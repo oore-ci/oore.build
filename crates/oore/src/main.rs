@@ -3754,15 +3754,15 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
     } else {
         checks.push(doctor_check(
             "fvm",
-            "missing",
+            "ok",
+            Some("managed by Oore; prepared automatically on the first Flutter build".to_string()),
             None,
-            Some("reinstall or update Oore to restore its managed Flutter toolchain"),
         ));
     }
 
     if let Some(version) = command_version("flutter", &["--version"]) {
         checks.push(doctor_check("flutter", "ok", Some(version), None));
-    } else if fvm_available.is_some() {
+    } else {
         checks.push(doctor_check(
             "flutter",
             "ok",
@@ -3770,13 +3770,6 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
                 "managed by Oore through FVM; downloaded and cached on the first build".to_string(),
             ),
             None,
-        ));
-    } else {
-        checks.push(doctor_check(
-            "flutter",
-            "missing",
-            None,
-            Some("reinstall or update Oore to restore its managed Flutter toolchain"),
         ));
     }
 

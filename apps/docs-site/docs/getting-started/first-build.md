@@ -141,9 +141,11 @@ Run `oore doctor` to check your toolchain:
 oore doctor
 ```
 
-Oore bundles FVM and downloads the selected Flutter SDK automatically. If this
-check fails, update or reinstall Oore. Android builds still require an Android
-SDK, and Apple builds require full Xcode.
+Oore bundles FVM and downloads the selected Flutter SDK automatically. Hosts
+updated from an older Oore release also repair a missing managed FVM payload
+automatically on the first Flutter build. If that download is interrupted,
+retry the build. Android builds still require an Android SDK, and Apple builds
+require full Xcode.
 
 ### "No .oore.yaml found" but UI pipeline exists
 

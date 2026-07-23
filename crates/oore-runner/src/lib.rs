@@ -56,6 +56,12 @@ pub const RUNNER_SERVICE_ACK_MAX_AGE_SECS: u64 = 75;
 const RUNNER_SERVICE_ACK_SCHEMA_VERSION: u32 = 1;
 // ponytail: fixed three-check grace; move it into the runner protocol if deployments need tuning.
 const MAX_CONSECUTIVE_AUTHORITY_FAILURES: u8 = 3;
+const MANAGED_FVM_VERSION: &str = "4.1.2";
+const MANAGED_FVM_ARM64_SHA256: &str =
+    "0b2a146986c51f06331f135f0bdf2a202eb57f55d7edd420c9078e8520e4c033";
+const MANAGED_FVM_X64_SHA256: &str =
+    "7bbfcb6883ea67ce532163704f5625eba7ecf340084be707cde71a28fefff1d8";
+const MANAGED_FVM_MAX_ARCHIVE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RunnerConfig {
@@ -216,10 +222,172 @@ fn repository_shell_command(script: &str, workspace: &Path) -> tokio::process::C
 
 fn bundled_fvm_install_root() -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?;
+    oore_install_root_for_executable(&executable)
+        .filter(|install_root| managed_fvm_is_available(install_root))
+}
+
+fn oore_install_root_for_executable(executable: &Path) -> Option<PathBuf> {
     let bin = executable.parent()?;
+    if bin.file_name()? != "bin" {
+        return None;
+    }
     let install_root = bin.parent()?;
-    (bin.join("fvm").is_file() && install_root.join("libexec/fvm/fvm").is_file())
+    install_root
+        .join("VERSION")
+        .is_file()
         .then(|| install_root.to_path_buf())
+}
+
+fn managed_fvm_is_available(install_root: &Path) -> bool {
+    install_root.join("bin/fvm").is_file() && install_root.join("libexec/fvm/fvm").is_file()
+}
+
+fn managed_fvm_download(arch: &str) -> anyhow::Result<(String, &'static str)> {
+    let (asset_arch, expected_sha256) = match arch {
+        "aarch64" => ("arm64", MANAGED_FVM_ARM64_SHA256),
+        "x86_64" => ("x64", MANAGED_FVM_X64_SHA256),
+        other => anyhow::bail!("Oore-managed FVM is not available for architecture {other}"),
+    };
+    Ok((
+        format!(
+            "https://github.com/conceptadev/fvm/releases/download/{MANAGED_FVM_VERSION}/fvm-{MANAGED_FVM_VERSION}-macos-{asset_arch}.tar.gz"
+        ),
+        expected_sha256,
+    ))
+}
+
+async fn install_managed_fvm_archive(
+    install_root: &Path,
+    archive_bytes: &[u8],
+    expected_sha256: &str,
+) -> anyhow::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    anyhow::ensure!(
+        archive_bytes.len() <= MANAGED_FVM_MAX_ARCHIVE_BYTES,
+        "managed FVM archive exceeds the {} byte limit",
+        MANAGED_FVM_MAX_ARCHIVE_BYTES
+    );
+    let actual_sha256 = hex::encode(Sha256::digest(archive_bytes));
+    anyhow::ensure!(
+        actual_sha256 == expected_sha256,
+        "managed FVM archive checksum mismatch"
+    );
+
+    let mut random = [0u8; 8];
+    rand::thread_rng().fill_bytes(&mut random);
+    let staging = install_root.join(format!(
+        ".fvm-bootstrap-{}-{}",
+        std::process::id(),
+        hex::encode(random)
+    ));
+    let mut staging_builder = fs::DirBuilder::new();
+    staging_builder.mode(0o700);
+    staging_builder
+        .create(&staging)
+        .with_context(|| format!("failed to create {}", staging.display()))?;
+
+    let result: anyhow::Result<()> = async {
+        let archive = staging.join("fvm.tar.gz");
+        write_private_file(&archive, archive_bytes)
+            .with_context(|| format!("failed to write {}", archive.display()))?;
+        let output = tokio::process::Command::new("/usr/bin/tar")
+            .args(["-xzf"])
+            .arg(&archive)
+            .args(["-C"])
+            .arg(&staging)
+            .output()
+            .await
+            .context("failed to extract managed FVM archive")?;
+        anyhow::ensure!(
+            output.status.success(),
+            "failed to extract managed FVM archive: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+
+        let extracted = staging.join("fvm");
+        let payload = extracted.join("fvm");
+        let payload_metadata = fs::symlink_metadata(&payload)
+            .with_context(|| format!("managed FVM archive is missing {}", payload.display()))?;
+        anyhow::ensure!(
+            payload_metadata.file_type().is_file(),
+            "managed FVM payload is not a regular file"
+        );
+        fs::set_permissions(&payload, fs::Permissions::from_mode(0o755))?;
+
+        let libexec = install_root.join("libexec");
+        fs::create_dir_all(&libexec)?;
+        let destination = libexec.join("fvm");
+        match fs::remove_dir_all(&destination) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        fs::rename(&extracted, &destination).with_context(|| {
+            format!(
+                "failed to install managed FVM payload at {}",
+                destination.display()
+            )
+        })?;
+        fs::File::open(&libexec)?.sync_all()?;
+
+        let bin = install_root.join("bin");
+        fs::create_dir_all(&bin)?;
+        let launcher = bin.join(format!(
+            ".fvm.{}-{}.tmp",
+            std::process::id(),
+            hex::encode(random)
+        ));
+        write_private_file(
+            &launcher,
+            b"#!/bin/sh\nset -eu\nroot=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")/..\" && pwd)\"\nexec \"$root/libexec/fvm/fvm\" \"$@\"\n",
+        )?;
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755))?;
+        fs::rename(&launcher, bin.join("fvm"))?;
+        fs::File::open(&bin)?.sync_all()?;
+        Ok(())
+    }
+    .await;
+
+    if let Err(cleanup_error) = fs::remove_dir_all(&staging)
+        && cleanup_error.kind() != ErrorKind::NotFound
+        && result.is_ok()
+    {
+        return Err(cleanup_error).context("failed to clean up managed FVM bootstrap");
+    }
+    result
+}
+
+async fn ensure_managed_fvm(client: &reqwest::Client) -> anyhow::Result<bool> {
+    let executable = std::env::current_exe().context("failed to locate the Oore runner")?;
+    let Some(install_root) = oore_install_root_for_executable(&executable) else {
+        return Ok(false);
+    };
+    if managed_fvm_is_available(&install_root) {
+        return Ok(false);
+    }
+
+    let (url, expected_sha256) = managed_fvm_download(std::env::consts::ARCH)?;
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .context("failed to download Oore-managed FVM")?
+        .error_for_status()
+        .context("Oore-managed FVM download failed")?;
+    if let Some(length) = response.content_length() {
+        anyhow::ensure!(
+            length <= MANAGED_FVM_MAX_ARCHIVE_BYTES as u64,
+            "managed FVM archive exceeds the {} byte limit",
+            MANAGED_FVM_MAX_ARCHIVE_BYTES
+        );
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .context("failed to read Oore-managed FVM download")?;
+    install_managed_fvm_archive(&install_root, &bytes, expected_sha256).await?;
+    Ok(true)
 }
 
 fn configure_bundled_fvm_environment(command: &mut tokio::process::Command, install_root: &Path) {
@@ -4052,6 +4220,48 @@ async fn execute_build(
         Ok(plan) => plan,
         Err(e) => return (steps, Err(e)),
     };
+    let requires_managed_fvm = execution_plan
+        .stage_commands
+        .pre_build
+        .iter()
+        .chain(&execution_plan.stage_commands.build)
+        .chain(&execution_plan.stage_commands.post_build)
+        .any(|command| command_uses_flutter_toolchain(command));
+    if requires_managed_fvm && bundled_fvm_install_root().is_none() {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &mut log_seq,
+            "stdout",
+            "Preparing Oore-managed Flutter tooling for this runner...",
+        )
+        .await;
+        match ensure_managed_fvm(client).await {
+            Ok(true) => {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    &mut log_seq,
+                    "stdout",
+                    "Oore-managed Flutter tooling is ready.",
+                )
+                .await;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                return (
+                    steps,
+                    Err(error.context(
+                        "Failed to prepare Oore-managed Flutter tooling; retry the build",
+                    )),
+                );
+            }
+        }
+    }
 
     let mut signing_source: Option<&str> = None;
     let mut signing_variant: Option<AndroidSigningBuildType> = None;
@@ -6456,6 +6666,83 @@ mod tests {
         );
 
         cleanup_workspace(&install_root);
+    }
+
+    #[test]
+    fn managed_fvm_download_is_pinned_for_supported_macos_architectures() {
+        let (arm64_url, arm64_sha) = managed_fvm_download("aarch64").expect("arm64 FVM download");
+        assert!(arm64_url.ends_with("/fvm-4.1.2-macos-arm64.tar.gz"));
+        assert_eq!(arm64_sha, MANAGED_FVM_ARM64_SHA256);
+
+        let (x64_url, x64_sha) = managed_fvm_download("x86_64").expect("x64 FVM download");
+        assert!(x64_url.ends_with("/fvm-4.1.2-macos-x64.tar.gz"));
+        assert_eq!(x64_sha, MANAGED_FVM_X64_SHA256);
+        assert!(managed_fvm_download("unsupported").is_err());
+    }
+
+    #[test]
+    fn managed_fvm_install_root_requires_the_installed_bin_layout() {
+        let root = temp_workspace();
+        fs::write(root.join("VERSION"), "0.1.32-alpha.21").expect("write VERSION");
+        fs::create_dir_all(root.join("bin")).expect("create bin");
+        let executable = root.join("bin/oore");
+        fs::write(&executable, "fixture").expect("write executable");
+
+        assert_eq!(
+            oore_install_root_for_executable(&executable),
+            Some(root.clone())
+        );
+        assert_eq!(
+            oore_install_root_for_executable(&root.join("target/debug/oore")),
+            None
+        );
+
+        cleanup_workspace(&root);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn managed_fvm_archive_installs_launcher_and_payload_for_legacy_updates() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_workspace();
+        let fixture = root.join("fixture/fvm");
+        fs::create_dir_all(&fixture).expect("create FVM fixture");
+        fs::write(fixture.join("fvm"), "#!/bin/sh\nprintf 'fixture-fvm\\n'\n")
+            .expect("write FVM fixture");
+        let archive = root.join("fixture.tar.gz");
+        let output = Command::new("/usr/bin/tar")
+            .args(["-czf"])
+            .arg(&archive)
+            .args(["-C"])
+            .arg(root.join("fixture"))
+            .arg("fvm")
+            .output()
+            .expect("create FVM fixture archive");
+        assert!(output.status.success());
+        let bytes = fs::read(&archive).expect("read FVM fixture archive");
+        let expected_sha = hex::encode(Sha256::digest(&bytes));
+
+        install_managed_fvm_archive(&root, &bytes, &expected_sha)
+            .await
+            .expect("install managed FVM fixture");
+
+        assert!(managed_fvm_is_available(&root));
+        assert_ne!(
+            fs::metadata(root.join("bin/fvm"))
+                .expect("launcher metadata")
+                .permissions()
+                .mode()
+                & 0o111,
+            0
+        );
+        let output = Command::new(root.join("bin/fvm"))
+            .output()
+            .expect("run managed FVM launcher");
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "fixture-fvm\n");
+
+        cleanup_workspace(&root);
     }
 
     #[test]
