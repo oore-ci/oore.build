@@ -41,6 +41,7 @@ import { useProjects } from '@/hooks/use-projects'
 import { useRunners } from '@/hooks/use-runners'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { getSetupStatus } from '@/lib/api'
+import { isLoopbackHostname } from '@/lib/connectivity'
 import { PageMeta } from '@/lib/seo'
 import { isManagedFrontend } from '@/lib/managed-frontend'
 import { useAuthStore } from '@/stores/auth-store'
@@ -99,15 +100,6 @@ function normalizeUrl(value: string): string {
   return value.replace(/\/+$/, '')
 }
 
-function isLoopbackHostname(hostname: string): boolean {
-  return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname === '[::1]'
-  )
-}
-
 async function detectReachableLocalDaemonUrl(): Promise<string | null> {
   for (const candidate of KNOWN_LOCAL_DAEMON_URLS) {
     try {
@@ -126,7 +118,6 @@ function IndexPage() {
   const [showAddInstance, setShowAddInstance] = useState(false)
   const [isDetectingLocalInstance, setIsDetectingLocalInstance] =
     useState(false)
-  const [isAutoSigningIn, setIsAutoSigningIn] = useState(false)
   const autoDetectAttemptedRef = useRef(false)
   const authUser = useAuthStore((s) => s.user)
 
@@ -167,7 +158,7 @@ function IndexPage() {
       })
   })
 
-  useIndexAuthGuard(status, instance, setIsAutoSigningIn)
+  const isAutoSigningIn = useIndexAuthGuard(status, instance)
 
   if (!instance && isDetectingLocalInstance) {
     return (

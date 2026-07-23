@@ -19,6 +19,7 @@ import {
 } from '@/hooks/use-artifact-storage'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { getApiErrorMessage } from '@/lib/api'
+import { isLoopbackHostname, resolveUrlHostname } from '@/lib/connectivity'
 import {
   getActiveInstanceOrRedirect,
   requireInstanceRoleOrRedirect,
@@ -52,7 +53,7 @@ function ArtifactStoragePage() {
   const instanceApiBaseUrl = resolveInstanceApiBaseUrl(instance)
   const canBrowseLocalFs =
     isLoopbackHostname(window.location.hostname) &&
-    isLoopbackHostname(resolveHostname(instanceApiBaseUrl))
+    isLoopbackHostname(resolveUrlHostname(instanceApiBaseUrl))
   const settingsQuery = useArtifactStorageSettings()
   const updateStorageMutation = useUpdateArtifactStorageSettings()
   const settings = settingsQuery.data
@@ -229,23 +230,4 @@ function ArtifactStoragePage() {
       ) : null}
     </PageLayout>
   )
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname === '[::1]'
-  )
-}
-
-function resolveHostname(rawUrl: string | null | undefined): string {
-  const trimmed = rawUrl?.trim() ?? ''
-  if (!trimmed) return ''
-  try {
-    return new URL(trimmed).hostname
-  } catch {
-    return ''
-  }
 }

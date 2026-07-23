@@ -41,6 +41,7 @@ import type { ScmProvider } from '@/lib/types'
 import { useCreateProject } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { useSourceRepositories } from '@/hooks/use-source-repositories'
+import { isLoopbackHostname, resolveUrlHostname } from '@/lib/connectivity'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useActiveInstance } from '@/stores/instance-store'
 
@@ -58,25 +59,6 @@ function sourceProviderLabel(provider: ScmProvider): string {
   if (provider === 'gitlab') return 'GitLab'
   if (provider === 'github') return 'GitHub'
   return 'Local Git'
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname === '[::1]'
-  )
-}
-
-function resolveHostname(rawUrl: string | null | undefined): string {
-  const trimmed = rawUrl?.trim() ?? ''
-  if (!trimmed) return ''
-  try {
-    return new URL(trimmed).hostname
-  } catch {
-    return ''
-  }
 }
 
 interface CreateProjectDialogProps {
@@ -98,7 +80,7 @@ export default function CreateProjectDialog({
 
   const uiIsLoopback = isLoopbackHostname(window.location.hostname)
   const backendIsLoopback = isLoopbackHostname(
-    resolveHostname(instanceApiBaseUrl),
+    resolveUrlHostname(instanceApiBaseUrl),
   )
   const canBrowseLocalFs = uiIsLoopback && backendIsLoopback
 

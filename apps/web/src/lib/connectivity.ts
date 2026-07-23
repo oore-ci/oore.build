@@ -14,6 +14,20 @@ function parseUrl(value: string): URL | null {
   }
 }
 
+export function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '[::1]'
+  )
+}
+
+export function resolveUrlHostname(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? ''
+  return trimmed ? (parseUrl(trimmed)?.hostname ?? '') : ''
+}
+
 export function isHostedUiOrigin(origin: string): boolean {
   const parsed = parseUrl(origin)
   return parsed?.hostname === 'ci.oore.build'

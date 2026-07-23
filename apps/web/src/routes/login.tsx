@@ -20,7 +20,9 @@ import {
 import {
   getConnectivityIssue,
   isHostedUiOrigin,
+  isLoopbackHostname,
   isMixedContentBlocked,
+  resolveUrlHostname,
 } from '@/lib/connectivity'
 import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
@@ -81,25 +83,6 @@ export function buildLoginBackendCommands(backendUrl: string) {
   }
 }
 
-function isLoopbackHostname(hostname: string): boolean {
-  return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname === '[::1]'
-  )
-}
-
-function resolveBackendHostname(url: string): string {
-  const trimmed = url.trim()
-  if (!trimmed) return window.location.hostname
-  try {
-    return new URL(trimmed).hostname
-  } catch {
-    return ''
-  }
-}
-
 function LoginPage() {
   const instance = useActiveInstance()
   const instances = useInstanceStore((s) => s.instances)
@@ -132,7 +115,7 @@ function LoginPage() {
   const instanceApiBaseUrl = resolveInstanceApiBaseUrl(instance)
   const uiIsLoopback = isLoopbackHostname(window.location.hostname)
   const backendIsLoopback = instanceApiBaseUrl
-    ? isLoopbackHostname(resolveBackendHostname(instanceApiBaseUrl))
+    ? isLoopbackHostname(resolveUrlHostname(instanceApiBaseUrl))
     : false
   const loopbackLocalPath = uiIsLoopback && backendIsLoopback
   const loginFlow = setupStatusQuery.data
@@ -203,7 +186,7 @@ function LoginPage() {
         return
       }
       const localUi = isLoopbackHostname(window.location.hostname)
-      const localBackend = isLoopbackHostname(resolveBackendHostname(baseUrl))
+      const localBackend = isLoopbackHostname(resolveUrlHostname(baseUrl))
       const canUseLoopbackLocalLogin = localUi && localBackend
       if (status.runtime_mode === 'local' && !canUseLoopbackLocalLogin) {
         setError(
