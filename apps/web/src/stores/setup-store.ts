@@ -46,7 +46,9 @@ function saveSessionToken(
 function loadSessionExpiresAt(instanceId: string | null): number | null {
   try {
     const val = sessionStorage.getItem(expiresKey(instanceId))
-    return val ? Number(val) : null
+    if (!val) return null
+    const expiresAt = Number(val)
+    return Number.isFinite(expiresAt) ? expiresAt : null
   } catch {
     return null
   }

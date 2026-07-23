@@ -5,53 +5,15 @@ import { useInstanceStore } from '@/stores/instance-store'
 import { useSetupStore } from '@/stores/setup-store'
 
 /**
- * Read the active instance directly from localStorage.
- *
- * Zustand persist may not have rehydrated the store yet when route guards
- * run on a full-page reload (e.g. after an OIDC redirect). This function
- * bypasses the store and reads the persisted value directly.
- */
-function readActiveInstanceFromStorage(): Instance | null {
-  try {
-    const raw = localStorage.getItem('oore_instances')
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as {
-      state?: {
-        instances?: Record<string, Instance>
-        activeInstanceId?: string | null
-      }
-    }
-    const state = parsed.state
-    if (
-      !state?.activeInstanceId ||
-      !state.instances?.[state.activeInstanceId]
-    ) {
-      return null
-    }
-    return state.instances[state.activeInstanceId]
-  } catch {
-    return null
-  }
-}
-
-/**
  * Read the active instance from the store. If none is active, redirect to '/'.
  * Intended for use in route `beforeLoad` guards (synchronous, no hooks).
- *
- * Falls back to reading localStorage directly if the Zustand store hasn't
- * rehydrated yet (happens on full-page reloads like OIDC redirects).
  */
 export function getActiveInstanceOrRedirect(): Instance {
-  // Fast path: store is already hydrated
   const { activeInstanceId, instances } = useInstanceStore.getState()
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive: instances record may be stale
   if (activeInstanceId && instances[activeInstanceId]) {
     return instances[activeInstanceId]
   }
-
-  // Fallback: read directly from localStorage (persist hasn't hydrated yet)
-  const fromStorage = readActiveInstanceFromStorage()
-  if (fromStorage) return fromStorage
 
   throw redirect({ to: '/' })
 }
@@ -114,7 +76,9 @@ export function getAuthTokenForInstance(instanceId: string): string | null {
 function getAuthExpiresForInstance(instanceId: string): number | null {
   try {
     const val = localStorage.getItem(`oore_auth_expires_${instanceId}`)
-    return val ? Number(val) : null
+    if (!val) return null
+    const expiresAt = Number(val)
+    return Number.isFinite(expiresAt) ? expiresAt : null
   } catch {
     return null
   }
@@ -132,7 +96,7 @@ export function requireAuthOrRedirect(instanceId: string): string {
 
   // Check expiry
   const expiresAt = getAuthExpiresForInstance(instanceId)
-  if (expiresAt != null && expiresAt <= Math.floor(Date.now() / 1000)) {
+  if (expiresAt == null || expiresAt <= Math.floor(Date.now() / 1000)) {
     throw redirect({ to: '/login' })
   }
 

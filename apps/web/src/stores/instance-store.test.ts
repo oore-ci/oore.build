@@ -82,59 +82,6 @@ describe('useInstanceStore', () => {
     expect(useInstanceStore.getState().activeInstanceId).toBe(id)
   })
 
-  it('updateInstanceLabel changes label', () => {
-    const id = useInstanceStore
-      .getState()
-      .addInstance('Old', 'https://ci.example.com')
-    useInstanceStore.getState().updateInstanceLabel(id, 'New Label')
-    expect(useInstanceStore.getState().instances[id].label).toBe('New Label')
-  })
-
-  it('removeInstance removes and auto-selects next', () => {
-    const first = useInstanceStore
-      .getState()
-      .addInstance('First', 'https://one.example.com')
-    const second = useInstanceStore
-      .getState()
-      .addInstance('Second', 'https://two.example.com')
-    useInstanceStore.getState().removeInstance(first)
-    expect(useInstanceStore.getState().instances[first]).toBeUndefined()
-    expect(useInstanceStore.getState().activeInstanceId).toBe(second)
-  })
-
-  it('removeInstance sets null when last instance removed', () => {
-    const id = useInstanceStore
-      .getState()
-      .addInstance('Only', 'https://ci.example.com')
-    useInstanceStore.getState().removeInstance(id)
-    expect(useInstanceStore.getState().activeInstanceId).toBeNull()
-    expect(Object.keys(useInstanceStore.getState().instances)).toHaveLength(0)
-  })
-
-  it('removeInstance clears namespaced sessionStorage keys', () => {
-    const id = useInstanceStore
-      .getState()
-      .addInstance('Test', 'https://ci.example.com')
-    sessionStorage.setItem(`oore_setup_session_${id}`, 'tok')
-    sessionStorage.setItem(`oore_setup_session_expires_${id}`, '999')
-    useInstanceStore.getState().removeInstance(id)
-    expect(sessionStorage.getItem(`oore_setup_session_${id}`)).toBeNull()
-    expect(
-      sessionStorage.getItem(`oore_setup_session_expires_${id}`),
-    ).toBeNull()
-  })
-
-  it('removeInstance does not change active when removing non-active', () => {
-    const first = useInstanceStore
-      .getState()
-      .addInstance('First', 'https://one.example.com')
-    const second = useInstanceStore
-      .getState()
-      .addInstance('Second', 'https://two.example.com')
-    useInstanceStore.getState().removeInstance(second)
-    expect(useInstanceStore.getState().activeInstanceId).toBe(first)
-  })
-
   it('addInstance stores icon when provided', () => {
     const id = useInstanceStore
       .getState()
@@ -147,14 +94,6 @@ describe('useInstanceStore', () => {
       .getState()
       .addInstance('Default', 'https://ci.example.com')
     expect(useInstanceStore.getState().instances[id].icon).toBeUndefined()
-  })
-
-  it('updateInstanceIcon changes icon', () => {
-    const id = useInstanceStore
-      .getState()
-      .addInstance('Test', 'https://ci.example.com', 'cloud-server')
-    useInstanceStore.getState().updateInstanceIcon(id, 'shield-01')
-    expect(useInstanceStore.getState().instances[id].icon).toBe('shield-01')
   })
 
   it('updateInstance changes multiple fields at once', () => {

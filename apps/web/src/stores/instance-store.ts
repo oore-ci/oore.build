@@ -30,40 +30,15 @@ function clearInstanceScopedState(id: string): void {
   queryClient.removeQueries({ queryKey: [id] })
 }
 
-function generateInstanceId(): string {
-  // crypto can be missing in some test environments / older runtimes
-  const webCrypto = (globalThis as unknown as { crypto?: Crypto }).crypto
-  if (webCrypto && typeof webCrypto.randomUUID === 'function') {
-    return webCrypto.randomUUID()
-  }
-
-  if (webCrypto && typeof webCrypto.getRandomValues === 'function') {
-    const bytes = new Uint8Array(16)
-    webCrypto.getRandomValues(bytes)
-    bytes[6] = (bytes[6] & 0x0f) | 0x40
-    bytes[8] = (bytes[8] & 0x3f) | 0x80
-
-    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(
-      '',
-    )
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
-  }
-
-  return `instance-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-}
-
 interface InstanceStoreState {
   instances: Record<string, Instance>
   activeInstanceId: string | null
   addInstance: (label: string, url: string, icon?: string) => string
-  removeInstance: (id: string) => void
   setActiveInstance: (id: string) => void
   updateInstance: (
     id: string,
     fields: Partial<Pick<Instance, 'label' | 'url' | 'icon'>>,
   ) => void
-  updateInstanceLabel: (id: string, label: string) => void
-  updateInstanceIcon: (id: string, icon: string) => void
 }
 
 export const useInstanceStore = create<InstanceStoreState>()(
@@ -73,7 +48,7 @@ export const useInstanceStore = create<InstanceStoreState>()(
       activeInstanceId: null,
 
       addInstance: (label, url, icon) => {
-        const id = generateInstanceId()
+        const id = crypto.randomUUID()
         const instance: Instance = {
           id,
           label,
@@ -88,23 +63,6 @@ export const useInstanceStore = create<InstanceStoreState>()(
           ...(isFirst ? { activeInstanceId: id } : {}),
         })
         return id
-      },
-
-      removeInstance: (id) => {
-        const state = get()
-        const { [id]: _, ...rest } = state.instances
-        clearInstanceScopedState(id)
-
-        // Auto-select next instance or null
-        let nextActiveId: string | null = state.activeInstanceId
-        if (state.activeInstanceId === id) {
-          const remaining = Object.keys(rest)
-          nextActiveId = remaining[0] ?? null
-        }
-
-        set({ instances: rest, activeInstanceId: nextActiveId })
-        useSetupStore.getState().setInstanceContext(nextActiveId)
-        useAuthStore.getState().setInstanceContext(nextActiveId)
       },
 
       setActiveInstance: (id) => {
@@ -142,34 +100,6 @@ export const useInstanceStore = create<InstanceStoreState>()(
             instances: {
               ...state.instances,
               [id]: next,
-            },
-          })
-        }
-      },
-
-      updateInstanceLabel: (id, label) => {
-        const state = get()
-        const instance = state.instances[id]
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- id may not exist in record
-        if (instance) {
-          set({
-            instances: {
-              ...state.instances,
-              [id]: { ...instance, label },
-            },
-          })
-        }
-      },
-
-      updateInstanceIcon: (id, icon) => {
-        const state = get()
-        const instance = state.instances[id]
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- id may not exist in record
-        if (instance) {
-          set({
-            instances: {
-              ...state.instances,
-              [id]: { ...instance, icon },
             },
           })
         }
