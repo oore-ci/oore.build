@@ -1,4 +1,4 @@
-import { createBoundStore } from '@/lib/store'
+import { create } from 'zustand'
 
 interface SetupStoreState {
   instanceId: string | null
@@ -69,7 +69,7 @@ function saveSessionExpiresAt(
   }
 }
 
-export const useSetupStore = createBoundStore<SetupStoreState>((set, get) => ({
+export const useSetupStore = create<SetupStoreState>()((set, get) => ({
   instanceId: null,
   currentStep: 0,
   sessionToken: loadSessionToken(null),

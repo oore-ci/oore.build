@@ -6,7 +6,6 @@ import { DEMO_PERSONAS, authenticateDemoUser } from '@/demo/personas'
 import { DEMO_PASSWORD } from '@/demo/seed'
 import { queryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
-import { useRecentProjectsStore } from '@/stores/recent-projects-store'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -47,7 +46,6 @@ export default function DemoLoginForm() {
     }
 
     queryClient.clear()
-    useRecentProjectsStore.getState().clear()
     setAuth(
       persona.token,
       4102444800,

@@ -1,4 +1,5 @@
-import { createBoundStore } from '@/lib/store'
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import type { Instance } from '@/lib/types'
 import { queryClient } from '@/lib/query-client'
@@ -65,115 +66,117 @@ interface InstanceStoreState {
   updateInstanceIcon: (id: string, icon: string) => void
 }
 
-export const useInstanceStore = createBoundStore<InstanceStoreState>(
-  (set, get) => ({
-    instances: {},
-    activeInstanceId: null,
+export const useInstanceStore = create<InstanceStoreState>()(
+  persist(
+    (set, get) => ({
+      instances: {},
+      activeInstanceId: null,
 
-    addInstance: (label, url, icon) => {
-      const id = generateInstanceId()
-      const instance: Instance = {
-        id,
-        label,
-        url,
-        ...(icon ? { icon } : {}),
-        addedAt: Date.now(),
-      }
-      const state = get()
-      const isFirst = state.activeInstanceId === null
-      set({
-        instances: { ...state.instances, [id]: instance },
-        ...(isFirst ? { activeInstanceId: id } : {}),
-      })
-      return id
-    },
+      addInstance: (label, url, icon) => {
+        const id = generateInstanceId()
+        const instance: Instance = {
+          id,
+          label,
+          url,
+          ...(icon ? { icon } : {}),
+          addedAt: Date.now(),
+        }
+        const state = get()
+        const isFirst = state.activeInstanceId === null
+        set({
+          instances: { ...state.instances, [id]: instance },
+          ...(isFirst ? { activeInstanceId: id } : {}),
+        })
+        return id
+      },
 
-    removeInstance: (id) => {
-      const state = get()
-      const { [id]: _, ...rest } = state.instances
-      clearInstanceScopedState(id)
+      removeInstance: (id) => {
+        const state = get()
+        const { [id]: _, ...rest } = state.instances
+        clearInstanceScopedState(id)
 
-      // Auto-select next instance or null
-      let nextActiveId: string | null = state.activeInstanceId
-      if (state.activeInstanceId === id) {
-        const remaining = Object.keys(rest)
-        nextActiveId = remaining[0] ?? null
-      }
-
-      set({ instances: rest, activeInstanceId: nextActiveId })
-      useSetupStore.getState().setInstanceContext(nextActiveId)
-      useAuthStore.getState().setInstanceContext(nextActiveId)
-    },
-
-    setActiveInstance: (id) => {
-      const state = get()
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- id may not exist in record
-      if (state.instances[id]) {
-        set({ activeInstanceId: id })
-        useSetupStore.getState().setInstanceContext(id)
-        useAuthStore.getState().setInstanceContext(id)
-      }
-    },
-
-    updateInstance: (id, fields) => {
-      const state = get()
-      const instance = state.instances[id]
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- id may not exist in record
-      if (instance) {
-        const next = { ...instance, ...fields }
-        const authorityChanged =
-          fields.url !== undefined &&
-          backendOrigin(instance.url) !== backendOrigin(fields.url)
-
-        if (authorityChanged) {
-          clearInstanceScopedState(id)
-
-          if (useSetupStore.getState().instanceId === id) {
-            useSetupStore.getState().setInstanceContext(id)
-          }
-          if (useAuthStore.getState().instanceId === id) {
-            useAuthStore.getState().setInstanceContext(id)
-          }
+        // Auto-select next instance or null
+        let nextActiveId: string | null = state.activeInstanceId
+        if (state.activeInstanceId === id) {
+          const remaining = Object.keys(rest)
+          nextActiveId = remaining[0] ?? null
         }
 
-        set({
-          instances: {
-            ...state.instances,
-            [id]: next,
-          },
-        })
-      }
-    },
+        set({ instances: rest, activeInstanceId: nextActiveId })
+        useSetupStore.getState().setInstanceContext(nextActiveId)
+        useAuthStore.getState().setInstanceContext(nextActiveId)
+      },
 
-    updateInstanceLabel: (id, label) => {
-      const state = get()
-      const instance = state.instances[id]
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- id may not exist in record
-      if (instance) {
-        set({
-          instances: {
-            ...state.instances,
-            [id]: { ...instance, label },
-          },
-        })
-      }
-    },
+      setActiveInstance: (id) => {
+        const state = get()
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- id may not exist in record
+        if (state.instances[id]) {
+          set({ activeInstanceId: id })
+          useSetupStore.getState().setInstanceContext(id)
+          useAuthStore.getState().setInstanceContext(id)
+        }
+      },
 
-    updateInstanceIcon: (id, icon) => {
-      const state = get()
-      const instance = state.instances[id]
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- id may not exist in record
-      if (instance) {
-        set({
-          instances: {
-            ...state.instances,
-            [id]: { ...instance, icon },
-          },
-        })
-      }
-    },
-  }),
-  { name: 'oore_instances' },
+      updateInstance: (id, fields) => {
+        const state = get()
+        const instance = state.instances[id]
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- id may not exist in record
+        if (instance) {
+          const next = { ...instance, ...fields }
+          const authorityChanged =
+            fields.url !== undefined &&
+            backendOrigin(instance.url) !== backendOrigin(fields.url)
+
+          if (authorityChanged) {
+            clearInstanceScopedState(id)
+
+            if (useSetupStore.getState().instanceId === id) {
+              useSetupStore.getState().setInstanceContext(id)
+            }
+            if (useAuthStore.getState().instanceId === id) {
+              useAuthStore.getState().setInstanceContext(id)
+            }
+          }
+
+          set({
+            instances: {
+              ...state.instances,
+              [id]: next,
+            },
+          })
+        }
+      },
+
+      updateInstanceLabel: (id, label) => {
+        const state = get()
+        const instance = state.instances[id]
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- id may not exist in record
+        if (instance) {
+          set({
+            instances: {
+              ...state.instances,
+              [id]: { ...instance, label },
+            },
+          })
+        }
+      },
+
+      updateInstanceIcon: (id, icon) => {
+        const state = get()
+        const instance = state.instances[id]
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- id may not exist in record
+        if (instance) {
+          set({
+            instances: {
+              ...state.instances,
+              [id]: { ...instance, icon },
+            },
+          })
+        }
+      },
+    }),
+    { name: 'oore_instances' },
+  ),
 )
 
 export function useActiveInstance() {

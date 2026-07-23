@@ -16,7 +16,8 @@ export default function AppSidebar(
   props: React.ComponentProps<typeof Sidebar>,
 ) {
   const instance = useActiveInstance()
-  const [token, user] = useAuthStore((s) => [s.token, s.user])
+  const token = useAuthStore((state) => state.token)
+  const user = useAuthStore((state) => state.user)
 
   if (!instance || !token || !user) return null
 

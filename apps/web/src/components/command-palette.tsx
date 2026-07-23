@@ -23,7 +23,6 @@ import {
 } from '@/components/ui/command'
 import { useProjects } from '@/hooks/use-projects'
 import { useAuthStore } from '@/stores/auth-store'
-import { useUiStore } from '@/stores/ui-store'
 import { useHasPermission } from '@/hooks/use-permissions'
 import type { Project } from '@/lib/types'
 
@@ -37,9 +36,13 @@ interface PaletteItem {
   keywords?: string
 }
 
-export default function CommandPalette() {
-  const open = useUiStore((state) => state.commandPaletteOpen)
-  const setOpen = useUiStore((state) => state.setCommandPaletteOpen)
+export default function CommandPalette({
+  open,
+  onOpenChange,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
   const navigate = useNavigate()
   const authUser = useAuthStore((s) => s.user)
 
@@ -55,10 +58,10 @@ export default function CommandPalette() {
 
   const go = useCallback(
     (to: string) => {
-      setOpen(false)
+      onOpenChange(false)
       void navigate({ to })
     },
-    [navigate, setOpen],
+    [navigate, onOpenChange],
   )
 
   const navItems = useMemo<Array<PaletteItem>>(
@@ -158,7 +161,7 @@ export default function CommandPalette() {
   )
 
   return (
-    <CommandDialog open={open} onOpenChange={setOpen}>
+    <CommandDialog open={open} onOpenChange={onOpenChange}>
       <Command>
         <CommandInput
           placeholder={

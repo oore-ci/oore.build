@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 
 import {
   DropdownMenu,
@@ -16,7 +16,6 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
 import { ChevronsUpDown, PlusIcon } from 'lucide-react'
-import { createAtom, useAtom } from '@tanstack/react-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 import { DynamicLucideIcon } from './ui/dynamic-lucide-icon'
 import { getInstanceIcon } from '@/lib/instance-icons'
@@ -24,13 +23,12 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { useHotkeys } from '@tanstack/react-hotkeys'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 
-const dialogAtom = createAtom(false)
-
 export default function InstanceSwitcher() {
-  const [showAddDialog, setShowAddDialog] = useAtom(dialogAtom)
+  const [showAddDialog, setShowAddDialog] = useState(false)
   const activeInstance = useActiveInstance()
   const isMobile = useIsMobile()
-  const instanceList = useInstanceStore((s) => Object.values(s.instances))
+  const instances = useInstanceStore((state) => state.instances)
+  const instanceList = Object.values(instances)
 
   const selectInstance = useCallback((id: string) => {
     useInstanceStore.getState().setActiveInstance(id)

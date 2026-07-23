@@ -1,3 +1,4 @@
+import { lazy, Suspense, useState } from 'react'
 import PageBreadcrumb from './page-breadcrumb'
 import { Button } from './ui/button'
 import { Kbd } from './ui/kbd'
@@ -5,13 +6,14 @@ import { Separator } from './ui/separator'
 import { SidebarTrigger } from './ui/sidebar'
 import { SearchIcon } from 'lucide-react'
 import { useHotkey } from '@tanstack/react-hotkeys'
-import CommandPalette from './command-palette'
-import { useUiStore } from '@/stores/ui-store'
+
+const CommandPalette = lazy(() => import('./command-palette'))
 
 export default function SiteHeader() {
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+
   useHotkey('Mod+K', () => {
-    const currentState = useUiStore.getState()
-    currentState.setCommandPaletteOpen(!currentState.commandPaletteOpen)
+    setCommandPaletteOpen((open) => !open)
   })
 
   return (
@@ -30,7 +32,11 @@ export default function SiteHeader() {
             <Kbd className="hidden sm:inline-flex">⌘K</Kbd>
           </Button>
         </div>
-        <CommandPalette />
+        {commandPaletteOpen ? (
+          <Suspense fallback={null}>
+            <CommandPalette open onOpenChange={setCommandPaletteOpen} />
+          </Suspense>
+        ) : null}
       </div>
     </header>
   )

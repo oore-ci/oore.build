@@ -13,7 +13,6 @@ import {
   requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { useHasPermission } from '@/hooks/use-permissions'
-import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import {
   useDeleteIntegration,
   useGitLabAuthorize,
@@ -188,12 +187,6 @@ function useIntegrationDetailPageState(
     (nextPage) => {
       updateSearch({ page: nextPage === 1 ? undefined : nextPage })
     },
-  )
-
-  useBreadcrumbLabel(
-    '/settings/integrations/$integrationId',
-    detailQuery.data?.integration.display_name ??
-      detailQuery.data?.integration.provider,
   )
 
   useMountEffect(() => {

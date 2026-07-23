@@ -24,7 +24,6 @@ import { qaBuildVersion, qaProjectVersionBase } from '@/lib/qa-releases'
 import { PageMeta } from '@/lib/seo'
 import { getStatusVariant } from '@/lib/status-variants'
 import type { Artifact, Build, Project } from '@/lib/types'
-import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -370,7 +369,6 @@ export function ArtifactInstallPage({
   buildId: string
   artifactId?: string
 }) {
-  useBreadcrumbLabel('/builds/$buildId', 'Install')
   const buildQuery = useBuild(buildId, {
     refetchInterval: (query) =>
       query.state.data && isTerminalStatus(query.state.data.build.status)

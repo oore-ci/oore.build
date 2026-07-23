@@ -90,8 +90,6 @@ export default defineConfig({
             id.includes('/@tanstack/react-router/') ||
             id.includes('/@tanstack/router-') ||
             id.includes('/@tanstack/history') ||
-            id.includes('/@tanstack/react-store') ||
-            id.includes('/@tanstack/store') ||
             id.includes('/tiny-invariant/') ||
             id.includes('/tiny-warning/')
           )

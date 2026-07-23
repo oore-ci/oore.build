@@ -13,7 +13,6 @@ import {
   getActiveInstanceOrRedirect,
   requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
-import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import { useBuilds } from '@/hooks/use-builds'
 import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import {
@@ -113,11 +112,6 @@ function usePipelineDetailPageState() {
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
 
   const label = data?.pipeline.name ?? 'Pipeline Details'
-
-  useBreadcrumbLabel(
-    '/projects/$projectId/pipelines/$pipelineId',
-    data?.pipeline.name,
-  )
 
   if (isLoading) {
     return { status: 'loading' as const, label }

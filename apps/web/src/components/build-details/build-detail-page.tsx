@@ -11,7 +11,6 @@ import { ArtifactsPanel } from './artifacts-panel'
 import { BuildSummary } from './build-summary'
 import { EventTimeline } from './event-timeline'
 import type { BuildLogChunk } from '@/lib/types'
-import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import { useBuildNotification } from '@/hooks/use-build-notification'
 import { useIsBelowBreakpoint } from '@/hooks/use-mobile'
 import {
@@ -83,11 +82,6 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
   const label = data?.build.build_number
     ? `Build #${data.build.build_number}`
     : 'Build Details'
-
-  useBreadcrumbLabel(
-    '/builds/$buildId',
-    data?.build.build_number ? `Build #${data.build.build_number}` : undefined,
-  )
 
   useBuildNotification(data?.build, isTerminal)
 

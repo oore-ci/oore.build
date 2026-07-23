@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { queryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
-import { useRecentProjectsStore } from '@/stores/recent-projects-store'
 import { DEMO_INSTANCE_ID } from './seed'
 import { activateDemoPersona, demoScenarioUrl } from './controls'
 
@@ -15,9 +14,6 @@ describe('demo controls', () => {
       token: null,
       expiresAt: null,
       user: null,
-    })
-    useRecentProjectsStore.setState({
-      projects: [{ id: 'project-1', name: 'Project', visitedAt: 1 }],
     })
   })
 
@@ -36,7 +32,6 @@ describe('demo controls', () => {
       },
     })
     expect(queryClient.getQueryCache().getAll()).toHaveLength(0)
-    expect(useRecentProjectsStore.getState().projects).toEqual([])
   })
 
   it('changes scenarios without losing the current route or query', () => {

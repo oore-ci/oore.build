@@ -1,8 +1,7 @@
-import { act, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import CommandPalette from './command-palette'
-import { useUiStore } from '@/stores/ui-store'
 
 const { navigate, authState } = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -44,13 +43,10 @@ describe('CommandPalette', () => {
   beforeEach(() => {
     navigate.mockReset()
     authState.role = 'owner'
-    useUiStore.setState({ commandPaletteOpen: false })
   })
 
   it('renders searchable commands when opened by the app shell', async () => {
-    render(<CommandPalette />)
-
-    act(() => useUiStore.getState().setCommandPaletteOpen(true))
+    render(<CommandPalette open onOpenChange={vi.fn()} />)
 
     expect(await screen.findByRole('dialog')).toBeTruthy()
     expect(
@@ -61,9 +57,7 @@ describe('CommandPalette', () => {
 
   it('shows a build-only navigation surface for QA viewers', async () => {
     authState.role = 'qa_viewer'
-    render(<CommandPalette />)
-
-    act(() => useUiStore.getState().setCommandPaletteOpen(true))
+    render(<CommandPalette open onOpenChange={vi.fn()} />)
 
     expect(await screen.findByRole('dialog')).toBeTruthy()
     expect(screen.getByText('Builds')).toBeTruthy()

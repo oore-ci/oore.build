@@ -1,4 +1,4 @@
-import { createBoundStore } from '@/lib/store'
+import { create } from 'zustand'
 import type { UserRole } from '@/lib/types'
 
 interface AuthUser {
@@ -153,7 +153,7 @@ export function getLastAuthMetaForInstance(
   }
 }
 
-export const useAuthStore = createBoundStore<AuthStoreState>((set, get) => ({
+export const useAuthStore = create<AuthStoreState>()((set, get) => ({
   instanceId: null,
   token: loadToken(null),
   expiresAt: loadExpiresAt(null),
