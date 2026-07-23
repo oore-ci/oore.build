@@ -5,7 +5,6 @@ import {
   changelogSummary,
   qaBuildVersion,
   qaProjectVersionBase,
-  selectQaProjectReleases,
 } from '@/lib/qa-releases'
 
 function build(id: string, projectId: string, createdAt: number): Build {
@@ -63,7 +62,7 @@ describe('QA release selection', () => {
     ).toBe('Faster checkout — Alex')
   })
 
-  it('keeps every artifact-bearing build and groups its installable platforms under one version', () => {
+  it('derives app versions from artifact metadata', () => {
     const builds = [build('new', 'kite', 13), build('older', 'kite', 12)]
     const artifacts = [
       artifact('new-ipa', 'new', 'ipa', 'Kite.ipa', 13, '13'),
@@ -71,22 +70,9 @@ describe('QA release selection', () => {
       artifact('apk-64', 'new', 'apk', 'app-arm64-v8a.apk', 13),
       artifact('older-ipa', 'older', 'ipa', 'Kite.ipa', 12),
     ]
-    const releases = selectQaProjectReleases('kite', builds, artifacts, 200)
-
     expect(qaProjectVersionBase(artifacts)).toBe('1.2.0')
     expect(qaBuildVersion(builds[0], artifacts.slice(0, 2), '1.2.0')).toBe(
       '1.2.0+13',
     )
-    expect(releases.map((release) => release.version)).toEqual([
-      '1.2.0+13',
-      '1.2.0+12',
-    ])
-    expect(releases[0].artifacts.map((candidate) => candidate.id)).toEqual([
-      'new-ipa',
-      'apk-64',
-    ])
-    expect(releases[1].artifacts.map((candidate) => candidate.id)).toEqual([
-      'older-ipa',
-    ])
   })
 })

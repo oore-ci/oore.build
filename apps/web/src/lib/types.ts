@@ -47,17 +47,8 @@ export interface OidcConfigureResponse {
   session_expires_at?: number
 }
 
-export interface SetupOidcStartRequest {
-  redirect_uri: string
-}
-
 export interface SetupOidcStartResponse {
   authorization_url: string
-  state: string
-}
-
-export interface SetupOidcVerifyRequest {
-  code: string
   state: string
 }
 
@@ -66,10 +57,6 @@ export interface SetupOidcVerifyResponse {
   owner_email: string
   oidc_subject: string
   session_expires_at?: number
-}
-
-export interface SetupLocalOwnerCreateRequest {
-  email: string
 }
 
 export interface SetupLocalOwnerCreateResponse {
@@ -191,10 +178,6 @@ export interface ListUsersResponse {
   users: Array<User>
 }
 
-export interface UserProfileResponse {
-  user: User
-}
-
 export interface LogoutResponse {
   ok: boolean
 }
@@ -281,14 +264,6 @@ export interface GitHubAppStartResponse {
   create_url: string
 }
 
-export interface GitHubAppCompleteRequest {
-  code: string
-}
-
-export interface GitHubAppCompleteResponse {
-  integration: Integration
-}
-
 export interface SyncInstallationsResponse {
   installations: Array<IntegrationInstallation>
 }
@@ -318,16 +293,6 @@ export interface GitLabAuthorizeRequest {
 
 export interface GitLabAuthorizeResponse {
   authorize_url: string
-}
-
-export interface CreateLocalGitIntegrationRequest {
-  repository_path: string
-  display_name?: string
-}
-
-export interface CreateLocalGitIntegrationResponse {
-  integration: Integration
-  repository: IntegrationRepository
 }
 
 export interface LocalGitDirectoryEntry {
@@ -514,14 +479,6 @@ export interface BuildLogChunk {
   stream: 'stdout' | 'stderr'
 }
 
-export interface AppendBuildLogsRequest {
-  chunks: Array<BuildLogChunk>
-}
-
-export interface AppendBuildLogsResponse {
-  appended: number
-}
-
 export interface BuildLogsResponse {
   logs: Array<BuildLogChunk>
   total: number
@@ -578,26 +535,6 @@ export interface CreateScopedDownloadTokenResponse {
   prefix: string
   expires_at: number
   single_use: boolean
-}
-
-export interface ArtifactDownloadTokenSummary {
-  id: string
-  artifact_id: string
-  prefix: string
-  created_by: string
-  created_by_email: string
-  expires_at: number
-  single_use: boolean
-  used_at?: number
-  revoked_at?: number
-  is_expired: boolean
-  is_used: boolean
-  is_revoked: boolean
-  created_at: number
-}
-
-export interface ListArtifactDownloadTokensResponse {
-  tokens: Array<ArtifactDownloadTokenSummary>
 }
 
 export type ArtifactStorageProvider = 'disabled' | 'local' | 's3' | 'r2'
@@ -1245,22 +1182,6 @@ export interface ProjectRetentionOverride {
   keep_statuses?: Array<string>
   artifact_ttl_days?: number
   updated_at?: number
-}
-
-export interface EffectiveProjectRetentionResponse {
-  effective: RetentionPolicy
-  has_override: boolean
-  override_fields?: ProjectRetentionOverride
-}
-
-export interface UpdateProjectRetentionOverrideRequest {
-  enabled?: boolean
-  max_age_days?: number
-  max_builds_per_project?: number
-  max_artifact_size_bytes?: number
-  cleanup_target?: RetentionCleanupTarget
-  keep_statuses?: Array<string>
-  artifact_ttl_days?: number
 }
 
 export interface RetentionCleanupSummary {

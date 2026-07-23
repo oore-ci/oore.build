@@ -1,14 +1,5 @@
 import type { Artifact, Build } from '@/lib/types'
-import {
-  artifactInstallReadiness,
-  getIosAppMetadata,
-} from '@/lib/artifact-install'
-
-export interface QaRelease {
-  artifacts: Array<Artifact>
-  build: Build
-  version: string
-}
+import { getIosAppMetadata } from '@/lib/artifact-install'
 
 export function changelogSummary(markdown: string): string {
   const firstLine = markdown
@@ -85,60 +76,4 @@ export function qaBuildVersion(
     : fallbackVersion
       ? `${fallbackVersion}+${build.build_number}`
       : `Build ${build.build_number}`
-}
-
-function bestArtifact(
-  artifacts: Array<Artifact>,
-  type: 'apk' | 'ipa',
-  now: number,
-): Artifact | undefined {
-  return artifacts
-    .filter(
-      (artifact) =>
-        artifact.artifact_type === type &&
-        (artifact.expires_at == null || artifact.expires_at > now) &&
-        artifactInstallReadiness(artifact).ready,
-    )
-    .sort((left, right) => {
-      if (type !== 'apk') return right.created_at - left.created_at
-      const rank = (name: string) =>
-        /universal/i.test(name) ? 2 : /arm64[-_]v8a|arm64/i.test(name) ? 1 : 0
-      return rank(right.name) - rank(left.name)
-    })[0]
-}
-
-export function selectQaProjectReleases(
-  projectId: string,
-  builds: Array<Build>,
-  projectArtifacts: Array<Artifact>,
-  now = Math.floor(Date.now() / 1000),
-): Array<QaRelease> {
-  const fallbackVersion = qaProjectVersionBase(projectArtifacts)
-  const artifactsByBuild = new Map<string, Array<Artifact>>()
-  for (const artifact of projectArtifacts) {
-    const artifacts = artifactsByBuild.get(artifact.build_id) ?? []
-    artifacts.push(artifact)
-    artifactsByBuild.set(artifact.build_id, artifacts)
-  }
-
-  return builds
-    .filter(
-      (build) => build.project_id === projectId && build.status === 'succeeded',
-    )
-    .sort((left, right) => right.created_at - left.created_at)
-    .flatMap((build) => {
-      const buildArtifacts = artifactsByBuild.get(build.id) ?? []
-      const artifacts = (['ipa', 'apk'] as const)
-        .map((type) => bestArtifact(buildArtifacts, type, now))
-        .filter((artifact): artifact is Artifact => artifact !== undefined)
-      return artifacts.length > 0
-        ? [
-            {
-              artifacts,
-              build,
-              version: qaBuildVersion(build, buildArtifacts, fallbackVersion),
-            },
-          ]
-        : []
-    })
 }
