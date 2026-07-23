@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Copy as Copy01Icon, Check as Tick02Icon } from 'lucide-react'
 
@@ -7,12 +7,12 @@ import { Button } from '@/components/ui/button'
 export function CopyableOidcRedirectUri({ uri }: { uri: string }) {
   const [copied, setCopied] = useState(false)
 
-  const handleCopy = useCallback(() => {
+  function handleCopy() {
     void navigator.clipboard.writeText(uri).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
-  }, [uri])
+  }
 
   return (
     <div className="flex items-center gap-2 bg-muted px-3 py-2">

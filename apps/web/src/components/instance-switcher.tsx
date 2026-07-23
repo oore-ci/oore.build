@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 
 import {
   DropdownMenu,
@@ -30,9 +30,9 @@ export default function InstanceSwitcher() {
   const instances = useInstanceStore((state) => state.instances)
   const instanceList = Object.values(instances)
 
-  const selectInstance = useCallback((id: string) => {
+  function selectInstance(id: string) {
     useInstanceStore.getState().setActiveInstance(id)
-  }, [])
+  }
 
   useHotkeys(
     instanceList.map((instance, idx) => ({

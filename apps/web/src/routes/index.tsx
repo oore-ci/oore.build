@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { lazy, Suspense, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useRef, useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Plus as Add01Icon,
@@ -358,19 +358,15 @@ function ConfiguredDashboard({
   }
   const canShowRunBuild = hasProjects && !noOnlineRunners && canWriteBuilds
 
-  // Derive last build status per project from recent builds
-  const lastBuildByProject = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const build of recentBuildsQuery.data?.builds ?? []) {
-      if (!map.has(build.project_id)) {
-        map.set(build.project_id, build.status)
-      }
+  const lastBuildByProject = new Map<string, string>()
+  for (const build of recentBuildsQuery.data?.builds ?? []) {
+    if (!lastBuildByProject.has(build.project_id)) {
+      lastBuildByProject.set(build.project_id, build.status)
     }
-    return map
-  }, [recentBuildsQuery.data?.builds])
+  }
 
   function handleTriggerForProject(projectId: string) {
-    setTriggerProjectId(() => projectId)
+    setTriggerProjectId(projectId)
     setTriggerOpen(true)
   }
 

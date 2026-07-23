@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useEffectEvent, useRef } from 'react'
 
 /**
  * Sanctioned reactive effect for proxy-authenticated login surfaces.
@@ -17,14 +17,13 @@ export function useTrustedProxyAutoLogin({
   onLogin: () => void | Promise<void>
 }) {
   const attemptedInstanceRef = useRef<string | null>(null)
+  const login = useEffectEvent(onLogin)
 
   useEffect(() => {
     if (!enabled || !instanceId) return
     if (attemptedInstanceRef.current === instanceId) return
 
     attemptedInstanceRef.current = instanceId
-    void onLogin()
-  }, [enabled, instanceId, onLogin])
-
-  return attemptedInstanceRef
+    void login()
+  }, [enabled, instanceId])
 }

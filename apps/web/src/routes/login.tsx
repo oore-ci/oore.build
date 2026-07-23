@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Plus as Add01Icon, Check as Tick02Icon } from 'lucide-react'
 import type { ConnectivityIssue } from '@/lib/connectivity'
@@ -157,7 +157,7 @@ function LoginPage() {
     return unsub
   })
 
-  const handleLogin = useCallback(async () => {
+  async function handleLogin() {
     if (!instance) return
     const baseUrl = resolveInstanceApiBaseUrl(instance)
     if (!baseUrl) return
@@ -335,7 +335,7 @@ function LoginPage() {
       }
       setLoading(false)
     }
-  }, [instance, localEmail, navigate, recoveryCapability, setAuth])
+  }
 
   useTrustedProxyAutoLogin({
     enabled:

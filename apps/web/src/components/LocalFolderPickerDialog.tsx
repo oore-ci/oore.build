@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   Plus as Add01Icon,
@@ -56,9 +56,8 @@ export default function LocalFolderPickerDialog({
     refetch: refetchBrowser,
   } = useBrowseLocalGitDirectories(browserPath, open && enabled)
 
-  const quickJumps = useMemo(
-    () => (browserData?.suggestions ?? []).filter((s) => s.path.length > 0),
-    [browserData?.suggestions],
+  const quickJumps = (browserData?.suggestions ?? []).filter(
+    (suggestion) => suggestion.path.length > 0,
   )
 
   const canSelectCurrent =
