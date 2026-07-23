@@ -19,10 +19,10 @@ describe('useIsMobile', () => {
     )
   })
 
-  it('keeps the sidebar compact at tablet width', () => {
+  it('uses the compact layout below the mobile breakpoint', () => {
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
-      value: 768,
+      value: 767,
     })
 
     render(<BreakpointProbe />)
@@ -30,10 +30,10 @@ describe('useIsMobile', () => {
     expect(screen.getByText('compact')).toBeTruthy()
   })
 
-  it('switches to the desktop sidebar at 1024px', () => {
+  it('uses the desktop layout at the mobile breakpoint', () => {
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
-      value: 1024,
+      value: 768,
     })
 
     render(<BreakpointProbe />)
