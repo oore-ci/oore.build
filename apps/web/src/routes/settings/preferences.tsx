@@ -5,7 +5,11 @@ import {
   requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 
-export type { PreferencesPageState } from './preferences.lazy'
+export type {
+  ExternalAccessNetworkFormValues,
+  ExternalAccessOidcFormValues,
+  TrustedProxyFormValues,
+} from './preferences.lazy'
 
 export const Route = createFileRoute('/settings/preferences')({
   staticData: {

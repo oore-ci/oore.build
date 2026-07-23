@@ -1,23 +1,30 @@
 import { toast } from '@/lib/toast'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Download as Download04Icon } from 'lucide-react'
-import type { PreferencesPageState } from '@/routes/settings/preferences'
+import type { useRuntimeUpdates } from '@/hooks/use-runtime-updates'
+import type { RuntimeUpdateStatus } from '@/lib/types'
 import { runtimeUpdateActive } from '@/components/settings/preferences-utils'
 import { installerCommand } from '@/components/runtime-update-utils'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 
-export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
-  const {
-    backendHealthQuery,
-    backendUpdatePhase,
-    backendVersionLabel,
-    frontendUpdatePhase,
-    isOwner,
-    runtimeUpdates,
-    webHealthQuery,
-    webVersionLabel,
-  } = state
+export function RuntimeOverview({
+  backendUpdatePhase,
+  backendVersionLabel,
+  frontendUpdatePhase,
+  isOwner,
+  runtimeUpdates,
+  webVersionLabel,
+}: {
+  backendUpdatePhase: RuntimeUpdateStatus['phase'] | undefined
+  backendVersionLabel: string
+  frontendUpdatePhase: RuntimeUpdateStatus['phase'] | undefined
+  isOwner: boolean
+  runtimeUpdates: ReturnType<typeof useRuntimeUpdates>
+  webVersionLabel: string
+}) {
+  const webHealthQuery = runtimeUpdates.frontendHealth
+  const backendHealthQuery = runtimeUpdates.backendHealth
   const backendUpdateFailure =
     runtimeUpdates.backendUpdate.data?.phase === 'failed'
       ? runtimeUpdates.backendUpdate.data.error

@@ -5,7 +5,17 @@ import {
   ArrowRight as ArrowRight01Icon,
   CircleCheck as CheckmarkCircle02Icon,
 } from 'lucide-react'
-import type { PreferencesPageState } from '@/routes/settings/preferences'
+import type {
+  useExternalAccessNetworkSettings,
+  useExternalAccessOidc,
+  useExternalAccessPreflight,
+  useExternalAccessTrustedProxySettings,
+} from '@/hooks/use-artifact-storage'
+import type {
+  GetExternalAccessOidcResponse,
+  RemoteAuthMode,
+  TrustedProxySettingsPublic,
+} from '@/lib/types'
 import {
   authModeLabel,
   guidanceForPreflight,
@@ -21,38 +31,50 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 
 export function ExternalAccessSetup({
-  state,
+  identityQuery,
+  identityReady,
+  isOwner,
+  networkReady,
+  networkSettingsQuery,
+  oidcConfig,
+  onEditIdentity,
+  onEditNetwork,
+  onPreloadIdentity,
+  onPreloadNetwork,
+  onReadinessOpenChange,
+  preflightQuery,
+  readinessOpen,
+  readinessReady,
+  remoteAuthMode,
+  setupReady,
+  setupStepsComplete,
+  trustedProxySettings,
 }: {
-  state: PreferencesPageState
+  identityQuery:
+    | ReturnType<typeof useExternalAccessOidc>
+    | ReturnType<typeof useExternalAccessTrustedProxySettings>
+  identityReady: boolean
+  isOwner: boolean
+  networkReady: boolean
+  networkSettingsQuery: ReturnType<typeof useExternalAccessNetworkSettings>
+  oidcConfig: GetExternalAccessOidcResponse | undefined
+  onEditIdentity: () => void
+  onEditNetwork: () => void
+  onPreloadIdentity: () => void
+  onPreloadNetwork: () => void
+  onReadinessOpenChange: (open: boolean) => void
+  preflightQuery: ReturnType<typeof useExternalAccessPreflight>
+  readinessOpen: boolean
+  readinessReady: boolean
+  remoteAuthMode: RemoteAuthMode
+  setupReady: boolean
+  setupStepsComplete: number
+  trustedProxySettings: TrustedProxySettingsPublic | undefined
 }) {
-  const {
-    failedReadinessChecks,
-    identityReady,
-    isOwner,
-    networkReady,
-    networkSettings,
-    networkSettingsQuery,
-    oidcConfig,
-    oidcConfigQuery,
-    preflightQuery,
-    preloadExternalAccessNetworkDialog,
-    preloadOidcSettingsDialog,
-    preloadTrustedProxySettingsDialog,
-    readinessOpen,
-    readinessReady,
-    remoteAuthMode,
-    setNetworkEditorOpen,
-    setOidcDialogOpen,
-    setReadinessOpen,
-    setTrustedProxyDialogOpen,
-    setupReady,
-    setupStepCount,
-    setupStepsComplete,
-    trustedProxySettings,
-    trustedProxyQuery,
-  } = state
-  const identityQuery =
-    remoteAuthMode === 'trusted_proxy' ? trustedProxyQuery : oidcConfigQuery
+  const networkSettings = networkSettingsQuery.data
+  const failedReadinessChecks =
+    preflightQuery.data?.checks.filter((check) => !check.ok) ?? []
+  const setupStepCount = 2
   return (
     <>
       <div className="space-y-3 border p-3">
@@ -83,9 +105,9 @@ export function ExternalAccessSetup({
           <Button
             type="button"
             variant="outline"
-            onMouseEnter={() => void preloadExternalAccessNetworkDialog()}
-            onFocus={() => void preloadExternalAccessNetworkDialog()}
-            onClick={() => setNetworkEditorOpen(true)}
+            onMouseEnter={onPreloadNetwork}
+            onFocus={onPreloadNetwork}
+            onClick={onEditNetwork}
             disabled={
               !isOwner ||
               networkSettingsQuery.isLoading ||
@@ -117,21 +139,9 @@ export function ExternalAccessSetup({
           <Button
             type="button"
             variant="outline"
-            onMouseEnter={() =>
-              void (remoteAuthMode === 'trusted_proxy'
-                ? preloadTrustedProxySettingsDialog()
-                : preloadOidcSettingsDialog())
-            }
-            onFocus={() =>
-              void (remoteAuthMode === 'trusted_proxy'
-                ? preloadTrustedProxySettingsDialog()
-                : preloadOidcSettingsDialog())
-            }
-            onClick={() =>
-              remoteAuthMode === 'trusted_proxy'
-                ? setTrustedProxyDialogOpen(true)
-                : setOidcDialogOpen(true)
-            }
+            onMouseEnter={onPreloadIdentity}
+            onFocus={onPreloadIdentity}
+            onClick={onEditIdentity}
             disabled={
               !isOwner || identityQuery.isLoading || !!identityQuery.error
             }
@@ -259,7 +269,7 @@ export function ExternalAccessSetup({
 
       <Collapsible
         open={readinessOpen}
-        onOpenChange={setReadinessOpen}
+        onOpenChange={onReadinessOpenChange}
         className="space-y-3 border p-3"
       >
         <div className="flex flex-wrap items-center justify-between gap-3">

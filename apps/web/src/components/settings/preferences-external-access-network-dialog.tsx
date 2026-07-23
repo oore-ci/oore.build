@@ -1,4 +1,5 @@
-import type { PreferencesPageState } from '@/routes/settings/preferences'
+import type { SubmitHandler, UseFormReturn } from 'react-hook-form'
+import type { ExternalAccessNetworkFormValues } from '@/routes/settings/preferences'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -22,20 +23,22 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 
 export default function ExternalAccessNetworkDialog({
-  state,
+  form,
+  isOwner,
+  isPending,
+  onOpenChange,
+  onSubmit,
+  open,
 }: {
-  state: PreferencesPageState
+  form: UseFormReturn<ExternalAccessNetworkFormValues>
+  isOwner: boolean
+  isPending: boolean
+  onOpenChange: (open: boolean) => void
+  onSubmit: SubmitHandler<ExternalAccessNetworkFormValues>
+  open: boolean
 }) {
-  const {
-    externalAccessNetworkForm,
-    isOwner,
-    networkEditorOpen,
-    onSubmitExternalAccessNetwork,
-    setNetworkEditorOpen,
-    updateNetworkSettingsMutation,
-  } = state
   return (
-    <Dialog open={networkEditorOpen} onOpenChange={setNetworkEditorOpen}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>External Access network settings</DialogTitle>
@@ -44,15 +47,10 @@ export default function ExternalAccessNetworkDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Form {...externalAccessNetworkForm}>
-          <form
-            onSubmit={externalAccessNetworkForm.handleSubmit(
-              onSubmitExternalAccessNetwork,
-            )}
-            className="space-y-4"
-          >
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <FormField
-              control={externalAccessNetworkForm.control}
+              control={form.control}
               name="public_url"
               render={({ field }) => (
                 <FormItem>
@@ -62,9 +60,7 @@ export default function ExternalAccessNetworkDialog({
                       type="url"
                       placeholder="https://ci.example.com"
                       {...field}
-                      disabled={
-                        updateNetworkSettingsMutation.isPending || !isOwner
-                      }
+                      disabled={isPending || !isOwner}
                     />
                   </FormControl>
                   <FormDescription>
@@ -76,7 +72,7 @@ export default function ExternalAccessNetworkDialog({
             />
 
             <FormField
-              control={externalAccessNetworkForm.control}
+              control={form.control}
               name="allowed_origins"
               render={({ field }) => (
                 <FormItem>
@@ -86,9 +82,7 @@ export default function ExternalAccessNetworkDialog({
                       rows={5}
                       placeholder="http://localhost:3000&#10;http://127.0.0.1:3000&#10;https://ci.example.com"
                       {...field}
-                      disabled={
-                        updateNetworkSettingsMutation.isPending || !isOwner
-                      }
+                      disabled={isPending || !isOwner}
                     />
                   </FormControl>
                   <FormDescription>
@@ -100,7 +94,7 @@ export default function ExternalAccessNetworkDialog({
             />
 
             <FormField
-              control={externalAccessNetworkForm.control}
+              control={form.control}
               name="artifact_delivery_url"
               render={({ field }) => (
                 <FormItem>
@@ -110,9 +104,7 @@ export default function ExternalAccessNetworkDialog({
                       type="url"
                       placeholder="https://install.ci.example.com"
                       {...field}
-                      disabled={
-                        updateNetworkSettingsMutation.isPending || !isOwner
-                      }
+                      disabled={isPending || !isOwner}
                     />
                   </FormControl>
                   <FormDescription>
@@ -129,16 +121,13 @@ export default function ExternalAccessNetworkDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setNetworkEditorOpen(false)}
-                disabled={updateNetworkSettingsMutation.isPending}
+                onClick={() => onOpenChange(false)}
+                disabled={isPending}
               >
                 Cancel
               </Button>
-              <Button
-                type="submit"
-                disabled={!isOwner || updateNetworkSettingsMutation.isPending}
-              >
-                {updateNetworkSettingsMutation.isPending ? (
+              <Button type="submit" disabled={!isOwner || isPending}>
+                {isPending ? (
                   <>
                     <Spinner className="size-4" />
                     Saving...

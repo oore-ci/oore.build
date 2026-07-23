@@ -1,31 +1,37 @@
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { ArrowRight as ArrowRight01Icon } from 'lucide-react'
-import type { PreferencesPageState } from '@/routes/settings/preferences'
+import type {
+  useExternalAccessNetworkSettings,
+  useExternalAccessOidc,
+  useExternalAccessTrustedProxySettings,
+} from '@/hooks/use-artifact-storage'
+import type { RemoteAuthMode, TrustedProxySettingsPublic } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
 export function ExternalAccessManagement({
-  state,
+  identityQuery,
+  isOwner,
+  networkSettingsQuery,
+  onEditIdentity,
+  onEditNetwork,
+  onPreloadIdentity,
+  onPreloadNetwork,
+  remoteAuthMode,
+  trustedProxySettings,
 }: {
-  state: PreferencesPageState
+  identityQuery:
+    | ReturnType<typeof useExternalAccessOidc>
+    | ReturnType<typeof useExternalAccessTrustedProxySettings>
+  isOwner: boolean
+  networkSettingsQuery: ReturnType<typeof useExternalAccessNetworkSettings>
+  onEditIdentity: () => void
+  onEditNetwork: () => void
+  onPreloadIdentity: () => void
+  onPreloadNetwork: () => void
+  remoteAuthMode: RemoteAuthMode
+  trustedProxySettings: TrustedProxySettingsPublic | undefined
 }) {
-  const {
-    isOwner,
-    networkSettings,
-    networkSettingsQuery,
-    oidcConfigQuery,
-    preloadExternalAccessNetworkDialog,
-    preloadOidcSettingsDialog,
-    preloadTrustedProxySettingsDialog,
-    remoteAuthMode,
-    setNetworkEditorOpen,
-    setOidcDialogOpen,
-    setTrustedProxyDialogOpen,
-    trustedProxySettings,
-    trustedProxyQuery,
-  } = state
-  const identityQuery =
-    remoteAuthMode === 'trusted_proxy' ? trustedProxyQuery : oidcConfigQuery
   return (
     <div className="flex flex-col gap-2">
       <h3 className="text-sm font-medium text-muted-foreground">
@@ -35,9 +41,9 @@ export function ExternalAccessManagement({
         <Button
           type="button"
           variant="ghost"
-          onMouseEnter={() => void preloadExternalAccessNetworkDialog()}
-          onFocus={() => void preloadExternalAccessNetworkDialog()}
-          onClick={() => setNetworkEditorOpen(true)}
+          onMouseEnter={onPreloadNetwork}
+          onFocus={onPreloadNetwork}
+          onClick={onEditNetwork}
           disabled={
             !isOwner ||
             networkSettingsQuery.isLoading ||
@@ -48,7 +54,7 @@ export function ExternalAccessManagement({
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-medium">Network settings</span>
             <span className="mt-1 block truncate text-xs text-muted-foreground">
-              {networkSettings?.public_url ??
+              {networkSettingsQuery.data?.public_url ??
                 'Set Public URL and allowed origins.'}
             </span>
             <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
@@ -64,21 +70,9 @@ export function ExternalAccessManagement({
         <Button
           type="button"
           variant="ghost"
-          onMouseEnter={() =>
-            void (remoteAuthMode === 'trusted_proxy'
-              ? preloadTrustedProxySettingsDialog()
-              : preloadOidcSettingsDialog())
-          }
-          onFocus={() =>
-            void (remoteAuthMode === 'trusted_proxy'
-              ? preloadTrustedProxySettingsDialog()
-              : preloadOidcSettingsDialog())
-          }
-          onClick={() =>
-            remoteAuthMode === 'trusted_proxy'
-              ? setTrustedProxyDialogOpen(true)
-              : setOidcDialogOpen(true)
-          }
+          onMouseEnter={onPreloadIdentity}
+          onFocus={onPreloadIdentity}
+          onClick={onEditIdentity}
           disabled={
             !isOwner || identityQuery.isLoading || !!identityQuery.error
           }

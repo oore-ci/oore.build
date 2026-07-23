@@ -24,6 +24,8 @@ import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import { ApiClientError, getApiErrorMessage } from '@/lib/api'
 import { ExternalAccessCard } from '@/components/settings/preferences-external-access-card'
+import { ExternalAccessManagement } from '@/components/settings/preferences-external-access-management'
+import { ExternalAccessSetup } from '@/components/settings/preferences-external-access-setup'
 import { RuntimeOverview } from '@/components/settings/preferences-runtime-overview'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -52,7 +54,9 @@ const externalAccessOidcSchema = z.object({
   client_secret: z.string().optional(),
 })
 
-type ExternalAccessOidcFormValues = z.infer<typeof externalAccessOidcSchema>
+export type ExternalAccessOidcFormValues = z.infer<
+  typeof externalAccessOidcSchema
+>
 
 const trustedProxySchema = z.object({
   user_email_header: z.string().trim().min(1, 'User email header is required.'),
@@ -65,7 +69,7 @@ const trustedProxySchema = z.object({
   clear_warpgate_ticket: z.boolean(),
 })
 
-type TrustedProxyFormValues = z.infer<typeof trustedProxySchema>
+export type TrustedProxyFormValues = z.infer<typeof trustedProxySchema>
 
 function parseTrustedProxyCidrs(value: string | undefined): Array<string> {
   return (value ?? '')
@@ -82,7 +86,7 @@ const externalAccessNetworkSchema = z.object({
     .min(1, 'Add at least one allowed frontend origin.'),
 })
 
-type ExternalAccessNetworkFormValues = z.infer<
+export type ExternalAccessNetworkFormValues = z.infer<
   typeof externalAccessNetworkSchema
 >
 
@@ -103,7 +107,73 @@ function parseAllowedOriginsInput(value: string): Array<string> {
     .filter((entry) => entry.length > 0)
 }
 
-function usePreferencesPageState() {
+function DirectRunnerSettings({
+  canWrite,
+  isError,
+  isPending,
+  onToggle,
+  paused,
+}: {
+  canWrite: boolean
+  isError: boolean
+  isPending: boolean
+  onToggle: (acceptingBuilds: boolean) => void
+  paused: boolean | undefined
+}) {
+  const acceptingBuilds = paused === false
+  const runnerStateLabel = isError
+    ? 'Unavailable'
+    : paused === undefined
+      ? 'Checking...'
+      : acceptingBuilds
+        ? 'Accepting builds'
+        : 'Paused'
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-4">
+          <CardTitle className="text-sm font-medium">
+            Direct macOS runner
+          </CardTitle>
+          <Badge variant={acceptingBuilds ? 'secondary' : 'outline'}>
+            {runnerStateLabel}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-start justify-between gap-6">
+          <div className="space-y-1">
+            <p className="text-sm font-medium">Accept new builds</p>
+            <p className="text-sm text-muted-foreground">
+              When paused, running builds finish and queued builds wait.
+            </p>
+          </div>
+          <Switch
+            checked={acceptingBuilds}
+            disabled={!canWrite || paused === undefined || isError || isPending}
+            onCheckedChange={onToggle}
+            aria-label="Accept new builds"
+            className="after:-inset-y-3.5"
+          />
+        </div>
+        <Alert>
+          <AlertDescription>
+            {isError
+              ? 'Oore could not load the runner pause state. Refresh this page before changing build intake.'
+              : paused === undefined
+                ? 'Checking whether this Mac is accepting new builds.'
+                : !canWrite
+                  ? 'An owner or admin can pause new claims while assigned and running builds finish.'
+                  : 'Pausing stops new claims while assigned and running builds finish. Resume whenever this Mac is ready for more work.'}
+          </AlertDescription>
+        </Alert>
+      </CardContent>
+    </Card>
+  )
+}
+
+function PreferencesPage() {
   const navigate = useNavigate()
   const [readinessOpen, setReadinessOpen] = useState(false)
   const [networkEditorOpen, setNetworkEditorOpen] = useState(false)
@@ -350,10 +420,6 @@ function usePreferencesPageState() {
     remoteAuthMode === 'trusted_proxy'
       ? 'trusted_proxy_configured'
       : 'oidc_configured'
-  const failedReadinessChecks = useMemo(
-    () => preflightQuery.data?.checks.filter((check) => !check.ok) ?? [],
-    [preflightQuery.data?.checks],
-  )
   const readinessById = useMemo(() => {
     const entries = preflightQuery.data?.checks ?? []
     return new Map(entries.map((check) => [check.id, check]))
@@ -370,7 +436,6 @@ function usePreferencesPageState() {
   )
   const readinessReady = preflightQuery.data?.ready ?? false
   const setupStepsComplete = Number(networkReady) + Number(identityReady)
-  const setupStepCount = 2
 
   function handleExternalAccessToggle() {
     if (!preferences || updatePreferencesMutation.isPending || !isOwner) return
@@ -448,127 +513,31 @@ function usePreferencesPageState() {
     )
   }
 
-  return {
-    backendHealthQuery,
-    backendUpdatePhase,
-    backendVersionLabel,
-    canWrite,
-    externalAccessEnabled,
-    externalAccessNetworkForm,
-    externalAccessOidcForm,
-    failedReadinessChecks,
-    frontendUpdatePhase,
-    handleDirectRunnerToggle,
-    handleExternalAccessToggle,
-    identityReady,
-    isOwner,
-    networkEditorOpen,
-    networkReady,
-    networkSettings,
-    networkSettingsQuery,
-    oidcConfig,
-    oidcConfigQuery,
-    oidcDialogOpen,
-    onSubmitExternalAccessNetwork,
-    onSubmitExternalAccessOidc,
-    onSubmitTrustedProxy,
-    preflightQuery,
-    preloadExternalAccessNetworkDialog,
-    preloadOidcSettingsDialog,
-    preloadTrustedProxySettingsDialog,
-    preferences,
-    preferencesQuery,
-    readinessOpen,
-    readinessReady,
-    remoteAuthMode,
-    runtimeUpdates,
-    setNetworkEditorOpen,
-    setOidcDialogOpen,
-    setReadinessOpen,
-    setTrustedProxyDialogOpen,
-    setupReady,
-    setupStepCount,
-    setupStepsComplete,
-    testOidcConnectionMutation,
-    trustedProxyDialogOpen,
-    trustedProxyForm,
-    trustedProxyQuery,
-    trustedProxySettings,
-    updateNetworkSettingsMutation,
-    updatePreferencesMutation,
-    updateTrustedProxyMutation,
-    configureExternalAccessOidcMutation,
-    webHealthQuery,
-    webVersionLabel,
+  const identitySettingsQuery =
+    remoteAuthMode === 'trusted_proxy' ? trustedProxyQuery : oidcConfigQuery
+
+  function preloadNetworkSettingsDialog() {
+    void preloadExternalAccessNetworkDialog()
   }
-}
 
-export type PreferencesPageState = ReturnType<typeof usePreferencesPageState>
+  function openNetworkSettingsDialog() {
+    setNetworkEditorOpen(true)
+  }
 
-function DirectRunnerSettings({ state }: { state: PreferencesPageState }) {
-  const paused = state.preferences?.direct_macos_runner_paused
-  const acceptingBuilds = paused === false
-  const runnerStateLabel = state.preferencesQuery.isError
-    ? 'Unavailable'
-    : paused === undefined
-      ? 'Checking...'
-      : acceptingBuilds
-        ? 'Accepting builds'
-        : 'Paused'
+  function preloadIdentitySettingsDialog() {
+    void (remoteAuthMode === 'trusted_proxy'
+      ? preloadTrustedProxySettingsDialog()
+      : preloadOidcSettingsDialog())
+  }
 
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-4">
-          <CardTitle className="text-sm font-medium">
-            Direct macOS runner
-          </CardTitle>
-          <Badge variant={acceptingBuilds ? 'secondary' : 'outline'}>
-            {runnerStateLabel}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-start justify-between gap-6">
-          <div className="space-y-1">
-            <p className="text-sm font-medium">Accept new builds</p>
-            <p className="text-sm text-muted-foreground">
-              When paused, running builds finish and queued builds wait.
-            </p>
-          </div>
-          <Switch
-            checked={acceptingBuilds}
-            disabled={
-              !state.canWrite ||
-              !state.preferences ||
-              state.preferencesQuery.isError ||
-              state.updatePreferencesMutation.isPending
-            }
-            onCheckedChange={(checked) =>
-              state.handleDirectRunnerToggle(checked)
-            }
-            aria-label="Accept new builds"
-            className="after:-inset-y-3.5"
-          />
-        </div>
-        <Alert>
-          <AlertDescription>
-            {state.preferencesQuery.isError
-              ? 'Oore could not load the runner pause state. Refresh this page before changing build intake.'
-              : paused === undefined
-                ? 'Checking whether this Mac is accepting new builds.'
-                : !state.canWrite
-                  ? 'An owner or admin can pause new claims while assigned and running builds finish.'
-                  : 'Pausing stops new claims while assigned and running builds finish. Resume whenever this Mac is ready for more work.'}
-          </AlertDescription>
-        </Alert>
-      </CardContent>
-    </Card>
-  )
-}
+  function openIdentitySettingsDialog() {
+    if (remoteAuthMode === 'trusted_proxy') {
+      setTrustedProxyDialogOpen(true)
+    } else {
+      setOidcDialogOpen(true)
+    }
+  }
 
-function PreferencesPage() {
-  const state = usePreferencesPageState()
   return (
     <PageLayout width="wide">
       <PageMeta title="General settings" noindex />
@@ -576,31 +545,43 @@ function PreferencesPage() {
         title="General"
         description="Manage runtime services and External Access for this instance."
       />
-      <RuntimeOverview state={state} />
-      <DirectRunnerSettings state={state} />
-      {state.preferencesQuery.isLoading ? (
+      <RuntimeOverview
+        backendUpdatePhase={backendUpdatePhase}
+        backendVersionLabel={backendVersionLabel}
+        frontendUpdatePhase={frontendUpdatePhase}
+        isOwner={isOwner}
+        runtimeUpdates={runtimeUpdates}
+        webVersionLabel={webVersionLabel}
+      />
+      <DirectRunnerSettings
+        canWrite={canWrite}
+        isError={preferencesQuery.isError}
+        isPending={updatePreferencesMutation.isPending}
+        onToggle={handleDirectRunnerToggle}
+        paused={preferences?.direct_macos_runner_paused}
+      />
+      {preferencesQuery.isLoading ? (
         <div className="space-y-3 border bg-card p-4">
           <Skeleton className="h-4 w-40" />
           <Skeleton className="h-9 w-full" />
         </div>
-      ) : state.preferencesQuery.error ? (
+      ) : preferencesQuery.error ? (
         <Alert variant="destructive">
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
-              Failed to load instance settings:{' '}
-              {state.preferencesQuery.error.message}
+              Failed to load instance settings: {preferencesQuery.error.message}
             </span>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => void state.preferencesQuery.refetch()}
+              onClick={() => void preferencesQuery.refetch()}
             >
               Retry
             </Button>
           </AlertDescription>
         </Alert>
-      ) : !state.preferences ? (
+      ) : !preferences ? (
         <Alert variant="destructive">
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>The response did not include instance settings.</span>
@@ -608,34 +589,101 @@ function PreferencesPage() {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => void state.preferencesQuery.refetch()}
+              onClick={() => void preferencesQuery.refetch()}
             >
               Retry
             </Button>
           </AlertDescription>
         </Alert>
       ) : (
-        <ExternalAccessCard state={state} />
+        <ExternalAccessCard
+          externalAccessEnabled={externalAccessEnabled}
+          isOwner={isOwner}
+          onToggle={handleExternalAccessToggle}
+          preflightLoading={preflightQuery.isLoading}
+          readinessReady={readinessReady}
+          remoteAuthMode={remoteAuthMode}
+          updatePending={updatePreferencesMutation.isPending}
+        >
+          {externalAccessEnabled ? (
+            <ExternalAccessManagement
+              identityQuery={identitySettingsQuery}
+              isOwner={isOwner}
+              networkSettingsQuery={networkSettingsQuery}
+              onEditIdentity={openIdentitySettingsDialog}
+              onEditNetwork={openNetworkSettingsDialog}
+              onPreloadIdentity={preloadIdentitySettingsDialog}
+              onPreloadNetwork={preloadNetworkSettingsDialog}
+              remoteAuthMode={remoteAuthMode}
+              trustedProxySettings={trustedProxySettings}
+            />
+          ) : (
+            <ExternalAccessSetup
+              identityQuery={identitySettingsQuery}
+              identityReady={identityReady}
+              isOwner={isOwner}
+              networkReady={networkReady}
+              networkSettingsQuery={networkSettingsQuery}
+              oidcConfig={oidcConfig}
+              onEditIdentity={openIdentitySettingsDialog}
+              onEditNetwork={openNetworkSettingsDialog}
+              onPreloadIdentity={preloadIdentitySettingsDialog}
+              onPreloadNetwork={preloadNetworkSettingsDialog}
+              onReadinessOpenChange={setReadinessOpen}
+              preflightQuery={preflightQuery}
+              readinessOpen={readinessOpen}
+              readinessReady={readinessReady}
+              remoteAuthMode={remoteAuthMode}
+              setupReady={setupReady}
+              setupStepsComplete={setupStepsComplete}
+              trustedProxySettings={trustedProxySettings}
+            />
+          )}
+        </ExternalAccessCard>
       )}
-      {state.networkEditorOpen &&
-      !state.networkSettingsQuery.isLoading &&
-      !state.networkSettingsQuery.error ? (
+      {networkEditorOpen &&
+      !networkSettingsQuery.isLoading &&
+      !networkSettingsQuery.error ? (
         <Suspense fallback={null}>
-          <ExternalAccessNetworkDialog state={state} />
+          <ExternalAccessNetworkDialog
+            form={externalAccessNetworkForm}
+            isOwner={isOwner}
+            isPending={updateNetworkSettingsMutation.isPending}
+            onOpenChange={setNetworkEditorOpen}
+            onSubmit={onSubmitExternalAccessNetwork}
+            open={networkEditorOpen}
+          />
         </Suspense>
       ) : null}
-      {state.trustedProxyDialogOpen &&
-      !state.trustedProxyQuery.isLoading &&
-      !state.trustedProxyQuery.error ? (
+      {trustedProxyDialogOpen &&
+      !trustedProxyQuery.isLoading &&
+      !trustedProxyQuery.error ? (
         <Suspense fallback={null}>
-          <TrustedProxySettingsDialog state={state} />
+          <TrustedProxySettingsDialog
+            form={trustedProxyForm}
+            isOwner={isOwner}
+            isPending={updateTrustedProxyMutation.isPending}
+            onOpenChange={setTrustedProxyDialogOpen}
+            onSubmit={onSubmitTrustedProxy}
+            open={trustedProxyDialogOpen}
+            settings={trustedProxySettings}
+          />
         </Suspense>
       ) : null}
-      {state.oidcDialogOpen &&
-      !state.oidcConfigQuery.isLoading &&
-      !state.oidcConfigQuery.error ? (
+      {oidcDialogOpen &&
+      !oidcConfigQuery.isLoading &&
+      !oidcConfigQuery.error ? (
         <Suspense fallback={null}>
-          <OidcSettingsDialog state={state} />
+          <OidcSettingsDialog
+            form={externalAccessOidcForm}
+            isOwner={isOwner}
+            isSaving={configureExternalAccessOidcMutation.isPending}
+            oidcConfig={oidcConfig}
+            onOpenChange={setOidcDialogOpen}
+            onSubmit={onSubmitExternalAccessOidc}
+            open={oidcDialogOpen}
+            testMutation={testOidcConnectionMutation}
+          />
         </Suspense>
       ) : null}
     </PageLayout>

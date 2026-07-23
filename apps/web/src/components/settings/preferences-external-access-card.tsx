@@ -1,25 +1,33 @@
-import type { PreferencesPageState } from '@/routes/settings/preferences'
+import type { ReactNode } from 'react'
+import type { RemoteAuthMode } from '@/lib/types'
 import {
   authModeDescription,
   authModeLabel,
 } from '@/components/settings/preferences-utils'
-import { ExternalAccessManagement } from '@/components/settings/preferences-external-access-management'
-import { ExternalAccessSetup } from '@/components/settings/preferences-external-access-setup'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 
-export function ExternalAccessCard({ state }: { state: PreferencesPageState }) {
-  const {
-    externalAccessEnabled,
-    handleExternalAccessToggle,
-    isOwner,
-    preflightQuery,
-    readinessReady,
-    remoteAuthMode,
-    updatePreferencesMutation,
-  } = state
+export function ExternalAccessCard({
+  children,
+  externalAccessEnabled,
+  isOwner,
+  onToggle,
+  preflightLoading,
+  readinessReady,
+  remoteAuthMode,
+  updatePending,
+}: {
+  children: ReactNode
+  externalAccessEnabled: boolean
+  isOwner: boolean
+  onToggle: () => void
+  preflightLoading: boolean
+  readinessReady: boolean
+  remoteAuthMode: RemoteAuthMode
+  updatePending: boolean
+}) {
   return (
     <section className="border bg-card" aria-labelledby="external-access-title">
       <div className="border-b px-4 py-3">
@@ -47,14 +55,14 @@ export function ExternalAccessCard({ state }: { state: PreferencesPageState }) {
           {isOwner ? (
             <Button
               type="button"
-              onClick={handleExternalAccessToggle}
+              onClick={onToggle}
               disabled={
-                updatePreferencesMutation.isPending ||
+                updatePending ||
                 (!externalAccessEnabled &&
-                  (!readinessReady || preflightQuery.isLoading))
+                  (!readinessReady || preflightLoading))
               }
             >
-              {updatePreferencesMutation.isPending ? (
+              {updatePending ? (
                 <>
                   <Spinner className="size-4" />
                   Saving...
@@ -74,11 +82,7 @@ export function ExternalAccessCard({ state }: { state: PreferencesPageState }) {
             </AlertDescription>
           </Alert>
         ) : null}
-        {externalAccessEnabled ? (
-          <ExternalAccessManagement state={state} />
-        ) : (
-          <ExternalAccessSetup state={state} />
-        )}
+        {children}
       </div>
     </section>
   )
