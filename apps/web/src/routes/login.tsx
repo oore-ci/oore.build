@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Plus as Add01Icon, Check as Tick02Icon } from 'lucide-react'
 import type { ConnectivityIssue } from '@/lib/connectivity'
@@ -100,7 +100,7 @@ function resolveBackendHostname(url: string): string {
   }
 }
 
-function useLoginPageState() {
+function LoginPage() {
   const instance = useActiveInstance()
   const instances = useInstanceStore((s) => s.instances)
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
@@ -123,15 +123,11 @@ function useLoginPageState() {
   const [connectivityIssue, setConnectivityIssue] =
     useState<ConnectivityIssue | null>(null)
   const hostedUi = isHostedUiOrigin(window.location.origin)
-  const instanceList = useMemo(
-    () =>
-      Object.values(instances).sort((a, b) => {
-        if (a.id === activeInstanceId) return -1
-        if (b.id === activeInstanceId) return 1
-        return b.addedAt - a.addedAt
-      }),
-    [instances, activeInstanceId],
-  )
+  const instanceList = Object.values(instances).sort((a, b) => {
+    if (a.id === activeInstanceId) return -1
+    if (b.id === activeInstanceId) return 1
+    return b.addedAt - a.addedAt
+  })
   const lastAuthMeta = instance ? getLastAuthMetaForInstance(instance.id) : null
   const instanceApiBaseUrl = resolveInstanceApiBaseUrl(instance)
   const uiIsLoopback = isLoopbackHostname(window.location.hostname)
@@ -369,53 +365,6 @@ function useLoginPageState() {
     onLogin: handleLogin,
   })
 
-  return {
-    activeInstanceId,
-    connectivityIssue,
-    error,
-    handleLogin,
-    hostedUi,
-    instance,
-    instanceList,
-    lastAuthMeta,
-    loading,
-    localEmail,
-    localLoginAvailable,
-    localModeNetworkBlocked,
-    loginFlow,
-    runtimeMode,
-    setActiveInstance,
-    setLocalEmail,
-    setShowAddInstance,
-    setupStatusQuery,
-    showAddInstance,
-    trustedProxyLoginAvailable,
-  }
-}
-
-function LoginPage() {
-  const {
-    activeInstanceId,
-    connectivityIssue,
-    error,
-    handleLogin,
-    hostedUi,
-    instance,
-    instanceList,
-    lastAuthMeta,
-    loading,
-    localEmail,
-    localLoginAvailable,
-    localModeNetworkBlocked,
-    loginFlow,
-    runtimeMode,
-    setActiveInstance,
-    setLocalEmail,
-    setShowAddInstance,
-    setupStatusQuery,
-    showAddInstance,
-    trustedProxyLoginAvailable,
-  } = useLoginPageState()
   const backendCommands = buildLoginBackendCommands(instance?.url ?? '')
 
   if (isDemoMode) {
