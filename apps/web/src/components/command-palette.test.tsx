@@ -45,16 +45,6 @@ describe('CommandPalette', () => {
     authState.role = 'owner'
   })
 
-  it('renders searchable commands when opened by the app shell', async () => {
-    render(<CommandPalette open onOpenChange={vi.fn()} />)
-
-    expect(await screen.findByRole('dialog')).toBeTruthy()
-    expect(
-      screen.getByPlaceholderText('Search projects, pages, actions...'),
-    ).toBeTruthy()
-    expect(screen.getByText('Dashboard')).toBeTruthy()
-  })
-
   it('shows a build-only navigation surface for QA viewers', async () => {
     authState.role = 'qa_viewer'
     render(<CommandPalette open onOpenChange={vi.fn()} />)

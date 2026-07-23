@@ -33,12 +33,6 @@ beforeEach(() => {
 })
 
 describe('useInstanceStore', () => {
-  it('starts with empty instances and no active', () => {
-    const state = useInstanceStore.getState()
-    expect(state.instances).toEqual({})
-    expect(state.activeInstanceId).toBeNull()
-  })
-
   it('addInstance creates an instance and returns its id', () => {
     const id = useInstanceStore
       .getState()

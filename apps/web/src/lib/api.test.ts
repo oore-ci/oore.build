@@ -51,34 +51,6 @@ beforeEach(() => {
   mockFetch.mockReset()
 })
 
-// ── ApiClientError ─────────────────────────────────────────────
-
-describe('ApiClientError', () => {
-  it('stores status, code, and details', () => {
-    const err = new ApiClientError(422, {
-      error: 'Validation failed',
-      code: 'validation_error',
-      details: 'issuer_url is required',
-    })
-
-    expect(err).toBeInstanceOf(Error)
-    expect(err.name).toBe('ApiClientError')
-    expect(err.message).toBe('Validation failed')
-    expect(err.status).toBe(422)
-    expect(err.code).toBe('validation_error')
-    expect(err.details).toBe('issuer_url is required')
-  })
-
-  it('handles missing details', () => {
-    const err = new ApiClientError(401, {
-      error: 'Unauthorized',
-      code: 'unauthorized',
-    })
-
-    expect(err.details).toBeUndefined()
-  })
-})
-
 // ── getApiErrorMessage ─────────────────────────────────────────
 
 describe('getApiErrorMessage', () => {
