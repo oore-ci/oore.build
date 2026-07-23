@@ -27,7 +27,6 @@ beforeEach(() => {
   })
   useSetupStore.setState({
     instanceId: null,
-    currentStep: 0,
     sessionToken: null,
     sessionExpiresAt: null,
   })

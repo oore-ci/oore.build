@@ -2,7 +2,6 @@ import { createLazyFileRoute, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -78,7 +77,6 @@ function headerForPreset(preset: TrustedProxyPreset): string | undefined {
 function SetupTrustedProxyStep() {
   const navigate = useNavigate()
   const sessionToken = useSetupStore((s) => s.sessionToken)
-  const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
   const setupInstanceId = useSetupStore((s) => s.instanceId)
   const configureMutation = useSetupTrustedProxyConfigure()
   const { data: status } = useSetupStatus()
@@ -99,10 +97,6 @@ function SetupTrustedProxyStep() {
       sharedSecret: '',
     },
     mode: 'onBlur',
-  })
-
-  useMountEffect(() => {
-    setCurrentStep(2)
   })
 
   useSetupModeGuard(status, 'trusted_proxy')

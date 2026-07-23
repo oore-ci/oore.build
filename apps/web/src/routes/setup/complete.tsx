@@ -15,7 +15,6 @@ import {
   getActiveInstanceOrRedirect,
   requireSetupSessionOrRedirect,
 } from '@/lib/instance-context'
-import { useSetupCurrentStep } from '@/hooks/use-setup-route-transitions'
 import { SetupStepError } from '@/components/setup-route-components'
 
 export const Route = createFileRoute('/setup/complete')({
@@ -29,7 +28,6 @@ export const Route = createFileRoute('/setup/complete')({
 
 function CompleteStep() {
   const sessionToken = useSetupStore((s) => s.sessionToken)
-  const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
   const completeMutation = useCompleteSetup()
   const { data: status } = useSetupStatus()
   const { data: summary } = useSetupSummary()
@@ -48,13 +46,10 @@ function CompleteStep() {
   const isComplete = completeMutation.isSuccess
   const isLocalMode = status?.runtime_mode === 'local'
 
-  useSetupCurrentStep(status ? (isLocalMode ? 3 : 4) : null)
-
   function handleComplete() {
     if (!sessionToken) return
     completeMutation.mutate(sessionToken, {
       onSuccess: () => {
-        setCurrentStep(isLocalMode ? 4 : 5)
         useSetupStore.getState().setSessionToken(null)
       },
     })

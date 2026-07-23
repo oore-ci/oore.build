@@ -74,7 +74,6 @@ function getOidcErrorMessage(error: Error | null): string | null {
 function OwnerStep() {
   const navigate = useNavigate()
   const sessionToken = useSetupStore((s) => s.sessionToken)
-  const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
   const startOidcMutation = useSetupOidcVerificationStart()
   const localOwnerMutation = useSetupLocalOwnerCreate()
   const trustedProxyClaimMutation = useSetupTrustedProxyClaimOwner()
@@ -158,7 +157,6 @@ function OwnerStep() {
       },
       {
         onSuccess: () => {
-          setCurrentStep(3)
           void navigate({ to: '/setup/complete' })
         },
       },
@@ -171,7 +169,6 @@ function OwnerStep() {
       { sessionToken },
       {
         onSuccess: () => {
-          setCurrentStep(4)
           void navigate({ to: '/setup/complete' })
         },
       },

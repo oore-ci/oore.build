@@ -2,7 +2,6 @@ import { createLazyFileRoute, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -75,7 +74,6 @@ function toModeValue(
 function SetupModeStep() {
   const navigate = useNavigate()
   const sessionToken = useSetupStore((s) => s.sessionToken)
-  const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
   const { data: status } = useSetupStatus()
   const setupModeMutation = useSetupPreferences()
 
@@ -91,10 +89,7 @@ function SetupModeStep() {
     values: modeValues,
     mode: 'onBlur',
   })
-
-  useMountEffect(() => {
-    setCurrentStep(1)
-  })
+  const selectedMode = form.watch('mode')
 
   const errorMessage = setupModeMutation.error
     ? getApiErrorMessage(setupModeMutation.error, {
@@ -188,7 +183,7 @@ function SetupModeStep() {
             aria-label="Mode comparison"
           >
             {MODE_COMPARISON.map((mode) => {
-              const selected = form.watch('mode') === mode.value
+              const selected = selectedMode === mode.value
               return (
                 <dl
                   key={mode.value}

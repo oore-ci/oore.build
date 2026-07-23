@@ -7,7 +7,6 @@ beforeEach(() => {
   sessionStorage.clear()
   useSetupStore.setState({
     instanceId: null,
-    currentStep: 0,
     sessionToken: null,
     sessionExpiresAt: null,
   })
@@ -17,14 +16,8 @@ describe('useSetupStore', () => {
   it('has correct initial state after reset', () => {
     const state = useSetupStore.getState()
     expect(state.instanceId).toBeNull()
-    expect(state.currentStep).toBe(0)
     expect(state.sessionToken).toBeNull()
     expect(state.sessionExpiresAt).toBeNull()
-  })
-
-  it('setCurrentStep updates step', () => {
-    useSetupStore.getState().setCurrentStep(3)
-    expect(useSetupStore.getState().currentStep).toBe(3)
   })
 
   // ── Without instance context (legacy-compatible) ─────────────
@@ -58,14 +51,12 @@ describe('useSetupStore', () => {
   })
 
   it('reset clears all state and sessionStorage', () => {
-    useSetupStore.getState().setCurrentStep(5)
     useSetupStore.getState().setSessionToken('tok')
     useSetupStore.getState().setSessionExpiresAt(999)
 
     useSetupStore.getState().reset()
 
     const state = useSetupStore.getState()
-    expect(state.currentStep).toBe(0)
     expect(state.sessionToken).toBeNull()
     expect(state.sessionExpiresAt).toBeNull()
     expect(sessionStorage.getItem('oore_setup_session')).toBeNull()

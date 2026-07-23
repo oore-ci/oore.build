@@ -36,7 +36,6 @@ export function BootstrapTokenStep() {
   const sessionToken = useSetupStore((s) => s.sessionToken)
   const setSessionToken = useSetupStore((s) => s.setSessionToken)
   const setSessionExpiresAt = useSetupStore((s) => s.setSessionExpiresAt)
-  const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
   const verifyMutation = useVerifyBootstrapToken()
   const { data: status } = useSetupStatus()
 
@@ -65,7 +64,6 @@ export function BootstrapTokenStep() {
       onSuccess: (res) => {
         setSessionToken(res.session_token)
         setSessionExpiresAt(res.expires_at)
-        setCurrentStep(1)
         void navigate({ to: '/setup/mode' })
       },
     })

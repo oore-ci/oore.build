@@ -3,7 +3,6 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { useMountEffect } from '@/hooks/use-mount-effect'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -100,7 +99,6 @@ export const Route = createLazyFileRoute('/setup/oidc')({
 function OidcConfigStep() {
   const navigate = useNavigate()
   const sessionToken = useSetupStore((s) => s.sessionToken)
-  const setCurrentStep = useSetupStore((s) => s.setCurrentStep)
   const configureMutation = useConfigureOidc()
   const { data: status } = useSetupStatus()
   const [selectedProvider, setSelectedProvider] = useState<ProviderId>('google')
@@ -140,10 +138,6 @@ function OidcConfigStep() {
 
   const discoveredIssuer = configureMutation.data?.discovered_issuer ?? null
 
-  useMountEffect(() => {
-    setCurrentStep(2)
-  })
-
   useSetupModeGuard(status, 'oidc')
 
   function handleProviderChange(value: ProviderId) {
@@ -172,7 +166,6 @@ function OidcConfigStep() {
       {
         onSuccess: () => {
           setTimeout(() => {
-            setCurrentStep(2)
             void navigate({ to: '/setup/owner' })
           }, 1200)
         },
