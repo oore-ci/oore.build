@@ -72,10 +72,13 @@ import type { SortDirection } from '@/components/collection-controls'
 import type { ApiTokenSort, ApiTokensSearch } from './api-tokens'
 import { ApiTokenInventory } from './-api-token-inventory'
 import { ApiTokenStats } from './-api-token-summary'
+import { ROLE_LABELS } from './-user-role-labels'
 
 export const Route = createLazyFileRoute('/settings/api-tokens')({
   component: ApiTokensPage,
 })
+
+const EMPTY_API_TOKENS: Array<ApiTokenSummary> = []
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -93,13 +96,6 @@ const ROLE_HIERARCHY: Array<string> = [
   'developer',
   'qa_viewer',
 ]
-
-const ROLE_LABELS: Record<string, string> = {
-  owner: 'Owner',
-  admin: 'Admin',
-  developer: 'Developer',
-  qa_viewer: 'QA Viewer',
-}
 
 const EXPIRY_OPTIONS: Record<string, string> = {
   never: 'Never',
@@ -356,17 +352,13 @@ function ApiTokensPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [createdResponse, setCreatedResponse] =
     useState<CreateApiTokenResponse | null>(null)
-  const [createdDialogOpen, setCreatedDialogOpen] = useState(false)
   const [revokeTarget, setRevokeTarget] = useState<ApiTokenSummary | null>(null)
 
   const page = search.page ?? 1
   const pageSize = search.pageSize ?? 20
   const sort = search.sort ?? 'created_at'
   const direction = search.direction ?? 'desc'
-  const tokens = useMemo(
-    () => tokensQuery.data?.tokens ?? [],
-    [tokensQuery.data?.tokens],
-  )
+  const tokens = tokensQuery.data?.tokens ?? EMPTY_API_TOKENS
   const activeCount = tokens.filter(
     (t) => !t.is_revoked && !t.is_expired,
   ).length
@@ -420,7 +412,6 @@ function ApiTokensPage() {
 
   function handleTokenCreated(response: CreateApiTokenResponse) {
     setCreatedResponse(() => response)
-    setCreatedDialogOpen(true)
     toast.success('API token created')
   }
 
@@ -465,7 +456,6 @@ function ApiTokensPage() {
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <CollectionSearchInput
-          key={search.q ?? ''}
           initialValue={search.q ?? ''}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })
@@ -588,9 +578,8 @@ function ApiTokensPage() {
       />
 
       <TokenCreatedDialog
-        open={createdDialogOpen}
+        open={createdResponse !== null}
         onOpenChange={(open) => {
-          setCreatedDialogOpen(() => open)
           if (!open) setCreatedResponse(null)
         }}
         response={createdResponse}

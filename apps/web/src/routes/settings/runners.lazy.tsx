@@ -83,40 +83,25 @@ const renameRunnerSchema = z.object({
 type RenameRunnerForm = z.infer<typeof renameRunnerSchema>
 
 interface RenameRunnerDialogProps {
-  runner: Runner | null
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  runner: Runner
+  onClose: () => void
 }
 
-function RenameRunnerDialog({
-  runner,
-  open,
-  onOpenChange,
-}: RenameRunnerDialogProps) {
+function RenameRunnerDialog({ runner, onClose }: RenameRunnerDialogProps) {
   const mutation = useUpdateRunner()
   const form = useForm<RenameRunnerForm>({
     resolver: zodResolver(renameRunnerSchema),
-    defaultValues: { name: runner?.name ?? '' },
-    values: { name: runner?.name ?? '' },
+    defaultValues: { name: runner.name },
     mode: 'onBlur',
   })
 
-  const initialName = runner?.name ?? ''
-  const isManaged = !runner?.registered_by
-
-  function handleClose(nextOpen: boolean) {
-    if (!nextOpen) {
-      form.reset({ name: runner?.name ?? '' })
-    }
-    onOpenChange(nextOpen)
-  }
+  const initialName = runner.name
+  const isManaged = !runner.registered_by
 
   function onSubmit(data: RenameRunnerForm) {
-    if (!runner) return
-
     const trimmed = data.name.trim()
     if (trimmed === initialName.trim()) {
-      handleClose(false)
+      onClose()
       return
     }
 
@@ -125,7 +110,7 @@ function RenameRunnerDialog({
       {
         onSuccess: () => {
           toast.success('Runner renamed')
-          handleClose(false)
+          onClose()
         },
         onError: (error) => {
           toast.error(
@@ -137,7 +122,12 @@ function RenameRunnerDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Rename runner</DialogTitle>
@@ -171,11 +161,7 @@ function RenameRunnerDialog({
               />
 
               <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => handleClose(false)}
-                >
+                <Button type="button" variant="outline" onClick={onClose}>
                   Cancel
                 </Button>
                 <Button type="submit" disabled={mutation.isPending}>
@@ -229,7 +215,6 @@ function RunnersSettingsPage() {
   const search = useSearch({ from: '/settings/runners' })
   const canWrite = useHasPermission('runners', 'write')
   const [selectedRunner, setSelectedRunner] = useState<Runner | null>(null)
-  const [dialogOpen, setDialogOpen] = useState(false)
 
   const page = search.page ?? 1
   const pageSize = search.pageSize ?? 20
@@ -297,7 +282,6 @@ function RunnersSettingsPage() {
 
   function openRename(runner: Runner) {
     setSelectedRunner(runner)
-    setDialogOpen(true)
   }
 
   return (
@@ -371,7 +355,6 @@ function RunnersSettingsPage() {
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <CollectionSearchInput
-          key={search.q ?? ''}
           initialValue={search.q ?? ''}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })
@@ -484,16 +467,10 @@ function RunnersSettingsPage() {
         />
       ) : null}
 
-      {canWrite ? (
+      {canWrite && selectedRunner ? (
         <RenameRunnerDialog
-          open={dialogOpen}
           runner={selectedRunner}
-          onOpenChange={(open) => {
-            setDialogOpen(() => open)
-            if (!open) {
-              setSelectedRunner(null)
-            }
-          }}
+          onClose={() => setSelectedRunner(null)}
         />
       ) : null}
     </PageLayout>

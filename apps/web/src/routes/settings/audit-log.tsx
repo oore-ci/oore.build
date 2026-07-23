@@ -1,4 +1,3 @@
-import { useMemo } from 'react'
 import {
   CalendarDays as Calendar03Icon,
   Info as InformationCircleIcon,
@@ -223,10 +222,7 @@ function AuditLogPage() {
     direction,
   })
 
-  const entries = useMemo(
-    () => auditQuery.data?.entries ?? [],
-    [auditQuery.data?.entries],
-  )
+  const entries = auditQuery.data?.entries ?? []
   const total = auditQuery.data?.total ?? 0
   const hasFilters =
     !!search.q || !!search.resource || !!search.from || !!search.to
@@ -270,7 +266,6 @@ function AuditLogPage() {
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
         <CollectionSearchInput
-          key={search.q ?? ''}
           initialValue={search.q ?? ''}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })

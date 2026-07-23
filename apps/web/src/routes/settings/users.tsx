@@ -389,7 +389,6 @@ function UsersSettingsPage() {
       ) : (
         <section aria-label="User inventory" className="min-w-0 space-y-4">
           <UsersToolbar
-            key={search.q ?? ''}
             table={table}
             initialSearch={search.q ?? ''}
             sort={sort}

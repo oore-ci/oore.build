@@ -69,7 +69,6 @@ export function ConnectedSourcesSection({
       {query.isLoading || collection.total > 0 || query.search ? (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CollectionSearchInput
-            key={query.search ?? ''}
             initialValue={query.search ?? ''}
             onSearch={onSearch}
             placeholder="Search connected sources"
