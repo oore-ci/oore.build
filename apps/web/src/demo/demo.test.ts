@@ -148,17 +148,15 @@ describe('canonical demo state', () => {
 
   it('applies operating, blocked, degraded, empty, and setup overlays', () => {
     expect(
-      resetDemoState('operating').builds.find(
-        (build) => build.id === EXTRA_BUILD_IDS.policyBlocked,
-      )?.runner_policy_block_reason,
-    ).toBe('repository_not_approved')
+      resetDemoState('operating').preferences.direct_macos_runner_paused,
+    ).toBe(false)
 
     const blocked = resetDemoState('blocked')
-    expect(blocked.preferences.direct_macos_runner_enabled).toBe(false)
+    expect(blocked.preferences.direct_macos_runner_paused).toBe(true)
     expect(
       blocked.builds.find((build) => build.id === EXTRA_BUILD_IDS.policyBlocked)
         ?.runner_policy_block_reason,
-    ).toBe('instance_disabled')
+    ).toBe('instance_paused')
 
     const degraded = resetDemoState('degraded')
     expect(
@@ -247,47 +245,165 @@ describe('demo authentication and RBAC', () => {
     )
   })
 
+  it('returns JSON 404 for an unassigned project', async () => {
+    const response = await fetch(
+      `${demoOrigin}/v1/projects/${PROJECT_IDS.internalAdmin}`,
+      { headers: headers('developer') },
+    )
+
+    expect(response.status).toBe(404)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    await expect(response.json()).resolves.toMatchObject({ code: 'not_found' })
+  })
+
+  it('keeps instance settings and user inventory admin-only', async () => {
+    const [users, preferences] = await Promise.all([
+      fetch(`${demoOrigin}/v1/users`, { headers: headers('developer') }),
+      fetch(`${demoOrigin}/v1/settings/preferences`, {
+        headers: headers('developer'),
+      }),
+    ])
+
+    expect(users.status).toBe(403)
+    expect(preferences.status).toBe(403)
+    await expect(users.json()).resolves.toMatchObject({ code: 'forbidden' })
+    await expect(preferences.json()).resolves.toMatchObject({
+      code: 'forbidden',
+    })
+  })
+
+  it('scopes eligible member candidates to project maintainers', async () => {
+    const [maintainer, viewer] = await Promise.all([
+      fetch(
+        `${demoOrigin}/v1/projects/${PROJECT_IDS.flutterShop}/members/candidates`,
+        { headers: headers('developer') },
+      ),
+      fetch(
+        `${demoOrigin}/v1/projects/${PROJECT_IDS.nativePayments}/members/candidates`,
+        { headers: headers('developer') },
+      ),
+    ])
+
+    expect(maintainer.status).toBe(200)
+    await expect(maintainer.json()).resolves.toEqual({
+      candidates: [
+        expect.objectContaining({ id: USER_IDS.invited, role: 'developer' }),
+      ],
+    })
+    expect(viewer.status).toBe(403)
+  })
+
   it('enforces instance and project permissions', async () => {
     const developerHeaders = {
       ...headers('developer'),
       'Content-Type': 'application/json',
     }
-    const [invite, createProject, updateViewerProject, runDeveloperProject] =
-      await Promise.all([
-        fetch(`${demoOrigin}/v1/users/invite`, {
+
+    const [
+      invite,
+      createProject,
+      updateViewerProject,
+      relinkMaintainerProject,
+      runDeveloperProject,
+    ] = await Promise.all([
+      fetch(`${demoOrigin}/v1/users/invite`, {
+        method: 'POST',
+        headers: developerHeaders,
+        body: JSON.stringify({
+          email: 'demo+new@oore.build',
+          role: 'developer',
+        }),
+      }),
+      fetch(`${demoOrigin}/v1/projects`, {
+        method: 'POST',
+        headers: developerHeaders,
+        body: JSON.stringify({ name: 'Developer project' }),
+      }),
+      fetch(`${demoOrigin}/v1/projects/${PROJECT_IDS.nativePayments}`, {
+        method: 'PATCH',
+        headers: developerHeaders,
+        body: JSON.stringify({ name: 'Should not change' }),
+      }),
+      fetch(`${demoOrigin}/v1/projects/${PROJECT_IDS.flutterShop}`, {
+        method: 'PATCH',
+        headers: developerHeaders,
+        body: JSON.stringify({ repository_id: 'repo-other' }),
+      }),
+      fetch(
+        `${demoOrigin}/v1/projects/${EXTRA_PROJECT_IDS.developerTools}/builds`,
+        {
           method: 'POST',
           headers: developerHeaders,
           body: JSON.stringify({
-            email: 'demo+new@oore.build',
-            role: 'developer',
+            pipeline_id: EXTRA_PIPELINE_IDS.developerTools,
           }),
-        }),
-        fetch(`${demoOrigin}/v1/projects`, {
-          method: 'POST',
-          headers: developerHeaders,
-          body: JSON.stringify({ name: 'Developer project' }),
-        }),
+        },
+      ),
+    ])
+
+    expect(invite.status).toBe(403)
+    expect(createProject.status).toBe(403)
+    await expect(createProject.json()).resolves.toMatchObject({
+      code: 'forbidden',
+    })
+    expect(updateViewerProject.status).toBe(403)
+    expect(relinkMaintainerProject.status).toBe(403)
+    expect(runDeveloperProject.status).toBe(200)
+
+    const runViewerProject = await fetch(
+      `${demoOrigin}/v1/projects/${PROJECT_IDS.nativePayments}/builds`,
+      {
+        method: 'POST',
+        headers: developerHeaders,
+        body: JSON.stringify({ pipeline_id: PIPELINE_IDS.paymentsAll }),
+      },
+    )
+    expect(runViewerProject.status).toBe(403)
+
+    const [deleteViewerProject, deleteViewerPipeline, manageViewerMembers] =
+      await Promise.all([
         fetch(`${demoOrigin}/v1/projects/${PROJECT_IDS.nativePayments}`, {
-          method: 'PATCH',
+          method: 'DELETE',
           headers: developerHeaders,
-          body: JSON.stringify({ name: 'Should not change' }),
+        }),
+        fetch(`${demoOrigin}/v1/pipelines/${PIPELINE_IDS.paymentsAll}`, {
+          method: 'DELETE',
+          headers: developerHeaders,
         }),
         fetch(
-          `${demoOrigin}/v1/projects/${EXTRA_PROJECT_IDS.developerTools}/builds`,
+          `${demoOrigin}/v1/projects/${PROJECT_IDS.nativePayments}/members/${USER_IDS.qaViewer}`,
           {
-            method: 'POST',
+            method: 'PATCH',
             headers: developerHeaders,
-            body: JSON.stringify({
-              pipeline_id: EXTRA_PIPELINE_IDS.developerTools,
-            }),
+            body: JSON.stringify({ role: 'viewer' }),
           },
         ),
       ])
+    expect(deleteViewerProject.status).toBe(403)
+    expect(deleteViewerPipeline.status).toBe(403)
+    expect(manageViewerMembers.status).toBe(403)
 
-    expect(invite.status).toBe(403)
-    expect(createProject.status).toBe(200)
-    expect(updateViewerProject.status).toBe(403)
-    expect(runDeveloperProject.status).toBe(200)
+    const manageMaintainerMembers = await fetch(
+      `${demoOrigin}/v1/projects/${PROJECT_IDS.flutterShop}/members/${USER_IDS.qaViewer}`,
+      {
+        method: 'PATCH',
+        headers: developerHeaders,
+        body: JSON.stringify({ role: 'viewer' }),
+      },
+    )
+    expect(manageMaintainerMembers.status).toBe(200)
+
+    const deleteMaintainerPipeline = await fetch(
+      `${demoOrigin}/v1/pipelines/${PIPELINE_IDS.shopAndroid}`,
+      { method: 'DELETE', headers: developerHeaders },
+    )
+    expect(deleteMaintainerPipeline.status).toBe(204)
+
+    const deleteMaintainerProject = await fetch(
+      `${demoOrigin}/v1/projects/${PROJECT_IDS.flutterShop}`,
+      { method: 'DELETE', headers: developerHeaders },
+    )
+    expect(deleteMaintainerProject.status).toBe(204)
   })
 
   it('keeps hosted demo writes blocked and local demo writes interactive', async () => {
@@ -461,36 +577,6 @@ describe('interactive demo API', () => {
       { headers: headers('owner') },
     )
     expect(missing.status).toBe(404)
-  })
-
-  it('persists repository policy changes', async () => {
-    const update = await fetch(
-      `${demoOrigin}/v1/integration-repositories/repo-001/runner-policy`,
-      {
-        method: 'PUT',
-        headers: {
-          ...headers('owner'),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ allow_direct_macos_runner: false }),
-      },
-    )
-    expect(update.status).toBe(200)
-
-    const list = await fetch(
-      `${demoOrigin}/v1/integrations/${INTEGRATION_IDS.github}/repositories`,
-      { headers: headers('owner') },
-    )
-    const body = (await list.json()) as {
-      repositories: Array<{
-        id: string
-        allow_direct_macos_runner: boolean
-      }>
-    }
-    expect(
-      body.repositories.find((repository) => repository.id === 'repo-001')
-        ?.allow_direct_macos_runner,
-    ).toBe(false)
   })
 
   it('paginates repository responses and terminates aggregate loading', async () => {

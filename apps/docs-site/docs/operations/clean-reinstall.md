@@ -7,14 +7,14 @@ description: 'Clean reinstall guide for alpha users'
 
 If you need to reset your Oore CI instance after a mis‑configuration or a failed setup, follow these steps. **Warning:** This will permanently delete all data, including projects, builds, users, and signing credentials.
 
-## 1. Stop the daemon
+## 1. Stop the backend services
 
 ```bash
 # If you started the daemon in the foreground
 Ctrl+C
-# Or remove the macOS launchd service
-oored uninstall-service 2>/dev/null || true
-launchctl bootout gui/$(id -u)/build.oore.oored 2>/dev/null || true
+# Or remove the managed macOS services
+oore runner uninstall-service 2>/dev/null || true
+sudo oored uninstall-service --system 2>/dev/null || true
 ```
 
 ## 2. Remove local data
@@ -26,11 +26,9 @@ Typical paths for alpha users:
 rm -rf ~/Library/Application\ Support/oore/
 ```
 
-If you have a custom configuration path, you can use `oore doctor` and `jq` to dynamically find your config directory:
-
-```bash
-rm -rf "$(dirname $(oore doctor --json | jq -r .configPath))"
-```
+If the daemon was installed with a custom `--state-file` or data directory,
+remove the exact path you configured. `oore doctor` reports toolchain readiness;
+it does not discover or delete daemon data.
 
 ## 3. Re‑install (optional)
 
@@ -50,9 +48,12 @@ oore setup
 
 ```bash
 oore doctor --json
+oore status
 ```
 
-You should see an empty instance with no projects.
+`oore doctor` should report the runner toolchain, and `oore status` should show
+the newly configured instance. Confirm the managed runner is online under
+**Settings > Runners** before triggering a build.
 
 ---
 

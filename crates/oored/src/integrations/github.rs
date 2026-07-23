@@ -1375,6 +1375,21 @@ async fn cleanup_stale_installations(
         .await
         .map_err(|e| format!("Failed to begin stale installation cleanup: {e}"))?;
 
+    let repository_ids = sqlx::query_scalar::<_, String>(
+        "SELECT r.id FROM integration_repositories r \
+         JOIN integration_installations i ON i.id = r.installation_id \
+         WHERE i.integration_id = ?1 \
+           AND i.external_id NOT IN (SELECT value FROM json_each(?2))",
+    )
+    .bind(integration_id)
+    .bind(&synced_json)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| format!("Failed to load repositories from stale installations: {e}"))?;
+    super::cancel_unassigned_builds_for_removed_repositories(&mut tx, &repository_ids)
+        .await
+        .map_err(|e| format!("Failed to cancel builds from stale installations: {e}"))?;
+
     sqlx::query(
         "UPDATE projects SET repository_id = NULL \
          WHERE repository_id IN (\
@@ -1395,6 +1410,11 @@ async fn cleanup_stale_installations(
              SELECT id FROM integration_installations \
              WHERE integration_id = ?1 \
                AND external_id NOT IN (SELECT value FROM json_each(?2))\
+         ) \
+         AND NOT EXISTS (\
+             SELECT 1 FROM builds b \
+             WHERE b.status IN ('assigned', 'running') \
+               AND json_extract(b.config_snapshot, '$.repository_id') = integration_repositories.id\
          )",
     )
     .bind(integration_id)
@@ -1406,7 +1426,11 @@ async fn cleanup_stale_installations(
     let deleted = sqlx::query(
         "DELETE FROM integration_installations \
          WHERE integration_id = ?1 \
-           AND external_id NOT IN (SELECT value FROM json_each(?2))",
+           AND external_id NOT IN (SELECT value FROM json_each(?2)) \
+           AND NOT EXISTS (\
+             SELECT 1 FROM integration_repositories r \
+             WHERE r.installation_id = integration_installations.id\
+           )",
     )
     .bind(integration_id)
     .bind(&synced_json)
@@ -1704,6 +1728,33 @@ async fn sync_installation_repos_with_token(
     }
 
     let synced_json = serde_json::json!(synced_repo_ids).to_string();
+    let repository_ids = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM integration_repositories \
+         WHERE installation_id = ?1 \
+           AND external_id NOT IN (SELECT value FROM json_each(?2))",
+    )
+    .bind(installation_id_internal)
+    .bind(&synced_json)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to load stale GitHub repositories");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to clean up stale repositories",
+        )
+    })?;
+    super::cancel_unassigned_builds_for_removed_repositories(&mut tx, &repository_ids)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to cancel builds from stale GitHub repositories");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to clean up stale repositories",
+            )
+        })?;
     sqlx::query(
         "UPDATE projects SET repository_id = NULL \
          WHERE repository_id IN (\
@@ -1728,7 +1779,12 @@ async fn sync_installation_repos_with_token(
     let deleted = sqlx::query(
         "DELETE FROM integration_repositories \
          WHERE installation_id = ?1 \
-           AND external_id NOT IN (SELECT value FROM json_each(?2))",
+           AND external_id NOT IN (SELECT value FROM json_each(?2)) \
+           AND NOT EXISTS (\
+             SELECT 1 FROM builds b \
+             WHERE b.status IN ('assigned', 'running') \
+               AND json_extract(b.config_snapshot, '$.repository_id') = integration_repositories.id\
+           )",
     )
     .bind(installation_id_internal)
     .bind(&synced_json)
@@ -1788,7 +1844,7 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn github_sync_paginates_and_preserves_or_resets_repository_approval() {
+    async fn github_sync_paginates_and_retains_active_stale_sources() {
         let app = axum::Router::new()
             .route(
                 "/app/installations",
@@ -1862,7 +1918,6 @@ mod tests {
                 id TEXT PRIMARY KEY, installation_id TEXT NOT NULL, external_id TEXT NOT NULL,
                 full_name TEXT NOT NULL, default_branch TEXT, is_private INTEGER NOT NULL,
                 html_url TEXT, avatar_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-                allow_direct_macos_runner INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(installation_id, external_id)
             )",
         )
@@ -1873,12 +1928,26 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE builds (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, status TEXT NOT NULL,
+                runner_id TEXT, signing_token_hash TEXT, config_snapshot TEXT NOT NULL DEFAULT '{}',
+                finished_at INTEGER, updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE build_events (
+                id TEXT PRIMARY KEY, build_id TEXT NOT NULL, from_status TEXT,
+                to_status TEXT NOT NULL, actor TEXT, reason TEXT, created_at INTEGER NOT NULL
+            );",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO integration_repositories
              (id, installation_id, external_id, full_name, default_branch, is_private,
-              created_at, updated_at, allow_direct_macos_runner)
-             VALUES ('approved', 'install', '1', 'org/old-name', 'main', 1, 1, 1, 1),
-                    ('stale', 'install', 'stale', 'org/stale', 'main', 1, 1, 1, 0)",
+              created_at, updated_at)
+             VALUES ('existing', 'install', '1', 'org/old-name', 'main', 1, 1, 1),
+                    ('stale', 'install', 'stale', 'org/stale', 'main', 1, 1, 1)",
         )
         .execute(&pool)
         .await
@@ -1887,6 +1956,14 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(
+            "INSERT INTO builds \
+             (id, project_id, status, config_snapshot, updated_at) \
+             VALUES ('active', 'project', 'assigned', '{\"repository_id\":\"stale\"}', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         sync_installation_repos_with_token(client, &pool, &host, "token", 1, "install", 2)
             .await
@@ -1903,38 +1980,43 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        let approval: i64 = sqlx::query_scalar(
-            "SELECT allow_direct_macos_runner FROM integration_repositories WHERE external_id = '1'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(repository_count, 101);
+        assert_eq!(repository_count, 102);
         assert!(linked.is_none());
-        assert_eq!(approval, 1, "repository sync must preserve runner approval");
 
-        sqlx::query("DELETE FROM integration_repositories WHERE external_id = '1'")
+        sqlx::query("UPDATE builds SET status = 'succeeded' WHERE id = 'active'")
             .execute(&pool)
             .await
             .unwrap();
         sync_installation_repos_with_token(client, &pool, &host, "token", 1, "install", 3)
             .await
             .unwrap();
-        let readded_approval: i64 = sqlx::query_scalar(
-            "SELECT allow_direct_macos_runner FROM integration_repositories WHERE external_id = '1'",
+        let repository_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM integration_repositories WHERE installation_id = 'install'",
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(
-            readded_approval, 0,
-            "deleting and rediscovering a repository must reset runner approval"
-        );
+        assert_eq!(repository_count, 101);
+
+        sqlx::query("DELETE FROM integration_repositories WHERE external_id = '1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sync_installation_repos_with_token(&client, &pool, &host, "token", 1, "install", 4)
+            .await
+            .unwrap();
+        let readded_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM integration_repositories WHERE external_id = '1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(readded_count, 1);
         server.abort();
     }
 
     #[tokio::test]
-    async fn stale_installation_cleanup_unlinks_projects_before_deletion() {
+    async fn stale_installation_cleanup_retains_sources_until_active_builds_finish() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             "CREATE TABLE integration_installations (
@@ -1956,6 +2038,20 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE builds (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, status TEXT NOT NULL,
+                runner_id TEXT, signing_token_hash TEXT, config_snapshot TEXT NOT NULL DEFAULT '{}',
+                finished_at INTEGER, updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE build_events (
+                id TEXT PRIMARY KEY, build_id TEXT NOT NULL, from_status TEXT,
+                to_status TEXT NOT NULL, actor TEXT, reason TEXT, created_at INTEGER NOT NULL
+            );",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO integration_installations VALUES
              ('current', 'integration', '1'), ('stale', 'integration', '2')",
@@ -1974,6 +2070,14 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(
+            "INSERT INTO builds \
+             (id, project_id, status, config_snapshot, updated_at) \
+             VALUES ('active', 'project', 'running', '{\"repository_id\":\"stale-repo\"}', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let removed = cleanup_stale_installations(&pool, "integration", &["1".to_string()])
             .await
@@ -1994,10 +2098,31 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
+        assert_eq!(removed, 0);
+        assert_eq!(installation_count, 2);
+        assert_eq!(repository_count, 2);
+        assert!(linked.is_none());
+
+        sqlx::query("UPDATE builds SET status = 'succeeded' WHERE id = 'active'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let removed = cleanup_stale_installations(&pool, "integration", &["1".to_string()])
+            .await
+            .unwrap();
+        let installation_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM integration_installations")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let repository_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM integration_repositories")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(removed, 1);
         assert_eq!(installation_count, 1);
         assert_eq!(repository_count, 1);
-        assert!(linked.is_none());
     }
 
     #[test]

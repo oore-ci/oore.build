@@ -104,8 +104,6 @@ import type {
   UpdateProjectMemberResponse,
   UpdateRetentionPolicyRequest,
   UpdateRunnerRequest,
-  UpdateRepositoryRunnerPolicyRequest,
-  UpdateRepositoryRunnerPolicyResponse,
   UpdateRunnerResponse,
   UpdateTrustedProxySettingsRequest,
   UpdateUserRoleRequest,
@@ -574,23 +572,6 @@ export function getRepositoryAvatar(
     baseUrl,
     `/v1/integration-repositories/${repositoryId}/avatar`,
     { headers: authHeaders(token), signal: options?.signal },
-  )
-}
-
-export function updateRepositoryRunnerPolicy(
-  baseUrl: string,
-  token: string,
-  repositoryId: string,
-  data: UpdateRepositoryRunnerPolicyRequest,
-): Promise<UpdateRepositoryRunnerPolicyResponse> {
-  return request<UpdateRepositoryRunnerPolicyResponse>(
-    baseUrl,
-    `/v1/integration-repositories/${repositoryId}/runner-policy`,
-    {
-      method: 'PUT',
-      headers: authHeaders(token),
-      body: JSON.stringify(data),
-    },
   )
 }
 

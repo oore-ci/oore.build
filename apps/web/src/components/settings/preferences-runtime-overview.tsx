@@ -3,6 +3,8 @@ import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Download as Download04Icon } from 'lucide-react'
 import type { PreferencesPageState } from '@/routes/settings/preferences'
 import { runtimeUpdateActive } from '@/components/settings/preferences-utils'
+import { installerCommand } from '@/components/runtime-update-utils'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 
 export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
@@ -16,6 +18,11 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
     webHealthQuery,
     webVersionLabel,
   } = state
+  const backendUpdateFailure =
+    runtimeUpdates.backendUpdate.data?.phase === 'failed'
+      ? runtimeUpdates.backendUpdate.data.error
+      : null
+
   return (
     <section
       aria-label="Runtime versions"
@@ -113,15 +120,42 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
                   ? 'Restarting...'
                   : backendUpdatePhase === 'updating'
                     ? 'Updating...'
-                    : 'Update backend'}
+                    : backendUpdatePhase === 'failed'
+                      ? 'Retry backend update'
+                      : 'Update backend'}
             </Button>
             {runtimeUpdates.backendUpdate.data &&
             !runtimeUpdates.backendUpdate.data.managed_service ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                Install oored as the managed macOS service to update it here.
-              </p>
+              <div className="mt-2 space-y-2 text-xs text-muted-foreground">
+                <p>
+                  Run the current installer once from Terminal to finish or
+                  repair managed service setup. Later backend updates remain
+                  available here.
+                </p>
+                <code className="block rounded-md bg-muted p-2 font-mono break-all text-foreground">
+                  {installerCommand(runtimeUpdates.backendRelease.data.channel)}
+                </code>
+              </div>
             ) : null}
           </>
+        ) : null}
+        {runtimeUpdates.backendUpdate.data?.phase === 'failed' ? (
+          <Alert variant="destructive" className="mt-3">
+            <AlertTitle>Backend update failed</AlertTitle>
+            <AlertDescription className="space-y-2 wrap-break-word">
+              <p>
+                {backendUpdateFailure ||
+                  'The supervised backend update stopped before completion.'}
+              </p>
+              <p>
+                Check{' '}
+                <code className="font-mono text-[11px]">
+                  &lt;install root&gt;/logs/update-supervisor.log
+                </code>{' '}
+                on the backend Mac for the rollback details, then retry.
+              </p>
+            </AlertDescription>
+          </Alert>
         ) : null}
       </div>
     </section>

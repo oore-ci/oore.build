@@ -5,7 +5,7 @@ description: 'Register and manage the Direct macOS runner for trusted repositori
 
 # Run Builds with the Direct macOS Runner
 
-Oore V1 executes builds through a separate `oore-runner` process on macOS. Repository commands run directly with the permissions of the runner's macOS account, so approve only repositories whose code and contributors you would run on that Mac yourself.
+Oore V1 executes builds through a separate `oore-runner` process on macOS. Repository commands run directly with the permissions of the runner's macOS account, so create projects only for repositories whose code and contributors you would run on that Mac yourself.
 
 The Direct runner is a compatibility-first execution mode, not a hostile-code sandbox. Oore does not automatically run external-fork pull or merge requests in this mode.
 
@@ -16,7 +16,40 @@ The Direct runner is a compatibility-first execution mode, not a hostile-code sa
 - A user session token for registration
 - The runner machine must have all [prerequisites](/getting-started/prerequisites) installed
 
-## 1. Register the runner
+## Managed runner on the backend Mac
+
+The macOS `all` and `backend` installers enroll the local runner and install it
+with the backend service. Both processes are boot-time system LaunchDaemons, so
+they recover after a restart without waiting for a GUI login.
+
+To repair or replace the managed runner service, run this as the macOS account
+that should execute builds (not with `sudo`):
+
+```bash
+oore runner install-service --managed-local
+```
+
+Oore requests administrator access only to install the LaunchDaemon. When the
+runner and daemon share the local Oore database, the command creates or repairs
+the local runner registration and its `~/.oore/managed-runner.json` config
+automatically.
+
+If this host is upgrading from an earlier login-session daemon or runner, rerun
+the current installer for the host's installed release channel. The installer
+uses the verified candidate updater to drain active work, migrate both services,
+verify their restart, and roll back the release, data, and service definitions
+if the transition fails. Afterward, reboot recovery and managed updates are
+automatic.
+
+The managed local runner uses `~/.oore/managed-runner.json`, so an existing
+manual external registration in `~/.oore/runner.json` is left untouched.
+
+## Manual runner on another Mac
+
+Manual registration remains available when the runner is on a different Mac
+from the backend.
+
+### 1. Register the runner
 
 On the runner machine:
 
@@ -40,15 +73,17 @@ not addressed by a literal loopback IP. Cleartext HTTP remains available only
 for `127.0.0.1` or `::1`; hostnames such as `localhost` are intentionally not
 treated as proof of loopback.
 
-## 2. Start the runner
+### 2. Install the runner service
 
-On macOS, install the managed user service:
+Run this as the macOS account that should execute builds:
 
 ```bash
 oore runner install-service
 ```
 
-The service starts at interactive login and remains running in the user's Aqua session. This is the supported mode for iOS signing because Apple Keychain Services does not expose imported private keys to a system LaunchDaemon or a background-only login session.
+The command installs a system LaunchDaemon that starts at boot and runs as that
+non-root account. It keeps the same `HOME`, toolchain paths, workspace ownership,
+and file permissions as a foreground runner.
 
 For temporary foreground use instead:
 
@@ -68,16 +103,21 @@ The runner process:
 3. Polls for available jobs
 4. Executes claimed builds
 
-The separate service keeps runner lifecycle and updates independent from the daemon. It is not an OS security boundary between repository code and the runner account.
+The separate service keeps runner execution out of the control-plane process.
+Backend restarts do not stop it, and managed updates restart it when its binary
+changes. It is not an OS security boundary between repository code and the
+runner account.
 
-## 3. Verify
+## Verify
 
-1. Go to **Settings > Runners** and enable **Direct macOS runner**
-2. Go to **Settings > Sources**, open the source, and approve the repository
-3. Go to **Settings > Runners** and confirm the runner is `online`
-4. Trigger a test build and verify it is picked up
+1. Go to **Settings > Runners** and confirm the runner is `online`
+2. In **Settings > Preferences**, confirm **Accept new builds** is on
+3. Trigger a test build and verify it is picked up
 
-Approval is repository-wide: every Oore project linked to that repository shares the same decision. New and newly re-added repositories start unapproved. Turning off the instance switch or revoking repository approval lets running builds finish while queued builds wait.
+Creating a project or changing its linked source is the execution trust decision
+and therefore requires an Owner or Admin. There is no second per-repository
+allowlist to maintain. Turning off **Accept new builds** is an operational pause:
+running builds finish while queued builds wait.
 
 ## Recommended account setup
 
@@ -94,7 +134,8 @@ Use a dedicated, non-admin macOS account for the runner when practical, and keep
 
 ## Stopping the runner
 
-For a foreground runner, stop `oore runner start` with Ctrl+C. For the managed macOS service, run:
+For a foreground runner, stop `oore runner start` with Ctrl+C. To remove the
+managed macOS service, run this as its runner account:
 
 ```bash
 oore runner uninstall-service

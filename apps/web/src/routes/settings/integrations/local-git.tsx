@@ -6,6 +6,7 @@ import {
   requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
+import { useHasPermission } from '@/hooks/use-permissions'
 import { PageMeta } from '@/lib/seo'
 import { Button } from '@/components/ui/button'
 import PageHeader from '@/components/page-header'
@@ -24,9 +25,13 @@ export const Route = createFileRoute('/settings/integrations/local-git')({
   component: LocalGitPage,
 })
 
-function LocalGitPage() {
-  const { data: preferences } = useInstancePreferences()
-  const runtimeMode = preferences?.preferences.runtime_mode ?? 'local'
+export function LocalGitPage() {
+  const canCreateProjects = useHasPermission('projects', 'write')
+  const canReadPreferences = useHasPermission('instance_settings', 'read')
+  const { data: preferences } = useInstancePreferences({
+    enabled: canReadPreferences,
+  })
+  const runtimeMode = preferences?.preferences.runtime_mode
 
   return (
     <PageLayout width="wide">
@@ -44,26 +49,33 @@ function LocalGitPage() {
         </div>
         <div className="space-y-3 p-4">
           <p className="text-sm text-muted-foreground">
-            Local repository selection happens directly during project creation.
-            Enter an absolute path (or browse folders when available).
+            Owners and admins link local repositories while creating a project
+            or from the project&apos;s Source repository setting.
           </p>
-          {runtimeMode === 'remote' ? (
+          {canReadPreferences && runtimeMode === 'remote' ? (
             <p className="text-xs text-muted-foreground">
               In External Access mode, remote clients must enter paths manually.
               Folder browsing is limited to localhost for security.
             </p>
-          ) : (
+          ) : canReadPreferences && runtimeMode === 'local' ? (
             <p className="text-xs text-muted-foreground">
               In Local Only mode, folder browsing is available from localhost.
             </p>
-          )}
-          <Button
-            render={<Link to="/projects" search={{ openCreate: '1' }} />}
-            nativeButton={false}
-          >
-            <DynamicLucideIcon icon={Add01Icon} />
-            Create project
-          </Button>
+          ) : !canCreateProjects ? (
+            <p className="text-xs text-muted-foreground">
+              You can use local repositories already linked to projects you can
+              access. Ask an owner or admin to add or change a source.
+            </p>
+          ) : null}
+          {canCreateProjects ? (
+            <Button
+              render={<Link to="/projects" search={{ openCreate: '1' }} />}
+              nativeButton={false}
+            >
+              <DynamicLucideIcon icon={Add01Icon} />
+              Create project
+            </Button>
+          ) : null}
         </div>
       </section>
     </PageLayout>

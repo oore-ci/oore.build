@@ -6,6 +6,7 @@ import * as z from 'zod'
 import { toast } from '@/lib/toast'
 import { useAuthStore } from '@/stores/auth-store'
 import { PageMeta } from '@/lib/seo'
+import { useHasPermission } from '@/hooks/use-permissions'
 import { useRuntimeUpdates } from '@/hooks/use-runtime-updates'
 import {
   useConfigureExternalAccessOidc,
@@ -25,8 +26,11 @@ import { ApiClientError, getApiErrorMessage } from '@/lib/api'
 import { ExternalAccessCard } from '@/components/settings/preferences-external-access-card'
 import { RuntimeOverview } from '@/components/settings/preferences-runtime-overview'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 
 const preloadExternalAccessNetworkDialog = () =>
   import('@/components/settings/preferences-external-access-network-dialog')
@@ -105,6 +109,7 @@ function usePreferencesPageState() {
   const [networkEditorOpen, setNetworkEditorOpen] = useState(false)
   const [oidcDialogOpen, setOidcDialogOpen] = useState(false)
   const [trustedProxyDialogOpen, setTrustedProxyDialogOpen] = useState(false)
+  const canWrite = useHasPermission('instance_settings', 'write')
   const user = useAuthStore((s) => s.user)
   const clearAuth = useAuthStore((s) => s.clearAuth)
   const isOwner = user?.role === 'owner'
@@ -115,9 +120,13 @@ function usePreferencesPageState() {
   const frontendUpdatePhase =
     runtimeUpdates.startFrontendUpdate.data?.phase ??
     runtimeUpdates.frontendRelease.data?.phase
-  const backendUpdatePhase =
-    runtimeUpdates.startBackendUpdate.data?.phase ??
-    runtimeUpdates.backendUpdate.data?.phase
+  const backendUpdateQueryIsCurrent =
+    runtimeUpdates.backendUpdate.dataUpdatedAt >=
+    runtimeUpdates.startBackendUpdate.submittedAt
+  const backendUpdatePhase = backendUpdateQueryIsCurrent
+    ? runtimeUpdates.backendUpdate.data?.phase
+    : (runtimeUpdates.startBackendUpdate.data?.phase ??
+      runtimeUpdates.backendUpdate.data?.phase)
   const preflightQuery = useExternalAccessPreflight()
   const networkSettingsQuery = useExternalAccessNetworkSettings()
   const oidcConfigQuery = useExternalAccessOidc()
@@ -412,15 +421,44 @@ function usePreferencesPageState() {
     )
   }
 
+  function handleDirectRunnerToggle(acceptingBuilds: boolean) {
+    if (
+      !preferences ||
+      preferencesQuery.isError ||
+      updatePreferencesMutation.isPending ||
+      !canWrite
+    )
+      return
+
+    updatePreferencesMutation.mutate(
+      {
+        key_storage_mode: preferences.key_storage_mode,
+        direct_macos_runner_paused: !acceptingBuilds,
+      },
+      {
+        onSuccess: () =>
+          toast.success(
+            acceptingBuilds
+              ? 'This Mac is accepting new builds.'
+              : 'New builds are paused. Running builds will finish.',
+          ),
+        onError: (error) =>
+          toast.error(`Failed to change build intake: ${error.message}`),
+      },
+    )
+  }
+
   return {
     backendHealthQuery,
     backendUpdatePhase,
     backendVersionLabel,
+    canWrite,
     externalAccessEnabled,
     externalAccessNetworkForm,
     externalAccessOidcForm,
     failedReadinessChecks,
     frontendUpdatePhase,
+    handleDirectRunnerToggle,
     handleExternalAccessToggle,
     identityReady,
     isOwner,
@@ -467,6 +505,68 @@ function usePreferencesPageState() {
 
 export type PreferencesPageState = ReturnType<typeof usePreferencesPageState>
 
+function DirectRunnerSettings({ state }: { state: PreferencesPageState }) {
+  const paused = state.preferences?.direct_macos_runner_paused
+  const acceptingBuilds = paused === false
+  const runnerStateLabel = state.preferencesQuery.isError
+    ? 'Unavailable'
+    : paused === undefined
+      ? 'Checking...'
+      : acceptingBuilds
+        ? 'Accepting builds'
+        : 'Paused'
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-4">
+          <CardTitle className="text-sm font-medium">
+            Direct macOS runner
+          </CardTitle>
+          <Badge variant={acceptingBuilds ? 'secondary' : 'outline'}>
+            {runnerStateLabel}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-start justify-between gap-6">
+          <div className="space-y-1">
+            <p className="text-sm font-medium">Accept new builds</p>
+            <p className="text-sm text-muted-foreground">
+              When paused, running builds finish and queued builds wait.
+            </p>
+          </div>
+          <Switch
+            checked={acceptingBuilds}
+            disabled={
+              !state.canWrite ||
+              !state.preferences ||
+              state.preferencesQuery.isError ||
+              state.updatePreferencesMutation.isPending
+            }
+            onCheckedChange={(checked) =>
+              state.handleDirectRunnerToggle(checked)
+            }
+            aria-label="Accept new builds"
+            className="after:-inset-y-3.5"
+          />
+        </div>
+        <Alert>
+          <AlertDescription>
+            {state.preferencesQuery.isError
+              ? 'Oore could not load the runner pause state. Refresh this page before changing build intake.'
+              : paused === undefined
+                ? 'Checking whether this Mac is accepting new builds.'
+                : !state.canWrite
+                  ? 'An owner or admin can pause new claims while assigned and running builds finish.'
+                  : 'Pausing stops new claims while assigned and running builds finish. Resume whenever this Mac is ready for more work.'}
+          </AlertDescription>
+        </Alert>
+      </CardContent>
+    </Card>
+  )
+}
+
 function PreferencesPage() {
   const state = usePreferencesPageState()
   return (
@@ -477,6 +577,7 @@ function PreferencesPage() {
         description="Manage runtime services and External Access for this instance."
       />
       <RuntimeOverview state={state} />
+      <DirectRunnerSettings state={state} />
       {state.preferencesQuery.isLoading ? (
         <div className="space-y-3 border bg-card p-4">
           <Skeleton className="h-4 w-40" />

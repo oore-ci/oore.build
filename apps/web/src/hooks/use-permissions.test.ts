@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { hasInstancePermission, hasProjectPermission } from './use-permissions'
 
 describe('instance permissions', () => {
-  it('matches developer project creation and read-only inventory access', () => {
-    expect(hasInstancePermission('developer', 'projects', 'write')).toBe(true)
+  it('blocks developer project creation and keeps inventory read-only', () => {
+    expect(hasInstancePermission('developer', 'projects', 'write')).toBe(false)
     expect(hasInstancePermission('developer', 'runners', 'read')).toBe(true)
     expect(hasInstancePermission('developer', 'runners', 'write')).toBe(false)
     expect(hasInstancePermission('developer', 'integrations', 'read')).toBe(

@@ -12,8 +12,9 @@ This tutorial walks you through creating a project, configuring a pipeline, and 
 - A running Oore CI instance in `ready` state ([Set Up Your Instance](/getting-started/first-instance))
 - A [GitHub](/getting-started/connect-github) or GitLab integration connected
 - A Flutter project repository accessible through your integration
-- A registered Direct macOS runner running as a separate login-session service
-- Direct runner execution enabled in **Settings > Runners** and the repository approved in **Settings > Sources**
+- An online Direct macOS runner (installed automatically with a local macOS backend)
+- **Accept new builds** on in **Settings > Preferences**
+- An Owner/Admin-created project whose linked source is available
 
 ## 1. Create a project
 
@@ -50,7 +51,9 @@ artifacts:
 
 Push the file to your repository. Oore CI reads this file at build time — no UI configuration needed.
 
-If your repository includes a `.fvmrc` file, Oore CI uses that Flutter version automatically. The `flutter_version` field in `.oore.yaml` is a fallback.
+If your repository includes a `.fvmrc` file, Oore CI uses that Flutter version
+automatically. The `flutter_version` field is a fallback; otherwise Oore
+downloads and caches stable Flutter automatically.
 
 ### Option B: Configure via the UI
 
@@ -126,9 +129,9 @@ For the full state machine, see [Build States](/reference/build-states).
 
 ### Build stuck in "queued"
 
-- Read the waiting reason on the build page. Enable Direct runner execution in **Settings > Runners** or approve the repository in **Settings > Sources** when prompted.
+- Read the waiting reason on the build page. Turn on **Accept new builds** in **Settings > Preferences**, or reconnect the project's source when prompted.
 - Check **Settings > Runners** for an active runner.
-- For a foreground diagnostic run, start it with `oore runner start`. Normal installations should use `oore runner install-service`.
+- For a foreground diagnostic run, start it with `oore runner start`. Normal backend installations should use `oore runner install-service --managed-local`; a separately registered external runner uses `oore runner install-service`.
 
 ### Flutter commands fail
 
@@ -138,7 +141,11 @@ Run `oore doctor` to check your toolchain:
 oore doctor
 ```
 
-Ensure `fvm` and `flutter` are installed and accessible.
+Oore bundles FVM and downloads the selected Flutter SDK automatically. Hosts
+updated from an older Oore release also repair a missing managed FVM payload
+automatically on the first Flutter build. If that download is interrupted,
+retry the build. Android builds still require an Android SDK, and Apple builds
+require full Xcode.
 
 ### "No .oore.yaml found" but UI pipeline exists
 

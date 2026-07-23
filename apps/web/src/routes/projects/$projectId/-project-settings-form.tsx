@@ -1,5 +1,5 @@
-import { useForm } from 'react-hook-form'
 import { Link } from '@tanstack/react-router'
+import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { toast } from '@/lib/toast'
 import * as z from 'zod'
@@ -20,7 +20,6 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { Spinner } from '@/components/ui/spinner'
 import {
   Select,
   SelectContent,
@@ -28,48 +27,38 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Spinner } from '@/components/ui/spinner'
+import { SourceDiscoveryWarning } from '@/components/source-discovery-warning'
 
 const editProjectSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   description: z.string().optional(),
   default_branch: z.string().optional(),
-  repository_id: z.string().min(1, 'Choose a source repository'),
+  repository_id: z.string().optional(),
 })
 
 type EditProjectForm = z.infer<typeof editProjectSchema>
 
 export function ProjectSettingsForm({
+  canChangeSource,
   projectId,
   currentValues,
 }: {
+  canChangeSource: boolean
   projectId: string
   currentValues: {
     name: string
     description?: string
     default_branch?: string
     repository_id?: string
-    repository_full_name?: string
   }
 }) {
   const updateMutation = useUpdateProject()
-  const sourceRepositoriesQuery = useSourceRepositories(true)
-  const repositories = sourceRepositoriesQuery.data ?? []
-  const currentRepositoryMissing =
-    !!currentValues.repository_id &&
-    !repositories.some(
-      (repository) => repository.id === currentValues.repository_id,
-    )
-  const repositoryItems = Object.fromEntries([
-    ...repositories.map((repository) => [repository.id, repository.full_name]),
-    ...(currentRepositoryMissing
-      ? [
-          [
-            currentValues.repository_id!,
-            currentValues.repository_full_name ?? 'Current repository',
-          ],
-        ]
-      : []),
-  ])
+  const repositoriesQuery = useSourceRepositories(canChangeSource)
+  const repositories = repositoriesQuery.data ?? []
+  const repositoryItems = Object.fromEntries(
+    repositories.map((repository) => [repository.id, repository.full_name]),
+  )
   const form = useForm<EditProjectForm>({
     resolver: zodResolver(editProjectSchema),
     defaultValues: {
@@ -95,7 +84,10 @@ export function ProjectSettingsForm({
           name: data.name.trim(),
           description: data.description?.trim() || undefined,
           default_branch: data.default_branch?.trim() || undefined,
-          repository_id: data.repository_id,
+          repository_id:
+            canChangeSource && form.getFieldState('repository_id').isDirty
+              ? data.repository_id?.trim() || undefined
+              : undefined,
         },
       },
       {
@@ -113,96 +105,6 @@ export function ProjectSettingsForm({
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <FormField
               control={form.control}
-              name="repository_id"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Source repository</FormLabel>
-                  <Select
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    disabled={
-                      sourceRepositoriesQuery.isLoading ||
-                      sourceRepositoriesQuery.isError ||
-                      (sourceRepositoriesQuery.isSuccess &&
-                        repositories.length === 0) ||
-                      updateMutation.isPending
-                    }
-                    items={repositoryItems}
-                  >
-                    <FormControl>
-                      <SelectTrigger className="w-full">
-                        <SelectValue
-                          placeholder={
-                            sourceRepositoriesQuery.isLoading
-                              ? 'Loading repositories...'
-                              : 'Choose a repository'
-                          }
-                        />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {currentRepositoryMissing ? (
-                        <SelectItem value={currentValues.repository_id!}>
-                          {currentValues.repository_full_name ??
-                            'Current repository'}{' '}
-                          (currently linked)
-                        </SelectItem>
-                      ) : null}
-                      {repositories.map((repository) => (
-                        <SelectItem key={repository.id} value={repository.id}>
-                          <RepositoryAvatar
-                            fullName={repository.full_name}
-                            repositoryId={repository.id}
-                            provider={repository.provider}
-                            size="sm"
-                          />
-                          {repository.full_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormDescription>
-                    Relinking changes the repository used for future workflow
-                    discovery and builds.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            {sourceRepositoriesQuery.error ? (
-              <Alert variant="destructive">
-                <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <span>Source repositories could not be loaded.</span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void sourceRepositoriesQuery.refetch()}
-                  >
-                    Retry
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            ) : null}
-            {sourceRepositoriesQuery.isSuccess &&
-            repositories.length === 0 &&
-            !currentValues.repository_id ? (
-              <Alert>
-                <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <span>No source repositories are available to link.</span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    render={<Link to="/settings/integrations" />}
-                  >
-                    Open sources
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            ) : null}
-            <FormField
-              control={form.control}
               name="name"
               render={({ field }) => (
                 <FormItem>
@@ -214,6 +116,106 @@ export function ProjectSettingsForm({
                 </FormItem>
               )}
             />
+            {canChangeSource ? (
+              <FormField
+                control={form.control}
+                name="repository_id"
+                render={({ field, fieldState }) => (
+                  <FormItem>
+                    <FormLabel>Source repository</FormLabel>
+                    <SourceDiscoveryWarning
+                      failures={repositoriesQuery.sourceFailures}
+                      isRetrying={repositoriesQuery.isFetching}
+                      onRetry={() => void repositoriesQuery.refetch()}
+                    />
+                    {repositoriesQuery.isLoading ? (
+                      <div className="flex items-center gap-2 py-2">
+                        <Spinner className="size-4" />
+                        <span className="text-sm text-muted-foreground">
+                          Loading repositories...
+                        </span>
+                      </div>
+                    ) : repositoriesQuery.error ? (
+                      <Alert variant="destructive">
+                        <AlertDescription className="flex items-center justify-between gap-3">
+                          <span>
+                            Failed to load repositories:{' '}
+                            {repositoriesQuery.error.message}
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void repositoriesQuery.refetch()}
+                          >
+                            Retry
+                          </Button>
+                        </AlertDescription>
+                      </Alert>
+                    ) : repositories.length > 0 ? (
+                      <Select
+                        value={field.value}
+                        onValueChange={(value) => field.onChange(value ?? '')}
+                        items={repositoryItems}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Choose source" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {repositories.map((repository) => (
+                            <SelectItem
+                              key={repository.id}
+                              value={repository.id}
+                            >
+                              <RepositoryAvatar
+                                fullName={repository.full_name}
+                                avatarUrl={repository.avatar_url}
+                                repositoryId={repository.id}
+                                provider={repository.provider}
+                              />
+                              <span>{repository.full_name}</span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        render={<Link to="/settings/integrations" />}
+                        nativeButton={false}
+                      >
+                        Connect source
+                      </Button>
+                    )}
+                    <FormDescription>
+                      Choosing the source trusts its build commands to run with
+                      the runner account&apos;s macOS permissions.
+                    </FormDescription>
+                    {fieldState.isDirty &&
+                    currentValues.repository_id &&
+                    field.value !== currentValues.repository_id ? (
+                      <Alert>
+                        <AlertDescription>
+                          Changing the source from{' '}
+                          {repositoryItems[currentValues.repository_id] ??
+                            'the current repository'}{' '}
+                          to{' '}
+                          {repositoryItems[field.value ?? ''] ??
+                            'the selected repository'}{' '}
+                          cancels queued or scheduled builds from the old
+                          source. Assigned or running builds finish from their
+                          original source.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            ) : null}
             <FormField
               control={form.control}
               name="description"

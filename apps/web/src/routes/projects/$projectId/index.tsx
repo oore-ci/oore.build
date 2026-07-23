@@ -19,7 +19,6 @@ import { usePageClamp } from '@/hooks/use-page-clamp'
 import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import { usePipelines, useRepositoryWorkflows } from '@/hooks/use-pipelines'
 import { useDeleteProject, useProject } from '@/hooks/use-projects'
-import { useSourceRepositories } from '@/hooks/use-source-repositories'
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { relativeTime } from '@/lib/format-utils'
 import { ApiClientError } from '@/lib/api'
@@ -172,17 +171,19 @@ function useProjectDetailPageState() {
     { refetchInterval: 15_000 },
   )
   const deleteMutation = useDeleteProject()
-  const canWriteProjectsGlobally = useHasPermission('projects', 'write')
   const canWritePipelinesGlobally = useHasPermission('pipelines', 'write')
   const canTriggerBuildGlobally = useHasPermission('builds', 'write')
   const canWriteInstanceSettings = useHasPermission(
     'instance_settings',
     'write',
   )
-  const projectRole = data?.project.current_user_role
-  const canWriteProjects =
-    canWriteProjectsGlobally &&
-    hasProjectPermission(projectRole, 'projects', 'write')
+  const canReadInstanceSettings = useHasPermission('instance_settings', 'read')
+  const projectRole = data?.current_user_role ?? data?.project.current_user_role
+  const canWriteProjects = hasProjectPermission(
+    projectRole,
+    'projects',
+    'write',
+  )
   const canDeleteProjects = hasProjectPermission(
     projectRole,
     'projects',
@@ -198,18 +199,18 @@ function useProjectDetailPageState() {
   const pipelineCount = search.pipelineQ
     ? (data?.pipeline_count ?? 0)
     : (pipelinesData?.total ?? data?.pipeline_count ?? 0)
+  const projectSourceAvailable = Boolean(
+    data?.project.repository_id && data.project.repository_full_name,
+  )
   const shouldDiscoverWorkflows =
-    canWritePipelines && !!data?.project.repository_id && pipelineCount === 0
+    canWritePipelines && projectSourceAvailable && pipelineCount === 0
   const repositoryWorkflowsQuery = useRepositoryWorkflows(
     projectId,
     undefined,
     { enabled: shouldDiscoverWorkflows },
   )
-  const sourceRepositoriesQuery = useSourceRepositories(
-    !!data?.project.repository_id,
-  )
   const preferencesQuery = useInstancePreferences({
-    enabled: canWriteInstanceSettings && !!data?.project.repository_id,
+    enabled: projectSourceAvailable && canReadInstanceSettings,
   })
 
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -278,19 +279,14 @@ function useProjectDetailPageState() {
 
   const { project } = data
   const pipelines = pipelinesData?.pipelines ?? []
-  const projectHasSource = !!project.repository_id
-  const sourceRepository = sourceRepositoriesQuery.data?.find(
-    (repository) => repository.id === project.repository_id,
-  )
-  const runnerPolicyBlockReason = !preferencesQuery.data
-    ? undefined
-    : !preferencesQuery.data.preferences.direct_macos_runner_enabled
-      ? ('instance_disabled' as const)
-      : sourceRepository && !sourceRepository.allow_direct_macos_runner
-        ? ('repository_not_approved' as const)
-        : sourceRepositoriesQuery.isSuccess && !sourceRepository
-          ? ('repository_unavailable' as const)
-          : undefined
+  const projectHasSource = projectSourceAvailable
+  const runnerPolicyBlockReason =
+    project.repository_id && !projectHasSource
+      ? ('repository_unavailable' as const)
+      : canReadInstanceSettings &&
+          preferencesQuery.data?.preferences.direct_macos_runner_paused
+        ? ('instance_paused' as const)
+        : undefined
 
   function setTab(value: TabValue) {
     void navigate({
@@ -357,7 +353,6 @@ function useProjectDetailPageState() {
     setTab,
     setTriggerBuildOpen,
     setTriggerPipelineId,
-    sourceRepository,
     triggerBuildOpen,
     triggerPipelineId,
     updatePipelineSearch,
@@ -451,7 +446,6 @@ function ProjectDetailPage() {
     setTab,
     setTriggerBuildOpen,
     setTriggerPipelineId,
-    sourceRepository,
     triggerBuildOpen,
     triggerPipelineId,
     updatePipelineSearch,
@@ -526,80 +520,70 @@ function ProjectDetailPage() {
           ) : undefined
         }
       />
-      {!projectHasSource ? (
+      {!project.repository_id ? (
         <Alert variant="destructive">
           <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            This project has no linked source repository. Link a repository
-            before triggering builds.{' '}
-            {canWriteProjects ? (
-              <Link
-                to="/projects/$projectId"
-                params={{ projectId }}
-                search={{ tab: 'settings' }}
-                className="font-medium underline underline-offset-4"
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              This project has no linked source repository.{' '}
+              {canWriteInstanceSettings
+                ? 'Choose a source before triggering builds.'
+                : 'Ask an owner or admin to choose one before triggering builds.'}
+            </span>
+            {canWriteInstanceSettings ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setTab('settings')}
               >
-                Open project settings
-              </Link>
-            ) : (
-              'Ask a project maintainer to relink it.'
-            )}
+                Choose source
+              </Button>
+            ) : null}
           </AlertDescription>
         </Alert>
       ) : null}
-      {projectHasSource && runnerPolicyBlockReason ? (
+      {runnerPolicyBlockReason ? (
         <Alert>
           <DynamicLucideIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
-            {runnerPolicyBlockReason === 'instance_disabled' ? (
-              <>
-                Direct macOS runner is paused. Builds can be queued, but they
-                will not start until an owner or admin enables it
-                {canWriteInstanceSettings ? (
-                  <>
-                    {' in '}
-                    <Link
-                      to="/settings/runners"
-                      className="font-medium underline underline-offset-4"
-                    >
-                      Runners
-                    </Link>
-                  </>
-                ) : null}
-                .
-              </>
-            ) : runnerPolicyBlockReason === 'repository_not_approved' ? (
-              <>
-                This repository is not approved for Direct runner builds. Builds
-                will remain queued until an owner or admin approves it
-                {sourceRepository ? (
-                  <>
-                    {' in '}
-                    <Link
-                      to="/settings/integrations/$integrationId"
-                      params={{
-                        integrationId: sourceRepository.integration_id,
-                      }}
-                      className="font-medium underline underline-offset-4"
-                    >
-                      Sources
-                    </Link>
-                  </>
-                ) : null}
-                .
-              </>
+            {runnerPolicyBlockReason === 'instance_paused' ? (
+              canWriteInstanceSettings ? (
+                <>
+                  Direct macOS runner is paused. Builds can be queued, but they
+                  will not start until you resume it in{' '}
+                  <Link
+                    to="/settings/preferences"
+                    className="font-medium underline underline-offset-4"
+                  >
+                    Preferences
+                  </Link>
+                  .
+                </>
+              ) : (
+                <>
+                  Direct macOS runner is paused. Builds can be queued, but they
+                  will not start. Ask an owner or admin to resume it.
+                </>
+              )
             ) : (
-              <>
-                Oore cannot find this project&apos;s repository policy. Builds
-                fail closed and remain queued. Check the repository under{' '}
-                <Link
-                  to="/settings/integrations"
-                  className="font-medium underline underline-offset-4"
-                >
-                  Sources
-                </Link>
-                .
-              </>
+              <span className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  Oore cannot find this project&apos;s source repository. Builds
+                  remain queued until{' '}
+                  {canWriteInstanceSettings
+                    ? 'you repair the source link.'
+                    : 'an owner or admin repairs the source link.'}
+                </span>
+                {canWriteInstanceSettings ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setTab('settings')}
+                  >
+                    Repair source
+                  </Button>
+                ) : null}
+              </span>
             )}
           </AlertDescription>
         </Alert>
@@ -704,13 +688,13 @@ function ProjectDetailPage() {
                 ) : null}
                 {canWriteProjects ? (
                   <ProjectSettingsForm
+                    canChangeSource={canWriteInstanceSettings}
                     projectId={projectId}
                     currentValues={{
                       name: project.name,
                       description: project.description,
                       default_branch: project.default_branch,
                       repository_id: project.repository_id,
-                      repository_full_name: project.repository_full_name,
                     }}
                   />
                 ) : (

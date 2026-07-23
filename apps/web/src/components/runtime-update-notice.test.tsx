@@ -79,4 +79,47 @@ describe('RuntimeUpdateNotice', () => {
         .getAttribute('href'),
     ).toBe(release.changelog_url)
   })
+
+  it('requires the one-time installer repair for a wrapper runner service', async () => {
+    useRuntimeUpdates.mockReturnValue({
+      frontendRelease: { data: release },
+      backendRelease: { data: release },
+      backendUpdate: { data: { managed_service: false, phase: 'idle' } },
+      startFrontendUpdate: {
+        data: undefined,
+        isPending: false,
+        mutate: vi.fn(),
+      },
+      startBackendUpdate: {
+        data: undefined,
+        isPending: false,
+        mutate: vi.fn(),
+      },
+    })
+
+    render(
+      <SidebarProvider>
+        <RuntimeUpdateNotice />
+      </SidebarProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Updates available/i }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(
+      within(dialog).getByText(
+        /Run the current installer once from Terminal to finish or repair managed service setup/i,
+      ),
+    ).toBeTruthy()
+    expect(
+      within(dialog).getByText(
+        'curl -fsSL https://alpha.oore.pages.dev/install | OORE_CHANNEL=alpha bash',
+      ),
+    ).toBeTruthy()
+    expect(
+      within(dialog)
+        .getAllByRole('button', { name: 'Update now' })[1]
+        .hasAttribute('disabled'),
+    ).toBe(true)
+  })
 })

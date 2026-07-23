@@ -1,37 +1,23 @@
-import { useState } from 'react'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
   ArrowLeft as ArrowLeft01Icon,
   ArrowRight as ArrowRight01Icon,
-  X as Cancel01Icon,
   GitBranch as GitBranchIcon,
   Info as InformationCircleIcon,
   CircleEllipsis as MoreHorizontalCircle01Icon,
   RefreshCw as Refresh01Icon,
   Search as Search01Icon,
-  Check as Tick02Icon,
 } from 'lucide-react'
 
 import RepositoryAvatar from '@/components/repository-avatar'
 import { CollectionPagination } from '@/components/collection-controls'
 import { CollectionSearchInput } from '@/components/collection-search-input'
-import { toast } from '@/lib/toast'
 import type {
   Integration,
   IntegrationInstallation,
   IntegrationRepository,
 } from '@/lib/types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -48,7 +34,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -58,8 +43,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { useUpdateRepositoryRunnerPolicy } from '@/hooks/use-integrations'
-import type { RepositoryRunnerFilter } from './-integration-inventory-utils'
 
 function repositoryUrl(
   integration: Integration,
@@ -105,31 +88,13 @@ function RepositoryIdentity({
   )
 }
 
-function RepositoryRunnerPolicy({
+function RepositoryWebhookAction({
+  onSelect,
   repository,
 }: {
+  onSelect: () => void
   repository: IntegrationRepository
 }) {
-  const allowed = repository.allow_direct_macos_runner
-  return (
-    <Badge variant={allowed ? 'success' : 'outline'}>
-      {allowed ? 'Allowed' : 'Blocked'}
-    </Badge>
-  )
-}
-
-function RepositoryActions({
-  onPolicySelect,
-  onWebhookSelect,
-  pending,
-  repository,
-}: {
-  onPolicySelect: () => void
-  onWebhookSelect?: () => void
-  pending: boolean
-  repository: IntegrationRepository
-}) {
-  const allowed = repository.allow_direct_macos_runner
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -137,27 +102,17 @@ function RepositoryActions({
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label={`Actions for ${repository.full_name}`}
+            aria-label={`Webhook actions for ${repository.full_name}`}
           />
         }
       >
         <DynamicLucideIcon icon={MoreHorizontalCircle01Icon} />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto">
-        <DropdownMenuItem onClick={onPolicySelect} disabled={pending}>
-          <DynamicLucideIcon icon={allowed ? Cancel01Icon : Tick02Icon} />
-          {pending
-            ? 'Saving runner access...'
-            : allowed
-              ? 'Block new builds'
-              : 'Allow builds'}
+        <DropdownMenuItem onClick={onSelect}>
+          <DynamicLucideIcon icon={Refresh01Icon} />
+          Create webhook token
         </DropdownMenuItem>
-        {onWebhookSelect ? (
-          <DropdownMenuItem onClick={onWebhookSelect}>
-            <DynamicLucideIcon icon={Refresh01Icon} />
-            Create webhook token
-          </DropdownMenuItem>
-        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -166,23 +121,16 @@ function RepositoryActions({
 function RepositoryRows({
   canWrite,
   integration,
-  onPolicySelect,
   onWebhookSelect,
-  pendingRepositoryId,
   repositories,
 }: {
   canWrite: boolean
   integration: Integration
-  onPolicySelect: (repository: IntegrationRepository) => void
   onWebhookSelect?: (repository: IntegrationRepository) => void
-  pendingRepositoryId?: string
   repositories: Array<IntegrationRepository>
 }) {
-  const showActions = canWrite
-  const webhookAction =
-    integration.provider === 'gitlab' && onWebhookSelect
-      ? onWebhookSelect
-      : undefined
+  const showWebhookActions =
+    integration.provider === 'gitlab' && canWrite && !!onWebhookSelect
   return (
     <>
       <div className="divide-y sm:hidden">
@@ -193,14 +141,10 @@ function RepositoryRows({
                 integration={integration}
                 repository={repository}
               />
-              {showActions ? (
-                <RepositoryActions
+              {showWebhookActions ? (
+                <RepositoryWebhookAction
                   repository={repository}
-                  pending={pendingRepositoryId === repository.id}
-                  onPolicySelect={() => onPolicySelect(repository)}
-                  onWebhookSelect={
-                    webhookAction ? () => webhookAction(repository) : undefined
-                  }
+                  onSelect={() => onWebhookSelect(repository)}
                 />
               ) : null}
             </div>
@@ -211,9 +155,6 @@ function RepositoryRows({
               <Badge variant={repository.is_private ? 'secondary' : 'outline'}>
                 {repository.is_private ? 'Private' : 'Public'}
               </Badge>
-            </div>
-            <div className="flex items-center justify-end">
-              <RepositoryRunnerPolicy repository={repository} />
             </div>
           </article>
         ))}
@@ -226,10 +167,9 @@ function RepositoryRows({
               <TableHead>Repository</TableHead>
               <TableHead>Default branch</TableHead>
               <TableHead className="hidden lg:table-cell">Visibility</TableHead>
-              <TableHead className="text-right">Direct runner</TableHead>
-              {showActions ? (
+              {showWebhookActions ? (
                 <TableHead className="w-10">
-                  <span className="sr-only">Actions</span>
+                  <span className="sr-only">Webhook actions</span>
                 </TableHead>
               ) : null}
             </TableRow>
@@ -253,22 +193,11 @@ function RepositoryRows({
                     {repository.is_private ? 'Private' : 'Public'}
                   </Badge>
                 </TableCell>
-                <TableCell>
-                  <div className="flex justify-end">
-                    <RepositoryRunnerPolicy repository={repository} />
-                  </div>
-                </TableCell>
-                {showActions ? (
+                {showWebhookActions ? (
                   <TableCell>
-                    <RepositoryActions
+                    <RepositoryWebhookAction
                       repository={repository}
-                      pending={pendingRepositoryId === repository.id}
-                      onPolicySelect={() => onPolicySelect(repository)}
-                      onWebhookSelect={
-                        webhookAction
-                          ? () => webhookAction(repository)
-                          : undefined
-                      }
+                      onSelect={() => onWebhookSelect(repository)}
                     />
                   </TableCell>
                 ) : null}
@@ -353,7 +282,6 @@ export function IntegrationRepositoryInventory({
   onPageChange,
   onPageSizeChange,
   onRetry,
-  onRunnerFilterChange,
   onSearch,
   onWebhookTokenRequest,
   page,
@@ -361,7 +289,6 @@ export function IntegrationRepositoryInventory({
   query,
   repositories,
   repositoryCount,
-  runnerFilter,
   total,
 }: {
   canWrite: boolean
@@ -372,7 +299,6 @@ export function IntegrationRepositoryInventory({
   onPageChange: (page: number) => void
   onPageSizeChange: (pageSize: number) => void
   onRetry: () => void
-  onRunnerFilterChange: (filter: RepositoryRunnerFilter) => void
   onSearch: (query: string) => void
   onWebhookTokenRequest?: (repository: IntegrationRepository) => void
   page: number
@@ -380,46 +306,20 @@ export function IntegrationRepositoryInventory({
   query?: string
   repositories: Array<IntegrationRepository>
   repositoryCount: number
-  runnerFilter: RepositoryRunnerFilter
   total: number
 }) {
-  const policyMutation = useUpdateRepositoryRunnerPolicy(integration.id)
-  const [policyTarget, setPolicyTarget] =
-    useState<IntegrationRepository | null>(null)
   const repositoryKind =
     integration.provider === 'gitlab' ? 'projects' : 'repositories'
 
-  function updateRunnerPolicy() {
-    if (!policyTarget) return
-    const target = policyTarget
-    const allow = !target.allow_direct_macos_runner
-    setPolicyTarget(null)
-    policyMutation.mutate(
-      { repositoryId: target.id, allow },
-      {
-        onSuccess: () =>
-          toast.success(
-            allow
-              ? `${target.full_name} can now run builds.`
-              : `${target.full_name} is blocked from new builds.`,
-          ),
-        onError: (mutationError) =>
-          toast.error(
-            `Could not update ${target.full_name}: ${mutationError.message}`,
-          ),
-      },
-    )
-  }
-
-  const showControls =
-    isLoading || repositoryCount > 0 || !!query || runnerFilter !== 'all'
+  const showControls = isLoading || repositoryCount > 0 || !!query
   const showPagination =
     !isLoading && !error && (total > 20 || page > 1 || pageSize !== 20)
 
   return (
-    <section aria-label="Repository access" className="min-w-0 space-y-4">
+    <section aria-label="Repositories" className="min-w-0 space-y-4">
       <p className="text-sm text-muted-foreground">
-        Runner access is granted per repository. Blocked is the safe default.
+        Repositories discovered from this source are available when an owner or
+        admin creates a project.
       </p>
 
       {showControls ? (
@@ -430,20 +330,6 @@ export function IntegrationRepositoryInventory({
             placeholder={`Search ${repositoryKind}`}
             ariaLabel={`Search ${repositoryKind}`}
           />
-          <NativeSelect
-            className="w-full sm:w-44"
-            aria-label="Filter by runner access"
-            value={runnerFilter}
-            onChange={(event) =>
-              onRunnerFilterChange(event.target.value as RepositoryRunnerFilter)
-            }
-          >
-            <NativeSelectOption value="all">
-              All runner states
-            </NativeSelectOption>
-            <NativeSelectOption value="blocked">Blocked</NativeSelectOption>
-            <NativeSelectOption value="allowed">Allowed</NativeSelectOption>
-          </NativeSelect>
         </div>
       ) : null}
 
@@ -490,9 +376,7 @@ export function IntegrationRepositoryInventory({
               <DynamicLucideIcon icon={Search01Icon} />
             </EmptyMedia>
             <EmptyTitle>No matching {repositoryKind}</EmptyTitle>
-            <EmptyDescription>
-              Try a different search or runner state.
-            </EmptyDescription>
+            <EmptyDescription>Try a different search.</EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
             <Button variant="outline" onClick={onClearFilters}>
@@ -506,13 +390,7 @@ export function IntegrationRepositoryInventory({
         <RepositoryRows
           canWrite={canWrite}
           integration={integration}
-          onPolicySelect={setPolicyTarget}
           onWebhookSelect={onWebhookTokenRequest}
-          pendingRepositoryId={
-            policyMutation.isPending
-              ? policyMutation.variables.repositoryId
-              : undefined
-          }
           repositories={repositories}
         />
       ) : null}
@@ -526,36 +404,6 @@ export function IntegrationRepositoryInventory({
           onPageSizeChange={onPageSizeChange}
         />
       ) : null}
-
-      <AlertDialog
-        open={policyTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setPolicyTarget(null)
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {policyTarget?.allow_direct_macos_runner
-                ? `Block ${policyTarget.full_name}?`
-                : `Allow ${policyTarget?.full_name ?? 'this repository'}?`}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {policyTarget?.allow_direct_macos_runner
-                ? `Running builds will finish. New builds for projects linked to ${policyTarget.full_name} will wait.`
-                : `Build commands from every project linked to ${policyTarget?.full_name ?? 'this repository'} will run with the runner account's macOS permissions.`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={updateRunnerPolicy}>
-              {policyTarget?.allow_direct_macos_runner
-                ? 'Block new builds'
-                : 'Allow this repository'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </section>
   )
 }

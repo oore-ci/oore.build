@@ -37,7 +37,9 @@ Open the source details page and choose **Sync GitLab projects**. Oore follows G
 
 Go to **Projects**, create a project, and confirm the repository picker identifies the GitLab host as well as the project path.
 
-Before running builds, approve the repository in **Settings > Sources** and enable Direct macOS runner under **Settings > Runners**. Approval applies to every Oore project linked to that GitLab repository.
+An Owner or Admin trusts a repository for execution by creating a project linked
+to it. There is no separate repository approval step. Use **Accept new builds**
+under **Settings > Preferences** only when you need to pause or resume scheduling.
 
 ## Webhook configuration
 
@@ -79,7 +81,6 @@ Also revoke the OAuth application in GitLab if no longer needed.
 | `POST`   | `/v1/integrations/gitlab/authorize`                       | Complete authorization                     |
 | `GET`    | `/v1/integrations/{id}/repositories`                      | List accessible repositories               |
 | `POST`   | `/v1/integration-repositories/{id}/gitlab-webhook-secret` | Generate or rotate a project webhook token |
-| `PUT`    | `/v1/integration-repositories/{id}/runner-policy`         | Approve or revoke Direct runner execution  |
 | `DELETE` | `/v1/integrations/{id}`                                   | Remove integration                         |
 
 ## Reference

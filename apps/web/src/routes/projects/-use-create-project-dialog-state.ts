@@ -65,9 +65,8 @@ export function useCreateProjectDialogState(
   )
   const canBrowseLocalFs = uiIsLoopback && backendIsLoopback
 
-  const { data: repos, isLoading: reposLoading } = useSourceRepositories(
-    open && isRemoteMode,
-  )
+  const repositoriesQuery = useSourceRepositories(open && isRemoteMode)
+  const repos = repositoriesQuery.data
   const [pickerOpen, setPickerOpen] = useState(false)
 
   const repoItems = useMemo(
@@ -192,7 +191,11 @@ export function useCreateProjectDialogState(
     pickerOpen,
     repoItems,
     repos,
-    reposLoading,
+    reposError: repositoriesQuery.error,
+    repoFailures: repositoriesQuery.sourceFailures,
+    reposLoading: repositoriesQuery.isLoading,
+    reposRetrying: repositoriesQuery.isFetching,
+    retryRepos: repositoriesQuery.refetch,
     setPickerOpen,
   }
 }

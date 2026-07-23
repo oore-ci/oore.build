@@ -30,24 +30,37 @@ cargo build --release -p oore --locked
 
 The release binaries are at `target/release/oored` and `target/release/oore`.
 
-### 2. Install the daemon service
+### 2. Install the backend services
 
-Keep the daemon bound to loopback and run it as a macOS launchd user service:
+Keep the daemon bound to loopback and install it as a boot-time system
+LaunchDaemon running as a non-root service account:
 
 ```bash
-./target/release/oored install-service \
+sudo ./target/release/oored install-service \
+  --system \
+  --user "$USER" \
   --listen 127.0.0.1:8787 \
   --env OORE_PUBLIC_URL=https://ci.mycompany.com \
   --env OORE_CORS_ORIGINS=https://ci.mycompany.com \
   --env RUST_LOG=info
 ```
 
-If you installed release binaries with the installer, use `oored install-service`
-instead of `./target/release/oored install-service`.
+Then enroll and install the separate Direct runner. Run this command as the
+runner account, without `sudo`; it requests administrator access only for
+launchd setup:
 
-The service plist is written to
-`~/Library/LaunchAgents/build.oore.oored.plist`, and daemon logs are written to
-`~/.oore/logs/oored.log`.
+```bash
+./target/release/oore runner install-service \
+  --managed-local \
+  --daemon-url http://127.0.0.1:8787
+```
+
+If you installed release binaries with the installer, use `oored` and `oore`
+instead of the paths under `target/release`. The installer normally performs
+both service steps automatically. The plists are written to
+`/Library/LaunchDaemons/build.oore.oored.plist` and
+`/Library/LaunchDaemons/build.oore.oore-runner.plist`; both start at boot without
+a GUI login.
 
 ### 3. Set up a reverse proxy
 
@@ -108,7 +121,8 @@ For production, use S3 or R2 instead of local storage. See [Configure Storage](/
 ```bash
 curl https://ci.mycompany.com/v1/public/setup-status
 curl https://ci.mycompany.com/healthz
-launchctl print gui/$(id -u)/build.oore.oored
+sudo launchctl print system/build.oore.oored
+sudo launchctl print system/build.oore.oore-runner
 ```
 
 ## Security hardening

@@ -32,6 +32,8 @@ enum Commands {
     InstallService(InstallServiceArgs),
     UninstallService(UninstallServiceArgs),
     Version,
+    #[command(hide = true)]
+    PackageVersion,
 }
 
 #[derive(Debug, clap::Args)]
@@ -191,8 +193,9 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
         });
     }
 
-    // The embedded runner always reaches the daemon through loopback. Keep a
-    // loopback listener alongside a private (for example, NetBird) bind.
+    // The managed local runner and operator CLI reach the daemon through
+    // loopback. Keep a loopback listener alongside a private (for example,
+    // NetBird) bind.
     let daemon_url = embedded_runner_url(addr);
     let _embedded_runner = oored::embedded_runner::start_if_enabled(runner_pool, daemon_url)
         .await
@@ -648,6 +651,7 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", env!("CARGO_PKG_VERSION"));
             }
         }
+        Commands::PackageVersion => println!("{}", env!("CARGO_PKG_VERSION")),
     }
 
     Ok(())

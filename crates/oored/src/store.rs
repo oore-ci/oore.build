@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 use anyhow::{Context, bail};
@@ -20,11 +20,20 @@ fn local_subject_for_email(email: &str) -> String {
 /// SQLite-backed state store for the setup state machine.
 pub struct SetupStore {
     pool: SqlitePool,
+    path: PathBuf,
 }
 
 impl SetupStore {
     /// Create a new store by connecting to the SQLite database at `path`.
     pub async fn connect(path: PathBuf) -> anyhow::Result<Self> {
+        let path = if path.is_absolute() {
+            path
+        } else {
+            env::current_dir()
+                .context("failed to resolve the current directory")?
+                .join(path)
+        };
+
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
@@ -49,7 +58,7 @@ impl SetupStore {
             .await
             .context("failed to run database migrations")?;
 
-        Ok(Self { pool })
+        Ok(Self { pool, path })
     }
 
     /// Resolve the database path from (in priority order):
@@ -167,6 +176,11 @@ impl SetupStore {
     /// Return a reference to the underlying connection pool.
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    /// Return the absolute path backing this store.
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     /// Ensure the owner user row exists in the `users` table.

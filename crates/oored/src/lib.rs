@@ -2434,10 +2434,6 @@ async fn build_router_inner(
             get(integrations::repository_avatar),
         )
         .route(
-            "/v1/integration-repositories/{id}/runner-policy",
-            axum::routing::put(integrations::update_repository_runner_policy),
-        )
-        .route(
             "/v1/integration-repositories/{id}/gitlab-webhook-secret",
             post(integrations::gitlab::rotate_repository_webhook_secret),
         )

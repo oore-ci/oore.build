@@ -1083,6 +1083,40 @@ async fn sync_gitlab_projects(
     }
 
     let external_ids: Vec<String> = projects.iter().map(|p| p.id.to_string()).collect();
+    let mut stale_repositories = QueryBuilder::<Sqlite>::new(
+        "SELECT id FROM integration_repositories WHERE installation_id = ",
+    );
+    stale_repositories.push_bind(installation_id);
+    if !external_ids.is_empty() {
+        stale_repositories.push(" AND external_id NOT IN (");
+        let mut separated = stale_repositories.separated(", ");
+        for external_id in &external_ids {
+            separated.push_bind(external_id);
+        }
+        separated.push_unseparated(")");
+    }
+    let repository_ids = stale_repositories
+        .build_query_scalar::<String>()
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to load stale GitLab repositories");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to clean up stale repositories",
+            )
+        })?;
+    super::cancel_unassigned_builds_for_removed_repositories(&mut tx, &repository_ids)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to cancel builds from stale GitLab repositories");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to clean up stale repositories",
+            )
+        })?;
     for prefix in [
         "UPDATE projects SET repository_id = NULL WHERE repository_id IN (SELECT id FROM integration_repositories WHERE installation_id = ",
         "DELETE FROM integration_repositories WHERE installation_id = ",
@@ -1099,6 +1133,14 @@ async fn sync_gitlab_projects(
         }
         if prefix.starts_with("UPDATE") {
             query.push(")");
+        } else {
+            query.push(
+                " AND NOT EXISTS (\
+                   SELECT 1 FROM builds b \
+                   WHERE b.status IN ('assigned', 'running') \
+                     AND json_extract(b.config_snapshot, '$.repository_id') = integration_repositories.id\
+                 )",
+            );
         }
         query.build().execute(&mut *tx).await.map_err(|e| {
             error!(error = %e, "failed to remove stale GitLab projects");
@@ -1288,8 +1330,8 @@ pub async fn proxy_git_checkout(
     let row = sqlx::query(
         "SELECT i.host_url, r.full_name, c.encrypted_value \
          FROM builds b \
-         JOIN projects p ON p.id = b.project_id \
-         JOIN integration_repositories r ON r.id = p.repository_id \
+         JOIN integration_repositories r \
+           ON r.id = json_extract(b.config_snapshot, '$.repository_id') \
          JOIN integration_installations inst ON inst.id = r.installation_id \
          JOIN integrations i ON i.id = inst.integration_id \
          JOIN integration_credentials c ON c.integration_id = i.id \
@@ -2198,7 +2240,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_sync_paginates_and_removes_stale_repositories() {
+    async fn project_sync_paginates_and_retains_active_stale_sources() {
         let app = axum::Router::new().route(
             "/api/v4/projects",
             get(|Query(params): Query<HashMap<String, String>>| async move {
@@ -2244,7 +2286,6 @@ mod tests {
                 id TEXT PRIMARY KEY, installation_id TEXT NOT NULL, external_id TEXT NOT NULL,
                 full_name TEXT NOT NULL, default_branch TEXT, is_private INTEGER NOT NULL,
                 html_url TEXT, avatar_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-                allow_direct_macos_runner INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(installation_id, external_id)
             )",
         )
@@ -2255,6 +2296,20 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE builds (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, status TEXT NOT NULL,
+                runner_id TEXT, signing_token_hash TEXT, config_snapshot TEXT NOT NULL DEFAULT '{}',
+                finished_at INTEGER, updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE build_events (
+                id TEXT PRIMARY KEY, build_id TEXT NOT NULL, from_status TEXT,
+                to_status TEXT NOT NULL, actor TEXT, reason TEXT, created_at INTEGER NOT NULL
+            );",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO integration_repositories \
              (id, installation_id, external_id, full_name, default_branch, is_private, \
@@ -2267,8 +2322,8 @@ mod tests {
         sqlx::query(
             "INSERT INTO integration_repositories \
              (id, installation_id, external_id, full_name, default_branch, is_private, \
-              html_url, avatar_url, created_at, updated_at, allow_direct_macos_runner) \
-             VALUES ('approved', 'install', '1', 'group/old-name', 'main', 1, NULL, NULL, 1, 1, 1)",
+              html_url, avatar_url, created_at, updated_at) \
+             VALUES ('existing', 'install', '1', 'group/old-name', 'main', 1, NULL, NULL, 1, 1)",
         )
         .execute(&pool)
         .await
@@ -2277,6 +2332,14 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(
+            "INSERT INTO builds \
+             (id, project_id, status, config_snapshot, updated_at) \
+             VALUES ('active', 'project', 'running', '{\"repository_id\":\"stale\"}', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         sync_gitlab_projects(
             build_http_client().unwrap(),
@@ -2301,7 +2364,7 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(count, 101);
+        assert_eq!(count, 102);
         let first_avatar: Option<String> = sqlx::query_scalar(
             "SELECT avatar_url FROM integration_repositories WHERE external_id = '1'",
         )
@@ -2322,14 +2385,6 @@ mod tests {
             fallback_avatar.as_deref(),
             Some("https://gitlab.example/namespace-avatar.png")
         );
-        let approved: i64 = sqlx::query_scalar(
-            "SELECT allow_direct_macos_runner FROM integration_repositories WHERE external_id = '1'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(approved, 1, "repository sync must preserve runner approval");
-
         sqlx::query("DELETE FROM integration_repositories WHERE external_id = '1'")
             .execute(&pool)
             .await
@@ -2345,17 +2400,37 @@ mod tests {
         )
         .await
         .unwrap();
-        let readded_approval: i64 = sqlx::query_scalar(
-            "SELECT allow_direct_macos_runner FROM integration_repositories WHERE external_id = '1'",
+        let readded_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM integration_repositories WHERE external_id = '1'",
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(
-            readded_approval, 0,
-            "deleting and rediscovering a repository must reset runner approval"
-        );
+        assert_eq!(readded_count, 1);
         assert!(linked.is_none());
+
+        sqlx::query("UPDATE builds SET status = 'succeeded' WHERE id = 'active'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sync_gitlab_projects(
+            &build_http_client().unwrap(),
+            &pool,
+            &host,
+            "token",
+            "install",
+            false,
+            3,
+        )
+        .await
+        .unwrap();
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM integration_repositories WHERE installation_id = 'install'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 101);
         server.abort();
     }
 

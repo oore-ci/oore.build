@@ -50,8 +50,18 @@ const RUNNER_WORKSPACE_ROOT_NAME: &str = "oore-runner-workspaces";
 const LEGACY_RECONCILIATION_MARKER: &str = ".legacy-workspaces-reconciled-v1";
 const LEGACY_BUILD_WORKSPACE_ROOT: &str = "/tmp/oore-builds.noindex";
 const SPOTLIGHT_NO_INDEX_SENTINEL: &str = ".metadata_never_index";
+pub const RUNNER_SERVICE_ACK_FILE: &str = "runner-service-ack.json";
+pub const RUNNER_SERVICE_ACK_PATH_ENV: &str = "OORE_RUNNER_SERVICE_ACK_PATH";
+pub const RUNNER_SERVICE_ACK_MAX_AGE_SECS: u64 = 75;
+const RUNNER_SERVICE_ACK_SCHEMA_VERSION: u32 = 1;
 // ponytail: fixed three-check grace; move it into the runner protocol if deployments need tuning.
 const MAX_CONSECUTIVE_AUTHORITY_FAILURES: u8 = 3;
+const MANAGED_FVM_VERSION: &str = "4.1.2";
+const MANAGED_FVM_ARM64_SHA256: &str =
+    "0b2a146986c51f06331f135f0bdf2a202eb57f55d7edd420c9078e8520e4c033";
+const MANAGED_FVM_X64_SHA256: &str =
+    "7bbfcb6883ea67ce532163704f5625eba7ecf340084be707cde71a28fefff1d8";
+const MANAGED_FVM_MAX_ARCHIVE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RunnerConfig {
@@ -59,6 +69,18 @@ pub struct RunnerConfig {
     pub runner_token: String,
     pub daemon_url: String,
     pub name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct RunnerServiceAck {
+    pub schema_version: u32,
+    pub pid: u32,
+    pub runner_id: String,
+    pub daemon_url_sha256: String,
+    pub executable_identity: String,
+    pub version: String,
+    pub protocol_version: u32,
+    pub acknowledged_at: i64,
 }
 
 /// Reject runner control-plane URLs that could expose the bearer token or job
@@ -187,8 +209,199 @@ fn prepare_runner_workspace_root() -> anyhow::Result<PathBuf> {
 
 fn repository_shell_command(script: &str, workspace: &Path) -> tokio::process::Command {
     let mut command = tokio::process::Command::new("/bin/sh");
-    command.arg("-c").arg(script).current_dir(workspace);
     command
+        .arg("-c")
+        .arg(script)
+        .current_dir(workspace)
+        .env_remove(RUNNER_SERVICE_ACK_PATH_ENV);
+    if let Some(install_root) = bundled_fvm_install_root() {
+        configure_bundled_fvm_environment(&mut command, &install_root);
+    }
+    command
+}
+
+fn bundled_fvm_install_root() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    oore_install_root_for_executable(&executable)
+        .filter(|install_root| managed_fvm_is_available(install_root))
+}
+
+fn oore_install_root_for_executable(executable: &Path) -> Option<PathBuf> {
+    let bin = executable.parent()?;
+    if bin.file_name()? != "bin" {
+        return None;
+    }
+    let install_root = bin.parent()?;
+    install_root
+        .join("VERSION")
+        .is_file()
+        .then(|| install_root.to_path_buf())
+}
+
+fn managed_fvm_is_available(install_root: &Path) -> bool {
+    install_root.join("bin/fvm").is_file() && install_root.join("libexec/fvm/fvm").is_file()
+}
+
+fn managed_fvm_download(arch: &str) -> anyhow::Result<(String, &'static str)> {
+    let (asset_arch, expected_sha256) = match arch {
+        "aarch64" => ("arm64", MANAGED_FVM_ARM64_SHA256),
+        "x86_64" => ("x64", MANAGED_FVM_X64_SHA256),
+        other => anyhow::bail!("Oore-managed FVM is not available for architecture {other}"),
+    };
+    Ok((
+        format!(
+            "https://github.com/conceptadev/fvm/releases/download/{MANAGED_FVM_VERSION}/fvm-{MANAGED_FVM_VERSION}-macos-{asset_arch}.tar.gz"
+        ),
+        expected_sha256,
+    ))
+}
+
+async fn install_managed_fvm_archive(
+    install_root: &Path,
+    archive_bytes: &[u8],
+    expected_sha256: &str,
+) -> anyhow::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    anyhow::ensure!(
+        archive_bytes.len() <= MANAGED_FVM_MAX_ARCHIVE_BYTES,
+        "managed FVM archive exceeds the {} byte limit",
+        MANAGED_FVM_MAX_ARCHIVE_BYTES
+    );
+    let actual_sha256 = hex::encode(Sha256::digest(archive_bytes));
+    anyhow::ensure!(
+        actual_sha256 == expected_sha256,
+        "managed FVM archive checksum mismatch"
+    );
+
+    let mut random = [0u8; 8];
+    rand::thread_rng().fill_bytes(&mut random);
+    let staging = install_root.join(format!(
+        ".fvm-bootstrap-{}-{}",
+        std::process::id(),
+        hex::encode(random)
+    ));
+    let mut staging_builder = fs::DirBuilder::new();
+    staging_builder.mode(0o700);
+    staging_builder
+        .create(&staging)
+        .with_context(|| format!("failed to create {}", staging.display()))?;
+
+    let result: anyhow::Result<()> = async {
+        let archive = staging.join("fvm.tar.gz");
+        write_private_file(&archive, archive_bytes)
+            .with_context(|| format!("failed to write {}", archive.display()))?;
+        let output = tokio::process::Command::new("/usr/bin/tar")
+            .args(["-xzf"])
+            .arg(&archive)
+            .args(["-C"])
+            .arg(&staging)
+            .output()
+            .await
+            .context("failed to extract managed FVM archive")?;
+        anyhow::ensure!(
+            output.status.success(),
+            "failed to extract managed FVM archive: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+
+        let extracted = staging.join("fvm");
+        let payload = extracted.join("fvm");
+        let payload_metadata = fs::symlink_metadata(&payload)
+            .with_context(|| format!("managed FVM archive is missing {}", payload.display()))?;
+        anyhow::ensure!(
+            payload_metadata.file_type().is_file(),
+            "managed FVM payload is not a regular file"
+        );
+        fs::set_permissions(&payload, fs::Permissions::from_mode(0o755))?;
+
+        let libexec = install_root.join("libexec");
+        fs::create_dir_all(&libexec)?;
+        let destination = libexec.join("fvm");
+        match fs::remove_dir_all(&destination) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        fs::rename(&extracted, &destination).with_context(|| {
+            format!(
+                "failed to install managed FVM payload at {}",
+                destination.display()
+            )
+        })?;
+        fs::File::open(&libexec)?.sync_all()?;
+
+        let bin = install_root.join("bin");
+        fs::create_dir_all(&bin)?;
+        let launcher = bin.join(format!(
+            ".fvm.{}-{}.tmp",
+            std::process::id(),
+            hex::encode(random)
+        ));
+        write_private_file(
+            &launcher,
+            b"#!/bin/sh\nset -eu\nroot=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")/..\" && pwd)\"\nexec \"$root/libexec/fvm/fvm\" \"$@\"\n",
+        )?;
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755))?;
+        fs::rename(&launcher, bin.join("fvm"))?;
+        fs::File::open(&bin)?.sync_all()?;
+        Ok(())
+    }
+    .await;
+
+    if let Err(cleanup_error) = fs::remove_dir_all(&staging)
+        && cleanup_error.kind() != ErrorKind::NotFound
+        && result.is_ok()
+    {
+        return Err(cleanup_error).context("failed to clean up managed FVM bootstrap");
+    }
+    result
+}
+
+async fn ensure_managed_fvm(client: &reqwest::Client) -> anyhow::Result<bool> {
+    let executable = std::env::current_exe().context("failed to locate the Oore runner")?;
+    let Some(install_root) = oore_install_root_for_executable(&executable) else {
+        return Ok(false);
+    };
+    if managed_fvm_is_available(&install_root) {
+        return Ok(false);
+    }
+
+    let (url, expected_sha256) = managed_fvm_download(std::env::consts::ARCH)?;
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .context("failed to download Oore-managed FVM")?
+        .error_for_status()
+        .context("Oore-managed FVM download failed")?;
+    if let Some(length) = response.content_length() {
+        anyhow::ensure!(
+            length <= MANAGED_FVM_MAX_ARCHIVE_BYTES as u64,
+            "managed FVM archive exceeds the {} byte limit",
+            MANAGED_FVM_MAX_ARCHIVE_BYTES
+        );
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .context("failed to read Oore-managed FVM download")?;
+    install_managed_fvm_archive(&install_root, &bytes, expected_sha256).await?;
+    Ok(true)
+}
+
+fn configure_bundled_fvm_environment(command: &mut tokio::process::Command, install_root: &Path) {
+    let mut paths = vec![install_root.join("bin")];
+    if let Some(current) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&current));
+    }
+    if let Ok(path) = std::env::join_paths(paths) {
+        command.env("PATH", path);
+    }
+    command.env(
+        "FVM_CACHE_PATH",
+        install_root.join("toolchains").join("flutter"),
+    );
 }
 
 fn write_private_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
@@ -213,6 +426,17 @@ fn write_private_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+pub fn runner_version_for_executable(executable: &Path) -> String {
+    executable
+        .parent()
+        .and_then(Path::parent)
+        .map(|root| root.join("VERSION"))
+        .and_then(|path| fs::read_to_string(path).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+}
+
 pub async fn detect_capabilities() -> serde_json::Value {
     let os_version = std::process::Command::new("sw_vers")
         .arg("-productVersion")
@@ -232,12 +456,8 @@ pub async fn detect_capabilities() -> serde_json::Value {
 
     let arch = std::env::consts::ARCH.to_string();
     let version = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent()?.parent().map(|root| root.join("VERSION")))
-        .and_then(|path| fs::read_to_string(path).ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+        .map(|path| runner_version_for_executable(&path))
+        .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
 
     serde_json::json!({
         "os": "macos",
@@ -256,6 +476,385 @@ pub fn get_hostname() -> String {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+pub const RUNNER_RELEASE_MARKER_FILE: &str = "RUNNER_RELEASE";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExecutableIdentity {
+    device: u64,
+    inode: u64,
+    length: u64,
+    modified_seconds: i64,
+    modified_nanoseconds: i64,
+}
+
+fn executable_identity(path: &Path) -> anyhow::Result<ExecutableIdentity> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = fs::metadata(path)
+        .with_context(|| format!("failed to inspect runner executable {}", path.display()))?;
+    anyhow::ensure!(
+        metadata.is_file(),
+        "runner executable is not a regular file"
+    );
+
+    Ok(ExecutableIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        length: metadata.len(),
+        modified_seconds: metadata.mtime(),
+        modified_nanoseconds: metadata.mtime_nsec(),
+    })
+}
+
+impl ExecutableIdentity {
+    fn encode_fields(&self) -> String {
+        format!(
+            "{}:{}:{}:{}:{}",
+            self.device, self.inode, self.length, self.modified_seconds, self.modified_nanoseconds
+        )
+    }
+
+    fn encode(&self) -> String {
+        format!("v1:{}", self.encode_fields())
+    }
+
+    fn decode(raw: &str) -> anyhow::Result<Self> {
+        let values = raw.trim().split(':').collect::<Vec<_>>();
+        anyhow::ensure!(
+            values.len() == 6 && values[0] == "v1",
+            "invalid runner release marker"
+        );
+        Ok(Self {
+            device: values[1].parse().context("invalid marker device")?,
+            inode: values[2].parse().context("invalid marker inode")?,
+            length: values[3].parse().context("invalid marker length")?,
+            modified_seconds: values[4]
+                .parse()
+                .context("invalid marker modification time")?,
+            modified_nanoseconds: values[5]
+                .parse()
+                .context("invalid marker modification nanoseconds")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RunnerReleaseMarker {
+    generation: Option<String>,
+    executable: ExecutableIdentity,
+}
+
+impl RunnerReleaseMarker {
+    fn new(executable: ExecutableIdentity) -> Self {
+        let mut generation = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut generation);
+        Self {
+            generation: Some(hex::encode(generation)),
+            executable,
+        }
+    }
+
+    fn encode(&self) -> String {
+        match self.generation.as_deref() {
+            Some(generation) => {
+                format!("v2:{generation}:{}", self.executable.encode_fields())
+            }
+            None => self.executable.encode(),
+        }
+    }
+
+    fn decode(raw: &str) -> anyhow::Result<Self> {
+        let raw = raw.trim();
+        if raw.starts_with("v1:") {
+            return Ok(Self {
+                generation: None,
+                executable: ExecutableIdentity::decode(raw)?,
+            });
+        }
+
+        let mut values = raw.splitn(3, ':');
+        anyhow::ensure!(values.next() == Some("v2"), "invalid runner release marker");
+        let generation = values.next().context("missing marker generation")?;
+        anyhow::ensure!(
+            generation.len() == 32 && generation.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "invalid marker generation"
+        );
+        let identity = values
+            .next()
+            .context("missing marker executable identity")?;
+        Ok(Self {
+            generation: Some(generation.to_string()),
+            executable: ExecutableIdentity::decode(&format!("v1:{identity}"))?,
+        })
+    }
+}
+
+pub fn runner_executable_identity_marker(path: &Path) -> anyhow::Result<String> {
+    Ok(executable_identity(path)?.encode())
+}
+
+fn runner_service_ack_path(raw_path: Option<OsString>) -> anyhow::Result<Option<PathBuf>> {
+    let Some(raw_path) = raw_path else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        !raw_path.is_empty(),
+        "{RUNNER_SERVICE_ACK_PATH_ENV} must not be empty"
+    );
+    let path = PathBuf::from(raw_path);
+    anyhow::ensure!(
+        path.is_absolute(),
+        "{RUNNER_SERVICE_ACK_PATH_ENV} must be an absolute path"
+    );
+    Ok(Some(path))
+}
+
+fn runner_service_ack_path_from_env() -> anyhow::Result<Option<PathBuf>> {
+    runner_service_ack_path(std::env::var_os(RUNNER_SERVICE_ACK_PATH_ENV))
+}
+
+pub fn runner_daemon_url_fingerprint(daemon_url: &str) -> String {
+    hex::encode(Sha256::digest(daemon_url.as_bytes()))
+}
+
+fn runner_service_ack_for(
+    config: &RunnerConfig,
+    daemon_url: &str,
+    executable: &Path,
+    acknowledged_at: i64,
+) -> anyhow::Result<RunnerServiceAck> {
+    Ok(RunnerServiceAck {
+        schema_version: RUNNER_SERVICE_ACK_SCHEMA_VERSION,
+        pid: std::process::id(),
+        runner_id: config.runner_id.clone(),
+        daemon_url_sha256: runner_daemon_url_fingerprint(daemon_url),
+        executable_identity: runner_executable_identity_marker(executable)?,
+        version: runner_version_for_executable(executable),
+        protocol_version: RUNNER_PROTOCOL_VERSION,
+        acknowledged_at,
+    })
+}
+
+fn refreshed_runner_service_ack(
+    template: &RunnerServiceAck,
+    acknowledged_at: i64,
+) -> RunnerServiceAck {
+    let mut ack = template.clone();
+    ack.acknowledged_at = acknowledged_at;
+    ack
+}
+
+fn write_runner_service_ack(path: &Path, ack: &RunnerServiceAck) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .context("runner service acknowledgement path has no parent")?;
+    fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "failed to create runner acknowledgement directory {}",
+            parent.display()
+        )
+    })?;
+
+    let mut random = [0u8; 8];
+    rand::thread_rng().fill_bytes(&mut random);
+    let staged = parent.join(format!(
+        ".{}.{}-{}.tmp",
+        RUNNER_SERVICE_ACK_FILE,
+        std::process::id(),
+        hex::encode(random)
+    ));
+    let bytes = serde_json::to_vec(ack).context("failed to serialize runner acknowledgement")?;
+    if let Err(error) = write_private_file(&staged, &bytes).and_then(|()| fs::rename(&staged, path))
+    {
+        let _ = fs::remove_file(&staged);
+        return Err(error).with_context(|| {
+            format!(
+                "failed to publish runner service acknowledgement {}",
+                path.display()
+            )
+        });
+    }
+    fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+fn clear_runner_service_ack(path: &Path) -> anyhow::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "failed to clear runner service acknowledgement {}",
+                path.display()
+            )
+        }),
+    }
+}
+
+fn clear_runner_service_ack_if_owned(path: &Path, pid: u32) {
+    let owned = fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<RunnerServiceAck>(&bytes).ok())
+        .is_some_and(|ack| ack.pid == pid);
+    if owned {
+        let _ = fs::remove_file(path);
+    }
+}
+
+pub fn verify_runner_service_ack(
+    path: &Path,
+    config: &RunnerConfig,
+    executable: &Path,
+    expected_pid: u32,
+    not_before: Option<i64>,
+    max_age: Duration,
+) -> anyhow::Result<RunnerServiceAck> {
+    #[cfg(unix)]
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let metadata = fs::symlink_metadata(path).with_context(|| {
+        format!(
+            "runner has not acknowledged the backend at {}",
+            path.display()
+        )
+    })?;
+    anyhow::ensure!(
+        metadata.file_type().is_file(),
+        "runner service acknowledgement is not a regular file"
+    );
+    #[cfg(unix)]
+    anyhow::ensure!(
+        metadata.uid() == current_uid()? && metadata.permissions().mode() & 0o777 == 0o600,
+        "runner service acknowledgement is not a private current-user file"
+    );
+
+    let ack: RunnerServiceAck = serde_json::from_slice(&fs::read(path).with_context(|| {
+        format!(
+            "failed to read runner service acknowledgement {}",
+            path.display()
+        )
+    })?)
+    .context("runner service acknowledgement is invalid")?;
+    anyhow::ensure!(
+        ack.schema_version == RUNNER_SERVICE_ACK_SCHEMA_VERSION,
+        "runner service acknowledgement schema is unsupported"
+    );
+    anyhow::ensure!(
+        ack.pid == expected_pid,
+        "runner has not acknowledged from the active service process"
+    );
+    anyhow::ensure!(
+        ack.runner_id == config.runner_id,
+        "runner acknowledgement belongs to a different runner"
+    );
+    anyhow::ensure!(
+        ack.daemon_url_sha256 == runner_daemon_url_fingerprint(&config.daemon_url),
+        "runner acknowledgement belongs to a different backend"
+    );
+    anyhow::ensure!(
+        ack.executable_identity == runner_executable_identity_marker(executable)?,
+        "runner acknowledgement belongs to a different executable"
+    );
+    anyhow::ensure!(
+        ack.version == runner_version_for_executable(executable),
+        "runner acknowledgement belongs to a different release"
+    );
+    anyhow::ensure!(
+        ack.protocol_version == RUNNER_PROTOCOL_VERSION,
+        "runner acknowledgement uses a different protocol"
+    );
+    if let Some(not_before) = not_before {
+        anyhow::ensure!(
+            ack.acknowledged_at >= not_before,
+            "runner acknowledgement predates this service start"
+        );
+    }
+    let now = now_unix();
+    anyhow::ensure!(
+        ack.acknowledged_at <= now.saturating_add(30),
+        "runner acknowledgement timestamp is in the future"
+    );
+    anyhow::ensure!(
+        now.saturating_sub(ack.acknowledged_at) <= max_age.as_secs() as i64,
+        "runner has not acknowledged the backend recently"
+    );
+    Ok(ack)
+}
+
+pub fn runner_release_marker(path: &Path) -> anyhow::Result<String> {
+    Ok(RunnerReleaseMarker::new(executable_identity(path)?).encode())
+}
+
+fn read_runner_release_marker(path: &Path) -> anyhow::Result<Option<RunnerReleaseMarker>> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("failed to read runner release marker {}", path.display())
+            });
+        }
+    };
+    RunnerReleaseMarker::decode(&raw)
+        .with_context(|| format!("invalid runner release marker {}", path.display()))
+        .map(Some)
+}
+
+struct RunnerReleaseWatch {
+    marker_path: PathBuf,
+    started_from: ExecutableIdentity,
+    observed_commit: Option<RunnerReleaseMarker>,
+}
+
+impl RunnerReleaseWatch {
+    fn for_current_executable() -> anyhow::Result<Self> {
+        let executable_path =
+            std::env::current_exe().context("failed to locate the running runner executable")?;
+        let install_root = executable_path
+            .parent()
+            .and_then(Path::parent)
+            .context("runner executable path has no install root")?;
+        let marker_path = install_root.join(RUNNER_RELEASE_MARKER_FILE);
+        Self::for_paths(executable_path, marker_path)
+    }
+
+    fn for_paths(executable_path: PathBuf, marker_path: PathBuf) -> anyhow::Result<Self> {
+        let started_from = executable_identity(&executable_path)?;
+        let observed_commit = match read_runner_release_marker(&marker_path) {
+            Ok(commit) => commit,
+            Err(error) => {
+                eprintln!("Warning: could not read the committed runner release marker: {error:#}");
+                None
+            }
+        };
+        Ok(Self {
+            marker_path,
+            started_from,
+            observed_commit,
+        })
+    }
+
+    fn replacement_committed(&mut self) -> anyhow::Result<bool> {
+        let Some(committed) = read_runner_release_marker(&self.marker_path)? else {
+            return Ok(false);
+        };
+        let commit_changed = self.observed_commit.as_ref() != Some(&committed);
+        self.observed_commit = Some(committed.clone());
+        Ok(commit_changed && committed.executable != self.started_from)
+    }
+}
+
+fn runner_should_retire(watch: &mut RunnerReleaseWatch) -> bool {
+    match watch.replacement_committed() {
+        Ok(retire) => retire,
+        Err(error) => {
+            eprintln!("Warning: could not check for a committed runner update: {error:#}");
+            false
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -624,10 +1223,11 @@ fn strip_android_bundle_signatures(
     Ok(())
 }
 
-fn scrub_managed_android_signing_env(command: &mut tokio::process::Command) {
+fn scrub_managed_runner_env(command: &mut tokio::process::Command) {
     for key in MANAGED_ANDROID_SIGNING_ENV_KEYS {
         command.env_remove(key);
     }
+    command.env_remove(RUNNER_SERVICE_ACK_PATH_ENV);
 }
 
 fn android_artifacts_for_signing(
@@ -770,8 +1370,11 @@ struct SignedIosArchive {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct IosCleanupJournal {
     keychain_path: PathBuf,
-    original_default_keychain: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    original_default_keychain: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     original_keychains: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     installed_profiles: Vec<PathBuf>,
 }
 
@@ -813,15 +1416,25 @@ impl Drop for IosSigningCleanup {
 }
 
 fn run_security_command(args: &[&str]) -> anyhow::Result<String> {
-    let output = Command::new("/usr/bin/security")
-        .args(args)
+    run_security_command_with_strings(
+        &args
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn require_ios_signing_user_session() -> anyhow::Result<()> {
+    let uid = unsafe { libc::geteuid() };
+    let output = Command::new("/bin/launchctl")
+        .args(["print", &format!("gui/{uid}")])
         .output()
-        .map_err(|e| anyhow::anyhow!("failed to execute security command: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("security command failed: {stderr}");
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        .context("failed to inspect the runner account login session")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "iOS signing requires an active macOS login session. Log into the runner account and retry the build"
+    );
+    Ok(())
 }
 
 fn run_security_command_with_strings(args: &[String]) -> anyhow::Result<String> {
@@ -839,49 +1452,51 @@ fn run_security_command_with_strings(args: &[String]) -> anyhow::Result<String> 
 fn cleanup_ios_signing_state(journal: &IosCleanupJournal) -> anyhow::Result<()> {
     let mut errors = Vec::new();
     let keychain_path = journal.keychain_path.display().to_string();
-    match run_security_command(&["default-keychain", "-d", "user"]) {
-        Ok(output)
-            if parse_keychain_list(&output).into_iter().next().as_deref()
-                == Some(keychain_path.as_str()) =>
-        {
-            if let Err(error) = run_security_command_with_strings(&[
-                "default-keychain".to_string(),
-                "-d".to_string(),
-                "user".to_string(),
-                "-s".to_string(),
-                journal.original_default_keychain.clone(),
-            ]) {
-                errors.push(format!("failed to restore default keychain: {error:#}"));
-            }
-        }
-        Ok(_) => {}
-        Err(error) => errors.push(format!("failed to inspect default keychain: {error:#}")),
-    }
-
-    match run_security_command(&["list-keychains", "-d", "user"]) {
-        Ok(output) => {
-            let current_keychains = parse_keychain_list(&output);
-            if current_keychains.iter().any(|path| path == &keychain_path)
-                && let Err(error) = run_security_command_with_strings(
-                    &[
-                        "list-keychains".to_string(),
-                        "-d".to_string(),
-                        "user".to_string(),
-                        "-s".to_string(),
-                    ]
-                    .into_iter()
-                    .chain(
-                        current_keychains
-                            .into_iter()
-                            .filter(|path| path != &keychain_path),
-                    )
-                    .collect::<Vec<_>>(),
-                )
+    if let Some(original_default_keychain) = &journal.original_default_keychain {
+        match run_security_command(&["default-keychain", "-d", "user"]) {
+            Ok(output)
+                if parse_keychain_list(&output).into_iter().next().as_deref()
+                    == Some(keychain_path.as_str()) =>
             {
-                errors.push(format!("failed to restore keychain search list: {error:#}"));
+                if let Err(error) = run_security_command_with_strings(&[
+                    "default-keychain".to_string(),
+                    "-d".to_string(),
+                    "user".to_string(),
+                    "-s".to_string(),
+                    original_default_keychain.clone(),
+                ]) {
+                    errors.push(format!("failed to restore default keychain: {error:#}"));
+                }
             }
+            Ok(_) => {}
+            Err(error) => errors.push(format!("failed to inspect default keychain: {error:#}")),
         }
-        Err(error) => errors.push(format!("failed to inspect keychain search list: {error:#}")),
+
+        match run_security_command(&["list-keychains", "-d", "user"]) {
+            Ok(output) => {
+                let current_keychains = parse_keychain_list(&output);
+                if current_keychains.iter().any(|path| path == &keychain_path)
+                    && let Err(error) = run_security_command_with_strings(
+                        &[
+                            "list-keychains".to_string(),
+                            "-d".to_string(),
+                            "user".to_string(),
+                            "-s".to_string(),
+                        ]
+                        .into_iter()
+                        .chain(
+                            current_keychains
+                                .into_iter()
+                                .filter(|path| path != &keychain_path),
+                        )
+                        .collect::<Vec<_>>(),
+                    )
+                {
+                    errors.push(format!("failed to restore keychain search list: {error:#}"));
+                }
+            }
+            Err(error) => errors.push(format!("failed to inspect keychain search list: {error:#}")),
+        }
     }
 
     if journal.keychain_path.exists() {
@@ -954,6 +1569,68 @@ fn parse_keychain_list(raw: &str) -> Vec<String> {
             Some(trimmed.to_string())
         })
         .collect()
+}
+
+fn is_missing_legacy_oore_keychain(path: &str) -> bool {
+    let path = Path::new(path);
+    if path.exists() {
+        return false;
+    }
+
+    let relative = path
+        .strip_prefix("/private/tmp")
+        .or_else(|_| path.strip_prefix("/tmp"));
+    let Ok(relative) = relative else {
+        return false;
+    };
+    let components = relative.components().collect::<Vec<_>>();
+    components.len() == 5
+        && matches!(
+            components[0],
+            Component::Normal(name) if name == "oore-builds" || name == "oore-builds.noindex"
+        )
+        && matches!(components[1], Component::Normal(_))
+        && matches!(components[2], Component::Normal(name) if name == ".oore")
+        && matches!(components[3], Component::Normal(name) if name == "ios-signing")
+        && matches!(
+            components[4],
+            Component::Normal(name) if name == "oore-ci-build.keychain-db"
+        )
+}
+
+#[cfg(target_os = "macos")]
+fn remove_missing_legacy_oore_keychains_from_search_list() -> anyhow::Result<usize> {
+    let current = parse_keychain_list(&run_security_command(&["list-keychains", "-d", "user"])?);
+    let retained = current
+        .iter()
+        .filter(|path| !is_missing_legacy_oore_keychain(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let removed = current.len().saturating_sub(retained.len());
+    if removed == 0 {
+        return Ok(0);
+    }
+    anyhow::ensure!(
+        !retained.is_empty(),
+        "refusing to replace the user keychain search list with an empty list"
+    );
+
+    let args = [
+        "list-keychains".to_string(),
+        "-d".to_string(),
+        "user".to_string(),
+        "-s".to_string(),
+    ]
+    .into_iter()
+    .chain(retained)
+    .collect::<Vec<_>>();
+    run_security_command_with_strings(&args)?;
+    Ok(removed)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn remove_missing_legacy_oore_keychains_from_search_list() -> anyhow::Result<usize> {
+    Ok(0)
 }
 
 fn parse_distribution_certificate(raw: &str) -> Option<(String, String)> {
@@ -1079,6 +1756,19 @@ fn install_ios_signing_bundle(
     signing_workspace: &Path,
     bundle: &RunnerIosSigningBundle,
 ) -> anyhow::Result<(IosSigningMaterialization, IosSigningCleanup)> {
+    install_ios_signing_bundle_with_session_check(
+        signing_workspace,
+        bundle,
+        require_ios_signing_user_session,
+    )
+}
+
+fn install_ios_signing_bundle_with_session_check(
+    signing_workspace: &Path,
+    bundle: &RunnerIosSigningBundle,
+    require_session: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<(IosSigningMaterialization, IosSigningCleanup)> {
+    require_session()?;
     if bundle.team_id.trim().is_empty() {
         anyhow::bail!("iOS signing bundle team_id is empty");
     }
@@ -1123,19 +1813,6 @@ fn install_ios_signing_bundle(
         )
     })?;
 
-    let home = std::env::var("HOME")
-        .map_err(|_| anyhow::anyhow!("HOME environment variable is not set"))?;
-    let installed_profiles_dir = PathBuf::from(home)
-        .join("Library")
-        .join("MobileDevice")
-        .join("Provisioning Profiles");
-    fs::create_dir_all(&installed_profiles_dir).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to create provisioning profiles directory {}: {e}",
-            installed_profiles_dir.display()
-        )
-    })?;
-
     let keychain_password = random_password_hex();
     let keychain_path = signing_dir.join("oore-ci-build.keychain-db");
     let keychain_path_str = keychain_path.display().to_string();
@@ -1171,31 +1848,14 @@ fn install_ios_signing_bundle(
             .clone()
             .or_else(|| profile.profile_name.clone())
             .unwrap_or_else(|| hex::encode(Sha256::digest(&profile_bytes)));
-        let installed_path = installed_profiles_dir.join(format!("{profile_ref}.mobileprovision"));
-        prepared_profiles.push((
-            profile.bundle_id.clone(),
-            profile_ref,
-            work_path,
-            installed_path,
-            profile_bytes,
-        ));
+        prepared_profiles.push((profile.bundle_id.clone(), profile_ref, work_path));
     }
 
-    let original_keychains =
-        parse_keychain_list(&run_security_command(&["list-keychains", "-d", "user"])?);
-    let original_default_keychain =
-        parse_keychain_list(&run_security_command(&["default-keychain", "-d", "user"])?)
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("no default user keychain is configured"))?;
-    let journal = IosCleanupJournal {
+    let mut journal = IosCleanupJournal {
         keychain_path: keychain_path.clone(),
-        original_default_keychain,
-        original_keychains,
-        installed_profiles: prepared_profiles
-            .iter()
-            .map(|(_, _, _, installed_path, _)| installed_path.clone())
-            .collect(),
+        original_default_keychain: None,
+        original_keychains: Vec::new(),
+        installed_profiles: Vec::new(),
     };
     let journal_path = signing_workspace.join(IOS_CLEANUP_JOURNAL);
     write_ios_cleanup_journal(&journal_path, &journal)?;
@@ -1203,14 +1863,7 @@ fn install_ios_signing_bundle(
     let install_result: anyhow::Result<IosSigningMaterialization> = (|| {
         let mut bundle_profile_mapping = Vec::new();
         let mut bundle_profile_paths = Vec::new();
-        for (bundle_id, profile_ref, work_path, installed_path, profile_bytes) in &prepared_profiles
-        {
-            write_private_file(installed_path, profile_bytes).map_err(|e| {
-                anyhow::anyhow!(
-                    "failed to install provisioning profile {}: {e}",
-                    installed_path.display()
-                )
-            })?;
+        for (bundle_id, profile_ref, work_path) in &prepared_profiles {
             bundle_profile_mapping.push((bundle_id.clone(), profile_ref.clone()));
             bundle_profile_paths.push((bundle_id.clone(), work_path.clone()));
         }
@@ -1241,18 +1894,32 @@ fn install_ios_signing_bundle(
             keychain_path_str.clone(),
         ])?;
 
-        // Match Codemagic's proven keychain layout: keep the user's normal
-        // keychains available for Apple's public trust chain and append the
-        // isolated build keychain that owns the private signing identity.
-        let mut build_keychain_search_list = vec![
-            "list-keychains".to_string(),
-            "-d".to_string(),
-            "user".to_string(),
-            "-s".to_string(),
-        ];
-        build_keychain_search_list.extend(journal.original_keychains.iter().cloned());
-        build_keychain_search_list.push(keychain_path_str.clone());
-        run_security_command_with_strings(&build_keychain_search_list)?;
+        let original_default_keychain =
+            parse_keychain_list(&run_security_command(&["default-keychain", "-d", "user"])?)
+                .into_iter()
+                .next()
+                .context("user keychain domain has no default keychain")?;
+        let original_keychains =
+            parse_keychain_list(&run_security_command(&["list-keychains", "-d", "user"])?);
+        anyhow::ensure!(
+            !original_keychains.is_empty(),
+            "user keychain search list is empty"
+        );
+        journal.original_default_keychain = Some(original_default_keychain);
+        journal.original_keychains = original_keychains.clone();
+        write_ios_cleanup_journal(&journal_path, &journal)?;
+        run_security_command_with_strings(
+            &[
+                "list-keychains".to_string(),
+                "-d".to_string(),
+                "user".to_string(),
+                "-s".to_string(),
+                keychain_path_str.clone(),
+            ]
+            .into_iter()
+            .chain(original_keychains)
+            .collect::<Vec<_>>(),
+        )?;
         run_security_command_with_strings(&[
             "default-keychain".to_string(),
             "-d".to_string(),
@@ -1261,16 +1928,20 @@ fn install_ios_signing_bundle(
             keychain_path_str.clone(),
         ])?;
 
+        run_security_command_with_strings(&ios_keychain_import_arguments(
+            &p12_path,
+            &keychain_path,
+            &bundle.p12_password,
+        ))?;
+
         run_security_command_with_strings(&[
-            "import".to_string(),
-            p12_path.display().to_string(),
-            "-f".to_string(),
-            "pkcs12".to_string(),
+            "set-key-partition-list".to_string(),
+            "-S".to_string(),
+            "apple-tool:,apple:,codesign:".to_string(),
+            "-s".to_string(),
             "-k".to_string(),
+            keychain_password.clone(),
             keychain_path_str.clone(),
-            "-P".to_string(),
-            bundle.p12_password.clone(),
-            "-A".to_string(),
         ])?;
 
         run_security_command_with_strings(&[
@@ -1368,6 +2039,25 @@ fn install_ios_signing_bundle(
     }
 }
 
+fn ios_keychain_import_arguments(
+    p12_path: &Path,
+    keychain_path: &Path,
+    password: &str,
+) -> Vec<String> {
+    vec![
+        "import".to_string(),
+        p12_path.display().to_string(),
+        "-f".to_string(),
+        "pkcs12".to_string(),
+        "-k".to_string(),
+        keychain_path.display().to_string(),
+        "-P".to_string(),
+        password.to_string(),
+        "-T".to_string(),
+        "/usr/bin/codesign".to_string(),
+    ]
+}
+
 fn run_ios_signing_tool(program: &str, args: Vec<String>, action: &str) -> anyhow::Result<String> {
     let output = Command::new(program)
         .args(&args)
@@ -1381,7 +2071,7 @@ fn run_ios_signing_tool(program: &str, args: Vec<String>, action: &str) -> anyho
             || detail.contains("User interaction is not allowed")
         {
             detail.push_str(
-                "; the runner is outside an interactive macOS login session. Register it as an external runner and run `oore runner install-service`",
+                "; the build keychain could not authorize non-interactive signing. Re-import the signing credential in Oore and retry the build",
             );
         }
         anyhow::bail!("failed to {action}: {detail}");
@@ -1592,6 +2282,32 @@ fn collect_nested_code(root: &Path, output: &mut Vec<PathBuf>) -> anyhow::Result
     Ok(())
 }
 
+fn collect_provisioned_bundles_deepest_first(app: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let mut bundles = Vec::new();
+    collect_paths_with_extension(app, "app", &mut bundles)?;
+    collect_paths_with_extension(app, "appex", &mut bundles)?;
+    bundles.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    bundles.push(app.to_path_buf());
+    Ok(bundles)
+}
+
+fn provision_and_sign_bundle(
+    bundle: &Path,
+    entitlements_dir: &Path,
+    materialization: &IosSigningMaterialization,
+) -> anyhow::Result<()> {
+    let bundle_id = read_apple_bundle_identifier(bundle)?;
+    let profile = profile_path_for_bundle(materialization, &bundle_id)?;
+    fs::copy(profile, bundle.join("embedded.mobileprovision"))
+        .map_err(|error| anyhow::anyhow!("failed to embed profile for {bundle_id}: {error}"))?;
+    let entitlements = entitlements_dir.join(format!(
+        "{}.plist",
+        xcode_build_setting_identifier(&bundle_id)
+    ));
+    extract_profile_entitlements(profile, &entitlements)?;
+    codesign_path(bundle, materialization, Some(&entitlements))
+}
+
 fn manually_sign_ios_archive(
     workspace: &Path,
     materialization: &IosSigningMaterialization,
@@ -1606,9 +2322,6 @@ fn manually_sign_ios_archive(
         .join("entitlements");
     fs::create_dir_all(&entitlements_dir)?;
 
-    let mut app_extensions = Vec::new();
-    collect_paths_with_extension(&app, "appex", &mut app_extensions)?;
-
     let mut nested_code = Vec::new();
     collect_nested_code(&app, &mut nested_code)?;
     nested_code.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
@@ -1616,30 +2329,9 @@ fn manually_sign_ios_archive(
         codesign_path(&path, materialization, None)?;
     }
 
-    app_extensions.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
-    for extension in &app_extensions {
-        let bundle_id = read_apple_bundle_identifier(extension)?;
-        let profile = profile_path_for_bundle(materialization, &bundle_id)?;
-        fs::copy(profile, extension.join("embedded.mobileprovision"))
-            .map_err(|error| anyhow::anyhow!("failed to embed profile for {bundle_id}: {error}"))?;
-        let entitlements = entitlements_dir.join(format!(
-            "{}.plist",
-            xcode_build_setting_identifier(&bundle_id)
-        ));
-        extract_profile_entitlements(profile, &entitlements)?;
-        codesign_path(extension, materialization, Some(&entitlements))?;
+    for bundle in collect_provisioned_bundles_deepest_first(&app)? {
+        provision_and_sign_bundle(&bundle, &entitlements_dir, materialization)?;
     }
-
-    let app_bundle_id = read_apple_bundle_identifier(&app)?;
-    let app_profile = profile_path_for_bundle(materialization, &app_bundle_id)?;
-    fs::copy(app_profile, app.join("embedded.mobileprovision"))
-        .map_err(|error| anyhow::anyhow!("failed to embed profile for {app_bundle_id}: {error}"))?;
-    let app_entitlements = entitlements_dir.join(format!(
-        "{}.plist",
-        xcode_build_setting_identifier(&app_bundle_id)
-    ));
-    extract_profile_entitlements(app_profile, &app_entitlements)?;
-    codesign_path(&app, materialization, Some(&app_entitlements))?;
 
     run_ios_signing_tool(
         "/usr/bin/codesign",
@@ -1932,12 +2624,16 @@ fn validate_ios_cleanup_journal(
         }),
         "iOS cleanup journal contains an invalid provisioning profile path"
     );
-    anyhow::ensure!(
-        journal
-            .original_keychains
-            .contains(&journal.original_default_keychain),
-        "iOS cleanup journal has no original default keychain"
-    );
+    match &journal.original_default_keychain {
+        Some(default_keychain) => anyhow::ensure!(
+            journal.original_keychains.contains(default_keychain),
+            "iOS cleanup journal has no original default keychain"
+        ),
+        None => anyhow::ensure!(
+            journal.original_keychains.is_empty() && journal.installed_profiles.is_empty(),
+            "iOS cleanup journal mixes legacy global state with headless signing state"
+        ),
+    }
     Ok(())
 }
 
@@ -2237,6 +2933,107 @@ fn reconcile_stale_runner_mutations() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
+struct RunnerControlPlaneRejected {
+    operation: &'static str,
+    status: reqwest::StatusCode,
+}
+
+impl std::fmt::Display for RunnerControlPlaneRejected {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "runner {operation} was rejected by the backend ({status})",
+            operation = self.operation,
+            status = self.status
+        )
+    }
+}
+
+impl std::error::Error for RunnerControlPlaneRejected {}
+
+fn runner_response_is_terminal(status: reqwest::StatusCode) -> bool {
+    status.is_client_error()
+        && !matches!(
+            status,
+            reqwest::StatusCode::REQUEST_TIMEOUT | reqwest::StatusCode::TOO_MANY_REQUESTS
+        )
+}
+
+fn terminal_runner_error(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<RunnerControlPlaneRejected>().is_some()
+}
+
+async fn send_runner_heartbeat(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    capabilities: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let response = client
+        .post(format!(
+            "{}/v1/runners/{}/heartbeat",
+            daemon_url, config.runner_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .json(&serde_json::json!({ "status": "online", "capabilities": capabilities }))
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+        .context("runner heartbeat could not reach the backend")?;
+    let status = response.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    if runner_response_is_terminal(status) {
+        return Err(anyhow::Error::new(RunnerControlPlaneRejected {
+            operation: "heartbeat",
+            status,
+        }));
+    }
+    anyhow::bail!("runner heartbeat was unavailable ({status})")
+}
+
+async fn establish_runner_heartbeat(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    capabilities: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let delays = [
+        Duration::ZERO,
+        Duration::from_millis(500),
+        Duration::from_secs(1),
+    ];
+    let mut last_error = None;
+    for delay in delays {
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
+        match send_runner_heartbeat(client, daemon_url, config, capabilities).await {
+            Ok(()) => return Ok(()),
+            Err(error) if terminal_runner_error(&error) => return Err(error),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error
+        .unwrap_or_else(|| anyhow::anyhow!("runner heartbeat failed"))
+        .context("backend did not acknowledge runner startup"))
+}
+
+struct RunnerServiceAckGuard {
+    path: Option<PathBuf>,
+    pid: u32,
+}
+
+impl Drop for RunnerServiceAckGuard {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.as_deref() {
+            clear_runner_service_ack_if_owned(path, self.pid);
+        }
+    }
+}
+
 pub async fn run_runner_forever(
     config: RunnerConfig,
     daemon_url_override: Option<String>,
@@ -2244,6 +3041,34 @@ pub async fn run_runner_forever(
     let daemon_url = daemon_url_override.unwrap_or(config.daemon_url.clone());
     require_safe_daemon_url(&daemon_url)?;
     let client = reqwest::Client::new();
+    let mut release_watch = RunnerReleaseWatch::for_current_executable()?;
+    let executable = std::env::current_exe().context("failed to locate the runner executable")?;
+    let service_ack_path = runner_service_ack_path_from_env()?;
+    // Capture process identity before doing any network work. An updater can
+    // atomically replace the executable path while this process is still
+    // finishing a build; later heartbeats must not let the old process claim
+    // the replacement binary's identity or version.
+    let service_ack_template = service_ack_path
+        .as_ref()
+        .map(|_| runner_service_ack_for(&config, &daemon_url, &executable, now_unix()))
+        .transpose()?;
+    if let Some(path) = service_ack_path.as_deref() {
+        clear_runner_service_ack(path)?;
+    }
+    let _service_ack_guard = RunnerServiceAckGuard {
+        path: service_ack_path.clone(),
+        pid: std::process::id(),
+    };
+
+    match remove_missing_legacy_oore_keychains_from_search_list() {
+        Ok(removed) if removed > 0 => {
+            println!("Removed {removed} stale Oore build keychain entries");
+        }
+        Ok(_) => {}
+        Err(error) => {
+            eprintln!("Warning: could not remove stale Oore build keychain entries: {error:#}");
+        }
+    }
 
     reconcile_stale_runner_mutations()
         .context("failed to reconcile stale runner state before startup")?;
@@ -2253,37 +3078,75 @@ pub async fn run_runner_forever(
 
     let capabilities = detect_capabilities().await;
 
-    // Send one heartbeat immediately so runner status appears online
-    // without waiting for the first interval tick.
-    let _ = client
-        .post(format!(
-            "{}/v1/runners/{}/heartbeat",
-            daemon_url, config.runner_id
-        ))
-        .bearer_auth(&config.runner_token)
-        .json(&serde_json::json!({ "status": "online", "capabilities": capabilities }))
-        .send()
-        .await;
+    // Do not enter the claim loop or advertise service readiness until the
+    // backend has authenticated this exact runner/config/release.
+    establish_runner_heartbeat(&client, &daemon_url, &config, &capabilities).await?;
+    if let (Some(path), Some(template)) =
+        (service_ack_path.as_deref(), service_ack_template.as_ref())
+    {
+        write_runner_service_ack(path, &refreshed_runner_service_ack(template, now_unix()))?;
+    }
 
     let hb_client = client.clone();
     let hb_url = daemon_url.clone();
-    let hb_token = config.runner_token.clone();
-    let hb_runner_id = config.runner_id.clone();
+    let hb_config = config.clone();
     let hb_capabilities = capabilities.clone();
+    let hb_ack_path = service_ack_path;
+    let hb_ack_template = service_ack_template;
+    let (fatal_tx, mut fatal_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
-            let _ = hb_client
-                .post(format!("{}/v1/runners/{}/heartbeat", hb_url, hb_runner_id))
-                .bearer_auth(&hb_token)
-                .json(&serde_json::json!({ "status": "online", "capabilities": hb_capabilities }))
-                .send()
-                .await;
+            match send_runner_heartbeat(&hb_client, &hb_url, &hb_config, &hb_capabilities).await {
+                Ok(()) => {
+                    if let (Some(path), Some(template)) =
+                        (hb_ack_path.as_deref(), hb_ack_template.as_ref())
+                    {
+                        match write_runner_service_ack(
+                            path,
+                            &refreshed_runner_service_ack(template, now_unix()),
+                        ) {
+                            Ok(()) => {}
+                            Err(error) => {
+                                clear_runner_service_ack_if_owned(path, std::process::id());
+                                let _ = fatal_tx.send(format!(
+                                    "failed to publish authenticated runner readiness: {error:#}"
+                                ));
+                                return;
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    if let Some(path) = hb_ack_path.as_deref() {
+                        clear_runner_service_ack_if_owned(path, std::process::id());
+                    }
+                    if terminal_runner_error(&error) {
+                        let _ = fatal_tx.send(error.to_string());
+                        return;
+                    }
+                    eprintln!("Runner heartbeat is temporarily unavailable: {error:#}");
+                }
+            }
         }
     });
 
     loop {
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::select! {
+            fatal = fatal_rx.recv() => {
+                match fatal {
+                    Some(error) => anyhow::bail!(error),
+                    None => anyhow::bail!("runner heartbeat monitor stopped unexpectedly"),
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+        }
+        if runner_should_retire(&mut release_watch) {
+            println!(
+                "A committed runner update is ready; no build is active, exiting for a clean restart"
+            );
+            return Ok(());
+        }
         if let Err(error) = reconcile_stale_runner_mutations() {
             eprintln!("Refusing to claim work until stale runner state is cleaned: {error:#}");
             tokio::time::sleep(Duration::from_secs(10)).await;
@@ -2291,6 +3154,7 @@ pub async fn run_runner_forever(
         }
         match claim_and_execute(&client, &daemon_url, &config).await {
             Ok(_executed) => {}
+            Err(error) if terminal_runner_error(&error) => return Err(error),
             Err(e) => {
                 eprintln!("Error during claim/execute: {}", e);
                 tokio::time::sleep(Duration::from_secs(10)).await;
@@ -2317,7 +3181,14 @@ async fn claim_and_execute(
         .await?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("Claim request failed: {}", resp.status());
+        let status = resp.status();
+        if runner_response_is_terminal(status) {
+            return Err(anyhow::Error::new(RunnerControlPlaneRejected {
+                operation: "claim",
+                status,
+            }));
+        }
+        anyhow::bail!("Claim request failed: {status}");
     }
 
     let claim: ClaimJobResponse = resp.json().await?;
@@ -2440,6 +3311,8 @@ struct FvmRcConfig {
     flutter: String,
 }
 
+const DEFAULT_MANAGED_FLUTTER_VERSION: &str = "stable";
+
 #[derive(Debug, Clone)]
 struct ResolvedExecutionPlan {
     stage_commands: PipelineCommandStages,
@@ -2547,6 +3420,36 @@ fn apply_fvm_wrappers(stage_commands: PipelineCommandStages) -> PipelineCommandS
             .map(|cmd| maybe_wrap_with_fvm(&cmd))
             .collect(),
     }
+}
+
+fn command_uses_flutter_toolchain(command: &str) -> bool {
+    let trimmed = command.trim();
+    maybe_wrap_with_fvm(trimmed) != trimmed
+        || trimmed == "fvm flutter"
+        || trimmed == "fvm dart"
+        || trimmed.starts_with("fvm flutter ")
+        || trimmed.starts_with("fvm dart ")
+}
+
+fn apply_managed_flutter_toolchain(
+    stage_commands: PipelineCommandStages,
+    version: &str,
+) -> PipelineCommandStages {
+    let requires_flutter = stage_commands
+        .pre_build
+        .iter()
+        .chain(&stage_commands.build)
+        .chain(&stage_commands.post_build)
+        .any(|command| command_uses_flutter_toolchain(command));
+    if !requires_flutter {
+        return stage_commands;
+    }
+
+    let mut stage_commands = apply_fvm_wrappers(stage_commands);
+    stage_commands
+        .pre_build
+        .insert(0, format!("fvm use {version} --force --skip-pub-get"));
+    stage_commands
 }
 
 fn validate_artifact_patterns(patterns: &[String]) -> anyhow::Result<Vec<String>> {
@@ -2841,16 +3744,15 @@ fn resolve_execution_plan(
             anyhow::anyhow!("Invalid pipeline config in {}: {}", full_path.display(), e)
         })?;
         let file_config = apply_run_platform_selection(file_config, snapshot)?;
-        let resolved_flutter_version =
-            fvmrc_version.or_else(|| file_config.flutter_version.clone());
+        let resolved_flutter_version = fvmrc_version
+            .clone()
+            .or_else(|| file_config.flutter_version.clone())
+            .unwrap_or_else(|| DEFAULT_MANAGED_FLUTTER_VERSION.to_string());
         let include_defaults = file_config.commands.build.is_empty();
-        let mut stage_commands = materialize_stage_commands(&file_config, include_defaults);
-        if let Some(version) = resolved_flutter_version {
-            stage_commands = apply_fvm_wrappers(stage_commands);
-            stage_commands
-                .pre_build
-                .insert(0, format!("fvm use {version} --force"));
-        }
+        let stage_commands = apply_managed_flutter_toolchain(
+            materialize_stage_commands(&file_config, include_defaults),
+            &resolved_flutter_version,
+        );
 
         return Ok(ResolvedExecutionPlan {
             stage_commands,
@@ -2861,14 +3763,13 @@ fn resolve_execution_plan(
     }
 
     let fallback = apply_run_platform_selection(load_ui_execution_config(snapshot)?, snapshot)?;
-    let resolved_flutter_version = fvmrc_version.or_else(|| fallback.flutter_version.clone());
-    let mut stage_commands = materialize_stage_commands(&fallback, true);
-    if let Some(version) = resolved_flutter_version {
-        stage_commands = apply_fvm_wrappers(stage_commands);
-        stage_commands
-            .pre_build
-            .insert(0, format!("fvm use {version} --force"));
-    }
+    let resolved_flutter_version = fvmrc_version
+        .or_else(|| fallback.flutter_version.clone())
+        .unwrap_or_else(|| DEFAULT_MANAGED_FLUTTER_VERSION.to_string());
+    let stage_commands = apply_managed_flutter_toolchain(
+        materialize_stage_commands(&fallback, true),
+        &resolved_flutter_version,
+    );
     Ok(ResolvedExecutionPlan {
         stage_commands,
         artifact_patterns: fallback.artifact_patterns,
@@ -3074,6 +3975,20 @@ fn add_checkout_proxy_config(
     ]);
 }
 
+fn snapshot_requests_ios(snapshot: &serde_json::Value) -> bool {
+    let platforms = snapshot
+        .get("selected_platforms")
+        .filter(|value| !value.is_null())
+        .or_else(|| {
+            snapshot
+                .get("ui_execution_config")
+                .and_then(|config| config.get("platforms"))
+        });
+    platforms
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|platforms| platforms.iter().any(|platform| platform == "ios"))
+}
+
 async fn execute_build(
     job: &ClaimedJob,
     client: &reqwest::Client,
@@ -3109,10 +4024,51 @@ async fn execute_build(
     let snapshot = &job.config_snapshot;
     let mut steps = Vec::new();
     let mut log_seq: i64 = 0;
+    let mut ios_signing_source: Option<&str> = None;
+    let mut ios_signing_bundle: Option<RunnerIosSigningBundle> = None;
+    let ios_signing_checked_before_checkout = snapshot_requests_ios(snapshot);
 
     if let Err(e) = check_build_active(client, daemon_url, config, &job.build_id, &authority).await
     {
         return (steps, Err(e));
+    }
+
+    if ios_signing_checked_before_checkout {
+        match fetch_job_ios_signing(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &job.signing_token,
+        )
+        .await
+        {
+            Ok(Some(server_payload)) => {
+                if let Some(mut bundle) = server_payload.bundle {
+                    if let Err(error) = require_ios_signing_user_session() {
+                        zeroize_ios_signing_bundle(&mut bundle);
+                        return (steps, Err(error));
+                    }
+                    let signing_source = match bundle.mode {
+                        oore_contract::IosSigningMode::Manual => "manual",
+                        oore_contract::IosSigningMode::Api => "api",
+                        oore_contract::IosSigningMode::Hybrid => "hybrid",
+                    };
+                    ios_signing_bundle = Some(bundle);
+                    ios_signing_source = Some(signing_source);
+                    println!("Reserved iOS signing bundle before repository checkout");
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return (
+                    steps,
+                    Err(anyhow::anyhow!(
+                        "Failed to load iOS signing bundle before checkout. Aborting to avoid unsigned iOS artifacts: {error}"
+                    )),
+                );
+            }
+        }
     }
 
     let repo_url = snapshot
@@ -3177,6 +4133,7 @@ async fn execute_build(
     for (key, value) in &checkout.env {
         checkout_child.env(key, value);
     }
+    scrub_managed_runner_env(&mut checkout_child);
 
     let child = match checkout_child.spawn() {
         Ok(c) => c,
@@ -3258,12 +4215,52 @@ async fn execute_build(
         Ok(plan) => plan,
         Err(e) => return (steps, Err(e)),
     };
+    let requires_managed_fvm = execution_plan
+        .stage_commands
+        .pre_build
+        .iter()
+        .chain(&execution_plan.stage_commands.build)
+        .chain(&execution_plan.stage_commands.post_build)
+        .any(|command| command_uses_flutter_toolchain(command));
+    if requires_managed_fvm && bundled_fvm_install_root().is_none() {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &mut log_seq,
+            "stdout",
+            "Preparing Oore-managed Flutter tooling for this runner...",
+        )
+        .await;
+        match ensure_managed_fvm(client).await {
+            Ok(true) => {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    &mut log_seq,
+                    "stdout",
+                    "Oore-managed Flutter tooling is ready.",
+                )
+                .await;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                return (
+                    steps,
+                    Err(error.context(
+                        "Failed to prepare Oore-managed Flutter tooling; retry the build",
+                    )),
+                );
+            }
+        }
+    }
 
     let mut signing_source: Option<&str> = None;
     let mut signing_variant: Option<AndroidSigningBuildType> = None;
     let mut signing_inputs: Option<AndroidSigningInputs> = None;
-    let mut ios_signing_source: Option<&str> = None;
-    let mut ios_signing_bundle: Option<RunnerIosSigningBundle> = None;
     let build_commands = execution_plan.stage_commands.build.as_slice();
     match determine_android_signing_variant(build_commands) {
         Ok(Some(variant)) => {
@@ -3307,9 +4304,10 @@ async fn execute_build(
         Err(e) => return (steps, Err(e)),
     }
 
-    if build_commands
-        .iter()
-        .any(|command| is_ios_flutter_build_command(command))
+    if !ios_signing_checked_before_checkout
+        && build_commands
+            .iter()
+            .any(|command| is_ios_flutter_build_command(command))
     {
         match fetch_job_ios_signing(
             client,
@@ -3321,7 +4319,11 @@ async fn execute_build(
         .await
         {
             Ok(Some(server_payload)) => {
-                if let Some(bundle) = server_payload.bundle {
+                if let Some(mut bundle) = server_payload.bundle {
+                    if let Err(error) = require_ios_signing_user_session() {
+                        zeroize_ios_signing_bundle(&mut bundle);
+                        return (steps, Err(error));
+                    }
                     let signing_source = match bundle.mode {
                         oore_contract::IosSigningMode::Manual => "manual",
                         oore_contract::IosSigningMode::Api => "api",
@@ -3483,7 +4485,7 @@ async fn execute_build(
             for (key, value) in &step_env {
                 step_cmd.env(key, value);
             }
-            scrub_managed_android_signing_env(&mut step_cmd);
+            scrub_managed_runner_env(&mut step_cmd);
             let child = match step_cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => return (steps, Err(e.into())),
@@ -4745,6 +5747,90 @@ mod tests {
         dir
     }
 
+    #[test]
+    fn apple_signing_commands_run_directly_in_the_runner_service_session() {
+        let command = Command::new("/usr/bin/codesign");
+
+        assert_eq!(
+            command.get_program(),
+            Path::new("/usr/bin/codesign").as_os_str()
+        );
+    }
+
+    #[test]
+    fn ios_snapshot_selection_is_known_before_checkout() {
+        assert!(snapshot_requests_ios(&serde_json::json!({
+            "selected_platforms": ["ios"]
+        })));
+        assert!(!snapshot_requests_ios(&serde_json::json!({
+            "selected_platforms": ["android"],
+            "ui_execution_config": { "platforms": ["android", "ios"] }
+        })));
+        assert!(snapshot_requests_ios(&serde_json::json!({
+            "ui_execution_config": { "platforms": ["android", "ios"] }
+        })));
+    }
+
+    #[test]
+    fn ios_private_key_access_is_scoped_to_codesign() {
+        let arguments = ios_keychain_import_arguments(
+            Path::new("/tmp/identity.p12"),
+            Path::new("/tmp/build.keychain-db"),
+            "secret",
+        );
+
+        assert_eq!(
+            arguments,
+            [
+                "import",
+                "/tmp/identity.p12",
+                "-f",
+                "pkcs12",
+                "-k",
+                "/tmp/build.keychain-db",
+                "-P",
+                "secret",
+                "-T",
+                "/usr/bin/codesign",
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_login_session_fails_before_ios_signing_state_is_created() {
+        let parent = temp_workspace();
+        let signing_workspace = parent.join("signing");
+        let bundle = RunnerIosSigningBundle {
+            enabled: true,
+            mode: oore_contract::IosSigningMode::Manual,
+            team_id: "TEAM".to_string(),
+            export_method: "ad-hoc".to_string(),
+            p12_filename: "identity.p12".to_string(),
+            p12_base64: "unused".to_string(),
+            p12_password: "unused".to_string(),
+            provisioning_profiles: Vec::new(),
+        };
+
+        let error =
+            install_ios_signing_bundle_with_session_check(&signing_workspace, &bundle, || {
+                anyhow::bail!("Log into the runner account and retry the build")
+            })
+            .err()
+            .expect("missing session must fail before signing setup");
+
+        assert!(error.to_string().contains("Log into the runner account"));
+        assert!(!signing_workspace.exists());
+        cleanup_workspace(&parent);
+    }
+
+    fn release_marker_for(path: &Path, generation: u128) -> String {
+        RunnerReleaseMarker {
+            generation: Some(format!("{generation:032x}")),
+            executable: executable_identity(path).expect("inspect executable fixture"),
+        }
+        .encode()
+    }
+
     #[tokio::test]
     async fn reported_capabilities_identify_the_installed_runner() {
         let capabilities = detect_capabilities().await;
@@ -4760,6 +5846,306 @@ mod tests {
                 .and_then(serde_json::Value::as_u64),
             Some(u64::from(RUNNER_PROTOCOL_VERSION))
         );
+    }
+
+    #[test]
+    fn only_an_explicit_absolute_service_ack_path_enables_acknowledgements() {
+        assert_eq!(runner_service_ack_path(None).unwrap(), None);
+        assert!(runner_service_ack_path(Some(OsString::new())).is_err());
+        assert!(runner_service_ack_path(Some(OsString::from("relative/ack.json"))).is_err());
+        assert_eq!(
+            runner_service_ack_path(Some(OsString::from("/private/tmp/oore-runner-ack.json")))
+                .unwrap(),
+            Some(PathBuf::from("/private/tmp/oore-runner-ack.json"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn authenticated_runner_acknowledgement_is_private_and_bound_to_service_identity() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let workspace = temp_workspace();
+        let executable = workspace.join("bin/oore");
+        let ack_path = workspace.join(RUNNER_SERVICE_ACK_FILE);
+        fs::create_dir_all(executable.parent().expect("executable parent"))
+            .expect("create executable directory");
+        fs::write(&executable, b"runner executable").expect("write executable fixture");
+        fs::write(workspace.join("VERSION"), b"2.4.6\n").expect("write version fixture");
+        let config = RunnerConfig {
+            daemon_url: "https://ci.example.test".to_string(),
+            runner_id: "runner-service".to_string(),
+            runner_token: "secret".to_string(),
+            name: "Managed runner".to_string(),
+        };
+        let acknowledged_at = now_unix();
+        let ack = runner_service_ack_for(&config, &config.daemon_url, &executable, acknowledged_at)
+            .expect("build acknowledgement");
+        write_runner_service_ack(&ack_path, &ack).expect("publish acknowledgement");
+
+        assert_eq!(
+            fs::metadata(&ack_path)
+                .expect("inspect acknowledgement")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        let verified = verify_runner_service_ack(
+            &ack_path,
+            &config,
+            &executable,
+            std::process::id(),
+            Some(acknowledged_at),
+            Duration::from_secs(RUNNER_SERVICE_ACK_MAX_AGE_SECS),
+        )
+        .expect("verify acknowledgement");
+        assert_eq!(verified.version, "2.4.6");
+        assert_eq!(verified.runner_id, config.runner_id);
+
+        let wrong_pid = std::process::id().saturating_add(1);
+        let error = verify_runner_service_ack(
+            &ack_path,
+            &config,
+            &executable,
+            wrong_pid,
+            None,
+            Duration::from_secs(RUNNER_SERVICE_ACK_MAX_AGE_SECS),
+        )
+        .expect_err("different service pid must be rejected");
+        assert!(error.to_string().contains("active service process"));
+
+        let mut wrong_backend = config.clone();
+        wrong_backend.daemon_url = "https://other.example.test".to_string();
+        let error = verify_runner_service_ack(
+            &ack_path,
+            &wrong_backend,
+            &executable,
+            std::process::id(),
+            None,
+            Duration::from_secs(RUNNER_SERVICE_ACK_MAX_AGE_SECS),
+        )
+        .expect_err("different backend must be rejected");
+        assert!(error.to_string().contains("different backend"));
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_runner_acknowledgement_is_not_service_readiness() {
+        let workspace = temp_workspace();
+        let executable = workspace.join("bin/oore");
+        let ack_path = workspace.join(RUNNER_SERVICE_ACK_FILE);
+        fs::create_dir_all(executable.parent().expect("executable parent"))
+            .expect("create executable directory");
+        fs::write(&executable, b"runner executable").expect("write executable fixture");
+        let config = RunnerConfig {
+            daemon_url: "https://ci.example.test".to_string(),
+            runner_id: "runner-service".to_string(),
+            runner_token: "secret".to_string(),
+            name: "Managed runner".to_string(),
+        };
+        let ack = runner_service_ack_for(
+            &config,
+            &config.daemon_url,
+            &executable,
+            now_unix().saturating_sub(120),
+        )
+        .expect("build acknowledgement");
+        write_runner_service_ack(&ack_path, &ack).expect("publish acknowledgement");
+
+        let error = verify_runner_service_ack(
+            &ack_path,
+            &config,
+            &executable,
+            std::process::id(),
+            None,
+            Duration::from_secs(RUNNER_SERVICE_ACK_MAX_AGE_SECS),
+        )
+        .expect_err("stale acknowledgement must be rejected");
+        assert!(error.to_string().contains("recently"));
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn running_process_does_not_adopt_replacement_executable_identity_in_heartbeat_ack() {
+        let workspace = temp_workspace();
+        let executable = workspace.join("bin/oore");
+        let replacement = workspace.join("bin/oore.next");
+        let ack_path = workspace.join(RUNNER_SERVICE_ACK_FILE);
+        fs::create_dir_all(executable.parent().expect("executable parent"))
+            .expect("create executable directory");
+        fs::write(&executable, b"old runner executable").expect("write old executable fixture");
+        fs::write(workspace.join("VERSION"), b"1.0.0\n").expect("write old version fixture");
+        let config = RunnerConfig {
+            daemon_url: "https://ci.example.test".to_string(),
+            runner_id: "runner-service".to_string(),
+            runner_token: "secret".to_string(),
+            name: "Managed runner".to_string(),
+        };
+        let template = runner_service_ack_for(&config, &config.daemon_url, &executable, now_unix())
+            .expect("capture running process identity");
+
+        fs::write(
+            &replacement,
+            b"new runner executable with a different identity",
+        )
+        .expect("write replacement executable fixture");
+        fs::rename(&replacement, &executable).expect("atomically replace executable fixture");
+        fs::write(workspace.join("VERSION"), b"2.0.0\n").expect("write new version fixture");
+        let refreshed = refreshed_runner_service_ack(&template, now_unix());
+        write_runner_service_ack(&ack_path, &refreshed).expect("refresh acknowledgement");
+
+        assert_eq!(refreshed.version, "1.0.0");
+        let error = verify_runner_service_ack(
+            &ack_path,
+            &config,
+            &executable,
+            std::process::id(),
+            None,
+            Duration::from_secs(RUNNER_SERVICE_ACK_MAX_AGE_SECS),
+        )
+        .expect_err("old process acknowledgement must not verify as the replacement");
+        assert!(error.to_string().contains("different executable"));
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[test]
+    fn runner_authentication_failures_are_terminal_but_retriable_outages_are_not() {
+        for status in [
+            reqwest::StatusCode::BAD_REQUEST,
+            reqwest::StatusCode::UNAUTHORIZED,
+            reqwest::StatusCode::FORBIDDEN,
+            reqwest::StatusCode::NOT_FOUND,
+            reqwest::StatusCode::CONFLICT,
+        ] {
+            assert!(runner_response_is_terminal(status), "{status}");
+        }
+        for status in [
+            reqwest::StatusCode::REQUEST_TIMEOUT,
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        ] {
+            assert!(!runner_response_is_terminal(status), "{status}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runner_retires_only_after_an_atomic_replacement_is_committed() {
+        let workspace = temp_workspace();
+        let executable = workspace.join("oore");
+        let replacement = workspace.join("oore.next");
+        let marker = workspace.join(RUNNER_RELEASE_MARKER_FILE);
+        fs::write(&executable, b"old runner").expect("write original executable fixture");
+        fs::write(&replacement, b"new runner").expect("write replacement executable fixture");
+        let mut watch = RunnerReleaseWatch::for_paths(executable.clone(), marker.clone())
+            .expect("watch original release");
+
+        assert!(!watch.replacement_committed().unwrap());
+        fs::rename(&replacement, &executable).expect("atomically replace executable fixture");
+        assert!(!watch.replacement_committed().unwrap());
+
+        fs::write(&marker, release_marker_for(&executable, 1)).expect("commit replacement release");
+        assert!(watch.replacement_committed().unwrap());
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn newly_started_runner_adopts_its_matching_commit_without_restarting() {
+        let workspace = temp_workspace();
+        let executable = workspace.join("oore");
+        let marker = workspace.join(RUNNER_RELEASE_MARKER_FILE);
+        fs::write(&executable, b"old runner").expect("write original executable fixture");
+        fs::write(&marker, release_marker_for(&executable, 1))
+            .expect("write original release marker");
+        let replacement = workspace.join("oore.next");
+        fs::write(&replacement, b"new runner").expect("write replacement executable fixture");
+        fs::rename(&replacement, &executable).expect("atomically replace executable fixture");
+        let mut watch = RunnerReleaseWatch::for_paths(executable.clone(), marker.clone())
+            .expect("watch replacement before commit");
+
+        fs::write(&marker, release_marker_for(&executable, 2)).expect("commit replacement release");
+        assert!(!watch.replacement_committed().unwrap());
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_release_marker_does_not_retire_runner_before_new_release_is_committed() {
+        let workspace = temp_workspace();
+        let original = workspace.join("oore.original");
+        let executable = workspace.join("oore");
+        let replacement = workspace.join("oore.next");
+        let marker = workspace.join(RUNNER_RELEASE_MARKER_FILE);
+        fs::write(&original, b"old runner").expect("write original executable fixture");
+        fs::write(&executable, b"current runner").expect("write current executable fixture");
+        fs::write(&marker, release_marker_for(&original, 1)).expect("write stale release marker");
+        let mut watch = RunnerReleaseWatch::for_paths(executable.clone(), marker.clone())
+            .expect("watch current runner with stale marker");
+
+        fs::write(&replacement, b"next runner").expect("write replacement executable fixture");
+        fs::rename(&replacement, &executable).expect("atomically replace executable fixture");
+        assert!(!watch.replacement_committed().unwrap());
+
+        fs::write(&marker, release_marker_for(&executable, 2)).expect("commit replacement release");
+        assert!(watch.replacement_committed().unwrap());
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runner_started_before_commit_retires_after_rollback_republishes_previous_release() {
+        let workspace = temp_workspace();
+        let executable = workspace.join("oore");
+        let previous = workspace.join("oore.previous");
+        let marker = workspace.join(RUNNER_RELEASE_MARKER_FILE);
+        fs::write(&executable, b"release A").expect("write release A fixture");
+        fs::write(&marker, release_marker_for(&executable, 1)).expect("publish release A marker");
+        fs::rename(&executable, &previous).expect("preserve release A fixture");
+        fs::write(&executable, b"release B").expect("install release B fixture");
+        let mut release_b = RunnerReleaseWatch::for_paths(executable.clone(), marker.clone())
+            .expect("start release B before commit");
+
+        assert!(!release_b.replacement_committed().unwrap());
+        fs::rename(&previous, &executable).expect("restore release A fixture");
+        fs::write(&marker, release_marker_for(&executable, 2))
+            .expect("republish release A after rollback");
+        assert!(release_b.replacement_committed().unwrap());
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runner_release_marker_reader_accepts_v1_markers() {
+        let workspace = temp_workspace();
+        let executable = workspace.join("oore");
+        let marker = workspace.join(RUNNER_RELEASE_MARKER_FILE);
+        fs::write(&executable, b"legacy runner").expect("write legacy runner fixture");
+        fs::write(
+            &marker,
+            runner_executable_identity_marker(&executable).unwrap(),
+        )
+        .expect("write v1 marker");
+
+        let decoded = read_runner_release_marker(&marker).unwrap().unwrap();
+
+        assert!(decoded.generation.is_none());
+        assert_eq!(
+            decoded.executable,
+            executable_identity(&executable).unwrap()
+        );
+        cleanup_workspace(&workspace);
     }
 
     #[test]
@@ -4897,11 +6283,25 @@ mod tests {
             keychain_path: workspace
                 .join(IOS_SIGNING_DIR)
                 .join("oore-ci-build.keychain-db"),
-            original_default_keychain: "/placeholder/login.keychain-db".to_string(),
+            original_default_keychain: Some("/placeholder/login.keychain-db".to_string()),
             original_keychains: vec!["/placeholder/login.keychain-db".to_string()],
             installed_profiles: vec![profile_root.join("placeholder.mobileprovision")],
         };
         validate_ios_cleanup_journal(&workspace, &valid).expect("valid journal paths");
+        let headless = IosCleanupJournal {
+            keychain_path: workspace
+                .join(IOS_SIGNING_DIR)
+                .join("oore-ci-build.keychain-db"),
+            original_default_keychain: None,
+            original_keychains: Vec::new(),
+            installed_profiles: Vec::new(),
+        };
+        validate_ios_cleanup_journal(&workspace, &headless)
+            .expect("headless journal does not own global user state");
+        let serialized = serde_json::to_value(&headless).expect("serialize headless journal");
+        assert!(serialized.get("original_default_keychain").is_none());
+        assert!(serialized.get("original_keychains").is_none());
+        assert!(serialized.get("installed_profiles").is_none());
         let mut escaped = valid;
         escaped.installed_profiles = vec![profile_root.join("../escaped.mobileprovision")];
         assert!(validate_ios_cleanup_journal(&workspace, &escaped).is_err());
@@ -4976,7 +6376,7 @@ mod tests {
             keychain_path: workspace
                 .join(IOS_SIGNING_DIR)
                 .join("oore-ci-build.keychain-db"),
-            original_default_keychain: "/placeholder/login.keychain-db".to_string(),
+            original_default_keychain: Some("/placeholder/login.keychain-db".to_string()),
             original_keychains: vec!["/placeholder/login.keychain-db".to_string()],
             installed_profiles: vec![owned_profile.clone()],
         };
@@ -5565,19 +6965,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repository_child_process_cannot_inherit_managed_signing_values() {
+    async fn repository_child_process_cannot_inherit_managed_runner_values() {
         let mut command = tokio::process::Command::new("sh");
         command.arg("-c").arg("env");
         for key in MANAGED_ANDROID_SIGNING_ENV_KEYS {
             command.env(key, "managed-secret");
         }
-        scrub_managed_android_signing_env(&mut command);
+        command.env(RUNNER_SERVICE_ACK_PATH_ENV, "/private/runner-ack.json");
+        scrub_managed_runner_env(&mut command);
         let output = command.output().await.expect("run scrubbed child");
         assert!(output.status.success());
         let environment = String::from_utf8_lossy(&output.stdout);
         for key in MANAGED_ANDROID_SIGNING_ENV_KEYS {
             assert!(!environment.contains(&format!("{key}=")));
         }
+        assert!(!environment.contains(&format!("{RUNNER_SERVICE_ACK_PATH_ENV}=")));
     }
 
     #[cfg(target_os = "macos")]
@@ -5604,6 +7006,113 @@ mod tests {
         );
         assert!(repository_workspace.join(".git").is_dir());
         cleanup_workspace(&parent);
+    }
+
+    #[test]
+    fn bundled_fvm_environment_is_scoped_to_the_oore_install() {
+        let install_root = temp_workspace();
+        let mut command = tokio::process::Command::new("/bin/sh");
+
+        configure_bundled_fvm_environment(&mut command, &install_root);
+
+        let environment = command
+            .as_std()
+            .get_envs()
+            .filter_map(|(key, value)| {
+                value.map(|value| format!("{}={}", key.to_string_lossy(), value.to_string_lossy()))
+            })
+            .collect::<Vec<_>>();
+        assert!(environment.contains(&format!(
+            "FVM_CACHE_PATH={}",
+            install_root.join("toolchains/flutter").display()
+        )));
+        assert!(
+            environment
+                .iter()
+                .find(|entry| entry.starts_with("PATH="))
+                .is_some_and(
+                    |entry| entry.contains(&install_root.join("bin").display().to_string())
+                )
+        );
+
+        cleanup_workspace(&install_root);
+    }
+
+    #[test]
+    fn managed_fvm_download_is_pinned_for_supported_macos_architectures() {
+        let (arm64_url, arm64_sha) = managed_fvm_download("aarch64").expect("arm64 FVM download");
+        assert!(arm64_url.ends_with("/fvm-4.1.2-macos-arm64.tar.gz"));
+        assert_eq!(arm64_sha, MANAGED_FVM_ARM64_SHA256);
+
+        let (x64_url, x64_sha) = managed_fvm_download("x86_64").expect("x64 FVM download");
+        assert!(x64_url.ends_with("/fvm-4.1.2-macos-x64.tar.gz"));
+        assert_eq!(x64_sha, MANAGED_FVM_X64_SHA256);
+        assert!(managed_fvm_download("unsupported").is_err());
+    }
+
+    #[test]
+    fn managed_fvm_install_root_requires_the_installed_bin_layout() {
+        let root = temp_workspace();
+        fs::write(root.join("VERSION"), "0.1.32-alpha.21").expect("write VERSION");
+        fs::create_dir_all(root.join("bin")).expect("create bin");
+        let executable = root.join("bin/oore");
+        fs::write(&executable, "fixture").expect("write executable");
+
+        assert_eq!(
+            oore_install_root_for_executable(&executable),
+            Some(root.clone())
+        );
+        assert_eq!(
+            oore_install_root_for_executable(&root.join("target/debug/oore")),
+            None
+        );
+
+        cleanup_workspace(&root);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn managed_fvm_archive_installs_launcher_and_payload_for_legacy_updates() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_workspace();
+        let fixture = root.join("fixture/fvm");
+        fs::create_dir_all(&fixture).expect("create FVM fixture");
+        fs::write(fixture.join("fvm"), "#!/bin/sh\nprintf 'fixture-fvm\\n'\n")
+            .expect("write FVM fixture");
+        let archive = root.join("fixture.tar.gz");
+        let output = Command::new("/usr/bin/tar")
+            .args(["-czf"])
+            .arg(&archive)
+            .args(["-C"])
+            .arg(root.join("fixture"))
+            .arg("fvm")
+            .output()
+            .expect("create FVM fixture archive");
+        assert!(output.status.success());
+        let bytes = fs::read(&archive).expect("read FVM fixture archive");
+        let expected_sha = hex::encode(Sha256::digest(&bytes));
+
+        install_managed_fvm_archive(&root, &bytes, &expected_sha)
+            .await
+            .expect("install managed FVM fixture");
+
+        assert!(managed_fvm_is_available(&root));
+        assert_ne!(
+            fs::metadata(root.join("bin/fvm"))
+                .expect("launcher metadata")
+                .permissions()
+                .mode()
+                & 0o111,
+            0
+        );
+        let output = Command::new(root.join("bin/fvm"))
+            .output()
+            .expect("run managed FVM launcher");
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "fixture-fvm\n");
+
+        cleanup_workspace(&root);
     }
 
     #[test]
@@ -5990,7 +7499,7 @@ mod tests {
         let plan = resolve_execution_plan(&workspace, &snapshot).expect("resolve plan");
         assert_eq!(
             plan.stage_commands.build,
-            vec!["flutter build ios --release --no-codesign".to_string()]
+            vec!["fvm flutter build ios --release --no-codesign".to_string()]
         );
         assert_eq!(plan.artifact_patterns, vec!["*.ipa".to_string()]);
 
@@ -6025,7 +7534,7 @@ mod tests {
         let plan = resolve_execution_plan(&workspace, &snapshot).expect("resolve plan");
         assert_eq!(
             plan.stage_commands.build,
-            vec!["flutter build macos --release".to_string()]
+            vec!["fvm flutter build macos --release".to_string()]
         );
         assert_eq!(plan.artifact_patterns, vec!["*.zip".to_string()]);
 
@@ -6117,13 +7626,17 @@ mod tests {
         assert_eq!(plan.source, "ui_fallback");
         assert_eq!(
             plan.stage_commands.pre_build,
-            vec!["flutter pub get".to_string(), "echo pre".to_string()]
+            vec![
+                "fvm use stable --force --skip-pub-get".to_string(),
+                "fvm flutter pub get".to_string(),
+                "echo pre".to_string(),
+            ]
         );
         assert_eq!(
             plan.stage_commands.build,
             vec![
-                "flutter build apk --release".to_string(),
-                "flutter build macos --release".to_string(),
+                "fvm flutter build apk --release".to_string(),
+                "fvm flutter build macos --release".to_string(),
                 "echo custom".to_string(),
             ]
         );
@@ -6190,7 +7703,7 @@ mod tests {
         assert_eq!(
             plan.stage_commands.pre_build,
             vec![
-                "fvm use 3.24.0 --force".to_string(),
+                "fvm use 3.24.0 --force --skip-pub-get".to_string(),
                 "fvm flutter pub get".to_string(),
             ]
         );
@@ -6220,7 +7733,35 @@ mod tests {
         assert_eq!(
             plan.stage_commands.pre_build,
             vec![
-                "fvm use 3.22.3 --force".to_string(),
+                "fvm use 3.22.3 --force --skip-pub-get".to_string(),
+                "fvm flutter pub get".to_string(),
+            ]
+        );
+        assert_eq!(
+            plan.stage_commands.build,
+            vec!["fvm flutter build apk --release".to_string()]
+        );
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[test]
+    fn unpinned_flutter_project_uses_oore_managed_stable_sdk() {
+        let workspace = temp_workspace();
+        let snapshot = serde_json::json!({
+            "config_path_explicit": false,
+            "ui_execution_config": {
+                "platforms": ["android"],
+                "commands": { "pre_build": [], "build": [], "post_build": [] },
+                "artifact_patterns": ["*.apk"]
+            }
+        });
+
+        let plan = resolve_execution_plan(&workspace, &snapshot).expect("resolve plan");
+        assert_eq!(
+            plan.stage_commands.pre_build,
+            vec![
+                "fvm use stable --force --skip-pub-get".to_string(),
                 "fvm flutter pub get".to_string(),
             ]
         );
@@ -6328,7 +7869,7 @@ mod tests {
         assert_eq!(
             plan.stage_commands.build,
             vec![
-                "flutter build ipa --release --export-method ad-hoc --target lib/main_adhoc.dart"
+                "fvm flutter build ipa --release --export-method ad-hoc --target lib/main_adhoc.dart"
                     .to_string()
             ]
         );
@@ -6709,6 +8250,21 @@ mod tests {
     }
 
     #[test]
+    fn provisioned_bundles_are_ordered_deepest_first_with_root_app_last() {
+        let workspace = temp_workspace();
+        let app = workspace.join("Runner.app");
+        let nested_app = app.join("Watch/Companion.app");
+        let nested_extension = nested_app.join("PlugIns/CompanionExtension.appex");
+        fs::create_dir_all(&nested_extension).expect("create nested signed bundles");
+
+        assert_eq!(
+            collect_provisioned_bundles_deepest_first(&app).expect("collect signed bundles"),
+            vec![nested_extension, nested_app, app]
+        );
+        cleanup_workspace(&workspace);
+    }
+
+    #[test]
     fn build_stage_ios_simulator_command_fails_when_signing_enabled() {
         let export_plist = PathBuf::from("/tmp/ExportOptions.plist");
         let command = "flutter build ios --simulator";
@@ -6748,5 +8304,24 @@ attributes:
             parse_keychain_list("    \"/Users/runner/Library/Keychains/login.keychain-db\"\n"),
             vec!["/Users/runner/Library/Keychains/login.keychain-db"]
         );
+    }
+
+    #[test]
+    fn recognizes_only_missing_legacy_oore_keychain_paths() {
+        assert!(is_missing_legacy_oore_keychain(
+            "/private/tmp/oore-builds/old-build/.oore/ios-signing/oore-ci-build.keychain-db"
+        ));
+        assert!(is_missing_legacy_oore_keychain(
+            "/tmp/oore-builds.noindex/old-build/.oore/ios-signing/oore-ci-build.keychain-db"
+        ));
+        assert!(!is_missing_legacy_oore_keychain(
+            "/Users/runner/Library/Keychains/login.keychain-db"
+        ));
+        assert!(!is_missing_legacy_oore_keychain(
+            "/private/tmp/another-tool/old-build/.oore/ios-signing/oore-ci-build.keychain-db"
+        ));
+        assert!(!is_missing_legacy_oore_keychain(
+            "/private/tmp/oore-builds/old-build/.oore/ios-signing/another.keychain-db"
+        ));
     }
 }

@@ -13,10 +13,16 @@ Upload your signing certificate and provisioning profile directly to Oore CI for
 - A `.p12` signing certificate and its export password (see [Acquire iOS Certificates](/guides/signing/ios-certificates))
 - A `.mobileprovision` provisioning profile (see [Acquire iOS Certificates](/guides/signing/ios-certificates))
 - A [pipeline](/guides/projects/pipeline-config) configured for iOS builds
-- A macOS runner started with `oore runner install-service` in an interactive login session
+- A macOS runner installed with `oore runner install-service`
 
-::: warning Runner session
-iOS signing cannot run inside the `oored` system LaunchDaemon. Register the Mac as a Direct macOS runner and install its user service. The user may connect over SSH, but an interactive macOS login session must remain active for Apple Keychain code signing.
+::: info Runner login for Apple signing
+The Direct runner is a boot-time system LaunchDaemon running as its configured
+non-root account, so ordinary and Android builds remain available before login.
+Apple signing requires that account to have an active macOS login session. If
+it does not, a build already configured for iOS stops before checkout and asks
+you to log in and retry. Oore keeps profiles inside the private job workspace,
+temporarily selects its build keychain for fixed signing commands, then restores
+the previous default and search list; it does not install profiles globally.
 :::
 
 ## Steps
@@ -45,7 +51,10 @@ Click **Save**. The certificate and profile are encrypted at rest.
 
 ### 5. Verify
 
-Trigger a build. The runner installs the certificate and profile before executing `flutter build ipa`. Download the resulting `.ipa` and verify:
+Trigger a build. The runner imports the certificate into its temporary keychain,
+uses the workspace-local profiles, signs nested apps such as Watch apps and App
+Clips plus extensions before the root app, and cleans up the temporary signing
+state. Download the resulting `.ipa` and verify:
 
 ```bash
 codesign -dv --verbose=4 Payload/Runner.app

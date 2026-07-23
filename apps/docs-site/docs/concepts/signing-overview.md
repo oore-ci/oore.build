@@ -70,4 +70,5 @@ See [iOS Manual Signing](/guides/signing/ios-manual-signing) and [iOS API Signin
 - Credentials are transmitted only over HTTPS, except literal-loopback runner connections
 - Only the actively assigned runner with the per-job signing capability receives credentials
 - Repository-controlled commands never receive signing files, passwords, capability tokens, or an unlocked signing keychain
+- iOS profiles remain in the private job workspace; the runner passes a temporary keychain explicitly to signing tools without changing the user's default keychain, search list, or globally installed profiles
 - Credentials are not included in build logs

@@ -63,7 +63,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { PipelineConfigurationCard } from './-pipeline-configuration-card'
+import { PipelineConfigurationCard } from '../-pipeline-configuration-card'
 
 const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
 const TriggerBuildDialog = lazy(loadTriggerBuildDialog)

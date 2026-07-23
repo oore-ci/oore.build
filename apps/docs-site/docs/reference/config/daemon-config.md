@@ -37,9 +37,10 @@ Override the database path with `--state-file` or `OORE_SETUP_STATE_FILE`.
 macOS runner process. `OORED_RUNNER_MODE` may be omitted or set to `external`;
 legacy `embedded` and `hybrid` values are rejected.
 
-The runner claims a queued build only when Direct runner execution is enabled in
-**Settings > Runners** and that build's source repository has been approved in
-**Settings > Sources**.
+The runner claims a queued build while **Accept new builds** is on and the
+project's linked source is available. The Owner/Admin action that links the
+source to a project is the execution trust decision; there is no separate
+repository allowlist.
 
 ## CORS configuration
 

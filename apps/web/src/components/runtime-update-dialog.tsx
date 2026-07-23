@@ -27,7 +27,10 @@ import {
 } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
-import { formatReleaseNotes } from '@/components/runtime-update-utils'
+import {
+  formatReleaseNotes,
+  installerCommand,
+} from '@/components/runtime-update-utils'
 
 function updateButtonLabel(phase: string | undefined, pending: boolean) {
   if (pending) return 'Starting...'
@@ -79,9 +82,15 @@ function RuntimeUpdateCard({
           </span>
         </div>
         {!managed ? (
-          <p className="mt-2 text-xs text-muted-foreground">
-            Install this runtime as a managed service to update it here.
-          </p>
+          <div className="mt-2 space-y-2 text-xs text-muted-foreground">
+            <p>
+              Run the current installer once from Terminal to finish or repair
+              managed service setup.
+            </p>
+            <code className="block break-all rounded-md bg-muted p-2 font-mono text-foreground">
+              {installerCommand(release.channel)}
+            </code>
+          </div>
         ) : null}
       </CardContent>
       <CardFooter>
@@ -128,8 +137,13 @@ export default function RuntimeUpdateDialog({
     )
   const frontendPhase =
     updates.startFrontendUpdate.data?.phase ?? frontend?.phase
-  const backendPhase =
-    updates.startBackendUpdate.data?.phase ?? updates.backendUpdate.data?.phase
+  const backendQueryIsCurrent =
+    updates.backendUpdate.dataUpdatedAt >=
+    updates.startBackendUpdate.submittedAt
+  const backendPhase = backendQueryIsCurrent
+    ? updates.backendUpdate.data?.phase
+    : (updates.startBackendUpdate.data?.phase ??
+      updates.backendUpdate.data?.phase)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

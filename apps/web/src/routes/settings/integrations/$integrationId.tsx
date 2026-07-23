@@ -46,7 +46,6 @@ import {
   filterIntegrationRepositories,
   paginateIntegrationRepositories,
 } from './-integration-inventory-utils'
-import type { RepositoryRunnerFilter } from './-integration-inventory-utils'
 import { GitLabWebhookTokenDialogs } from './-gitlab-webhook-tokens'
 import { IntegrationConnectionDetails } from './-integration-connection-details'
 import { IntegrationDisconnectDialog } from './-integration-disconnect-dialog'
@@ -63,7 +62,6 @@ interface IntegrationDetailSearch {
   page?: number
   pageSize?: 10 | 20 | 50 | 100
   q?: string
-  runner?: Exclude<RepositoryRunnerFilter, 'all'>
   tab?: Exclude<IntegrationDetailTab, 'repositories'>
 }
 
@@ -72,14 +70,12 @@ function parseSearch(search: Record<string, unknown>): IntegrationDetailSearch {
   const pageSize = Number(search.pageSize)
   const q = typeof search.q === 'string' ? search.q.trim() : ''
   const tab = search.tab
-  const runner = search.runner
 
   return {
     installed:
       typeof search.installed === 'string' ? search.installed : undefined,
     gitlab: typeof search.gitlab === 'string' ? search.gitlab : undefined,
     q: q || undefined,
-    runner: runner === 'allowed' || runner === 'blocked' ? runner : undefined,
     tab: tab === 'accounts' || tab === 'connection' ? tab : undefined,
     page: Number.isInteger(page) && page > 1 ? page : undefined,
     pageSize:
@@ -163,12 +159,11 @@ function useIntegrationDetailPageState(
       !repositoriesQuery.isLoading &&
       !repositoriesQuery.error,
   })
-  const runnerFilter: RepositoryRunnerFilter = search.runner ?? 'all'
   const defaultPageSize = isCompact ? 10 : 20
   const pageSize = search.pageSize ?? defaultPageSize
   const filteredRepositories = useMemo(
-    () => filterIntegrationRepositories(repositories, search.q, runnerFilter),
-    [repositories, runnerFilter, search.q],
+    () => filterIntegrationRepositories(repositories, search.q),
+    [repositories, search.q],
   )
   const total = filteredRepositories.length
   const requestedPage = search.page ?? 1
@@ -298,9 +293,6 @@ function useIntegrationDetailPageState(
 
   return {
     status: 'ready' as const,
-    allowedRepositoryCount: repositories.filter(
-      (repository) => repository.allow_direct_macos_runner,
-    ).length,
     accountsTabLabel,
     accountsEmptyDescription,
     canSyncInstallations,
@@ -325,7 +317,6 @@ function useIntegrationDetailPageState(
     providerLabel,
     repositories,
     repositoriesQuery,
-    runnerFilter,
     search,
     syncLabel,
     syncMutation,
@@ -391,7 +382,6 @@ function IntegrationDetailPage() {
 
   const {
     accountsEmptyDescription,
-    allowedRepositoryCount,
     accountsTabLabel,
     canSyncInstallations,
     defaultPageSize,
@@ -415,7 +405,6 @@ function IntegrationDetailPage() {
     providerLabel,
     repositories,
     repositoriesQuery,
-    runnerFilter,
     search,
     syncLabel,
     syncMutation,
@@ -461,7 +450,6 @@ function IntegrationDetailPage() {
                   {repositories.length}{' '}
                   {repositories.length === 1 ? 'repository' : 'repositories'}
                 </span>
-                <span>{allowedRepositoryCount} allowed</span>
               </>
             ) : null}
           </>
@@ -559,7 +547,7 @@ function IntegrationDetailPage() {
             integration={integration}
             isLoading={repositoriesQuery.isLoading}
             onClearFilters={() =>
-              updateSearch({ q: undefined, runner: undefined, page: undefined })
+              updateSearch({ q: undefined, page: undefined })
             }
             onPageChange={(nextPage) =>
               updateSearch({ page: nextPage === 1 ? undefined : nextPage })
@@ -574,12 +562,6 @@ function IntegrationDetailPage() {
               })
             }
             onRetry={() => void repositoriesQuery.refetch()}
-            onRunnerFilterChange={(nextFilter) =>
-              updateSearch({
-                runner: nextFilter === 'all' ? undefined : nextFilter,
-                page: undefined,
-              })
-            }
             onSearch={(nextQuery) =>
               updateSearch({
                 q: nextQuery.trim() || undefined,
@@ -596,7 +578,6 @@ function IntegrationDetailPage() {
             query={search.q}
             repositories={visibleRepositories}
             repositoryCount={repositories.length}
-            runnerFilter={runnerFilter}
             total={total}
           />
         </TabsContent>

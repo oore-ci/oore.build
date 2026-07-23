@@ -27,7 +27,7 @@ Browser
 
 In this shape:
 
-- Mac Studio runs `oored` plus a separately registered Direct macOS runner service.
+- Mac Studio runs `oored` plus a separately enrolled Direct macOS runner service.
 - Ubuntu runs only `oore-web` plus the static frontend assets.
 - Warpgate overwrites `X-Warpgate-Username` with the authenticated email before forwarding the request to HAProxy.
 - HAProxy is reachable only from Warpgate, forwards that identity, and adds the frontend proof header expected by `oore-web`.
@@ -74,11 +74,14 @@ Backend-only macOS installs use a system LaunchDaemon running as the installing 
 
 When the daemon binds a specific NetBird address, it also opens the same port on loopback for the local Direct runner and operator commands. It does not add a wildcard listener; the NetBird address remains the only non-loopback daemon address.
 
-After backend setup, register the Mac once with `oore runner register`, then run
-`oore runner install-service` in the macOS account that will execute builds. In
-the web UI, enable Direct runner execution in **Settings > Runners** and
-approve each source in **Settings > Sources**. A dedicated non-admin account is
-recommended hardening, but Direct mode is not hostile-code isolation.
+The backend installer enrolls the local Direct runner and installs its separate
+boot-time LaunchDaemon as the selected macOS account. If that service ever needs
+repair, run `oore runner install-service --managed-local` as the runner account, without `sudo`;
+Oore requests administrator access only for launchd setup. An Owner or Admin
+trusts repository code by linking it to a project. **Accept new builds** in
+Preferences is an operational pause, not a second allowlist. A dedicated
+non-admin account is recommended hardening, but Direct mode is not hostile-code
+isolation.
 
 ### 2. Create a frontend pairing code
 
@@ -150,7 +153,11 @@ On the Mac:
 curl -fsS http://127.0.0.1:8787/readyz
 ```
 
-The loopback readiness request must succeed. After signing in, **Runners** must show the Direct macOS runner as `online`; backend readiness alone is not sufficient for a testable build host. Confirm the instance-level switch and repository approval before expecting queued builds to be claimed.
+The loopback readiness request must succeed. After signing in, **Runners** must
+show the Direct macOS runner as `online`; backend readiness alone is not
+sufficient for a testable build host. Confirm **Accept new builds** is on and the
+project's linked source is available before expecting queued builds to be
+claimed.
 
 On Ubuntu:
 

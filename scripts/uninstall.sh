@@ -11,6 +11,11 @@ DATA_DIR="$HOME/Library/Application Support/oore"
 DAEMON_LAUNCH_AGENT_LABEL="build.oore.oored"
 DAEMON_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$DAEMON_LAUNCH_AGENT_LABEL.plist"
 DAEMON_LAUNCH_DAEMON_PLIST="/Library/LaunchDaemons/$DAEMON_LAUNCH_AGENT_LABEL.plist"
+UPDATER_LAUNCH_DAEMON_LABEL="build.oore.oore-updater"
+UPDATER_LAUNCH_DAEMON_PLIST="/Library/LaunchDaemons/$UPDATER_LAUNCH_DAEMON_LABEL.plist"
+RUNNER_LAUNCH_AGENT_LABEL="build.oore.oore-runner"
+RUNNER_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$RUNNER_LAUNCH_AGENT_LABEL.plist"
+RUNNER_LAUNCH_DAEMON_PLIST="/Library/LaunchDaemons/$RUNNER_LAUNCH_AGENT_LABEL.plist"
 WEB_LAUNCH_AGENT_LABEL="build.oore.oore-web"
 WEB_LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$WEB_LAUNCH_AGENT_LABEL.plist"
 WEB_SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -236,31 +241,105 @@ stop_daemon() {
   fi
 }
 
-remove_daemon_launch_agent() {
-  local install_mode=""
-  [[ -f "$OORE_INSTALL_ROOT/INSTALL_MODE" ]] && install_mode="$(cat "$OORE_INSTALL_ROOT/INSTALL_MODE")"
+remove_system_launchd_service() {
+  local label="$1"
+  local plist="$2"
+  local component="$3"
 
-  if [[ "$install_mode" == "backend" ]]; then
-    sudo /bin/launchctl bootout "system/$DAEMON_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
-    sudo /bin/launchctl remove "$DAEMON_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
-    sudo /bin/rm -f "$DAEMON_LAUNCH_DAEMON_PLIST" >/dev/null 2>&1 || true
+  if [[ ! -e "$plist" ]] && ! system_launchd_job_is_loaded "$label"; then
+    return 0
   fi
 
-  if [[ -x "$BIN_DIR/oored" ]]; then
-    "$BIN_DIR/oored" uninstall-service >/dev/null 2>&1 || true
+  if ! sudo -v; then
+    die "Administrator access is required to remove the $component system service. The install directory was left intact."
+  fi
+
+  sudo -n /bin/launchctl bootout "system/$label" >/dev/null 2>&1 || true
+  sudo -n /bin/launchctl remove "$label" >/dev/null 2>&1 || true
+
+  if sudo -n /bin/launchctl print "system/$label" >/dev/null 2>&1; then
+    die "The $component system service is still loaded. Its service definition and the install directory were left intact."
+  fi
+
+  if ! sudo -n /bin/rm -f "$plist" >/dev/null 2>&1; then
+    die "Could not remove the $component system service. The install directory was left intact."
+  fi
+  if [[ -e "$plist" ]]; then
+    die "The $component system service definition is still installed. The install directory was left intact."
+  fi
+}
+
+system_launchd_job_is_loaded() {
+  local label="$1"
+  command -v launchctl >/dev/null 2>&1 \
+    && launchctl print "system/$label" >/dev/null 2>&1
+}
+
+remove_user_launchd_service() {
+  local label="$1"
+  local plist="$2"
+  local component="$3"
+  local uid=""
+
+  if [[ ! -e "$plist" ]] && ! user_launchd_job_is_loaded "$label"; then
+    return 0
   fi
 
   if command -v launchctl >/dev/null 2>&1; then
-    local uid=""
     uid="$(id -u)"
-    launchctl bootout "gui/$uid/$DAEMON_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
-    launchctl remove "$DAEMON_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
+    launchctl bootout "gui/$uid/$label" >/dev/null 2>&1 || true
+    launchctl remove "$label" >/dev/null 2>&1 || true
+    if launchctl print "gui/$uid/$label" >/dev/null 2>&1; then
+      die "The $component is still loaded. Its service definition and the install directory were left intact."
+    fi
   fi
 
-  if [[ -f "$DAEMON_LAUNCH_AGENT_PLIST" ]]; then
-    log "Removing launch agent: $DAEMON_LAUNCH_AGENT_PLIST"
-    rm -f "$DAEMON_LAUNCH_AGENT_PLIST"
+  if [[ -e "$plist" ]]; then
+    log "Removing $component: $plist"
+    rm -f "$plist" || die "Could not remove the $component. The install directory was left intact."
   fi
+  if [[ -e "$plist" ]]; then
+    die "The $component service definition is still installed. The install directory was left intact."
+  fi
+}
+
+user_launchd_job_is_loaded() {
+  local label="$1"
+  local uid=""
+  command -v launchctl >/dev/null 2>&1 || return 1
+  uid="$(id -u)"
+  launchctl print "gui/$uid/$label" >/dev/null 2>&1
+}
+
+remove_daemon_launch_agent() {
+  remove_system_launchd_service \
+    "$DAEMON_LAUNCH_AGENT_LABEL" \
+    "$DAEMON_LAUNCH_DAEMON_PLIST" \
+    "backend"
+
+  remove_user_launchd_service \
+    "$DAEMON_LAUNCH_AGENT_LABEL" \
+    "$DAEMON_LAUNCH_AGENT_PLIST" \
+    "backend launch agent"
+}
+
+remove_runner_service() {
+  remove_system_launchd_service \
+    "$RUNNER_LAUNCH_AGENT_LABEL" \
+    "$RUNNER_LAUNCH_DAEMON_PLIST" \
+    "runner"
+
+  remove_user_launchd_service \
+    "$RUNNER_LAUNCH_AGENT_LABEL" \
+    "$RUNNER_LAUNCH_AGENT_PLIST" \
+    "legacy runner launch agent"
+}
+
+remove_updater_service() {
+  remove_system_launchd_service \
+    "$UPDATER_LAUNCH_DAEMON_LABEL" \
+    "$UPDATER_LAUNCH_DAEMON_PLIST" \
+    "backend updater"
 }
 
 stop_local_web() {
@@ -287,17 +366,10 @@ stop_local_web() {
 }
 
 remove_local_web_launch_agent() {
-  if command -v launchctl >/dev/null 2>&1; then
-    local uid=""
-    uid="$(id -u)"
-    launchctl bootout "gui/$uid/$WEB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
-    launchctl remove "$WEB_LAUNCH_AGENT_LABEL" >/dev/null 2>&1 || true
-  fi
-
-  if [[ -f "$WEB_LAUNCH_AGENT_PLIST" ]]; then
-    log "Removing launch agent: $WEB_LAUNCH_AGENT_PLIST"
-    rm -f "$WEB_LAUNCH_AGENT_PLIST"
-  fi
+  remove_user_launchd_service \
+    "$WEB_LAUNCH_AGENT_LABEL" \
+    "$WEB_LAUNCH_AGENT_PLIST" \
+    "local web launch agent"
 }
 
 remove_local_web_systemd_user_service() {
@@ -387,7 +459,21 @@ main() {
 
   print_uninstall_intro
 
-  if [[ ! -d "$OORE_INSTALL_ROOT" ]] && [[ ! -f "$WEB_SYSTEMD_SERVICE_FILE" ]] && ! grep -rqF "$BIN_DIR" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile" 2>/dev/null; then
+  if [[ ! -d "$OORE_INSTALL_ROOT" ]] \
+    && [[ ! -f "$DAEMON_LAUNCH_DAEMON_PLIST" ]] \
+    && [[ ! -f "$UPDATER_LAUNCH_DAEMON_PLIST" ]] \
+    && [[ ! -f "$RUNNER_LAUNCH_DAEMON_PLIST" ]] \
+    && [[ ! -f "$DAEMON_LAUNCH_AGENT_PLIST" ]] \
+    && [[ ! -f "$RUNNER_LAUNCH_AGENT_PLIST" ]] \
+    && [[ ! -f "$WEB_LAUNCH_AGENT_PLIST" ]] \
+    && [[ ! -f "$WEB_SYSTEMD_SERVICE_FILE" ]] \
+    && ! system_launchd_job_is_loaded "$DAEMON_LAUNCH_AGENT_LABEL" \
+    && ! system_launchd_job_is_loaded "$UPDATER_LAUNCH_DAEMON_LABEL" \
+    && ! system_launchd_job_is_loaded "$RUNNER_LAUNCH_AGENT_LABEL" \
+    && ! user_launchd_job_is_loaded "$DAEMON_LAUNCH_AGENT_LABEL" \
+    && ! user_launchd_job_is_loaded "$RUNNER_LAUNCH_AGENT_LABEL" \
+    && ! user_launchd_job_is_loaded "$WEB_LAUNCH_AGENT_LABEL" \
+    && ! grep -rqF "$BIN_DIR" "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile" 2>/dev/null; then
     log "Oore CI does not appear to be installed."
     exit 0
   fi
@@ -399,6 +485,8 @@ main() {
     fi
   fi
 
+  remove_runner_service
+  remove_updater_service
   remove_daemon_launch_agent
   stop_daemon
   stop_local_web

@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Folder as Folder02Icon, Link2 as Link04Icon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Input } from '@/components/ui/input'
 import LocalFolderPickerDialog from '@/components/LocalFolderPickerDialog'
 import {
@@ -30,6 +31,7 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import RepositoryAvatar from '@/components/repository-avatar'
+import { SourceDiscoveryWarning } from '@/components/source-discovery-warning'
 import { repositoryProjectDefaults } from '@/lib/project-form-utils'
 import { useCreateProjectDialogState } from './-use-create-project-dialog-state'
 
@@ -56,7 +58,11 @@ export default function CreateProjectDialog({
     pickerOpen,
     repoItems,
     repos,
+    reposError,
+    repoFailures,
     reposLoading,
+    reposRetrying,
+    retryRepos,
     setPickerOpen,
   } = dialogState
 
@@ -65,11 +71,11 @@ export default function CreateProjectDialog({
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create Project</DialogTitle>
+            <DialogTitle>Create project</DialogTitle>
             <DialogDescription>
               {isRemoteMode
-                ? 'Choose a repository from a connected source. Project defaults are filled in for you.'
-                : 'Create a project from a repository on this Mac.'}
+                ? "Choose a repository from a connected source. Creating the project trusts its build commands to run with the runner account's macOS permissions."
+                : "Choose a repository on this Mac. Creating the project trusts its build commands to run with the runner account's macOS permissions."}
             </DialogDescription>
           </DialogHeader>
 
@@ -82,6 +88,11 @@ export default function CreateProjectDialog({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Repository</FormLabel>
+                      <SourceDiscoveryWarning
+                        failures={repoFailures}
+                        isRetrying={reposRetrying}
+                        onRetry={() => void retryRepos()}
+                      />
                       {reposLoading ? (
                         <div className="flex items-center gap-2 py-2">
                           <Spinner className="size-4" />
@@ -89,6 +100,22 @@ export default function CreateProjectDialog({
                             Loading repositories...
                           </span>
                         </div>
+                      ) : reposError ? (
+                        <Alert variant="destructive">
+                          <AlertDescription className="flex items-center justify-between gap-3">
+                            <span>
+                              Failed to load repositories: {reposError.message}
+                            </span>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void retryRepos()}
+                            >
+                              Retry
+                            </Button>
+                          </AlertDescription>
+                        </Alert>
                       ) : hasRepos ? (
                         <Select
                           value={field.value}
@@ -271,7 +298,8 @@ export default function CreateProjectDialog({
                   type="submit"
                   disabled={
                     createMutation.isPending ||
-                    (isRemoteMode && (reposLoading || !hasRepos))
+                    (isRemoteMode &&
+                      (reposLoading || !!reposError || !hasRepos))
                   }
                 >
                   {createMutation.isPending ? (

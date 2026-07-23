@@ -70,7 +70,6 @@ const RBAC_MATRIX: Record<string, Set<string>> = {
   ]),
   developer: new Set([
     'projects:read',
-    'projects:write',
     'pipelines:read',
     'pipelines:write',
     'builds:read',

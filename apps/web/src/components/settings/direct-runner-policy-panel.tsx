@@ -26,7 +26,7 @@ function DirectRunnerPolicyControl() {
   const updatePreferences = useUpdateInstancePreferences()
   const canWrite = useHasPermission('instance_settings', 'write')
   const preferences = preferencesQuery.data?.preferences
-  const enabled = preferences?.direct_macos_runner_enabled ?? false
+  const enabled = !(preferences?.direct_macos_runner_paused ?? false)
 
   if (preferencesQuery.isLoading) {
     return (
@@ -71,7 +71,7 @@ function DirectRunnerPolicyControl() {
     updatePreferences.mutate(
       {
         key_storage_mode: currentPreferences.key_storage_mode,
-        direct_macos_runner_enabled: checked,
+        direct_macos_runner_paused: !checked,
       },
       {
         onSuccess: () =>

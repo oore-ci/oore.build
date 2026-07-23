@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ArtifactStorageSettings } from './preferences-artifact-storage-settings'
 import { ExternalAccessManagement } from './preferences-external-access-management'
+import { RuntimeOverview } from './preferences-runtime-overview'
 import type { ArtifactStoragePageState } from './use-artifact-storage-page-state'
 import type { PreferencesPageState } from '@/routes/settings/preferences'
 
@@ -20,6 +21,53 @@ function artifactStateWith(
 }
 
 describe('Preferences deferred surfaces', () => {
+  it('keeps a supervised backend update failure visible with its log path', () => {
+    render(
+      <RuntimeOverview
+        state={stateWith({
+          backendHealthQuery: { data: { channel: 'alpha' } } as never,
+          backendUpdatePhase: 'failed',
+          backendVersionLabel: '1.2.3-alpha.1',
+          frontendUpdatePhase: 'idle',
+          isOwner: true,
+          runtimeUpdates: {
+            backendRelease: {
+              data: {
+                latest_version: '1.2.3-alpha.2',
+                update_available: true,
+              },
+            },
+            backendUpdate: {
+              data: {
+                error: 'Candidate readiness check failed; rollback completed.',
+                managed_service: true,
+                phase: 'failed',
+              },
+            },
+            frontendRelease: { data: undefined },
+            startBackendUpdate: {
+              isPending: false,
+              mutate: vi.fn(),
+            },
+          } as never,
+          webHealthQuery: { data: { channel: 'alpha' } } as never,
+          webVersionLabel: '1.2.3-alpha.1',
+        })}
+      />,
+    )
+
+    expect(screen.getByText('Backend update failed')).toBeTruthy()
+    expect(
+      screen.getByText('Candidate readiness check failed; rollback completed.'),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('<install root>/logs/update-supervisor.log'),
+    ).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Retry backend update' }),
+    ).toBeTruthy()
+  })
+
   it('preloads only the dialog matching the focused control', () => {
     const preloadNetwork = vi.fn()
     const preloadOidc = vi.fn()

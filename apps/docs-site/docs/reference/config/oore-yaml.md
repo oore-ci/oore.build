@@ -101,4 +101,5 @@ Patterns are workspace-relative. Absolute paths, parent traversal, and symlink t
 
 1. `.fvmrc` in repo root — highest priority
 2. `flutter_version` in `.oore.yaml` — fallback
-3. Pipeline Flutter version setting in UI — final fallback
+3. Pipeline Flutter version setting in UI — fallback
+4. Oore-managed stable Flutter — default

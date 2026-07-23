@@ -102,7 +102,7 @@ function RenameRunnerDialog({
   })
 
   const initialName = runner?.name ?? ''
-  const isEmbedded = !runner?.registered_by
+  const isManaged = !runner?.registered_by
 
   function handleClose(nextOpen: boolean) {
     if (!nextOpen) {
@@ -146,10 +146,10 @@ function RenameRunnerDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {isEmbedded ? (
+        {isManaged ? (
           <Alert>
             <AlertDescription>
-              Embedded runner names are managed by the daemon and cannot be
+              Managed runner names are set from the build host and cannot be
               changed.
             </AlertDescription>
           </Alert>

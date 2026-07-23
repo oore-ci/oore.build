@@ -600,7 +600,6 @@ pub async fn create_local_git_integration(
         full_name: repo_name,
         default_branch,
         is_private: true,
-        allow_direct_macos_runner: false,
         avatar_url: None,
         created_at: now,
         updated_at: now,

@@ -82,7 +82,6 @@ use utoipa::OpenApi;
         paths::get_integration,
         paths::delete_integration,
         paths::list_repositories,
-        paths::update_repository_runner_policy,
         paths::repository_avatar,
         paths::list_installations,
         paths::sync_installations,
@@ -252,8 +251,6 @@ use utoipa::OpenApi;
         oore_contract::IntegrationDetailResponse,
         oore_contract::ListInstallationsResponse,
         oore_contract::ListRepositoriesResponse,
-        oore_contract::UpdateRepositoryRunnerPolicyRequest,
-        oore_contract::UpdateRepositoryRunnerPolicyResponse,
         // Projects
         oore_contract::Project,
         oore_contract::CreateProjectRequest,
@@ -1118,19 +1115,6 @@ mod paths {
         )
     )]
     pub(super) async fn list_repositories() {}
-
-    /// Update direct macOS runner policy for a repository
-    #[utoipa::path(put, path = "/v1/integration-repositories/{id}/runner-policy", tag = "Integrations",
-        params(("id" = String, Path, description = "Integration repository ID")),
-        request_body = UpdateRepositoryRunnerPolicyRequest,
-        security(("bearer_auth" = [])),
-        responses(
-            (status = 200, description = "Repository runner policy updated", body = UpdateRepositoryRunnerPolicyResponse),
-            (status = 403, description = "Owner or administrator permission required", body = ApiError),
-            (status = 404, description = "Repository not found", body = ApiError),
-        )
-    )]
-    pub(super) async fn update_repository_runner_policy() {}
 
     /// Fetch a private GitLab repository avatar through Oore
     #[utoipa::path(get, path = "/v1/integration-repositories/{id}/avatar", tag = "Integrations",

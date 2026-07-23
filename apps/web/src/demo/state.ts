@@ -386,7 +386,7 @@ function makeExtraBuilds(): Array<Build> {
       trigger_type: 'api',
       branch: 'develop',
       config_snapshot: {},
-      runner_policy_block_reason: 'repository_not_approved',
+      runner_policy_block_reason: 'repository_unavailable',
       queued_at: ago(600),
       created_at: ago(600),
       updated_at: ago(600),
@@ -670,11 +670,11 @@ export function createDemoState(
   }
 
   if (scenario === 'blocked') {
-    state.preferences.direct_macos_runner_enabled = false
+    state.preferences.direct_macos_runner_paused = true
     const blocked = state.builds.find(
       (build) => build.id === EXTRA_BUILD_IDS.policyBlocked,
     )
-    if (blocked) blocked.runner_policy_block_reason = 'instance_disabled'
+    if (blocked) blocked.runner_policy_block_reason = 'instance_paused'
   }
 
   if (scenario === 'degraded') {

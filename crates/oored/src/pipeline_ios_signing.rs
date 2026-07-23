@@ -789,7 +789,6 @@ fn reexport_p12_legacy_blocking(
     let cert_out = run_openssl_pkcs12(&[
         "-in",
         old_p12_path.to_string_lossy().as_ref(),
-        "-clcerts",
         "-nokeys",
         "-passin",
         &passin,
@@ -3380,6 +3379,75 @@ pub async fn get_job_ios_signing(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_p12_reexport_preserves_certificate_chain() {
+        let scratch = SigningScratch::new().expect("create signing scratch");
+        let password = "test-password";
+        for name in ["leaf", "intermediate"] {
+            let status = Command::new("openssl")
+                .args([
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:2048",
+                    "-nodes",
+                    "-keyout",
+                    scratch.path(&format!("{name}.key")).to_str().unwrap(),
+                    "-out",
+                    scratch.path(&format!("{name}.crt")).to_str().unwrap(),
+                    "-days",
+                    "1",
+                    "-subj",
+                    &format!("/CN={name}"),
+                ])
+                .output()
+                .expect("generate certificate")
+                .status;
+            assert!(status.success());
+        }
+        let input = scratch.path("input.p12");
+        let status = Command::new("openssl")
+            .args([
+                "pkcs12",
+                "-export",
+                "-inkey",
+                scratch.path("leaf.key").to_str().unwrap(),
+                "-in",
+                scratch.path("leaf.crt").to_str().unwrap(),
+                "-certfile",
+                scratch.path("intermediate.crt").to_str().unwrap(),
+                "-out",
+                input.to_str().unwrap(),
+                "-passout",
+                &format!("pass:{password}"),
+            ])
+            .output()
+            .expect("create p12 chain")
+            .status;
+        assert!(status.success());
+
+        let (reexported, reexported_password) =
+            reexport_p12_legacy_blocking(&fs::read(input).unwrap(), password).unwrap();
+        let output = scratch.path("output.p12");
+        fs::write(&output, reexported).unwrap();
+        let certificates = run_openssl_pkcs12(&[
+            "-in",
+            output.to_str().unwrap(),
+            "-nokeys",
+            "-passin",
+            &format!("pass:{reexported_password}"),
+        ])
+        .expect("inspect re-exported p12");
+        assert!(certificates.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&certificates.stdout)
+                .matches("BEGIN CERTIFICATE")
+                .count(),
+            2,
+            "re-export must retain the intermediate certificate"
+        );
+    }
 
     #[test]
     fn signing_scratch_removes_material_on_success_and_error() {

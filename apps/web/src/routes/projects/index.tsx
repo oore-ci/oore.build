@@ -283,7 +283,7 @@ function ProjectsListPage() {
               </Button>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Ask an owner, admin, or developer to create the first project.
+                Ask an owner or admin to create the first project.
               </p>
             )}
           </EmptyContent>

@@ -327,11 +327,11 @@ pub async fn runner_heartbeat(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Atomically linearize a direct-runner claim against both policy gates.
+/// Atomically linearize a direct-runner claim against the operational pause.
 ///
 /// The initial queue lookup chooses the oldest eligible build. Rechecking the
-/// gates in the queued -> scheduled update closes the race with an operator
-/// disabling either policy while a claim request is in flight.
+/// pause and source identity in the queued -> scheduled update closes races
+/// with an operator change while a claim request is in flight.
 async fn schedule_eligible_direct_runner_build(
     pool: &sqlx::SqlitePool,
     build_id: &str,
@@ -352,10 +352,10 @@ async fn schedule_eligible_direct_runner_build(
            AND EXISTS ( \
              SELECT 1 FROM projects p \
              JOIN integration_repositories r ON r.id = p.repository_id \
-             JOIN instance_preferences pref ON pref.id = 1 \
+             LEFT JOIN instance_preferences pref ON pref.id = 1 \
              WHERE p.id = builds.project_id \
-               AND pref.direct_macos_runner_enabled = 1 \
-               AND r.allow_direct_macos_runner = 1 \
+               AND json_extract(builds.config_snapshot, '$.repository_id') = p.repository_id \
+               AND COALESCE(pref.direct_macos_runner_paused, 0) = 0 \
            )",
     )
     .bind(now)
@@ -434,16 +434,17 @@ pub async fn claim_job(
 
     let pool = &state.db;
 
-    // Missing repository or instance policy rows fail closed. Filtering before
-    // ordering prevents blocked work from starving later eligible builds.
+    // A missing repository remains ineligible. Missing preferences means the
+    // ordinary running state. Filtering before ordering prevents blocked work
+    // from starving later eligible builds.
     let build_row = sqlx::query(
         "SELECT b.* FROM builds b \
          JOIN projects p ON p.id = b.project_id \
          JOIN integration_repositories r ON r.id = p.repository_id \
-         JOIN instance_preferences pref ON pref.id = 1 \
+         LEFT JOIN instance_preferences pref ON pref.id = 1 \
          WHERE b.status = 'queued' \
-           AND pref.direct_macos_runner_enabled = 1 \
-           AND r.allow_direct_macos_runner = 1 \
+           AND json_extract(b.config_snapshot, '$.repository_id') = p.repository_id \
+           AND COALESCE(pref.direct_macos_runner_paused, 0) = 0 \
          ORDER BY b.queued_at ASC, b.id ASC LIMIT 1",
     )
     .fetch_optional(pool)
@@ -474,13 +475,14 @@ pub async fn claim_job(
 
     let source_row = sqlx::query(
         "SELECT i.provider, r.full_name \
-         FROM projects p \
-         JOIN integration_repositories r ON r.id = p.repository_id \
+         FROM builds b \
+         JOIN integration_repositories r \
+           ON r.id = json_extract(b.config_snapshot, '$.repository_id') \
          JOIN integration_installations inst ON inst.id = r.installation_id \
          JOIN integrations i ON i.id = inst.integration_id \
-         WHERE p.id = ?1",
+         WHERE b.id = ?1",
     )
-    .bind(&project_id)
+    .bind(&build_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| {
@@ -879,8 +881,8 @@ pub async fn update_runner(
     if registered_by.is_none() {
         return Err(api_err(
             StatusCode::CONFLICT,
-            "embedded_runner_locked",
-            "Embedded runner name cannot be changed",
+            "managed_runner_locked",
+            "Managed runner name cannot be changed",
         ));
     }
 
