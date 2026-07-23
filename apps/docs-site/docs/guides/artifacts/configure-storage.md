@@ -7,6 +7,10 @@ description: 'Configure artifact storage backends for Oore CI including local, S
 
 Build artifacts (APKs, IPAs, etc.) need a storage location. Oore CI supports local filesystem storage, Amazon S3, and Cloudflare R2.
 
+New instances use local filesystem storage automatically. You only need to
+change these settings when you want to disable artifacts or move them to S3 or
+R2.
+
 ## What you need
 
 - **Role**: owner or admin
@@ -30,7 +34,9 @@ Build artifacts (APKs, IPAs, etc.) need a storage location. Oore CI supports loc
 
 ### Local storage
 
-No additional configuration needed. Artifacts are stored on the daemon's filesystem and served via signed token URLs.
+This is the default for a new instance and needs no additional configuration.
+Artifacts are stored on the daemon's filesystem and served via signed token
+URLs.
 
 ### S3 storage
 
