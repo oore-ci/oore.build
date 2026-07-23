@@ -224,23 +224,28 @@ export function PipelineIdentityAndConfigSection({
 }
 
 export function PipelineTriggersSection({
-  cancelPrevious,
   manualOnlyTriggers,
-  onCancelPreviousChange,
   onOpenChange,
-  onToggleEvent,
   open,
-  selectedEvents,
 }: {
-  cancelPrevious: boolean
   manualOnlyTriggers: boolean
-  onCancelPreviousChange: (checked: boolean) => void
   onOpenChange: (open: boolean) => void
-  onToggleEvent: (event: string) => void
   open: boolean
-  selectedEvents: Array<string>
 }) {
   const form = useFormContext<PipelineFormValues>()
+  const selectedEvents = form.watch('trigger_events')
+  const cancelPrevious = form.watch('cancel_previous')
+
+  function toggleEvent(event: (typeof TRIGGER_EVENTS)[number]) {
+    form.setValue(
+      'trigger_events',
+      selectedEvents.includes(event)
+        ? selectedEvents.filter((entry) => entry !== event)
+        : [...selectedEvents, event],
+      { shouldDirty: true },
+    )
+  }
+
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
       <Card>
@@ -280,7 +285,7 @@ export function PipelineTriggersSection({
                       >
                         <Checkbox
                           checked={selectedEvents.includes(event)}
-                          onCheckedChange={() => onToggleEvent(event)}
+                          onCheckedChange={() => toggleEvent(event)}
                         />
                         {event}
                       </label>
@@ -310,7 +315,11 @@ export function PipelineTriggersSection({
             <label className="flex items-center gap-2 text-sm">
               <Checkbox
                 checked={cancelPrevious}
-                onCheckedChange={(checked) => onCancelPreviousChange(!!checked)}
+                onCheckedChange={(checked) =>
+                  form.setValue('cancel_previous', !!checked, {
+                    shouldDirty: true,
+                  })
+                }
               />
               Cancel previous builds on same branch
             </label>

@@ -197,6 +197,8 @@ function EditPipelinePage() {
       ),
     ),
     artifact_patterns: toMultiline(pipeline.execution_config.artifact_patterns),
+    trigger_events: manualOnlyTriggers ? [] : pipeline.trigger_config.events,
+    cancel_previous: pipeline.concurrency.cancel_previous,
     branches: manualOnlyTriggers
       ? ''
       : pipeline.trigger_config.branches.join(', '),
@@ -207,8 +209,6 @@ function EditPipelinePage() {
 
   async function handleSubmit(
     values: PipelineFormValues,
-    events: Array<string>,
-    cancelPrevious: boolean,
     releaseKeystoreFile: File | null,
     debugKeystoreFile: File | null,
     iosSigningFiles: {
@@ -226,12 +226,12 @@ function EditPipelinePage() {
     const trigger_config: TriggerConfig = manualOnlyTriggers
       ? { events: [], branches: [] }
       : {
-          events,
+          events: values.trigger_events,
           branches: parseCsv(values.branches),
         }
 
     const concurrency: ConcurrencyPolicy = {
-      cancel_previous: cancelPrevious,
+      cancel_previous: values.cancel_previous,
       max_concurrent: values.max_concurrent
         ? Number(values.max_concurrent)
         : undefined,
@@ -604,10 +604,6 @@ function EditPipelinePage() {
       <div className="mx-auto max-w-4xl">
         <PipelineForm
           initialValues={formInitialValues}
-          initialEvents={
-            manualOnlyTriggers ? [] : pipeline.trigger_config.events
-          }
-          initialCancelPrevious={pipeline.concurrency.cancel_previous}
           manualOnlyTriggers={manualOnlyTriggers}
           onSubmit={handleSubmit}
           onCancel={() =>

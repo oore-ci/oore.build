@@ -4,7 +4,6 @@ import type { UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { toast } from '@/lib/toast'
-import { useMountEffect } from '@/hooks/use-mount-effect'
 
 import { useBuildChangelogPreview, useCreateBuild } from '@/hooks/use-builds'
 import { useAllPipelines } from '@/hooks/use-pipelines'
@@ -320,10 +319,7 @@ export default function TriggerBuildDialog({
   )
 
   const projectId = fixedProjectId ?? form.watch('project_id') ?? ''
-  const activeProject = useMemo(
-    () => projects.find((project) => project.id === projectId),
-    [projects, projectId],
-  )
+  const activeProject = projects.find((project) => project.id === projectId)
   const sourceMissing =
     !!projectId &&
     !projectsQuery.isLoading &&
@@ -336,15 +332,11 @@ export default function TriggerBuildDialog({
     { sort: 'name', direction: 'asc' },
     { enabled: open && !!projectId },
   )
-  const pipelines = useMemo(
-    () => pipelinesQuery.data?.pipelines ?? [],
-    [pipelinesQuery.data?.pipelines],
-  )
+  const pipelines = pipelinesQuery.data?.pipelines ?? []
 
   const selectedPipelineId = fixedPipelineId ?? form.watch('pipeline_id') ?? ''
-  const selectedPipeline = useMemo(
-    () => pipelines.find((pipeline) => pipeline.id === selectedPipelineId),
-    [pipelines, selectedPipelineId],
+  const selectedPipeline = pipelines.find(
+    (pipeline) => pipeline.id === selectedPipelineId,
   )
   const availablePlatforms = selectedPipeline?.execution_config.platforms ?? []
   const branchItems = useMemo(
@@ -374,17 +366,6 @@ export default function TriggerBuildDialog({
     },
     { enabled: open },
   )
-
-  // Auto-select pipeline when project changes
-  useMountEffect(() => {
-    const subscription = form.watch((_, { name }) => {
-      if (name !== 'project_id') return
-      if (fixedPipelineId) return
-      form.setValue('pipeline_id', '', { shouldDirty: false })
-      form.setValue('platforms', [], { shouldDirty: false })
-    })
-    return () => subscription.unsubscribe()
-  })
 
   function handleClose() {
     onOpenChange(false)
@@ -507,6 +488,9 @@ export default function TriggerBuildDialog({
                         if (!fixedPipelineId) {
                           form.setValue('pipeline_id', '', {
                             shouldDirty: true,
+                          })
+                          form.setValue('platforms', [], {
+                            shouldDirty: false,
                           })
                         }
                       }}

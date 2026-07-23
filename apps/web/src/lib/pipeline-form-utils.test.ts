@@ -55,6 +55,8 @@ const defaults: PipelineFormValues = {
   macos_command_override: '',
   env_vars: '',
   artifact_patterns: '',
+  trigger_events: [],
+  cancel_previous: true,
   branches: '',
   max_concurrent: undefined,
 }

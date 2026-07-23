@@ -45,12 +45,8 @@ import {
 
 interface PipelineFormProps {
   initialValues: PipelineFormValues
-  initialEvents: Array<string>
-  initialCancelPrevious: boolean
   onSubmit: (
     data: PipelineFormValues,
-    events: Array<string>,
-    cancelPrevious: boolean,
     releaseKeystoreFile: File | null,
     debugKeystoreFile: File | null,
     iosSigningFiles: {
@@ -134,33 +130,6 @@ interface PipelineSections {
   signing: boolean
 }
 
-interface PipelineAuxiliaryState {
-  cancelPrevious: boolean
-  isDirty: boolean
-  selectedEvents: Array<string>
-}
-
-type PipelineAuxiliaryAction =
-  | { type: 'toggle_event'; event: string }
-  | { type: 'set_cancel_previous'; checked: boolean }
-
-function pipelineAuxiliaryReducer(
-  state: PipelineAuxiliaryState,
-  action: PipelineAuxiliaryAction,
-): PipelineAuxiliaryState {
-  if (action.type === 'set_cancel_previous') {
-    return { ...state, cancelPrevious: action.checked, isDirty: true }
-  }
-
-  return {
-    ...state,
-    isDirty: true,
-    selectedEvents: state.selectedEvents.includes(action.event)
-      ? state.selectedEvents.filter((entry) => entry !== action.event)
-      : [...state.selectedEvents, action.event],
-  }
-}
-
 type PipelineSectionsAction =
   | {
       type: 'set'
@@ -213,8 +182,6 @@ function initialPipelineSections({
 
 export default function PipelineForm({
   initialValues,
-  initialEvents,
-  initialCancelPrevious,
   onSubmit,
   onCancel,
   submitLabel,
@@ -237,11 +204,6 @@ export default function PipelineForm({
     shouldUnregister: false,
   })
 
-  const [auxiliary, dispatchAuxiliary] = useReducer(pipelineAuxiliaryReducer, {
-    cancelPrevious: initialCancelPrevious,
-    isDirty: false,
-    selectedEvents: initialEvents,
-  })
   const [releaseKeystoreFile, setReleaseKeystoreFile] = useState<File | null>(
     null,
   )
@@ -261,8 +223,7 @@ export default function PipelineForm({
     [releaseKeystoreFile, debugKeystoreFile, iosP12File, iosApiKeyFile],
     iosProfileFiles,
   )
-  const isDirty =
-    form.formState.isDirty || auxiliary.isDirty || signingFilesDirty
+  const isDirty = form.formState.isDirty || signingFilesDirty
   const blocker = useBlocker({
     shouldBlockFn: () => isDirty && !isSubmittingRef.current,
     enableBeforeUnload: () => isDirty && !isSubmittingRef.current,
@@ -270,14 +231,6 @@ export default function PipelineForm({
   })
   const setSectionOpen = (section: keyof typeof sections) => (open: boolean) =>
     dispatchSections({ type: 'set', section, open })
-
-  function toggleEvent(event: string) {
-    dispatchAuxiliary({ type: 'toggle_event', event })
-  }
-
-  function handleCancelPreviousChange(checked: boolean) {
-    dispatchAuxiliary({ type: 'set_cancel_previous', checked })
-  }
 
   function handleProfileFileChange(bundleId: string, file: File | null) {
     setIosProfileFiles((previous) => ({
@@ -289,18 +242,11 @@ export default function PipelineForm({
   async function handleFormSubmit(data: PipelineFormValues) {
     isSubmittingRef.current = true
     try {
-      await onSubmit(
-        data,
-        auxiliary.selectedEvents,
-        auxiliary.cancelPrevious,
-        releaseKeystoreFile,
-        debugKeystoreFile,
-        {
-          p12File: iosP12File,
-          apiKeyFile: iosApiKeyFile,
-          profileFiles: iosProfileFiles,
-        },
-      )
+      await onSubmit(data, releaseKeystoreFile, debugKeystoreFile, {
+        p12File: iosP12File,
+        apiKeyFile: iosApiKeyFile,
+        profileFiles: iosProfileFiles,
+      })
     } finally {
       isSubmittingRef.current = false
     }
@@ -334,13 +280,9 @@ export default function PipelineForm({
           repositoryWorkflow={repositoryWorkflow}
         />
         <PipelineTriggersSection
-          cancelPrevious={auxiliary.cancelPrevious}
           manualOnlyTriggers={manualOnlyTriggers}
-          onCancelPreviousChange={handleCancelPreviousChange}
           onOpenChange={setSectionOpen('triggers')}
-          onToggleEvent={toggleEvent}
           open={sections.triggers}
-          selectedEvents={auxiliary.selectedEvents}
         />
         <PipelineCommandsSection
           commandCount={totalCmdCount}

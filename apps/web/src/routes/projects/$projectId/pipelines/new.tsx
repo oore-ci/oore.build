@@ -106,6 +106,8 @@ const emptyDefaults: PipelineFormValues = {
   macos_command_override: '',
   env_vars: '',
   artifact_patterns: 'build/app/outputs/flutter-apk/*.apk',
+  trigger_events: [],
+  cancel_previous: true,
   branches: '',
   max_concurrent: undefined,
 }
@@ -332,8 +334,6 @@ function NewPipelinePage() {
 
   async function handleSubmit(
     data: PipelineFormValues,
-    events: Array<string>,
-    cancelPrevious: boolean,
     releaseKeystoreFile: File | null,
     debugKeystoreFile: File | null,
     iosSigningFiles: {
@@ -352,12 +352,12 @@ function NewPipelinePage() {
     const trigger_config: TriggerConfig = manualOnlyTriggers
       ? { events: [], branches: [] }
       : {
-          events,
+          events: data.trigger_events,
           branches: parseCsv(data.branches),
         }
 
     const concurrency: ConcurrencyPolicy = {
-      cancel_previous: cancelPrevious,
+      cancel_previous: data.cancel_previous,
       max_concurrent: data.max_concurrent
         ? Number(data.max_concurrent)
         : undefined,
@@ -832,9 +832,12 @@ function NewPipelinePage() {
         <div className="mx-auto max-w-4xl">
           <PipelineForm
             key={activeTemplate.key}
-            initialValues={activeTemplate.values}
-            initialEvents={manualOnlyTriggers ? [] : [...activeTemplate.events]}
-            initialCancelPrevious={true}
+            initialValues={{
+              ...activeTemplate.values,
+              trigger_events: manualOnlyTriggers
+                ? []
+                : [...activeTemplate.events],
+            }}
             manualOnlyTriggers={manualOnlyTriggers}
             onSubmit={handleSubmit}
             onCancel={() =>
