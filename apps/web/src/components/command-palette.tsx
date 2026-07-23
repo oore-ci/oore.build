@@ -1,4 +1,3 @@
-import { useCallback, useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import {
@@ -56,108 +55,92 @@ export default function CommandPalette({
   )
   const projects = projectsData?.projects ?? EMPTY_PROJECTS
 
-  const go = useCallback(
-    (to: string) => {
-      onOpenChange(false)
-      void navigate({ to })
+  function go(to: string) {
+    onOpenChange(false)
+    void navigate({ to })
+  }
+
+  const navItems: Array<PaletteItem> = [
+    ...(!isQaViewer
+      ? [
+          {
+            id: 'nav-dashboard',
+            label: 'Dashboard',
+            icon: Home01Icon,
+            action: () => go('/'),
+            keywords: 'home overview',
+          },
+          {
+            id: 'nav-projects',
+            label: 'Projects',
+            icon: FolderLibraryIcon,
+            action: () => go('/projects'),
+            keywords: 'repositories repos',
+          },
+        ]
+      : []),
+    {
+      id: 'nav-builds',
+      label: 'Builds',
+      icon: CommandLineIcon,
+      action: () => go('/builds'),
+      keywords: 'queue history runs',
     },
-    [navigate, onOpenChange],
-  )
+  ]
 
-  const navItems = useMemo<Array<PaletteItem>>(
-    () => [
-      ...(!isQaViewer
-        ? [
-            {
-              id: 'nav-dashboard',
-              label: 'Dashboard',
-              icon: Home01Icon,
-              action: () => go('/'),
-              keywords: 'home overview',
-            },
-            {
-              id: 'nav-projects',
-              label: 'Projects',
-              icon: FolderLibraryIcon,
-              action: () => go('/projects'),
-              keywords: 'repositories repos',
-            },
-          ]
-        : []),
-      {
-        id: 'nav-builds',
-        label: 'Builds',
-        icon: CommandLineIcon,
-        action: () => go('/builds'),
-        keywords: 'queue history runs',
-      },
-    ],
-    [go, isQaViewer],
-  )
+  const adminItems: Array<PaletteItem> = isAdmin
+    ? [
+        {
+          id: 'nav-users',
+          label: 'Users',
+          icon: UserMultiple02Icon,
+          action: () => go('/settings/users'),
+          keywords: 'team members invite',
+        },
+        {
+          id: 'nav-runners',
+          label: 'Runners',
+          icon: ComputerIcon,
+          action: () => go('/settings/runners'),
+          keywords: 'machines agents workers',
+        },
+        {
+          id: 'nav-sources',
+          label: 'Sources',
+          icon: LinkSquare01Icon,
+          action: () => go('/settings/integrations'),
+          keywords: 'github gitlab integrations',
+        },
+        {
+          id: 'nav-preferences',
+          label: 'Preferences',
+          icon: Settings01Icon,
+          action: () => go('/settings/preferences'),
+          keywords: 'settings config',
+        },
+      ]
+    : []
 
-  const adminItems = useMemo<Array<PaletteItem>>(
-    () =>
-      isAdmin
-        ? [
-            {
-              id: 'nav-users',
-              label: 'Users',
-              icon: UserMultiple02Icon,
-              action: () => go('/settings/users'),
-              keywords: 'team members invite',
-            },
-            {
-              id: 'nav-runners',
-              label: 'Runners',
-              icon: ComputerIcon,
-              action: () => go('/settings/runners'),
-              keywords: 'machines agents workers',
-            },
-            {
-              id: 'nav-sources',
-              label: 'Sources',
-              icon: LinkSquare01Icon,
-              action: () => go('/settings/integrations'),
-              keywords: 'github gitlab integrations',
-            },
-            {
-              id: 'nav-preferences',
-              label: 'Preferences',
-              icon: Settings01Icon,
-              action: () => go('/settings/preferences'),
-              keywords: 'settings config',
-            },
-          ]
-        : [],
-    [go, isAdmin],
-  )
+  const actionItems: Array<PaletteItem> = canWriteProjects
+    ? [
+        {
+          id: 'action-new-project',
+          label: 'Create new project',
+          icon: FolderLibraryIcon,
+          action: () => go('/projects?openCreate=1'),
+          keywords: 'add new project create',
+        },
+      ]
+    : []
 
-  const actionItems = useMemo<Array<PaletteItem>>(
-    () =>
-      canWriteProjects
-        ? [
-            {
-              id: 'action-new-project',
-              label: 'Create new project',
-              icon: FolderLibraryIcon,
-              action: () => go('/projects?openCreate=1'),
-              keywords: 'add new project create',
-            },
-          ]
-        : [],
-    [go, canWriteProjects],
-  )
-
-  const projectItems = useMemo<Array<PaletteItem>>(
-    () =>
-      (isQaViewer ? [] : projects).map((project) => ({
-        id: `project-${project.id}`,
-        label: project.name,
-        icon: FolderLibraryIcon,
-        action: () => go(`/projects/${project.id}`),
-        keywords: project.description ?? '',
-      })),
-    [go, isQaViewer, projects],
+  const projectItems: Array<PaletteItem> = (isQaViewer ? [] : projects).map(
+    (project) => ({
+      id: `project-${project.id}`,
+      label: project.name,
+      icon: FolderLibraryIcon,
+      action: () => go(`/projects/${project.id}`),
+      keywords: project.description ?? '',
+    }),
   )
 
   return (
