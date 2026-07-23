@@ -220,14 +220,10 @@ function useProjectDetailPageState() {
     string | undefined
   >()
 
-  const summaryBuilds = useMemo(
-    () => summaryBuildsData?.builds ?? [],
-    [summaryBuildsData?.builds],
-  )
   const lastBuildByPipeline = useMemo(() => {
     const byPipeline = new Map<string, { status: string; time: number }>()
 
-    for (const build of summaryBuilds) {
+    for (const build of summaryBuildsData?.builds ?? []) {
       if (build.pipeline_id && !byPipeline.has(build.pipeline_id)) {
         byPipeline.set(build.pipeline_id, {
           status: build.status,
@@ -237,7 +233,7 @@ function useProjectDetailPageState() {
     }
 
     return byPipeline
-  }, [summaryBuilds])
+  }, [summaryBuildsData?.builds])
   const buildCount = summaryBuildsData?.total ?? data?.build_count ?? 0
 
   function updatePipelineSearch(updates: Partial<ProjectDetailSearch>) {

@@ -1,5 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { GitLabAuthorizeRequest, GitLabStartRequest } from '@/lib/types'
+import type {
+  GitLabAuthorizeRequest,
+  GitLabStartRequest,
+  ListIntegrationsResponse,
+} from '@/lib/types'
 import {
   browseLocalGitDirectories,
   deleteIntegration,
@@ -29,16 +33,20 @@ function useBaseUrl(): string | null {
   return resolveInstanceApiBaseUrl(instance)
 }
 
-export function useIntegrations(provider?: string) {
+export function useIntegrations<TData = ListIntegrationsResponse>(
+  provider?: string,
+  options?: { select?: (data: ListIntegrationsResponse) => TData },
+) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
 
-  return useQuery({
+  return useQuery<ListIntegrationsResponse, Error, TData>({
     queryKey: [instance?.id ?? '__none__', 'integrations', provider ?? 'all'],
     queryFn: ({ signal }) =>
       listAllIntegrations(baseUrl!, token!, provider, { signal }),
     enabled: !!baseUrl && !!token,
+    select: options?.select,
   })
 }
 

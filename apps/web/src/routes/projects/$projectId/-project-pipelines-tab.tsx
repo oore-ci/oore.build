@@ -83,7 +83,6 @@ export function ProjectPipelinesTab({
         {total > 0 || query ? (
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <CollectionSearchInput
-              key={query}
               initialValue={query}
               onSearch={onQueryChange}
               placeholder="Search pipelines"

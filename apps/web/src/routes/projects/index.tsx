@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import {
   Link,
   createFileRoute,
@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/empty'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import type { SortDirection } from '@/components/collection-controls'
+import type { ListIntegrationsResponse } from '@/lib/types'
 import { PageMeta } from '@/lib/seo'
 import { ProjectInventory } from './-project-inventory'
 import type { ProjectSort } from './-project-inventory'
@@ -66,6 +67,12 @@ const PROJECT_SORT_VALUES = new Set<ProjectSort>([
   'updated_at',
   'name',
 ])
+
+function selectHasActiveIntegration({
+  integrations,
+}: ListIntegrationsResponse): boolean {
+  return integrations.some((integration) => integration.status === 'active')
+}
 
 function parseSearch(search: Record<string, unknown>): ProjectsSearch {
   const page = Number(search.page)
@@ -110,7 +117,9 @@ function ProjectsListPage() {
     limit: pageSize,
     offset: (page - 1) * pageSize,
   })
-  const integrationsQuery = useIntegrations()
+  const integrationsQuery = useIntegrations(undefined, {
+    select: selectHasActiveIntegration,
+  })
   const setupStatusQuery = useSetupStatus()
   const canWriteProjects = useHasPermission('projects', 'write')
   const instanceRole = useAuthStore((state) => state.user?.role)
@@ -119,28 +128,15 @@ function ProjectsListPage() {
   const canWriteIntegrations = useHasPermission('integrations', 'write')
   const [createOpen, setCreateOpen] = useState(false)
 
-  const projects = useMemo(
-    () => projectsQuery.data?.projects ?? [],
-    [projectsQuery.data?.projects],
-  )
+  const projects = projectsQuery.data?.projects ?? []
   const total = projectsQuery.data?.total ?? 0
-  const integrations = useMemo(
-    () => integrationsQuery.data?.integrations ?? [],
-    [integrationsQuery.data?.integrations],
-  )
-  const activeIntegrationsCount = useMemo(
-    () =>
-      integrations.filter((integration) => integration.status === 'active')
-        .length,
-    [integrations],
-  )
   const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'local'
   const integrationsResolved =
     !integrationsQuery.isLoading && !integrationsQuery.error
   const noConnectedSources =
     runtimeMode === 'remote' &&
     integrationsResolved &&
-    activeIntegrationsCount === 0
+    integrationsQuery.data === false
 
   const openCreateFromSearch =
     search.openCreate === '1' &&
@@ -202,7 +198,6 @@ function ProjectsListPage() {
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <CollectionSearchInput
-          key={search.q ?? ''}
           initialValue={search.q ?? ''}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })

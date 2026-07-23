@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { createFileRoute, redirect, useSearch } from '@tanstack/react-router'
 import { DynamicLucideIcon } from '@/components/ui/dynamic-lucide-icon'
 import { Info as InformationCircleIcon, Play as PlayIcon } from 'lucide-react'
@@ -23,7 +23,7 @@ import { PageMeta } from '@/lib/seo'
 import { BuildInventory } from './-build-inventory'
 import type { BuildSort } from './-build-inventory'
 import { BuildsEmptyState } from './-builds-empty-state'
-import { BuildFilters } from './-build-filters'
+import { BUILD_SORT_OPTIONS, BuildFilters } from './-build-filters'
 
 const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
 const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
@@ -36,14 +36,6 @@ interface BuildsSearch {
   q?: string
   sort?: BuildSort
   status?: string
-}
-
-const BUILD_SORT_OPTIONS: Record<BuildSort, string> = {
-  created_at: 'Newest first',
-  status: 'Status',
-  project_name: 'Project',
-  pipeline_name: 'Pipeline',
-  branch: 'Branch',
 }
 
 const BUILD_SORT_VALUES = new Set<BuildSort>(
@@ -115,14 +107,8 @@ function OperationsBuildsPage() {
   const canWriteIntegrations = useHasPermission('integrations', 'write')
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
 
-  const builds = useMemo(
-    () => buildsQuery.data?.builds ?? [],
-    [buildsQuery.data?.builds],
-  )
-  const projects = useMemo(
-    () => projectsQuery.data?.projects ?? [],
-    [projectsQuery.data?.projects],
-  )
+  const builds = buildsQuery.data?.builds ?? []
+  const projects = projectsQuery.data?.projects ?? []
   const total = buildsQuery.data?.total ?? 0
   const canTriggerBuild =
     canTriggerBuildGlobally &&

@@ -8,7 +8,14 @@ import {
   Play as PlayIcon,
 } from 'lucide-react'
 
-import type { RuntimeMode } from '@/lib/types'
+import type {
+  AuthorizedProject,
+  BuildStatus,
+  ListBuildsResponse,
+  ListIntegrationsResponse,
+  ListRunnersResponse,
+  RuntimeMode,
+} from '@/lib/types'
 import { useIndexAuthGuard } from '@/hooks/use-index-auth-guard'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import ActiveBuildBanner from '@/components/active-build-banner'
@@ -34,7 +41,6 @@ import { useProjects } from '@/hooks/use-projects'
 import { useRunners } from '@/hooks/use-runners'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { getSetupStatus } from '@/lib/api'
-import { selectDashboardBuilds } from '@/lib/dashboard'
 import { PageMeta } from '@/lib/seo'
 import { isManagedFrontend } from '@/lib/managed-frontend'
 import { useAuthStore } from '@/stores/auth-store'
@@ -60,6 +66,35 @@ const KNOWN_LOCAL_DAEMON_URLS = [
   'http://127.0.0.1:8790',
 ]
 
+const ACTIVE_BUILD_STATUSES = new Set<BuildStatus>([
+  'queued',
+  'scheduled',
+  'assigned',
+  'running',
+])
+
+function selectDashboardBuilds({ builds }: ListBuildsResponse) {
+  return {
+    builds,
+    active: builds.filter((build) => ACTIVE_BUILD_STATUSES.has(build.status)),
+    recentCompleted: builds
+      .filter((build) => !ACTIVE_BUILD_STATUSES.has(build.status))
+      .slice(0, 6),
+  }
+}
+
+function selectHasActiveIntegration({
+  integrations,
+}: ListIntegrationsResponse): boolean {
+  return integrations.some((integration) => integration.status === 'active')
+}
+
+function selectHasOnlineRunner({ runners }: ListRunnersResponse): boolean {
+  return runners.some(
+    (runner) => runner.status === 'online' || runner.status === 'busy',
+  )
+}
+
 function normalizeUrl(value: string): string {
   return value.replace(/\/+$/, '')
 }
@@ -73,19 +108,10 @@ function isLoopbackHostname(hostname: string): boolean {
   )
 }
 
-async function getSetupStatusWithTimeout(baseUrl: string, timeoutMs: number) {
-  return await Promise.race([
-    getSetupStatus(baseUrl),
-    new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('timeout')), timeoutMs)
-    }),
-  ])
-}
-
 async function detectReachableLocalDaemonUrl(): Promise<string | null> {
   for (const candidate of KNOWN_LOCAL_DAEMON_URLS) {
     try {
-      await getSetupStatusWithTimeout(candidate, 900)
+      await getSetupStatus(candidate, { signal: AbortSignal.timeout(900) })
       return candidate
     } catch {
       // try next candidate
@@ -301,59 +327,42 @@ function ConfiguredDashboard({
   const canWriteBuilds = useHasPermission('builds', 'write')
 
   const projectsQuery = useProjects({ limit: 6 })
-  const projects = useMemo(
-    () => projectsQuery.data?.projects ?? [],
-    [projectsQuery.data?.projects],
-  )
-  const integrationsQuery = useIntegrations()
-  const runnersQuery = useRunners()
-  const integrations = useMemo(
-    () => integrationsQuery.data?.integrations ?? [],
-    [integrationsQuery.data?.integrations],
-  )
-  const activeIntegrationsCount = useMemo(
-    () =>
-      integrations.filter((integration) => integration.status === 'active')
-        .length,
-    [integrations],
-  )
+  const projects = projectsQuery.data?.projects ?? []
+  const integrationsQuery = useIntegrations(undefined, {
+    select: selectHasActiveIntegration,
+  })
+  const runnersQuery = useRunners({
+    select: selectHasOnlineRunner,
+  })
 
-  const recentBuildsQuery = useBuilds({ limit: 50 })
-  const recentBuilds = useMemo(
-    () => recentBuildsQuery.data?.builds ?? [],
-    [recentBuildsQuery.data?.builds],
+  const recentBuildsQuery = useBuilds(
+    { limit: 50 },
+    { select: selectDashboardBuilds },
   )
-  const { active: activeBuilds, recentCompleted: recentCompletedBuilds } =
-    useMemo(() => selectDashboardBuilds(recentBuilds), [recentBuilds])
+  const activeBuilds = recentBuildsQuery.data?.active ?? []
+  const recentCompletedBuilds = recentBuildsQuery.data?.recentCompleted ?? []
   const hasProjects = projects.length > 0
-  const recentProjects = hasProjects ? projects.slice(0, 6) : []
   const integrationsResolved =
     !integrationsQuery.isLoading && !integrationsQuery.error
   const noConnectedSources =
     runtimeMode === 'remote' &&
     integrationsResolved &&
-    activeIntegrationsCount === 0
+    integrationsQuery.data === false
   const integrationConnectTo = '/settings/integrations'
-  const noOnlineRunners =
-    !!runnersQuery.data &&
-    !runnersQuery.data.runners.some(
-      (runner) => runner.status === 'online' || runner.status === 'busy',
-    )
+  const noOnlineRunners = runnersQuery.data === false
   const canActOnEveryProject =
     authUser?.role === 'owner' || authUser?.role === 'admin'
-  const canTriggerProject = (projectId: string) => {
-    const project = projects.find((candidate) => candidate.id === projectId)
+  const canTriggerProject = (project: AuthorizedProject) => {
     return (
       canWriteBuilds &&
       (canActOnEveryProject ||
-        hasProjectPermission(project?.current_user_role, 'builds', 'write'))
+        hasProjectPermission(project.current_user_role, 'builds', 'write'))
     )
   }
-  const canManageProject = (projectId: string) => {
-    const project = projects.find((candidate) => candidate.id === projectId)
+  const canManageProject = (project: AuthorizedProject) => {
     return (
       canActOnEveryProject ||
-      hasProjectPermission(project?.current_user_role, 'projects', 'write')
+      hasProjectPermission(project.current_user_role, 'projects', 'write')
     )
   }
   const canShowRunBuild = hasProjects && !noOnlineRunners && canWriteBuilds
@@ -361,13 +370,13 @@ function ConfiguredDashboard({
   // Derive last build status per project from recent builds
   const lastBuildByProject = useMemo(() => {
     const map = new Map<string, string>()
-    for (const build of recentBuilds) {
+    for (const build of recentBuildsQuery.data?.builds ?? []) {
       if (!map.has(build.project_id)) {
         map.set(build.project_id, build.status)
       }
     }
     return map
-  }, [recentBuilds])
+  }, [recentBuildsQuery.data?.builds])
 
   function handleTriggerForProject(projectId: string) {
     setTriggerProjectId(() => projectId)
@@ -476,13 +485,11 @@ function ConfiguredDashboard({
           />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {recentProjects.map((project) => (
+            {projects.map((project) => (
               <ProjectCard
                 key={project.id}
-                canOpenSettings={canManageProject(project.id)}
-                canTriggerBuild={
-                  !noOnlineRunners && canTriggerProject(project.id)
-                }
+                canOpenSettings={canManageProject(project)}
+                canTriggerBuild={!noOnlineRunners && canTriggerProject(project)}
                 project={project}
                 lastBuildStatus={lastBuildByProject.get(project.id)}
                 onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}

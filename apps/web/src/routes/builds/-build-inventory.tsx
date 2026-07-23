@@ -36,10 +36,13 @@ export type BuildSort =
 const loadBuildActionsMenu = () => import('./-build-actions-menu')
 const BuildActionsMenu = lazy(loadBuildActionsMenu)
 
-function projectName(build: Build, projects: Array<Project>) {
+function projectName(
+  build: Build,
+  projectNamesById: ReadonlyMap<string, string>,
+) {
   return (
     build.context?.project_name ??
-    projects.find((project) => project.id === build.project_id)?.name ??
+    projectNamesById.get(build.project_id) ??
     'Unknown project'
   )
 }
@@ -116,6 +119,10 @@ export function BuildInventory({
   sort: BuildSort
   total: number
 }) {
+  const projectNamesById = new Map(
+    projects.map((project) => [project.id, project.name]),
+  )
+
   return (
     <section aria-label="Build queue and history" className="min-w-0">
       <div className="divide-y sm:hidden">
@@ -145,7 +152,7 @@ export function BuildInventory({
                   </p>
                 ) : null}
                 <p className="truncate text-sm">
-                  {projectName(build, projects)}
+                  {projectName(build, projectNamesById)}
                   {build.context?.pipeline_name ? (
                     <span className="text-muted-foreground">
                       {' · '}
@@ -246,7 +253,9 @@ export function BuildInventory({
                       <BuildIdentity build={build} />
                     </TableCell>
                     <TableCell>
-                      <p className="text-sm">{projectName(build, projects)}</p>
+                      <p className="text-sm">
+                        {projectName(build, projectNamesById)}
+                      </p>
                       {build.context?.pipeline_name ? (
                         <p className="text-xs text-muted-foreground">
                           {build.context.pipeline_name}

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import type { UpdateRunnerRequest } from '@/lib/types'
+import type { ListRunnersResponse, UpdateRunnerRequest } from '@/lib/types'
 import { listRunners, updateRunner } from '@/lib/api'
 import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
@@ -19,16 +19,19 @@ function useBaseUrl(): string | null {
   return resolveInstanceApiBaseUrl(instance)
 }
 
-export function useRunners() {
+export function useRunners<TData = ListRunnersResponse>(options?: {
+  select?: (data: ListRunnersResponse) => TData
+}) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
 
-  return useQuery({
+  return useQuery<ListRunnersResponse, Error, TData>({
     queryKey: [instance?.id ?? '__none__', 'runners'],
     queryFn: ({ signal }) => listRunners(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
     refetchInterval: 15_000,
+    select: options?.select,
   })
 }
 

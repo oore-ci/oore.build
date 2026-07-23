@@ -240,13 +240,16 @@ function AddProjectMemberDialog({ projectId }: { projectId: string }) {
     resolver: zodResolver(accessSchema),
     defaultValues: { user_id: '', role: 'viewer' },
   })
-  const candidates = useMemo(
-    () => candidatesQuery.data?.candidates ?? [],
-    [candidatesQuery.data],
-  )
+  const candidates = candidatesQuery.data?.candidates ?? []
   const candidatesById = useMemo(
-    () => new Map(candidates.map((candidate) => [candidate.id, candidate])),
-    [candidates],
+    () =>
+      new Map(
+        (candidatesQuery.data?.candidates ?? []).map((candidate) => [
+          candidate.id,
+          candidate,
+        ]),
+      ),
+    [candidatesQuery.data?.candidates],
   )
   const selectedUser = candidatesById.get(form.watch('user_id'))
   const availableRoles =
@@ -427,10 +430,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
   const [memberToRemove, setMemberToRemove] = useState<ProjectMember | null>(
     null,
   )
-  const members = useMemo(
-    () => membersQuery.data?.members ?? [],
-    [membersQuery.data],
-  )
+  const members = membersQuery.data?.members ?? []
 
   function updateRole(member: ProjectMember, role: ProjectRole) {
     if (role === member.role) return

@@ -57,7 +57,7 @@ function useBaseUrl(): string | null {
   return resolveInstanceApiBaseUrl(instance)
 }
 
-export function useBuilds(
+export function useBuilds<TData = ListBuildsResponse>(
   params?: {
     project_id?: string
     pipeline_id?: string
@@ -68,14 +68,18 @@ export function useBuilds(
     limit?: number
     offset?: number
   },
-  options?: { enabled?: boolean; refetchInterval?: number | false },
+  options?: {
+    enabled?: boolean
+    refetchInterval?: number | false
+    select?: (data: ListBuildsResponse) => TData
+  },
 ) {
   const baseUrl = useBaseUrl()
   const token = useAuthToken()
   const instance = useActiveInstance()
   const pollInterval = options?.refetchInterval ?? BUILD_POLL_INTERVAL_MS
 
-  return useQuery({
+  return useQuery<ListBuildsResponse, Error, TData>({
     queryKey: [instance?.id ?? '__none__', 'builds', params ?? {}],
     queryFn: ({ signal }) => listBuilds(baseUrl!, token!, params, { signal }),
     enabled: !!baseUrl && !!token && (options?.enabled ?? true),
@@ -83,6 +87,7 @@ export function useBuilds(
     refetchInterval: (query) =>
       hasActiveBuilds(query.state.data) ? pollInterval : false,
     placeholderData: keepPreviousData,
+    select: options?.select,
   })
 }
 
