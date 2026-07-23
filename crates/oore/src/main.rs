@@ -3734,19 +3734,11 @@ fn add_signing_warnings(checks: &mut Vec<DoctorCheckResult>) {
 fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
     let mut checks: Vec<DoctorCheckResult> = Vec::new();
 
-    let base_checks: [(&str, &[&str], &str); 3] = [
-        ("git", &["--version"], "brew install git"),
-        (
-            "fvm",
-            &["--version"],
-            "brew tap leoafarias/fvm && brew install fvm",
-        ),
-        (
-            "flutter",
-            &["--version"],
-            "fvm install <version> && fvm use <version>",
-        ),
-    ];
+    let base_checks: [(&str, &[&str], &str); 1] = [(
+        "git",
+        &["--version"],
+        "install the Xcode Command Line Tools",
+    )];
 
     for (name, command_args, install_hint) in base_checks {
         if let Some(version) = command_version(name, command_args) {
@@ -3754,6 +3746,38 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
         } else {
             checks.push(doctor_check(name, "missing", None, Some(install_hint)));
         }
+    }
+
+    let fvm_available = command_version("fvm", &["--version"]);
+    if let Some(version) = &fvm_available {
+        checks.push(doctor_check("fvm", "ok", Some(version.clone()), None));
+    } else {
+        checks.push(doctor_check(
+            "fvm",
+            "missing",
+            None,
+            Some("reinstall or update Oore to restore its managed Flutter toolchain"),
+        ));
+    }
+
+    if let Some(version) = command_version("flutter", &["--version"]) {
+        checks.push(doctor_check("flutter", "ok", Some(version), None));
+    } else if fvm_available.is_some() {
+        checks.push(doctor_check(
+            "flutter",
+            "ok",
+            Some(
+                "managed by Oore through FVM; downloaded and cached on the first build".to_string(),
+            ),
+            None,
+        ));
+    } else {
+        checks.push(doctor_check(
+            "flutter",
+            "missing",
+            None,
+            Some("reinstall or update Oore to restore its managed Flutter toolchain"),
+        ));
     }
 
     add_managed_runner_service_check(&mut checks);
@@ -4893,6 +4917,8 @@ fn render_runner_launch_daemon(
         <string>{}</string>
         <key>PATH</key>
         <string>{}</string>
+        <key>FVM_CACHE_PATH</key>
+        <string>{}</string>
         <key>{}</key>
         <string>{}</string>
     </dict>
@@ -4912,6 +4938,7 @@ fn render_runner_launch_daemon(
         launchd_xml_escape(user),
         launchd_xml_escape(&home.display().to_string()),
         launchd_xml_escape(path),
+        launchd_xml_escape(&working_dir.join("toolchains/flutter").display().to_string()),
         oore_runner::RUNNER_SERVICE_ACK_PATH_ENV,
         launchd_xml_escape(&acknowledgement.display().to_string()),
         launchd_xml_escape(&working_dir.display().to_string()),
@@ -6151,6 +6178,7 @@ fn copy_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Result
         "bin/oore",
         "bin/oored",
         "bin/oore-web",
+        "bin/fvm",
         "VERSION",
         "WEB_VERSION",
         "CHANNEL",
@@ -6169,6 +6197,10 @@ fn copy_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Result
     let web = install_root.join("web-dist");
     if web.is_dir() {
         copy_dir_recursive(&web, &snapshot.join("web-dist"))?;
+    }
+    let fvm = install_root.join("libexec/fvm");
+    if fvm.is_dir() {
+        copy_dir_recursive(&fvm, &snapshot.join("libexec/fvm"))?;
     }
     Ok(())
 }
@@ -6249,6 +6281,7 @@ fn atomic_replace_directory(source: &Path, destination: &Path) -> anyhow::Result
     let parent = destination
         .parent()
         .context("release destination has no parent")?;
+    fs::create_dir_all(parent)?;
     let stem = destination
         .file_name()
         .unwrap_or_default()
@@ -6280,6 +6313,7 @@ fn restore_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Res
         "bin/oore",
         "bin/oored",
         "bin/oore-web",
+        "bin/fvm",
         "VERSION",
         "WEB_VERSION",
         "CHANNEL",
@@ -6303,6 +6337,13 @@ fn restore_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Res
     } else if destination.exists() {
         fs::remove_dir_all(destination)?;
     }
+    let source = snapshot.join("libexec/fvm");
+    let destination = install_root.join("libexec/fvm");
+    if source.is_dir() {
+        atomic_replace_directory(&source, &destination)?;
+    } else if destination.exists() {
+        fs::remove_dir_all(destination)?;
+    }
     Ok(())
 }
 
@@ -6316,6 +6357,7 @@ fn install_staged_release(
         ("bin/oore", true),
         ("bin/oored", true),
         ("bin/oore-web", true),
+        ("bin/fvm", true),
         ("VERSION", false),
     ] {
         let source = stage.join(relative);
@@ -6332,6 +6374,10 @@ fn install_staged_release(
         atomic_replace_directory(&web, &install_root.join("web-dist"))?;
         fs::write(install_root.join("WEB_CHANNEL"), channel.as_str())?;
         fs::write(install_root.join("WEB_GITHUB_REPO"), repo)?;
+    }
+    let fvm = stage.join("libexec/fvm");
+    if fvm.is_dir() {
+        atomic_replace_directory(&fvm, &install_root.join("libexec/fvm"))?;
     }
     let license = stage.join("LICENSE");
     if license.is_file() {
@@ -8298,6 +8344,8 @@ mod tests {
         assert!(plist.contains("<string>/Users/me/.oore/runner.json</string>"));
         assert!(plist.contains("<key>OORE_RUNNER_SERVICE_ACK_PATH</key>"));
         assert!(plist.contains("<string>/Users/me/.oore/run/runner-service-ack.json</string>"));
+        assert!(plist.contains("<key>FVM_CACHE_PATH</key>"));
+        assert!(plist.contains("<string>/Users/me/.oore/toolchains/flutter</string>"));
         assert!(
             plist.contains("<key>WorkingDirectory</key>\n    <string>/Users/me/.oore</string>")
         );
@@ -9731,11 +9779,16 @@ mod tests {
         for root in [&install, &stage] {
             fs::create_dir_all(root.join("bin")).unwrap();
             fs::create_dir_all(root.join("web-dist")).unwrap();
+            fs::create_dir_all(root.join("libexec/fvm")).unwrap();
         }
         fs::write(install.join("bin/oore"), "old-binary").unwrap();
+        fs::write(install.join("bin/fvm"), "old-fvm-launcher").unwrap();
+        fs::write(install.join("libexec/fvm/fvm"), "old-fvm").unwrap();
         fs::write(install.join("VERSION"), "1.0.0").unwrap();
         fs::write(install.join("web-dist/index.html"), "old-web").unwrap();
         fs::write(stage.join("bin/oore"), "new-binary").unwrap();
+        fs::write(stage.join("bin/fvm"), "new-fvm-launcher").unwrap();
+        fs::write(stage.join("libexec/fvm/fvm"), "new-fvm").unwrap();
         fs::write(stage.join("VERSION"), "2.0.0").unwrap();
         fs::write(stage.join("web-dist/index.html"), "new-web").unwrap();
 
@@ -9757,6 +9810,10 @@ mod tests {
             fs::read_to_string(install.join("WEB_GITHUB_REPO")).unwrap(),
             "oorebuild/oore"
         );
+        assert_eq!(
+            fs::read_to_string(install.join("libexec/fvm/fvm")).unwrap(),
+            "new-fvm"
+        );
 
         restore_release_snapshot(&install, &snapshot).unwrap();
         assert_eq!(
@@ -9773,6 +9830,14 @@ mod tests {
         assert_eq!(
             fs::read_to_string(install.join("web-dist/index.html")).unwrap(),
             "old-web"
+        );
+        assert_eq!(
+            fs::read_to_string(install.join("bin/fvm")).unwrap(),
+            "old-fvm-launcher"
+        );
+        assert_eq!(
+            fs::read_to_string(install.join("libexec/fvm/fvm")).unwrap(),
+            "old-fvm"
         );
     }
 

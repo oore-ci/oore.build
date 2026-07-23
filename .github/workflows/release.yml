@@ -228,6 +228,7 @@ jobs:
           install -m 0755 "dist/rust/arm64/oored" "$stage_arm/bin/oored"
           install -m 0755 "dist/rust/arm64/oore"  "$stage_arm/bin/oore"
           install -m 0755 "dist/oore-web-arm64" "$stage_arm/bin/oore-web"
+          bash tools/stage-fvm.sh arm64 "$stage_arm"
           cp -R "apps/web/dist" "$stage_arm/web-dist"
           cp "LICENSE" "$stage_arm/LICENSE"
           printf '%s\n' "$ver" > "$stage_arm/VERSION"
@@ -235,6 +236,7 @@ jobs:
           install -m 0755 "dist/rust/x86_64/oored" "$stage_x64/bin/oored"
           install -m 0755 "dist/rust/x86_64/oore"  "$stage_x64/bin/oore"
           install -m 0755 "dist/oore-web-x86_64" "$stage_x64/bin/oore-web"
+          bash tools/stage-fvm.sh x86_64 "$stage_x64"
           cp -R "apps/web/dist" "$stage_x64/web-dist"
           cp "LICENSE" "$stage_x64/LICENSE"
           printf '%s\n' "$ver" > "$stage_x64/VERSION"
@@ -259,8 +261,8 @@ jobs:
           cp "LICENSE" "$stage_web_linux_x64/LICENSE"
           printf '%s\n' "$ver" > "$stage_web_linux_x64/VERSION"
 
-          [[ -x "$stage_arm/bin/oore" && -x "$stage_arm/bin/oored" && -x "$stage_arm/bin/oore-web" ]]
-          [[ -x "$stage_x64/bin/oore" && -x "$stage_x64/bin/oored" && -x "$stage_x64/bin/oore-web" ]]
+          [[ -x "$stage_arm/bin/oore" && -x "$stage_arm/bin/oored" && -x "$stage_arm/bin/oore-web" && -x "$stage_arm/bin/fvm" && -x "$stage_arm/libexec/fvm/fvm" ]]
+          [[ -x "$stage_x64/bin/oore" && -x "$stage_x64/bin/oored" && -x "$stage_x64/bin/oore-web" && -x "$stage_x64/bin/fvm" && -x "$stage_x64/libexec/fvm/fvm" ]]
 
           out="dist/releases/$tag"
           arm_asset="$(printf 'oore_%s_darwin_arm64.tar.gz' "$ver")"

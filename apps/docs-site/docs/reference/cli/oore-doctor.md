@@ -25,7 +25,7 @@ oore doctor [--json] [--platform android|ios|macos]... [--all]
 
 `oore doctor` reports status for:
 
-- Core runner tools: `git`, `fvm`, and `flutter`
+- Core runner tools: `git`, Oore's bundled `fvm`, and the managed Flutter SDK
 - Managed runner lifecycle on macOS: the boot-time system service is installed, running, and recently authenticated to the backend, with explicit warnings for a stopped or crash-looping service, a process that is up but has not authenticated successfully, and the legacy login-session runner
 - Android (with `--platform android`): Java and an `ANDROID_HOME` / `ANDROID_SDK_ROOT` SDK with Platform-Tools
 - iOS/macOS (with `--platform ios` or `--platform macos`): `xcode-select -p` and `xcodebuild -version`

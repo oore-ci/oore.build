@@ -51,7 +51,9 @@ artifacts:
 
 Push the file to your repository. Oore CI reads this file at build time — no UI configuration needed.
 
-If your repository includes a `.fvmrc` file, Oore CI uses that Flutter version automatically. The `flutter_version` field in `.oore.yaml` is a fallback.
+If your repository includes a `.fvmrc` file, Oore CI uses that Flutter version
+automatically. The `flutter_version` field is a fallback; otherwise Oore
+downloads and caches stable Flutter automatically.
 
 ### Option B: Configure via the UI
 
@@ -139,7 +141,9 @@ Run `oore doctor` to check your toolchain:
 oore doctor
 ```
 
-Ensure `fvm` and `flutter` are installed and accessible.
+Oore bundles FVM and downloads the selected Flutter SDK automatically. If this
+check fails, update or reinstall Oore. Android builds still require an Android
+SDK, and Apple builds require full Xcode.
 
 ### "No .oore.yaml found" but UI pipeline exists
 

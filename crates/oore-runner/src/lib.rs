@@ -208,7 +208,32 @@ fn repository_shell_command(script: &str, workspace: &Path) -> tokio::process::C
         .arg(script)
         .current_dir(workspace)
         .env_remove(RUNNER_SERVICE_ACK_PATH_ENV);
+    if let Some(install_root) = bundled_fvm_install_root() {
+        configure_bundled_fvm_environment(&mut command, &install_root);
+    }
     command
+}
+
+fn bundled_fvm_install_root() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let bin = executable.parent()?;
+    let install_root = bin.parent()?;
+    (bin.join("fvm").is_file() && install_root.join("libexec/fvm/fvm").is_file())
+        .then(|| install_root.to_path_buf())
+}
+
+fn configure_bundled_fvm_environment(command: &mut tokio::process::Command, install_root: &Path) {
+    let mut paths = vec![install_root.join("bin")];
+    if let Some(current) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&current));
+    }
+    if let Ok(path) = std::env::join_paths(paths) {
+        command.env("PATH", path);
+    }
+    command.env(
+        "FVM_CACHE_PATH",
+        install_root.join("toolchains").join("flutter"),
+    );
 }
 
 fn write_private_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
@@ -1231,23 +1256,6 @@ fn run_security_command(args: &[&str]) -> anyhow::Result<String> {
     )
 }
 
-fn user_bootstrap_command_arguments(uid: u32, program: &str, args: &[String]) -> Vec<String> {
-    ["asuser".to_string(), uid.to_string(), program.to_string()]
-        .into_iter()
-        .chain(args.iter().cloned())
-        .collect()
-}
-
-fn user_bootstrap_command(program: &str, args: &[String]) -> Command {
-    let mut command = Command::new("/bin/launchctl");
-    command.args(user_bootstrap_command_arguments(
-        unsafe { libc::geteuid() },
-        program,
-        args,
-    ));
-    command
-}
-
 fn require_ios_signing_user_session() -> anyhow::Result<()> {
     let uid = unsafe { libc::geteuid() };
     let output = Command::new("/bin/launchctl")
@@ -1262,7 +1270,8 @@ fn require_ios_signing_user_session() -> anyhow::Result<()> {
 }
 
 fn run_security_command_with_strings(args: &[String]) -> anyhow::Result<String> {
-    let output = user_bootstrap_command("/usr/bin/security", args)
+    let output = Command::new("/usr/bin/security")
+        .args(args)
         .output()
         .map_err(|e| anyhow::anyhow!("failed to execute security command: {e}"))?;
     if !output.status.success() {
@@ -1883,12 +1892,10 @@ fn ios_keychain_import_arguments(
 }
 
 fn run_ios_signing_tool(program: &str, args: Vec<String>, action: &str) -> anyhow::Result<String> {
-    let output = if program == "/usr/bin/codesign" {
-        user_bootstrap_command(program, &args).output()
-    } else {
-        Command::new(program).args(&args).output()
-    }
-    .map_err(|error| anyhow::anyhow!("failed to {action}: {error}"))?;
+    let output = Command::new(program)
+        .args(&args)
+        .output()
+        .map_err(|error| anyhow::anyhow!("failed to {action}: {error}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -3141,6 +3148,8 @@ struct FvmRcConfig {
     flutter: String,
 }
 
+const DEFAULT_MANAGED_FLUTTER_VERSION: &str = "stable";
+
 #[derive(Debug, Clone)]
 struct ResolvedExecutionPlan {
     stage_commands: PipelineCommandStages,
@@ -3248,6 +3257,36 @@ fn apply_fvm_wrappers(stage_commands: PipelineCommandStages) -> PipelineCommandS
             .map(|cmd| maybe_wrap_with_fvm(&cmd))
             .collect(),
     }
+}
+
+fn command_uses_flutter_toolchain(command: &str) -> bool {
+    let trimmed = command.trim();
+    maybe_wrap_with_fvm(trimmed) != trimmed
+        || trimmed == "fvm flutter"
+        || trimmed == "fvm dart"
+        || trimmed.starts_with("fvm flutter ")
+        || trimmed.starts_with("fvm dart ")
+}
+
+fn apply_managed_flutter_toolchain(
+    stage_commands: PipelineCommandStages,
+    version: &str,
+) -> PipelineCommandStages {
+    let requires_flutter = stage_commands
+        .pre_build
+        .iter()
+        .chain(&stage_commands.build)
+        .chain(&stage_commands.post_build)
+        .any(|command| command_uses_flutter_toolchain(command));
+    if !requires_flutter {
+        return stage_commands;
+    }
+
+    let mut stage_commands = apply_fvm_wrappers(stage_commands);
+    stage_commands
+        .pre_build
+        .insert(0, format!("fvm use {version} --force --skip-pub-get"));
+    stage_commands
 }
 
 fn validate_artifact_patterns(patterns: &[String]) -> anyhow::Result<Vec<String>> {
@@ -3544,15 +3583,13 @@ fn resolve_execution_plan(
         let file_config = apply_run_platform_selection(file_config, snapshot)?;
         let resolved_flutter_version = fvmrc_version
             .clone()
-            .or_else(|| file_config.flutter_version.clone());
+            .or_else(|| file_config.flutter_version.clone())
+            .unwrap_or_else(|| DEFAULT_MANAGED_FLUTTER_VERSION.to_string());
         let include_defaults = file_config.commands.build.is_empty();
-        let mut stage_commands = materialize_stage_commands(&file_config, include_defaults);
-        if let Some(version) = resolved_flutter_version {
-            stage_commands = apply_fvm_wrappers(stage_commands);
-            stage_commands
-                .pre_build
-                .insert(0, format!("fvm use {version} --force"));
-        }
+        let stage_commands = apply_managed_flutter_toolchain(
+            materialize_stage_commands(&file_config, include_defaults),
+            &resolved_flutter_version,
+        );
 
         return Ok(ResolvedExecutionPlan {
             stage_commands,
@@ -3563,14 +3600,13 @@ fn resolve_execution_plan(
     }
 
     let fallback = apply_run_platform_selection(load_ui_execution_config(snapshot)?, snapshot)?;
-    let resolved_flutter_version = fvmrc_version.or_else(|| fallback.flutter_version.clone());
-    let mut stage_commands = materialize_stage_commands(&fallback, true);
-    if let Some(version) = resolved_flutter_version {
-        stage_commands = apply_fvm_wrappers(stage_commands);
-        stage_commands
-            .pre_build
-            .insert(0, format!("fvm use {version} --force"));
-    }
+    let resolved_flutter_version = fvmrc_version
+        .or_else(|| fallback.flutter_version.clone())
+        .unwrap_or_else(|| DEFAULT_MANAGED_FLUTTER_VERSION.to_string());
+    let stage_commands = apply_managed_flutter_toolchain(
+        materialize_stage_commands(&fallback, true),
+        &resolved_flutter_version,
+    );
     Ok(ResolvedExecutionPlan {
         stage_commands,
         artifact_patterns: fallback.artifact_patterns,
@@ -5309,22 +5345,12 @@ mod tests {
     }
 
     #[test]
-    fn apple_signing_commands_enter_only_the_user_bootstrap() {
-        let arguments = user_bootstrap_command_arguments(
-            501,
-            "/usr/bin/codesign",
-            &["--verify".to_string(), "/tmp/App.app".to_string()],
-        );
+    fn apple_signing_commands_run_directly_in_the_runner_service_session() {
+        let command = Command::new("/usr/bin/codesign");
 
         assert_eq!(
-            arguments,
-            [
-                "asuser",
-                "501",
-                "/usr/bin/codesign",
-                "--verify",
-                "/tmp/App.app",
-            ]
+            command.get_program(),
+            Path::new("/usr/bin/codesign").as_os_str()
         );
     }
 
@@ -6403,6 +6429,36 @@ mod tests {
     }
 
     #[test]
+    fn bundled_fvm_environment_is_scoped_to_the_oore_install() {
+        let install_root = temp_workspace();
+        let mut command = tokio::process::Command::new("/bin/sh");
+
+        configure_bundled_fvm_environment(&mut command, &install_root);
+
+        let environment = command
+            .as_std()
+            .get_envs()
+            .filter_map(|(key, value)| {
+                value.map(|value| format!("{}={}", key.to_string_lossy(), value.to_string_lossy()))
+            })
+            .collect::<Vec<_>>();
+        assert!(environment.contains(&format!(
+            "FVM_CACHE_PATH={}",
+            install_root.join("toolchains/flutter").display()
+        )));
+        assert!(
+            environment
+                .iter()
+                .find(|entry| entry.starts_with("PATH="))
+                .is_some_and(
+                    |entry| entry.contains(&install_root.join("bin").display().to_string())
+                )
+        );
+
+        cleanup_workspace(&install_root);
+    }
+
+    #[test]
     fn android_signing_marker_exposes_no_reusable_authority() {
         let marker =
             android_signing_prepared_marker("pipeline_profile", AndroidSigningBuildType::Release);
@@ -6786,7 +6842,7 @@ mod tests {
         let plan = resolve_execution_plan(&workspace, &snapshot).expect("resolve plan");
         assert_eq!(
             plan.stage_commands.build,
-            vec!["flutter build ios --release --no-codesign".to_string()]
+            vec!["fvm flutter build ios --release --no-codesign".to_string()]
         );
         assert_eq!(plan.artifact_patterns, vec!["*.ipa".to_string()]);
 
@@ -6821,7 +6877,7 @@ mod tests {
         let plan = resolve_execution_plan(&workspace, &snapshot).expect("resolve plan");
         assert_eq!(
             plan.stage_commands.build,
-            vec!["flutter build macos --release".to_string()]
+            vec!["fvm flutter build macos --release".to_string()]
         );
         assert_eq!(plan.artifact_patterns, vec!["*.zip".to_string()]);
 
@@ -6913,13 +6969,17 @@ mod tests {
         assert_eq!(plan.source, "ui_fallback");
         assert_eq!(
             plan.stage_commands.pre_build,
-            vec!["flutter pub get".to_string(), "echo pre".to_string()]
+            vec![
+                "fvm use stable --force --skip-pub-get".to_string(),
+                "fvm flutter pub get".to_string(),
+                "echo pre".to_string(),
+            ]
         );
         assert_eq!(
             plan.stage_commands.build,
             vec![
-                "flutter build apk --release".to_string(),
-                "flutter build macos --release".to_string(),
+                "fvm flutter build apk --release".to_string(),
+                "fvm flutter build macos --release".to_string(),
                 "echo custom".to_string(),
             ]
         );
@@ -6986,7 +7046,7 @@ mod tests {
         assert_eq!(
             plan.stage_commands.pre_build,
             vec![
-                "fvm use 3.24.0 --force".to_string(),
+                "fvm use 3.24.0 --force --skip-pub-get".to_string(),
                 "fvm flutter pub get".to_string(),
             ]
         );
@@ -7016,7 +7076,35 @@ mod tests {
         assert_eq!(
             plan.stage_commands.pre_build,
             vec![
-                "fvm use 3.22.3 --force".to_string(),
+                "fvm use 3.22.3 --force --skip-pub-get".to_string(),
+                "fvm flutter pub get".to_string(),
+            ]
+        );
+        assert_eq!(
+            plan.stage_commands.build,
+            vec!["fvm flutter build apk --release".to_string()]
+        );
+
+        cleanup_workspace(&workspace);
+    }
+
+    #[test]
+    fn unpinned_flutter_project_uses_oore_managed_stable_sdk() {
+        let workspace = temp_workspace();
+        let snapshot = serde_json::json!({
+            "config_path_explicit": false,
+            "ui_execution_config": {
+                "platforms": ["android"],
+                "commands": { "pre_build": [], "build": [], "post_build": [] },
+                "artifact_patterns": ["*.apk"]
+            }
+        });
+
+        let plan = resolve_execution_plan(&workspace, &snapshot).expect("resolve plan");
+        assert_eq!(
+            plan.stage_commands.pre_build,
+            vec![
+                "fvm use stable --force --skip-pub-get".to_string(),
                 "fvm flutter pub get".to_string(),
             ]
         );
@@ -7124,7 +7212,7 @@ mod tests {
         assert_eq!(
             plan.stage_commands.build,
             vec![
-                "flutter build ipa --release --export-method ad-hoc --target lib/main_adhoc.dart"
+                "fvm flutter build ipa --release --export-method ad-hoc --target lib/main_adhoc.dart"
                     .to_string()
             ]
         );

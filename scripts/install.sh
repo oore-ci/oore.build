@@ -45,6 +45,7 @@ OORE_LOCAL_WEB_MODE="${OORE_LOCAL_WEB_MODE:-}"
 OORE_LOCAL_WEB_LISTEN="${OORE_LOCAL_WEB_LISTEN:-127.0.0.1:4173}"
 
 BIN_DIR="$OORE_INSTALL_ROOT/bin"
+LIBEXEC_DIR="$OORE_INSTALL_ROOT/libexec"
 LOG_DIR="$OORE_INSTALL_ROOT/logs"
 DAEMON_LOG="$LOG_DIR/oored.log"
 DAEMON_PID_FILE="$OORE_INSTALL_ROOT/oored.pid"
@@ -1532,6 +1533,13 @@ install_extracted_release() {
   if is_daemon_install; then
     install_executable "$extract_dir/bin/oored" "$BIN_DIR/oored"
     install_executable "$extract_dir/bin/oore" "$BIN_DIR/oore"
+    if [[ -f "$extract_dir/bin/fvm" && -d "$extract_dir/libexec/fvm" ]]; then
+      install_executable "$extract_dir/bin/fvm" "$BIN_DIR/fvm"
+      mkdir -p "$LIBEXEC_DIR"
+      rm -rf "$LIBEXEC_DIR/fvm"
+      cp -R "$extract_dir/libexec/fvm" "$LIBEXEC_DIR/fvm"
+      chmod +x "$LIBEXEC_DIR/fvm/fvm"
+    fi
   fi
   if is_web_install; then
     install_executable "$extract_dir/bin/oore-web" "$WEB_BINARY"
@@ -1881,8 +1889,8 @@ install_runner_service() {
 }
 
 install_backend_services() {
-  install_daemon_service || return 1
   install_update_service || return 1
+  install_daemon_service || return 1
   install_runner_service || return 1
 }
 
@@ -2470,6 +2478,9 @@ print_next_steps() {
       printf 'To keep the daemon running across login sessions:\n'
       printf '  oored install-service --listen %s\n\n' "$OORE_DAEMON_LISTEN"
     fi
+    if [[ -x "$BIN_DIR/fvm" ]]; then
+      printf 'Flutter toolchain: managed by Oore (SDK downloads automatically on first build)\n\n'
+    fi
     if [[ "$BACKEND_SETUP_INITIALIZED" -eq 1 ]]; then
       printf 'Setup is initialized. Sign in through your configured auth path.\n'
     elif is_default_local_install; then
@@ -2618,9 +2629,17 @@ main() {
   elif [[ "$OORE_INSTALL_MODE" == "frontend" ]]; then
     step_done "$BIN_DIR/oore-web + web-dist"
   elif [[ "$OORE_INSTALL_MODE" == "backend" ]]; then
-    step_done "$BIN_DIR/{oored,oore}"
+    if [[ -x "$BIN_DIR/fvm" ]]; then
+      step_done "$BIN_DIR/{oored,oore,fvm}"
+    else
+      step_done "$BIN_DIR/{oored,oore}"
+    fi
   elif has_local_web_bundle; then
-    step_done "$BIN_DIR/{oored,oore,oore-web}"
+    if [[ -x "$BIN_DIR/fvm" ]]; then
+      step_done "$BIN_DIR/{oored,oore,oore-web,fvm}"
+    else
+      step_done "$BIN_DIR/{oored,oore,oore-web}"
+    fi
   else
     step_done "$BIN_DIR/{oored,oore}"
   fi
