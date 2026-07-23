@@ -2,6 +2,22 @@
 
 This file guides future coding sessions for `oore.build`.
 
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues is the canonical tracker. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default Matt Pocock skill label vocabulary. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Oore has one product domain whose private documentation follows the existing
+repository governance. See `docs/agents/domain.md`.
+
 ## Read First (Mandatory)
 
 Before making any code or architecture change, use the Obsidian MCP to read

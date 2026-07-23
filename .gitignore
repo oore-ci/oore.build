@@ -39,3 +39,6 @@ dist/releases
 /*.png
 
 package-lock.json
+
+# Agent specific
+.agents/skills/
