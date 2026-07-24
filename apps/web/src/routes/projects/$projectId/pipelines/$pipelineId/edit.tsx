@@ -30,7 +30,6 @@ import { useProject } from '@/hooks/use-projects'
 import {
   executionConfigFromForm,
   fileToBase64,
-  fileToUtf8,
   hasCustomFallback,
   parseBundleIdsInput,
   parseCsv,
@@ -516,7 +515,7 @@ function EditPipelinePage() {
     )
 
     const apiPrivateKey = iosSigningFiles.apiKeyFile
-      ? await fileToUtf8(iosSigningFiles.apiKeyFile)
+      ? await iosSigningFiles.apiKeyFile.text()
       : undefined
 
     return {

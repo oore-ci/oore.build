@@ -516,10 +516,6 @@ function PreferencesPage() {
   const identitySettingsQuery =
     remoteAuthMode === 'trusted_proxy' ? trustedProxyQuery : oidcConfigQuery
 
-  function preloadNetworkSettingsDialog() {
-    void preloadExternalAccessNetworkDialog()
-  }
-
   function openNetworkSettingsDialog() {
     setNetworkEditorOpen(true)
   }
@@ -613,7 +609,7 @@ function PreferencesPage() {
               onEditIdentity={openIdentitySettingsDialog}
               onEditNetwork={openNetworkSettingsDialog}
               onPreloadIdentity={preloadIdentitySettingsDialog}
-              onPreloadNetwork={preloadNetworkSettingsDialog}
+              onPreloadNetwork={preloadExternalAccessNetworkDialog}
               remoteAuthMode={remoteAuthMode}
               trustedProxySettings={trustedProxySettings}
             />
@@ -628,7 +624,7 @@ function PreferencesPage() {
               onEditIdentity={openIdentitySettingsDialog}
               onEditNetwork={openNetworkSettingsDialog}
               onPreloadIdentity={preloadIdentitySettingsDialog}
-              onPreloadNetwork={preloadNetworkSettingsDialog}
+              onPreloadNetwork={preloadExternalAccessNetworkDialog}
               onReadinessOpenChange={setReadinessOpen}
               preflightQuery={preflightQuery}
               readinessOpen={readinessOpen}

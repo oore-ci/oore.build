@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react'
+
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useRepositoryAvatar } from '@/hooks/use-repository-avatar'
 import type { ScmProvider } from '@/lib/types'
@@ -33,6 +35,19 @@ export default function RepositoryAvatar({
 }
 
 function GitLabAvatarImage({ repositoryId }: { repositoryId: string }) {
-  const { data: avatarUrl } = useRepositoryAvatar(repositoryId)
+  const { data: avatarBlob } = useRepositoryAvatar(repositoryId)
+  const [avatarUrl, setAvatarUrl] = useState<string>()
+
+  useEffect(() => {
+    if (!avatarBlob) {
+      setAvatarUrl(undefined)
+      return
+    }
+
+    const nextAvatarUrl = URL.createObjectURL(avatarBlob)
+    setAvatarUrl(nextAvatarUrl)
+    return () => URL.revokeObjectURL(nextAvatarUrl)
+  }, [avatarBlob])
+
   return avatarUrl ? <AvatarImage src={avatarUrl} alt="" /> : null
 }

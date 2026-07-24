@@ -27,12 +27,9 @@ export default function InstanceSwitcher() {
   const activeInstance = useActiveInstance()
   const isMobile = useIsMobile()
   const instances = useInstanceStore((state) => state.instances)
+  const setActiveInstance = useInstanceStore((state) => state.setActiveInstance)
   const instanceList = Object.values(instances)
   const ActiveInstanceIcon = getInstanceIcon(activeInstance?.icon)
-
-  function selectInstance(id: string) {
-    useInstanceStore.getState().setActiveInstance(id)
-  }
 
   useHotkeys(
     instanceList.map((instance, idx) => ({
@@ -40,7 +37,7 @@ export default function InstanceSwitcher() {
         key: (idx + 1).toString(),
         mod: true,
       },
-      callback: () => selectInstance(instance.id),
+      callback: () => setActiveInstance(instance.id),
     })),
     { preventDefault: true },
   )
@@ -86,7 +83,7 @@ export default function InstanceSwitcher() {
                   return (
                     <DropdownMenuItem
                       key={candidate.id}
-                      onClick={() => selectInstance(candidate.id)}
+                      onClick={() => setActiveInstance(candidate.id)}
                       className="min-w-0 gap-2 rounded-r-none p-2"
                       aria-selected={candidate.id == activeInstance?.id}
                     >

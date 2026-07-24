@@ -33,7 +33,6 @@ import { useProject } from '@/hooks/use-projects'
 import {
   executionConfigFromForm,
   fileToBase64,
-  fileToUtf8,
   parseBundleIdsInput,
   parseCsv,
   selectedPlatforms,
@@ -638,7 +637,7 @@ function NewPipelinePage() {
         }),
       ),
       iosSigningFiles.apiKeyFile
-        ? fileToUtf8(iosSigningFiles.apiKeyFile)
+        ? iosSigningFiles.apiKeyFile.text()
         : Promise.resolve(undefined),
     ])
 

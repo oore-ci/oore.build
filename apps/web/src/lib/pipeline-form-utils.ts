@@ -168,10 +168,6 @@ export function parseBundleIdsInput(raw?: string): Array<string> {
   return out
 }
 
-export async function fileToUtf8(file: File): Promise<string> {
-  return await file.text()
-}
-
 export function hasSigningFileChanges(
   files: Array<File | null>,
   profiles: Record<string, File | null>,

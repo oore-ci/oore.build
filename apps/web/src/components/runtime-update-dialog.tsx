@@ -85,7 +85,7 @@ function RuntimeUpdateCard({
               Run the current installer once from Terminal to finish or repair
               managed service setup.
             </p>
-            <code className="block break-all rounded-md bg-muted p-2 font-mono text-foreground">
+            <code className="block rounded-md bg-muted p-2 font-mono break-all text-foreground">
               {installerCommand(release.channel)}
             </code>
           </div>

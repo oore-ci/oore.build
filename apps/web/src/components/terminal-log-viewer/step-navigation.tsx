@@ -1,7 +1,7 @@
-import { formatDuration } from './log-model'
 import { StepStatusIcon } from './step-status-icon'
 import type { StepGroup } from './types'
 import { Button } from '@/components/ui/button'
+import { formatDuration } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
 
 interface StepNavigationProps {

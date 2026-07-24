@@ -13,6 +13,7 @@ import { pipelineFormSchema } from '@/lib/pipeline-schema'
 import {
   parseEnvVars,
   hasSigningFileChanges,
+  parseBundleIdsInput,
   parseMultiline,
   previewPlatformCommands,
   selectedPlatforms,
@@ -102,20 +103,6 @@ interface PipelineFormProps {
       expires_at?: number
     }>
   }
-}
-
-function parseBundleIdsInput(raw?: string): Array<string> {
-  if (!raw) return []
-  const seen = new Set<string>()
-  const values: Array<string> = []
-  for (const part of raw.split(/[\n,]/g)) {
-    const trimmed = part.trim()
-    if (!trimmed) continue
-    if (seen.has(trimmed)) continue
-    seen.add(trimmed)
-    values.push(trimmed)
-  }
-  return values
 }
 
 interface PipelineSections {

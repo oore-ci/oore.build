@@ -41,16 +41,18 @@ function maybeAutoAddBackendInstance() {
   let instanceId = store.activeInstanceId
 
   if (backendUrl) {
+    let parsedBackendUrl: URL
     try {
-      new URL(backendUrl)
+      parsedBackendUrl = new URL(backendUrl)
     } catch {
       return
     }
 
     // Only auto-add if instance store is empty (prevents phishing via crafted links)
     if (Object.keys(store.instances).length === 0) {
-      const parsed = new URL(backendUrl)
-      const label = isLoopbackUrl(backendUrl) ? 'Local' : parsed.hostname
+      const label = isLoopbackUrl(backendUrl)
+        ? 'Local'
+        : parsedBackendUrl.hostname
       const id = store.addInstance(label, backendUrl.replace(/\/+$/, ''))
       store.setActiveInstance(id)
       instanceId = id
