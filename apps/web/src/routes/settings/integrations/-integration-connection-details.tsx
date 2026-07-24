@@ -3,6 +3,7 @@ import { Copy as Copy01Icon } from 'lucide-react'
 import { toast } from '@/lib/toast'
 import type { Integration } from '@/lib/types'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 
@@ -46,13 +47,11 @@ export function IntegrationConnectionDetails({
   onRetryNetworkSettings: () => void
 }) {
   return (
-    <section className="border bg-card" aria-labelledby="connection-title">
-      <div className="border-b px-4 py-3">
-        <h2 id="connection-title" className="text-sm font-semibold">
-          Connection
-        </h2>
-      </div>
-      <div className="overflow-x-auto p-4">
+    <Card size="sm" aria-labelledby="connection-title">
+      <CardHeader>
+        <CardTitle id="connection-title">Connection</CardTitle>
+      </CardHeader>
+      <CardContent className="overflow-x-auto">
         <Table>
           <TableBody>
             <TableRow>
@@ -144,7 +143,7 @@ export function IntegrationConnectionDetails({
             </TableRow>
           </TableBody>
         </Table>
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   )
 }

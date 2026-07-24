@@ -41,7 +41,7 @@ export default function ExternalAccessNetworkDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>External Access network settings</DialogTitle>
+          <DialogTitle>External access network settings</DialogTitle>
           <DialogDescription>
             Configure the public endpoint and allowed frontend origins.
           </DialogDescription>

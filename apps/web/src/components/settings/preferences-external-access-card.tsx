@@ -7,6 +7,13 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 
 export function ExternalAccessCard({
@@ -29,20 +36,18 @@ export function ExternalAccessCard({
   updatePending: boolean
 }) {
   return (
-    <section className="border bg-card" aria-labelledby="external-access-title">
-      <div className="border-b px-4 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <h2 id="external-access-title" className="text-sm font-semibold">
-            External Access
-          </h2>
+    <Card size="sm" aria-labelledby="external-access-title">
+      <CardHeader>
+        <CardTitle id="external-access-title">External access</CardTitle>
+        <CardAction>
           <Badge variant={externalAccessEnabled ? 'secondary' : 'outline'}>
             {externalAccessEnabled
               ? `External Access: ${authModeLabel(remoteAuthMode)}`
               : 'Local Only'}
           </Badge>
-        </div>
-      </div>
-      <div className="flex flex-col gap-5 p-4">
+        </CardAction>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex flex-col gap-1">
             <p className="text-sm font-medium">Current access</p>
@@ -83,7 +88,7 @@ export function ExternalAccessCard({
           </Alert>
         ) : null}
         {children}
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   )
 }

@@ -25,6 +25,7 @@ import { DirectRunnerPolicyPanel } from '@/components/settings/direct-runner-pol
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -291,54 +292,53 @@ function RunnersSettingsPage() {
       ) : null}
 
       {!runnersQuery.isLoading && !runnersQuery.error ? (
-        <section
-          aria-label="Runner summary"
-          className="grid border sm:grid-cols-3 sm:divide-x"
-        >
-          <div className="p-4">
-            <p className="text-xs font-medium text-muted-foreground">
-              Total runners
-            </p>
-            <p className="mt-2 text-xl font-semibold tracking-tight">
-              {runners.length}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Embedded and external
-            </p>
-          </div>
-          <div className="border-t p-4 sm:border-t-0">
-            <div className="flex items-center justify-between">
+        <Card size="sm" aria-label="Runner summary">
+          <CardContent className="grid gap-4 sm:grid-cols-3">
+            <div>
               <p className="text-xs font-medium text-muted-foreground">
-                Online runners
+                Total runners
               </p>
-              {onlineCount > 0 ? (
-                <Badge variant="secondary">{onlineCount}</Badge>
-              ) : null}
-            </div>
-            <p className="mt-2 text-xl font-semibold tracking-tight">
-              {onlineCount}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Online or currently busy
-            </p>
-          </div>
-          <div className="border-t p-4 sm:border-t-0">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-muted-foreground">
-                Offline runners
+              <p className="mt-2 text-xl font-semibold tracking-tight">
+                {runners.length}
               </p>
-              {offlineCount > 0 ? (
-                <Badge variant="destructive">{offlineCount}</Badge>
-              ) : null}
+              <p className="mt-1 text-xs text-muted-foreground">
+                Embedded and external
+              </p>
             </div>
-            <p className="mt-2 text-xl font-semibold tracking-tight">
-              {offlineCount}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Unreachable or stopped
-            </p>
-          </div>
-        </section>
+            <div>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Online runners
+                </p>
+                {onlineCount > 0 ? (
+                  <Badge variant="secondary">{onlineCount}</Badge>
+                ) : null}
+              </div>
+              <p className="mt-2 text-xl font-semibold tracking-tight">
+                {onlineCount}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Online or currently busy
+              </p>
+            </div>
+            <div>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Offline runners
+                </p>
+                {offlineCount > 0 ? (
+                  <Badge variant="destructive">{offlineCount}</Badge>
+                ) : null}
+              </div>
+              <p className="mt-2 text-xl font-semibold tracking-tight">
+                {offlineCount}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Unreachable or stopped
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       ) : null}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -395,7 +395,7 @@ function RunnersSettingsPage() {
       {!runnersQuery.isLoading &&
       !runnersQuery.error &&
       runners.length === 0 ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyTitle>No runners registered</EmptyTitle>
             <EmptyDescription>
@@ -409,7 +409,7 @@ function RunnersSettingsPage() {
       !runnersQuery.error &&
       runners.length > 0 &&
       total === 0 ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <Search01Icon />

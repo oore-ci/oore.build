@@ -1,7 +1,7 @@
 import { Info as InformationCircleIcon } from 'lucide-react'
 
 import type { Integration, Project } from '@/lib/types'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -78,20 +78,22 @@ export function IntegrationDisconnectDialog({
               </AlertDescription>
             </Alert>
           ) : affectedProjects.length > 0 ? (
-            <div className="border bg-muted/40">
-              <p className="border-b px-3 py-2 text-sm">
+            <Alert>
+              <AlertTitle>
                 {affectedProjects.length}{' '}
                 {affectedProjects.length === 1 ? 'project is' : 'projects are'}{' '}
                 currently linked to this source.
-              </p>
-              <ul className="max-h-40 overflow-y-auto px-3 py-2 text-sm">
-                {affectedProjects.map((project) => (
-                  <li key={project.id} className="py-1 font-medium">
-                    {project.name}
-                  </li>
-                ))}
-              </ul>
-            </div>
+              </AlertTitle>
+              <AlertDescription>
+                <ul className="max-h-40 list-disc overflow-y-auto pl-4">
+                  {affectedProjects.map((project) => (
+                    <li key={project.id} className="py-1 font-medium">
+                      {project.name}
+                    </li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
           ) : (
             <p className="text-sm text-muted-foreground">
               No current projects are linked to repositories from this source.

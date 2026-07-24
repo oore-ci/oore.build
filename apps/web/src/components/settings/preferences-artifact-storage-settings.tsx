@@ -6,6 +6,13 @@ import type { ArtifactStorageSettings as ArtifactStorageSettingsValue } from '@/
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import {
   Form,
   FormControl,
   FormDescription,
@@ -134,11 +141,13 @@ export function ArtifactStorageSettings({
   return (
     <section aria-label="Artifact storage configuration" className="space-y-4">
       {isLoading ? (
-        <div className="space-y-3 border bg-card p-4">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
+        <Card size="sm">
+          <CardContent className="space-y-3">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </CardContent>
+        </Card>
       ) : null}
 
       {error ? (
@@ -164,14 +173,14 @@ export function ArtifactStorageSettings({
       ) : null}
 
       {!isLoading && !error && settings ? (
-        <div className="border bg-card">
-          <div className="border-b px-4 py-3">
-            <h2 className="text-sm font-semibold">Storage provider</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
+        <Card size="sm">
+          <CardHeader>
+            <CardTitle>Storage provider</CardTitle>
+            <CardDescription>
               Files remain unavailable when storage is disabled.
-            </p>
-          </div>
-          <div className="space-y-4 p-4">
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
             {!canWrite ? (
               <Alert>
                 <AlertDescription>
@@ -310,8 +319,8 @@ export function ArtifactStorageSettings({
                 </div>
               </form>
             </Form>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       ) : null}
     </section>
   )

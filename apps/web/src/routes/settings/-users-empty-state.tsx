@@ -25,7 +25,7 @@ export function UsersEmptyState({
   const Icon = state === 'empty' ? UserMultiple02Icon : Search01Icon
 
   return (
-    <Empty className="bg-card">
+    <Empty className="border bg-card">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <Icon />

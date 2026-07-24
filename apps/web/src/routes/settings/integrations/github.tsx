@@ -17,6 +17,7 @@ import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import SetupHint from '@/components/setup-hint'
@@ -70,11 +71,11 @@ function GitHubSetupPage() {
       />
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <section className="min-w-0 border bg-card">
-          <div className="border-b px-4 py-3">
-            <h2 className="text-sm font-semibold">Connection flow</h2>
-          </div>
-          <div className="space-y-3 p-4">
+        <Card size="sm" className="min-w-0">
+          <CardHeader>
+            <CardTitle>Connection flow</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
               oore creates a GitHub App manifest, redirects you to GitHub, then
               returns here after install.
@@ -103,14 +104,14 @@ function GitHubSetupPage() {
                     : 'Create GitHub app'}
               {!startMutation.isPending ? <ArrowRight01Icon /> : null}
             </Button>
-          </div>
-        </section>
+          </CardContent>
+        </Card>
 
-        <section className="min-w-0 border bg-card">
-          <div className="border-b px-4 py-3">
-            <h2 className="text-sm font-semibold">Generated endpoints</h2>
-          </div>
-          <div className="p-4">
+        <Card size="sm" className="min-w-0">
+          <CardHeader>
+            <CardTitle>Generated endpoints</CardTitle>
+          </CardHeader>
+          <CardContent>
             <Table>
               <TableBody>
                 <TableRow>
@@ -131,8 +132,8 @@ function GitHubSetupPage() {
                 </TableRow>
               </TableBody>
             </Table>
-          </div>
-        </section>
+          </CardContent>
+        </Card>
       </section>
 
       <Alert>

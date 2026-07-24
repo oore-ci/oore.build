@@ -264,7 +264,7 @@ function NotificationsPage() {
       ) : null}
 
       {showTrueEmpty ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <InformationCircleIcon />
@@ -287,7 +287,7 @@ function NotificationsPage() {
       ) : null}
 
       {showFilteredEmpty ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <Search01Icon />

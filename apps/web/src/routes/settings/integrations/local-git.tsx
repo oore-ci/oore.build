@@ -8,6 +8,7 @@ import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { PageMeta } from '@/lib/seo'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 
@@ -40,13 +41,11 @@ function LocalGitPage() {
         description="Local repository selection now happens directly during project creation."
       />
 
-      <section className="border bg-card" aria-labelledby="local-project-title">
-        <div className="border-b px-4 py-3">
-          <h2 id="local-project-title" className="text-sm font-semibold">
-            Use project creation
-          </h2>
-        </div>
-        <div className="space-y-3 p-4">
+      <Card size="sm" aria-labelledby="local-project-title">
+        <CardHeader>
+          <CardTitle id="local-project-title">Use project creation</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
             Owners and admins link local repositories while creating a project
             or from the project&apos;s Source repository setting.
@@ -75,8 +74,8 @@ function LocalGitPage() {
               Create project
             </Button>
           ) : null}
-        </div>
-      </section>
+        </CardContent>
+      </Card>
     </PageLayout>
   )
 }

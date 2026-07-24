@@ -9,6 +9,14 @@ import { toast } from '@/lib/toast'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 
@@ -29,13 +37,12 @@ function DirectRunnerPolicyControl() {
 
   if (preferencesQuery.isLoading) {
     return (
-      <section
-        className="space-y-3 border bg-card p-4"
-        aria-label="Direct runner policy"
-      >
-        <Skeleton className="h-4 w-40" />
-        <Skeleton className="h-9 w-full" />
-      </section>
+      <Card size="sm" aria-label="Direct runner policy">
+        <CardContent className="space-y-3">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-9 w-full" />
+        </CardContent>
+      </Card>
     )
   }
 
@@ -86,25 +93,22 @@ function DirectRunnerPolicyControl() {
   }
 
   return (
-    <section
-      className="border bg-card"
-      aria-labelledby="direct-runner-policy-title"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-        <div>
-          <h2 id="direct-runner-policy-title" className="text-sm font-semibold">
-            Direct runner policy
-          </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Global execution gate for repositories approved under Sources.
-          </p>
-        </div>
-        <Badge variant={enabled ? 'default' : 'outline'}>
-          {enabled ? 'Enabled' : 'Paused'}
-        </Badge>
-      </div>
+    <Card size="sm" aria-labelledby="direct-runner-policy-title">
+      <CardHeader>
+        <CardTitle id="direct-runner-policy-title">
+          Direct runner policy
+        </CardTitle>
+        <CardDescription>
+          Global execution gate for repositories approved under Sources.
+        </CardDescription>
+        <CardAction>
+          <Badge variant={enabled ? 'default' : 'outline'}>
+            {enabled ? 'Enabled' : 'Paused'}
+          </Badge>
+        </CardAction>
+      </CardHeader>
 
-      <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between">
+      <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="max-w-3xl space-y-2">
           <p className="text-sm text-foreground">
             Repository commands run with the macOS permissions of the runner
@@ -132,7 +136,7 @@ function DirectRunnerPolicyControl() {
             onCheckedChange={updatePolicy}
           />
         </div>
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   )
 }

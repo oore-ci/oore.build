@@ -105,7 +105,7 @@ export function ConnectedSourcesSection({
         </Alert>
       ) : null}
       {isEmpty && !search ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <Link04Icon />
@@ -120,7 +120,7 @@ export function ConnectedSourcesSection({
         </Empty>
       ) : null}
       {isEmpty && search ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <Search01Icon />

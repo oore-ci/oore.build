@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Separator } from '@/components/ui/separator'
 import type { SortDirection } from '@/components/collection-controls'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
@@ -232,9 +233,10 @@ function IntegrationsPage() {
         </Alert>
       ) : !sourcesAvailable ? (
         <section
-          className="space-y-3 border-t pt-4"
+          className="space-y-3"
           aria-labelledby="local-only-sources-title"
         >
+          <Separator />
           <div>
             <h2 id="local-only-sources-title" className="text-sm font-semibold">
               Local Only mode

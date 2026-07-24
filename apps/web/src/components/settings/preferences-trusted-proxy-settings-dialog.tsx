@@ -2,6 +2,7 @@ import type { SubmitHandler, UseFormReturn } from 'react-hook-form'
 import type { TrustedProxySettingsPublic } from '@/lib/types'
 import type { TrustedProxyFormValues } from '@/routes/settings/preferences'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
@@ -141,65 +142,67 @@ export default function TrustedProxySettingsDialog({
             />
 
             {isWarpgate ? (
-              <div className="space-y-3 border p-3">
-                <FormField
-                  control={form.control}
-                  name="warpgate_ticket"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>iOS install access ticket</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="password"
-                          placeholder={
-                            settings?.has_warpgate_ticket
-                              ? 'Leave empty to keep existing ticket'
-                              : 'Paste Warpgate access ticket'
-                          }
-                          autoComplete="off"
-                          {...field}
-                          disabled={isPending || clearWarpgateTicket}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        {settings?.warpgate_ticket_source === 'environment'
-                          ? 'Currently supplied by OORE_WARPGATE_TICKET. Saving a value here stores an encrypted override.'
-                          : settings?.has_warpgate_ticket
-                            ? 'Stored encrypted. Leave empty to keep it; enter a value only to rotate it.'
-                            : 'Optional. Lets the iOS installer fetch the manifest and IPA through Warpgate without an interactive login.'}
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {settings?.warpgate_ticket_source === 'database' ? (
+              <Card size="sm">
+                <CardContent className="space-y-3">
                   <FormField
                     control={form.control}
-                    name="clear_warpgate_ticket"
+                    name="warpgate_ticket"
                     render={({ field }) => (
                       <FormItem>
-                        <label className="flex items-center gap-2 text-sm font-medium">
-                          <FormControl>
-                            <Checkbox
-                              checked={field.value}
-                              onCheckedChange={(checked) =>
-                                field.onChange(!!checked)
-                              }
-                              disabled={isPending}
-                            />
-                          </FormControl>
-                          Remove stored install ticket
-                        </label>
+                        <FormLabel>iOS install access ticket</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="password"
+                            placeholder={
+                              settings?.has_warpgate_ticket
+                                ? 'Leave empty to keep existing ticket'
+                                : 'Paste Warpgate access ticket'
+                            }
+                            autoComplete="off"
+                            {...field}
+                            disabled={isPending || clearWarpgateTicket}
+                          />
+                        </FormControl>
                         <FormDescription>
-                          Environment configuration will become active if
-                          OORE_WARPGATE_TICKET is also set.
+                          {settings?.warpgate_ticket_source === 'environment'
+                            ? 'Currently supplied by OORE_WARPGATE_TICKET. Saving a value here stores an encrypted override.'
+                            : settings?.has_warpgate_ticket
+                              ? 'Stored encrypted. Leave empty to keep it; enter a value only to rotate it.'
+                              : 'Optional. Lets the iOS installer fetch the manifest and IPA through Warpgate without an interactive login.'}
                         </FormDescription>
+                        <FormMessage />
                       </FormItem>
                     )}
                   />
-                ) : null}
-              </div>
+
+                  {settings?.warpgate_ticket_source === 'database' ? (
+                    <FormField
+                      control={form.control}
+                      name="clear_warpgate_ticket"
+                      render={({ field }) => (
+                        <FormItem>
+                          <label className="flex items-center gap-2 text-sm font-medium">
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value}
+                                onCheckedChange={(checked) =>
+                                  field.onChange(!!checked)
+                                }
+                                disabled={isPending}
+                              />
+                            </FormControl>
+                            Remove stored install ticket
+                          </label>
+                          <FormDescription>
+                            Environment configuration will become active if
+                            OORE_WARPGATE_TICKET is also set.
+                          </FormDescription>
+                        </FormItem>
+                      )}
+                    />
+                  ) : null}
+                </CardContent>
+              </Card>
             ) : null}
 
             <DialogFooter>

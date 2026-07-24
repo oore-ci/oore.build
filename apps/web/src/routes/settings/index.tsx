@@ -4,6 +4,15 @@ import { ArrowRight as ArrowRight01Icon } from 'lucide-react'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { settingsGroupsForRole } from '@/components/settings/settings-navigation'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from '@/components/ui/item'
 import { PageMeta } from '@/lib/seo'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -35,35 +44,36 @@ function SettingsHubPage() {
             >
               {group.title}
             </h2>
-            <div className="divide-y border bg-card">
+            <ItemGroup className="gap-2">
               {group.items.map((item) => {
                 const ItemIcon = item.icon
 
                 return (
-                  <Link
+                  <Item
                     key={item.to}
-                    to={item.to}
-                    className="group grid min-h-16 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 p-3 transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-4"
+                    variant="outline"
+                    render={<Link to={item.to} />}
                   >
-                    <span className="flex size-8 items-center justify-center text-muted-foreground group-hover:text-foreground">
+                    <ItemMedia
+                      variant="icon"
+                      className="size-8 text-muted-foreground group-hover/item:text-foreground"
+                    >
                       <ItemIcon aria-hidden />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-sm font-medium">
-                        {item.title}
-                      </span>
-                      <span className="block text-xs leading-relaxed text-muted-foreground">
-                        {item.description}
-                      </span>
-                    </span>
-                    <ArrowRight01Icon
-                      className="text-muted-foreground"
-                      aria-hidden
-                    />
-                  </Link>
+                    </ItemMedia>
+                    <ItemContent>
+                      <ItemTitle>{item.title}</ItemTitle>
+                      <ItemDescription>{item.description}</ItemDescription>
+                    </ItemContent>
+                    <ItemActions>
+                      <ArrowRight01Icon
+                        className="text-muted-foreground"
+                        aria-hidden
+                      />
+                    </ItemActions>
+                  </Item>
                 )
               })}
-            </div>
+            </ItemGroup>
           </section>
         ))}
       </div>

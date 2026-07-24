@@ -11,6 +11,7 @@ import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -386,16 +387,11 @@ function NewNotificationChannelPage() {
         description="Configure a notification channel to receive build and runner status updates."
       />
 
-      <section
-        className="border bg-card"
-        aria-labelledby="channel-config-title"
-      >
-        <div className="border-b px-4 py-3">
-          <h2 id="channel-config-title" className="text-sm font-semibold">
-            Channel configuration
-          </h2>
-        </div>
-        <div className="p-4">
+      <Card size="sm" aria-labelledby="channel-config-title">
+        <CardHeader>
+          <CardTitle id="channel-config-title">Channel configuration</CardTitle>
+        </CardHeader>
+        <CardContent>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <FormField
@@ -518,8 +514,8 @@ function NewNotificationChannelPage() {
               </div>
             </form>
           </Form>
-        </div>
-      </section>
+        </CardContent>
+      </Card>
     </PageLayout>
   )
 }

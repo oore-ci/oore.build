@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
 
 type GitLabAuthStepProps = {
   form: UseFormReturn<GitLabSetupForm>
@@ -32,7 +33,8 @@ export function GitLabAuthStep({
   callbackUrl,
 }: GitLabAuthStepProps) {
   return (
-    <section className="space-y-4 border-t border-border/60 pt-6">
+    <section className="space-y-4">
+      <Separator />
       <div>
         <p className="text-sm font-medium text-muted-foreground">
           2. Authenticate

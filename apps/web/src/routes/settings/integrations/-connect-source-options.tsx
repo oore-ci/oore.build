@@ -1,7 +1,15 @@
 import { Link } from '@tanstack/react-router'
 import { Link2 as Link04Icon } from 'lucide-react'
 
-import { buttonVariants } from '@/components/ui/button-variants'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 
 const providers = [
   {
@@ -45,14 +53,12 @@ export function ConnectSourceOptions() {
       </div>
       <div className="grid items-stretch gap-4 md:grid-cols-2">
         {providers.map((provider) => (
-          <article key={provider.name} className="flex flex-col border bg-card">
-            <div className="border-b px-4 py-3">
-              <h3 className="text-sm font-semibold">{provider.name}</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {provider.description}
-              </p>
-            </div>
-            <div className="flex-1 p-4">
+          <Card key={provider.name} size="sm">
+            <CardHeader>
+              <CardTitle>{provider.name}</CardTitle>
+              <CardDescription>{provider.description}</CardDescription>
+            </CardHeader>
+            <CardContent className="flex-1">
               <div className="flex h-full flex-col gap-2 text-xs text-muted-foreground">
                 <p className="font-medium text-foreground">
                   {provider.heading}
@@ -63,20 +69,18 @@ export function ConnectSourceOptions() {
                   ))}
                 </ul>
               </div>
-            </div>
-            <div className="mt-auto border-t px-4 py-3">
-              <Link
-                to={provider.to}
-                className={buttonVariants({
-                  size: 'sm',
-                  className: 'w-full sm:w-auto',
-                })}
+            </CardContent>
+            <CardFooter>
+              <Button
+                render={<Link to={provider.to} />}
+                nativeButton={false}
+                size="sm"
               >
                 <Link04Icon data-icon="inline-start" aria-hidden />
                 Connect {provider.name}
-              </Link>
-            </div>
-          </article>
+              </Button>
+            </CardFooter>
+          </Card>
         ))}
       </div>
     </section>

@@ -130,12 +130,10 @@ function DirectRunnerSettings({
         : 'Paused'
 
   return (
-    <Card>
+    <Card size="sm">
       <CardHeader>
         <div className="flex items-center justify-between gap-4">
-          <CardTitle className="text-sm font-medium">
-            Direct macOS runner
-          </CardTitle>
+          <CardTitle>Direct macOS runner</CardTitle>
           <Badge variant={acceptingBuilds ? 'secondary' : 'outline'}>
             {runnerStateLabel}
           </Badge>
@@ -557,10 +555,12 @@ function PreferencesPage() {
         paused={preferences?.direct_macos_runner_paused}
       />
       {preferencesQuery.isLoading ? (
-        <div className="space-y-3 border bg-card p-4">
-          <Skeleton className="h-4 w-40" />
-          <Skeleton className="h-9 w-full" />
-        </div>
+        <Card size="sm">
+          <CardContent className="space-y-3">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-9 w-full" />
+          </CardContent>
+        </Card>
       ) : preferencesQuery.error ? (
         <Alert variant="destructive">
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

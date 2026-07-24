@@ -1,5 +1,6 @@
 import type { GitLabSetupForm } from './-gitlab-setup'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Separator } from '@/components/ui/separator'
 
 export function GitLabVerificationStep({
   authMode,
@@ -7,7 +8,8 @@ export function GitLabVerificationStep({
   authMode: GitLabSetupForm['auth_mode']
 }) {
   return (
-    <section className="space-y-3 border-t border-border/60 pt-6">
+    <section className="space-y-3">
+      <Separator />
       <div>
         <p className="text-sm font-medium text-muted-foreground">
           3. Verify source connection

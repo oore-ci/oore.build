@@ -35,7 +35,14 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -55,6 +62,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemTitle,
+} from '@/components/ui/item'
 import { buildWebhookChannelUpdate } from './-notification-update'
 
 export const Route = createLazyFileRoute('/settings/notifications/$channelId')({
@@ -477,10 +492,12 @@ function NotificationChannelDetailPage() {
     return (
       <PageLayout width="wide">
         <Skeleton className="h-8 w-48" />
-        <div className="space-y-3 border p-4">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
+        <Card size="sm">
+          <CardContent className="space-y-3">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </CardContent>
+        </Card>
       </PageLayout>
     )
   }
@@ -512,9 +529,14 @@ function NotificationChannelDetailPage() {
     return (
       <PageLayout width="wide">
         <PageHeader title="Channel not found" />
-        <p className="text-sm text-muted-foreground">
-          This notification channel does not exist or has been deleted.
-        </p>
+        <Empty>
+          <EmptyHeader>
+            <EmptyTitle>Channel not found</EmptyTitle>
+            <EmptyDescription>
+              This notification channel does not exist or has been deleted.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       </PageLayout>
     )
   }
@@ -569,16 +591,11 @@ function NotificationChannelDetailPage() {
         }
       />
 
-      <section
-        className="border bg-card"
-        aria-labelledby="channel-settings-title"
-      >
-        <div className="border-b px-4 py-3">
-          <h2 id="channel-settings-title" className="text-sm font-semibold">
-            Settings
-          </h2>
-        </div>
-        <div className="p-4">
+      <Card size="sm" aria-labelledby="channel-settings-title">
+        <CardHeader>
+          <CardTitle id="channel-settings-title">Settings</CardTitle>
+        </CardHeader>
+        <CardContent>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <FormField
@@ -670,19 +687,14 @@ function NotificationChannelDetailPage() {
               </Button>
             </form>
           </Form>
-        </div>
-      </section>
+        </CardContent>
+      </Card>
 
-      <section
-        className="border bg-card"
-        aria-labelledby="delivery-history-title"
-      >
-        <div className="border-b px-4 py-3">
-          <h2 id="delivery-history-title" className="text-sm font-semibold">
-            Delivery history
-          </h2>
-        </div>
-        <div className="p-4">
+      <Card size="sm" aria-labelledby="delivery-history-title">
+        <CardHeader>
+          <CardTitle id="delivery-history-title">Delivery history</CardTitle>
+        </CardHeader>
+        <CardContent>
           {deliveriesLoading ? (
             <div className="space-y-2" aria-label="Loading delivery history">
               <Skeleton className="h-12 w-full" />
@@ -705,16 +717,21 @@ function NotificationChannelDetailPage() {
               </AlertDescription>
             </Alert>
           ) : deliveries.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No deliveries yet.</p>
+            <Empty className="py-4">
+              <EmptyHeader>
+                <EmptyTitle>No deliveries yet</EmptyTitle>
+                <EmptyDescription>
+                  Delivery attempts will appear here after this channel is
+                  triggered.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           ) : (
-            <div className="space-y-2">
+            <ItemGroup>
               {deliveries.map((delivery) => (
-                <div
-                  key={delivery.id}
-                  className="flex items-center justify-between gap-3 border border-border/60 p-3 text-sm"
-                >
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
+                <Item key={delivery.id} variant="outline" size="sm">
+                  <ItemContent>
+                    <ItemTitle>
                       <Badge
                         variant={
                           delivery.status === 'delivered'
@@ -729,22 +746,28 @@ function NotificationChannelDetailPage() {
                       <span className="text-muted-foreground">
                         {delivery.event_type}
                       </span>
-                    </div>
+                    </ItemTitle>
                     {delivery.last_error ? (
-                      <p className="truncate text-xs text-destructive">
+                      <ItemDescription className="text-destructive">
                         {delivery.last_error}
-                      </p>
+                      </ItemDescription>
                     ) : null}
-                  </div>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {new Date(delivery.created_at * 1000).toLocaleString()}
-                  </span>
-                </div>
+                  </ItemContent>
+                  <ItemActions className="text-xs text-muted-foreground">
+                    <time
+                      dateTime={new Date(
+                        delivery.created_at * 1000,
+                      ).toISOString()}
+                    >
+                      {new Date(delivery.created_at * 1000).toLocaleString()}
+                    </time>
+                  </ItemActions>
+                </Item>
               ))}
-            </div>
+            </ItemGroup>
           )}
-        </div>
-      </section>
+        </CardContent>
+      </Card>
     </PageLayout>
   )
 }

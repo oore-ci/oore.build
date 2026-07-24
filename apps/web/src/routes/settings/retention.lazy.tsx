@@ -16,6 +16,13 @@ import PageHeader from '@/components/page-header'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ApiClientError, getApiErrorMessage } from '@/lib/api'
 import {
@@ -37,6 +44,7 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
+import { Separator } from '@/components/ui/separator'
 import { RetentionSummaryCard } from './-retention-summary-card'
 
 export const Route = createLazyFileRoute('/settings/retention')({
@@ -86,7 +94,8 @@ function EnabledRetentionFields({
 }) {
   return (
     <>
-      <div className="border-t pt-6">
+      <section className="space-y-4">
+        <Separator />
         <h4 className="mb-4 text-sm font-medium">Retention criteria</h4>
         <p className="mb-4 text-sm text-muted-foreground">
           Builds matching any of the criteria below will be cleaned up. Leave a
@@ -154,9 +163,10 @@ function EnabledRetentionFields({
             )}
           />
         </div>
-      </div>
+      </section>
 
-      <div className="border-t pt-6">
+      <section className="space-y-4">
+        <Separator />
         <h4 className="mb-4 text-sm font-medium">Cleanup behavior</h4>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -226,9 +236,10 @@ function EnabledRetentionFields({
             )}
           />
         </div>
-      </div>
+      </section>
 
-      <div className="border-t pt-6">
+      <section className="space-y-4">
+        <Separator />
         <h4 className="mb-4 text-sm font-medium">Protected statuses</h4>
         <p className="mb-4 text-sm text-muted-foreground">
           Builds with these statuses will never be cleaned up, regardless of
@@ -265,9 +276,10 @@ function EnabledRetentionFields({
             </FormItem>
           )}
         />
-      </div>
+      </section>
 
-      <div className="border-t pt-6">
+      <section className="space-y-4">
+        <Separator />
         <FormField
           control={form.control}
           name="dry_run"
@@ -290,7 +302,7 @@ function EnabledRetentionFields({
             </FormItem>
           )}
         />
-      </div>
+      </section>
     </>
   )
 }
@@ -399,11 +411,13 @@ function RetentionPage() {
           title="Retention"
           description="Configure automatic cleanup of old builds and artifacts."
         />
-        <div className="space-y-4 border p-4">
-          <Skeleton className="h-4 w-48" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
+        <Card size="sm">
+          <CardContent className="space-y-4">
+            <Skeleton className="h-4 w-48" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </CardContent>
+        </Card>
       </PageLayout>
     )
   }
@@ -452,14 +466,16 @@ function RetentionPage() {
 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          <section className="border bg-card">
-            <div className="flex items-center justify-between border-b px-4 py-3">
-              <h2 className="text-sm font-semibold">Global retention policy</h2>
-              <Badge variant={enabled ? 'secondary' : 'outline'}>
-                {enabled ? 'Active' : 'Disabled'}
-              </Badge>
-            </div>
-            <div className="space-y-6 p-4">
+          <Card size="sm">
+            <CardHeader>
+              <CardTitle>Global retention policy</CardTitle>
+              <CardAction>
+                <Badge variant={enabled ? 'secondary' : 'outline'}>
+                  {enabled ? 'Active' : 'Disabled'}
+                </Badge>
+              </CardAction>
+            </CardHeader>
+            <CardContent className="space-y-6">
               <FormField
                 control={form.control}
                 name="enabled"
@@ -490,8 +506,8 @@ function RetentionPage() {
                   Save policy
                 </Button>
               </div>
-            </div>
-          </section>
+            </CardContent>
+          </Card>
         </form>
       </Form>
     </PageLayout>

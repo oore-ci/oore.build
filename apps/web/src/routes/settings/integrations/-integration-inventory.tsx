@@ -78,7 +78,7 @@ function RepositoryIdentity({
       href={url}
       target="_blank"
       rel="noreferrer"
-      className="group flex min-w-0 items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring [&_span:last-child]:group-hover:underline"
+      className="group flex min-w-0 items-center gap-2 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_span:last-child]:group-hover:underline"
     >
       {content}
     </a>
@@ -355,7 +355,7 @@ export function IntegrationRepositoryInventory({
       ) : null}
 
       {!isLoading && !error && repositoryCount === 0 ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <GitBranchIcon />
@@ -369,7 +369,7 @@ export function IntegrationRepositoryInventory({
       ) : null}
 
       {!isLoading && !error && repositoryCount > 0 && total === 0 ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <Search01Icon />
@@ -455,7 +455,7 @@ export function IntegrationAccountsInventory({
 
   if (installations.length === 0) {
     return (
-      <Empty className="bg-card">
+      <Empty className="border bg-card">
         <EmptyHeader>
           <EmptyTitle>No {label.toLocaleLowerCase()}</EmptyTitle>
           <EmptyDescription>{emptyDescription}</EmptyDescription>

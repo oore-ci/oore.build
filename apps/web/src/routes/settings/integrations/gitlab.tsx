@@ -10,7 +10,9 @@ import { GitLabVerificationStep } from './-gitlab-verification-step'
 import type { GitLabHostKind, GitLabSetupForm } from './-gitlab-setup'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Form } from '@/components/ui/form'
+import { Separator } from '@/components/ui/separator'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import {
@@ -134,11 +136,11 @@ function GitLabSetupPage() {
         title="Connect GitLab source"
         description="Connect GitLab.com or a self-managed GitLab host for repository discovery and webhook-triggered builds."
       />
-      <section className="border bg-card">
-        <div className="border-b px-4 py-3">
-          <h2 className="text-sm font-semibold">GitLab connection</h2>
-        </div>
-        <div className="p-4">
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle>GitLab connection</CardTitle>
+        </CardHeader>
+        <CardContent>
           {!remoteEnabled ? (
             <Alert>
               <AlertDescription>
@@ -165,7 +167,8 @@ function GitLabSetupPage() {
                 callbackUrl={callbackUrl}
               />
               <GitLabVerificationStep authMode={authMode} />
-              <section className="space-y-4 border-t border-border/60 pt-6">
+              <section className="space-y-4">
+                <Separator />
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">
                     4. Finish repository setup
@@ -196,8 +199,8 @@ function GitLabSetupPage() {
               </Button>
             </form>
           </Form>
-        </div>
-      </section>
+        </CardContent>
+      </Card>
     </PageLayout>
   )
 }

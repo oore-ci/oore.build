@@ -23,10 +23,27 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from '@/components/ui/item'
 import { Spinner } from '@/components/ui/spinner'
 
 export function ExternalAccessSetup({
@@ -77,150 +94,143 @@ export function ExternalAccessSetup({
   const ReadinessIcon = readinessOpen ? ArrowDown01Icon : ArrowRight01Icon
   return (
     <>
-      <div className="space-y-3 border p-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-sm font-medium text-muted-foreground">
-              Setup steps
-            </p>
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle>Setup steps</CardTitle>
+          <CardDescription>
             {preflightQuery.isLoading ? (
-              <p className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+              <span className="flex items-center gap-2">
                 <Spinner className="size-4" />
                 Checking requirements...
-              </p>
+              </span>
             ) : (
-              <p className="mt-1 text-sm text-muted-foreground">
+              <>
                 {setupStepsComplete}/{setupStepCount} setup steps ready.
-              </p>
+              </>
             )}
-          </div>
-          <Badge variant={readinessReady ? 'secondary' : 'outline'}>
-            {readinessReady
-              ? 'Ready to enable'
-              : `${setupStepsComplete}/${setupStepCount} ready`}
-          </Badge>
-        </div>
+          </CardDescription>
+          <CardAction>
+            <Badge variant={readinessReady ? 'secondary' : 'outline'}>
+              {readinessReady
+                ? 'Ready to enable'
+                : `${setupStepsComplete}/${setupStepCount} ready`}
+            </Badge>
+          </CardAction>
+        </CardHeader>
 
-        <div className="grid gap-3 md:grid-cols-2">
-          <Button
-            type="button"
-            variant="outline"
-            onMouseEnter={onPreloadNetwork}
-            onFocus={onPreloadNetwork}
-            onClick={onEditNetwork}
-            disabled={
-              !isOwner ||
-              networkSettingsQuery.isLoading ||
-              !!networkSettingsQuery.error
-            }
-            className="group h-auto w-full flex-col items-stretch justify-start border-border/60 bg-card p-4 text-left whitespace-normal hover:border-primary/40 hover:bg-primary/5"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium">1. Network</p>
-                <p className="mt-1 text-xs text-muted-foreground">
+        <CardContent>
+          <ItemGroup className="grid gap-3 md:grid-cols-2">
+            <Item
+              render={
+                <button
+                  type="button"
+                  disabled={
+                    !isOwner ||
+                    networkSettingsQuery.isLoading ||
+                    !!networkSettingsQuery.error
+                  }
+                />
+              }
+              variant="outline"
+              className="disabled:pointer-events-none disabled:opacity-50"
+              onMouseEnter={onPreloadNetwork}
+              onFocus={onPreloadNetwork}
+              onClick={onEditNetwork}
+            >
+              <ItemContent>
+                <ItemTitle>1. Network</ItemTitle>
+                <ItemDescription>
                   {networkSettings?.public_url ??
                     'Set Public URL and allowed origins.'}
-                </p>
-              </div>
-              <Badge variant={networkReady ? 'secondary' : 'outline'}>
-                {networkReady ? 'Ready' : 'Setup'}
-              </Badge>
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              {networkSettings?.allowed_origins.length ?? 0} allowed origins
-            </p>
-            <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
-              Configure
-              <ArrowRight01Icon size={14} />
-            </p>
-          </Button>
+                </ItemDescription>
+                <ItemDescription>
+                  {networkSettings?.allowed_origins.length ?? 0} allowed origins
+                </ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                <Badge variant={networkReady ? 'secondary' : 'outline'}>
+                  {networkReady ? 'Ready' : 'Setup'}
+                </Badge>
+                <ArrowRight01Icon />
+              </ItemActions>
+            </Item>
 
-          <Button
-            type="button"
-            variant="outline"
-            onMouseEnter={onPreloadIdentity}
-            onFocus={onPreloadIdentity}
-            onClick={onEditIdentity}
-            disabled={
-              !isOwner || identityQuery.isLoading || !!identityQuery.error
-            }
-            className="group h-auto w-full flex-col items-stretch justify-start border-border/60 bg-card p-4 text-left whitespace-normal hover:border-primary/40 hover:bg-primary/5"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium">2. Identity</p>
-                <p className="mt-1 text-xs text-muted-foreground">
+            <Item
+              render={
+                <button
+                  type="button"
+                  disabled={
+                    !isOwner || identityQuery.isLoading || !!identityQuery.error
+                  }
+                />
+              }
+              variant="outline"
+              className="disabled:pointer-events-none disabled:opacity-50"
+              onMouseEnter={onPreloadIdentity}
+              onFocus={onPreloadIdentity}
+              onClick={onEditIdentity}
+            >
+              <ItemContent>
+                <ItemTitle>2. Identity</ItemTitle>
+                <ItemDescription>
                   {identityReady
                     ? `${authModeLabel(remoteAuthMode)} configured.`
                     : `Configure ${authModeLabel(remoteAuthMode)}.`}
-                </p>
-              </div>
-              <Badge variant={identityReady ? 'secondary' : 'outline'}>
-                {identityReady ? 'Ready' : 'Setup'}
-              </Badge>
-            </div>
-            {remoteAuthMode === 'trusted_proxy' && trustedProxySettings ? (
-              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                <p>
-                  <span className="font-medium text-foreground">Header:</span>{' '}
-                  <span className="font-mono">
-                    {trustedProxySettings.user_email_header}
-                  </span>
-                </p>
-                <p>
-                  <span className="font-medium text-foreground">Secret:</span>{' '}
-                  {trustedProxySettings.has_shared_secret
-                    ? 'Stored'
-                    : 'Missing'}
-                </p>
-                {trustedProxySettings.user_email_header ===
-                'x-warpgate-username' ? (
-                  <p>
-                    <span className="font-medium text-foreground">
-                      iOS installs:
-                    </span>{' '}
-                    {trustedProxySettings.has_warpgate_ticket
-                      ? `Ticket from ${trustedProxySettings.warpgate_ticket_source === 'environment' ? 'environment' : 'encrypted settings'}`
-                      : 'Ticket missing'}
-                  </p>
+                </ItemDescription>
+                {remoteAuthMode === 'trusted_proxy' && trustedProxySettings ? (
+                  <>
+                    <ItemDescription>
+                      Header: {trustedProxySettings.user_email_header}
+                    </ItemDescription>
+                    <ItemDescription>
+                      Secret:{' '}
+                      {trustedProxySettings.has_shared_secret
+                        ? 'Stored'
+                        : 'Missing'}
+                    </ItemDescription>
+                    {trustedProxySettings.user_email_header ===
+                    'x-warpgate-username' ? (
+                      <ItemDescription>
+                        iOS installs:{' '}
+                        {trustedProxySettings.has_warpgate_ticket
+                          ? `Ticket from ${trustedProxySettings.warpgate_ticket_source === 'environment' ? 'environment' : 'encrypted settings'}`
+                          : 'Ticket missing'}
+                      </ItemDescription>
+                    ) : null}
+                    <ItemDescription>
+                      Peer CIDRs:{' '}
+                      {trustedProxySettings.trusted_proxy_cidrs.length > 0
+                        ? trustedProxySettings.trusted_proxy_cidrs.join(', ')
+                        : 'Loopback only'}
+                    </ItemDescription>
+                  </>
+                ) : remoteAuthMode === 'oidc' && oidcConfig ? (
+                  <>
+                    <ItemDescription>
+                      Issuer: {oidcConfig.issuer_url}
+                    </ItemDescription>
+                    <ItemDescription>
+                      Client ID: {oidcConfig.client_id}
+                    </ItemDescription>
+                    <ItemDescription>
+                      Secret:{' '}
+                      {oidcConfig.has_client_secret
+                        ? 'Stored'
+                        : 'None (public client)'}
+                    </ItemDescription>
+                  </>
                 ) : null}
-                <p>
-                  <span className="font-medium text-foreground">
-                    Peer CIDRs:
-                  </span>{' '}
-                  {trustedProxySettings.trusted_proxy_cidrs.length > 0
-                    ? trustedProxySettings.trusted_proxy_cidrs.join(', ')
-                    : 'Loopback only'}
-                </p>
-              </div>
-            ) : remoteAuthMode === 'oidc' && oidcConfig ? (
-              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                <p>
-                  <span className="font-medium text-foreground">Issuer:</span>{' '}
-                  <span className="font-mono">{oidcConfig.issuer_url}</span>
-                </p>
-                <p>
-                  <span className="font-medium text-foreground">
-                    Client ID:
-                  </span>{' '}
-                  <span className="font-mono">{oidcConfig.client_id}</span>
-                </p>
-                <p>
-                  <span className="font-medium text-foreground">Secret:</span>{' '}
-                  {oidcConfig.has_client_secret
-                    ? 'Stored'
-                    : 'None (public client)'}
-                </p>
-              </div>
-            ) : null}
-            <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
-              {identityReady ? 'Reconfigure' : 'Configure'}
-              <ArrowRight01Icon size={14} />
-            </p>
-          </Button>
-        </div>
-      </div>
+              </ItemContent>
+              <ItemActions>
+                <Badge variant={identityReady ? 'secondary' : 'outline'}>
+                  {identityReady ? 'Ready' : 'Setup'}
+                </Badge>
+                <ArrowRight01Icon />
+              </ItemActions>
+            </Item>
+          </ItemGroup>
+        </CardContent>
+      </Card>
 
       {!setupReady ? (
         <Alert variant="destructive">
@@ -267,99 +277,99 @@ export function ExternalAccessSetup({
         </Alert>
       ) : null}
 
-      <Collapsible
-        open={readinessOpen}
-        onOpenChange={onReadinessOpenChange}
-        className="space-y-3 border p-3"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-medium text-muted-foreground">
-              Technical checks
-            </p>
-            {preflightQuery.isLoading ? (
-              <p className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
-                <Spinner className="size-4" />
-                Checking...
-              </p>
-            ) : preflightQuery.error ? (
-              <p className="mt-1 text-sm text-destructive">Check run failed.</p>
-            ) : preflightQuery.data?.ready ? (
-              <p className="mt-1 text-sm text-muted-foreground">
-                All checks are passing.
-              </p>
-            ) : (
-              <p className="mt-1 text-sm text-muted-foreground">
-                {failedReadinessChecks.length} check
-                {failedReadinessChecks.length === 1 ? '' : 's'} need attention.
-              </p>
-            )}
-          </div>
-          <CollapsibleTrigger className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-            <ReadinessIcon size={14} />
-            {readinessOpen ? 'Hide checks' : 'Show checks'}
-          </CollapsibleTrigger>
-        </div>
-
-        {preflightQuery.error ? (
-          <Alert variant="destructive">
-            <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <span>
-                Failed to run readiness checks: {preflightQuery.error.message}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void preflightQuery.refetch()}
+      <Collapsible open={readinessOpen} onOpenChange={onReadinessOpenChange}>
+        <Card size="sm">
+          <CardHeader>
+            <CardTitle>Technical checks</CardTitle>
+            <CardDescription>
+              {preflightQuery.isLoading ? (
+                <span className="flex items-center gap-2">
+                  <Spinner className="size-4" />
+                  Checking...
+                </span>
+              ) : preflightQuery.error ? (
+                <span className="text-destructive">Check run failed.</span>
+              ) : preflightQuery.data?.ready ? (
+                <>All checks are passing.</>
+              ) : (
+                <>
+                  {failedReadinessChecks.length} check
+                  {failedReadinessChecks.length === 1 ? '' : 's'} need
+                  attention.
+                </>
+              )}
+            </CardDescription>
+            <CardAction>
+              <CollapsibleTrigger
+                render={<Button type="button" variant="ghost" size="sm" />}
               >
-                Retry
-              </Button>
-            </AlertDescription>
-          </Alert>
-        ) : null}
+                <ReadinessIcon />
+                {readinessOpen ? 'Hide checks' : 'Show checks'}
+              </CollapsibleTrigger>
+            </CardAction>
+          </CardHeader>
 
-        <CollapsibleContent className="space-y-2">
-          {preflightQuery.data
-            ? preflightQuery.data.checks.map((check) => {
-                const CheckIcon = check.ok
-                  ? CheckmarkCircle02Icon
-                  : AlertCircleIcon
+          <CardContent className="space-y-3">
+            {preflightQuery.error ? (
+              <Alert variant="destructive">
+                <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span>
+                    Failed to run readiness checks:{' '}
+                    {preflightQuery.error.message}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void preflightQuery.refetch()}
+                  >
+                    Retry
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ) : null}
 
-                return (
-                  <div key={check.id} className="border border-border/60 p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-2">
-                        <CheckIcon
-                          size={14}
-                          className={
-                            check.ok ? 'text-success' : 'text-destructive'
-                          }
-                        />
-                        <div>
-                          <p className="text-sm font-medium">{check.label}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {check.ok
-                              ? check.message
-                              : guidanceForPreflight(
-                                  check.id,
-                                  check.failure_code,
-                                )}
-                          </p>
-                        </div>
-                      </div>
-                      <Badge
-                        variant={check.ok ? 'secondary' : 'outline'}
-                        className="mt-0.5"
-                      >
-                        {check.ok ? 'Ready' : 'Needs setup'}
-                      </Badge>
-                    </div>
-                  </div>
-                )
-              })
-            : null}
-        </CollapsibleContent>
+            <CollapsibleContent>
+              <ItemGroup>
+                {preflightQuery.data
+                  ? preflightQuery.data.checks.map((check) => {
+                      const CheckIcon = check.ok
+                        ? CheckmarkCircle02Icon
+                        : AlertCircleIcon
+
+                      return (
+                        <Item key={check.id} variant="outline" size="sm">
+                          <ItemMedia>
+                            <CheckIcon
+                              className={
+                                check.ok ? 'text-success' : 'text-destructive'
+                              }
+                            />
+                          </ItemMedia>
+                          <ItemContent>
+                            <ItemTitle>{check.label}</ItemTitle>
+                            <ItemDescription>
+                              {check.ok
+                                ? check.message
+                                : guidanceForPreflight(
+                                    check.id,
+                                    check.failure_code,
+                                  )}
+                            </ItemDescription>
+                          </ItemContent>
+                          <ItemActions>
+                            <Badge variant={check.ok ? 'secondary' : 'outline'}>
+                              {check.ok ? 'Ready' : 'Needs setup'}
+                            </Badge>
+                          </ItemActions>
+                        </Item>
+                      )
+                    })
+                  : null}
+              </ItemGroup>
+            </CollapsibleContent>
+          </CardContent>
+        </Card>
       </Collapsible>
     </>
   )

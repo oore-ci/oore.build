@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { RetentionCleanupSummary } from '@/lib/types'
 
@@ -32,13 +33,11 @@ export function RetentionSummaryCard({
   onRetry: () => void
 }) {
   return (
-    <section className="border bg-card" aria-labelledby="last-cleanup-title">
-      <div className="border-b px-4 py-3">
-        <h2 id="last-cleanup-title" className="text-sm font-semibold">
-          Last cleanup
-        </h2>
-      </div>
-      <div className="p-4">
+    <Card size="sm" aria-labelledby="last-cleanup-title">
+      <CardHeader>
+        <CardTitle id="last-cleanup-title">Last cleanup</CardTitle>
+      </CardHeader>
+      <CardContent>
         {isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-4 w-64" />
@@ -96,7 +95,7 @@ export function RetentionSummaryCard({
             next scheduled run.
           </p>
         )}
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   )
 }

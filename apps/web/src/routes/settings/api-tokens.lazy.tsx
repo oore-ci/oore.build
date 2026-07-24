@@ -494,7 +494,7 @@ function ApiTokensPage() {
       ) : null}
 
       {!tokensQuery.isLoading && !tokensQuery.error && tokens.length === 0 ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyTitle>No API tokens yet</EmptyTitle>
             <EmptyDescription>
@@ -513,7 +513,7 @@ function ApiTokensPage() {
       !tokensQuery.error &&
       tokens.length > 0 &&
       total === 0 ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <Search01Icon />
