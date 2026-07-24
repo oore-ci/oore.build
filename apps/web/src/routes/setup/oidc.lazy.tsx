@@ -6,6 +6,14 @@ import * as z from 'zod'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   Select,
@@ -106,12 +114,7 @@ function OidcConfigStep() {
   const provider =
     PROVIDERS.find((p) => p.id === selectedProvider) ?? PROVIDERS[0]
 
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    formState: { errors, isValid },
-  } = useForm<OidcConfigForm>({
+  const form = useForm<OidcConfigForm>({
     resolver: zodResolver(oidcConfigSchema),
     defaultValues: {
       issuerUrl: PROVIDERS[0].issuerUrl,
@@ -144,9 +147,11 @@ function OidcConfigStep() {
     setSelectedProvider(() => value)
     const nextProvider = PROVIDERS.find((pr) => pr.id === value) ?? PROVIDERS[0]
     if (nextProvider.locked) {
-      setValue('issuerUrl', nextProvider.issuerUrl, { shouldValidate: true })
+      form.setValue('issuerUrl', nextProvider.issuerUrl, {
+        shouldValidate: true,
+      })
     } else {
-      setValue('issuerUrl', '', { shouldValidate: false })
+      form.setValue('issuerUrl', '', { shouldValidate: false })
     }
   }
 
@@ -174,137 +179,161 @@ function OidcConfigStep() {
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-      <PageMeta title="Setup OIDC" />
-      <div className="space-y-1">
-        <h2 className="text-lg font-medium">OIDC Provider</h2>
-        <p className="text-sm text-muted-foreground">
-          Configure the OpenID Connect provider for authentication. You will
-          need a client ID (and optionally secret) from your identity provider.
-        </p>
-        <p className="text-xs text-warning">
-          You can edit this until owner verification is completed. After owner
-          verification, setup can only move forward to finalize.
-        </p>
-      </div>
-
-      {/* Redirect URI guidance */}
-      <Alert>
-        <AlertTitle>
-          Configure this redirect URI in your identity provider
-        </AlertTitle>
-        <AlertDescription>
-          <p className="mb-2 text-sm text-muted-foreground">
-            Add this as an authorized redirect URI when creating your OAuth app:
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <PageMeta title="Setup OIDC" />
+        <div className="space-y-1">
+          <h2 className="text-lg font-medium">OIDC provider</h2>
+          <p className="text-sm text-muted-foreground">
+            Configure the OpenID Connect provider for authentication. You will
+            need a client ID (and optionally secret) from your identity
+            provider.
           </p>
-          <CopyableOidcRedirectUri
-            uri={`${window.location.origin}/auth/callback`}
-          />
-        </AlertDescription>
-      </Alert>
+          <p className="text-xs text-warning">
+            You can edit this until owner verification is completed. After owner
+            verification, setup can only move forward to finalize.
+          </p>
+        </div>
 
-      {/* Provider selector */}
-      <div className="space-y-2">
-        <Label htmlFor="identity-provider">Identity provider</Label>
-        <Select
-          value={selectedProvider}
-          onValueChange={(v) => handleProviderChange(v as ProviderId)}
-          disabled={isFormDisabled}
-        >
-          <SelectTrigger id="identity-provider" className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PROVIDERS.map((p) => (
-              <SelectItem key={p.id} value={p.id}>
-                {p.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <a
-          href={`https://docs.oore.build${provider.docsPath}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs text-primary underline underline-offset-2"
-        >
-          How to set up {provider.label} for Oore CI
-        </a>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="issuer-url">Issuer URL</Label>
-        <Input
-          id="issuer-url"
-          type="url"
-          placeholder={provider.placeholder || 'https://accounts.google.com'}
-          {...register('issuerUrl')}
-          disabled={isFormDisabled || provider.locked}
-          autoFocus={!provider.locked}
-        />
-        {errors.issuerUrl ? (
-          <p className="text-sm text-destructive">{errors.issuerUrl.message}</p>
-        ) : null}
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="client-id">Client ID</Label>
-        <Input
-          id="client-id"
-          type="text"
-          placeholder="your-client-id"
-          {...register('clientId')}
-          disabled={isFormDisabled}
-        />
-        {errors.clientId ? (
-          <p className="text-sm text-destructive">{errors.clientId.message}</p>
-        ) : null}
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="client-secret">
-          Client Secret{' '}
-          <span className="font-normal text-muted-foreground">(optional)</span>
-        </Label>
-        <Input
-          id="client-secret"
-          type="password"
-          placeholder="your-client-secret"
-          {...register('clientSecret')}
-          disabled={isFormDisabled}
-        />
-      </div>
-
-      {errorMessage ? (
-        <Alert variant="destructive">
-          <AlertTitle>Configuration failed</AlertTitle>
-          <AlertDescription>{errorMessage}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      {discoveredIssuer ? (
+        {/* Redirect URI guidance */}
         <Alert>
-          <AlertTitle>Discovery successful</AlertTitle>
+          <AlertTitle>
+            Configure this redirect URI in your identity provider
+          </AlertTitle>
           <AlertDescription>
-            Verified issuer: <code className="text-xs">{discoveredIssuer}</code>
-            . Proceeding to next step...
+            <p className="mb-2 text-sm text-muted-foreground">
+              Add this as an authorized redirect URI when creating your OAuth
+              app:
+            </p>
+            <CopyableOidcRedirectUri
+              uri={`${window.location.origin}/auth/callback`}
+            />
           </AlertDescription>
         </Alert>
-      ) : null}
 
-      <Button
-        type="submit"
-        disabled={
-          !isValid || configureMutation.isPending || configureMutation.isSuccess
-        }
-        className="w-full"
-      >
-        {configureMutation.isPending
-          ? 'Discovering provider...'
-          : configureMutation.isSuccess
-            ? 'Configured'
-            : 'Configure OIDC'}
-      </Button>
-    </form>
+        {/* Provider selector */}
+        <div className="space-y-2">
+          <Label htmlFor="identity-provider">Identity provider</Label>
+          <Select
+            value={selectedProvider}
+            onValueChange={(v) => handleProviderChange(v as ProviderId)}
+            disabled={isFormDisabled}
+          >
+            <SelectTrigger id="identity-provider" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PROVIDERS.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <a
+            href={`https://docs.oore.build${provider.docsPath}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-primary underline underline-offset-2"
+          >
+            How to set up {provider.label} for Oore CI
+          </a>
+        </div>
+
+        <FormField
+          control={form.control}
+          name="issuerUrl"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Issuer URL</FormLabel>
+              <FormControl>
+                <Input
+                  type="url"
+                  placeholder={
+                    provider.placeholder || 'https://accounts.google.com'
+                  }
+                  disabled={isFormDisabled || provider.locked}
+                  autoFocus={!provider.locked}
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="clientId"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Client ID</FormLabel>
+              <FormControl>
+                <Input
+                  type="text"
+                  placeholder="your-client-id"
+                  disabled={isFormDisabled}
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="clientSecret"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Client secret (optional)</FormLabel>
+              <FormControl>
+                <Input
+                  type="password"
+                  placeholder="your-client-secret"
+                  disabled={isFormDisabled}
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {errorMessage ? (
+          <Alert variant="destructive">
+            <AlertTitle>Configuration failed</AlertTitle>
+            <AlertDescription>{errorMessage}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {discoveredIssuer ? (
+          <Alert>
+            <AlertTitle>Discovery successful</AlertTitle>
+            <AlertDescription>
+              Verified issuer:{' '}
+              <code className="text-xs">{discoveredIssuer}</code>. Proceeding to
+              next step...
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        <Button
+          type="submit"
+          disabled={
+            !form.formState.isValid ||
+            configureMutation.isPending ||
+            configureMutation.isSuccess
+          }
+          className="w-full"
+        >
+          {configureMutation.isPending
+            ? 'Discovering provider...'
+            : configureMutation.isSuccess
+              ? 'Configured'
+              : 'Configure OIDC'}
+        </Button>
+      </form>
+    </Form>
   )
 }

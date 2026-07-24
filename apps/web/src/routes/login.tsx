@@ -5,11 +5,19 @@ import type { ConnectivityIssue } from '@/lib/connectivity'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { useTrustedProxyAutoLogin } from '@/hooks/use-trusted-proxy-auto-login'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from '@/components/ui/item'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   ApiClientError,
   getSetupStatus,
@@ -389,7 +397,7 @@ function LoginPage() {
           </div>
         </div>
 
-        <Card>
+        <Card size="sm">
           <CardContent className="space-y-4">
             <div className="flex items-center gap-2 text-sm">
               <span className="text-muted-foreground">Instance</span>
@@ -399,29 +407,29 @@ function LoginPage() {
               </code>
             </div>
 
-            <div className="border border-border/60 bg-muted/20 p-3">
-              <p className="text-xs font-medium text-muted-foreground">
-                Sign-in method
-              </p>
-              <p className="mt-1 text-sm font-medium">
-                {loginFlow === 'local'
-                  ? runtimeMode === 'local'
-                    ? 'Local Only'
-                    : 'Local (loopback)'
-                  : loginFlow === 'recovery'
-                    ? 'Local recovery'
-                    : loginFlow === 'trusted_proxy'
-                      ? 'Trusted Proxy'
-                      : loginFlow === 'oidc'
-                        ? 'OIDC'
-                        : 'Checking...'}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {lastAuthMeta
-                  ? `Last successful sign-in: ${formatLastAuthTime(lastAuthMeta.at)} via ${formatAuthMethodLabel(lastAuthMeta.method)}`
-                  : 'No previous successful sign-in stored on this device.'}
-              </p>
-            </div>
+            <Item variant="muted" size="sm">
+              <ItemContent>
+                <ItemDescription>Sign-in method</ItemDescription>
+                <ItemTitle>
+                  {loginFlow === 'local'
+                    ? runtimeMode === 'local'
+                      ? 'Local Only'
+                      : 'Local (loopback)'
+                    : loginFlow === 'recovery'
+                      ? 'Local recovery'
+                      : loginFlow === 'trusted_proxy'
+                        ? 'Trusted Proxy'
+                        : loginFlow === 'oidc'
+                          ? 'OIDC'
+                          : 'Checking...'}
+                </ItemTitle>
+                <ItemDescription>
+                  {lastAuthMeta
+                    ? `Last successful sign-in: ${formatLastAuthTime(lastAuthMeta.at)} via ${formatAuthMethodLabel(lastAuthMeta.method)}`
+                    : 'No previous successful sign-in stored on this device.'}
+                </ItemDescription>
+              </ItemContent>
+            </Item>
 
             {runtimeMode === 'local' && localModeNetworkBlocked ? (
               <Alert variant="destructive">
@@ -481,35 +489,37 @@ function LoginPage() {
             ) : null}
 
             {connectivityIssue && instance ? (
-              <div className="space-y-3 border p-3">
-                <p className="text-sm font-medium">{connectivityIssue.title}</p>
-                <p className="text-xs text-muted-foreground">
-                  {connectivityIssue.description}
-                </p>
+              <Alert>
+                <AlertTitle>{connectivityIssue.title}</AlertTitle>
+                <AlertDescription className="space-y-3">
+                  <p>{connectivityIssue.description}</p>
 
-                <div className="space-y-1">
-                  <p className="text-xs font-medium">CLI fallback</p>
-                  <code className="block bg-muted px-2 py-1 text-xs">
-                    oore setup
-                  </code>
-                </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-foreground">
+                      CLI fallback
+                    </p>
+                    <code className="block rounded-md bg-muted px-2 py-1 text-xs text-foreground">
+                      oore setup
+                    </code>
+                  </div>
 
-                <div className="space-y-1">
-                  <p className="text-xs font-medium">
-                    Expose backend with tunnel
-                  </p>
-                  <code className="block bg-muted px-2 py-1 text-xs">
-                    {backendCommands.cloudflared}
-                  </code>
-                </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-foreground">
+                      Expose backend with tunnel
+                    </p>
+                    <code className="block rounded-md bg-muted px-2 py-1 text-xs text-foreground">
+                      {backendCommands.cloudflared}
+                    </code>
+                  </div>
 
-                {hostedUi ? (
-                  <p className="text-xs text-muted-foreground">
-                    For local-only backends, run the bundled local web launcher:{' '}
-                    <code>{backendCommands.ooreWeb}</code>.
-                  </p>
-                ) : null}
-              </div>
+                  {hostedUi ? (
+                    <p>
+                      For local-only backends, run the bundled local web
+                      launcher: <code>{backendCommands.ooreWeb}</code>.
+                    </p>
+                  ) : null}
+                </AlertDescription>
+              </Alert>
             ) : null}
 
             <Button
@@ -546,11 +556,9 @@ function LoginPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card size="sm">
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Saved instances
-            </CardTitle>
+            <CardTitle>Saved instances</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {instanceList.length === 0 ? (
@@ -558,44 +566,53 @@ function LoginPage() {
                 No saved instances yet. Add one to start signing in.
               </p>
             ) : (
-              instanceList.map((inst) => {
-                const isActive = inst.id === activeInstanceId
-                const meta = getLastAuthMetaForInstance(inst.id)
-                return (
-                  <button
-                    key={inst.id}
-                    type="button"
-                    onClick={() => setActiveInstance(inst.id)}
-                    className={`w-full border p-3 text-left transition-colors ${
-                      isActive
-                        ? 'border-primary/40 bg-primary/5'
-                        : 'border-border/60 bg-background hover:border-primary/30'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">
-                          {inst.label}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground">
+              <RadioGroup
+                value={activeInstanceId ?? ''}
+                onValueChange={setActiveInstance}
+              >
+                {instanceList.map((inst) => {
+                  const isActive = inst.id === activeInstanceId
+                  const meta = getLastAuthMetaForInstance(inst.id)
+                  return (
+                    <Item
+                      key={inst.id}
+                      variant="outline"
+                      render={
+                        <label
+                          htmlFor={`login-instance-${inst.id}`}
+                          className="cursor-pointer"
+                        />
+                      }
+                      className="items-start has-data-checked:border-primary has-data-checked:bg-accent"
+                    >
+                      <RadioGroupItem
+                        id={`login-instance-${inst.id}`}
+                        value={inst.id}
+                        className="mt-0.5"
+                      />
+                      <ItemContent>
+                        <ItemTitle>{inst.label}</ItemTitle>
+                        <ItemDescription className="line-clamp-none">
                           {instanceHostname(inst.url)}
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {meta
-                            ? `Last sign-in: ${formatLastAuthTime(meta.at)} via ${formatAuthMethodLabel(meta.method)}`
-                            : 'No successful sign-in stored for this instance'}
-                        </p>
-                      </div>
-                      {isActive ? (
-                        <span className="flex items-center gap-1 text-xs text-primary">
-                          <Tick02Icon size={14} />
-                          Active
-                        </span>
-                      ) : null}
-                    </div>
-                  </button>
-                )
-              })
+                          <span className="mt-1 block">
+                            {meta
+                              ? `Last sign-in: ${formatLastAuthTime(meta.at)} via ${formatAuthMethodLabel(meta.method)}`
+                              : 'No successful sign-in stored for this instance'}
+                          </span>
+                        </ItemDescription>
+                      </ItemContent>
+                      <ItemActions>
+                        {isActive ? (
+                          <span className="flex items-center gap-1 text-xs text-primary">
+                            <Tick02Icon size={14} />
+                            Active
+                          </span>
+                        ) : null}
+                      </ItemActions>
+                    </Item>
+                  )
+                })}
+              </RadioGroup>
             )}
             <Button
               variant="outline"

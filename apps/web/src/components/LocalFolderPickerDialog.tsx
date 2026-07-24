@@ -17,6 +17,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemMedia,
+  ItemTitle,
+} from '@/components/ui/item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { useBrowseLocalGitDirectories } from '@/hooks/use-integrations'
@@ -84,12 +92,14 @@ export default function LocalFolderPickerDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="border bg-muted/20 p-3">
-            <p className="text-xs text-muted-foreground">Current folder</p>
-            <p className="mt-1 font-mono text-xs break-all">
-              {browserData?.current_path ?? 'Loading...'}
-            </p>
-          </div>
+          <Item variant="muted" size="sm">
+            <ItemContent>
+              <ItemDescription>Current folder</ItemDescription>
+              <ItemTitle className="font-mono text-xs break-all">
+                {browserData?.current_path ?? 'Loading...'}
+              </ItemTitle>
+            </ItemContent>
+          </Item>
 
           {quickJumps.length ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -161,7 +171,7 @@ export default function LocalFolderPickerDialog({
               </span>
             </div>
           ) : (
-            <ScrollArea className="h-80 border">
+            <ScrollArea className="h-80 rounded-lg ring-1 ring-foreground/10">
               {browserData?.directories.length ? (
                 <div className="divide-y">
                   {browserData.directories.map((directory) => {
@@ -172,24 +182,26 @@ export default function LocalFolderPickerDialog({
                         key={directory.path}
                         className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between"
                       >
-                        <button
-                          type="button"
-                          className="group min-w-0 flex-1 border border-transparent px-3 py-2 text-left transition-colors hover:border-primary/30 hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:outline-none"
+                        <Item
+                          render={<button type="button" />}
+                          className="min-w-0 flex-1 cursor-pointer text-left"
                           onClick={() => setBrowserPath(directory.path)}
                         >
-                          <div className="flex items-center gap-2">
-                            <Folder02Icon size={14} />
-                            <p className="truncate text-sm font-medium">
-                              {directory.name}
-                            </p>
+                          <ItemMedia variant="icon">
+                            <Folder02Icon />
+                          </ItemMedia>
+                          <ItemContent>
+                            <ItemTitle>{directory.name}</ItemTitle>
+                            <ItemDescription className="font-mono text-xs">
+                              {directory.path}
+                            </ItemDescription>
+                          </ItemContent>
+                          <ItemActions>
                             {directory.is_git_repository ? (
                               <Badge variant="secondary">Git repo</Badge>
                             ) : null}
-                          </div>
-                          <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                            {directory.path}
-                          </p>
-                        </button>
+                          </ItemActions>
+                        </Item>
 
                         {canSelectDirectory ? (
                           <Button

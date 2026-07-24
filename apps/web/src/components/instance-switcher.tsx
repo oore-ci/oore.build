@@ -68,7 +68,7 @@ export default function InstanceSwitcher() {
               <ChevronsUpDown className="ml-auto" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
-              className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
+              className="w-(--anchor-width) min-w-56"
               align="start"
               side={isMobile ? 'bottom' : 'right'}
               sideOffset={4}

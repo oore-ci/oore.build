@@ -38,6 +38,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Item, ItemContent, ItemMedia, ItemTitle } from '@/components/ui/item'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import type { BuildPlatform } from '@/lib/types'
@@ -93,35 +94,43 @@ function PlatformSelectionField({
           <FormLabel>Platforms for this run</FormLabel>
           <div className="grid gap-2 sm:grid-cols-3">
             {platforms.map((platform) => (
-              <label
+              <Item
                 key={platform}
-                className="flex items-center gap-2 border border-border px-3 py-2 text-sm"
+                render={<label />}
+                variant="outline"
+                size="sm"
+                className="has-data-checked:border-primary has-data-checked:bg-accent"
               >
-                <Checkbox
-                  checked={
-                    field.value.length === 0 || field.value.includes(platform)
-                  }
-                  onCheckedChange={(checked) => {
-                    const current =
-                      field.value.length === 0 ? platforms : field.value
-                    const next = checked
-                      ? [...current, platform].filter(
-                          (value, index, values) =>
-                            values.indexOf(value) === index,
-                        )
-                      : current.filter((value) => value !== platform)
-                    if (next.length === 0) {
-                      form.setError('platforms', {
-                        message: 'Select at least one platform for this build',
-                      })
-                      return
+                <ItemMedia>
+                  <Checkbox
+                    checked={
+                      field.value.length === 0 || field.value.includes(platform)
                     }
-                    form.clearErrors('platforms')
-                    field.onChange(next)
-                  }}
-                />
-                {platformLabels[platform]}
-              </label>
+                    onCheckedChange={(checked) => {
+                      const current =
+                        field.value.length === 0 ? platforms : field.value
+                      const next = checked
+                        ? [...current, platform].filter(
+                            (value, index, values) =>
+                              values.indexOf(value) === index,
+                          )
+                        : current.filter((value) => value !== platform)
+                      if (next.length === 0) {
+                        form.setError('platforms', {
+                          message:
+                            'Select at least one platform for this build',
+                        })
+                        return
+                      }
+                      form.clearErrors('platforms')
+                      field.onChange(next)
+                    }}
+                  />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>{platformLabels[platform]}</ItemTitle>
+                </ItemContent>
+              </Item>
             ))}
           </div>
           <FormDescription>

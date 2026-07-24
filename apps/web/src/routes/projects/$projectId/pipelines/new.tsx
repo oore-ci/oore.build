@@ -42,11 +42,17 @@ import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import PipelineForm from '@/components/pipeline-form'
 import { PageMeta } from '@/lib/seo'
-import { cn } from '@/lib/utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from '@/components/ui/item'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Spinner } from '@/components/ui/spinner'
 
 export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
@@ -679,7 +685,7 @@ function NewPipelinePage() {
       />
       <div className="mx-auto mb-6 max-w-4xl">
         {workflowsQuery.isLoading ? (
-          <Card>
+          <Card size="sm">
             <CardContent className="flex items-center gap-3 py-6 text-sm text-muted-foreground">
               <Spinner className="size-4" />
               Looking for Oore workflows on{' '}
@@ -714,10 +720,10 @@ function NewPipelinePage() {
             </AlertDescription>
           </Alert>
         ) : validWorkflows.length > 0 && !manualSetup ? (
-          <Card>
+          <Card size="sm">
             <CardHeader className="gap-2">
               <div className="flex items-center justify-between gap-3">
-                <CardTitle className="flex items-center gap-2 text-base">
+                <CardTitle className="flex items-center gap-2">
                   <File02Icon size={18} />
                   Repository workflow found
                 </CardTitle>
@@ -803,25 +809,37 @@ function NewPipelinePage() {
                 </Button>
               ) : null}
             </div>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <RadioGroup
+              value={selectedTemplate}
+              onValueChange={setSelectedTemplate}
+              className="sm:grid-cols-2 lg:grid-cols-3"
+            >
               {PIPELINE_TEMPLATES.map((tmpl) => (
-                <button
+                <Item
                   key={tmpl.key}
-                  type="button"
-                  aria-pressed={selectedTemplate === tmpl.key}
-                  onClick={() => setSelectedTemplate(tmpl.key)}
-                  className={cn(
-                    'flex flex-col items-start gap-1 border p-3 text-left text-sm transition-colors hover:bg-accent',
-                    selectedTemplate === tmpl.key && 'border-primary bg-accent',
-                  )}
+                  variant="outline"
+                  render={
+                    <label
+                      htmlFor={`pipeline-template-${tmpl.key}`}
+                      className="cursor-pointer"
+                    />
+                  }
+                  className="items-start has-data-checked:border-primary has-data-checked:bg-accent"
                 >
-                  <span className="font-medium">{tmpl.label}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {tmpl.description}
-                  </span>
-                </button>
+                  <RadioGroupItem
+                    id={`pipeline-template-${tmpl.key}`}
+                    value={tmpl.key}
+                    className="mt-0.5"
+                  />
+                  <ItemContent>
+                    <ItemTitle>{tmpl.label}</ItemTitle>
+                    <ItemDescription className="line-clamp-none">
+                      {tmpl.description}
+                    </ItemDescription>
+                  </ItemContent>
+                </Item>
               ))}
-            </div>
+            </RadioGroup>
           </div>
         )}
       </div>

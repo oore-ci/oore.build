@@ -4,7 +4,17 @@ import { addInstanceSchema } from '@/components/add-instance-schema'
 import type { AddInstanceForm } from '@/components/add-instance-schema'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form'
+import { Item, ItemContent, ItemMedia, ItemTitle } from '@/components/ui/item'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   Dialog,
   DialogContent,
@@ -35,31 +45,22 @@ export default function AddInstanceDialog({
   const addInstance = useInstanceStore((s) => s.addInstance)
   const setActiveInstance = useInstanceStore((s) => s.setActiveInstance)
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isValid },
-    reset,
-    watch,
-    setValue,
-  } = useForm<AddInstanceForm>({
+  const form = useForm<AddInstanceForm>({
     resolver: zodResolver(addInstanceSchema(frontendOrigin)),
     defaultValues: { label: '', url: '', icon: DEFAULT_INSTANCE_ICON_KEY },
     mode: 'onBlur',
   })
 
-  const selectedIcon = watch('icon')
-
   function onSubmit(data: AddInstanceForm) {
     const id = addInstance(data.label.trim(), data.url, data.icon)
     setActiveInstance(id)
-    reset()
+    form.reset()
     onOpenChange(false)
   }
 
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
-      reset()
+      form.reset()
     }
     onOpenChange(nextOpen)
   }
@@ -78,112 +79,114 @@ export default function AddInstanceDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="instance-label">Label</Label>
-            <Input
-              id="instance-label"
-              type="text"
-              placeholder="My CI Server"
-              {...register('label')}
-              aria-invalid={Boolean(errors.label)}
-              aria-describedby={
-                errors.label ? 'instance-label-error' : undefined
-              }
-              autoFocus
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="label"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Label</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="text"
+                      placeholder="My CI Server"
+                      autoFocus
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-            {errors.label ? (
-              <p id="instance-label-error" className="text-sm text-destructive">
-                {errors.label.message}
-              </p>
-            ) : null}
-          </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="instance-url">
-              Backend URL{' '}
-              {!hostedUi ? (
-                <span className="font-normal text-muted-foreground">
-                  (optional)
-                </span>
-              ) : null}
-            </Label>
-            <Input
-              id="instance-url"
-              type="text"
-              placeholder="https://ci.example.com"
-              {...register('url')}
-              aria-invalid={Boolean(errors.url)}
-              aria-describedby={
-                errors.url
-                  ? 'instance-url-guidance instance-url-error'
-                  : 'instance-url-guidance'
-              }
+            <FormField
+              control={form.control}
+              name="url"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    Backend URL {!hostedUi ? '(optional)' : null}
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      type="text"
+                      placeholder="https://ci.example.com"
+                      {...field}
+                    />
+                  </FormControl>
+                  {hostedUi ? (
+                    <FormDescription>
+                      <code>https://ci.oore.build</code> requires an explicit
+                      HTTPS backend URL and cannot connect to localhost{' '}
+                      <code>http://</code> backends directly.
+                    </FormDescription>
+                  ) : null}
+                  {localLauncher ? (
+                    <FormDescription>
+                      For local oore-web, keep this empty for localhost daemons
+                      to use the built-in proxy.
+                    </FormDescription>
+                  ) : null}
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-            <div id="instance-url-guidance">
-              {hostedUi ? (
-                <p className="text-xs text-muted-foreground">
-                  <code>https://ci.oore.build</code> requires an explicit HTTPS
-                  backend URL and cannot connect to localhost{' '}
-                  <code>http://</code> backends directly.
-                </p>
-              ) : null}
-              {localLauncher ? (
-                <p className="text-xs text-muted-foreground">
-                  For local oore-web, keep this empty for localhost daemons to
-                  use the built-in proxy.
-                </p>
-              ) : null}
-            </div>
-            {errors.url ? (
-              <p id="instance-url-error" className="text-sm text-destructive">
-                {errors.url.message}
-              </p>
-            ) : null}
-          </div>
 
-          <fieldset className="space-y-2">
-            <legend className="text-sm font-medium">Icon</legend>
-            <div className="flex flex-wrap gap-2">
-              {INSTANCE_ICONS.map((entry) => {
-                const Icon = entry.icon
+            <FormField
+              control={form.control}
+              name="icon"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Icon</FormLabel>
+                  <FormControl>
+                    <RadioGroup
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      aria-label="Icon"
+                      className="grid grid-cols-2 gap-2 sm:grid-cols-3"
+                    >
+                      {INSTANCE_ICONS.map((entry) => {
+                        const Icon = entry.icon
+                        return (
+                          <Item
+                            key={entry.key}
+                            render={<label />}
+                            variant="outline"
+                            size="xs"
+                            className="has-data-checked:border-primary has-data-checked:bg-accent"
+                          >
+                            <ItemMedia>
+                              <RadioGroupItem value={entry.key} />
+                              <Icon />
+                            </ItemMedia>
+                            <ItemContent>
+                              <ItemTitle>{entry.label}</ItemTitle>
+                            </ItemContent>
+                          </Item>
+                        )
+                      })}
+                    </RadioGroup>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-                return (
-                  <Button
-                    key={entry.key}
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className={
-                      selectedIcon === entry.key
-                        ? 'ring-2 ring-primary ring-offset-2 ring-offset-background'
-                        : ''
-                    }
-                    onClick={() => setValue('icon', entry.key)}
-                    aria-label={`Select ${entry.label} icon`}
-                    aria-pressed={selectedIcon === entry.key}
-                    title={entry.label}
-                  >
-                    <Icon />
-                  </Button>
-                )
-              })}
-            </div>
-          </fieldset>
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => handleOpenChange(false)}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!isValid}>
-              Add
-            </Button>
-          </DialogFooter>
-        </form>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => handleOpenChange(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={!form.formState.isValid}>
+                Add
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
       </DialogContent>
     </Dialog>
   )

@@ -18,6 +18,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Separator } from '@/components/ui/separator'
 
 const demoLoginSchema = z.object({
   email: z.email('Enter one of the demo email addresses.'),
@@ -107,7 +108,8 @@ export default function DemoLoginForm() {
           </form>
         </Form>
 
-        <div className="space-y-2 border-t pt-4">
+        <div className="space-y-2">
+          <Separator />
           <p className="text-xs font-medium text-muted-foreground">
             Demo accounts
           </p>

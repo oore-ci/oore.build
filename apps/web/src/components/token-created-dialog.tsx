@@ -13,6 +13,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from '@/components/ui/input-group'
 
 interface TokenCreatedDialogProps {
   open: boolean
@@ -41,22 +47,27 @@ export default function TokenCreatedDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Token Created</DialogTitle>
+          <DialogTitle>Token created</DialogTitle>
           <DialogDescription>
             Make sure to copy your token now. You won&apos;t be able to see it
             again.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <code className="flex-1 rounded-md bg-muted px-3 py-2 font-mono text-sm break-all">
-              {response?.token}
-            </code>
-            <Button variant="outline" size="sm" onClick={handleCopy}>
-              <CopyIcon />
-              {copied ? 'Copied' : 'Copy'}
-            </Button>
-          </div>
+          <InputGroup>
+            <InputGroupInput
+              value={response?.token ?? ''}
+              readOnly
+              aria-label="Created API token"
+              className="font-mono text-xs"
+            />
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton variant="ghost" size="xs" onClick={handleCopy}>
+                <CopyIcon />
+                {copied ? 'Copied' : 'Copy'}
+              </InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
           <Alert>
             <AlertDescription>
               This token will not be shown again. Store it in a secure location.

@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import {
   Form,
   FormControl,
@@ -19,6 +20,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemTitle,
+} from '@/components/ui/item'
 import { useSetupPreferences, useSetupStatus } from '@/hooks/use-setup'
 import { getApiErrorMessage } from '@/lib/api'
 import { PageMeta } from '@/lib/seo'
@@ -138,7 +147,7 @@ function SetupModeStep() {
     <div className="space-y-4">
       <PageMeta title="Setup Mode" />
       <div className="space-y-1">
-        <h2 className="text-lg font-medium">Access Mode</h2>
+        <h2 className="text-lg font-medium">Access mode</h2>
         <p className="text-sm text-muted-foreground">
           Choose how users will authenticate when accessing this instance.
         </p>
@@ -177,41 +186,30 @@ function SetupModeStep() {
             )}
           />
 
-          <div
-            role="group"
-            className="divide-y border"
-            aria-label="Mode comparison"
-          >
+          <ItemGroup aria-label="Mode comparison">
             {MODE_COMPARISON.map((mode) => {
               const selected = selectedMode === mode.value
               return (
-                <dl
+                <Item
                   key={mode.value}
-                  className={`grid gap-1 px-3 py-2 text-sm sm:grid-cols-[minmax(0,1fr)_1fr_1fr] sm:gap-4 ${selected ? 'bg-muted' : ''}`}
+                  variant={selected ? 'muted' : 'outline'}
+                  size="sm"
                 >
-                  <div>
-                    <dt className="sr-only">Mode</dt>
-                    <dd className="font-medium">
-                      {mode.label}
-                      {selected ? (
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          Selected
-                        </span>
-                      ) : null}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">Access</dt>
-                    <dd>{mode.access}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">Identity</dt>
-                    <dd>{mode.identity}</dd>
-                  </div>
-                </dl>
+                  <ItemContent>
+                    <ItemTitle>{mode.label}</ItemTitle>
+                    <ItemDescription>
+                      Access: {mode.access} · Identity: {mode.identity}
+                    </ItemDescription>
+                  </ItemContent>
+                  {selected ? (
+                    <ItemActions>
+                      <Badge variant="secondary">Selected</Badge>
+                    </ItemActions>
+                  ) : null}
+                </Item>
               )
             })}
-          </div>
+          </ItemGroup>
 
           {errorMessage ? (
             <Alert variant="destructive">

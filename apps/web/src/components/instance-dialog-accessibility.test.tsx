@@ -9,6 +9,6 @@ describe('instance dialogs', () => {
 
     expect(screen.getByLabelText('Label')).toBeTruthy()
     expect(screen.getByLabelText(/Backend URL/)).toBeTruthy()
-    expect(screen.getByRole('group', { name: 'Icon' })).toBeTruthy()
+    expect(screen.getByRole('radiogroup', { name: 'Icon' })).toBeTruthy()
   })
 })
