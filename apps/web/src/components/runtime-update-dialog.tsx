@@ -1,9 +1,8 @@
 import {
-  ArrowRight01Icon,
-  ArrowUpRight01Icon,
-  Download04Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  ArrowRight as ArrowRight01Icon,
+  ArrowUpRight as ArrowUpRight01Icon,
+  Download as Download04Icon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 import type { RuntimeReleaseStatus } from '@/lib/types'
 import { useRuntimeUpdates } from '@/hooks/use-runtime-updates'
@@ -59,9 +58,7 @@ function RuntimeUpdateCard({
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-          {name}
-        </CardTitle>
+        <CardTitle>{name}</CardTitle>
         <CardDescription>{release.channel} channel</CardDescription>
         <CardAction>
           <Badge variant="outline">Update available</Badge>
@@ -72,8 +69,7 @@ function RuntimeUpdateCard({
           <span className="font-mono text-xs text-muted-foreground">
             {release.version}
           </span>
-          <HugeiconsIcon
-            icon={ArrowRight01Icon}
+          <ArrowRight01Icon
             size={14}
             className="shrink-0 text-muted-foreground"
           />
@@ -87,7 +83,7 @@ function RuntimeUpdateCard({
               Run the current installer once from Terminal to finish or repair
               managed service setup.
             </p>
-            <code className="block break-all rounded-md bg-muted p-2 font-mono text-foreground">
+            <code className="block rounded-md bg-muted p-2 font-mono break-all text-foreground">
               {installerCommand(release.channel)}
             </code>
           </div>
@@ -100,11 +96,7 @@ function RuntimeUpdateCard({
           disabled={!managed || busy}
           onClick={onUpdate}
         >
-          {busy ? (
-            <Spinner />
-          ) : (
-            <HugeiconsIcon icon={Download04Icon} data-icon="inline-start" />
-          )}
+          {busy ? <Spinner /> : <Download04Icon data-icon="inline-start" />}
           {updateButtonLabel(phase, pending)}
         </Button>
       </CardFooter>
@@ -223,14 +215,11 @@ export default function RuntimeUpdateDialog({
                     }
                   >
                     Full changelog
-                    <HugeiconsIcon
-                      icon={ArrowUpRight01Icon}
-                      data-icon="inline-end"
-                    />
+                    <ArrowUpRight01Icon data-icon="inline-end" />
                   </Badge>
                 </div>
-                <ScrollArea className="max-h-52 border bg-muted/30">
-                  <p className="whitespace-pre-wrap p-4 text-sm leading-6">
+                <ScrollArea className="max-h-52 rounded-lg bg-muted/30 ring-1 ring-foreground/10">
+                  <p className="p-4 text-sm leading-6 whitespace-pre-wrap">
                     {notes ||
                       'No release notes were published for this version.'}
                   </p>

@@ -1,10 +1,9 @@
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Add01Icon,
-  ArrowRight01Icon,
-  Link04Icon,
-} from '@hugeicons/core-free-icons'
+  Plus as Add01Icon,
+  ArrowRight as ArrowRight01Icon,
+  Link2 as Link04Icon,
+} from 'lucide-react'
 
 import type { Build, Project, RuntimeMode } from '@/lib/types'
 import { getStatusVariant } from '@/lib/status-variants'
@@ -38,19 +37,17 @@ export function DashboardGettingStarted({
 }) {
   const hasSourceStep = runtimeMode === 'remote' && noConnectedSources
   return (
-    <Card>
+    <Card size="sm">
       <CardHeader>
-        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-          Getting Started
-        </CardTitle>
+        <CardTitle>Getting started</CardTitle>
       </CardHeader>
       <CardContent>
         <ol className="space-y-3 text-sm">
           {hasSourceStep ? (
             <li className="flex items-start gap-3">
-              <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+              <Badge variant="outline" className="mt-0.5 size-5 px-0">
                 1
-              </span>
+              </Badge>
               <div className="space-y-1.5">
                 <p className="font-medium">Connect a source</p>
                 <p className="text-xs text-muted-foreground">
@@ -63,7 +60,7 @@ export function DashboardGettingStarted({
                     render={<Link to={integrationConnectTo} />}
                     nativeButton={false}
                   >
-                    <HugeiconsIcon icon={Link04Icon} />
+                    <Link04Icon />
                     Connect source
                   </Button>
                 ) : (
@@ -75,9 +72,9 @@ export function DashboardGettingStarted({
             </li>
           ) : null}
           <li className="flex items-start gap-3">
-            <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+            <Badge variant="outline" className="mt-0.5 size-5 px-0">
               {hasSourceStep ? '2' : '1'}
-            </span>
+            </Badge>
             <div className="space-y-1.5">
               <p className="font-medium">Create a project</p>
               <p className="text-xs text-muted-foreground">
@@ -91,7 +88,7 @@ export function DashboardGettingStarted({
                   render={<Link to="/projects" search={{ openCreate: '1' }} />}
                   nativeButton={false}
                 >
-                  <HugeiconsIcon icon={Add01Icon} />
+                  <Add01Icon />
                   Create project
                 </Button>
               ) : (
@@ -102,9 +99,9 @@ export function DashboardGettingStarted({
             </div>
           </li>
           <li className="flex items-start gap-3">
-            <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+            <Badge variant="outline" className="mt-0.5 size-5 px-0">
               {hasSourceStep ? '3' : '2'}
-            </span>
+            </Badge>
             <div className="space-y-1.5">
               <p className="font-medium">Add a pipeline</p>
               <p className="text-xs text-muted-foreground">
@@ -114,9 +111,9 @@ export function DashboardGettingStarted({
             </div>
           </li>
           <li className="flex items-start gap-3">
-            <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+            <Badge variant="outline" className="mt-0.5 size-5 px-0">
               {hasSourceStep ? '4' : '3'}
-            </span>
+            </Badge>
             <div className="space-y-1.5">
               <p className="font-medium">Run your first build</p>
               <p className="text-xs text-muted-foreground">
@@ -151,8 +148,8 @@ export function DashboardRecentBuilds({
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          Recent Builds
+        <h2 className="text-sm font-medium text-muted-foreground">
+          Recent builds
         </h2>
         <Button
           variant="ghost"
@@ -161,7 +158,7 @@ export function DashboardRecentBuilds({
           nativeButton={false}
         >
           View all
-          <HugeiconsIcon icon={ArrowRight01Icon} />
+          <ArrowRight01Icon />
         </Button>
       </div>
 
@@ -199,7 +196,7 @@ export function DashboardRecentBuilds({
                   key={build.id}
                   to="/builds/$buildId"
                   params={{ buildId: build.id }}
-                  className="flex min-h-16 items-center justify-between gap-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="flex min-h-16 items-center justify-between gap-3 py-3 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">
@@ -238,7 +235,7 @@ export function DashboardRecentBuilds({
                         <Link
                           to="/builds/$buildId"
                           params={{ buildId: build.id }}
-                          className="hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                         >
                           #{build.build_number}
                         </Link>

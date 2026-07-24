@@ -1,14 +1,20 @@
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
-import { lazy, Suspense, useMemo, useRef, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { lazy, Suspense, useRef, useState } from 'react'
 import {
-  Add01Icon,
-  ArrowRight01Icon,
-  Loading03Icon,
-  PlayIcon,
-} from '@hugeicons/core-free-icons'
+  Plus as Add01Icon,
+  ArrowRight as ArrowRight01Icon,
+  LoaderCircle as Loading03Icon,
+  Play as PlayIcon,
+} from 'lucide-react'
 
-import type { RuntimeMode } from '@/lib/types'
+import type {
+  AuthorizedProject,
+  BuildStatus,
+  ListBuildsResponse,
+  ListIntegrationsResponse,
+  ListRunnersResponse,
+  RuntimeMode,
+} from '@/lib/types'
 import { useIndexAuthGuard } from '@/hooks/use-index-auth-guard'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import ActiveBuildBanner from '@/components/active-build-banner'
@@ -22,6 +28,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { ItemGroup } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
@@ -33,7 +40,7 @@ import { useProjects } from '@/hooks/use-projects'
 import { useRunners } from '@/hooks/use-runners'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { getSetupStatus } from '@/lib/api'
-import { selectDashboardBuilds, selectDashboardProjects } from '@/lib/dashboard'
+import { isLoopbackHostname } from '@/lib/connectivity'
 import { PageMeta } from '@/lib/seo'
 import { isManagedFrontend } from '@/lib/managed-frontend'
 import { useAuthStore } from '@/stores/auth-store'
@@ -45,7 +52,11 @@ const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
 const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
 
 export const Route = createFileRoute('/')({
-  staticData: { breadcrumbLabel: 'Dashboard' },
+  staticData: {
+    breadcrumb: {
+      title: 'Dashboard',
+    },
+  },
   component: IndexPage,
 })
 
@@ -55,32 +66,43 @@ const KNOWN_LOCAL_DAEMON_URLS = [
   'http://127.0.0.1:8790',
 ]
 
-function normalizeUrl(value: string): string {
-  return value.replace(/\/+$/, '')
+const ACTIVE_BUILD_STATUSES = new Set<BuildStatus>([
+  'queued',
+  'scheduled',
+  'assigned',
+  'running',
+])
+
+function selectDashboardBuilds({ builds }: ListBuildsResponse) {
+  return {
+    builds,
+    active: builds.filter((build) => ACTIVE_BUILD_STATUSES.has(build.status)),
+    recentCompleted: builds
+      .filter((build) => !ACTIVE_BUILD_STATUSES.has(build.status))
+      .slice(0, 6),
+  }
 }
 
-function isLoopbackHostname(hostname: string): boolean {
-  return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname === '[::1]'
+function selectHasActiveIntegration({
+  integrations,
+}: ListIntegrationsResponse): boolean {
+  return integrations.some((integration) => integration.status === 'active')
+}
+
+function selectHasOnlineRunner({ runners }: ListRunnersResponse): boolean {
+  return runners.some(
+    (runner) => runner.status === 'online' || runner.status === 'busy',
   )
 }
 
-async function getSetupStatusWithTimeout(baseUrl: string, timeoutMs: number) {
-  return await Promise.race([
-    getSetupStatus(baseUrl),
-    new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('timeout')), timeoutMs)
-    }),
-  ])
+function normalizeUrl(value: string): string {
+  return value.replace(/\/+$/, '')
 }
 
 async function detectReachableLocalDaemonUrl(): Promise<string | null> {
   for (const candidate of KNOWN_LOCAL_DAEMON_URLS) {
     try {
-      await getSetupStatusWithTimeout(candidate, 900)
+      await getSetupStatus(candidate, { signal: AbortSignal.timeout(900) })
       return candidate
     } catch {
       // try next candidate
@@ -95,7 +117,6 @@ function IndexPage() {
   const [showAddInstance, setShowAddInstance] = useState(false)
   const [isDetectingLocalInstance, setIsDetectingLocalInstance] =
     useState(false)
-  const [isAutoSigningIn, setIsAutoSigningIn] = useState(false)
   const autoDetectAttemptedRef = useRef(false)
   const authUser = useAuthStore((s) => s.user)
 
@@ -136,7 +157,7 @@ function IndexPage() {
       })
   })
 
-  useIndexAuthGuard(status, instance, setIsAutoSigningIn)
+  const isAutoSigningIn = useIndexAuthGuard(status, instance)
 
   if (!instance && isDetectingLocalInstance) {
     return (
@@ -181,11 +202,9 @@ function IndexPage() {
             </p>
           </div>
 
-          <Card>
+          <Card size="sm">
             <CardHeader>
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-                Instance Registry
-              </CardTitle>
+              <CardTitle>Instance registry</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
@@ -196,7 +215,7 @@ function IndexPage() {
                 onClick={() => setShowAddInstance(true)}
                 className="w-full"
               >
-                <HugeiconsIcon icon={Add01Icon} />
+                <Add01Icon />
                 Add instance
               </Button>
             </CardContent>
@@ -296,82 +315,55 @@ function ConfiguredDashboard({
   const canWriteBuilds = useHasPermission('builds', 'write')
 
   const projectsQuery = useProjects({ limit: 6 })
-  const projects = useMemo(
-    () => projectsQuery.data?.projects ?? [],
-    [projectsQuery.data?.projects],
-  )
-  const integrationsQuery = useIntegrations()
-  const runnersQuery = useRunners()
-  const integrations = useMemo(
-    () => integrationsQuery.data?.integrations ?? [],
-    [integrationsQuery.data?.integrations],
-  )
-  const activeIntegrationsCount = useMemo(
-    () =>
-      integrations.filter((integration) => integration.status === 'active')
-        .length,
-    [integrations],
-  )
+  const projects = projectsQuery.data?.projects ?? []
+  const integrationsQuery = useIntegrations(undefined, {
+    select: selectHasActiveIntegration,
+  })
+  const runnersQuery = useRunners({
+    select: selectHasOnlineRunner,
+  })
 
-  const recentBuildsQuery = useBuilds({ limit: 50 })
-  const recentBuilds = useMemo(
-    () => recentBuildsQuery.data?.builds ?? [],
-    [recentBuildsQuery.data?.builds],
+  const recentBuildsQuery = useBuilds(
+    { limit: 50 },
+    { select: selectDashboardBuilds },
   )
-  const { active: activeBuilds, recentCompleted: recentCompletedBuilds } =
-    useMemo(() => selectDashboardBuilds(recentBuilds), [recentBuilds])
-  const recentProjects = useMemo(
-    () => selectDashboardProjects(projects),
-    [projects],
-  )
+  const activeBuilds = recentBuildsQuery.data?.active ?? []
+  const recentCompletedBuilds = recentBuildsQuery.data?.recentCompleted ?? []
   const hasProjects = projects.length > 0
   const integrationsResolved =
     !integrationsQuery.isLoading && !integrationsQuery.error
   const noConnectedSources =
     runtimeMode === 'remote' &&
     integrationsResolved &&
-    activeIntegrationsCount === 0
+    integrationsQuery.data === false
   const integrationConnectTo = '/settings/integrations'
-  const noOnlineRunners =
-    !!runnersQuery.data &&
-    !runnersQuery.data.runners.some(
-      (runner) => runner.status === 'online' || runner.status === 'busy',
-    )
+  const noOnlineRunners = runnersQuery.data === false
   const canActOnEveryProject =
     authUser?.role === 'owner' || authUser?.role === 'admin'
-  const canTriggerProject = (projectId: string) => {
-    const project = projects.find((candidate) => candidate.id === projectId)
+  const canTriggerProject = (project: AuthorizedProject) => {
     return (
       canWriteBuilds &&
       (canActOnEveryProject ||
-        hasProjectPermission(project?.current_user_role, 'builds', 'write'))
+        hasProjectPermission(project.current_user_role, 'builds', 'write'))
     )
   }
-  const canManageProject = (projectId: string) => {
-    const project = projects.find((candidate) => candidate.id === projectId)
+  const canManageProject = (project: AuthorizedProject) => {
     return (
       canActOnEveryProject ||
-      hasProjectPermission(project?.current_user_role, 'projects', 'write')
+      hasProjectPermission(project.current_user_role, 'projects', 'write')
     )
   }
-  const canShowRunBuild =
-    hasProjects &&
-    !noOnlineRunners &&
-    projects.some((project) => canTriggerProject(project.id))
+  const canShowRunBuild = hasProjects && !noOnlineRunners && canWriteBuilds
 
-  // Derive last build status per project from recent builds
-  const lastBuildByProject = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const build of recentBuilds) {
-      if (!map.has(build.project_id)) {
-        map.set(build.project_id, build.status)
-      }
+  const lastBuildByProject = new Map<string, string>()
+  for (const build of recentBuildsQuery.data?.builds ?? []) {
+    if (!lastBuildByProject.has(build.project_id)) {
+      lastBuildByProject.set(build.project_id, build.status)
     }
-    return map
-  }, [recentBuilds])
+  }
 
   function handleTriggerForProject(projectId: string) {
-    setTriggerProjectId(() => projectId)
+    setTriggerProjectId(projectId)
     setTriggerOpen(true)
   }
 
@@ -392,7 +384,7 @@ function ConfiguredDashboard({
               onFocus={() => void loadTriggerBuildDialog()}
               onClick={handleGlobalTrigger}
             >
-              <HugeiconsIcon icon={PlayIcon} />
+              <PlayIcon />
               Run build
             </Button>
           ) : undefined
@@ -413,28 +405,24 @@ function ConfiguredDashboard({
       {activeBuilds.length > 0 ? (
         <section className="space-y-2">
           <div className="flex items-center gap-2">
-            <HugeiconsIcon
-              icon={Loading03Icon}
-              size={14}
-              className="animate-spin text-info"
-            />
-            <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Active Builds
+            <Loading03Icon size={14} className="animate-spin text-info" />
+            <h2 className="text-sm font-medium text-muted-foreground">
+              Active builds
             </h2>
             <Badge variant="secondary">{activeBuilds.length}</Badge>
           </div>
-          <div className="space-y-1">
+          <ItemGroup>
             {activeBuilds.map((build) => (
               <ActiveBuildBanner key={build.id} build={build} />
             ))}
-          </div>
+          </ItemGroup>
         </section>
       ) : null}
 
       {/* Projects Grid */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <h2 className="text-sm font-medium text-muted-foreground">
             Projects
           </h2>
           <Button
@@ -444,7 +432,7 @@ function ConfiguredDashboard({
             nativeButton={false}
           >
             View all
-            <HugeiconsIcon icon={ArrowRight01Icon} />
+            <ArrowRight01Icon />
           </Button>
         </div>
 
@@ -477,13 +465,11 @@ function ConfiguredDashboard({
           />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {recentProjects.map((project) => (
+            {projects.map((project) => (
               <ProjectCard
                 key={project.id}
-                canOpenSettings={canManageProject(project.id)}
-                canTriggerBuild={
-                  !noOnlineRunners && canTriggerProject(project.id)
-                }
+                canOpenSettings={canManageProject(project)}
+                canTriggerBuild={!noOnlineRunners && canTriggerProject(project)}
                 project={project}
                 lastBuildStatus={lastBuildByProject.get(project.id)}
                 onPreloadTriggerBuild={() => void loadTriggerBuildDialog()}

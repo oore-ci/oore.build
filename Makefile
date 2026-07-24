@@ -1,13 +1,12 @@
 .PHONY: dev-web dev-docs dev-site build-web bundle-check build-demo deploy-demo deploy-web build-site deploy-site build-docs deploy-docs build-release-index deploy-release-index-only test-release-index web-performance-baseline test-web-performance-baseline test-web-runtime-performance build check \
-		       test-web test-web-ui test-demo lint-web fix-web \
+		       test-web test-web-ui test-demo lint-web fix-web lint-site fix-site \
 		       test-direct-runner-upgrade-smoke \
 		       test-docs lint-docs fix-docs test-rust test-install \
-		       fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
+		       format-oxc format-oxc-check fmt-rust fmt-rust-check clippy-rust test-rust-workspace lint test \
 		       cargo-check run-daemon run-daemon-debug run-daemon-release \
 		       run-runner register-runner run-cli doctor clean-dev-state dev-fresh-setup \
-		       docs-check ui-init install-local validate validate-ci gen-openapi release-smoke \
+		       install-local validate gen-openapi \
 		       direct-runner-upgrade-smoke \
-		       release-local release-cut \
 		       portless-proxy portless-alias-api portless-list
 
 RUNNER_DAEMON_URL ?= http://127.0.0.1:8787
@@ -86,7 +85,7 @@ lint-web:
 	cd apps/web && bun run lint
 
 fix-web:
-	cd apps/web && bun run check
+	cd apps/web && bun run fix
 
 # ── Frontend: Docs Site (VitePress) ───────────────────────────────
 dev-docs:
@@ -142,11 +141,17 @@ lint-docs:
 	cd apps/docs-site && bun run lint
 
 fix-docs:
-	cd apps/docs-site && bun run check
+	cd apps/docs-site && bun run fix
+
+lint-site:
+	cd apps/site && bun run lint
+
+fix-site:
+	cd apps/site && bun run fix
 
 # ── Backend (Rust) ────────────────────────────────────────────────
 cargo-check:
-	cargo check --workspace
+	cargo check --workspace --locked
 
 run-daemon:
 	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=$(OORED_LOG_LEVEL) cargo run -p oored --bin oored -- run --listen $(OORED_DEV_LISTEN_ADDR)
@@ -155,7 +160,7 @@ run-daemon-debug:
 	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=debug cargo run -p oored --bin oored -- run --listen $(OORED_DEV_LISTEN_ADDR)
 
 run-daemon-release:
-	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=info cargo run -p oored --release --bin oored -- run --listen $(OORED_DEV_LISTEN_ADDR)
+	OORED_DATA_DIR=$(OORED_DEV_DATA_DIR) OORE_SETUP_STATE_FILE=$(OORE_DEV_SETUP_STATE_FILE) RUST_LOG=info cargo run -p oored --release --bin oored --locked -- run --listen $(OORED_DEV_LISTEN_ADDR)
 
 run-runner:
 	cargo run -p oore -- runner start --daemon-url $(RUNNER_DAEMON_URL) --config $(RUNNER_CONFIG)
@@ -180,7 +185,7 @@ install-local:
 	bash scripts/install.sh
 
 test-rust:
-	cargo test -p oored --features test-support
+	cargo test -p oored --features test-support --locked
 
 test-install:
 	bash scripts/install-acceptance.sh
@@ -193,41 +198,16 @@ fmt-rust-check:
 	cargo fmt --check
 
 clippy-rust:
-	cargo clippy --workspace --all-targets --all-features -- -D warnings
+	cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::redundant_clone
 
 test-rust-workspace:
-	cargo test --workspace
+	cargo test --workspace --locked
 
 # Release automation lives in GitHub Actions (tag -> GitHub release).
-release-local:
-	@echo "Use GitHub Actions tag pipeline to publish releases."
-	@echo "If you need a manual release, create/push a semver tag like v0.2.0."
-	@exit 1
-
-release-cut:
-	@echo "Push to alpha/beta/stable to auto-cut tags via GitHub Actions (or push a tag manually)."
-	@exit 1
-
 # ── OpenAPI Spec Generation ───────────────────────────────────────
 gen-openapi:
-	cargo run -p oored --bin openapi-export > apps/docs-site/docs/public/openapi.json
+	cargo run -p oored --bin openapi-export --locked > apps/docs-site/docs/public/openapi.json
 	@echo "OpenAPI spec generated → apps/docs-site/docs/public/openapi.json"
-
-# ── Documentation & Validation ────────────────────────────────────
-docs-check:
-	bun run docs:check
-
-ui-init:
-	bun run ui:init
-
-ui-diff:
-	bun run ui:diff
-
-ui-update:
-	bun run ui:update
-
-deps-update:
-	bun run deps:update
 
 # ── Portless (named .localhost URLs for dev) ─────────────────────
 # Start the portless reverse proxy (run once, stays in background)
@@ -243,21 +223,21 @@ portless-list:
 	portless list
 
 # ── Aggregate Targets ─────────────────────────────────────────────
+format-oxc:
+	bun run format
+
+format-oxc-check:
+	bun run format:check
+
 build: build-web build-docs build-site cargo-check
 
-check: lint-web cargo-check
+check: format-oxc-check lint-web lint-docs lint-site cargo-check
 
-lint: lint-web lint-docs fmt-rust-check
+lint: format-oxc-check lint-web lint-docs lint-site fmt-rust-check
 
 test: test-web test-demo test-docs test-release-index test-direct-runner-upgrade-smoke test-web-performance-baseline test-web-runtime-performance test-rust-workspace
 
-validate: docs-check lint test test-web-ui clippy-rust bundle-check build-docs build-site cargo-check
-
-validate-ci:
-	bash tools/validate-ci.sh
-
-release-smoke:
-	bash tools/release-smoke.sh
+validate: lint test test-web-ui clippy-rust bundle-check build-docs build-site cargo-check
 
 direct-runner-upgrade-smoke:
 	@test -n "$$OORE_UPGRADE_SMOKE_SESSION_TOKEN" || (echo "OORE_UPGRADE_SMOKE_SESSION_TOKEN is required"; exit 1)

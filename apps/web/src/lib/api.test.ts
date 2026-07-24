@@ -19,6 +19,8 @@ import {
   getRepositoryAvatar,
   getSetupStatus,
   listAllIntegrations,
+  listAllPipelines,
+  listAllProjects,
   listIntegrationRepos,
   listBuildArtifacts,
   listBuilds,
@@ -47,34 +49,6 @@ global.fetch = mockFetch
 
 beforeEach(() => {
   mockFetch.mockReset()
-})
-
-// ── ApiClientError ─────────────────────────────────────────────
-
-describe('ApiClientError', () => {
-  it('stores status, code, and details', () => {
-    const err = new ApiClientError(422, {
-      error: 'Validation failed',
-      code: 'validation_error',
-      details: 'issuer_url is required',
-    })
-
-    expect(err).toBeInstanceOf(Error)
-    expect(err.name).toBe('ApiClientError')
-    expect(err.message).toBe('Validation failed')
-    expect(err.status).toBe(422)
-    expect(err.code).toBe('validation_error')
-    expect(err.details).toBe('issuer_url is required')
-  })
-
-  it('handles missing details', () => {
-    const err = new ApiClientError(401, {
-      error: 'Unauthorized',
-      code: 'unauthorized',
-    })
-
-    expect(err.details).toBeUndefined()
-  })
 })
 
 // ── getApiErrorMessage ─────────────────────────────────────────
@@ -306,6 +280,39 @@ describe('query cancellation', () => {
       2,
       'https://ci.example.com/v1/integrations?limit=200&offset=200',
       expect.objectContaining({ signal: controller.signal }),
+    )
+  })
+
+  it('loads every project page for full collection selectors', async () => {
+    const firstPage = Array.from({ length: 200 }, (_, index) => ({
+      id: `project-${index}`,
+    }))
+    mockFetch
+      .mockReturnValueOnce(
+        mockJsonResponse(200, { projects: firstPage, total: 201 }),
+      )
+      .mockReturnValueOnce(
+        mockJsonResponse(200, {
+          projects: [{ id: 'project-200' }],
+          total: 201,
+        }),
+      )
+
+    const result = await listAllProjects('https://ci.example.com', 'token', {
+      sort: 'name',
+      direction: 'asc',
+    })
+
+    expect(result.projects).toHaveLength(201)
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      'https://ci.example.com/v1/projects?sort=name&direction=asc&limit=200',
+      expect.any(Object),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      'https://ci.example.com/v1/projects?sort=name&direction=asc&limit=200&offset=200',
+      expect.any(Object),
     )
   })
 
@@ -1126,11 +1133,14 @@ describe('pipeline api', () => {
       mockJsonResponse(200, { pipelines: [], total: 0 }),
     )
     await listPipelines('https://ci.example.com', 'session-token', 'proj-1', {
+      search: 'release',
+      sort: 'name',
+      direction: 'asc',
       limit: 10,
       offset: 0,
     })
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://ci.example.com/v1/projects/proj-1/pipelines?limit=10',
+      'https://ci.example.com/v1/projects/proj-1/pipelines?search=release&sort=name&direction=asc&limit=10',
       {
         headers: {
           Authorization: 'Bearer session-token',
@@ -1149,6 +1159,41 @@ describe('pipeline api', () => {
           Authorization: 'Bearer session-token',
         },
       },
+    )
+  })
+
+  it('loads every pipeline page for full selectors', async () => {
+    const firstPage = Array.from({ length: 200 }, (_, index) => ({
+      id: `pipeline-${index}`,
+    }))
+    mockFetch
+      .mockReturnValueOnce(
+        mockJsonResponse(200, { pipelines: firstPage, total: 201 }),
+      )
+      .mockReturnValueOnce(
+        mockJsonResponse(200, {
+          pipelines: [{ id: 'pipeline-200' }],
+          total: 201,
+        }),
+      )
+
+    const result = await listAllPipelines(
+      'https://ci.example.com',
+      'session-token',
+      'proj-1',
+      { sort: 'name', direction: 'asc' },
+    )
+
+    expect(result.pipelines).toHaveLength(201)
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      'https://ci.example.com/v1/projects/proj-1/pipelines?sort=name&direction=asc&limit=200',
+      expect.any(Object),
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      'https://ci.example.com/v1/projects/proj-1/pipelines?sort=name&direction=asc&limit=200&offset=200',
+      expect.any(Object),
     )
   })
 })

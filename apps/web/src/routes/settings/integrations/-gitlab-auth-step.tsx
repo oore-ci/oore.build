@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
 
 type GitLabAuthStepProps = {
   form: UseFormReturn<GitLabSetupForm>
@@ -32,9 +33,10 @@ export function GitLabAuthStep({
   callbackUrl,
 }: GitLabAuthStepProps) {
   return (
-    <section className="space-y-4 border-t border-border/60 pt-6">
+    <section className="space-y-4">
+      <Separator />
       <div>
-        <p className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+        <p className="text-sm font-medium text-muted-foreground">
           2. Authenticate
         </p>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -51,8 +53,8 @@ export function GitLabAuthStep({
               value={field.value}
               onValueChange={field.onChange}
               items={{
-                personal_token: 'Personal Access Token',
-                oauth_app: 'OAuth Application',
+                personal_token: 'Personal access token',
+                oauth_app: 'OAuth application',
               }}
             >
               <FormControl>
@@ -62,9 +64,9 @@ export function GitLabAuthStep({
               </FormControl>
               <SelectContent>
                 <SelectItem value="personal_token">
-                  Personal Access Token
+                  Personal access token
                 </SelectItem>
-                <SelectItem value="oauth_app">OAuth Application</SelectItem>
+                <SelectItem value="oauth_app">OAuth application</SelectItem>
               </SelectContent>
             </Select>
             <FormDescription>

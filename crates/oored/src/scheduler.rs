@@ -35,6 +35,16 @@ pub struct BuildStateEvent {
     pub timestamp: i64,
 }
 
+/// A committed build-log append notification.
+///
+/// Log contents stay in SQLite; subscribers receive only the build and latest
+/// sequence needed to decide whether to fetch.
+#[derive(Debug, Clone)]
+pub struct BuildLogEvent {
+    pub build_id: String,
+    pub latest_sequence: i64,
+}
+
 /// A runner state change event broadcast to all subscribers.
 #[derive(Debug, Clone)]
 pub struct RunnerStateEvent {
@@ -52,6 +62,7 @@ pub struct RunnerStateEvent {
 /// state change events for SSE subscribers and notification dispatch.
 pub struct Scheduler {
     event_tx: broadcast::Sender<BuildStateEvent>,
+    log_event_tx: broadcast::Sender<BuildLogEvent>,
     runner_event_tx: broadcast::Sender<RunnerStateEvent>,
 }
 
@@ -59,9 +70,11 @@ impl Scheduler {
     /// Create a new scheduler with the given event bus capacity.
     pub fn new(capacity: usize) -> Arc<Self> {
         let (event_tx, _) = broadcast::channel(capacity);
+        let (log_event_tx, _) = broadcast::channel(capacity);
         let (runner_event_tx, _) = broadcast::channel(16);
         Arc::new(Self {
             event_tx,
+            log_event_tx,
             runner_event_tx,
         })
     }
@@ -75,6 +88,16 @@ impl Scheduler {
     pub fn publish_event(&self, event: BuildStateEvent) {
         // Ignore send errors (no active subscribers is OK)
         let _ = self.event_tx.send(event);
+    }
+
+    /// Subscribe to committed build-log notifications.
+    pub fn subscribe_log_events(&self) -> broadcast::Receiver<BuildLogEvent> {
+        self.log_event_tx.subscribe()
+    }
+
+    /// Publish a committed build-log notification to all subscribers.
+    pub fn publish_log_event(&self, event: BuildLogEvent) {
+        let _ = self.log_event_tx.send(event);
     }
 
     /// Subscribe to runner state events.
@@ -124,5 +147,32 @@ impl Scheduler {
             info!(count = count, "recovered stale builds on startup");
         }
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::broadcast::error::RecvError;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn build_log_channel_is_bounded_and_retains_only_metadata() {
+        let scheduler = Scheduler::new(1);
+        let mut receiver = scheduler.subscribe_log_events();
+
+        scheduler.publish_log_event(BuildLogEvent {
+            build_id: "build-1".to_string(),
+            latest_sequence: 1,
+        });
+        scheduler.publish_log_event(BuildLogEvent {
+            build_id: "build-2".to_string(),
+            latest_sequence: 2,
+        });
+
+        assert!(matches!(receiver.recv().await, Err(RecvError::Lagged(1))));
+        let event = receiver.recv().await.unwrap();
+        assert_eq!(event.build_id, "build-2");
+        assert_eq!(event.latest_sequence, 2);
     }
 }

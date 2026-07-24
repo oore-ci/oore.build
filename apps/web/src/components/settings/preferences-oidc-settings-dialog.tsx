@@ -1,10 +1,12 @@
 import { toast } from '@/lib/toast'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  AlertCircleIcon,
-  CheckmarkCircle02Icon,
-} from '@hugeicons/core-free-icons'
-import type { PreferencesPageState } from '@/routes/settings/preferences'
+  CircleAlert as AlertCircleIcon,
+  CircleCheck as CheckmarkCircle02Icon,
+} from 'lucide-react'
+import type { SubmitHandler, UseFormReturn } from 'react-hook-form'
+import type { useTestOidcConnection } from '@/hooks/use-artifact-storage'
+import type { GetExternalAccessOidcResponse } from '@/lib/types'
+import type { ExternalAccessOidcFormValues } from '@/routes/settings/preferences'
 import { getApiErrorMessage } from '@/lib/api'
 import { OidcIssuerUrlAutocomplete } from '@/components/oidc-issuer-url-autocomplete'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -30,33 +32,37 @@ import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 
 export default function OidcSettingsDialog({
-  state,
+  form,
+  isOwner,
+  isSaving,
+  oidcConfig,
+  onOpenChange,
+  onSubmit,
+  open,
+  testMutation,
 }: {
-  state: PreferencesPageState
+  form: UseFormReturn<ExternalAccessOidcFormValues>
+  isOwner: boolean
+  isSaving: boolean
+  oidcConfig: GetExternalAccessOidcResponse | undefined
+  onOpenChange: (open: boolean) => void
+  onSubmit: SubmitHandler<ExternalAccessOidcFormValues>
+  open: boolean
+  testMutation: ReturnType<typeof useTestOidcConnection>
 }) {
-  const {
-    configureExternalAccessOidcMutation,
-    externalAccessOidcForm,
-    isOwner,
-    oidcConfig,
-    oidcDialogOpen,
-    onSubmitExternalAccessOidc,
-    setOidcDialogOpen,
-    testOidcConnectionMutation,
-  } = state
   return (
     <Dialog
-      open={oidcDialogOpen}
+      open={open}
       onOpenChange={(open) => {
-        setOidcDialogOpen(open)
-        if (!open) testOidcConnectionMutation.reset()
+        onOpenChange(open)
+        if (!open) testMutation.reset()
       }}
     >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
             {oidcConfig
-              ? 'Update OIDC Provider'
+              ? 'Update OIDC provider'
               : 'Configure OIDC for External Access'}
           </DialogTitle>
           <DialogDescription>
@@ -68,15 +74,10 @@ export default function OidcSettingsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Form {...externalAccessOidcForm}>
-          <form
-            onSubmit={externalAccessOidcForm.handleSubmit(
-              onSubmitExternalAccessOidc,
-            )}
-            className="space-y-4"
-          >
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <FormField
-              control={externalAccessOidcForm.control}
+              control={form.control}
               name="issuer_url"
               render={({ field }) => (
                 <FormItem>
@@ -88,7 +89,7 @@ export default function OidcSettingsDialog({
                       onValueChange={(next) => field.onChange(next)}
                       onBlur={field.onBlur}
                       ref={field.ref}
-                      disabled={configureExternalAccessOidcMutation.isPending}
+                      disabled={isSaving}
                     />
                   </FormControl>
                   <FormDescription>
@@ -101,7 +102,7 @@ export default function OidcSettingsDialog({
             />
 
             <FormField
-              control={externalAccessOidcForm.control}
+              control={form.control}
               name="client_id"
               render={({ field }) => (
                 <FormItem>
@@ -110,7 +111,7 @@ export default function OidcSettingsDialog({
                     <Input
                       placeholder="your-client-id"
                       {...field}
-                      disabled={configureExternalAccessOidcMutation.isPending}
+                      disabled={isSaving}
                     />
                   </FormControl>
                   <FormMessage />
@@ -119,11 +120,11 @@ export default function OidcSettingsDialog({
             />
 
             <FormField
-              control={externalAccessOidcForm.control}
+              control={form.control}
               name="client_secret"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Client Secret (optional)</FormLabel>
+                  <FormLabel>Client secret (optional)</FormLabel>
                   <FormControl>
                     <Input
                       type="password"
@@ -133,36 +134,32 @@ export default function OidcSettingsDialog({
                           : 'Leave empty for public clients'
                       }
                       {...field}
-                      disabled={configureExternalAccessOidcMutation.isPending}
+                      disabled={isSaving}
                     />
                   </FormControl>
                   <FormDescription>
                     {oidcConfig?.has_client_secret
                       ? 'Leave empty to keep the existing secret. Enter a new value to rotate.'
-                      : 'If omitted, any existing stored client secret is removed.'}
+                      : 'Leave empty when the provider uses a public client.'}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
-            {testOidcConnectionMutation.isSuccess ? (
+            {testMutation.isSuccess ? (
               <Alert>
-                <HugeiconsIcon
-                  icon={CheckmarkCircle02Icon}
-                  size={16}
-                  className="text-emerald-500"
-                />
+                <CheckmarkCircle02Icon size={16} className="text-success" />
                 <AlertDescription>
                   Connection successful.{' '}
                   <span className="font-mono text-xs">
-                    {testOidcConnectionMutation.data.discovered_issuer}
+                    {testMutation.data.discovered_issuer}
                   </span>
                 </AlertDescription>
               </Alert>
-            ) : testOidcConnectionMutation.isError ? (
+            ) : testMutation.isError ? (
               <Alert variant="destructive">
-                <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+                <AlertCircleIcon size={16} />
                 <AlertDescription>
                   Connection failed. Verify the issuer URL and try again.
                 </AlertDescription>
@@ -173,8 +170,8 @@ export default function OidcSettingsDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setOidcDialogOpen(false)}
-                disabled={configureExternalAccessOidcMutation.isPending}
+                onClick={() => onOpenChange(false)}
+                disabled={isSaving}
               >
                 Cancel
               </Button>
@@ -183,16 +180,14 @@ export default function OidcSettingsDialog({
                 variant="secondary"
                 disabled={
                   !isOwner ||
-                  testOidcConnectionMutation.isPending ||
-                  configureExternalAccessOidcMutation.isPending ||
-                  !externalAccessOidcForm.watch('issuer_url').trim()
+                  testMutation.isPending ||
+                  isSaving ||
+                  !form.watch('issuer_url').trim()
                 }
                 onClick={() => {
-                  const issuerUrl = externalAccessOidcForm
-                    .getValues('issuer_url')
-                    .trim()
+                  const issuerUrl = form.getValues('issuer_url').trim()
                   if (issuerUrl) {
-                    testOidcConnectionMutation.mutate(
+                    testMutation.mutate(
                       { issuer_url: issuerUrl },
                       {
                         onError: (error) => {
@@ -210,7 +205,7 @@ export default function OidcSettingsDialog({
                   }
                 }}
               >
-                {testOidcConnectionMutation.isPending ? (
+                {testMutation.isPending ? (
                   <>
                     <Spinner className="size-4" />
                     Testing...
@@ -219,13 +214,8 @@ export default function OidcSettingsDialog({
                   'Test connection'
                 )}
               </Button>
-              <Button
-                type="submit"
-                disabled={
-                  !isOwner || configureExternalAccessOidcMutation.isPending
-                }
-              >
-                {configureExternalAccessOidcMutation.isPending ? (
+              <Button type="submit" disabled={!isOwner || isSaving}>
+                {isSaving ? (
                   <>
                     <Spinner className="size-4" />
                     Saving...

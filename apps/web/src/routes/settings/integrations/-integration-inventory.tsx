@@ -1,11 +1,12 @@
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  GitBranchIcon,
-  InformationCircleIcon,
-  MoreHorizontalCircle01Icon,
-  Refresh01Icon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
+  ArrowLeft as ArrowLeft01Icon,
+  ArrowRight as ArrowRight01Icon,
+  GitBranch as GitBranchIcon,
+  Info as InformationCircleIcon,
+  CircleEllipsis as MoreHorizontalCircle01Icon,
+  RefreshCw as Refresh01Icon,
+  Search as Search01Icon,
+} from 'lucide-react'
 
 import RepositoryAvatar from '@/components/repository-avatar'
 import { CollectionPagination } from '@/components/collection-controls'
@@ -77,7 +78,7 @@ function RepositoryIdentity({
       href={url}
       target="_blank"
       rel="noreferrer"
-      className="group flex min-w-0 items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring [&_span:last-child]:group-hover:underline"
+      className="group flex min-w-0 items-center gap-2 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_span:last-child]:group-hover:underline"
     >
       {content}
     </a>
@@ -104,11 +105,11 @@ function RepositoryWebhookAction({
           />
         }
       >
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+        <MoreHorizontalCircle01Icon />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto">
         <DropdownMenuItem onClick={onSelect}>
-          <HugeiconsIcon icon={Refresh01Icon} />
+          <Refresh01Icon />
           Create webhook token
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -208,6 +209,69 @@ function RepositoryRows({
   )
 }
 
+function RepositoryPagination({
+  onPageChange,
+  onPageSizeChange,
+  page,
+  pageSize,
+  total,
+}: {
+  onPageChange: (page: number) => void
+  onPageSizeChange: (pageSize: number) => void
+  page: number
+  pageSize: number
+  total: number
+}) {
+  if (pageSize !== 10) {
+    return (
+      <CollectionPagination
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+      />
+    )
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const start = total === 0 ? 0 : (page - 1) * pageSize + 1
+  const end = Math.min(page * pageSize, total)
+
+  return (
+    <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-xs text-muted-foreground" aria-live="polite">
+        Showing {start}-{end} of {total} repositories
+      </p>
+      <div className="flex items-center justify-between gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={page <= 1}
+          onClick={() => onPageChange(page - 1)}
+        >
+          <ArrowLeft01Icon aria-hidden />
+          Previous
+        </Button>
+        <span className="min-w-20 text-center text-xs text-muted-foreground">
+          Page {page} of {totalPages}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(page + 1)}
+        >
+          Next
+          <ArrowRight01Icon aria-hidden />
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 export function IntegrationRepositoryInventory({
   canWrite,
   error,
@@ -270,7 +334,7 @@ export function IntegrationRepositoryInventory({
 
       {error ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               Could not load {repositoryKind}: {error.message}
@@ -291,10 +355,10 @@ export function IntegrationRepositoryInventory({
       ) : null}
 
       {!isLoading && !error && repositoryCount === 0 ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={GitBranchIcon} />
+              <GitBranchIcon />
             </EmptyMedia>
             <EmptyTitle>No synced {repositoryKind}</EmptyTitle>
             <EmptyDescription>
@@ -305,10 +369,10 @@ export function IntegrationRepositoryInventory({
       ) : null}
 
       {!isLoading && !error && repositoryCount > 0 && total === 0 ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={Search01Icon} />
+              <Search01Icon />
             </EmptyMedia>
             <EmptyTitle>No matching {repositoryKind}</EmptyTitle>
             <EmptyDescription>Try a different search.</EmptyDescription>
@@ -331,7 +395,7 @@ export function IntegrationRepositoryInventory({
       ) : null}
 
       {showPagination ? (
-        <CollectionPagination
+        <RepositoryPagination
           page={page}
           pageSize={pageSize}
           total={total}
@@ -363,7 +427,7 @@ export function IntegrationAccountsInventory({
   if (error) {
     return (
       <Alert variant="destructive">
-        <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+        <InformationCircleIcon size={16} />
         <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <span>
             Could not load {label.toLocaleLowerCase()}: {error.message}
@@ -391,7 +455,7 @@ export function IntegrationAccountsInventory({
 
   if (installations.length === 0) {
     return (
-      <Empty className="bg-card">
+      <Empty className="border bg-card">
         <EmptyHeader>
           <EmptyTitle>No {label.toLocaleLowerCase()}</EmptyTitle>
           <EmptyDescription>{emptyDescription}</EmptyDescription>

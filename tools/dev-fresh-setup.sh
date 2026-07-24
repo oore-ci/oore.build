@@ -138,7 +138,7 @@ build_local_binaries() {
   log "Building local binaries (profile: $OORE_DEV_BUILD_PROFILE)..."
   case "$OORE_DEV_BUILD_PROFILE" in
     release)
-      cargo build --release -p oored -p oore
+      cargo build --release -p oored -p oore --locked
       OORED_BIN="target/release/oored"
       OORE_BIN="target/release/oore"
       ;;

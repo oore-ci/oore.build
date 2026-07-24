@@ -32,8 +32,9 @@ declare module '@tanstack/react-router' {
     router: ReturnType<typeof createAppRouter>
   }
   interface StaticDataRouteOption {
-    breadcrumbLabel?: string
-    breadcrumbParent?: { label: string; to: string }
+    breadcrumb?: {
+      title: string
+    }
   }
 }
 

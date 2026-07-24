@@ -17,7 +17,7 @@ export function useBuildNotification(
       typeof Notification !== 'undefined' &&
       Notification.permission === 'default'
     ) {
-      Notification.requestPermission()
+      void Notification.requestPermission()
     }
     return () => {
       document.title = 'Oore CI'

@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import {
   flexRender,
   getCoreRowModel,
@@ -44,7 +44,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { ApiClientError } from '@/lib/api'
 import PageLayout from '@/components/page-layout'
@@ -86,16 +86,15 @@ export function parseUsersSearch(search: Record<string, unknown>): UsersSearch {
 }
 
 export const Route = createFileRoute('/settings/users')({
-  staticData: { breadcrumbLabel: 'Users' },
+  staticData: {
+    breadcrumb: {
+      title: 'Users',
+    },
+  },
   validateSearch: parseUsersSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
-
-    const user = useAuthStore.getState().user
-    if (!user || (user.role !== 'owner' && user.role !== 'admin')) {
-      throw redirect({ to: '/' })
-    }
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
   },
   component: UsersSettingsPage,
 })
@@ -109,7 +108,14 @@ interface ConfirmAction {
   userIds?: Array<string>
 }
 
-function useUsersSettingsPageState() {
+function renderUserCell(row: Row<User>, columnId: string) {
+  const cell = row
+    .getVisibleCells()
+    .find((candidate) => candidate.column.id === columnId)
+  return cell ? flexRender(cell.column.columnDef.cell, cell.getContext()) : null
+}
+
+function UsersSettingsPage() {
   const authUser = useAuthStore((state) => state.user)
   const usersQuery = useUsers()
   const updateRoleMutation = useUpdateUserRole()
@@ -295,55 +301,6 @@ function useUsersSettingsPageState() {
     : confirmAction.type === 'role_change'
       ? `Change role from current to ${confirmAction.newRole?.replace('_', ' ') ?? ''}?`
       : 'This will revoke all active sessions. You can re-enable the affected users later.'
-
-  return {
-    confirmAction,
-    confirmDescription,
-    confirmTitle,
-    direction,
-    filteredTotal,
-    handleConfirm,
-    page,
-    pageSize,
-    search,
-    setConfirmAction,
-    sort,
-    table,
-    updateSearch,
-    userStatusCounts,
-    users,
-    usersQuery,
-    pendingMutation: deleteMutation.isPending || updateRoleMutation.isPending,
-  }
-}
-
-function renderUserCell(row: Row<User>, columnId: string) {
-  const cell = row
-    .getVisibleCells()
-    .find((candidate) => candidate.column.id === columnId)
-  return cell ? flexRender(cell.column.columnDef.cell, cell.getContext()) : null
-}
-
-function UsersSettingsPage() {
-  const pageState = useUsersSettingsPageState()
-  const {
-    confirmAction,
-    confirmDescription,
-    confirmTitle,
-    direction,
-    filteredTotal,
-    handleConfirm,
-    page,
-    pageSize,
-    search,
-    setConfirmAction,
-    sort,
-    table,
-    updateSearch,
-    userStatusCounts,
-    users,
-    usersQuery,
-  } = pageState
   const rows = table.getRowModel().rows
   const showTrueEmpty =
     !usersQuery.isLoading && !usersQuery.error && users.length === 0
@@ -359,7 +316,7 @@ function UsersSettingsPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="User Management" noindex />
+      <PageMeta title="Users" noindex />
       <PageHeader
         title="Users"
         description="Manage instance roles and assign project access from each project’s Settings tab."
@@ -385,7 +342,6 @@ function UsersSettingsPage() {
       ) : (
         <section aria-label="User inventory" className="min-w-0 space-y-4">
           <UsersToolbar
-            key={search.q ?? ''}
             table={table}
             initialSearch={search.q ?? ''}
             sort={sort}
@@ -608,7 +564,7 @@ function UsersSettingsPage() {
         confirmVariant={
           confirmAction?.type === 'role_change' ? 'default' : 'destructive'
         }
-        isPending={pageState.pendingMutation}
+        isPending={deleteMutation.isPending || updateRoleMutation.isPending}
         onConfirm={() => void handleConfirm()}
       />
     </PageLayout>

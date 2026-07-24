@@ -81,10 +81,7 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
             }
 
             // Fallback: try API token
-            let pool = {
-                let store = state.store.lock().await;
-                store.pool().clone()
-            };
+            let pool = state.db.clone();
 
             let api_token_result = crate::api_tokens::validate_api_token(&pool, token)
                 .await

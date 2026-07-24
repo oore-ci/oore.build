@@ -164,7 +164,7 @@ export default function TerminalLogViewer({
               Live
             </span>
           ) : (
-            <span className="text-xs tabular-nums text-muted-foreground">
+            <span className="text-xs text-muted-foreground tabular-nums">
               {lineCountLabel}
             </span>
           )}

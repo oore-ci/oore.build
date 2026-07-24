@@ -1,11 +1,9 @@
 import type { ReactNode } from 'react'
 import {
-  ArrowDown01Icon,
-  ArrowUp01Icon,
-  ArrowUpDownIcon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
-
+  ArrowDown as ArrowDown01Icon,
+  ArrowUp as ArrowUp01Icon,
+  ArrowUpDown as ArrowUpDownIcon,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Pagination,
@@ -40,7 +38,7 @@ export function SortableTableHead<TSort extends string>({
   const active = sort === sortKey
   const nextDirection: SortDirection =
     active && direction === 'asc' ? 'desc' : 'asc'
-  const icon = active
+  const Icon = active
     ? direction === 'asc'
       ? ArrowUp01Icon
       : ArrowDown01Icon
@@ -60,7 +58,7 @@ export function SortableTableHead<TSort extends string>({
         onClick={() => onSortChange(sortKey, nextDirection)}
       >
         {children}
-        <HugeiconsIcon icon={icon} aria-hidden />
+        <Icon aria-hidden />
       </Button>
     </TableHead>
   )

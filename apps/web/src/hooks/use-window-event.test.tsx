@@ -22,12 +22,12 @@ describe('useWindowEvent', () => {
     )
 
     rerender(<WindowEventListener value="latest" onEvent={onEvent} />)
-    act(() => window.dispatchEvent(new KeyboardEvent('keydown')))
+    void act(() => window.dispatchEvent(new KeyboardEvent('keydown')))
     expect(onEvent).toHaveBeenLastCalledWith('latest')
 
     const callCount = onEvent.mock.calls.length
     unmount()
-    act(() => window.dispatchEvent(new KeyboardEvent('keydown')))
+    void act(() => window.dispatchEvent(new KeyboardEvent('keydown')))
     expect(onEvent).toHaveBeenCalledTimes(callCount)
   })
 })

@@ -28,15 +28,17 @@ pub async fn pair(
         ));
     }
 
-    let store = state.store.lock().await;
-    let setup = store.load().await.map_err(|error| {
-        error!(%error, "failed to load setup state for frontend pairing");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to load setup state",
-        )
-    })?;
+    let setup = {
+        let store = state.store.lock().await;
+        store.load().await.map_err(|error| {
+            error!(%error, "failed to load setup state for frontend pairing");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load setup state",
+            )
+        })?
+    };
     if setup.setup_state != SetupState::Ready {
         return Err(api_err(
             StatusCode::CONFLICT,
@@ -45,7 +47,7 @@ pub async fn pair(
         ));
     }
 
-    let settings = instance_settings::load_effective_trusted_proxy_settings(store.pool())
+    let settings = instance_settings::load_effective_trusted_proxy_settings(&state.db)
         .await
         .map_err(|error| {
             error!(%error, "failed to load trusted proxy settings for frontend pairing");
@@ -83,7 +85,7 @@ pub async fn pair(
 
     let token_hash = hash_token(code);
     let now = now_unix();
-    let mut transaction = store.pool().begin().await.map_err(|error| {
+    let mut transaction = state.db.begin().await.map_err(|error| {
         error!(%error, "failed to begin frontend pairing transaction");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,

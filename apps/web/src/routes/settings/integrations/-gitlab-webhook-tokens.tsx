@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Copy01Icon, Refresh01Icon } from '@hugeicons/core-free-icons'
+import { Copy as Copy01Icon, RefreshCw as Refresh01Icon } from 'lucide-react'
 
 import {
   AlertDialog,
@@ -91,7 +90,7 @@ export function GitLabWebhookTokenDialogs({
               onClick={generateToken}
               disabled={rotate.isPending}
             >
-              <HugeiconsIcon icon={Refresh01Icon} />
+              <Refresh01Icon />
               {rotate.isPending ? 'Creating...' : 'Create token'}
             </Button>
           </AlertDialogFooter>
@@ -134,7 +133,7 @@ export function GitLabWebhookTokenDialogs({
                   aria-label="Copy GitLab webhook URL"
                   onClick={() => copyToClipboard(webhookUrl, 'Webhook URL')}
                 >
-                  <HugeiconsIcon icon={Copy01Icon} />
+                  <Copy01Icon />
                 </Button>
               </div>
             </div>
@@ -161,7 +160,7 @@ export function GitLabWebhookTokenDialogs({
                     }
                   }}
                 >
-                  <HugeiconsIcon icon={Copy01Icon} />
+                  <Copy01Icon />
                 </Button>
               </div>
             </div>

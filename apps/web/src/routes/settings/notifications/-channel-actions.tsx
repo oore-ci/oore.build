@@ -1,9 +1,8 @@
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Delete02Icon,
-  MoreHorizontalCircle01Icon,
-  TestTube01Icon,
-} from '@hugeicons/core-free-icons'
+  Trash2 as Delete02Icon,
+  CircleEllipsis as MoreHorizontalCircle01Icon,
+  FlaskConical as TestTube01Icon,
+} from 'lucide-react'
 
 import type { NotificationChannel } from '@/lib/types'
 import { Button } from '@/components/ui/button'
@@ -37,16 +36,16 @@ export function ChannelActions({
           />
         }
       >
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+        <MoreHorizontalCircle01Icon />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto">
         <DropdownMenuItem onClick={onTest} disabled={pending}>
-          <HugeiconsIcon icon={TestTube01Icon} />
+          <TestTube01Icon />
           Send test
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onClick={onDelete}>
-          <HugeiconsIcon icon={Delete02Icon} />
+          <Delete02Icon />
           Delete channel
         </DropdownMenuItem>
       </DropdownMenuContent>

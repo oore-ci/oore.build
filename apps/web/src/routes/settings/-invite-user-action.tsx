@@ -1,6 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { UserAdd01Icon } from '@hugeicons/core-free-icons'
+import { UserPlus as UserAdd01Icon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 
@@ -16,11 +15,7 @@ export function InviteUserAction() {
         onFocus={() => void loadInviteUserDialog()}
         onClick={() => setOpen(true)}
       >
-        <HugeiconsIcon
-          icon={UserAdd01Icon}
-          data-icon="inline-start"
-          aria-hidden
-        />
+        <UserAdd01Icon data-icon="inline-start" aria-hidden />
         Invite user
       </Button>
       {open ? (

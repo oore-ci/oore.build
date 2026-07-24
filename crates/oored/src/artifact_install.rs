@@ -268,10 +268,7 @@ pub async fn create_install_link(
     auth: AuthUser,
     Path(artifact_id): Path<String>,
 ) -> ApiResult<ArtifactInstallLinkResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     let artifact = load_install_artifact(&pool, &artifact_id).await?;
     require_artifact_read(&pool, &auth, &artifact.project_id).await?;
 
@@ -403,10 +400,7 @@ pub async fn ios_install_manifest(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
 ) -> Result<Response, (StatusCode, Json<ApiError>)> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     let validated = validate_download_token(&pool, &token)
         .await
         .map_err(|e| {

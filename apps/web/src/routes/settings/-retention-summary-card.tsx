@@ -1,4 +1,6 @@
 import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { RetentionCleanupSummary } from '@/lib/types'
@@ -20,18 +22,20 @@ function formatRelativeTime(unixSecs: number): string {
 }
 
 export function RetentionSummaryCard({
+  error,
   isLoading,
   lastCleanup,
+  onRetry,
 }: {
+  error: Error | null
   isLoading: boolean
   lastCleanup: RetentionCleanupSummary | undefined
+  onRetry: () => void
 }) {
   return (
-    <Card>
+    <Card size="sm" aria-labelledby="last-cleanup-title">
       <CardHeader>
-        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-          Last Cleanup
-        </CardTitle>
+        <CardTitle id="last-cleanup-title">Last cleanup</CardTitle>
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -39,28 +43,42 @@ export function RetentionSummaryCard({
             <Skeleton className="h-4 w-64" />
             <Skeleton className="h-4 w-48" />
           </div>
+        ) : error ? (
+          <Alert variant="destructive">
+            <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <span>Failed to load the last cleanup: {error.message}</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onRetry}
+              >
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
         ) : lastCleanup ? (
           <div className="grid gap-4 sm:grid-cols-4">
             <div>
-              <p className="text-muted-foreground text-sm">Builds cleaned</p>
+              <p className="text-sm text-muted-foreground">Builds cleaned</p>
               <p className="text-lg font-semibold">
                 {lastCleanup.builds_expired}
               </p>
             </div>
             <div>
-              <p className="text-muted-foreground text-sm">Artifacts deleted</p>
+              <p className="text-sm text-muted-foreground">Artifacts deleted</p>
               <p className="text-lg font-semibold">
                 {lastCleanup.artifacts_deleted}
               </p>
             </div>
             <div>
-              <p className="text-muted-foreground text-sm">Space reclaimed</p>
+              <p className="text-sm text-muted-foreground">Space reclaimed</p>
               <p className="text-lg font-semibold">
                 {formatBytes(lastCleanup.bytes_reclaimed)}
               </p>
             </div>
             <div>
-              <p className="text-muted-foreground text-sm">Ran</p>
+              <p className="text-sm text-muted-foreground">Ran</p>
               <p className="text-lg font-semibold">
                 {formatRelativeTime(lastCleanup.ran_at)}
                 {lastCleanup.dry_run && (
@@ -72,7 +90,7 @@ export function RetentionSummaryCard({
             </div>
           </div>
         ) : (
-          <p className="text-muted-foreground text-sm">
+          <p className="text-sm text-muted-foreground">
             No cleanup has run yet. Enable the retention policy and wait for the
             next scheduled run.
           </p>

@@ -33,7 +33,7 @@ function channelIdentity(channel: NotificationChannel) {
     <Link
       to="/settings/notifications/$channelId"
       params={{ channelId: channel.id }}
-      className="group block min-w-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="group block min-w-0 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
     >
       <span className="block truncate font-medium group-hover:underline">
         {channel.name}

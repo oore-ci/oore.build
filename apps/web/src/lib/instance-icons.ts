@@ -1,35 +1,35 @@
 import {
-  Atom01Icon,
-  Bug01Icon,
-  Building03Icon,
-  ChartLineData01Icon,
-  CloudServerIcon,
-  ComputerTerminal01Icon,
-  CpuIcon,
-  CubeIcon,
-  Database01Icon,
-  FlashIcon,
-  Globe02Icon,
-  HardDriveIcon,
-  Home01Icon,
-  Key01Icon,
-  Layers01Icon,
-  PuzzleIcon,
-  Rocket01Icon,
-  Satellite01Icon,
-  ServerStack01Icon,
-  Shield01Icon,
-  SourceCodeIcon,
-  Target01Icon,
-  TestTubeIcon,
-  Wifi01Icon,
-} from '@hugeicons/core-free-icons'
-import type { IconSvgElement } from '@hugeicons/react'
+  Atom as Atom01Icon,
+  Bug as Bug01Icon,
+  Building2 as Building03Icon,
+  ChartNoAxesCombined as ChartLineData01Icon,
+  CloudCog as CloudServerIcon,
+  SquareTerminal as ComputerTerminal01Icon,
+  Cpu as CpuIcon,
+  Box as CubeIcon,
+  Database as Database01Icon,
+  Zap as FlashIcon,
+  Globe as Globe02Icon,
+  HardDrive as HardDriveIcon,
+  House as Home01Icon,
+  KeyRound as Key01Icon,
+  Layers as Layers01Icon,
+  Puzzle as PuzzleIcon,
+  Rocket as Rocket01Icon,
+  Satellite as Satellite01Icon,
+  Server as ServerStack01Icon,
+  Shield as Shield01Icon,
+  CodeXml as SourceCodeIcon,
+  Target as Target01Icon,
+  FlaskConical as TestTubeIcon,
+  Wifi as Wifi01Icon,
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 
 export interface InstanceIconEntry {
   key: string
   label: string
-  icon: IconSvgElement
+  icon: LucideIcon
 }
 
 export const INSTANCE_ICONS: Array<InstanceIconEntry> = [
@@ -63,6 +63,6 @@ export const DEFAULT_INSTANCE_ICON_KEY = 'cloud-server'
 
 const iconMap = new Map(INSTANCE_ICONS.map((entry) => [entry.key, entry.icon]))
 
-export function getInstanceIcon(key: string | undefined): IconSvgElement {
+export function getInstanceIcon(key: string | undefined): LucideIcon {
   return iconMap.get(key ?? '') ?? CloudServerIcon
 }

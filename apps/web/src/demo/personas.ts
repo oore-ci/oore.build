@@ -1,68 +1,9 @@
-import type { ProjectRole, UserRole } from '@/lib/types'
-import {
-  DEMO_AUTH_EXPIRES_AT,
-  DEMO_PASSWORD,
-  PROJECT_IDS,
-  USER_IDS,
-} from './seed'
+import type { ProjectRole } from '@/lib/types'
+import type { DemoPersona } from './state'
+import { DEMO_PASSWORD } from './seed'
+import { DEMO_PERSONAS, demoSessionExpiresAt, demoState } from './state'
 
-export interface DemoPersona {
-  userId: string
-  email: string
-  displayName: string
-  role: UserRole
-  token: string
-  projectRoles: Partial<Record<string, ProjectRole>>
-}
-
-export const DEMO_PERSONAS: Array<DemoPersona> = [
-  {
-    userId: USER_IDS.owner,
-    email: 'demo+owner@oore.build',
-    displayName: 'Alex Chen',
-    role: 'owner',
-    token: 'demo-session-token-owner',
-    projectRoles: {
-      [PROJECT_IDS.flutterShop]: 'maintainer',
-      [PROJECT_IDS.internalAdmin]: 'maintainer',
-      [PROJECT_IDS.nativePayments]: 'maintainer',
-    },
-  },
-  {
-    userId: USER_IDS.admin,
-    email: 'demo+admin@oore.build',
-    displayName: 'Jamie Park',
-    role: 'admin',
-    token: 'demo-session-token-admin',
-    projectRoles: {
-      [PROJECT_IDS.flutterShop]: 'maintainer',
-      [PROJECT_IDS.internalAdmin]: 'maintainer',
-      [PROJECT_IDS.nativePayments]: 'maintainer',
-    },
-  },
-  {
-    userId: USER_IDS.developer,
-    email: 'demo+developer@oore.build',
-    displayName: 'Morgan Lee',
-    role: 'developer',
-    token: 'demo-session-token-developer',
-    projectRoles: {
-      [PROJECT_IDS.flutterShop]: 'maintainer',
-      [PROJECT_IDS.nativePayments]: 'viewer',
-    },
-  },
-  {
-    userId: USER_IDS.qaViewer,
-    email: 'demo+qa@oore.build',
-    displayName: 'Taylor Ruiz',
-    role: 'qa_viewer',
-    token: 'demo-session-token-qa',
-    projectRoles: {
-      [PROJECT_IDS.flutterShop]: 'viewer',
-      [PROJECT_IDS.nativePayments]: 'viewer',
-    },
-  },
-]
+export { DEMO_PERSONAS, type DemoPersona }
 
 export function authenticateDemoUser(
   email: string,
@@ -75,28 +16,41 @@ export function authenticateDemoUser(
   )
 }
 
-export function getDemoPersonaByToken(token?: string | null): DemoPersona {
-  return (
-    DEMO_PERSONAS.find((persona) => persona.token === token) ?? DEMO_PERSONAS[0]
-  )
+export function getDemoPersonaByToken(
+  token?: string | null,
+): DemoPersona | null {
+  if (!token) return null
+  return demoState.personas.find((persona) => persona.token === token) ?? null
 }
 
 export function getDemoPersonaFromRequest(request: Request): DemoPersona {
   const authorization = request.headers.get('Authorization')
-  return getDemoPersonaByToken(authorization?.replace(/^Bearer\s+/i, ''))
+  const persona = getDemoPersonaByToken(
+    authorization?.replace(/^Bearer\s+/i, ''),
+  )
+  if (!persona) throw new Error('Demo request reached a handler without auth')
+  return persona
 }
 
 export function getDemoProjectRole(
   persona: DemoPersona,
   projectId: string,
 ): ProjectRole | null {
-  return persona.projectRoles[projectId] ?? null
+  if (!demoState.projects.some((project) => project.id === projectId)) {
+    return null
+  }
+  if (persona.role === 'owner' || persona.role === 'admin') {
+    return demoState.projectRoles[projectId]?.[persona.userId] ?? 'maintainer'
+  }
+  const role = demoState.projectRoles[projectId]?.[persona.userId] ?? null
+  if (persona.role === 'qa_viewer' && role !== null) return 'viewer'
+  return role
 }
 
 export function getDemoSession(persona: DemoPersona) {
   return {
     session_token: persona.token,
-    expires_at: DEMO_AUTH_EXPIRES_AT,
+    expires_at: demoSessionExpiresAt(),
     user: {
       email: persona.email,
       oidc_subject: `demo::${persona.role}`,

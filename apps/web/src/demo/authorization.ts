@@ -2,6 +2,7 @@ import { HttpResponse } from 'msw'
 
 import type { DemoPersona } from './personas'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from './personas'
+import { demoState } from './state'
 
 const INSTANCE_PERMISSIONS: Record<string, ReadonlySet<string>> = {
   owner: new Set(['*']),
@@ -75,6 +76,12 @@ export function requireDemoProjectPermission(
   permission: string,
 ): Response | null {
   const persona = getDemoPersonaFromRequest(request)
+  if (!demoState.projects.some((project) => project.id === projectId)) {
+    return HttpResponse.json(
+      { error: 'Project not found', code: 'not_found' },
+      { status: 404 },
+    )
+  }
   if (persona.role === 'owner' || persona.role === 'admin') return null
   const assignedRole = getDemoProjectRole(persona, projectId)
   const projectRole =

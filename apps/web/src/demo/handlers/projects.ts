@@ -1,35 +1,19 @@
 import { HttpResponse, delay, http } from 'msw'
-import { demoProjects } from '../data/projects'
-import { demoPipelines } from '../data/pipelines'
-import { demoBuilds } from '../data/builds'
-import { demoUsers } from '../data/users'
 import { ago } from '../seed'
-import {
-  DEMO_PERSONAS,
-  getDemoPersonaFromRequest,
-  getDemoProjectRole,
-} from '../personas'
+import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import {
   requireDemoInstancePermission,
   requireDemoProjectPermission,
 } from '../authorization'
-
-const addedMembers = new Map<string, Map<string, string>>()
-const memberRoleOverrides = new Map<string, string>()
-const removedMembers = new Set<string>()
-
-function memberKey(projectId: string, userId: string): string {
-  return `${projectId}:${userId}`
-}
+import { demoState } from '../state'
 
 function hasProjectMembership(projectId: string, userId: string): boolean {
-  const key = memberKey(projectId, userId)
-  const persona = DEMO_PERSONAS.find((candidate) => candidate.userId === userId)
-  return (
-    addedMembers.get(projectId)?.has(userId) === true ||
-    (!!persona &&
-      !!getDemoProjectRole(persona, projectId) &&
-      !removedMembers.has(key))
+  return !!demoState.projectRoles[projectId]?.[userId]
+}
+
+function hasRepository(repositoryId: string): boolean {
+  return Object.values(demoState.repositories).some((repositories) =>
+    repositories?.some((repository) => repository.id === repositoryId),
   )
 }
 
@@ -38,7 +22,7 @@ export const projectHandlers = [
     await delay(150)
     const url = new URL(request.url)
     const persona = getDemoPersonaFromRequest(request)
-    let projects = demoProjects.flatMap((project) => {
+    let projects = demoState.projects.flatMap((project) => {
       const role = getDemoProjectRole(persona, project.id)
       return role ? [{ ...project, current_user_role: role }] : []
     })
@@ -86,7 +70,7 @@ export const projectHandlers = [
     await delay(150)
     const persona = getDemoPersonaFromRequest(request)
     const role = getDemoProjectRole(persona, String(params.projectId))
-    const project = demoProjects.find((p) => p.id === params.projectId)
+    const project = demoState.projects.find((p) => p.id === params.projectId)
     if (!project || !role) {
       return HttpResponse.json(
         { error: 'Project not found', code: 'not_found' },
@@ -95,9 +79,12 @@ export const projectHandlers = [
     }
     return HttpResponse.json({
       project: { ...project, current_user_role: role },
-      pipeline_count: demoPipelines.filter((p) => p.project_id === project.id)
-        .length,
-      build_count: demoBuilds.filter((b) => b.project_id === project.id).length,
+      pipeline_count: demoState.pipelines.filter(
+        (pipeline) => pipeline.project_id === project.id,
+      ).length,
+      build_count: demoState.builds.filter(
+        (build) => build.project_id === project.id,
+      ).length,
       current_user_role: role,
     })
   }),
@@ -112,21 +99,12 @@ export const projectHandlers = [
         { status: 404 },
       )
     }
-    const memberRoles = DEMO_PERSONAS.flatMap((candidate) => {
-      const role = getDemoProjectRole(candidate, projectId)
-      const key = memberKey(projectId, candidate.userId)
-      return role && !removedMembers.has(key)
-        ? [[candidate.userId, memberRoleOverrides.get(key) ?? role] as const]
-        : []
-    })
-    for (const [userId, role] of addedMembers.get(projectId) ?? []) {
-      if (!memberRoles.some(([candidateId]) => candidateId === userId)) {
-        memberRoles.push([userId, role])
-      }
-    }
+    const memberRoles = Object.entries(demoState.projectRoles[projectId] ?? {})
     return HttpResponse.json({
       members: memberRoles.map(([userId, role], index) => {
-        const user = demoUsers.find((candidate) => candidate.id === userId)!
+        const user = demoState.users.find(
+          (candidate) => candidate.id === userId,
+        )!
         return {
           id: `pm-demo-${projectId}-${index}`,
           project_id: projectId,
@@ -155,7 +133,7 @@ export const projectHandlers = [
       )
       if (forbidden) return forbidden
       return HttpResponse.json({
-        candidates: demoUsers.flatMap((user) =>
+        candidates: demoState.users.flatMap((user) =>
           (user.role === 'developer' || user.role === 'qa_viewer') &&
           (user.status === 'active' || user.status === 'invited') &&
           !hasProjectMembership(projectId, user.id)
@@ -184,7 +162,9 @@ export const projectHandlers = [
     )
     if (forbidden) return forbidden
     const body = (await request.json()) as { user_id: string; role: string }
-    const user = demoUsers.find((candidate) => candidate.id === body.user_id)
+    const user = demoState.users.find(
+      (candidate) => candidate.id === body.user_id,
+    )
     if (!user) {
       return HttpResponse.json(
         { error: 'User not found', code: 'not_found' },
@@ -200,10 +180,11 @@ export const projectHandlers = [
         { status: 400 },
       )
     }
-    const projectMembers = addedMembers.get(projectId) ?? new Map()
-    projectMembers.set(user.id, body.role)
-    addedMembers.set(projectId, projectMembers)
-    removedMembers.delete(memberKey(projectId, user.id))
+    demoState.projectRoles[projectId] ??= {}
+    demoState.projectRoles[projectId][user.id] = body.role as
+      | 'maintainer'
+      | 'developer'
+      | 'viewer'
     return HttpResponse.json({
       member: {
         id: `pm-demo-${projectId}-${user.id}`,
@@ -233,7 +214,7 @@ export const projectHandlers = [
       )
       if (forbidden) return forbidden
       const body = (await request.json()) as { role: string }
-      const user = demoUsers.find((candidate) => candidate.id === userId)
+      const user = demoState.users.find((candidate) => candidate.id === userId)
       if (!user) {
         return HttpResponse.json(
           { error: 'User not found', code: 'not_found' },
@@ -249,8 +230,11 @@ export const projectHandlers = [
           { status: 400 },
         )
       }
-      memberRoleOverrides.set(memberKey(projectId, userId), body.role)
-      addedMembers.get(projectId)?.set(userId, body.role)
+      demoState.projectRoles[projectId] ??= {}
+      demoState.projectRoles[projectId][userId] = body.role as
+        | 'maintainer'
+        | 'developer'
+        | 'viewer'
       return HttpResponse.json({
         member: {
           id: `pm-demo-${projectId}-${user.id}`,
@@ -280,9 +264,7 @@ export const projectHandlers = [
         'members:write',
       )
       if (forbidden) return forbidden
-      addedMembers.get(projectId)?.delete(userId)
-      memberRoleOverrides.delete(memberKey(projectId, userId))
-      removedMembers.add(memberKey(projectId, userId))
+      delete demoState.projectRoles[projectId]?.[userId]
       return HttpResponse.json({ ok: true })
     },
   ),
@@ -298,19 +280,26 @@ export const projectHandlers = [
       repository_id?: string
       default_branch?: string
     }
-    return HttpResponse.json({
-      project: {
-        id: `proj-demo-new-${Date.now()}`,
-        name: body.name,
-        description: body.description,
-        repository_id: body.repository_id,
-        default_branch: body.default_branch ?? 'main',
-        settings: {},
-        created_by: persona.userId,
-        created_at: ago(0),
-        updated_at: ago(0),
-      },
-    })
+    if (body.repository_id && !hasRepository(body.repository_id)) {
+      return HttpResponse.json(
+        { error: 'Repository not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    const project = {
+      id: `proj-demo-new-${crypto.randomUUID().slice(0, 8)}`,
+      name: body.name,
+      description: body.description,
+      repository_id: body.repository_id,
+      default_branch: body.default_branch ?? 'main',
+      settings: {},
+      created_by: persona.userId,
+      created_at: ago(0),
+      updated_at: ago(0),
+    }
+    demoState.projects.unshift(project)
+    demoState.projectRoles[project.id] = { [persona.userId]: 'maintainer' }
+    return HttpResponse.json({ project })
   }),
 
   http.patch('/v1/projects/:projectId', async ({ params, request }) => {
@@ -329,12 +318,24 @@ export const projectHandlers = [
       )
       if (sourceForbidden) return sourceForbidden
     }
-    const project = demoProjects.find((p) => p.id === params.projectId)
-    return HttpResponse.json({
-      project: project
-        ? { ...project, ...body, updated_at: ago(0) }
-        : { id: params.projectId, ...body, updated_at: ago(0) },
-    })
+    const project = demoState.projects.find((p) => p.id === params.projectId)
+    if (!project) {
+      return HttpResponse.json(
+        { error: 'Project not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    if (
+      typeof body.repository_id === 'string' &&
+      !hasRepository(body.repository_id)
+    ) {
+      return HttpResponse.json(
+        { error: 'Repository not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    Object.assign(project, body, { updated_at: ago(0) })
+    return HttpResponse.json({ project })
   }),
 
   http.delete('/v1/projects/:projectId', async ({ params, request }) => {
@@ -345,6 +346,28 @@ export const projectHandlers = [
       'projects:delete',
     )
     if (forbidden) return forbidden
+    const projectId = String(params.projectId)
+    const buildIds = new Set(
+      demoState.builds
+        .filter((build) => build.project_id === projectId)
+        .map((build) => build.id),
+    )
+    demoState.projects = demoState.projects.filter(
+      (project) => project.id !== projectId,
+    )
+    demoState.pipelines = demoState.pipelines.filter(
+      (pipeline) => pipeline.project_id !== projectId,
+    )
+    demoState.builds = demoState.builds.filter(
+      (build) => build.project_id !== projectId,
+    )
+    for (const buildId of buildIds) {
+      delete demoState.buildEvents[buildId]
+      delete demoState.buildLogs[buildId]
+      delete demoState.artifacts[buildId]
+    }
+    delete demoState.projectRoles[projectId]
+    delete demoState.repositoryWorkflows[projectId]
     return new HttpResponse(null, { status: 204 })
   }),
 ]

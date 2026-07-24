@@ -1,9 +1,8 @@
-import { InformationCircleIcon } from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { Info as InformationCircleIcon } from 'lucide-react'
 import { Children } from 'react'
 import type { ReactNode } from 'react'
 
-import { cn } from '@/lib/utils'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 
 interface SetupHintProps {
   title: string
@@ -21,33 +20,24 @@ export default function SetupHint({
   className,
 }: SetupHintProps) {
   return (
-    <div
-      className={cn(
-        'border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground [&_code]:break-all',
-        className,
-      )}
-    >
-      <div className="flex items-center gap-2 text-foreground">
-        <HugeiconsIcon
-          icon={InformationCircleIcon}
-          size={14}
-          className="shrink-0 text-muted-foreground"
-        />
-        <p className="font-medium uppercase tracking-wider">{title}</p>
-      </div>
-      {children ? <div className="mt-2 leading-relaxed">{children}</div> : null}
-      {items && items.length > 0 ? (
-        <ul className="mt-2 list-disc space-y-1 pl-5 leading-relaxed">
-          {Children.map(items, (item) => (
-            <li>{item}</li>
-          ))}
-        </ul>
-      ) : null}
-      {code ? (
-        <pre className="mt-3 overflow-x-auto border border-border/60 bg-background p-3 font-mono text-[11px] leading-relaxed text-foreground">
-          <code>{code}</code>
-        </pre>
-      ) : null}
-    </div>
+    <Alert className={className}>
+      <InformationCircleIcon />
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription className="[&_code]:break-all">
+        {children}
+        {items && items.length > 0 ? (
+          <ul className="list-disc space-y-1 pl-5">
+            {Children.map(items, (item) => (
+              <li>{item}</li>
+            ))}
+          </ul>
+        ) : null}
+        {code ? (
+          <pre className="overflow-x-auto rounded-md bg-background p-3 font-mono text-[11px] leading-relaxed text-foreground ring-1 ring-foreground/10">
+            <code>{code}</code>
+          </pre>
+        ) : null}
+      </AlertDescription>
+    </Alert>
   )
 }

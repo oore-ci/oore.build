@@ -203,19 +203,15 @@ fn gitlab_api_url(
     Ok(url)
 }
 
-fn source_client() -> Result<reqwest::Client, (StatusCode, Json<ApiError>)> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| {
-            error!(error = %e, "failed to build workflow discovery client");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "http_client_error",
-                "Failed to create the source provider client",
-            )
-        })
+fn source_client() -> Result<&'static reqwest::Client, (StatusCode, Json<ApiError>)> {
+    crate::integrations::scm_http_client().map_err(|e| {
+        error!(error = %e, "failed to build workflow discovery client");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "http_client_error",
+            "Failed to create the source provider client",
+        )
+    })
 }
 
 async fn gitlab_request(
@@ -296,7 +292,7 @@ async fn discover_gitlab(
         .append_pair("path", ".oore")
         .append_pair("ref", reference)
         .append_pair("per_page", "100");
-    let tree_response = gitlab_request(&client, source, &token, tree_url).await?;
+    let tree_response = gitlab_request(client, source, &token, tree_url).await?;
     let tree_truncated = tree_response
         .headers()
         .get("x-next-page")
@@ -347,7 +343,7 @@ async fn discover_gitlab(
             ],
         )?;
         file_url.query_pairs_mut().append_pair("ref", reference);
-        let response = gitlab_request(&client, source, &token, file_url).await?;
+        let response = gitlab_request(client, source, &token, file_url).await?;
         if response.status() == StatusCode::NOT_FOUND {
             continue;
         }
@@ -422,14 +418,14 @@ async fn discover_github(
 ) -> Result<(Vec<RepositoryWorkflowPreview>, bool), (StatusCode, Json<ApiError>)> {
     let client = source_client()?;
     let token = crate::integrations::github::load_installation_access_token(
-        &client,
+        client,
         pool,
         encryption_key,
         &source.integration_id,
         &source.installation_external_id,
     )
     .await?;
-    let tree_response = github_get(&client, source, &token, ".oore", reference, false).await?;
+    let tree_response = github_get(client, source, &token, ".oore", reference, false).await?;
     let directory_paths = if tree_response.status() == StatusCode::NOT_FOUND {
         Vec::new()
     } else if tree_response.status().is_success() {
@@ -463,7 +459,7 @@ async fn discover_github(
     let (paths, truncated) = workflow_candidates(explicit_path, directory_paths)?;
     let mut workflows = Vec::new();
     for path in paths {
-        let response = github_get(&client, source, &token, &path, reference, true).await?;
+        let response = github_get(client, source, &token, &path, reference, true).await?;
         if response.status() == StatusCode::NOT_FOUND {
             continue;
         }
@@ -719,10 +715,7 @@ pub async fn discover_repository_workflows(
     Path(project_id): Path<String>,
     Query(query): Query<DiscoverRepositoryWorkflowsQuery>,
 ) -> ApiResult<DiscoverRepositoryWorkflowsResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     let effective = resolve_effective_project_role(
         &pool,
         &auth.0.user_id,

@@ -2,6 +2,10 @@ import { defineConfig } from 'vitepress'
 import { useSidebar } from 'vitepress-openapi'
 import spec from '../public/openapi.json' with { type: 'json' }
 
+const siteUrl = 'https://docs.oore.build'
+const defaultDescription =
+  'Documentation for installing, operating, and integrating Oore CI.'
+
 const openApiSidebar = useSidebar({
   spec,
   linkPrefix: '/openapi/operations/',
@@ -9,350 +13,253 @@ const openApiSidebar = useSidebar({
   .generateSidebarGroups()
   .map((group) => ({ ...group, collapsed: true }))
 
+function canonicalUrl(
+  relativePath: string,
+  params: Record<string, unknown> = {},
+) {
+  let path =
+    relativePath === 'index.md'
+      ? ''
+      : relativePath.replace(/\.md$/, '').replace(/\/index$/, '/')
+
+  for (const [key, value] of Object.entries(params)) {
+    path = path.replace(`[${key}]`, encodeURIComponent(String(value)))
+  }
+
+  return new URL(`/${path}`, siteUrl).toString()
+}
+
 export default defineConfig({
-  title: 'Oore CI Docs',
-  description:
-    'Self-hosted, Flutter-first mobile CI and internal app distribution platform',
+  title: 'Oore CI docs',
+  description: defaultDescription,
   cleanUrls: true,
+  lastUpdated: true,
+
+  vite: {
+    build: {
+      cssCodeSplit: true,
+    },
+  },
+
   sitemap: {
-    hostname: 'https://docs.oore.build',
+    hostname: siteUrl,
   },
 
   head: [
-    [
-      'link',
-      {
-        rel: 'icon',
-        type: 'image/svg+xml',
-        href: '/logo.svg',
-      },
-    ],
-    [
-      'link',
-      {
-        rel: 'alternate icon',
-        href: '/favicon.ico',
-      },
-    ],
-    [
-      'link',
-      {
-        rel: 'apple-touch-icon',
-        href: '/logo192.png',
-      },
-    ],
-    [
-      'meta',
-      {
-        name: 'theme-color',
-        content: '#dc7702',
-      },
-    ],
-    [
-      'meta',
-      {
-        property: 'og:title',
-        content: 'Oore CI Docs',
-      },
-    ],
-    [
-      'meta',
-      {
-        property: 'og:description',
-        content:
-          'Documentation for oore.build — self-hosted, Flutter-first mobile CI.',
-      },
-    ],
-    [
-      'meta',
-      {
-        property: 'og:image',
-        content: 'https://docs.oore.build/og-image.png',
-      },
-    ],
-    [
-      'meta',
-      {
-        property: 'og:image:type',
-        content: 'image/png',
-      },
-    ],
-    [
-      'meta',
-      {
-        property: 'og:image:width',
-        content: '1200',
-      },
-    ],
-    [
-      'meta',
-      {
-        property: 'og:image:height',
-        content: '630',
-      },
-    ],
-    [
-      'meta',
-      {
-        property: 'og:logo',
-        content: 'https://docs.oore.build/logo.svg',
-      },
-    ],
-    [
-      'meta',
-      {
-        name: 'twitter:card',
-        content: 'summary_large_image',
-      },
-    ],
-    [
-      'meta',
-      {
-        name: 'twitter:title',
-        content: 'Oore CI Docs',
-      },
-    ],
-    [
-      'meta',
-      {
-        name: 'twitter:description',
-        content:
-          'Documentation for oore.build — self-hosted, Flutter-first mobile CI.',
-      },
-    ],
-    [
-      'meta',
-      {
-        name: 'twitter:image',
-        content: 'https://docs.oore.build/og-image.png',
-      },
-    ],
-    [
-      'link',
-      {
-        rel: 'canonical',
-        href: 'https://docs.oore.build',
-      },
-    ],
-    [
-      'meta',
-      {
-        property: 'og:url',
-        content: 'https://docs.oore.build',
-      },
-    ],
-    [
-      'link',
-      {
-        rel: 'preconnect',
-        href: 'https://fonts.googleapis.com',
-      },
-    ],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }],
+    ['link', { rel: 'alternate icon', href: '/favicon.ico' }],
+    ['link', { rel: 'apple-touch-icon', href: '/logo192.png' }],
+    ['meta', { name: 'theme-color', content: '#2457c5' }],
+    ['meta', { property: 'og:type', content: 'website' }],
+    ['meta', { property: 'og:image', content: `${siteUrl}/og-image.png` }],
+    ['meta', { property: 'og:image:type', content: 'image/png' }],
+    ['meta', { property: 'og:image:width', content: '1200' }],
+    ['meta', { property: 'og:image:height', content: '630' }],
+    ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+    ['meta', { name: 'twitter:image', content: `${siteUrl}/og-image.png` }],
   ],
+
+  transformPageData(pageData) {
+    if (pageData.params?.pageTitle) {
+      pageData.title = String(pageData.params.pageTitle)
+      pageData.frontmatter.title = pageData.title
+    }
+  },
+
+  transformHead({ pageData }) {
+    const url = canonicalUrl(pageData.relativePath, pageData.params)
+    const description = pageData.description || defaultDescription
+    const title = pageData.title
+      ? `${pageData.title} | Oore CI docs`
+      : 'Oore CI docs'
+
+    return [
+      ['link', { rel: 'canonical', href: url }],
+      ['meta', { property: 'og:title', content: title }],
+      ['meta', { property: 'og:description', content: description }],
+      ['meta', { property: 'og:url', content: url }],
+      ['meta', { name: 'twitter:title', content: title }],
+      ['meta', { name: 'twitter:description', content: description }],
+    ]
+  },
 
   themeConfig: {
     siteTitle: 'Oore CI',
     logo: '/logo.svg',
 
     nav: [
-      { text: 'Getting Started', link: '/getting-started/' },
-      { text: 'Guides', link: '/guides/oidc/' },
-      { text: 'Reference', link: '/reference/api/' },
-      { text: 'OpenAPI', link: '/openapi/' },
-      { text: 'Concepts', link: '/concepts/architecture' },
-      { text: 'Operations', link: '/operations/deployment' },
-      {
-        text: 'GitHub',
-        link: 'https://github.com/oore-ci/oore.build',
-      },
+      { text: 'Get Started', link: '/getting-started/' },
+      { text: 'Guides', link: '/guides/' },
+      { text: 'Reference', link: '/reference/' },
+      { text: 'Operations', link: '/operations/' },
     ],
 
     sidebar: {
       '/getting-started/': [
         {
-          text: 'Getting Started',
+          text: 'Get started',
           items: [
-            { text: 'What is oore.build?', link: '/getting-started/' },
-            {
-              text: 'Public Alpha (v0.1.x)',
-              link: '/getting-started/public-alpha',
-            },
-            {
-              text: 'Known Alpha Limitations',
-              link: '/getting-started/known-limitations',
-            },
-            {
-              text: 'Issue Report Checklist',
-              link: '/getting-started/issue-report-checklist',
-            },
-            {
-              text: 'Clean Reinstall Guide',
-              link: '/getting-started/clean-reinstall',
-            },
-            {
-              text: 'Alpha Feedback Playbook',
-              link: '/getting-started/alpha-feedback-playbook',
-            },
+            { text: 'Overview', link: '/getting-started/' },
             { text: 'Prerequisites', link: '/getting-started/prerequisites' },
             { text: 'Install', link: '/getting-started/install' },
             {
-              text: 'Hosted UI Onboarding',
-              link: '/getting-started/hosted-ui-onboarding',
-            },
-            {
-              text: 'Set Up Your Instance',
+              text: 'Set up your instance',
               link: '/getting-started/first-instance',
             },
-            { text: 'Connect GitHub', link: '/getting-started/connect-github' },
-            { text: 'First Build', link: '/getting-started/first-build' },
             {
-              text: 'First Signed Build',
+              text: 'Hosted UI onboarding',
+              link: '/getting-started/hosted-ui-onboarding',
+            },
+            { text: 'Connect GitHub', link: '/getting-started/connect-github' },
+            {
+              text: 'Run your first build',
+              link: '/getting-started/first-build',
+            },
+            {
+              text: 'Run your first signed build',
               link: '/getting-started/first-signed-build',
             },
             {
-              text: 'Invite Your Team',
+              text: 'Invite your team',
               link: '/getting-started/invite-your-team',
             },
           ],
         },
       ],
+
       '/guides/': [
         {
-          text: 'OIDC Authentication',
-          items: [
-            { text: 'Overview', link: '/guides/oidc/' },
-            { text: 'Google', link: '/guides/oidc/google' },
-            { text: 'Okta', link: '/guides/oidc/okta' },
-            { text: 'Azure AD', link: '/guides/oidc/azure-ad' },
-            { text: 'Auth0', link: '/guides/oidc/auth0' },
-            { text: 'Keycloak', link: '/guides/oidc/keycloak' },
-          ],
+          text: 'Guides',
+          items: [{ text: 'Overview', link: '/guides/' }],
         },
         {
-          text: 'Integrations',
+          text: 'Sources and projects',
+          collapsed: false,
           items: [
             { text: 'GitHub App', link: '/guides/integrations/github-app' },
             { text: 'GitLab', link: '/guides/integrations/gitlab' },
             { text: 'Webhooks', link: '/guides/integrations/webhooks' },
-          ],
-        },
-        {
-          text: 'Projects',
-          items: [
             {
-              text: 'Create a Project',
+              text: 'Create a project',
               link: '/guides/projects/create-project',
             },
             {
-              text: 'Pipeline Config (.oore.yaml)',
+              text: 'Pipeline config',
               link: '/guides/projects/pipeline-config',
             },
             {
               text: 'Pipeline via UI',
               link: '/guides/projects/pipeline-ui-fallback',
             },
-            { text: 'Trigger Builds', link: '/guides/projects/trigger-builds' },
-            { text: 'Cancel Builds', link: '/guides/projects/cancel-builds' },
+            { text: 'Trigger builds', link: '/guides/projects/trigger-builds' },
+            { text: 'Cancel builds', link: '/guides/projects/cancel-builds' },
           ],
         },
         {
-          text: 'Signing',
+          text: 'Signing and artifacts',
+          collapsed: true,
           items: [
             {
-              text: 'Android Keystore',
+              text: 'Android keystore',
               link: '/guides/signing/android-keystore',
             },
             { text: 'Android Gradle', link: '/guides/signing/android-gradle' },
             {
-              text: 'iOS Certificates',
+              text: 'iOS certificates',
               link: '/guides/signing/ios-certificates',
             },
             {
-              text: 'iOS Manual Signing',
+              text: 'iOS manual signing',
               link: '/guides/signing/ios-manual-signing',
             },
             {
-              text: 'iOS API Signing',
+              text: 'iOS API signing',
               link: '/guides/signing/ios-api-signing',
             },
             {
-              text: 'iOS Device Registration',
+              text: 'iOS device registration',
               link: '/guides/signing/ios-device-registration',
             },
-          ],
-        },
-        {
-          text: 'Runners',
-          items: [
             {
-              text: 'Embedded Runner',
-              link: '/guides/runners/embedded-runner',
-            },
-            {
-              text: 'External Runner',
-              link: '/guides/runners/external-runner',
-            },
-          ],
-        },
-        {
-          text: 'Artifacts',
-          items: [
-            {
-              text: 'Configure Storage',
+              text: 'Configure storage',
               link: '/guides/artifacts/configure-storage',
             },
             {
-              text: 'Download Artifacts',
+              text: 'Download artifacts',
               link: '/guides/artifacts/download-artifacts',
             },
             {
-              text: 'Install Mobile Builds',
+              text: 'Install mobile builds',
               link: '/guides/artifacts/install-mobile-builds',
             },
           ],
         },
         {
-          text: 'Users',
+          text: 'Access and operators',
+          collapsed: true,
           items: [
-            { text: 'Invite Users', link: '/guides/users/invite-users' },
-            { text: 'Manage Roles', link: '/guides/users/manage-roles' },
-            { text: 'Disable Users', link: '/guides/users/disable-users' },
+            { text: 'OIDC overview', link: '/guides/oidc/' },
+            { text: 'Google', link: '/guides/oidc/google' },
+            { text: 'Okta', link: '/guides/oidc/okta' },
+            { text: 'Microsoft Entra ID', link: '/guides/oidc/azure-ad' },
+            { text: 'Auth0', link: '/guides/oidc/auth0' },
+            { text: 'Keycloak', link: '/guides/oidc/keycloak' },
+            { text: 'Invite users', link: '/guides/users/invite-users' },
+            { text: 'Manage roles', link: '/guides/users/manage-roles' },
+            { text: 'Disable users', link: '/guides/users/disable-users' },
           ],
         },
         {
-          text: 'Multi-Instance',
+          text: 'Runners and instances',
+          collapsed: true,
           items: [
             {
-              text: 'Add Instance',
+              text: 'Direct macOS runner',
+              link: '/guides/runners/external-runner',
+            },
+            {
+              text: 'Why embedded execution is unavailable',
+              link: '/guides/runners/embedded-runner',
+            },
+            {
+              text: 'Add an instance',
               link: '/guides/multi-instance/add-instance',
             },
             {
-              text: 'Switch Instances',
+              text: 'Switch instances',
               link: '/guides/multi-instance/switch-instances',
             },
           ],
         },
       ],
+
+      '/concepts/': [
+        {
+          text: 'Concepts',
+          items: [
+            { text: 'Architecture', link: '/concepts/architecture' },
+            { text: 'Build execution', link: '/concepts/build-execution' },
+            { text: 'Runner protocol', link: '/concepts/runner-protocol' },
+            { text: 'File-first config', link: '/concepts/file-first-config' },
+            { text: 'Code signing', link: '/concepts/signing-overview' },
+            { text: 'Artifact access', link: '/concepts/artifact-access' },
+            { text: 'Multi-instance', link: '/concepts/multi-instance' },
+            { text: 'Security model', link: '/concepts/security-model' },
+          ],
+        },
+      ],
+
       '/reference/': [
         {
-          text: 'API Reference',
+          text: 'Reference',
           items: [
-            { text: 'Overview', link: '/reference/api/' },
-            { text: 'Setup', link: '/reference/api/setup' },
-            { text: 'Projects', link: '/reference/api/projects' },
-            { text: 'Pipelines', link: '/reference/api/pipelines' },
-            { text: 'Builds', link: '/reference/api/builds' },
-            { text: 'Integrations', link: '/reference/api/integrations' },
-            { text: 'Auth', link: '/reference/api/auth' },
-            { text: 'Users', link: '/reference/api/users' },
-            { text: 'Build Logs', link: '/reference/api/logs' },
-            { text: 'Runners', link: '/reference/api/runners' },
-            { text: 'Artifacts', link: '/reference/api/artifacts' },
-            { text: 'Settings', link: '/reference/api/settings' },
+            { text: 'Overview', link: '/reference/' },
+            { text: 'OpenAPI', link: '/openapi/' },
           ],
         },
         {
-          text: 'CLI Reference',
+          text: 'CLI',
+          collapsed: false,
           items: [
             { text: 'Overview', link: '/reference/cli/' },
             { text: 'oore setup', link: '/reference/cli/oore-setup' },
@@ -365,73 +272,85 @@ export default defineConfig({
         },
         {
           text: 'Configuration',
+          collapsed: true,
           items: [
             { text: '.oore.yaml', link: '/reference/config/oore-yaml' },
+            { text: 'Installer', link: '/reference/config/installer' },
             {
-              text: 'Environment Variables',
+              text: 'Environment variables',
               link: '/reference/config/environment-variables',
             },
             {
-              text: 'Daemon Config',
+              text: 'Daemon config',
               link: '/reference/config/daemon-config',
             },
           ],
         },
         {
-          text: 'State Machines & RBAC',
+          text: 'Platform',
+          collapsed: true,
           items: [
-            { text: 'Setup States', link: '/reference/setup-states' },
-            { text: 'Build States', link: '/reference/build-states' },
-            { text: 'Roles & Permissions', link: '/reference/rbac' },
-            { text: 'Error Codes', link: '/reference/error-codes' },
+            { text: 'Setup states', link: '/reference/setup-states' },
+            { text: 'Build states', link: '/reference/build-states' },
+            { text: 'Roles and permissions', link: '/reference/rbac' },
+            { text: 'Error codes', link: '/reference/error-codes' },
           ],
         },
       ],
+
       '/openapi/': [
         {
-          text: 'OpenAPI Spec',
+          text: 'OpenAPI',
           items: [{ text: 'Overview', link: '/openapi/' }, ...openApiSidebar],
         },
       ],
-      '/concepts/': [
-        {
-          text: 'Concepts',
-          items: [
-            { text: 'Architecture', link: '/concepts/architecture' },
-            { text: 'Build Execution', link: '/concepts/build-execution' },
-            { text: 'Runner Protocol', link: '/concepts/runner-protocol' },
-            {
-              text: 'File-First Config',
-              link: '/concepts/file-first-config',
-            },
-            { text: 'Code Signing', link: '/concepts/signing-overview' },
-            { text: 'Artifact Access', link: '/concepts/artifact-access' },
-            { text: 'Multi-Instance', link: '/concepts/multi-instance' },
-            { text: 'Security Model', link: '/concepts/security-model' },
-          ],
-        },
-      ],
+
       '/operations/': [
         {
           text: 'Operations',
+          items: [{ text: 'Overview', link: '/operations/' }],
+        },
+        {
+          text: 'Deploy',
+          collapsed: false,
           items: [
             { text: 'Deployment', link: '/operations/deployment' },
             {
-              text: 'Split Backend and Frontend',
+              text: 'Split backend and frontend',
               link: '/operations/split-roles',
             },
             {
-              text: 'Mac Studio + NetBird + Warpgate',
+              text: 'Mac Studio, NetBird, and Warpgate',
               link: '/operations/mac-studio-netbird-warpgate',
             },
+          ],
+        },
+        {
+          text: 'Maintain',
+          collapsed: false,
+          items: [
+            { text: 'Upgrade', link: '/operations/upgrade' },
+            { text: 'Backup and restore', link: '/operations/backup-restore' },
+            { text: 'Monitoring', link: '/operations/monitoring' },
             {
-              text: 'Release Automation (macOS + R2)',
+              text: 'Release automation',
               link: '/operations/release-automation-mac-mini',
             },
-            { text: 'Backup & Restore', link: '/operations/backup-restore' },
-            { text: 'Upgrade', link: '/operations/upgrade' },
-            { text: 'Monitoring', link: '/operations/monitoring' },
+          ],
+        },
+        {
+          text: 'Support',
+          collapsed: true,
+          items: [
             { text: 'Troubleshooting', link: '/operations/troubleshooting' },
+            { text: 'Clean reinstall', link: '/operations/clean-reinstall' },
+            {
+              text: 'Known limitations',
+              link: '/operations/known-limitations',
+            },
+            { text: 'Report an issue', link: '/operations/report-an-issue' },
+            { text: 'Alpha feedback', link: '/operations/alpha-feedback' },
+            { text: 'Release channels', link: '/operations/release-channels' },
           ],
         },
       ],
@@ -448,16 +367,11 @@ export default defineConfig({
     },
 
     footer: {
-      message: 'Self-hosted mobile CI, built for Flutter.',
-      copyright: 'Copyright &copy; 2026 devaryakjha',
+      message: 'Self-hosted mobile CI for Flutter teams.',
+      copyright: 'Copyright © 2026 oore.build',
     },
 
-    search: {
-      provider: 'local',
-    },
-
-    outline: {
-      level: [2, 3],
-    },
+    search: { provider: 'local' },
+    outline: { level: [2, 3] },
   },
 })

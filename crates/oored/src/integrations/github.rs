@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -83,11 +82,8 @@ async fn current_integration_writer(
     Some(row.get("email"))
 }
 
-fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
+fn build_http_client() -> Result<&'static reqwest::Client, &'static str> {
+    super::scm_http_client()
 }
 
 fn validate_redirect_origin(
@@ -322,10 +318,7 @@ pub async fn github_start(
     Json(req): Json<GitHubAppStartRequest>,
 ) -> ApiResult<GitHubAppStartResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_remote_mode(&pool).await?;
 
     if req.webhook_url.is_empty() {
@@ -394,10 +387,7 @@ pub async fn github_create_page(
     State(state): State<Arc<AppState>>,
     Query(params): Query<CreatePageQuery>,
 ) -> Response {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     if require_remote_mode(&pool).await.is_err() {
         return Html(error_page(
             "Remote mode required",
@@ -433,7 +423,7 @@ pub async fn github_create_page(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="{favicon}">
   <link rel="apple-touch-icon" href="{favicon}">
-  <meta name="theme-color" content="#dc7702">
+  <meta name="theme-color" content="#2457c5">
   <title>Creating GitHub App...</title>
   <style>
     body {{
@@ -485,10 +475,7 @@ pub async fn github_callback(
     State(state): State<Arc<AppState>>,
     Query(params): Query<CallbackQuery>,
 ) -> Response {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     if require_remote_mode(&pool).await.is_err() {
         return Html(error_page(
             "Remote mode required",
@@ -682,10 +669,7 @@ pub async fn github_installed(
     };
     // Clone the pool, then release the store lock so perform_sync (which makes
     // HTTP calls) doesn't hold it.
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     let integration_id = match install_state {
         Some(install_state)
             if current_integration_writer(&state, &pool, &install_state.user_id)
@@ -743,7 +727,7 @@ pub async fn github_installed(
   <meta http-equiv="refresh" content="2;url={redirect_url}">
   <link rel="icon" href="{favicon}">
   <link rel="apple-touch-icon" href="{favicon}">
-  <meta name="theme-color" content="#dc7702">
+  <meta name="theme-color" content="#2457c5">
   <title>GitHub App Installed</title>
   <style>
     body {{
@@ -832,10 +816,7 @@ async fn exchange_and_store(
         .map(|o| format!("{} ({})", conversion.name, o.login))
         .unwrap_or_else(|| conversion.name.clone());
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     // Insert integration record
     sqlx::query(
@@ -958,10 +939,7 @@ pub async fn github_complete(
     Json(req): Json<GitHubAppCompleteRequest>,
 ) -> ApiResult<GitHubAppCompleteResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_remote_mode(&pool).await?;
 
     if req.code.is_empty() {
@@ -1173,7 +1151,7 @@ pub(crate) async fn resolve_branch_commit(
         )
     })?;
     let token = load_installation_access_token(
-        &client,
+        client,
         pool,
         encryption_key,
         integration_id,
@@ -1275,7 +1253,7 @@ pub(crate) async fn compare_commits(
         )
     })?;
     let token = load_installation_access_token(
-        &client,
+        client,
         pool,
         encryption_key,
         integration_id,
@@ -1510,7 +1488,7 @@ pub(crate) async fn perform_sync(
         .map_err(|(_, e)| format!("JWT generation failed: {}", e.0.error))?;
 
     let client = build_http_client().map_err(|e| format!("failed to build HTTP client: {e}"))?;
-    let gh_installations = list_github_installations(&client, &jwt, GITHUB_API_BASE_URL).await?;
+    let gh_installations = list_github_installations(client, &jwt, GITHUB_API_BASE_URL).await?;
 
     let now = now_unix();
     let mut installations = Vec::new();
@@ -1557,7 +1535,7 @@ pub(crate) async fn perform_sync(
         });
 
         sync_installation_repos(
-            &client,
+            client,
             pool,
             encryption_key,
             &app_id,
@@ -1604,10 +1582,7 @@ pub async fn sync_installations(
 ) -> ApiResult<SyncInstallationsResponse> {
     check_permission(&state.enforcer, &auth.0.role, "integrations", "write").await?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     require_remote_mode(&pool).await?;
 
     let installations = perform_sync(&pool, &state.encryption_key, &integration_id)
@@ -1932,7 +1907,7 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let client = build_http_client().unwrap();
 
-        let installations = list_github_installations(&client, "jwt", &host)
+        let installations = list_github_installations(client, "jwt", &host)
             .await
             .unwrap();
         assert_eq!(installations.len(), 101);
@@ -1990,7 +1965,7 @@ mod tests {
         .await
         .unwrap();
 
-        sync_installation_repos_with_token(&client, &pool, &host, "token", 1, "install", 2)
+        sync_installation_repos_with_token(client, &pool, &host, "token", 1, "install", 2)
             .await
             .unwrap();
 
@@ -2012,7 +1987,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sync_installation_repos_with_token(&client, &pool, &host, "token", 1, "install", 3)
+        sync_installation_repos_with_token(client, &pool, &host, "token", 1, "install", 3)
             .await
             .unwrap();
         let repository_count: i64 = sqlx::query_scalar(

@@ -4,7 +4,7 @@
 
 use std::net::SocketAddr;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::body::Body;
@@ -12,9 +12,9 @@ use axum::extract::ConnectInfo;
 use http_body_util::BodyExt;
 use hyper::Request;
 use oore_contract::{BootstrapTokenRecord, OwnerRecord, SetupSessionRecord, SetupState};
-use oored::build_test_router;
 use oored::store::SetupStore;
 use oored::token::{generate_token, hash_token};
+use oored::{build_test_router, build_test_router_with_state};
 use sqlx::Row;
 
 /// Fixed test encryption key (32 bytes).
@@ -655,6 +655,73 @@ async fn test_readyz_reports_runtime_dependencies() {
     assert_eq!(body["database"], true);
     assert_eq!(body["migrations"], true);
     assert_eq!(body["encryption"], true);
+}
+
+#[tokio::test]
+async fn readyz_does_not_wait_for_setup_state_transition_lock() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("oore.db");
+    let store = SetupStore::connect(db_path).await.unwrap();
+    store.init_if_missing().await.unwrap();
+    let (app, state) = build_test_router_with_state(store, TEST_ENCRYPTION_KEY.to_vec()).await;
+    let _setup_transition = state.store.lock().await;
+
+    let response = tokio::time::timeout(
+        Duration::from_secs(1),
+        app.oneshot(
+            Request::builder()
+                .uri("/readyz")
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    )
+    .await
+    .expect("readyz should not wait for the setup state transition lock")
+    .unwrap();
+
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn runner_heartbeat_does_not_wait_for_setup_state_transition_lock() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("oore.db");
+    let store = SetupStore::connect(db_path).await.unwrap();
+    store.init_if_missing().await.unwrap();
+    let (app, state) = build_test_router_with_state(store, TEST_ENCRYPTION_KEY.to_vec()).await;
+
+    let runner_id = "mutex-boundary-runner";
+    let runner_token = generate_token();
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO runners (id, name, token_hash, status, capabilities, registered_by, created_at, updated_at) \
+         VALUES (?1, 'Mutex boundary runner', ?2, 'offline', '{}', NULL, ?3, ?3)",
+    )
+    .bind(runner_id)
+    .bind(hash_token(&runner_token))
+    .bind(now)
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    let _setup_transition = state.store.lock().await;
+    let response = tokio::time::timeout(
+        Duration::from_secs(1),
+        app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/runners/{runner_id}/heartbeat"))
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {runner_token}"))
+                .body(Body::from(r#"{"status":"online","capabilities":{}}"#))
+                .unwrap(),
+        ),
+    )
+    .await
+    .expect("runner heartbeat should not wait for the setup state transition lock")
+    .unwrap();
+
+    assert_eq!(response.status(), 204);
 }
 
 // ── Bootstrap token edge cases ──────────────────────────────────

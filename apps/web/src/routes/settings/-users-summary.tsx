@@ -1,5 +1,5 @@
-import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Card, CardContent } from '@/components/ui/card'
 
 export function UsersSummary({
   counts,
@@ -14,37 +14,32 @@ export function UsersSummary({
     ['Invited', counts.invited, 'Awaiting activation'],
   ] as const
   return (
-    <section
-      aria-label="User summary"
-      className="grid grid-cols-3 gap-2 md:gap-4"
-    >
-      {isLoading
-        ? Array.from({ length: 3 }, (_, index) => (
-            <Card key={index}>
-              <CardContent>
+    <Card size="sm" aria-label="User summary">
+      <CardContent className="grid grid-cols-3 divide-x px-0">
+        {isLoading
+          ? Array.from({ length: 3 }, (_, index) => (
+              <div key={index} className="p-4">
                 <div className="flex flex-col gap-2">
                   <Skeleton className="h-3 w-14" />
                   <Skeleton className="h-7 w-10" />
                   <Skeleton className="hidden h-3 w-24 md:block" />
                 </div>
-              </CardContent>
-            </Card>
-          ))
-        : metrics.map(([label, value, description]) => (
-            <Card key={label}>
-              <CardContent>
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              </div>
+            ))
+          : metrics.map(([label, value, description]) => (
+              <div key={label} className="p-4">
+                <p className="text-xs font-medium text-muted-foreground">
                   {label}
                 </p>
-                <p className="mt-3 text-2xl font-bold tracking-tight">
+                <p className="mt-2 text-xl font-semibold tracking-tight">
                   {value}
                 </p>
                 <p className="mt-1 hidden text-xs text-muted-foreground md:block">
                   {description}
                 </p>
-              </CardContent>
-            </Card>
-          ))}
-    </section>
+              </div>
+            ))}
+      </CardContent>
+    </Card>
   )
 }

@@ -72,10 +72,7 @@ async fn project_pool_with_permission(
     project_id: &str,
     permission: ProjectPermission,
 ) -> Result<sqlx::SqlitePool, (StatusCode, Json<ApiError>)> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let effective = resolve_effective_project_role(
         &pool,
@@ -207,8 +204,7 @@ pub async fn get_retention_policy(
     )
     .await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let policy = load_global_policy(pool).await.map_err(|e| {
         error!(error = %e, "failed to load retention policy");
@@ -254,8 +250,7 @@ pub async fn update_retention_policy(
     let keep_statuses_json =
         serde_json::to_string(&req.keep_statuses).unwrap_or_else(|_| "[]".to_string());
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     sqlx::query(
         "INSERT INTO retention_policy (id, enabled, max_age_days, max_builds_per_project, \
@@ -501,8 +496,7 @@ pub async fn get_last_cleanup(
     )
     .await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let row = sqlx::query(
         "SELECT details FROM audit_logs \

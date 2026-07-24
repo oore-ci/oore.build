@@ -1,5 +1,4 @@
-import { HugeiconsIcon } from '@hugeicons/react'
-import { InformationCircleIcon } from '@hugeicons/core-free-icons'
+import { Info as InformationCircleIcon } from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -13,7 +12,7 @@ export function UsersErrorAlert({
 }) {
   return (
     <Alert variant="destructive">
-      <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+      <InformationCircleIcon size={16} />
       <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <span>
           Failed to load users:{' '}

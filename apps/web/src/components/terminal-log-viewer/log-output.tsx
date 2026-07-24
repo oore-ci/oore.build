@@ -103,7 +103,7 @@ export function LogOutput({
                 >
                   <span
                     className={cn(
-                      'sticky left-0 z-10 shrink-0 select-none border-r px-3 text-right text-muted-foreground',
+                      'sticky left-0 z-10 shrink-0 border-r px-3 text-right text-muted-foreground select-none',
                       isError ? 'bg-destructive/10' : 'bg-card',
                     )}
                     style={{ width: `${lineNumWidth + 4}ch` }}
@@ -112,9 +112,9 @@ export function LogOutput({
                   </span>
                   <span
                     className={cn(
-                      'pl-3 pr-4',
+                      'pr-4 pl-3',
                       wrapLines
-                        ? 'whitespace-pre-wrap break-all'
+                        ? 'break-all whitespace-pre-wrap'
                         : 'whitespace-pre',
                     )}
                   >

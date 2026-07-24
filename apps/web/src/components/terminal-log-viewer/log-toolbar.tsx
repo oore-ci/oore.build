@@ -1,11 +1,10 @@
 import {
-  AlertCircleIcon,
-  Cancel01Icon,
-  Download04Icon,
-  Search01Icon,
-  TextWrapIcon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  CircleAlert as AlertCircleIcon,
+  X as Cancel01Icon,
+  Download as Download04Icon,
+  Search as Search01Icon,
+  WrapText as TextWrapIcon,
+} from 'lucide-react'
 import type { RefObject } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -41,7 +40,7 @@ export function LogToolbar({
 }: LogToolbarProps) {
   return (
     <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1.5">
-      <InputGroup className="order-first w-full flex-none bg-background sm:order-none sm:w-56">
+      <InputGroup className="order-first w-full flex-none bg-background sm:order-0 sm:w-56">
         <InputGroupInput
           ref={searchInputRef}
           value={searchQuery}
@@ -51,7 +50,7 @@ export function LogToolbar({
           className="font-mono text-xs"
         />
         <InputGroupAddon align="inline-start">
-          <HugeiconsIcon icon={Search01Icon} />
+          <Search01Icon />
         </InputGroupAddon>
         {searchQuery ? (
           <InputGroupAddon align="inline-end">
@@ -60,7 +59,7 @@ export function LogToolbar({
               aria-label="Clear log search"
               onClick={onSearchClear}
             >
-              <HugeiconsIcon icon={Cancel01Icon} />
+              <Cancel01Icon />
             </InputGroupButton>
           </InputGroupAddon>
         ) : null}
@@ -72,7 +71,7 @@ export function LogToolbar({
         disabled={!hasErrors}
         onClick={onJumpToError}
       >
-        <HugeiconsIcon icon={AlertCircleIcon} />
+        <AlertCircleIcon />
       </ToolbarButton>
       <ToolbarButton
         label="Toggle line wrapping"
@@ -81,14 +80,14 @@ export function LogToolbar({
         pressed={wrapLines}
         onClick={onToggleWrap}
       >
-        <HugeiconsIcon icon={TextWrapIcon} />
+        <TextWrapIcon />
       </ToolbarButton>
       <ToolbarButton
         label="Download raw logs"
         title="Download raw logs"
         onClick={onDownload}
       >
-        <HugeiconsIcon icon={Download04Icon} />
+        <Download04Icon />
       </ToolbarButton>
     </div>
   )

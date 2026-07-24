@@ -9,42 +9,55 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SetupRouteImport } from './routes/setup'
-import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as SetupIndexRouteImport } from './routes/setup/index'
-import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
-import { Route as BuildsIndexRouteImport } from './routes/builds/index'
-import { Route as SetupTrustedProxyRouteImport } from './routes/setup/trusted-proxy'
-import { Route as SetupOwnerRouteImport } from './routes/setup/owner'
-import { Route as SetupOidcRouteImport } from './routes/setup/oidc'
-import { Route as SetupModeRouteImport } from './routes/setup/mode'
-import { Route as SetupCompleteRouteImport } from './routes/setup/complete'
-import { Route as SettingsUsersRouteImport } from './routes/settings/users'
-import { Route as SettingsRunnersRouteImport } from './routes/settings/runners'
-import { Route as SettingsRetentionRouteImport } from './routes/settings/retention'
-import { Route as SettingsPreferencesRouteImport } from './routes/settings/preferences'
-import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
-import { Route as SettingsArtifactsRouteImport } from './routes/settings/artifacts'
-import { Route as SettingsApiTokensRouteImport } from './routes/settings/api-tokens'
-import { Route as BuildsBuildIdRouteImport } from './routes/builds/$buildId'
+import { Route as BuildsRouteRouteImport } from './routes/builds/route'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as ProjectsRouteRouteImport } from './routes/projects/route'
+import { Route as SettingsRouteRouteImport } from './routes/settings/route'
+import { Route as SetupRouteImport } from './routes/setup'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
-import { Route as SettingsNotificationsIndexRouteImport } from './routes/settings/notifications/index'
-import { Route as SettingsIntegrationsIndexRouteImport } from './routes/settings/integrations/index'
+import { Route as BuildsIndexRouteImport } from './routes/builds/index'
+import { Route as BuildsBuildIdRouteImport } from './routes/builds/$buildId'
+import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
+import { Route as ProjectsProjectIdRouteRouteImport } from './routes/projects/$projectId/route'
+import { Route as SettingsIndexRouteImport } from './routes/settings/index'
+import { Route as SettingsApiTokensRouteImport } from './routes/settings/api-tokens'
+import { Route as SettingsArtifactsRouteImport } from './routes/settings/artifacts'
+import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
+import { Route as SettingsIntegrationsRouteRouteImport } from './routes/settings/integrations/route'
+import { Route as SettingsNotificationsRouteRouteImport } from './routes/settings/notifications/route'
+import { Route as SettingsPreferencesRouteImport } from './routes/settings/preferences'
+import { Route as SettingsRetentionRouteImport } from './routes/settings/retention'
+import { Route as SettingsRunnersRouteImport } from './routes/settings/runners'
+import { Route as SettingsUsersRouteImport } from './routes/settings/users'
+import { Route as SetupIndexRouteImport } from './routes/setup/index'
+import { Route as SetupCompleteRouteImport } from './routes/setup/complete'
+import { Route as SetupModeRouteImport } from './routes/setup/mode'
+import { Route as SetupOidcRouteImport } from './routes/setup/oidc'
+import { Route as SetupOwnerRouteImport } from './routes/setup/owner'
+import { Route as SetupTrustedProxyRouteImport } from './routes/setup/trusted-proxy'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
-import { Route as SettingsNotificationsNewRouteImport } from './routes/settings/notifications/new'
-import { Route as SettingsNotificationsChannelIdRouteImport } from './routes/settings/notifications/$channelId'
-import { Route as SettingsIntegrationsLocalGitRouteImport } from './routes/settings/integrations/local-git'
-import { Route as SettingsIntegrationsGitlabRouteImport } from './routes/settings/integrations/gitlab'
-import { Route as SettingsIntegrationsGithubRouteImport } from './routes/settings/integrations/github'
+import { Route as SettingsIntegrationsIndexRouteImport } from './routes/settings/integrations/index'
 import { Route as SettingsIntegrationsIntegrationIdRouteImport } from './routes/settings/integrations/$integrationId'
+import { Route as SettingsIntegrationsGithubRouteImport } from './routes/settings/integrations/github'
+import { Route as SettingsIntegrationsGitlabRouteImport } from './routes/settings/integrations/gitlab'
+import { Route as SettingsIntegrationsLocalGitRouteImport } from './routes/settings/integrations/local-git'
+import { Route as SettingsNotificationsIndexRouteImport } from './routes/settings/notifications/index'
+import { Route as SettingsNotificationsChannelIdRouteImport } from './routes/settings/notifications/$channelId'
+import { Route as SettingsNotificationsNewRouteImport } from './routes/settings/notifications/new'
+import { Route as ProjectsProjectIdPipelinesPipelineIdRouteRouteImport } from './routes/projects/$projectId/pipelines/$pipelineId/route'
 import { Route as ProjectsProjectIdPipelinesNewRouteImport } from './routes/projects/$projectId/pipelines/new'
-import { Route as ProjectsProjectIdPipelinesPipelineIdRouteImport } from './routes/projects/$projectId/pipelines/$pipelineId'
-import { Route as ProjectsProjectIdPipelinesPipelineIdEditRouteImport } from './routes/projects/$projectId/pipelines/$pipelineId_.edit'
+import { Route as ProjectsProjectIdPipelinesPipelineIdIndexRouteImport } from './routes/projects/$projectId/pipelines/$pipelineId/index'
+import { Route as ProjectsProjectIdPipelinesPipelineIdEditRouteImport } from './routes/projects/$projectId/pipelines/$pipelineId/edit'
 
-const SetupRoute = SetupRouteImport.update({
-  id: '/setup',
-  path: '/setup',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BuildsRouteRoute = BuildsRouteRouteImport.update({
+  id: '/builds',
+  path: '/builds',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -52,99 +65,19 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const ProjectsRouteRoute = ProjectsRouteRouteImport.update({
+  id: '/projects',
+  path: '/projects',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SetupIndexRoute = SetupIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => SetupRoute,
-} as any).lazy(() => import('./routes/setup/index.lazy').then((d) => d.Route))
-const ProjectsIndexRoute = ProjectsIndexRouteImport.update({
-  id: '/projects/',
-  path: '/projects/',
+const SettingsRouteRoute = SettingsRouteRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const BuildsIndexRoute = BuildsIndexRouteImport.update({
-  id: '/builds/',
-  path: '/builds/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SetupTrustedProxyRoute = SetupTrustedProxyRouteImport.update({
-  id: '/trusted-proxy',
-  path: '/trusted-proxy',
-  getParentRoute: () => SetupRoute,
-} as any).lazy(() =>
-  import('./routes/setup/trusted-proxy.lazy').then((d) => d.Route),
-)
-const SetupOwnerRoute = SetupOwnerRouteImport.update({
-  id: '/owner',
-  path: '/owner',
-  getParentRoute: () => SetupRoute,
-} as any).lazy(() => import('./routes/setup/owner.lazy').then((d) => d.Route))
-const SetupOidcRoute = SetupOidcRouteImport.update({
-  id: '/oidc',
-  path: '/oidc',
-  getParentRoute: () => SetupRoute,
-} as any).lazy(() => import('./routes/setup/oidc.lazy').then((d) => d.Route))
-const SetupModeRoute = SetupModeRouteImport.update({
-  id: '/mode',
-  path: '/mode',
-  getParentRoute: () => SetupRoute,
-} as any).lazy(() => import('./routes/setup/mode.lazy').then((d) => d.Route))
-const SetupCompleteRoute = SetupCompleteRouteImport.update({
-  id: '/complete',
-  path: '/complete',
-  getParentRoute: () => SetupRoute,
-} as any)
-const SettingsUsersRoute = SettingsUsersRouteImport.update({
-  id: '/settings/users',
-  path: '/settings/users',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsRunnersRoute = SettingsRunnersRouteImport.update({
-  id: '/settings/runners',
-  path: '/settings/runners',
-  getParentRoute: () => rootRouteImport,
-} as any).lazy(() =>
-  import('./routes/settings/runners.lazy').then((d) => d.Route),
-)
-const SettingsRetentionRoute = SettingsRetentionRouteImport.update({
-  id: '/settings/retention',
-  path: '/settings/retention',
-  getParentRoute: () => rootRouteImport,
-} as any).lazy(() =>
-  import('./routes/settings/retention.lazy').then((d) => d.Route),
-)
-const SettingsPreferencesRoute = SettingsPreferencesRouteImport.update({
-  id: '/settings/preferences',
-  path: '/settings/preferences',
-  getParentRoute: () => rootRouteImport,
-} as any).lazy(() =>
-  import('./routes/settings/preferences.lazy').then((d) => d.Route),
-)
-const SettingsAuditLogRoute = SettingsAuditLogRouteImport.update({
-  id: '/settings/audit-log',
-  path: '/settings/audit-log',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsArtifactsRoute = SettingsArtifactsRouteImport.update({
-  id: '/settings/artifacts',
-  path: '/settings/artifacts',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsApiTokensRoute = SettingsApiTokensRouteImport.update({
-  id: '/settings/api-tokens',
-  path: '/settings/api-tokens',
-  getParentRoute: () => rootRouteImport,
-} as any).lazy(() =>
-  import('./routes/settings/api-tokens.lazy').then((d) => d.Route),
-)
-const BuildsBuildIdRoute = BuildsBuildIdRouteImport.update({
-  id: '/builds/$buildId',
-  path: '/builds/$buildId',
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthCallbackRoute = AuthCallbackRouteImport.update({
@@ -152,88 +85,212 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
   path: '/auth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SettingsNotificationsIndexRoute =
-  SettingsNotificationsIndexRouteImport.update({
-    id: '/settings/notifications/',
-    path: '/settings/notifications/',
-    getParentRoute: () => rootRouteImport,
+const BuildsIndexRoute = BuildsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => BuildsRouteRoute,
+} as any)
+const BuildsBuildIdRoute = BuildsBuildIdRouteImport.update({
+  id: '/$buildId',
+  path: '/$buildId',
+  getParentRoute: () => BuildsRouteRoute,
+} as any)
+const ProjectsIndexRoute = ProjectsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ProjectsRouteRoute,
+} as any)
+const ProjectsProjectIdRouteRoute = ProjectsProjectIdRouteRouteImport.update({
+  id: '/$projectId',
+  path: '/$projectId',
+  getParentRoute: () => ProjectsRouteRoute,
+} as any)
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsApiTokensRoute = SettingsApiTokensRouteImport.update({
+  id: '/api-tokens',
+  path: '/api-tokens',
+  getParentRoute: () => SettingsRouteRoute,
+} as any).lazy(() =>
+  import('./routes/settings/api-tokens.lazy').then((d) => d.Route),
+)
+const SettingsArtifactsRoute = SettingsArtifactsRouteImport.update({
+  id: '/artifacts',
+  path: '/artifacts',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsAuditLogRoute = SettingsAuditLogRouteImport.update({
+  id: '/audit-log',
+  path: '/audit-log',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsIntegrationsRouteRoute =
+  SettingsIntegrationsRouteRouteImport.update({
+    id: '/integrations',
+    path: '/integrations',
+    getParentRoute: () => SettingsRouteRoute,
   } as any)
+const SettingsNotificationsRouteRoute =
+  SettingsNotificationsRouteRouteImport.update({
+    id: '/notifications',
+    path: '/notifications',
+    getParentRoute: () => SettingsRouteRoute,
+  } as any)
+const SettingsPreferencesRoute = SettingsPreferencesRouteImport.update({
+  id: '/preferences',
+  path: '/preferences',
+  getParentRoute: () => SettingsRouteRoute,
+} as any).lazy(() =>
+  import('./routes/settings/preferences.lazy').then((d) => d.Route),
+)
+const SettingsRetentionRoute = SettingsRetentionRouteImport.update({
+  id: '/retention',
+  path: '/retention',
+  getParentRoute: () => SettingsRouteRoute,
+} as any).lazy(() =>
+  import('./routes/settings/retention.lazy').then((d) => d.Route),
+)
+const SettingsRunnersRoute = SettingsRunnersRouteImport.update({
+  id: '/runners',
+  path: '/runners',
+  getParentRoute: () => SettingsRouteRoute,
+} as any).lazy(() =>
+  import('./routes/settings/runners.lazy').then((d) => d.Route),
+)
+const SettingsUsersRoute = SettingsUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SetupIndexRoute = SetupIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SetupRoute,
+} as any).lazy(() => import('./routes/setup/index.lazy').then((d) => d.Route))
+const SetupCompleteRoute = SetupCompleteRouteImport.update({
+  id: '/complete',
+  path: '/complete',
+  getParentRoute: () => SetupRoute,
+} as any)
+const SetupModeRoute = SetupModeRouteImport.update({
+  id: '/mode',
+  path: '/mode',
+  getParentRoute: () => SetupRoute,
+} as any).lazy(() => import('./routes/setup/mode.lazy').then((d) => d.Route))
+const SetupOidcRoute = SetupOidcRouteImport.update({
+  id: '/oidc',
+  path: '/oidc',
+  getParentRoute: () => SetupRoute,
+} as any).lazy(() => import('./routes/setup/oidc.lazy').then((d) => d.Route))
+const SetupOwnerRoute = SetupOwnerRouteImport.update({
+  id: '/owner',
+  path: '/owner',
+  getParentRoute: () => SetupRoute,
+} as any).lazy(() => import('./routes/setup/owner.lazy').then((d) => d.Route))
+const SetupTrustedProxyRoute = SetupTrustedProxyRouteImport.update({
+  id: '/trusted-proxy',
+  path: '/trusted-proxy',
+  getParentRoute: () => SetupRoute,
+} as any).lazy(() =>
+  import('./routes/setup/trusted-proxy.lazy').then((d) => d.Route),
+)
+const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ProjectsProjectIdRouteRoute,
+} as any)
 const SettingsIntegrationsIndexRoute =
   SettingsIntegrationsIndexRouteImport.update({
-    id: '/settings/integrations/',
-    path: '/settings/integrations/',
-    getParentRoute: () => rootRouteImport,
+    id: '/',
+    path: '/',
+    getParentRoute: () => SettingsIntegrationsRouteRoute,
   } as any)
-const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
-  id: '/projects/$projectId/',
-  path: '/projects/$projectId/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsNotificationsNewRoute =
-  SettingsNotificationsNewRouteImport.update({
-    id: '/settings/notifications/new',
-    path: '/settings/notifications/new',
-    getParentRoute: () => rootRouteImport,
-  } as any).lazy(() =>
-    import('./routes/settings/notifications/new.lazy').then((d) => d.Route),
-  )
+const SettingsIntegrationsIntegrationIdRoute =
+  SettingsIntegrationsIntegrationIdRouteImport.update({
+    id: '/$integrationId',
+    path: '/$integrationId',
+    getParentRoute: () => SettingsIntegrationsRouteRoute,
+  } as any)
+const SettingsIntegrationsGithubRoute =
+  SettingsIntegrationsGithubRouteImport.update({
+    id: '/github',
+    path: '/github',
+    getParentRoute: () => SettingsIntegrationsRouteRoute,
+  } as any)
+const SettingsIntegrationsGitlabRoute =
+  SettingsIntegrationsGitlabRouteImport.update({
+    id: '/gitlab',
+    path: '/gitlab',
+    getParentRoute: () => SettingsIntegrationsRouteRoute,
+  } as any)
+const SettingsIntegrationsLocalGitRoute =
+  SettingsIntegrationsLocalGitRouteImport.update({
+    id: '/local-git',
+    path: '/local-git',
+    getParentRoute: () => SettingsIntegrationsRouteRoute,
+  } as any)
+const SettingsNotificationsIndexRoute =
+  SettingsNotificationsIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => SettingsNotificationsRouteRoute,
+  } as any)
 const SettingsNotificationsChannelIdRoute =
   SettingsNotificationsChannelIdRouteImport.update({
-    id: '/settings/notifications/$channelId',
-    path: '/settings/notifications/$channelId',
-    getParentRoute: () => rootRouteImport,
+    id: '/$channelId',
+    path: '/$channelId',
+    getParentRoute: () => SettingsNotificationsRouteRoute,
   } as any).lazy(() =>
     import('./routes/settings/notifications/$channelId.lazy').then(
       (d) => d.Route,
     ),
   )
-const SettingsIntegrationsLocalGitRoute =
-  SettingsIntegrationsLocalGitRouteImport.update({
-    id: '/settings/integrations/local-git',
-    path: '/settings/integrations/local-git',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const SettingsIntegrationsGitlabRoute =
-  SettingsIntegrationsGitlabRouteImport.update({
-    id: '/settings/integrations/gitlab',
-    path: '/settings/integrations/gitlab',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const SettingsIntegrationsGithubRoute =
-  SettingsIntegrationsGithubRouteImport.update({
-    id: '/settings/integrations/github',
-    path: '/settings/integrations/github',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const SettingsIntegrationsIntegrationIdRoute =
-  SettingsIntegrationsIntegrationIdRouteImport.update({
-    id: '/settings/integrations/$integrationId',
-    path: '/settings/integrations/$integrationId',
-    getParentRoute: () => rootRouteImport,
+const SettingsNotificationsNewRoute =
+  SettingsNotificationsNewRouteImport.update({
+    id: '/new',
+    path: '/new',
+    getParentRoute: () => SettingsNotificationsRouteRoute,
+  } as any).lazy(() =>
+    import('./routes/settings/notifications/new.lazy').then((d) => d.Route),
+  )
+const ProjectsProjectIdPipelinesPipelineIdRouteRoute =
+  ProjectsProjectIdPipelinesPipelineIdRouteRouteImport.update({
+    id: '/pipelines/$pipelineId',
+    path: '/pipelines/$pipelineId',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
 const ProjectsProjectIdPipelinesNewRoute =
   ProjectsProjectIdPipelinesNewRouteImport.update({
-    id: '/projects/$projectId/pipelines/new',
-    path: '/projects/$projectId/pipelines/new',
-    getParentRoute: () => rootRouteImport,
+    id: '/pipelines/new',
+    path: '/pipelines/new',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const ProjectsProjectIdPipelinesPipelineIdRoute =
-  ProjectsProjectIdPipelinesPipelineIdRouteImport.update({
-    id: '/projects/$projectId/pipelines/$pipelineId',
-    path: '/projects/$projectId/pipelines/$pipelineId',
-    getParentRoute: () => rootRouteImport,
+const ProjectsProjectIdPipelinesPipelineIdIndexRoute =
+  ProjectsProjectIdPipelinesPipelineIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => ProjectsProjectIdPipelinesPipelineIdRouteRoute,
   } as any)
 const ProjectsProjectIdPipelinesPipelineIdEditRoute =
   ProjectsProjectIdPipelinesPipelineIdEditRouteImport.update({
-    id: '/projects/$projectId/pipelines/$pipelineId_/edit',
-    path: '/projects/$projectId/pipelines/$pipelineId/edit',
-    getParentRoute: () => rootRouteImport,
+    id: '/edit',
+    path: '/edit',
+    getParentRoute: () => ProjectsProjectIdPipelinesPipelineIdRouteRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/builds': typeof BuildsRouteRouteWithChildren
+  '/projects': typeof ProjectsRouteRouteWithChildren
+  '/settings': typeof SettingsRouteRouteWithChildren
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
+  '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
+  '/settings/integrations': typeof SettingsIntegrationsRouteRouteWithChildren
+  '/settings/notifications': typeof SettingsNotificationsRouteRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
   '/settings/api-tokens': typeof SettingsApiTokensRoute
@@ -250,6 +307,7 @@ export interface FileRoutesByFullPath {
   '/setup/trusted-proxy': typeof SetupTrustedProxyRoute
   '/builds/': typeof BuildsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
+  '/settings/': typeof SettingsIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/settings/integrations/$integrationId': typeof SettingsIntegrationsIntegrationIdRoute
   '/settings/integrations/github': typeof SettingsIntegrationsGithubRoute
@@ -260,9 +318,10 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations/': typeof SettingsIntegrationsIndexRoute
   '/settings/notifications/': typeof SettingsNotificationsIndexRoute
-  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
+  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRouteRouteWithChildren
   '/projects/$projectId/pipelines/new': typeof ProjectsProjectIdPipelinesNewRoute
   '/projects/$projectId/pipelines/$pipelineId/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
+  '/projects/$projectId/pipelines/$pipelineId/': typeof ProjectsProjectIdPipelinesPipelineIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -283,6 +342,7 @@ export interface FileRoutesByTo {
   '/setup/trusted-proxy': typeof SetupTrustedProxyRoute
   '/builds': typeof BuildsIndexRoute
   '/projects': typeof ProjectsIndexRoute
+  '/settings': typeof SettingsIndexRoute
   '/setup': typeof SetupIndexRoute
   '/settings/integrations/$integrationId': typeof SettingsIntegrationsIntegrationIdRoute
   '/settings/integrations/github': typeof SettingsIntegrationsGithubRoute
@@ -293,15 +353,21 @@ export interface FileRoutesByTo {
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations': typeof SettingsIntegrationsIndexRoute
   '/settings/notifications': typeof SettingsNotificationsIndexRoute
-  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
   '/projects/$projectId/pipelines/new': typeof ProjectsProjectIdPipelinesNewRoute
   '/projects/$projectId/pipelines/$pipelineId/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
+  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/builds': typeof BuildsRouteRouteWithChildren
+  '/projects': typeof ProjectsRouteRouteWithChildren
+  '/settings': typeof SettingsRouteRouteWithChildren
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
+  '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
+  '/settings/integrations': typeof SettingsIntegrationsRouteRouteWithChildren
+  '/settings/notifications': typeof SettingsNotificationsRouteRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
   '/settings/api-tokens': typeof SettingsApiTokensRoute
@@ -318,6 +384,7 @@ export interface FileRoutesById {
   '/setup/trusted-proxy': typeof SetupTrustedProxyRoute
   '/builds/': typeof BuildsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
+  '/settings/': typeof SettingsIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/settings/integrations/$integrationId': typeof SettingsIntegrationsIntegrationIdRoute
   '/settings/integrations/github': typeof SettingsIntegrationsGithubRoute
@@ -328,16 +395,23 @@ export interface FileRoutesById {
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/settings/integrations/': typeof SettingsIntegrationsIndexRoute
   '/settings/notifications/': typeof SettingsNotificationsIndexRoute
-  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRoute
+  '/projects/$projectId/pipelines/$pipelineId': typeof ProjectsProjectIdPipelinesPipelineIdRouteRouteWithChildren
   '/projects/$projectId/pipelines/new': typeof ProjectsProjectIdPipelinesNewRoute
-  '/projects/$projectId/pipelines/$pipelineId_/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
+  '/projects/$projectId/pipelines/$pipelineId/edit': typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
+  '/projects/$projectId/pipelines/$pipelineId/': typeof ProjectsProjectIdPipelinesPipelineIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/builds'
+    | '/projects'
+    | '/settings'
     | '/login'
     | '/setup'
+    | '/projects/$projectId'
+    | '/settings/integrations'
+    | '/settings/notifications'
     | '/auth/callback'
     | '/builds/$buildId'
     | '/settings/api-tokens'
@@ -354,6 +428,7 @@ export interface FileRouteTypes {
     | '/setup/trusted-proxy'
     | '/builds/'
     | '/projects/'
+    | '/settings/'
     | '/setup/'
     | '/settings/integrations/$integrationId'
     | '/settings/integrations/github'
@@ -367,6 +442,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/pipelines/$pipelineId'
     | '/projects/$projectId/pipelines/new'
     | '/projects/$projectId/pipelines/$pipelineId/edit'
+    | '/projects/$projectId/pipelines/$pipelineId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -387,6 +463,7 @@ export interface FileRouteTypes {
     | '/setup/trusted-proxy'
     | '/builds'
     | '/projects'
+    | '/settings'
     | '/setup'
     | '/settings/integrations/$integrationId'
     | '/settings/integrations/github'
@@ -397,14 +474,20 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/settings/integrations'
     | '/settings/notifications'
-    | '/projects/$projectId/pipelines/$pipelineId'
     | '/projects/$projectId/pipelines/new'
     | '/projects/$projectId/pipelines/$pipelineId/edit'
+    | '/projects/$projectId/pipelines/$pipelineId'
   id:
     | '__root__'
     | '/'
+    | '/builds'
+    | '/projects'
+    | '/settings'
     | '/login'
     | '/setup'
+    | '/projects/$projectId'
+    | '/settings/integrations'
+    | '/settings/notifications'
     | '/auth/callback'
     | '/builds/$buildId'
     | '/settings/api-tokens'
@@ -421,6 +504,7 @@ export interface FileRouteTypes {
     | '/setup/trusted-proxy'
     | '/builds/'
     | '/projects/'
+    | '/settings/'
     | '/setup/'
     | '/settings/integrations/$integrationId'
     | '/settings/integrations/github'
@@ -433,45 +517,34 @@ export interface FileRouteTypes {
     | '/settings/notifications/'
     | '/projects/$projectId/pipelines/$pipelineId'
     | '/projects/$projectId/pipelines/new'
-    | '/projects/$projectId/pipelines/$pipelineId_/edit'
+    | '/projects/$projectId/pipelines/$pipelineId/edit'
+    | '/projects/$projectId/pipelines/$pipelineId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  BuildsRouteRoute: typeof BuildsRouteRouteWithChildren
+  ProjectsRouteRoute: typeof ProjectsRouteRouteWithChildren
+  SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRouteWithChildren
   AuthCallbackRoute: typeof AuthCallbackRoute
-  BuildsBuildIdRoute: typeof BuildsBuildIdRoute
-  SettingsApiTokensRoute: typeof SettingsApiTokensRoute
-  SettingsArtifactsRoute: typeof SettingsArtifactsRoute
-  SettingsAuditLogRoute: typeof SettingsAuditLogRoute
-  SettingsPreferencesRoute: typeof SettingsPreferencesRoute
-  SettingsRetentionRoute: typeof SettingsRetentionRoute
-  SettingsRunnersRoute: typeof SettingsRunnersRoute
-  SettingsUsersRoute: typeof SettingsUsersRoute
-  BuildsIndexRoute: typeof BuildsIndexRoute
-  ProjectsIndexRoute: typeof ProjectsIndexRoute
-  SettingsIntegrationsIntegrationIdRoute: typeof SettingsIntegrationsIntegrationIdRoute
-  SettingsIntegrationsGithubRoute: typeof SettingsIntegrationsGithubRoute
-  SettingsIntegrationsGitlabRoute: typeof SettingsIntegrationsGitlabRoute
-  SettingsIntegrationsLocalGitRoute: typeof SettingsIntegrationsLocalGitRoute
-  SettingsNotificationsChannelIdRoute: typeof SettingsNotificationsChannelIdRoute
-  SettingsNotificationsNewRoute: typeof SettingsNotificationsNewRoute
-  ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
-  SettingsIntegrationsIndexRoute: typeof SettingsIntegrationsIndexRoute
-  SettingsNotificationsIndexRoute: typeof SettingsNotificationsIndexRoute
-  ProjectsProjectIdPipelinesPipelineIdRoute: typeof ProjectsProjectIdPipelinesPipelineIdRoute
-  ProjectsProjectIdPipelinesNewRoute: typeof ProjectsProjectIdPipelinesNewRoute
-  ProjectsProjectIdPipelinesPipelineIdEditRoute: typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/setup': {
-      id: '/setup'
-      path: '/setup'
-      fullPath: '/setup'
-      preLoaderRoute: typeof SetupRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/builds': {
+      id: '/builds'
+      path: '/builds'
+      fullPath: '/builds'
+      preLoaderRoute: typeof BuildsRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -481,123 +554,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/setup/': {
-      id: '/setup/'
-      path: '/'
-      fullPath: '/setup/'
-      preLoaderRoute: typeof SetupIndexRouteImport
-      parentRoute: typeof SetupRoute
-    }
-    '/projects/': {
-      id: '/projects/'
+    '/projects': {
+      id: '/projects'
       path: '/projects'
-      fullPath: '/projects/'
-      preLoaderRoute: typeof ProjectsIndexRouteImport
+      fullPath: '/projects'
+      preLoaderRoute: typeof ProjectsRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/builds/': {
-      id: '/builds/'
-      path: '/builds'
-      fullPath: '/builds/'
-      preLoaderRoute: typeof BuildsIndexRouteImport
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/setup/trusted-proxy': {
-      id: '/setup/trusted-proxy'
-      path: '/trusted-proxy'
-      fullPath: '/setup/trusted-proxy'
-      preLoaderRoute: typeof SetupTrustedProxyRouteImport
-      parentRoute: typeof SetupRoute
-    }
-    '/setup/owner': {
-      id: '/setup/owner'
-      path: '/owner'
-      fullPath: '/setup/owner'
-      preLoaderRoute: typeof SetupOwnerRouteImport
-      parentRoute: typeof SetupRoute
-    }
-    '/setup/oidc': {
-      id: '/setup/oidc'
-      path: '/oidc'
-      fullPath: '/setup/oidc'
-      preLoaderRoute: typeof SetupOidcRouteImport
-      parentRoute: typeof SetupRoute
-    }
-    '/setup/mode': {
-      id: '/setup/mode'
-      path: '/mode'
-      fullPath: '/setup/mode'
-      preLoaderRoute: typeof SetupModeRouteImport
-      parentRoute: typeof SetupRoute
-    }
-    '/setup/complete': {
-      id: '/setup/complete'
-      path: '/complete'
-      fullPath: '/setup/complete'
-      preLoaderRoute: typeof SetupCompleteRouteImport
-      parentRoute: typeof SetupRoute
-    }
-    '/settings/users': {
-      id: '/settings/users'
-      path: '/settings/users'
-      fullPath: '/settings/users'
-      preLoaderRoute: typeof SettingsUsersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/runners': {
-      id: '/settings/runners'
-      path: '/settings/runners'
-      fullPath: '/settings/runners'
-      preLoaderRoute: typeof SettingsRunnersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/retention': {
-      id: '/settings/retention'
-      path: '/settings/retention'
-      fullPath: '/settings/retention'
-      preLoaderRoute: typeof SettingsRetentionRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/preferences': {
-      id: '/settings/preferences'
-      path: '/settings/preferences'
-      fullPath: '/settings/preferences'
-      preLoaderRoute: typeof SettingsPreferencesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/audit-log': {
-      id: '/settings/audit-log'
-      path: '/settings/audit-log'
-      fullPath: '/settings/audit-log'
-      preLoaderRoute: typeof SettingsAuditLogRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/artifacts': {
-      id: '/settings/artifacts'
-      path: '/settings/artifacts'
-      fullPath: '/settings/artifacts'
-      preLoaderRoute: typeof SettingsArtifactsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/api-tokens': {
-      id: '/settings/api-tokens'
-      path: '/settings/api-tokens'
-      fullPath: '/settings/api-tokens'
-      preLoaderRoute: typeof SettingsApiTokensRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/builds/$buildId': {
-      id: '/builds/$buildId'
-      path: '/builds/$buildId'
-      fullPath: '/builds/$buildId'
-      preLoaderRoute: typeof BuildsBuildIdRouteImport
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth/callback': {
@@ -607,92 +582,375 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/settings/notifications/': {
-      id: '/settings/notifications/'
-      path: '/settings/notifications'
-      fullPath: '/settings/notifications/'
-      preLoaderRoute: typeof SettingsNotificationsIndexRouteImport
-      parentRoute: typeof rootRouteImport
+    '/builds/': {
+      id: '/builds/'
+      path: '/'
+      fullPath: '/builds/'
+      preLoaderRoute: typeof BuildsIndexRouteImport
+      parentRoute: typeof BuildsRouteRoute
     }
-    '/settings/integrations/': {
-      id: '/settings/integrations/'
-      path: '/settings/integrations'
-      fullPath: '/settings/integrations/'
-      preLoaderRoute: typeof SettingsIntegrationsIndexRouteImport
-      parentRoute: typeof rootRouteImport
+    '/builds/$buildId': {
+      id: '/builds/$buildId'
+      path: '/$buildId'
+      fullPath: '/builds/$buildId'
+      preLoaderRoute: typeof BuildsBuildIdRouteImport
+      parentRoute: typeof BuildsRouteRoute
+    }
+    '/projects/': {
+      id: '/projects/'
+      path: '/'
+      fullPath: '/projects/'
+      preLoaderRoute: typeof ProjectsIndexRouteImport
+      parentRoute: typeof ProjectsRouteRoute
+    }
+    '/projects/$projectId': {
+      id: '/projects/$projectId'
+      path: '/$projectId'
+      fullPath: '/projects/$projectId'
+      preLoaderRoute: typeof ProjectsProjectIdRouteRouteImport
+      parentRoute: typeof ProjectsRouteRoute
+    }
+    '/settings/': {
+      id: '/settings/'
+      path: '/'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/api-tokens': {
+      id: '/settings/api-tokens'
+      path: '/api-tokens'
+      fullPath: '/settings/api-tokens'
+      preLoaderRoute: typeof SettingsApiTokensRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/artifacts': {
+      id: '/settings/artifacts'
+      path: '/artifacts'
+      fullPath: '/settings/artifacts'
+      preLoaderRoute: typeof SettingsArtifactsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/audit-log': {
+      id: '/settings/audit-log'
+      path: '/audit-log'
+      fullPath: '/settings/audit-log'
+      preLoaderRoute: typeof SettingsAuditLogRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/integrations': {
+      id: '/settings/integrations'
+      path: '/integrations'
+      fullPath: '/settings/integrations'
+      preLoaderRoute: typeof SettingsIntegrationsRouteRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/notifications': {
+      id: '/settings/notifications'
+      path: '/notifications'
+      fullPath: '/settings/notifications'
+      preLoaderRoute: typeof SettingsNotificationsRouteRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/preferences': {
+      id: '/settings/preferences'
+      path: '/preferences'
+      fullPath: '/settings/preferences'
+      preLoaderRoute: typeof SettingsPreferencesRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/retention': {
+      id: '/settings/retention'
+      path: '/retention'
+      fullPath: '/settings/retention'
+      preLoaderRoute: typeof SettingsRetentionRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/runners': {
+      id: '/settings/runners'
+      path: '/runners'
+      fullPath: '/settings/runners'
+      preLoaderRoute: typeof SettingsRunnersRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/users': {
+      id: '/settings/users'
+      path: '/users'
+      fullPath: '/settings/users'
+      preLoaderRoute: typeof SettingsUsersRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/setup/': {
+      id: '/setup/'
+      path: '/'
+      fullPath: '/setup/'
+      preLoaderRoute: typeof SetupIndexRouteImport
+      parentRoute: typeof SetupRoute
+    }
+    '/setup/complete': {
+      id: '/setup/complete'
+      path: '/complete'
+      fullPath: '/setup/complete'
+      preLoaderRoute: typeof SetupCompleteRouteImport
+      parentRoute: typeof SetupRoute
+    }
+    '/setup/mode': {
+      id: '/setup/mode'
+      path: '/mode'
+      fullPath: '/setup/mode'
+      preLoaderRoute: typeof SetupModeRouteImport
+      parentRoute: typeof SetupRoute
+    }
+    '/setup/oidc': {
+      id: '/setup/oidc'
+      path: '/oidc'
+      fullPath: '/setup/oidc'
+      preLoaderRoute: typeof SetupOidcRouteImport
+      parentRoute: typeof SetupRoute
+    }
+    '/setup/owner': {
+      id: '/setup/owner'
+      path: '/owner'
+      fullPath: '/setup/owner'
+      preLoaderRoute: typeof SetupOwnerRouteImport
+      parentRoute: typeof SetupRoute
+    }
+    '/setup/trusted-proxy': {
+      id: '/setup/trusted-proxy'
+      path: '/trusted-proxy'
+      fullPath: '/setup/trusted-proxy'
+      preLoaderRoute: typeof SetupTrustedProxyRouteImport
+      parentRoute: typeof SetupRoute
     }
     '/projects/$projectId/': {
       id: '/projects/$projectId/'
-      path: '/projects/$projectId'
+      path: '/'
       fullPath: '/projects/$projectId/'
       preLoaderRoute: typeof ProjectsProjectIdIndexRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/settings/notifications/new': {
-      id: '/settings/notifications/new'
-      path: '/settings/notifications/new'
-      fullPath: '/settings/notifications/new'
-      preLoaderRoute: typeof SettingsNotificationsNewRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/notifications/$channelId': {
-      id: '/settings/notifications/$channelId'
-      path: '/settings/notifications/$channelId'
-      fullPath: '/settings/notifications/$channelId'
-      preLoaderRoute: typeof SettingsNotificationsChannelIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/integrations/local-git': {
-      id: '/settings/integrations/local-git'
-      path: '/settings/integrations/local-git'
-      fullPath: '/settings/integrations/local-git'
-      preLoaderRoute: typeof SettingsIntegrationsLocalGitRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/integrations/gitlab': {
-      id: '/settings/integrations/gitlab'
-      path: '/settings/integrations/gitlab'
-      fullPath: '/settings/integrations/gitlab'
-      preLoaderRoute: typeof SettingsIntegrationsGitlabRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/integrations/github': {
-      id: '/settings/integrations/github'
-      path: '/settings/integrations/github'
-      fullPath: '/settings/integrations/github'
-      preLoaderRoute: typeof SettingsIntegrationsGithubRouteImport
-      parentRoute: typeof rootRouteImport
+    '/settings/integrations/': {
+      id: '/settings/integrations/'
+      path: '/'
+      fullPath: '/settings/integrations/'
+      preLoaderRoute: typeof SettingsIntegrationsIndexRouteImport
+      parentRoute: typeof SettingsIntegrationsRouteRoute
     }
     '/settings/integrations/$integrationId': {
       id: '/settings/integrations/$integrationId'
-      path: '/settings/integrations/$integrationId'
+      path: '/$integrationId'
       fullPath: '/settings/integrations/$integrationId'
       preLoaderRoute: typeof SettingsIntegrationsIntegrationIdRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof SettingsIntegrationsRouteRoute
     }
-    '/projects/$projectId/pipelines/new': {
-      id: '/projects/$projectId/pipelines/new'
-      path: '/projects/$projectId/pipelines/new'
-      fullPath: '/projects/$projectId/pipelines/new'
-      preLoaderRoute: typeof ProjectsProjectIdPipelinesNewRouteImport
-      parentRoute: typeof rootRouteImport
+    '/settings/integrations/github': {
+      id: '/settings/integrations/github'
+      path: '/github'
+      fullPath: '/settings/integrations/github'
+      preLoaderRoute: typeof SettingsIntegrationsGithubRouteImport
+      parentRoute: typeof SettingsIntegrationsRouteRoute
+    }
+    '/settings/integrations/gitlab': {
+      id: '/settings/integrations/gitlab'
+      path: '/gitlab'
+      fullPath: '/settings/integrations/gitlab'
+      preLoaderRoute: typeof SettingsIntegrationsGitlabRouteImport
+      parentRoute: typeof SettingsIntegrationsRouteRoute
+    }
+    '/settings/integrations/local-git': {
+      id: '/settings/integrations/local-git'
+      path: '/local-git'
+      fullPath: '/settings/integrations/local-git'
+      preLoaderRoute: typeof SettingsIntegrationsLocalGitRouteImport
+      parentRoute: typeof SettingsIntegrationsRouteRoute
+    }
+    '/settings/notifications/': {
+      id: '/settings/notifications/'
+      path: '/'
+      fullPath: '/settings/notifications/'
+      preLoaderRoute: typeof SettingsNotificationsIndexRouteImport
+      parentRoute: typeof SettingsNotificationsRouteRoute
+    }
+    '/settings/notifications/$channelId': {
+      id: '/settings/notifications/$channelId'
+      path: '/$channelId'
+      fullPath: '/settings/notifications/$channelId'
+      preLoaderRoute: typeof SettingsNotificationsChannelIdRouteImport
+      parentRoute: typeof SettingsNotificationsRouteRoute
+    }
+    '/settings/notifications/new': {
+      id: '/settings/notifications/new'
+      path: '/new'
+      fullPath: '/settings/notifications/new'
+      preLoaderRoute: typeof SettingsNotificationsNewRouteImport
+      parentRoute: typeof SettingsNotificationsRouteRoute
     }
     '/projects/$projectId/pipelines/$pipelineId': {
       id: '/projects/$projectId/pipelines/$pipelineId'
-      path: '/projects/$projectId/pipelines/$pipelineId'
+      path: '/pipelines/$pipelineId'
       fullPath: '/projects/$projectId/pipelines/$pipelineId'
-      preLoaderRoute: typeof ProjectsProjectIdPipelinesPipelineIdRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof ProjectsProjectIdPipelinesPipelineIdRouteRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/pipelines/$pipelineId_/edit': {
-      id: '/projects/$projectId/pipelines/$pipelineId_/edit'
-      path: '/projects/$projectId/pipelines/$pipelineId/edit'
+    '/projects/$projectId/pipelines/new': {
+      id: '/projects/$projectId/pipelines/new'
+      path: '/pipelines/new'
+      fullPath: '/projects/$projectId/pipelines/new'
+      preLoaderRoute: typeof ProjectsProjectIdPipelinesNewRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/pipelines/$pipelineId/': {
+      id: '/projects/$projectId/pipelines/$pipelineId/'
+      path: '/'
+      fullPath: '/projects/$projectId/pipelines/$pipelineId/'
+      preLoaderRoute: typeof ProjectsProjectIdPipelinesPipelineIdIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdPipelinesPipelineIdRouteRoute
+    }
+    '/projects/$projectId/pipelines/$pipelineId/edit': {
+      id: '/projects/$projectId/pipelines/$pipelineId/edit'
+      path: '/edit'
       fullPath: '/projects/$projectId/pipelines/$pipelineId/edit'
       preLoaderRoute: typeof ProjectsProjectIdPipelinesPipelineIdEditRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof ProjectsProjectIdPipelinesPipelineIdRouteRoute
     }
   }
 }
+
+interface BuildsRouteRouteChildren {
+  BuildsBuildIdRoute: typeof BuildsBuildIdRoute
+  BuildsIndexRoute: typeof BuildsIndexRoute
+}
+
+const BuildsRouteRouteChildren: BuildsRouteRouteChildren = {
+  BuildsBuildIdRoute: BuildsBuildIdRoute,
+  BuildsIndexRoute: BuildsIndexRoute,
+}
+
+const BuildsRouteRouteWithChildren = BuildsRouteRoute._addFileChildren(
+  BuildsRouteRouteChildren,
+)
+
+interface ProjectsProjectIdPipelinesPipelineIdRouteRouteChildren {
+  ProjectsProjectIdPipelinesPipelineIdEditRoute: typeof ProjectsProjectIdPipelinesPipelineIdEditRoute
+  ProjectsProjectIdPipelinesPipelineIdIndexRoute: typeof ProjectsProjectIdPipelinesPipelineIdIndexRoute
+}
+
+const ProjectsProjectIdPipelinesPipelineIdRouteRouteChildren: ProjectsProjectIdPipelinesPipelineIdRouteRouteChildren =
+  {
+    ProjectsProjectIdPipelinesPipelineIdEditRoute:
+      ProjectsProjectIdPipelinesPipelineIdEditRoute,
+    ProjectsProjectIdPipelinesPipelineIdIndexRoute:
+      ProjectsProjectIdPipelinesPipelineIdIndexRoute,
+  }
+
+const ProjectsProjectIdPipelinesPipelineIdRouteRouteWithChildren =
+  ProjectsProjectIdPipelinesPipelineIdRouteRoute._addFileChildren(
+    ProjectsProjectIdPipelinesPipelineIdRouteRouteChildren,
+  )
+
+interface ProjectsProjectIdRouteRouteChildren {
+  ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
+  ProjectsProjectIdPipelinesPipelineIdRouteRoute: typeof ProjectsProjectIdPipelinesPipelineIdRouteRouteWithChildren
+  ProjectsProjectIdPipelinesNewRoute: typeof ProjectsProjectIdPipelinesNewRoute
+}
+
+const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
+  {
+    ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
+    ProjectsProjectIdPipelinesPipelineIdRouteRoute:
+      ProjectsProjectIdPipelinesPipelineIdRouteRouteWithChildren,
+    ProjectsProjectIdPipelinesNewRoute: ProjectsProjectIdPipelinesNewRoute,
+  }
+
+const ProjectsProjectIdRouteRouteWithChildren =
+  ProjectsProjectIdRouteRoute._addFileChildren(
+    ProjectsProjectIdRouteRouteChildren,
+  )
+
+interface ProjectsRouteRouteChildren {
+  ProjectsProjectIdRouteRoute: typeof ProjectsProjectIdRouteRouteWithChildren
+  ProjectsIndexRoute: typeof ProjectsIndexRoute
+}
+
+const ProjectsRouteRouteChildren: ProjectsRouteRouteChildren = {
+  ProjectsProjectIdRouteRoute: ProjectsProjectIdRouteRouteWithChildren,
+  ProjectsIndexRoute: ProjectsIndexRoute,
+}
+
+const ProjectsRouteRouteWithChildren = ProjectsRouteRoute._addFileChildren(
+  ProjectsRouteRouteChildren,
+)
+
+interface SettingsIntegrationsRouteRouteChildren {
+  SettingsIntegrationsIntegrationIdRoute: typeof SettingsIntegrationsIntegrationIdRoute
+  SettingsIntegrationsGithubRoute: typeof SettingsIntegrationsGithubRoute
+  SettingsIntegrationsGitlabRoute: typeof SettingsIntegrationsGitlabRoute
+  SettingsIntegrationsLocalGitRoute: typeof SettingsIntegrationsLocalGitRoute
+  SettingsIntegrationsIndexRoute: typeof SettingsIntegrationsIndexRoute
+}
+
+const SettingsIntegrationsRouteRouteChildren: SettingsIntegrationsRouteRouteChildren =
+  {
+    SettingsIntegrationsIntegrationIdRoute:
+      SettingsIntegrationsIntegrationIdRoute,
+    SettingsIntegrationsGithubRoute: SettingsIntegrationsGithubRoute,
+    SettingsIntegrationsGitlabRoute: SettingsIntegrationsGitlabRoute,
+    SettingsIntegrationsLocalGitRoute: SettingsIntegrationsLocalGitRoute,
+    SettingsIntegrationsIndexRoute: SettingsIntegrationsIndexRoute,
+  }
+
+const SettingsIntegrationsRouteRouteWithChildren =
+  SettingsIntegrationsRouteRoute._addFileChildren(
+    SettingsIntegrationsRouteRouteChildren,
+  )
+
+interface SettingsNotificationsRouteRouteChildren {
+  SettingsNotificationsChannelIdRoute: typeof SettingsNotificationsChannelIdRoute
+  SettingsNotificationsNewRoute: typeof SettingsNotificationsNewRoute
+  SettingsNotificationsIndexRoute: typeof SettingsNotificationsIndexRoute
+}
+
+const SettingsNotificationsRouteRouteChildren: SettingsNotificationsRouteRouteChildren =
+  {
+    SettingsNotificationsChannelIdRoute: SettingsNotificationsChannelIdRoute,
+    SettingsNotificationsNewRoute: SettingsNotificationsNewRoute,
+    SettingsNotificationsIndexRoute: SettingsNotificationsIndexRoute,
+  }
+
+const SettingsNotificationsRouteRouteWithChildren =
+  SettingsNotificationsRouteRoute._addFileChildren(
+    SettingsNotificationsRouteRouteChildren,
+  )
+
+interface SettingsRouteRouteChildren {
+  SettingsIntegrationsRouteRoute: typeof SettingsIntegrationsRouteRouteWithChildren
+  SettingsNotificationsRouteRoute: typeof SettingsNotificationsRouteRouteWithChildren
+  SettingsApiTokensRoute: typeof SettingsApiTokensRoute
+  SettingsArtifactsRoute: typeof SettingsArtifactsRoute
+  SettingsAuditLogRoute: typeof SettingsAuditLogRoute
+  SettingsPreferencesRoute: typeof SettingsPreferencesRoute
+  SettingsRetentionRoute: typeof SettingsRetentionRoute
+  SettingsRunnersRoute: typeof SettingsRunnersRoute
+  SettingsUsersRoute: typeof SettingsUsersRoute
+  SettingsIndexRoute: typeof SettingsIndexRoute
+}
+
+const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
+  SettingsIntegrationsRouteRoute: SettingsIntegrationsRouteRouteWithChildren,
+  SettingsNotificationsRouteRoute: SettingsNotificationsRouteRouteWithChildren,
+  SettingsApiTokensRoute: SettingsApiTokensRoute,
+  SettingsArtifactsRoute: SettingsArtifactsRoute,
+  SettingsAuditLogRoute: SettingsAuditLogRoute,
+  SettingsPreferencesRoute: SettingsPreferencesRoute,
+  SettingsRetentionRoute: SettingsRetentionRoute,
+  SettingsRunnersRoute: SettingsRunnersRoute,
+  SettingsUsersRoute: SettingsUsersRoute,
+  SettingsIndexRoute: SettingsIndexRoute,
+}
+
+const SettingsRouteRouteWithChildren = SettingsRouteRoute._addFileChildren(
+  SettingsRouteRouteChildren,
+)
 
 interface SetupRouteChildren {
   SetupCompleteRoute: typeof SetupCompleteRoute
@@ -716,34 +974,12 @@ const SetupRouteWithChildren = SetupRoute._addFileChildren(SetupRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  BuildsRouteRoute: BuildsRouteRouteWithChildren,
+  ProjectsRouteRoute: ProjectsRouteRouteWithChildren,
+  SettingsRouteRoute: SettingsRouteRouteWithChildren,
   LoginRoute: LoginRoute,
   SetupRoute: SetupRouteWithChildren,
   AuthCallbackRoute: AuthCallbackRoute,
-  BuildsBuildIdRoute: BuildsBuildIdRoute,
-  SettingsApiTokensRoute: SettingsApiTokensRoute,
-  SettingsArtifactsRoute: SettingsArtifactsRoute,
-  SettingsAuditLogRoute: SettingsAuditLogRoute,
-  SettingsPreferencesRoute: SettingsPreferencesRoute,
-  SettingsRetentionRoute: SettingsRetentionRoute,
-  SettingsRunnersRoute: SettingsRunnersRoute,
-  SettingsUsersRoute: SettingsUsersRoute,
-  BuildsIndexRoute: BuildsIndexRoute,
-  ProjectsIndexRoute: ProjectsIndexRoute,
-  SettingsIntegrationsIntegrationIdRoute:
-    SettingsIntegrationsIntegrationIdRoute,
-  SettingsIntegrationsGithubRoute: SettingsIntegrationsGithubRoute,
-  SettingsIntegrationsGitlabRoute: SettingsIntegrationsGitlabRoute,
-  SettingsIntegrationsLocalGitRoute: SettingsIntegrationsLocalGitRoute,
-  SettingsNotificationsChannelIdRoute: SettingsNotificationsChannelIdRoute,
-  SettingsNotificationsNewRoute: SettingsNotificationsNewRoute,
-  ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
-  SettingsIntegrationsIndexRoute: SettingsIntegrationsIndexRoute,
-  SettingsNotificationsIndexRoute: SettingsNotificationsIndexRoute,
-  ProjectsProjectIdPipelinesPipelineIdRoute:
-    ProjectsProjectIdPipelinesPipelineIdRoute,
-  ProjectsProjectIdPipelinesNewRoute: ProjectsProjectIdPipelinesNewRoute,
-  ProjectsProjectIdPipelinesPipelineIdEditRoute:
-    ProjectsProjectIdPipelinesPipelineIdEditRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

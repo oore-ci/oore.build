@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  queryOptions,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import type { Instance, OidcConfigureRequest } from '@/lib/types'
 import {
   completeSetup,
@@ -19,17 +24,13 @@ function requireInstance(instance: Instance | null): string {
   return resolveRequiredInstanceApiBaseUrl(instance)
 }
 
-function useSetupStatusKey() {
-  const instance = useActiveInstance()
-  return [instance?.id ?? '__none__', 'setup-status'] as const
+function setupStatusQueryKey(instanceId: string | undefined) {
+  return [instanceId ?? '__none__', 'setup-status'] as const
 }
 
-export function useSetupStatus() {
-  const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
-
-  return useQuery({
-    queryKey,
+export function setupStatusQueryOptions(instance: Instance | null) {
+  return queryOptions({
+    queryKey: setupStatusQueryKey(instance?.id),
     queryFn: ({ signal }) =>
       getSetupStatus(requireInstance(instance), { signal }),
     refetchInterval: (query) =>
@@ -38,10 +39,15 @@ export function useSetupStatus() {
   })
 }
 
+export function useSetupStatus() {
+  const instance = useActiveInstance()
+  return useQuery(setupStatusQueryOptions(instance))
+}
+
 export function useVerifyBootstrapToken() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: (token: string) =>
@@ -55,7 +61,7 @@ export function useVerifyBootstrapToken() {
 export function useConfigureOidc() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: ({
@@ -77,7 +83,7 @@ export function useConfigureOidc() {
 export function useSetupLocalOwnerCreate() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: ({
@@ -99,7 +105,7 @@ export function useSetupLocalOwnerCreate() {
 export function useSetupPreferences() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: ({
@@ -127,7 +133,7 @@ export function useSetupPreferences() {
 export function useSetupTrustedProxyConfigure() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: ({
@@ -161,7 +167,7 @@ export function useSetupTrustedProxyConfigure() {
 export function useSetupTrustedProxyClaimOwner() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: ({ sessionToken }: { sessionToken: string }) =>
@@ -190,7 +196,7 @@ export function useSetupSummary() {
 export function useCompleteSetup() {
   const queryClient = useQueryClient()
   const instance = useActiveInstance()
-  const queryKey = useSetupStatusKey()
+  const queryKey = setupStatusQueryKey(instance?.id)
 
   return useMutation({
     mutationFn: (sessionToken: string) =>

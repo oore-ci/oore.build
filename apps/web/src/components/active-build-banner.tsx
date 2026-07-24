@@ -1,62 +1,39 @@
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Loading03Icon, TimeQuarter02Icon } from '@hugeicons/core-free-icons'
 
+import RepositoryAvatar from '@/components/repository-avatar'
 import type { Build } from '@/lib/types'
-import { Badge } from '@/components/ui/badge'
-import { getStatusVariant } from '@/lib/status-variants'
-
-function elapsed(startEpoch: number): string {
-  const seconds = Math.floor(Date.now() / 1000) - startEpoch
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`
-  const hours = Math.floor(minutes / 60)
-  return `${hours}h ${minutes % 60}m`
-}
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemMedia,
+  ItemTitle,
+} from '@/components/ui/item'
 
 interface ActiveBuildBannerProps {
   build: Build
 }
 
 export default function ActiveBuildBanner({ build }: ActiveBuildBannerProps) {
-  const startTime = build.started_at ?? build.queued_at
+  const projectName = build.context?.project_name ?? build.project_id
 
   return (
-    <Link
-      to="/builds/$buildId"
-      params={{ buildId: build.id }}
-      className="group flex items-center gap-3 border border-border/60 bg-card px-4 py-2.5 text-sm transition-colors hover:border-primary/30 hover:bg-primary/5"
+    <Item
+      variant="outline"
+      size="xs"
+      render={<Link to="/builds/$buildId" params={{ buildId: build.id }} />}
     >
-      {build.status === 'running' ? (
-        <HugeiconsIcon
-          icon={Loading03Icon}
-          size={14}
-          className="shrink-0 animate-spin text-info"
+      <ItemMedia>
+        <RepositoryAvatar
+          fullName={build.context?.repository_full_name ?? projectName}
+          avatarUrl={build.context?.project_avatar_url}
+          size="sm"
         />
-      ) : (
-        <HugeiconsIcon
-          icon={TimeQuarter02Icon}
-          size={14}
-          className="shrink-0 text-muted-foreground"
-        />
-      )}
-
-      <span className="font-mono text-xs font-medium">
-        #{build.build_number}
-      </span>
-
-      <Badge variant={getStatusVariant(build.status)} className="text-[10px]">
-        {build.status}
-      </Badge>
-
-      <span className="truncate text-xs text-muted-foreground">
-        {build.branch ?? 'n/a'}
-      </span>
-
-      <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
-        {elapsed(startTime)}
-      </span>
-    </Link>
+      </ItemMedia>
+      <ItemContent>
+        <ItemTitle>{projectName}</ItemTitle>
+      </ItemContent>
+      <ItemActions>#{build.build_number}</ItemActions>
+    </Item>
   )
 }

@@ -7,9 +7,7 @@ import type {
   ScmProvider,
 } from '@/lib/types'
 import { listAllIntegrations, listIntegrationRepos } from '@/lib/api'
-import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
-import { useAuthStore } from '@/stores/auth-store'
-import { useActiveInstance } from '@/stores/instance-store'
+import { useApiContext } from '@/hooks/use-api-context'
 
 export type SourceRepository = IntegrationRepository & {
   integration_id: string
@@ -88,11 +86,9 @@ export async function discoverSourceRepositories(
 }
 
 export function useSourceRepositories(enabled: boolean) {
-  const instance = useActiveInstance()
-  const token = useAuthStore((state) => state.token)
-  const baseUrl = resolveInstanceApiBaseUrl(instance)
+  const { baseUrl, instance, token } = useApiContext()
 
-  const query = useQuery({
+  return useQuery({
     queryKey: [instance?.id ?? '__none__', 'all-repos-for-project'],
     queryFn: async ({ signal }) => {
       signal.throwIfAborted()
@@ -116,10 +112,4 @@ export function useSourceRepositories(enabled: boolean) {
     },
     enabled: enabled && !!baseUrl && !!token,
   })
-
-  return {
-    ...query,
-    data: query.data?.repositories,
-    sourceFailures: query.data?.failures ?? [],
-  }
 }

@@ -1,8 +1,7 @@
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Link04Icon } from '@hugeicons/core-free-icons'
+import { Link2 as Link04Icon } from 'lucide-react'
 
-import { buttonVariants } from '@/components/ui/button-variants'
+import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
@@ -45,10 +44,7 @@ export function ConnectSourceOptions() {
       aria-labelledby="connect-source-title"
     >
       <div>
-        <h2
-          id="connect-source-title"
-          className="text-sm font-medium uppercase tracking-wider text-muted-foreground"
-        >
+        <h2 id="connect-source-title" className="text-sm font-semibold">
           Connect a source
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -64,7 +60,7 @@ export function ConnectSourceOptions() {
             </CardHeader>
             <CardContent className="flex-1">
               <div className="flex h-full flex-col gap-2 text-xs text-muted-foreground">
-                <p className="font-medium uppercase tracking-wider text-foreground">
+                <p className="font-medium text-foreground">
                   {provider.heading}
                 </p>
                 <ul className="flex list-disc flex-col gap-1 pl-4 leading-relaxed">
@@ -74,21 +70,15 @@ export function ConnectSourceOptions() {
                 </ul>
               </div>
             </CardContent>
-            <CardFooter className="mt-auto">
-              <Link
-                to={provider.to}
-                className={buttonVariants({
-                  size: 'sm',
-                  className: 'w-full sm:w-auto',
-                })}
+            <CardFooter>
+              <Button
+                render={<Link to={provider.to} />}
+                nativeButton={false}
+                size="sm"
               >
-                <HugeiconsIcon
-                  icon={Link04Icon}
-                  data-icon="inline-start"
-                  aria-hidden
-                />
+                <Link04Icon data-icon="inline-start" aria-hidden />
                 Connect {provider.name}
-              </Link>
+              </Button>
             </CardFooter>
           </Card>
         ))}

@@ -145,10 +145,7 @@ pub async fn list_api_tokens_handler(
 ) -> Result<Json<ListApiTokensResponse>, (StatusCode, Json<oore_contract::ApiError>)> {
     rbac::check_permission(&state.enforcer, &auth.0.role, "api_tokens", "read").await?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
     let now = now_unix();
 
     let is_admin = auth.0.role == "owner" || auth.0.role == "admin";
@@ -248,10 +245,7 @@ pub async fn create_api_token_handler(
         ));
     }
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let (id, token, prefix, created_at) =
         create_api_token(&pool, &auth.0.user_id, name, &req.role, req.expires_at)
@@ -305,10 +299,7 @@ pub async fn revoke_api_token_handler(
 ) -> Result<Json<RevokeApiTokenResponse>, (StatusCode, Json<oore_contract::ApiError>)> {
     rbac::check_permission(&state.enforcer, &auth.0.role, "api_tokens", "delete").await?;
 
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     // Fetch the token to check ownership
     let row = sqlx::query("SELECT created_by, revoked_at FROM api_tokens WHERE id = ?1")

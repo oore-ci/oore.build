@@ -1,42 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import type { UpdateRunnerRequest } from '@/lib/types'
+import type { ListRunnersResponse, UpdateRunnerRequest } from '@/lib/types'
 import { listRunners, updateRunner } from '@/lib/api'
-import { useActiveInstance } from '@/stores/instance-store'
-import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
-import { useAuthStore } from '@/stores/auth-store'
+import { useApiContext } from '@/hooks/use-api-context'
 
-function useAuthToken(): string | null {
-  const token = useAuthStore((s) => s.token)
-  const expiresAt = useAuthStore((s) => s.expiresAt)
-  if (!token || expiresAt == null) return null
-  if (expiresAt <= Math.floor(Date.now() / 1000)) return null
-  return token
-}
+export function useRunners<TData = ListRunnersResponse>(options?: {
+  select?: (data: ListRunnersResponse) => TData
+}) {
+  const { baseUrl, instance, token } = useApiContext()
 
-function useBaseUrl(): string | null {
-  const instance = useActiveInstance()
-  return resolveInstanceApiBaseUrl(instance)
-}
-
-export function useRunners() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useQuery({
+  return useQuery<ListRunnersResponse, Error, TData>({
     queryKey: [instance?.id ?? '__none__', 'runners'],
     queryFn: ({ signal }) => listRunners(baseUrl!, token!, { signal }),
     enabled: !!baseUrl && !!token,
     refetchInterval: 15_000,
+    select: options?.select,
   })
 }
 
 export function useUpdateRunner() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: ({

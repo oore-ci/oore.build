@@ -1,17 +1,15 @@
-import { useCallback, useMemo } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  InformationCircleIcon,
-  Refresh01Icon,
-} from '@hugeicons/core-free-icons'
+  Info as InformationCircleIcon,
+  RefreshCw as Refresh01Icon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import { ArtifactsPanel } from './artifacts-panel'
 import { BuildSummary } from './build-summary'
 import { EventTimeline } from './event-timeline'
 import type { BuildLogChunk } from '@/lib/types'
-import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
 import { useBuildNotification } from '@/hooks/use-build-notification'
 import { useIsBelowBreakpoint } from '@/hooks/use-mobile'
 import {
@@ -26,6 +24,7 @@ import { useLogStream } from '@/hooks/use-log-stream'
 import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import { useProject } from '@/hooks/use-projects'
 import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
+import { ApiClientError } from '@/lib/api'
 import { PageMeta } from '@/lib/seo'
 import { getStatusVariant } from '@/lib/status-variants'
 import { cn } from '@/lib/utils'
@@ -37,6 +36,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+
+const loadCancelBuildDialog = () => import('./cancel-build-dialog')
+const CancelBuildDialog = lazy(loadCancelBuildDialog)
 
 export function BuildDetailPage({ buildId }: { buildId: string }) {
   const navigate = useNavigate()
@@ -57,9 +59,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
   })
   const { data, isLoading, error, refetch: refetchBuild } = buildQuery
   const projectQuery = useProject(data?.build.project_id ?? '')
-  const projectRole =
-    projectQuery.data?.current_user_role ??
-    projectQuery.data?.project.current_user_role
+  const projectRole = projectQuery.data?.project.current_user_role
   const canTriggerBuild =
     canTriggerBuildGlobally &&
     hasProjectPermission(projectRole, 'builds', 'write')
@@ -74,17 +74,14 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
   const artifactsQuery = useArtifacts(buildId, {
     refetchInterval: isTerminal ? false : 3000,
   })
+  const artifacts = artifactsQuery.data?.artifacts ?? []
   const { refetch: refetchArtifacts } = artifactsQuery
   const cancelMutation = useCancelBuild()
+  const [cancelOpen, setCancelOpen] = useState(false)
 
   const label = data?.build.build_number
     ? `Build #${data.build.build_number}`
     : 'Build Details'
-
-  useBreadcrumbLabel(
-    '/builds/$buildId',
-    data?.build.build_number ? `Build #${data.build.build_number}` : undefined,
-  )
 
   useBuildNotification(data?.build, isTerminal)
 
@@ -93,10 +90,10 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
     buildId,
     streamEnabled,
     {
-      onDone: useCallback(() => {
+      onDone: () => {
         void refetchBuild()
         void refetchArtifacts()
-      }, [refetchBuild, refetchArtifacts]),
+      },
     },
   )
   const fullLogsQuery = useBuildLogs(buildId, { enabled: isTerminal })
@@ -110,6 +107,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
     cancelMutation.mutate(buildId, {
       onSuccess: () => {
         toast.success('Build canceled')
+        setCancelOpen(false)
       },
       onError: (err) => {
         toast.error(`Failed to cancel: ${err.message}`)
@@ -129,13 +127,36 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
   }
 
   if (error) {
+    const notFound = error instanceof ApiClientError && error.status === 404
     return (
       <PageLayout width="full">
         <PageMeta title={label} noindex />
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>
-            Failed to load build: {error.message}
+          <InformationCircleIcon size={16} />
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              {notFound
+                ? 'This build was not found or is no longer available.'
+                : `Failed to load build: ${error.message}`}
+            </span>
+            <span className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                render={<Link to="/builds" />}
+              >
+                Back to builds
+              </Button>
+              {!notFound ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void refetchBuild()}
+                >
+                  Retry
+                </Button>
+              ) : null}
+            </span>
           </AlertDescription>
         </Alert>
       </PageLayout>
@@ -166,7 +187,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
       width="full"
       className={cn(
         usesTabbedArtifacts &&
-          'flex h-[calc(100dvh-3rem)] min-h-0 flex-none flex-col gap-6 space-y-0 pb-6',
+          'flex min-h-0 flex-1 flex-col gap-6 space-y-0 overflow-hidden pb-6',
       )}
     >
       <PageMeta title={label} noindex />
@@ -211,7 +232,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
                 }}
                 disabled={rerunMutation.isPending}
               >
-                <HugeiconsIcon icon={Refresh01Icon} size={14} />
+                <Refresh01Icon size={14} />
                 {rerunMutation.isPending ? 'Re-running...' : 'Re-run'}
               </Button>
             ) : null}
@@ -219,7 +240,9 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
               <Button
                 variant="destructive"
                 size="sm"
-                onClick={handleCancel}
+                onMouseEnter={() => void loadCancelBuildDialog()}
+                onFocus={() => void loadCancelBuildDialog()}
+                onClick={() => setCancelOpen(true)}
                 disabled={cancelMutation.isPending}
               >
                 {cancelMutation.isPending ? 'Canceling...' : 'Cancel Build'}
@@ -231,7 +254,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
 
       {build.runner_policy_block_reason ? (
         <Alert>
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription>
             {build.runner_policy_block_reason === 'instance_paused' ? (
               canWriteInstanceSettings ? (
@@ -273,7 +296,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
 
       {failureReason ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription>{failureReason}</AlertDescription>
         </Alert>
       ) : null}
@@ -291,9 +314,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
           {usesTabbedArtifacts ? (
             <TabsTrigger value="artifacts">
               Artifacts
-              {artifactsQuery.data?.artifacts.length
-                ? ` (${artifactsQuery.data.artifacts.length})`
-                : ''}
+              {artifacts.length ? ` (${artifacts.length})` : ''}
             </TabsTrigger>
           ) : null}
         </TabsList>
@@ -326,7 +347,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
             {usesTabbedArtifacts ? (
               <TabsContent value="artifacts">
                 <ArtifactsPanel
-                  artifacts={artifactsQuery.data?.artifacts ?? []}
+                  artifacts={artifacts}
                   isLoading={artifactsQuery.isLoading}
                   buildStatus={build.status}
                   canManageShareLinks={canManageShareLinks}
@@ -337,7 +358,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
           {!usesTabbedArtifacts ? (
             <aside aria-label="Build output" className="sticky top-6">
               <ArtifactsPanel
-                artifacts={artifactsQuery.data?.artifacts ?? []}
+                artifacts={artifacts}
                 isLoading={artifactsQuery.isLoading}
                 buildStatus={build.status}
                 canManageShareLinks={canManageShareLinks}
@@ -346,6 +367,24 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
           ) : null}
         </div>
       </Tabs>
+
+      {cancelOpen ? (
+        <Suspense
+          fallback={
+            <span className="sr-only" role="status">
+              Loading cancel confirmation
+            </span>
+          }
+        >
+          <CancelBuildDialog
+            buildNumber={build.build_number}
+            isPending={cancelMutation.isPending}
+            onCancel={handleCancel}
+            onOpenChange={setCancelOpen}
+            open
+          />
+        </Suspense>
+      ) : null}
     </PageLayout>
   )
 }

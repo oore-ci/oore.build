@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useReducer,
+  useRef,
+} from 'react'
 
 import type { BuildLogChunk } from '@/lib/types'
 import { createStreamToken, getBuildLogs } from '@/lib/api'
@@ -6,9 +13,7 @@ import {
   createLogFrameBatcher,
   mergeBuildLogChunks,
 } from '@/lib/log-stream-utils'
-import { useAuthStore } from '@/stores/auth-store'
-import { useActiveInstance } from '@/stores/instance-store'
-import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
+import { useApiContext } from '@/hooks/use-api-context'
 
 interface UseLogStreamResult {
   logs: Array<BuildLogChunk>
@@ -60,12 +65,10 @@ export function useLogStream(
   enabled: boolean,
   options?: UseLogStreamOptions,
 ): UseLogStreamResult {
-  const onDone = options?.onDone
+  const onDone = useEffectEvent(() => options?.onDone?.())
   const [stream, updateStream] = useReducer(streamReducer, initialStreamState)
 
-  const instance = useActiveInstance()
-  const baseUrl = resolveInstanceApiBaseUrl(instance)
-  const token = useAuthStore((s) => s.token)
+  const { baseUrl, token } = useApiContext()
 
   const eventSourceRef = useRef<EventSource | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -182,7 +185,7 @@ export function useLogStream(
       eventSourceRef.current = null
       void pollOnce()
       stopPolling()
-      onDone?.()
+      onDone()
     }
 
     const handleError = () => {
@@ -246,7 +249,6 @@ export function useLogStream(
     stopPolling,
     pollOnce,
     cleanup,
-    onDone,
   ])
 
   return stream

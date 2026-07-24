@@ -85,8 +85,16 @@ describe('RuntimeUpdateNotice', () => {
       frontendRelease: { data: release },
       backendRelease: { data: release },
       backendUpdate: { data: { managed_service: false, phase: 'idle' } },
-      startFrontendUpdate: { data: undefined, isPending: false, mutate: vi.fn() },
-      startBackendUpdate: { data: undefined, isPending: false, mutate: vi.fn() },
+      startFrontendUpdate: {
+        data: undefined,
+        isPending: false,
+        mutate: vi.fn(),
+      },
+      startBackendUpdate: {
+        data: undefined,
+        isPending: false,
+        mutate: vi.fn(),
+      },
     })
 
     render(

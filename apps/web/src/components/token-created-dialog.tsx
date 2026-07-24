@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { toast } from '@/lib/toast'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Copy01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
+import { Copy as Copy01Icon, Check as Tick02Icon } from 'lucide-react'
 
 import type { CreateApiTokenResponse } from '@/lib/types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -14,6 +13,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from '@/components/ui/input-group'
 
 interface TokenCreatedDialogProps {
   open: boolean
@@ -27,6 +32,7 @@ export default function TokenCreatedDialog({
   response,
 }: TokenCreatedDialogProps) {
   const [copied, setCopied] = useState(false)
+  const CopyIcon = copied ? Tick02Icon : Copy01Icon
 
   function handleCopy() {
     if (!response) return
@@ -41,22 +47,27 @@ export default function TokenCreatedDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Token Created</DialogTitle>
+          <DialogTitle>Token created</DialogTitle>
           <DialogDescription>
             Make sure to copy your token now. You won&apos;t be able to see it
             again.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded-md bg-muted px-3 py-2 font-mono text-sm">
-              {response?.token}
-            </code>
-            <Button variant="outline" size="sm" onClick={handleCopy}>
-              <HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} />
-              {copied ? 'Copied' : 'Copy'}
-            </Button>
-          </div>
+          <InputGroup>
+            <InputGroupInput
+              value={response?.token ?? ''}
+              readOnly
+              aria-label="Created API token"
+              className="font-mono text-xs"
+            />
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton variant="ghost" size="xs" onClick={handleCopy}>
+                <CopyIcon />
+                {copied ? 'Copied' : 'Copy'}
+              </InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
           <Alert>
             <AlertDescription>
               This token will not be shown again. Store it in a secure location.

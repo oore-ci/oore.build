@@ -8,12 +8,11 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { toast } from '@/lib/toast'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Add01Icon,
-  InformationCircleIcon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
+  Plus as Add01Icon,
+  Info as InformationCircleIcon,
+  Search as Search01Icon,
+} from 'lucide-react'
 
 import type { ApiTokenSummary, CreateApiTokenResponse } from '@/lib/types'
 import { getApiErrorMessage } from '@/lib/api'
@@ -72,12 +71,13 @@ import type { SortDirection } from '@/components/collection-controls'
 import type { ApiTokenSort, ApiTokensSearch } from './api-tokens'
 import { ApiTokenInventory } from './-api-token-inventory'
 import { ApiTokenStats } from './-api-token-summary'
+import { ROLE_LABELS } from './-user-role-labels'
 
 export const Route = createLazyFileRoute('/settings/api-tokens')({
   component: ApiTokensPage,
 })
 
-// ── Helpers ─────────────────────────────────────────────────────
+const EMPTY_API_TOKENS: Array<ApiTokenSummary> = []
 
 function getTokenStatus(
   token: ApiTokenSummary,
@@ -94,21 +94,12 @@ const ROLE_HIERARCHY: Array<string> = [
   'qa_viewer',
 ]
 
-const ROLE_LABELS: Record<string, string> = {
-  owner: 'Owner',
-  admin: 'Admin',
-  developer: 'Developer',
-  qa_viewer: 'QA Viewer',
-}
-
 const EXPIRY_OPTIONS: Record<string, string> = {
   never: 'Never',
   '30': '30 days',
   '90': '90 days',
   '365': '1 year',
 }
-
-// ── Create Token Form Schema ────────────────────────────────────
 
 const createTokenSchema = z.object({
   name: z
@@ -121,8 +112,6 @@ const createTokenSchema = z.object({
 })
 
 type CreateTokenFormValues = z.infer<typeof createTokenSchema>
-
-// ── Create Token Dialog ─────────────────────────────────────────
 
 interface CreateTokenDialogProps {
   open: boolean
@@ -191,7 +180,7 @@ function CreateTokenDialog({
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create API Token</DialogTitle>
+          <DialogTitle>Create API token</DialogTitle>
           <DialogDescription>
             Create a new API token for programmatic access to this instance.
           </DialogDescription>
@@ -307,8 +296,6 @@ function CreateTokenDialog({
   )
 }
 
-// ── Main Page ───────────────────────────────────────────────────
-
 const API_TOKEN_SORT_OPTIONS: Record<ApiTokenSort, string> = {
   created_at: 'Created',
   last_used_at: 'Last used',
@@ -356,42 +343,35 @@ function ApiTokensPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [createdResponse, setCreatedResponse] =
     useState<CreateApiTokenResponse | null>(null)
-  const [createdDialogOpen, setCreatedDialogOpen] = useState(false)
   const [revokeTarget, setRevokeTarget] = useState<ApiTokenSummary | null>(null)
 
   const page = search.page ?? 1
   const pageSize = search.pageSize ?? 20
   const sort = search.sort ?? 'created_at'
   const direction = search.direction ?? 'desc'
-  const tokens = useMemo(
-    () => tokensQuery.data?.tokens ?? [],
-    [tokensQuery.data?.tokens],
-  )
+  const tokens = tokensQuery.data?.tokens ?? EMPTY_API_TOKENS
   const activeCount = tokens.filter(
-    (t) => !t.is_revoked && !t.is_expired,
+    (token) => !token.is_revoked && !token.is_expired,
   ).length
-  const filteredTokens = useMemo(() => {
+  const sortedTokens = useMemo(() => {
     const query = search.q?.toLowerCase()
-    if (!query) return tokens
+    const matchingTokens = query
+      ? tokens.filter((token) =>
+          [
+            token.name,
+            token.prefix,
+            token.role,
+            token.created_by_email,
+            getTokenStatus(token),
+          ].some((value) => value.toLowerCase().includes(query)),
+        )
+      : tokens
 
-    return tokens.filter((token) =>
-      [
-        token.name,
-        token.prefix,
-        token.role,
-        token.created_by_email,
-        getTokenStatus(token),
-      ].some((value) => value.toLowerCase().includes(query)),
-    )
-  }, [search.q, tokens])
-  const sortedTokens = useMemo(
-    () =>
-      [...filteredTokens].sort((left, right) => {
-        const result = compareTokens(left, right, sort)
-        return direction === 'asc' ? result : -result
-      }),
-    [direction, filteredTokens, sort],
-  )
+    return [...matchingTokens].sort((left, right) => {
+      const result = compareTokens(left, right, sort)
+      return direction === 'asc' ? result : -result
+    })
+  }, [direction, search.q, sort, tokens])
   const total = sortedTokens.length
   const currentPage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)))
   const visibleTokens = sortedTokens.slice(
@@ -419,8 +399,7 @@ function ApiTokensPage() {
   }
 
   function handleTokenCreated(response: CreateApiTokenResponse) {
-    setCreatedResponse(() => response)
-    setCreatedDialogOpen(true)
+    setCreatedResponse(response)
     toast.success('API token created')
   }
 
@@ -440,29 +419,31 @@ function ApiTokensPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="API Tokens" noindex />
+      <PageMeta title="API tokens" noindex />
       <PageHeader
-        title="API Tokens"
+        title="API tokens"
         description="Create and manage API tokens for programmatic access to your CI instance."
         actions={
           canWrite ? (
             <Button onClick={() => setCreateOpen(true)}>
-              <HugeiconsIcon icon={Add01Icon} />
+              <Add01Icon />
               Create token
             </Button>
           ) : undefined
         }
       />
 
-      <ApiTokenStats
-        active={activeCount}
-        revoked={tokens.filter((token) => token.is_revoked).length}
-        total={tokens.length}
-      />
+      {!tokensQuery.error ? (
+        <ApiTokenStats
+          active={activeCount}
+          isLoading={tokensQuery.isLoading}
+          revoked={tokens.filter((token) => token.is_revoked).length}
+          total={tokens.length}
+        />
+      ) : null}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <CollectionSearchInput
-          key={search.q ?? ''}
           initialValue={search.q ?? ''}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })
@@ -498,7 +479,7 @@ function ApiTokensPage() {
 
       {tokensQuery.error ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>Failed to load API tokens: {tokensQuery.error.message}</span>
             <Button
@@ -513,7 +494,7 @@ function ApiTokensPage() {
       ) : null}
 
       {!tokensQuery.isLoading && !tokensQuery.error && tokens.length === 0 ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyTitle>No API tokens yet</EmptyTitle>
             <EmptyDescription>
@@ -532,10 +513,10 @@ function ApiTokensPage() {
       !tokensQuery.error &&
       tokens.length > 0 &&
       total === 0 ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={Search01Icon} />
+              <Search01Icon />
             </EmptyMedia>
             <EmptyTitle>No matching tokens</EmptyTitle>
             <EmptyDescription>
@@ -585,9 +566,8 @@ function ApiTokensPage() {
       />
 
       <TokenCreatedDialog
-        open={createdDialogOpen}
+        open={createdResponse !== null}
         onOpenChange={(open) => {
-          setCreatedDialogOpen(() => open)
           if (!open) setCreatedResponse(null)
         }}
         response={createdResponse}
@@ -598,7 +578,7 @@ function ApiTokensPage() {
         onOpenChange={(open) => {
           if (!open) setRevokeTarget(null)
         }}
-        title="Revoke API Token"
+        title="Revoke API token"
         description="Are you sure you want to revoke this token? Any applications using this token will lose access immediately."
         confirmLabel="Revoke"
         confirmVariant="destructive"

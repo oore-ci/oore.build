@@ -150,7 +150,8 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
         metrics_handle,
         recovery_capabilities.clone(),
     )
-    .await;
+    .await
+    .context("failed to build daemon router")?;
     let management_socket = ManagementSocket::bind(
         management_socket_path(&db_path),
         runner_pool.clone(),
@@ -468,15 +469,9 @@ fn write_system_plist(path: &Path, contents: &str, expected_uid: u32) -> anyhow:
     result
 }
 
-fn current_uid() -> anyhow::Result<String> {
-    let output = Command::new("id")
-        .arg("-u")
-        .output()
-        .context("failed to run id -u")?;
-    if !output.status.success() {
-        anyhow::bail!("failed to determine current user id");
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+fn current_uid() -> u32 {
+    // SAFETY: `geteuid` has no arguments, pointer requirements, or failure state.
+    unsafe { libc::geteuid() }
 }
 
 fn launchctl(args: &[&str]) -> anyhow::Result<std::process::Output> {
@@ -514,7 +509,7 @@ fn install_service(args: InstallServiceArgs) -> anyhow::Result<()> {
     validate_launchd_label(&args.label)?;
     let bin = std::env::current_exe().context("failed to resolve current executable")?;
     let install_root = if args.system {
-        if current_uid()? != "0" {
+        if current_uid() != 0 {
             anyhow::bail!("system service installation requires root; rerun with sudo");
         }
         bin.parent()
@@ -572,7 +567,7 @@ fn install_service(args: InstallServiceArgs) -> anyhow::Result<()> {
     let (service, domain) = if args.system {
         (format!("system/{}", args.label), "system".to_string())
     } else {
-        let uid = current_uid()?;
+        let uid = current_uid();
         (format!("gui/{uid}/{}", args.label), format!("gui/{uid}"))
     };
 
@@ -607,7 +602,7 @@ fn uninstall_service(args: UninstallServiceArgs) -> anyhow::Result<()> {
     }
 
     validate_launchd_label(&args.label)?;
-    if args.system && current_uid()? != "0" {
+    if args.system && current_uid() != 0 {
         anyhow::bail!("system service removal requires root; rerun with sudo");
     }
     let plist_path = if args.system {
@@ -618,7 +613,7 @@ fn uninstall_service(args: UninstallServiceArgs) -> anyhow::Result<()> {
     let service = if args.system {
         format!("system/{}", args.label)
     } else {
-        let uid = current_uid()?;
+        let uid = current_uid();
         format!("gui/{uid}/{}", args.label)
     };
 

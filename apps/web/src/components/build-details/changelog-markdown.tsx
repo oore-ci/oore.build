@@ -21,7 +21,7 @@ export default function ChangelogMarkdown({ children }: { children: string }) {
           </ol>
         ),
         p: ({ children: paragraphChildren }) => (
-          <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+          <p className="mt-2 text-sm whitespace-pre-wrap text-muted-foreground">
             {paragraphChildren}
           </p>
         ),

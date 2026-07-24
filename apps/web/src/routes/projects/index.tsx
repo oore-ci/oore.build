@@ -1,18 +1,17 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import {
   Link,
   createFileRoute,
   redirect,
   useSearch,
 } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Add01Icon,
-  Folder02Icon,
-  InformationCircleIcon,
-  Link04Icon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
+  Plus as Add01Icon,
+  Folder as Folder02Icon,
+  Info as InformationCircleIcon,
+  Link2 as Link04Icon,
+  Search as Search01Icon,
+} from 'lucide-react'
 
 import {
   getActiveInstanceOrRedirect,
@@ -20,7 +19,7 @@ import {
 } from '@/lib/instance-context'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { useProjects } from '@/hooks/use-projects'
-import { useHasPermission } from '@/hooks/use-permissions'
+import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import { useAuthStore } from '@/stores/auth-store'
@@ -39,6 +38,7 @@ import {
 } from '@/components/ui/empty'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import type { SortDirection } from '@/components/collection-controls'
+import type { ListIntegrationsResponse } from '@/lib/types'
 import { PageMeta } from '@/lib/seo'
 import { ProjectInventory } from './-project-inventory'
 import type { ProjectSort } from './-project-inventory'
@@ -67,6 +67,12 @@ const PROJECT_SORT_VALUES = new Set<ProjectSort>([
   'name',
 ])
 
+function selectHasActiveIntegration({
+  integrations,
+}: ListIntegrationsResponse): boolean {
+  return integrations.some((integration) => integration.status === 'active')
+}
+
 function parseSearch(search: Record<string, unknown>): ProjectsSearch {
   const page = Number(search.page)
   const pageSize = Number(search.pageSize)
@@ -85,7 +91,6 @@ function parseSearch(search: Record<string, unknown>): ProjectsSearch {
 }
 
 export const Route = createFileRoute('/projects/')({
-  staticData: { breadcrumbLabel: 'Projects' },
   validateSearch: parseSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
@@ -111,34 +116,26 @@ function ProjectsListPage() {
     limit: pageSize,
     offset: (page - 1) * pageSize,
   })
-  const integrationsQuery = useIntegrations()
+  const integrationsQuery = useIntegrations(undefined, {
+    select: selectHasActiveIntegration,
+  })
   const setupStatusQuery = useSetupStatus()
   const canWriteProjects = useHasPermission('projects', 'write')
+  const instanceRole = useAuthStore((state) => state.user?.role)
+  const canManageEveryProject =
+    instanceRole === 'owner' || instanceRole === 'admin'
   const canWriteIntegrations = useHasPermission('integrations', 'write')
   const [createOpen, setCreateOpen] = useState(false)
 
-  const projects = useMemo(
-    () => projectsQuery.data?.projects ?? [],
-    [projectsQuery.data?.projects],
-  )
+  const projects = projectsQuery.data?.projects ?? []
   const total = projectsQuery.data?.total ?? 0
-  const integrations = useMemo(
-    () => integrationsQuery.data?.integrations ?? [],
-    [integrationsQuery.data?.integrations],
-  )
-  const activeIntegrationsCount = useMemo(
-    () =>
-      integrations.filter((integration) => integration.status === 'active')
-        .length,
-    [integrations],
-  )
   const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'local'
   const integrationsResolved =
     !integrationsQuery.isLoading && !integrationsQuery.error
   const noConnectedSources =
     runtimeMode === 'remote' &&
     integrationsResolved &&
-    activeIntegrationsCount === 0
+    integrationsQuery.data === false
 
   const openCreateFromSearch =
     search.openCreate === '1' &&
@@ -191,7 +188,7 @@ function ProjectsListPage() {
               onFocus={() => void loadCreateProjectDialog()}
               onClick={() => setCreateOpen(true)}
             >
-              <HugeiconsIcon icon={Add01Icon} />
+              <Add01Icon />
               New project
             </Button>
           ) : undefined
@@ -200,7 +197,6 @@ function ProjectsListPage() {
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <CollectionSearchInput
-          key={search.q ?? ''}
           initialValue={search.q ?? ''}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })
@@ -226,7 +222,7 @@ function ProjectsListPage() {
 
       {projectsQuery.error ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>Failed to load projects: {projectsQuery.error.message}</span>
             <Button
@@ -241,10 +237,10 @@ function ProjectsListPage() {
       ) : null}
 
       {showTrueEmpty ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={Folder02Icon} />
+              <Folder02Icon />
             </EmptyMedia>
             <EmptyTitle>Create your first project</EmptyTitle>
             <EmptyDescription>
@@ -262,7 +258,7 @@ function ProjectsListPage() {
                   render={<Link to="/settings/integrations" />}
                   nativeButton={false}
                 >
-                  <HugeiconsIcon icon={Link04Icon} />
+                  <Link04Icon />
                   Connect source
                 </Button>
               ) : (
@@ -276,7 +272,7 @@ function ProjectsListPage() {
                 onFocus={() => void loadCreateProjectDialog()}
                 onClick={() => setCreateOpen(true)}
               >
-                <HugeiconsIcon icon={Add01Icon} />
+                <Add01Icon />
                 Create project
               </Button>
             ) : (
@@ -289,10 +285,10 @@ function ProjectsListPage() {
       ) : null}
 
       {showFilteredEmpty ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={Search01Icon} />
+              <Search01Icon />
             </EmptyMedia>
             <EmptyTitle>No matching projects</EmptyTitle>
             <EmptyDescription>
@@ -312,6 +308,15 @@ function ProjectsListPage() {
 
       {!projectsQuery.error && (projectsQuery.isLoading || total > 0) ? (
         <ProjectInventory
+          canManageProject={(project) =>
+            canManageEveryProject ||
+            (canWriteProjects &&
+              hasProjectPermission(
+                project.current_user_role,
+                'projects',
+                'write',
+              ))
+          }
           direction={direction}
           isLoading={projectsQuery.isLoading}
           onPageChange={(nextPage) =>

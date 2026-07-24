@@ -1,5 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { GitLabAuthorizeRequest, GitLabStartRequest } from '@/lib/types'
+import type {
+  GitLabAuthorizeRequest,
+  GitLabStartRequest,
+  ListIntegrationsResponse,
+} from '@/lib/types'
 import {
   browseLocalGitDirectories,
   deleteIntegration,
@@ -12,40 +16,25 @@ import {
   rotateGitLabRepositoryWebhookSecret,
   syncInstallations,
 } from '@/lib/api'
-import { useActiveInstance } from '@/stores/instance-store'
-import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
-import { useAuthStore } from '@/stores/auth-store'
+import { useApiContext } from '@/hooks/use-api-context'
 
-function useAuthToken(): string | null {
-  const token = useAuthStore((s) => s.token)
-  const expiresAt = useAuthStore((s) => s.expiresAt)
-  if (!token || expiresAt == null) return null
-  if (expiresAt <= Math.floor(Date.now() / 1000)) return null
-  return token
-}
+export function useIntegrations<TData = ListIntegrationsResponse>(
+  provider?: string,
+  options?: { select?: (data: ListIntegrationsResponse) => TData },
+) {
+  const { baseUrl, instance, token } = useApiContext()
 
-function useBaseUrl(): string | null {
-  const instance = useActiveInstance()
-  return resolveInstanceApiBaseUrl(instance)
-}
-
-export function useIntegrations(provider?: string) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
-
-  return useQuery({
+  return useQuery<ListIntegrationsResponse, Error, TData>({
     queryKey: [instance?.id ?? '__none__', 'integrations', provider ?? 'all'],
     queryFn: ({ signal }) =>
       listAllIntegrations(baseUrl!, token!, provider, { signal }),
     enabled: !!baseUrl && !!token,
+    select: options?.select,
   })
 }
 
 export function useIntegration(id: string) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'integration', id],
@@ -55,9 +44,7 @@ export function useIntegration(id: string) {
 }
 
 export function useInstallations(integrationId: string) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'installations', integrationId],
@@ -68,9 +55,7 @@ export function useInstallations(integrationId: string) {
 }
 
 export function useIntegrationRepos(integrationId: string) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'integration-repos', integrationId],
@@ -82,9 +67,7 @@ export function useIntegrationRepos(integrationId: string) {
 
 export function useSyncInstallations() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (integrationId: string) => {
@@ -111,8 +94,7 @@ export function useSyncInstallations() {
 }
 
 export function useGitLabAuthorize() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
+  const { baseUrl, token } = useApiContext()
 
   return useMutation({
     mutationFn: (data: GitLabAuthorizeRequest) => {
@@ -128,9 +110,7 @@ export function useGitLabAuthorize() {
 
 export function useGitLabStart() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (data: GitLabStartRequest) => {
@@ -147,8 +127,7 @@ export function useGitLabStart() {
 }
 
 export function useRotateGitLabRepositoryWebhookSecret() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
+  const { baseUrl, token } = useApiContext()
 
   return useMutation({
     mutationFn: (repositoryId: string) => {
@@ -161,9 +140,7 @@ export function useRotateGitLabRepositoryWebhookSecret() {
 
 export function useDeleteIntegration() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (id: string) => {
@@ -180,9 +157,7 @@ export function useDeleteIntegration() {
 }
 
 export function useBrowseLocalGitDirectories(path?: string, enabled = true) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [

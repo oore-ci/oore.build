@@ -1,6 +1,5 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Add01Icon } from '@hugeicons/core-free-icons'
+import { Plus as Add01Icon } from 'lucide-react'
 import {
   getActiveInstanceOrRedirect,
   requireInstanceRoleOrRedirect,
@@ -15,8 +14,9 @@ import PageLayout from '@/components/page-layout'
 
 export const Route = createFileRoute('/settings/integrations/local-git')({
   staticData: {
-    breadcrumbLabel: 'Local Repositories',
-    breadcrumbParent: { label: 'Sources', to: '/settings/integrations' },
+    breadcrumb: {
+      title: 'Local repositories',
+    },
   },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
@@ -25,27 +25,25 @@ export const Route = createFileRoute('/settings/integrations/local-git')({
   component: LocalGitPage,
 })
 
-export function LocalGitPage() {
+function LocalGitPage() {
   const canCreateProjects = useHasPermission('projects', 'write')
   const canReadPreferences = useHasPermission('instance_settings', 'read')
   const { data: preferences } = useInstancePreferences({
     enabled: canReadPreferences,
   })
-  const runtimeMode = preferences?.preferences.runtime_mode
+  const runtimeMode = preferences?.runtime_mode
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Local Repositories" noindex />
+      <PageMeta title="Local repositories" noindex />
       <PageHeader
-        title="Local Repositories"
-        description="Local repositories are linked directly from projects."
+        title="Local repositories"
+        description="Local repository selection now happens directly during project creation."
       />
 
-      <Card>
+      <Card size="sm" aria-labelledby="local-project-title">
         <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            Link from projects
-          </CardTitle>
+          <CardTitle id="local-project-title">Use project creation</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
@@ -72,7 +70,7 @@ export function LocalGitPage() {
               render={<Link to="/projects" search={{ openCreate: '1' }} />}
               nativeButton={false}
             >
-              <HugeiconsIcon icon={Add01Icon} />
+              <Add01Icon />
               Create project
             </Button>
           ) : null}

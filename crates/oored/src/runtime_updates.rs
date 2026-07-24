@@ -392,18 +392,15 @@ pub async fn start_update(
         *status = next;
     }
 
-    {
-        let store = state.store.lock().await;
-        let _ = write_audit_log(
-            store.pool(),
-            Some(&auth.0.user_id),
-            "runtime_update_started",
-            "system",
-            Some("backend"),
-            None,
-        )
-        .await;
-    }
+    let _ = write_audit_log(
+        &state.db,
+        Some(&auth.0.user_id),
+        "runtime_update_started",
+        "system",
+        Some("backend"),
+        None,
+    )
+    .await;
 
     let result = tokio::task::spawn_blocking(move || {
         start_update_supervisor(&request_path, &invocation.into())

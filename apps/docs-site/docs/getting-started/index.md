@@ -39,8 +39,8 @@ Follow these pages in order to get your first instance running:
 3. [**Set Up Your Instance**](/getting-started/first-instance) — choose Local Only, Remote OIDC, or Remote Trusted Proxy
 4. [**Hosted UI Onboarding**](/getting-started/hosted-ui-onboarding) — connect an HTTPS-reachable backend to `ci.oore.build`
 
-If you’re new, start with: [**Public Alpha (v0.1.x)**](/getting-started/public-alpha) (common blockers + fastest paths).
+If you are testing a prerelease, review the [release channels](/operations/release-channels).
 
-Before production-like usage, review: [**Known Alpha Limitations**](/getting-started/known-limitations).
+Before production-like usage, review the [known limitations](/operations/known-limitations).
 
-When you hit friction during alpha, file reports with this checklist: [**Alpha Feedback Playbook**](/getting-started/alpha-feedback-playbook).
+When you hit friction, use the [issue report checklist](/operations/report-an-issue).

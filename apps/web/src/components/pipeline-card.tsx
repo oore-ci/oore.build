@@ -1,13 +1,12 @@
 import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  ArrowDown01Icon,
-  ArrowRight01Icon,
-  Edit02Icon,
-  Link01Icon,
-  PlayIcon,
-} from '@hugeicons/core-free-icons'
+  ArrowDown as ArrowDown01Icon,
+  ArrowRight as ArrowRight01Icon,
+  Pencil as Edit02Icon,
+  Link as Link01Icon,
+  Play as PlayIcon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import type { Pipeline } from '@/lib/types'
@@ -46,6 +45,7 @@ export default function PipelineCard({
 }: PipelineCardProps) {
   const updateMutation = useUpdatePipeline()
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const DetailsIcon = detailsOpen ? ArrowDown01Icon : ArrowRight01Icon
 
   function handleToggle() {
     updateMutation.mutate(
@@ -120,7 +120,7 @@ export default function PipelineCard({
                 onFocus={onPreloadTriggerBuild}
                 onClick={() => onTriggerBuild(pipeline.id)}
               >
-                <HugeiconsIcon icon={PlayIcon} />
+                <PlayIcon />
                 Run build
               </Button>
             ) : null}
@@ -137,7 +137,7 @@ export default function PipelineCard({
                 }
                 nativeButton={false}
               >
-                <HugeiconsIcon icon={Edit02Icon} />
+                <Edit02Icon />
                 Edit
               </Button>
             ) : null}
@@ -162,7 +162,7 @@ export default function PipelineCard({
               }
               nativeButton={false}
             >
-              <HugeiconsIcon icon={Link01Icon} />
+              <Link01Icon />
               Permalink
             </Button>
 
@@ -172,9 +172,7 @@ export default function PipelineCard({
               className="ml-auto"
               onClick={() => setDetailsOpen((o) => !o)}
             >
-              <HugeiconsIcon
-                icon={detailsOpen ? ArrowDown01Icon : ArrowRight01Icon}
-              />
+              <DetailsIcon />
               Details
             </Button>
           </div>

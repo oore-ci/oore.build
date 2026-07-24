@@ -1,13 +1,16 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
-import { useAuthStore } from '@/stores/auth-store'
 
 export type ApiTokenSort =
-  'created_at' | 'last_used_at' | 'name' | 'role' | 'status'
+  | 'created_at'
+  | 'last_used_at'
+  | 'name'
+  | 'role'
+  | 'status'
 
 export interface ApiTokensSearch {
   direction?: 'asc' | 'desc'
@@ -43,20 +46,14 @@ export function parseApiTokensSearch(
 }
 
 export const Route = createFileRoute('/settings/api-tokens')({
-  staticData: { breadcrumbLabel: 'API Tokens' },
+  staticData: {
+    breadcrumb: {
+      title: 'API tokens',
+    },
+  },
   validateSearch: parseApiTokensSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
-
-    const user = useAuthStore.getState().user
-    if (
-      !user ||
-      (user.role !== 'owner' &&
-        user.role !== 'admin' &&
-        user.role !== 'developer')
-    ) {
-      throw redirect({ to: '/' })
-    }
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
   },
 })

@@ -4,16 +4,11 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { toast } from '@/lib/toast'
-import { useMountEffect } from '@/hooks/use-mount-effect'
-
-import { useActiveInstance } from '@/stores/instance-store'
 import { useAuthStore } from '@/stores/auth-store'
-import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { PageMeta } from '@/lib/seo'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { useRuntimeUpdates } from '@/hooks/use-runtime-updates'
 import {
-  useArtifactStorageSettings,
   useConfigureExternalAccessOidc,
   useExternalAccessNetworkSettings,
   useExternalAccessOidc,
@@ -21,7 +16,6 @@ import {
   useExternalAccessTrustedProxySettings,
   useInstancePreferences,
   useTestOidcConnection,
-  useUpdateArtifactStorageSettings,
   useUpdateExternalAccessNetworkSettings,
   useUpdateExternalAccessTrustedProxySettings,
   useUpdateInstancePreferences,
@@ -30,11 +24,14 @@ import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import { ApiClientError, getApiErrorMessage } from '@/lib/api'
 import { ExternalAccessCard } from '@/components/settings/preferences-external-access-card'
+import { ExternalAccessManagement } from '@/components/settings/preferences-external-access-management'
+import { ExternalAccessSetup } from '@/components/settings/preferences-external-access-setup'
 import { RuntimeOverview } from '@/components/settings/preferences-runtime-overview'
-import { ArtifactStorageSettings } from '@/components/settings/preferences-artifact-storage-settings'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 
 const preloadExternalAccessNetworkDialog = () =>
@@ -43,78 +40,13 @@ const preloadTrustedProxySettingsDialog = () =>
   import('@/components/settings/preferences-trusted-proxy-settings-dialog')
 const preloadOidcSettingsDialog = () =>
   import('@/components/settings/preferences-oidc-settings-dialog')
-const preloadArtifactFolderPicker = () =>
-  import('@/components/settings/preferences-artifact-folder-picker')
-
 const ExternalAccessNetworkDialog = lazy(preloadExternalAccessNetworkDialog)
 const TrustedProxySettingsDialog = lazy(preloadTrustedProxySettingsDialog)
 const OidcSettingsDialog = lazy(preloadOidcSettingsDialog)
-const ArtifactFolderPicker = lazy(preloadArtifactFolderPicker)
 
 export const Route = createLazyFileRoute('/settings/preferences')({
   component: PreferencesPage,
 })
-
-const storageSchema = z
-  .object({
-    backend_kind: z.enum(['disabled', 'local', 'object']),
-    object_service: z
-      .enum(['aws_s3', 'cloudflare_r2', 'minio', 'custom'])
-      .optional(),
-    local_base_dir: z.string().optional(),
-    s3_bucket: z.string().optional(),
-    s3_region: z.string().optional(),
-    s3_endpoint: z.string().optional(),
-    access_key_id: z.string().optional(),
-    secret_access_key: z.string().optional(),
-  })
-  .superRefine((value, ctx) => {
-    const localDir = (value.local_base_dir ?? '').trim()
-    const bucket = (value.s3_bucket ?? '').trim()
-    const endpoint = (value.s3_endpoint ?? '').trim()
-    const service = value.object_service
-
-    if (value.backend_kind === 'local' && !localDir) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['local_base_dir'],
-        message: 'Local base directory is required.',
-      })
-    }
-
-    if (value.backend_kind === 'object') {
-      if (!service) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['object_service'],
-          message: 'Choose an object storage service.',
-        })
-      }
-
-      if (!bucket) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['s3_bucket'],
-          message: 'Bucket is required for object storage.',
-        })
-      }
-
-      const endpointRequired =
-        service === 'cloudflare_r2' ||
-        service === 'minio' ||
-        service === 'custom'
-      if (endpointRequired && !endpoint) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['s3_endpoint'],
-          message: 'Endpoint is required for this service preset.',
-        })
-      }
-    }
-  })
-
-type StorageFormInput = z.input<typeof storageSchema>
-type StorageFormValues = z.output<typeof storageSchema>
 
 const externalAccessOidcSchema = z.object({
   issuer_url: z.url('Please enter a valid issuer URL'),
@@ -122,7 +54,9 @@ const externalAccessOidcSchema = z.object({
   client_secret: z.string().optional(),
 })
 
-type ExternalAccessOidcFormValues = z.infer<typeof externalAccessOidcSchema>
+export type ExternalAccessOidcFormValues = z.infer<
+  typeof externalAccessOidcSchema
+>
 
 const trustedProxySchema = z.object({
   user_email_header: z.string().trim().min(1, 'User email header is required.'),
@@ -135,7 +69,7 @@ const trustedProxySchema = z.object({
   clear_warpgate_ticket: z.boolean(),
 })
 
-type TrustedProxyFormValues = z.infer<typeof trustedProxySchema>
+export type TrustedProxyFormValues = z.infer<typeof trustedProxySchema>
 
 function parseTrustedProxyCidrs(value: string | undefined): Array<string> {
   return (value ?? '')
@@ -152,7 +86,7 @@ const externalAccessNetworkSchema = z.object({
     .min(1, 'Add at least one allowed frontend origin.'),
 })
 
-type ExternalAccessNetworkFormValues = z.infer<
+export type ExternalAccessNetworkFormValues = z.infer<
   typeof externalAccessNetworkSchema
 >
 
@@ -173,44 +107,80 @@ function parseAllowedOriginsInput(value: string): Array<string> {
     .filter((entry) => entry.length > 0)
 }
 
-function isLoopbackHostname(hostname: string): boolean {
+function DirectRunnerSettings({
+  canWrite,
+  isError,
+  isPending,
+  onToggle,
+  paused,
+}: {
+  canWrite: boolean
+  isError: boolean
+  isPending: boolean
+  onToggle: (acceptingBuilds: boolean) => void
+  paused: boolean | undefined
+}) {
+  const acceptingBuilds = paused === false
+  const runnerStateLabel = isError
+    ? 'Unavailable'
+    : paused === undefined
+      ? 'Checking...'
+      : acceptingBuilds
+        ? 'Accepting builds'
+        : 'Paused'
+
   return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname === '[::1]'
+    <Card size="sm">
+      <CardHeader>
+        <div className="flex items-center justify-between gap-4">
+          <CardTitle>Direct macOS runner</CardTitle>
+          <Badge variant={acceptingBuilds ? 'secondary' : 'outline'}>
+            {runnerStateLabel}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-start justify-between gap-6">
+          <div className="space-y-1">
+            <p className="text-sm font-medium">Accept new builds</p>
+            <p className="text-sm text-muted-foreground">
+              When paused, running builds finish and queued builds wait.
+            </p>
+          </div>
+          <Switch
+            checked={acceptingBuilds}
+            disabled={!canWrite || paused === undefined || isError || isPending}
+            onCheckedChange={onToggle}
+            aria-label="Accept new builds"
+            className="after:-inset-y-3.5"
+          />
+        </div>
+        <Alert>
+          <AlertDescription>
+            {isError
+              ? 'Oore could not load the runner pause state. Refresh this page before changing build intake.'
+              : paused === undefined
+                ? 'Checking whether this Mac is accepting new builds.'
+                : !canWrite
+                  ? 'An owner or admin can pause new claims while assigned and running builds finish.'
+                  : 'Pausing stops new claims while assigned and running builds finish. Resume whenever this Mac is ready for more work.'}
+          </AlertDescription>
+        </Alert>
+      </CardContent>
+    </Card>
   )
 }
 
-function resolveHostname(rawUrl: string | null | undefined): string {
-  const trimmed = rawUrl?.trim() ?? ''
-  if (!trimmed) return ''
-  try {
-    return new URL(trimmed).hostname
-  } catch {
-    return ''
-  }
-}
-
-function usePreferencesPageState() {
+function PreferencesPage() {
   const navigate = useNavigate()
   const [readinessOpen, setReadinessOpen] = useState(false)
   const [networkEditorOpen, setNetworkEditorOpen] = useState(false)
   const [oidcDialogOpen, setOidcDialogOpen] = useState(false)
   const [trustedProxyDialogOpen, setTrustedProxyDialogOpen] = useState(false)
-  const [artifactDirPickerOpen, setArtifactDirPickerOpen] = useState(false)
   const canWrite = useHasPermission('instance_settings', 'write')
   const user = useAuthStore((s) => s.user)
   const clearAuth = useAuthStore((s) => s.clearAuth)
   const isOwner = user?.role === 'owner'
-  const instance = useActiveInstance()
-  const instanceApiBaseUrl = resolveInstanceApiBaseUrl(instance)
-  const uiIsLoopback = isLoopbackHostname(window.location.hostname)
-  const backendIsLoopback = isLoopbackHostname(
-    resolveHostname(instanceApiBaseUrl),
-  )
-  const canBrowseLocalFs = uiIsLoopback && backendIsLoopback
-  const settingsQuery = useArtifactStorageSettings()
   const preferencesQuery = useInstancePreferences()
   const runtimeUpdates = useRuntimeUpdates()
   const webHealthQuery = runtimeUpdates.frontendHealth
@@ -234,57 +204,7 @@ function usePreferencesPageState() {
     useUpdateExternalAccessTrustedProxySettings()
   const testOidcConnectionMutation = useTestOidcConnection()
   const updateNetworkSettingsMutation = useUpdateExternalAccessNetworkSettings()
-  const updateStorageMutation = useUpdateArtifactStorageSettings()
   const updatePreferencesMutation = useUpdateInstancePreferences()
-
-  const storageSettings = settingsQuery.data?.settings
-  const storageValues = useMemo<StorageFormInput | undefined>(() => {
-    if (!storageSettings) return undefined
-    const backend_kind =
-      storageSettings.provider === 'disabled'
-        ? 'disabled'
-        : storageSettings.provider === 'local'
-          ? 'local'
-          : 'object'
-    const object_service =
-      storageSettings.provider === 'r2'
-        ? 'cloudflare_r2'
-        : storageSettings.provider === 's3'
-          ? storageSettings.s3_endpoint
-            ? 'custom'
-            : 'aws_s3'
-          : 'aws_s3'
-    const region =
-      storageSettings.provider === 'r2'
-        ? (storageSettings.s3_region ?? 'auto')
-        : (storageSettings.s3_region ?? 'us-east-1')
-    return {
-      backend_kind,
-      object_service,
-      local_base_dir: storageSettings.local_base_dir ?? '',
-      s3_bucket: storageSettings.s3_bucket ?? '',
-      s3_region: region,
-      s3_endpoint: storageSettings.s3_endpoint ?? '',
-      access_key_id: '',
-      secret_access_key: '',
-    }
-  }, [storageSettings])
-
-  const storageForm = useForm<StorageFormInput, unknown, StorageFormValues>({
-    resolver: zodResolver(storageSchema),
-    defaultValues: {
-      backend_kind: 'disabled',
-      object_service: 'aws_s3',
-      local_base_dir: '',
-      s3_bucket: '',
-      s3_region: 'us-east-1',
-      s3_endpoint: '',
-      access_key_id: '',
-      secret_access_key: '',
-    },
-    values: storageValues,
-    mode: 'onBlur',
-  })
 
   const oidcConfig = oidcConfigQuery.data
   const externalAccessOidcForm = useForm<ExternalAccessOidcFormValues>({
@@ -303,7 +223,7 @@ function usePreferencesPageState() {
       : undefined,
     mode: 'onBlur',
   })
-  const networkSettings = networkSettingsQuery.data?.settings
+  const networkSettings = networkSettingsQuery.data
   const networkValues = useMemo(() => {
     if (!networkSettings) return undefined
     return {
@@ -324,7 +244,7 @@ function usePreferencesPageState() {
     mode: 'onBlur',
   })
 
-  const trustedProxySettings = trustedProxyQuery.data?.settings
+  const trustedProxySettings = trustedProxyQuery.data
   const trustedProxyValues = useMemo(() => {
     if (!trustedProxySettings) return undefined
     return {
@@ -348,98 +268,6 @@ function usePreferencesPageState() {
     values: trustedProxyValues,
     mode: 'onBlur',
   })
-
-  const backendKind = storageForm.watch('backend_kind')
-  const objectService = storageForm.watch('object_service')
-
-  useMountEffect(() => {
-    const subscription = storageForm.watch((values, { name }) => {
-      if (name !== 'object_service' && name !== 'backend_kind') return
-      if (values.backend_kind !== 'object') return
-      if (values.object_service === 'cloudflare_r2') {
-        if (values.s3_region !== 'auto') {
-          storageForm.setValue('s3_region', 'auto', { shouldDirty: true })
-        }
-      } else if (values.object_service === 'aws_s3') {
-        if (values.s3_region === 'auto') {
-          storageForm.setValue('s3_region', 'us-east-1', { shouldDirty: true })
-        }
-      }
-    })
-    return () => subscription.unsubscribe()
-  })
-
-  function onSubmitStorage(values: StorageFormValues) {
-    const provider =
-      values.backend_kind === 'disabled'
-        ? 'disabled'
-        : values.backend_kind === 'local'
-          ? 'local'
-          : values.object_service === 'cloudflare_r2'
-            ? 'r2'
-            : 's3'
-
-    const region =
-      values.backend_kind === 'object'
-        ? values.object_service === 'cloudflare_r2'
-          ? 'auto'
-          : values.s3_region?.trim() || 'us-east-1'
-        : undefined
-
-    const payload = {
-      provider,
-      local_base_dir:
-        values.backend_kind === 'local'
-          ? values.local_base_dir?.trim()
-          : undefined,
-      s3_bucket:
-        values.backend_kind === 'object' ? values.s3_bucket?.trim() : undefined,
-      s3_region: values.backend_kind === 'object' ? region : undefined,
-      s3_endpoint:
-        values.backend_kind === 'object'
-          ? values.s3_endpoint?.trim() || undefined
-          : undefined,
-      access_key_id:
-        values.backend_kind === 'object'
-          ? values.access_key_id?.trim() || undefined
-          : undefined,
-      secret_access_key:
-        values.backend_kind === 'object'
-          ? values.secret_access_key?.trim() || undefined
-          : undefined,
-    } as const
-
-    updateStorageMutation.mutate(payload, {
-      onSuccess: (res) => {
-        const label =
-          res.settings.provider === 'local'
-            ? 'Local filesystem'
-            : res.settings.provider === 's3'
-              ? 'Object storage'
-              : res.settings.provider === 'r2'
-                ? 'Object storage (R2)'
-                : 'Disabled'
-        toast.success(`Artifact storage updated: ${label}`)
-        storageForm.setValue('access_key_id', '')
-        storageForm.setValue('secret_access_key', '')
-      },
-      onError: (error) => {
-        toast.error(
-          getApiErrorMessage(error, {
-            invalid_local_base_dir:
-              'Local base directory must be an absolute path.',
-            invalid_s3_bucket: 'Bucket is required for object storage.',
-            invalid_s3_endpoint:
-              'Endpoint is required for this service preset.',
-            missing_s3_credentials:
-              'Access key ID and secret access key are required for object storage.',
-            encryption_error: 'Failed to store credentials securely.',
-            store_error: 'Failed to update artifact storage settings.',
-          }),
-        )
-      },
-    })
-  }
 
   function onSubmitExternalAccessNetwork(
     values: ExternalAccessNetworkFormValues,
@@ -573,32 +401,7 @@ function usePreferencesPageState() {
     )
   }
 
-  const settings = settingsQuery.data?.settings
-  const artifactBackendLabel = useMemo(() => {
-    switch (settings?.provider) {
-      case 'local':
-        return 'Local filesystem'
-      case 's3':
-        return 'Object storage'
-      case 'r2':
-        return 'Object storage (R2)'
-      case 'disabled':
-      default:
-        return 'Disabled'
-    }
-  }, [settings?.provider])
-  const artifactSourceLabel = useMemo(() => {
-    switch (settings?.source) {
-      case 'database':
-        return 'Database'
-      case 'environment':
-        return 'Environment'
-      case 'default':
-      default:
-        return 'Default'
-    }
-  }, [settings?.source])
-  const preferences = preferencesQuery.data?.preferences
+  const preferences = preferencesQuery.data
   const externalAccessEnabled = preferences?.runtime_mode === 'remote'
   const remoteAuthMode = preferences?.remote_auth_mode ?? 'oidc'
   const webVersionLabel = healthVersionLabel(
@@ -615,10 +418,6 @@ function usePreferencesPageState() {
     remoteAuthMode === 'trusted_proxy'
       ? 'trusted_proxy_configured'
       : 'oidc_configured'
-  const failedReadinessChecks = useMemo(
-    () => preflightQuery.data?.checks.filter((check) => !check.ok) ?? [],
-    [preflightQuery.data?.checks],
-  )
   const readinessById = useMemo(() => {
     const entries = preflightQuery.data?.checks ?? []
     return new Map(entries.map((check) => [check.id, check]))
@@ -635,7 +434,6 @@ function usePreferencesPageState() {
   )
   const readinessReady = preflightQuery.data?.ready ?? false
   const setupStepsComplete = Number(networkReady) + Number(identityReady)
-  const setupStepCount = 2
 
   function handleExternalAccessToggle() {
     if (!preferences || updatePreferencesMutation.isPending || !isOwner) return
@@ -713,167 +511,175 @@ function usePreferencesPageState() {
     )
   }
 
-  return {
-    artifactBackendLabel,
-    artifactDirPickerOpen,
-    artifactSourceLabel,
-    backendHealthQuery,
-    backendKind,
-    backendUpdatePhase,
-    backendVersionLabel,
-    canBrowseLocalFs,
-    canWrite,
-    externalAccessEnabled,
-    externalAccessNetworkForm,
-    externalAccessOidcForm,
-    failedReadinessChecks,
-    frontendUpdatePhase,
-    handleDirectRunnerToggle,
-    handleExternalAccessToggle,
-    identityReady,
-    isOwner,
-    networkEditorOpen,
-    networkReady,
-    networkSettings,
-    networkSettingsQuery,
-    objectService,
-    oidcConfig,
-    oidcDialogOpen,
-    onSubmitExternalAccessNetwork,
-    onSubmitExternalAccessOidc,
-    onSubmitStorage,
-    onSubmitTrustedProxy,
-    preflightQuery,
-    preloadArtifactFolderPicker,
-    preloadExternalAccessNetworkDialog,
-    preloadOidcSettingsDialog,
-    preloadTrustedProxySettingsDialog,
-    preferences,
-    preferencesQuery,
-    readinessOpen,
-    readinessReady,
-    remoteAuthMode,
-    runtimeUpdates,
-    setArtifactDirPickerOpen,
-    setNetworkEditorOpen,
-    setOidcDialogOpen,
-    setReadinessOpen,
-    setTrustedProxyDialogOpen,
-    settings,
-    settingsQuery,
-    setupReady,
-    setupStepCount,
-    setupStepsComplete,
-    storageForm,
-    testOidcConnectionMutation,
-    trustedProxyDialogOpen,
-    trustedProxyForm,
-    trustedProxySettings,
-    updateNetworkSettingsMutation,
-    updatePreferencesMutation,
-    updateStorageMutation,
-    updateTrustedProxyMutation,
-    configureExternalAccessOidcMutation,
-    webHealthQuery,
-    webVersionLabel,
+  const identitySettingsQuery =
+    remoteAuthMode === 'trusted_proxy' ? trustedProxyQuery : oidcConfigQuery
+
+  function openNetworkSettingsDialog() {
+    setNetworkEditorOpen(true)
   }
-}
 
-export type PreferencesPageState = ReturnType<typeof usePreferencesPageState>
+  function preloadIdentitySettingsDialog() {
+    void (remoteAuthMode === 'trusted_proxy'
+      ? preloadTrustedProxySettingsDialog()
+      : preloadOidcSettingsDialog())
+  }
 
-function DirectRunnerSettings({ state }: { state: PreferencesPageState }) {
-  const paused = state.preferences?.direct_macos_runner_paused
-  const acceptingBuilds = paused === false
-  const runnerStateLabel = state.preferencesQuery.isError
-    ? 'Unavailable'
-    : paused === undefined
-      ? 'Checking...'
-      : acceptingBuilds
-        ? 'Accepting builds'
-        : 'Paused'
+  function openIdentitySettingsDialog() {
+    if (remoteAuthMode === 'trusted_proxy') {
+      setTrustedProxyDialogOpen(true)
+    } else {
+      setOidcDialogOpen(true)
+    }
+  }
 
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-4">
-          <CardTitle className="text-sm font-medium">
-            Direct macOS runner
-          </CardTitle>
-          <Badge variant={acceptingBuilds ? 'success' : 'outline'}>
-            {runnerStateLabel}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-start justify-between gap-6">
-          <div className="space-y-1">
-            <p className="text-sm font-medium">Accept new builds</p>
-            <p className="text-sm text-muted-foreground">
-              When paused, running builds finish and queued builds wait.
-            </p>
-          </div>
-          <Switch
-            checked={acceptingBuilds}
-            disabled={
-              !state.canWrite ||
-              !state.preferences ||
-              state.preferencesQuery.isError ||
-              state.updatePreferencesMutation.isPending
-            }
-            onCheckedChange={(checked) =>
-              state.handleDirectRunnerToggle(checked)
-            }
-            aria-label="Accept new builds"
-            className="after:-inset-y-3.5"
-          />
-        </div>
-        <Alert>
-          <AlertDescription>
-            {state.preferencesQuery.isError
-              ? 'Oore could not load the runner pause state. Refresh this page before changing build intake.'
-              : paused === undefined
-                ? 'Checking whether this Mac is accepting new builds.'
-                : !state.canWrite
-                  ? 'An owner or admin can pause new claims while assigned and running builds finish.'
-                : 'Pausing stops new claims while assigned and running builds finish. Resume whenever this Mac is ready for more work.'}
-          </AlertDescription>
-        </Alert>
-      </CardContent>
-    </Card>
-  )
-}
-
-function PreferencesPage() {
-  const state = usePreferencesPageState()
   return (
     <PageLayout width="wide">
-      <PageMeta title="Preferences" noindex />
+      <PageMeta title="General settings" noindex />
       <PageHeader
-        title="Preferences"
-        description="Manage runner, artifact storage, and External Access policy for this instance."
+        title="General"
+        description="Manage runtime services and External Access for this instance."
       />
-      <RuntimeOverview state={state} />
-      <DirectRunnerSettings state={state} />
-      <ExternalAccessCard state={state} />
-      {state.networkEditorOpen ? (
+      <RuntimeOverview
+        backendUpdatePhase={backendUpdatePhase}
+        backendVersionLabel={backendVersionLabel}
+        frontendUpdatePhase={frontendUpdatePhase}
+        isOwner={isOwner}
+        runtimeUpdates={runtimeUpdates}
+        webVersionLabel={webVersionLabel}
+      />
+      <DirectRunnerSettings
+        canWrite={canWrite}
+        isError={preferencesQuery.isError}
+        isPending={updatePreferencesMutation.isPending}
+        onToggle={handleDirectRunnerToggle}
+        paused={preferences?.direct_macos_runner_paused}
+      />
+      {preferencesQuery.isLoading ? (
+        <Card size="sm">
+          <CardContent className="space-y-3">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-9 w-full" />
+          </CardContent>
+        </Card>
+      ) : preferencesQuery.error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Failed to load instance settings: {preferencesQuery.error.message}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void preferencesQuery.refetch()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : !preferences ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>The response did not include instance settings.</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void preferencesQuery.refetch()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <ExternalAccessCard
+          externalAccessEnabled={externalAccessEnabled}
+          isOwner={isOwner}
+          onToggle={handleExternalAccessToggle}
+          preflightLoading={preflightQuery.isLoading}
+          readinessReady={readinessReady}
+          remoteAuthMode={remoteAuthMode}
+          updatePending={updatePreferencesMutation.isPending}
+        >
+          {externalAccessEnabled ? (
+            <ExternalAccessManagement
+              identityQuery={identitySettingsQuery}
+              isOwner={isOwner}
+              networkSettingsQuery={networkSettingsQuery}
+              onEditIdentity={openIdentitySettingsDialog}
+              onEditNetwork={openNetworkSettingsDialog}
+              onPreloadIdentity={preloadIdentitySettingsDialog}
+              onPreloadNetwork={preloadExternalAccessNetworkDialog}
+              remoteAuthMode={remoteAuthMode}
+              trustedProxySettings={trustedProxySettings}
+            />
+          ) : (
+            <ExternalAccessSetup
+              identityQuery={identitySettingsQuery}
+              identityReady={identityReady}
+              isOwner={isOwner}
+              networkReady={networkReady}
+              networkSettingsQuery={networkSettingsQuery}
+              oidcConfig={oidcConfig}
+              onEditIdentity={openIdentitySettingsDialog}
+              onEditNetwork={openNetworkSettingsDialog}
+              onPreloadIdentity={preloadIdentitySettingsDialog}
+              onPreloadNetwork={preloadExternalAccessNetworkDialog}
+              onReadinessOpenChange={setReadinessOpen}
+              preflightQuery={preflightQuery}
+              readinessOpen={readinessOpen}
+              readinessReady={readinessReady}
+              remoteAuthMode={remoteAuthMode}
+              setupReady={setupReady}
+              setupStepsComplete={setupStepsComplete}
+              trustedProxySettings={trustedProxySettings}
+            />
+          )}
+        </ExternalAccessCard>
+      )}
+      {networkEditorOpen &&
+      !networkSettingsQuery.isLoading &&
+      !networkSettingsQuery.error ? (
         <Suspense fallback={null}>
-          <ExternalAccessNetworkDialog state={state} />
+          <ExternalAccessNetworkDialog
+            form={externalAccessNetworkForm}
+            isOwner={isOwner}
+            isPending={updateNetworkSettingsMutation.isPending}
+            onOpenChange={setNetworkEditorOpen}
+            onSubmit={onSubmitExternalAccessNetwork}
+            open={networkEditorOpen}
+          />
         </Suspense>
       ) : null}
-      {state.trustedProxyDialogOpen ? (
+      {trustedProxyDialogOpen &&
+      !trustedProxyQuery.isLoading &&
+      !trustedProxyQuery.error ? (
         <Suspense fallback={null}>
-          <TrustedProxySettingsDialog state={state} />
+          <TrustedProxySettingsDialog
+            form={trustedProxyForm}
+            isOwner={isOwner}
+            isPending={updateTrustedProxyMutation.isPending}
+            onOpenChange={setTrustedProxyDialogOpen}
+            onSubmit={onSubmitTrustedProxy}
+            open={trustedProxyDialogOpen}
+            settings={trustedProxySettings}
+          />
         </Suspense>
       ) : null}
-      {state.oidcDialogOpen ? (
+      {oidcDialogOpen &&
+      !oidcConfigQuery.isLoading &&
+      !oidcConfigQuery.error ? (
         <Suspense fallback={null}>
-          <OidcSettingsDialog state={state} />
-        </Suspense>
-      ) : null}
-      <ArtifactStorageSettings state={state} />
-      {state.artifactDirPickerOpen ? (
-        <Suspense fallback={null}>
-          <ArtifactFolderPicker state={state} />
+          <OidcSettingsDialog
+            form={externalAccessOidcForm}
+            isOwner={isOwner}
+            isSaving={configureExternalAccessOidcMutation.isPending}
+            oidcConfig={oidcConfig}
+            onOpenChange={setOidcDialogOpen}
+            onSubmit={onSubmitExternalAccessOidc}
+            open={oidcDialogOpen}
+            testMutation={testOidcConnectionMutation}
+          />
         </Suspense>
       ) : null}
     </PageLayout>

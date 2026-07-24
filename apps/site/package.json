@@ -6,7 +6,13 @@
     "dev": "bash ../../tools/sync-install-scripts.sh && portless run --name oore vite",
     "dev:legacy": "bash ../../tools/sync-install-scripts.sh && vite --port 3002",
     "build": "bash ../../tools/sync-install-scripts.sh && vite build",
-    "preview": "bash ../../tools/sync-install-scripts.sh && vite preview --port 3002"
+    "preview": "bash ../../tools/sync-install-scripts.sh && vite preview --port 3002",
+    "test": "node --test tests/site-sanity.test.mjs",
+    "lint": "oxlint --type-aware .",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "check": "node --test tests/site-sanity.test.mjs && oxfmt --check . && oxlint --type-aware .",
+    "fix": "oxfmt . && oxlint --type-aware --fix ."
   },
   "devDependencies": {
     "vite": "^8.1.4"

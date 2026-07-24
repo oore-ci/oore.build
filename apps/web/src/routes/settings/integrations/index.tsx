@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { InformationCircleIcon, Link04Icon } from '@hugeicons/core-free-icons'
+import {
+  Info as InformationCircleIcon,
+  Link2 as Link04Icon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 
-import type { Integration } from '@/lib/types'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import {
@@ -13,19 +14,9 @@ import {
 } from '@/lib/instance-context'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
-import { useDeleteIntegration, useIntegrations } from '@/hooks/use-integrations'
+import { useIntegrations } from '@/hooks/use-integrations'
 import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -35,10 +26,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Separator } from '@/components/ui/separator'
 import type { SortDirection } from '@/components/collection-controls'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
-import SetupHint from '@/components/setup-hint'
 import type { IntegrationSort } from './-source-inventory'
 import { ConnectSourceOptions } from './-connect-source-options'
 import { ConnectedSourcesSection } from './-connected-sources-section'
@@ -81,7 +72,6 @@ function parseSearch(search: Record<string, unknown>): IntegrationsSearch {
 }
 
 export const Route = createFileRoute('/settings/integrations/')({
-  staticData: { breadcrumbLabel: 'Sources' },
   validateSearch: parseSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
@@ -96,12 +86,8 @@ function IntegrationsPage() {
   const navigate = Route.useNavigate()
   const integrationsQuery = useIntegrations()
   const preferencesQuery = useInstancePreferences({ enabled: canWrite })
-  const deleteMutation = useDeleteIntegration()
-  const [disconnectTarget, setDisconnectTarget] = useState<Integration | null>(
-    null,
-  )
-  const runtimeMode = preferencesQuery.data?.preferences.runtime_mode
-  const remoteEnabled = !canWrite || runtimeMode === 'remote'
+  const runtimeMode = preferencesQuery.data?.runtime_mode
+  const sourcesAvailable = !canWrite || runtimeMode === 'remote'
   const pageSize = search.pageSize ?? 20
   const sort = search.sort ?? 'updated_at'
   const direction = search.direction ?? 'desc'
@@ -185,18 +171,6 @@ function IntegrationsPage() {
     updateSearch({ sort: nextSort, direction: next, page: undefined })
   }
 
-  function handleDisconnect(integration: Integration) {
-    deleteMutation.mutate(integration.id, {
-      onSuccess: () => {
-        toast.success(
-          `Disconnected source: ${integration.display_name ?? integration.provider}`,
-        )
-        setDisconnectTarget(null)
-      },
-      onError: (error) => toast.error(`Failed to disconnect: ${error.message}`),
-    })
-  }
-
   const hasSearch = !!search.q
   const sourceCount = integrationsQuery.data?.integrations.length ?? 0
   const hasConnectedSources = sourceCount > 0
@@ -207,14 +181,10 @@ function IntegrationsPage() {
         title="Sources"
         description="Source connections used to discover repositories and trigger builds."
         actions={
-          remoteEnabled && canWrite && hasConnectedSources ? (
+          sourcesAvailable && canWrite && hasConnectedSources ? (
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button />}>
-                <HugeiconsIcon
-                  icon={Link04Icon}
-                  data-icon="inline-start"
-                  aria-hidden
-                />
+                <Link04Icon data-icon="inline-start" aria-hidden />
                 Connect source
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -247,7 +217,7 @@ function IntegrationsPage() {
         </section>
       ) : canWrite && preferencesQuery.error ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               Failed to load access policy: {preferencesQuery.error.message}
@@ -261,34 +231,28 @@ function IntegrationsPage() {
             </Button>
           </AlertDescription>
         </Alert>
-      ) : !remoteEnabled ? (
-        <section className="space-y-4" aria-labelledby="external-access-title">
+      ) : !sourcesAvailable ? (
+        <section
+          className="space-y-3"
+          aria-labelledby="local-only-sources-title"
+        >
+          <Separator />
           <div>
-            <h2
-              id="external-access-title"
-              className="text-sm font-medium uppercase tracking-wider text-muted-foreground"
-            >
-              External access required
+            <h2 id="local-only-sources-title" className="text-sm font-semibold">
+              Local Only mode
             </h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              GitHub and GitLab connections require Remote mode. In Local Only
-              mode, choose a repository path during project creation.
+              Create projects from paths on this Mac. GitHub and GitLab sources
+              become available when External Access is configured.
             </p>
           </div>
-          <SetupHint
-            title="Local only path"
-            items={[
-              'Create a project from a repository path available on the runner host.',
-              'Switch to Remote mode only when browser users or external webhooks need to reach the backend.',
-            ]}
-          />
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
               render={<Link to="/settings/preferences" />}
               nativeButton={false}
             >
-              Open preferences
+              Open General settings
             </Button>
             <Button render={<Link to="/projects" />} nativeButton={false}>
               Go to projects
@@ -297,21 +261,19 @@ function IntegrationsPage() {
         </section>
       ) : null}
 
-      {remoteEnabled &&
+      {sourcesAvailable &&
       (integrationsQuery.isLoading ||
         integrationsQuery.error ||
         hasConnectedSources ||
         hasSearch ||
         !canWrite) ? (
         <ConnectedSourcesSection
-          collection={{
-            canWrite,
-            integrations: visibleIntegrations,
-            total,
-          }}
+          canWrite={canWrite}
           direction={direction}
+          error={integrationsQuery.error}
+          integrations={visibleIntegrations}
+          isLoading={integrationsQuery.isLoading}
           onClearSearch={() => updateSearch({ q: undefined, page: undefined })}
-          onDisconnect={setDisconnectTarget}
           onPageChange={(nextPage) =>
             updateSearch({ page: nextPage > 1 ? nextPage : undefined })
           }
@@ -329,16 +291,13 @@ function IntegrationsPage() {
           onSortChange={handleSortChange}
           page={page}
           pageSize={pageSize}
-          query={{
-            error: integrationsQuery.error,
-            isLoading: integrationsQuery.isLoading,
-            search: search.q,
-          }}
+          search={search.q}
           sort={sort}
+          total={total}
         />
       ) : null}
 
-      {remoteEnabled &&
+      {sourcesAvailable &&
       canWrite &&
       !integrationsQuery.isLoading &&
       !integrationsQuery.error &&
@@ -346,47 +305,15 @@ function IntegrationsPage() {
         <ConnectSourceOptions />
       ) : null}
 
-      {remoteEnabled && !canWrite ? (
+      {sourcesAvailable && !canWrite ? (
         <Alert>
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription>
             You have read-only access to connected sources. An owner or admin
             can add, reconnect, or disconnect providers.
           </AlertDescription>
         </Alert>
       ) : null}
-
-      <AlertDialog
-        open={disconnectTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setDisconnectTarget(null)
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Disconnect source?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This removes credentials, installations, repository links, and
-              webhook behavior for{' '}
-              {disconnectTarget?.display_name ??
-                disconnectTarget?.provider ??
-                'this source'}
-              .
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (disconnectTarget) handleDisconnect(disconnectTarget)
-              }}
-              disabled={deleteMutation.isPending}
-            >
-              {deleteMutation.isPending ? 'Disconnecting...' : 'Disconnect'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </PageLayout>
   )
 }

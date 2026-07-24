@@ -1,65 +1,41 @@
 import { toast } from '@/lib/toast'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Download04Icon } from '@hugeicons/core-free-icons'
-import type { PreferencesPageState } from '@/routes/settings/preferences'
+import { Download as Download04Icon } from 'lucide-react'
+import type { useRuntimeUpdates } from '@/hooks/use-runtime-updates'
+import type { RuntimeUpdateStatus } from '@/lib/types'
 import { runtimeUpdateActive } from '@/components/settings/preferences-utils'
 import { installerCommand } from '@/components/runtime-update-utils'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 
-export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
-  const {
-    artifactBackendLabel,
-    artifactSourceLabel,
-    backendHealthQuery,
-    backendUpdatePhase,
-    backendVersionLabel,
-    frontendUpdatePhase,
-    isOwner,
-    runtimeUpdates,
-    webHealthQuery,
-    webVersionLabel,
-  } = state
+export function RuntimeOverview({
+  backendUpdatePhase,
+  backendVersionLabel,
+  frontendUpdatePhase,
+  isOwner,
+  runtimeUpdates,
+  webVersionLabel,
+}: {
+  backendUpdatePhase: RuntimeUpdateStatus['phase'] | undefined
+  backendVersionLabel: string
+  frontendUpdatePhase: RuntimeUpdateStatus['phase'] | undefined
+  isOwner: boolean
+  runtimeUpdates: ReturnType<typeof useRuntimeUpdates>
+  webVersionLabel: string
+}) {
+  const webHealthQuery = runtimeUpdates.frontendHealth
+  const backendHealthQuery = runtimeUpdates.backendHealth
   const backendUpdateFailure =
     runtimeUpdates.backendUpdate.data?.phase === 'failed'
       ? runtimeUpdates.backendUpdate.data.error
       : null
 
   return (
-    <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-      <Card>
-        <CardContent>
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Artifact backend
-          </p>
-          <p className="mt-3 text-2xl font-bold tracking-tight">
-            {artifactBackendLabel}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Where build artifacts are stored
-          </p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent>
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Config source
-          </p>
-          <p className="mt-3 text-2xl font-bold tracking-tight">
-            {artifactSourceLabel}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Effective settings source
-          </p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="flex h-full flex-col">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Frontend version
-          </p>
-          <p className="mt-3 font-mono text-2xl font-bold tracking-tight">
+    <Card size="sm" aria-label="Runtime versions">
+      <CardContent className="grid gap-6 md:grid-cols-2">
+        <div className="flex min-w-0 flex-col">
+          <p className="text-sm font-medium">Frontend</p>
+          <p className="mt-2 font-mono text-lg font-semibold tracking-tight">
             {webVersionLabel}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -92,7 +68,7 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
                   })
                 }
               >
-                <HugeiconsIcon icon={Download04Icon} />
+                <Download04Icon />
                 {runtimeUpdates.startFrontendUpdate.isPending
                   ? 'Starting...'
                   : frontendUpdatePhase === 'restarting'
@@ -108,14 +84,10 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
               ) : null}
             </>
           ) : null}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="flex h-full flex-col">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Backend version
-          </p>
-          <p className="mt-3 font-mono text-2xl font-bold tracking-tight">
+        </div>
+        <div className="flex min-w-0 flex-col">
+          <p className="text-sm font-medium">Backend</p>
+          <p className="mt-2 font-mono text-lg font-semibold tracking-tight">
             {backendVersionLabel}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -147,7 +119,7 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
                   })
                 }
               >
-                <HugeiconsIcon icon={Download04Icon} />
+                <Download04Icon />
                 {runtimeUpdates.startBackendUpdate.isPending
                   ? 'Starting...'
                   : backendUpdatePhase === 'restarting'
@@ -166,7 +138,7 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
                     repair managed service setup. Later backend updates remain
                     available here.
                   </p>
-                  <code className="block break-all rounded-md bg-muted p-2 font-mono text-foreground">
+                  <code className="block rounded-md bg-muted p-2 font-mono break-all text-foreground">
                     {installerCommand(
                       runtimeUpdates.backendRelease.data.channel,
                     )}
@@ -178,7 +150,7 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
           {runtimeUpdates.backendUpdate.data?.phase === 'failed' ? (
             <Alert variant="destructive" className="mt-3">
               <AlertTitle>Backend update failed</AlertTitle>
-              <AlertDescription className="space-y-2 break-words">
+              <AlertDescription className="space-y-2 wrap-break-word">
                 <p>
                   {backendUpdateFailure ||
                     'The supervised backend update stopped before completion.'}
@@ -193,8 +165,8 @@ export function RuntimeOverview({ state }: { state: PreferencesPageState }) {
               </AlertDescription>
             </Alert>
           ) : null}
-        </CardContent>
-      </Card>
-    </section>
+        </div>
+      </CardContent>
+    </Card>
   )
 }

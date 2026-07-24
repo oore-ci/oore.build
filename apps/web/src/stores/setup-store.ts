@@ -2,11 +2,9 @@ import { create } from 'zustand'
 
 interface SetupStoreState {
   instanceId: string | null
-  currentStep: number
   sessionToken: string | null
   sessionExpiresAt: number | null
   setInstanceContext: (instanceId: string | null) => void
-  setCurrentStep: (step: number) => void
   setSessionToken: (token: string | null) => void
   setSessionExpiresAt: (expiresAt: number | null) => void
   reset: () => void
@@ -48,7 +46,9 @@ function saveSessionToken(
 function loadSessionExpiresAt(instanceId: string | null): number | null {
   try {
     const val = sessionStorage.getItem(expiresKey(instanceId))
-    return val ? Number(val) : null
+    if (!val) return null
+    const expiresAt = Number(val)
+    return Number.isFinite(expiresAt) ? expiresAt : null
   } catch {
     return null
   }
@@ -69,9 +69,8 @@ function saveSessionExpiresAt(
   }
 }
 
-export const useSetupStore = create<SetupStoreState>((set, get) => ({
+export const useSetupStore = create<SetupStoreState>()((set, get) => ({
   instanceId: null,
-  currentStep: 0,
   sessionToken: loadSessionToken(null),
   sessionExpiresAt: loadSessionExpiresAt(null),
 
@@ -82,8 +81,6 @@ export const useSetupStore = create<SetupStoreState>((set, get) => ({
       sessionExpiresAt: loadSessionExpiresAt(instanceId),
     })
   },
-
-  setCurrentStep: (step) => set({ currentStep: step }),
 
   setSessionToken: (token) => {
     const { instanceId } = get()
@@ -101,6 +98,6 @@ export const useSetupStore = create<SetupStoreState>((set, get) => ({
     const { instanceId } = get()
     saveSessionToken(instanceId, null)
     saveSessionExpiresAt(instanceId, null)
-    set({ currentStep: 0, sessionToken: null, sessionExpiresAt: null })
+    set({ sessionToken: null, sessionExpiresAt: null })
   },
 }))

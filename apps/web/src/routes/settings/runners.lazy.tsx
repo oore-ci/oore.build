@@ -8,8 +8,10 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { toast } from '@/lib/toast'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { InformationCircleIcon, Search01Icon } from '@hugeicons/core-free-icons'
+import {
+  Info as InformationCircleIcon,
+  Search as Search01Icon,
+} from 'lucide-react'
 
 import type { Runner } from '@/lib/types'
 import { useHasPermission } from '@/hooks/use-permissions'
@@ -19,9 +21,11 @@ import { useRunners, useUpdateRunner } from '@/hooks/use-runners'
 import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
+import { DirectRunnerPolicyPanel } from '@/components/settings/direct-runner-policy-panel'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -49,7 +53,6 @@ import {
 } from '@/components/ui/empty'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Spinner } from '@/components/ui/spinner'
-import { Card, CardContent } from '@/components/ui/card'
 import type { SortDirection } from '@/components/collection-controls'
 import type { RunnerSort, RunnersSearch } from './runners'
 import { RunnerInventory } from './-runner-inventory'
@@ -80,40 +83,25 @@ const renameRunnerSchema = z.object({
 type RenameRunnerForm = z.infer<typeof renameRunnerSchema>
 
 interface RenameRunnerDialogProps {
-  runner: Runner | null
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  runner: Runner
+  onClose: () => void
 }
 
-function RenameRunnerDialog({
-  runner,
-  open,
-  onOpenChange,
-}: RenameRunnerDialogProps) {
+function RenameRunnerDialog({ runner, onClose }: RenameRunnerDialogProps) {
   const mutation = useUpdateRunner()
   const form = useForm<RenameRunnerForm>({
     resolver: zodResolver(renameRunnerSchema),
-    defaultValues: { name: runner?.name ?? '' },
-    values: { name: runner?.name ?? '' },
+    defaultValues: { name: runner.name },
     mode: 'onBlur',
   })
 
-  const initialName = runner?.name ?? ''
-  const isManaged = !runner?.registered_by
-
-  function handleClose(nextOpen: boolean) {
-    if (!nextOpen) {
-      form.reset({ name: runner?.name ?? '' })
-    }
-    onOpenChange(nextOpen)
-  }
+  const initialName = runner.name
+  const isManaged = !runner.registered_by
 
   function onSubmit(data: RenameRunnerForm) {
-    if (!runner) return
-
     const trimmed = data.name.trim()
     if (trimmed === initialName.trim()) {
-      handleClose(false)
+      onClose()
       return
     }
 
@@ -122,7 +110,7 @@ function RenameRunnerDialog({
       {
         onSuccess: () => {
           toast.success('Runner renamed')
-          handleClose(false)
+          onClose()
         },
         onError: (error) => {
           toast.error(
@@ -134,7 +122,12 @@ function RenameRunnerDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Rename runner</DialogTitle>
@@ -168,11 +161,7 @@ function RenameRunnerDialog({
               />
 
               <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => handleClose(false)}
-                >
+                <Button type="button" variant="outline" onClick={onClose}>
                   Cancel
                 </Button>
                 <Button type="submit" disabled={mutation.isPending}>
@@ -226,45 +215,37 @@ function RunnersSettingsPage() {
   const search = useSearch({ from: '/settings/runners' })
   const canWrite = useHasPermission('runners', 'write')
   const [selectedRunner, setSelectedRunner] = useState<Runner | null>(null)
-  const [dialogOpen, setDialogOpen] = useState(false)
 
   const page = search.page ?? 1
   const pageSize = search.pageSize ?? 20
   const sort = search.sort ?? 'name'
   const direction = search.direction ?? 'asc'
   const runners = runnersQuery.data?.runners ?? EMPTY_RUNNERS
-  const onlineCount = useMemo(
-    () =>
-      runners.filter(
-        (runner) => runner.status === 'online' || runner.status === 'busy',
-      ).length,
-    [runners],
-  )
-  const offlineCount = useMemo(
-    () => runners.filter((runner) => runner.status === 'offline').length,
-    [runners],
-  )
-  const filteredRunners = useMemo(() => {
+  const onlineCount = runners.filter(
+    (runner) => runner.status === 'online' || runner.status === 'busy',
+  ).length
+  const offlineCount = runners.filter(
+    (runner) => runner.status === 'offline',
+  ).length
+  const sortedRunners = useMemo(() => {
     const query = search.q?.toLowerCase()
-    if (!query) return runners
-    return runners.filter((runner) =>
-      [
-        runner.name,
-        runner.id,
-        runner.status,
-        runner.registered_by ?? 'embedded',
-        formatCapabilities(runner.capabilities),
-      ].some((value) => value.toLowerCase().includes(query)),
-    )
-  }, [runners, search.q])
-  const sortedRunners = useMemo(
-    () =>
-      [...filteredRunners].sort((left, right) => {
-        const result = compareRunners(left, right, sort)
-        return direction === 'asc' ? result : -result
-      }),
-    [direction, filteredRunners, sort],
-  )
+    const matchingRunners = query
+      ? runners.filter((runner) =>
+          [
+            runner.name,
+            runner.id,
+            runner.status,
+            runner.registered_by ?? 'embedded',
+            formatCapabilities(runner.capabilities),
+          ].some((value) => value.toLowerCase().includes(query)),
+        )
+      : runners
+
+    return [...matchingRunners].sort((left, right) => {
+      const result = compareRunners(left, right, sort)
+      return direction === 'asc' ? result : -result
+    })
+  }, [direction, runners, search.q, sort])
   const total = sortedRunners.length
   const currentPage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)))
   const visibleRunners = sortedRunners.slice(
@@ -292,18 +273,15 @@ function RunnersSettingsPage() {
     updateSearch({ sort: nextSort, direction: next, page: undefined })
   }
 
-  function openRename(runner: Runner) {
-    setSelectedRunner(runner)
-    setDialogOpen(true)
-  }
-
   return (
     <PageLayout width="wide">
-      <PageMeta title="Runner Management" noindex />
+      <PageMeta title="Runners" noindex />
       <PageHeader
         title="Runners"
-        description="Runner health and metadata management. Auto-refreshes every 15s."
+        description="Manage runner execution policy, health, and metadata. Health refreshes every 15 seconds."
       />
+
+      <DirectRunnerPolicyPanel />
 
       {!canWrite ? (
         <Alert>
@@ -313,61 +291,58 @@ function RunnersSettingsPage() {
         </Alert>
       ) : null}
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardContent>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Total runners
-            </p>
-            <p className="mt-3 text-2xl font-bold tracking-tight">
-              {runners.length}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Embedded and external
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Online runners
+      {!runnersQuery.isLoading && !runnersQuery.error ? (
+        <Card size="sm" aria-label="Runner summary">
+          <CardContent className="grid gap-4 sm:grid-cols-3">
+            <div>
+              <p className="text-xs font-medium text-muted-foreground">
+                Total runners
               </p>
-              {onlineCount > 0 ? (
-                <Badge variant="secondary">{onlineCount}</Badge>
-              ) : null}
-            </div>
-            <p className="mt-3 text-2xl font-bold tracking-tight">
-              {onlineCount}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Online or currently busy
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Offline runners
+              <p className="mt-2 text-xl font-semibold tracking-tight">
+                {runners.length}
               </p>
-              {offlineCount > 0 ? (
-                <Badge variant="destructive">{offlineCount}</Badge>
-              ) : null}
+              <p className="mt-1 text-xs text-muted-foreground">
+                Embedded and external
+              </p>
             </div>
-            <p className="mt-3 text-2xl font-bold tracking-tight">
-              {offlineCount}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Unreachable or stopped
-            </p>
+            <div>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Online runners
+                </p>
+                {onlineCount > 0 ? (
+                  <Badge variant="secondary">{onlineCount}</Badge>
+                ) : null}
+              </div>
+              <p className="mt-2 text-xl font-semibold tracking-tight">
+                {onlineCount}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Online or currently busy
+              </p>
+            </div>
+            <div>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Offline runners
+                </p>
+                {offlineCount > 0 ? (
+                  <Badge variant="destructive">{offlineCount}</Badge>
+                ) : null}
+              </div>
+              <p className="mt-2 text-xl font-semibold tracking-tight">
+                {offlineCount}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Unreachable or stopped
+              </p>
+            </div>
           </CardContent>
         </Card>
-      </section>
+      ) : null}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <CollectionSearchInput
-          key={search.q ?? ''}
           initialValue={search.q ?? ''}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })
@@ -403,7 +378,7 @@ function RunnersSettingsPage() {
 
       {runnersQuery.error ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>Failed to load runners: {runnersQuery.error.message}</span>
             <Button
@@ -420,7 +395,7 @@ function RunnersSettingsPage() {
       {!runnersQuery.isLoading &&
       !runnersQuery.error &&
       runners.length === 0 ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyTitle>No runners registered</EmptyTitle>
             <EmptyDescription>
@@ -434,10 +409,10 @@ function RunnersSettingsPage() {
       !runnersQuery.error &&
       runners.length > 0 &&
       total === 0 ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={Search01Icon} />
+              <Search01Icon />
             </EmptyMedia>
             <EmptyTitle>No matching runners</EmptyTitle>
             <EmptyDescription>
@@ -470,7 +445,7 @@ function RunnersSettingsPage() {
               page: undefined,
             })
           }
-          onRename={openRename}
+          onRename={setSelectedRunner}
           onSortChange={handleSortChange}
           page={currentPage}
           pageSize={pageSize}
@@ -480,16 +455,10 @@ function RunnersSettingsPage() {
         />
       ) : null}
 
-      {canWrite ? (
+      {canWrite && selectedRunner ? (
         <RenameRunnerDialog
-          open={dialogOpen}
           runner={selectedRunner}
-          onOpenChange={(open) => {
-            setDialogOpen(() => open)
-            if (!open) {
-              setSelectedRunner(null)
-            }
-          }}
+          onClose={() => setSelectedRunner(null)}
         />
       ) : null}
     </PageLayout>

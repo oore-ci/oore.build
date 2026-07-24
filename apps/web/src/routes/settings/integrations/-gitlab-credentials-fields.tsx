@@ -39,15 +39,15 @@ export function GitLabCredentialsFields({
             <SetupHint
               title="Required GitLab PAT scopes"
               items={[
-                <span>
+                <span key={0}>
                   Select <code>read_user</code>, <code>read_api</code>, and{' '}
                   <code>read_repository</code>.
                 </span>,
-                <span>
+                <span key={1}>
                   Do not select full <code>api</code> unless you are testing a
                   future write-capable GitLab feature.
                 </span>,
-                <span>
+                <span key={2}>
                   Create it at{' '}
                   <code>{hostUrl}/-/user_settings/personal_access_tokens</code>.
                 </span>,
@@ -98,11 +98,11 @@ export function GitLabCredentialsFields({
             <SetupHint
               title="OAuth callback"
               items={[
-                <span>
+                <span key={3}>
                   Register this redirect URI in GitLab:{' '}
                   <code>{callbackUrl}</code>
                 </span>,
-                <span>
+                <span key={4}>
                   Request only <code>read_api</code> and{' '}
                   <code>read_repository</code>; Oore does not request write
                   scopes for this source.

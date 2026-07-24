@@ -14,8 +14,6 @@ export const BUILD_STATUS_FILTER_OPTIONS = {
   expired: 'Expired',
 } as const satisfies Record<'all' | BuildStatus, string>
 
-export type BuildStatusFilter = keyof typeof BUILD_STATUS_FILTER_OPTIONS
-
 const BUILD_STATUS_VARIANT: Record<string, BadgeVariant> = {
   succeeded: 'success',
   active: 'secondary',

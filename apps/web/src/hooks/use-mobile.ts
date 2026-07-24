@@ -1,25 +1,22 @@
 import * as React from 'react'
+import { useMountEffect } from './use-mount-effect'
 
-import { useMountEffect } from '@/hooks/use-mount-effect'
-
-const MOBILE_BREAKPOINT = 1024
+const MOBILE_BREAKPOINT = 768
 
 export function useIsBelowBreakpoint(breakpoint: number) {
-  const [matches, setMatches] = React.useState(
-    () => window.innerWidth < breakpoint,
-  )
+  const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined)
 
   useMountEffect(() => {
     const mql = window.matchMedia(`(max-width: ${breakpoint - 1}px)`)
     const onChange = () => {
-      setMatches(mql.matches)
+      setIsMobile(window.innerWidth < breakpoint)
     }
     mql.addEventListener('change', onChange)
-    setMatches(mql.matches)
+    setIsMobile(window.innerWidth < breakpoint)
     return () => mql.removeEventListener('change', onChange)
   })
 
-  return matches
+  return !!isMobile
 }
 
 export function useIsMobile() {

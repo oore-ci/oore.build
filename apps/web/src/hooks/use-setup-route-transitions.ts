@@ -4,40 +4,15 @@ import { useNavigate } from '@tanstack/react-router'
 import type { SetupStatus } from '@/lib/types'
 import { useSetupStore } from '@/stores/setup-store'
 
-function stateToStep(
-  state: string,
-  runtimeMode: 'local' | 'remote' | undefined,
-): number {
-  if (state === 'bootstrap_pending' || state === 'uninitialized') return 1
-
-  if (runtimeMode === 'local') {
-    if (state === 'idp_configured') return 2
-    if (state === 'owner_created') return 3
-    return 0
-  }
-
-  if (state === 'idp_configured') return 3
-  if (state === 'owner_created') return 4
-  return 0
-}
-
 export function useBootstrapStepTransition(
   status: SetupStatus | undefined,
   sessionToken: string | null,
 ) {
   const navigate = useNavigate()
-  const setCurrentStep = useSetupStore((state) => state.setCurrentStep)
   const setupState = status?.state
-  const runtimeMode = status?.runtime_mode
 
   useEffect(() => {
-    if (!setupState || !sessionToken) {
-      setCurrentStep(0)
-      return
-    }
-
-    const step = stateToStep(setupState, runtimeMode)
-    setCurrentStep(step)
+    if (!setupState || !sessionToken) return
 
     if (setupState === 'bootstrap_pending' || setupState === 'uninitialized') {
       void navigate({ to: '/setup/mode' })
@@ -46,7 +21,7 @@ export function useBootstrapStepTransition(
     } else if (setupState === 'owner_created') {
       void navigate({ to: '/setup/complete' })
     }
-  }, [navigate, runtimeMode, sessionToken, setCurrentStep, setupState])
+  }, [navigate, sessionToken, setupState])
 }
 
 export function useSetupModeGuard(
@@ -67,29 +42,15 @@ export function useSetupModeGuard(
   }, [expectedAuthMode, navigate, remoteAuthMode, runtimeMode])
 }
 
-export function useSetupCurrentStep(step: number | null) {
-  const setCurrentStep = useSetupStore((state) => state.setCurrentStep)
-
-  useEffect(() => {
-    if (step != null) setCurrentStep(step)
-  }, [setCurrentStep, step])
-}
-
 export function useOwnerStepTransition(status?: SetupStatus) {
   const navigate = useNavigate()
-  const setCurrentStep = useSetupStore((state) => state.setCurrentStep)
   const setupState = status?.state
-  const runtimeMode = status?.runtime_mode
 
   useEffect(() => {
-    if (!setupState || !runtimeMode) return
-
-    setCurrentStep(runtimeMode === 'local' ? 2 : 3)
     if (setupState === 'owner_created') {
-      setCurrentStep(runtimeMode === 'local' ? 3 : 4)
       void navigate({ to: '/setup/complete' })
     }
-  }, [navigate, runtimeMode, setCurrentStep, setupState])
+  }, [navigate, setupState])
 }
 
 export function useExpiredSetupSessionRedirect(isExpired: boolean) {

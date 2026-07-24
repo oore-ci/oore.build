@@ -6,6 +6,7 @@ import {
 } from './seed'
 import { clearAuthStorageForInstance, useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
+import { readDemoScenario, resetDemoState } from './state'
 
 function seedDemoStores() {
   // Use current origin so `!!baseUrl` checks pass in query hooks and
@@ -13,7 +14,7 @@ function seedDemoStores() {
   const instanceUrl = getDemoInstanceUrl()
   const now = Date.now()
 
-  // Seed instance store — matches zustand/persist format (name: 'oore_instances')
+  // Seed instance store — matches the persisted store format (name: 'oore_instances')
   const demoInstance = {
     id: DEMO_INSTANCE_ID,
     label: DEMO_INSTANCE_LABEL,
@@ -39,7 +40,7 @@ function seedDemoStores() {
   }
 
   // Imperatively set Zustand store state so React sees the demo instance
-  // immediately, without waiting for zustand/persist async rehydration.
+  // immediately, without waiting for persisted-state rehydration.
   useInstanceStore.setState({
     instances: { [DEMO_INSTANCE_ID]: demoInstance },
     activeInstanceId: DEMO_INSTANCE_ID,
@@ -48,6 +49,7 @@ function seedDemoStores() {
 }
 
 export async function enableDemoMode(): Promise<void> {
+  resetDemoState(readDemoScenario(window.location.search))
   seedDemoStores()
 
   const [{ FetchInterceptor }, { defineNetwork, InterceptorSource }] =
@@ -59,6 +61,7 @@ export async function enableDemoMode(): Promise<void> {
 
   const network = defineNetwork({
     handlers: allHandlers,
+    context: { quiet: true },
     sources: [
       new InterceptorSource({
         // MSW and its direct interceptor dependency expose structurally equal
@@ -75,18 +78,5 @@ export async function enableDemoMode(): Promise<void> {
       }
     },
   })
-  await network.enable()
-
-  // Remove the retired worker registration. A controlling legacy worker may
-  // live until navigation, but fetch interception above already owns requests.
-  if ('serviceWorker' in navigator) {
-    const registrations = await navigator.serviceWorker.getRegistrations()
-    await Promise.all(
-      registrations
-        .filter((registration) =>
-          registration.active?.scriptURL.endsWith('/mockServiceWorker.js'),
-        )
-        .map((registration) => registration.unregister()),
-    )
-  }
+  network.enable()
 }

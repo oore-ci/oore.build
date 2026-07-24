@@ -1,17 +1,7 @@
 import { HttpResponse, delay, http } from 'msw'
-import {
-  demoArtifactStorageSettings,
-  demoInstancePreferences,
-} from '../data/settings'
-import { ago } from '../seed'
-import type {
-  ArtifactStorageSettings,
-  ExternalAccessNetworkSettings,
-  ExternalAccessPreflightCheck,
-  InstancePreferences,
-  TrustedProxySettingsPublic,
-} from '@/lib/types'
+import type { ExternalAccessPreflightCheck } from '@/lib/types'
 import { requireDemoInstancePermission } from '../authorization'
+import { demoState } from '../state'
 
 const DEMO_OIDC_ISSUER = 'https://accounts.google.com'
 
@@ -19,36 +9,9 @@ function now(): number {
   return Math.floor(Date.now() / 1000)
 }
 
-// Mutate module-scoped state so demo changes survive refresh-free navigation.
-let artifactStorageSettings: ArtifactStorageSettings = {
-  ...demoArtifactStorageSettings,
-}
-let instancePreferences: InstancePreferences = { ...demoInstancePreferences }
-
-let externalAccessNetworkSettings: ExternalAccessNetworkSettings = {
-  public_url: undefined,
-  artifact_delivery_url: undefined,
-  allowed_origins: [],
-  source: 'default',
-  updated_at: ago(86400 * 30),
-}
-
-let trustedProxySettings: TrustedProxySettingsPublic = {
-  user_email_header: 'x-oore-user-email',
-  trusted_proxy_cidrs: [],
-  has_shared_secret: false,
-  has_warpgate_ticket: false,
-  updated_at: ago(86400 * 30),
-}
-
-let oidcConfigured = true
-let oidcIssuer = DEMO_OIDC_ISSUER
-let oidcHasClientSecret = false
-let oidcConfiguredAt = ago(86400 * 30)
-
 function ensureExternalAccessDefaults(origin: string) {
-  if (externalAccessNetworkSettings.allowed_origins.length === 0) {
-    externalAccessNetworkSettings = {
+  if (demoState.externalAccessNetwork.allowed_origins.length === 0) {
+    demoState.externalAccessNetwork = {
       public_url: origin,
       allowed_origins: [origin],
       source: 'database',
@@ -70,7 +33,7 @@ function buildPreflight(origin: string) {
     {
       id: 'public_url_https',
       label: 'Public URL is HTTPS',
-      ok: (externalAccessNetworkSettings.public_url ?? '').startsWith(
+      ok: (demoState.externalAccessNetwork.public_url ?? '').startsWith(
         'https://',
       ),
       message: 'Public URL uses HTTPS.',
@@ -79,20 +42,20 @@ function buildPreflight(origin: string) {
     {
       id: 'public_origin_allowed',
       label: 'Frontend origin is allowed',
-      ok: externalAccessNetworkSettings.allowed_origins.includes(origin),
+      ok: demoState.externalAccessNetwork.allowed_origins.includes(origin),
       message: 'Frontend origin is present in allowed origins.',
       failure_code: 'external_access_origin_not_allowed',
     },
   ]
 
-  if (instancePreferences.remote_auth_mode === 'trusted_proxy') {
+  if (demoState.preferences.remote_auth_mode === 'trusted_proxy') {
     checks.push({
       id: 'trusted_proxy_configured',
       label: 'Trusted proxy configured',
       ok:
-        !!trustedProxySettings.user_email_header &&
-        trustedProxySettings.has_shared_secret,
-      message: trustedProxySettings.has_shared_secret
+        !!demoState.trustedProxy.user_email_header &&
+        demoState.trustedProxy.has_shared_secret,
+      message: demoState.trustedProxy.has_shared_secret
         ? 'Trusted Proxy settings are configured.'
         : 'Configure Trusted Proxy to enable External Access.',
       failure_code: 'external_access_trusted_proxy_not_configured',
@@ -108,9 +71,9 @@ function buildPreflight(origin: string) {
       {
         id: 'oidc_configured',
         label: 'OIDC configured',
-        ok: oidcConfigured,
-        message: oidcConfigured
-          ? `OIDC is configured (${oidcIssuer}).`
+        ok: demoState.oidc.configured,
+        message: demoState.oidc.configured
+          ? `OIDC is configured (${demoState.oidc.issuer}).`
           : 'Configure OIDC to enable External Access.',
         failure_code: 'external_access_oidc_not_configured',
       },
@@ -126,7 +89,7 @@ function buildPreflight(origin: string) {
 export const settingsHandlers = [
   http.get('/v1/settings/artifact-storage', async () => {
     await delay(150)
-    return HttpResponse.json({ settings: artifactStorageSettings })
+    return HttpResponse.json({ settings: demoState.artifactStorage })
   }),
 
   http.put('/v1/settings/artifact-storage', async ({ request }) => {
@@ -144,21 +107,21 @@ export const settingsHandlers = [
     )?.trim()
 
     // Persist non-secret configuration in demo state; never echo secrets.
-    artifactStorageSettings = {
-      ...artifactStorageSettings,
+    demoState.artifactStorage = {
+      ...demoState.artifactStorage,
       ...body,
       has_access_key_id:
-        artifactStorageSettings.has_access_key_id || !!accessKeyId,
+        demoState.artifactStorage.has_access_key_id || !!accessKeyId,
       has_secret_access_key:
-        artifactStorageSettings.has_secret_access_key || !!secretAccessKey,
+        demoState.artifactStorage.has_secret_access_key || !!secretAccessKey,
       updated_at: now(),
     }
-    delete (artifactStorageSettings as any).access_key_id
-    delete (artifactStorageSettings as any).secret_access_key
+    delete (demoState.artifactStorage as any).access_key_id
+    delete (demoState.artifactStorage as any).secret_access_key
 
     return HttpResponse.json({
       settings: {
-        ...artifactStorageSettings,
+        ...demoState.artifactStorage,
       },
     })
   }),
@@ -170,7 +133,7 @@ export const settingsHandlers = [
       'instance_settings:read',
     )
     if (forbidden) return forbidden
-    return HttpResponse.json({ preferences: instancePreferences })
+    return HttpResponse.json({ preferences: demoState.preferences })
   }),
 
   http.put('/v1/settings/preferences', async ({ request }) => {
@@ -182,15 +145,15 @@ export const settingsHandlers = [
     if (forbidden) return forbidden
     const body = (await request.json()) as Record<string, unknown>
 
-    instancePreferences = {
-      ...instancePreferences,
+    demoState.preferences = {
+      ...demoState.preferences,
       ...body,
       updated_at: now(),
     }
 
     return HttpResponse.json({
       preferences: {
-        ...instancePreferences,
+        ...demoState.preferences,
       },
     })
   }),
@@ -204,7 +167,7 @@ export const settingsHandlers = [
   http.get('/v1/settings/external-access/network', async ({ request }) => {
     await delay(150)
     ensureExternalAccessDefaults(new URL(request.url).origin)
-    return HttpResponse.json({ settings: externalAccessNetworkSettings })
+    return HttpResponse.json({ settings: demoState.externalAccessNetwork })
   }),
 
   http.put('/v1/settings/external-access/network', async ({ request }) => {
@@ -219,20 +182,20 @@ export const settingsHandlers = [
       artifact_delivery_url?: string
       allowed_origins: Array<string>
     }
-    externalAccessNetworkSettings = {
-      ...externalAccessNetworkSettings,
+    demoState.externalAccessNetwork = {
+      ...demoState.externalAccessNetwork,
       public_url: body.public_url,
       artifact_delivery_url: body.artifact_delivery_url,
       allowed_origins: body.allowed_origins,
       source: 'database',
       updated_at: now(),
     }
-    return HttpResponse.json({ settings: externalAccessNetworkSettings })
+    return HttpResponse.json({ settings: demoState.externalAccessNetwork })
   }),
 
   http.get('/v1/settings/external-access/trusted-proxy', async () => {
     await delay(150)
-    return HttpResponse.json({ settings: trustedProxySettings })
+    return HttpResponse.json({ settings: demoState.trustedProxy })
   }),
 
   http.put(
@@ -250,33 +213,33 @@ export const settingsHandlers = [
         shared_secret?: string
         warpgate_ticket?: string
       }
-      trustedProxySettings = {
-        ...trustedProxySettings,
+      demoState.trustedProxy = {
+        ...demoState.trustedProxy,
         user_email_header:
-          body.user_email_header ?? trustedProxySettings.user_email_header,
+          body.user_email_header ?? demoState.trustedProxy.user_email_header,
         trusted_proxy_cidrs: body.trusted_proxy_cidrs,
         has_shared_secret:
-          trustedProxySettings.has_shared_secret || !!body.shared_secret,
+          demoState.trustedProxy.has_shared_secret || !!body.shared_secret,
         has_warpgate_ticket:
           body.warpgate_ticket === ''
             ? false
-            : trustedProxySettings.has_warpgate_ticket ||
+            : demoState.trustedProxy.has_warpgate_ticket ||
               !!body.warpgate_ticket,
         warpgate_ticket_source:
           body.warpgate_ticket === ''
             ? undefined
             : body.warpgate_ticket
               ? 'database'
-              : trustedProxySettings.warpgate_ticket_source,
+              : demoState.trustedProxy.warpgate_ticket_source,
         updated_at: now(),
       }
-      return HttpResponse.json({ settings: trustedProxySettings })
+      return HttpResponse.json({ settings: demoState.trustedProxy })
     },
   ),
 
   http.get('/v1/settings/external-access/oidc', async () => {
     await delay(150)
-    if (!oidcConfigured) {
+    if (!demoState.oidc.configured) {
       return new HttpResponse(
         JSON.stringify({
           code: 'oidc_not_configured',
@@ -285,16 +248,16 @@ export const settingsHandlers = [
         { status: 404 },
       )
     }
-    const base = oidcIssuer.replace(/\/$/, '')
+    const base = demoState.oidc.issuer.replace(/\/$/, '')
     return HttpResponse.json({
-      issuer_url: oidcIssuer,
+      issuer_url: demoState.oidc.issuer,
       client_id: 'demo-client-id',
-      has_client_secret: oidcHasClientSecret,
+      has_client_secret: demoState.oidc.hasClientSecret,
       authorization_endpoint: `${base}/o/oauth2/v2/auth`,
       token_endpoint: `${base}/token`,
       userinfo_endpoint: `${base}/userinfo`,
       jwks_uri: `${base}/jwks`,
-      configured_at: oidcConfiguredAt,
+      configured_at: demoState.oidc.configuredAt,
     })
   }),
 
@@ -311,15 +274,16 @@ export const settingsHandlers = [
       client_secret?: string
     }
 
-    oidcConfigured = true
-    oidcIssuer = body.issuer_url ?? oidcIssuer
-    oidcHasClientSecret = oidcHasClientSecret || !!body.client_secret
-    oidcConfiguredAt = now()
+    demoState.oidc.configured = true
+    demoState.oidc.issuer = body.issuer_url ?? demoState.oidc.issuer
+    demoState.oidc.hasClientSecret =
+      demoState.oidc.hasClientSecret || !!body.client_secret
+    demoState.oidc.configuredAt = now()
 
     return HttpResponse.json({
-      discovered_issuer: oidcIssuer,
-      has_client_secret: oidcHasClientSecret,
-      configured_at: oidcConfiguredAt,
+      discovered_issuer: demoState.oidc.issuer,
+      has_client_secret: demoState.oidc.hasClientSecret,
+      configured_at: demoState.oidc.configuredAt,
     })
   }),
 

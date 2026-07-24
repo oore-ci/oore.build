@@ -1,10 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  ArrowRight01Icon,
-  InformationCircleIcon,
-  LinkSquare02Icon,
-} from '@hugeicons/core-free-icons'
+  ArrowRight as ArrowRight01Icon,
+  Info as InformationCircleIcon,
+  SquareArrowOutUpRight as LinkSquare02Icon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import {
@@ -26,8 +25,9 @@ import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 
 export const Route = createFileRoute('/settings/integrations/github')({
   staticData: {
-    breadcrumbLabel: 'GitHub',
-    breadcrumbParent: { label: 'Sources', to: '/settings/integrations' },
+    breadcrumb: {
+      title: 'GitHub',
+    },
   },
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
@@ -41,7 +41,7 @@ function GitHubSetupPage() {
   const startMutation = usePreviewGitHubAppSetup()
   const { data: preferences, isLoading: preferencesLoading } =
     useInstancePreferences()
-  const remoteEnabled = preferences?.preferences.runtime_mode === 'remote'
+  const remoteEnabled = preferences?.runtime_mode === 'remote'
 
   const backendUrl = resolveInstanceApiBaseUrl(instance) ?? ''
   const webhookUrl = `${backendUrl}/v1/webhooks/github`
@@ -64,18 +64,16 @@ function GitHubSetupPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Connect GitHub Source" noindex />
+      <PageMeta title="Connect GitHub source" noindex />
       <PageHeader
-        title="Connect GitHub Source"
+        title="Connect GitHub source"
         description="Generate and install a GitHub App source for repository access and webhook delivery."
       />
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <Card>
+        <Card size="sm" className="min-w-0">
           <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Connection flow
-            </CardTitle>
+            <CardTitle>Connection flow</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
@@ -96,7 +94,7 @@ function GitHubSetupPage() {
                 startMutation.isPending || preferencesLoading || !remoteEnabled
               }
             >
-              <HugeiconsIcon icon={LinkSquare02Icon} />
+              <LinkSquare02Icon />
               {preferencesLoading
                 ? 'Checking access...'
                 : !remoteEnabled
@@ -104,18 +102,14 @@ function GitHubSetupPage() {
                   : startMutation.isPending
                     ? 'Starting...'
                     : 'Create GitHub app'}
-              {!startMutation.isPending ? (
-                <HugeiconsIcon icon={ArrowRight01Icon} />
-              ) : null}
+              {!startMutation.isPending ? <ArrowRight01Icon /> : null}
             </Button>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card size="sm" className="min-w-0">
           <CardHeader>
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-              Generated endpoints
-            </CardTitle>
+            <CardTitle>Generated endpoints</CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
@@ -143,7 +137,7 @@ function GitHubSetupPage() {
       </section>
 
       <Alert>
-        <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+        <InformationCircleIcon size={16} />
         <AlertDescription>
           {remoteEnabled
             ? 'After GitHub installation, you will return to Sources with the connection status updated.'

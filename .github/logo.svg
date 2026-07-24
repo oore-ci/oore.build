@@ -1,35 +1,37 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="100 100 320 320"
+  role="img"
+  aria-labelledby="title description"
+>
+  <title id="title">Oore</title>
+  <desc id="description">
+    A circular build sweep connecting a source commit to an artifact.
+  </desc>
   <defs>
-    <circle id="cut" cx="16" cy="16" r="7" />
-    <mask id="hole">
-      <rect x="0" y="0" width="32" height="32" fill="white" />
-      <use href="#cut" fill="black" />
+    <mask
+      id="cutouts"
+      x="0"
+      y="0"
+      width="512"
+      height="512"
+      maskUnits="userSpaceOnUse"
+    >
+      <rect width="512" height="512" fill="white" />
+      <circle cx="173" cy="349" r="16" fill="black" />
+      <rect x="329" y="197" width="66" height="11" fill="black" />
     </mask>
-    <clipPath id="left">
-      <rect x="0" y="0" width="15" height="32" />
-    </clipPath>
-    <clipPath id="right">
-      <rect x="17" y="0" width="15" height="32" />
-    </clipPath>
   </defs>
-  <rect
-    x="2"
-    y="2"
-    width="28"
-    height="28"
-    rx="6"
-    fill="#dc7702"
-    clip-path="url(#left)"
-    mask="url(#hole)"
-  />
-  <rect
-    x="2"
-    y="2"
-    width="28"
-    height="28"
-    rx="6"
-    fill="#dc7702"
-    clip-path="url(#right)"
-    mask="url(#hole)"
-  />
+  <g fill="#bb4d00" mask="url(#cutouts)">
+    <circle
+      cx="254"
+      cy="260"
+      r="119"
+      fill="none"
+      stroke="#bb4d00"
+      stroke-width="22"
+    />
+    <circle cx="173" cy="349" r="35" />
+    <rect x="315" y="170" width="79" height="90" rx="15" />
+  </g>
 </svg>

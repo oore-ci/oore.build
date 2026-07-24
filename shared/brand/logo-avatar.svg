@@ -1,35 +1,40 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 512 512"
+  role="img"
+  aria-labelledby="title description"
+>
+  <title id="title">Oore app icon</title>
+  <desc id="description">
+    The Oore source-to-artifact mark on a solid amber background.
+  </desc>
   <defs>
-    <circle id="cut" cx="24" cy="24" r="7" />
-    <mask id="hole">
-      <rect x="0" y="0" width="48" height="48" fill="white" />
-      <use href="#cut" fill="black" />
+    <mask
+      id="cutouts"
+      x="0"
+      y="0"
+      width="512"
+      height="512"
+      maskUnits="userSpaceOnUse"
+    >
+      <rect width="512" height="512" fill="white" />
+      <circle cx="173" cy="349" r="16" fill="black" />
+      <rect x="329" y="197" width="66" height="11" fill="black" />
     </mask>
-    <clipPath id="left">
-      <rect x="0" y="0" width="23" height="48" />
-    </clipPath>
-    <clipPath id="right">
-      <rect x="25" y="0" width="23" height="48" />
-    </clipPath>
   </defs>
-  <rect
-    x="10"
-    y="10"
-    width="28"
-    height="28"
-    rx="6"
-    fill="#dc7702"
-    clip-path="url(#left)"
-    mask="url(#hole)"
-  />
-  <rect
-    x="10"
-    y="10"
-    width="28"
-    height="28"
-    rx="6"
-    fill="#dc7702"
-    clip-path="url(#right)"
-    mask="url(#hole)"
-  />
+  <rect width="512" height="512" fill="#bb4d00" />
+  <g transform="translate(-26 -26) scale(1.1)">
+    <g fill="#fffbeb" mask="url(#cutouts)">
+      <circle
+        cx="254"
+        cy="260"
+        r="119"
+        fill="none"
+        stroke="#fffbeb"
+        stroke-width="22"
+      />
+      <circle cx="173" cy="349" r="35" />
+      <rect x="315" y="170" width="79" height="90" rx="15" />
+    </g>
+  </g>
 </svg>

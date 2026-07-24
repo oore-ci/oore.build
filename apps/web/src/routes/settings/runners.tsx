@@ -40,7 +40,11 @@ export function parseRunnersSearch(
 }
 
 export const Route = createFileRoute('/settings/runners')({
-  staticData: { breadcrumbLabel: 'Runners' },
+  staticData: {
+    breadcrumb: {
+      title: 'Runners',
+    },
+  },
   validateSearch: parseRunnersSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()

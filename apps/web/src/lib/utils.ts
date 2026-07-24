@@ -1,1 +1,1 @@
-export * from 'cnfast';
+export * from 'cnfast'

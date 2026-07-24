@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import { Search01Icon } from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { Search as Search01Icon } from 'lucide-react'
 
 import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
 import { Input } from '@/components/ui/input'
@@ -30,9 +29,8 @@ export function CollectionSearchInput({
 
   return (
     <div className={cn('relative w-full sm:max-w-sm', className)}>
-      <HugeiconsIcon
-        icon={Search01Icon}
-        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+      <Search01Icon
+        className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
         aria-hidden
       />
       <Input

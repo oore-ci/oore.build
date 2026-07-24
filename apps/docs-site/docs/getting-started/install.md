@@ -15,6 +15,7 @@ Installation puts the daemon, CLI, and/or frontend launcher on disk. First-run s
 - `curl`
 - Internet access to GitHub (`github.com`) and the installer endpoint for your channel
 - Access to `ci.oore.build` only if you plan to use the hosted UI
+- The [build prerequisites](/getting-started/prerequisites) required by your projects
 
 ## Install on one Mac (default)
 
@@ -56,6 +57,8 @@ curl -fsSL https://alpha.oore.pages.dev/install | OORE_CHANNEL=alpha bash
 ```
 
 `OORE_VERSION` (pinned tag/version) always overrides channel selection. Use the matching channel installer endpoint when testing prerelease installer behavior; `https://oore.build/install` is the stable production installer.
+
+See [Public alpha and release channels](/operations/release-channels) before testing a prerelease.
 
 ## Advanced topology install modes
 
@@ -220,9 +223,10 @@ Your reverse proxy must strip any browser-supplied identity headers, set the con
 ```bash
 oored version
 oore version
+oore-web status --url http://127.0.0.1:4173
 ```
 
-If `oore`/`oored` are not found, open a new terminal (so your shell picks up PATH changes) or use the full path under `~/.oore/bin`.
+If `oore`/`oored`/`oore-web` are not found, open a new terminal (so your shell picks up PATH changes) or use the full path under `~/.oore/bin`.
 
 ## Repair the managed backend services
 
@@ -304,6 +308,15 @@ oore update --channel alpha
 For a macOS system service, the updater explains why administrator access is needed and asks `sudo` to authorize the service restart before replacing installed files. Password input is hidden by macOS and is never stored by Oore.
 
 Owners can also check the frontend and backend versions independently from **Settings → Preferences**. When a newer release exists, the page can update a frontend installed as a managed systemd/launchd service and a backend installed as the managed macOS LaunchDaemon. Unmanaged processes remain command-line updates because Oore has no service manager to restart them safely.
+
+See [Upgrade procedures](/operations/upgrade) for backups, readiness checks, and rollback behavior.
+
+## Other deployment shapes
+
+- Use [Hosted UI onboarding](/getting-started/hosted-ui-onboarding) when `ci.oore.build` will connect to your HTTPS-reachable backend.
+- Use [Split backend and frontend roles](/operations/split-roles) when `oore-web` and `oored` run on different hosts.
+- Use the [installer reference](/reference/config/installer) for pinned versions, automation, install roles, and environment variables.
+- Use [Deployment](/operations/deployment) for reverse proxy, TLS, and production service guidance.
 
 Runner inventory reports each runner's installed version. Web-initiated updates
 of a runner on another Mac are not available yet; update that host locally with

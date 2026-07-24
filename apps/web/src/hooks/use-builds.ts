@@ -10,6 +10,7 @@ import type {
   BuildChangelogPreviewResponse,
   BuildDetailResponse,
   BuildLogChunk,
+  BuildLogsResponse,
   BuildStatus,
   CreateBuildRequest,
   CreateScopedDownloadTokenRequest,
@@ -30,9 +31,7 @@ import {
   listBuilds,
   rerunBuild,
 } from '@/lib/api'
-import { useActiveInstance } from '@/stores/instance-store'
-import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
-import { useAuthStore } from '@/stores/auth-store'
+import { useApiContext } from '@/hooks/use-api-context'
 
 const BUILD_POLL_INTERVAL_MS = 3_000
 
@@ -44,20 +43,7 @@ const TERMINAL_STATUSES: Set<string> = new Set<string>([
   'expired',
 ])
 
-function useAuthToken(): string | null {
-  const token = useAuthStore((s) => s.token)
-  const expiresAt = useAuthStore((s) => s.expiresAt)
-  if (!token || expiresAt == null) return null
-  if (expiresAt <= Math.floor(Date.now() / 1000)) return null
-  return token
-}
-
-function useBaseUrl(): string | null {
-  const instance = useActiveInstance()
-  return resolveInstanceApiBaseUrl(instance)
-}
-
-export function useBuilds(
+export function useBuilds<TData = ListBuildsResponse>(
   params?: {
     project_id?: string
     pipeline_id?: string
@@ -68,14 +54,16 @@ export function useBuilds(
     limit?: number
     offset?: number
   },
-  options?: { enabled?: boolean; refetchInterval?: number | false },
+  options?: {
+    enabled?: boolean
+    refetchInterval?: number | false
+    select?: (data: ListBuildsResponse) => TData
+  },
 ) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
   const pollInterval = options?.refetchInterval ?? BUILD_POLL_INTERVAL_MS
 
-  return useQuery({
+  return useQuery<ListBuildsResponse, Error, TData>({
     queryKey: [instance?.id ?? '__none__', 'builds', params ?? {}],
     queryFn: ({ signal }) => listBuilds(baseUrl!, token!, params, { signal }),
     enabled: !!baseUrl && !!token && (options?.enabled ?? true),
@@ -83,10 +71,11 @@ export function useBuilds(
     refetchInterval: (query) =>
       hasActiveBuilds(query.state.data) ? pollInterval : false,
     placeholderData: keepPreviousData,
+    select: options?.select,
   })
 }
 
-export function isTerminalStatus(status: BuildStatus | string): boolean {
+export function isTerminalStatus(status: BuildStatus): boolean {
   return TERMINAL_STATUSES.has(status)
 }
 
@@ -98,9 +87,7 @@ export function useBuild(
   buildId: string,
   options?: Pick<UseQueryOptions<BuildDetailResponse>, 'refetchInterval'>,
 ) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'build', buildId],
@@ -113,9 +100,7 @@ export function useBuild(
 
 export function useCreateBuild() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
   const instanceId = instance?.id ?? '__none__'
 
   return useMutation({
@@ -187,9 +172,7 @@ export function useBuildChangelogPreview(
   params: { pipeline_id: string; branch?: string; commit_sha?: string },
   options?: { enabled?: boolean },
 ) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery<BuildChangelogPreviewResponse>({
     queryKey: [
@@ -214,9 +197,7 @@ export function useBuildChangelogPreview(
 
 export function useCancelBuild() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (buildId: string) => {
@@ -237,9 +218,7 @@ export function useCancelBuild() {
 
 export function useRerunBuild() {
   const queryClient = useQueryClient()
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useMutation({
     mutationFn: (buildId: string) => {
@@ -259,23 +238,19 @@ export function useRerunBuild() {
 }
 
 export function useBuildLogs(buildId: string, options?: { enabled?: boolean }) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'build-logs', buildId],
     queryFn: async ({ signal }) => {
-      // Fetch all log pages (server max per page is 5000)
       const pageSize = 5000
-      let allLogs: Array<BuildLogChunk> = []
+      const logs: Array<BuildLogChunk> = []
       let afterSeq = -1
-      let total = 0
+      let page: BuildLogsResponse
 
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      while (true) {
+      do {
         signal.throwIfAborted()
-        const page = await getBuildLogs(
+        page = await getBuildLogs(
           baseUrl!,
           token!,
           buildId,
@@ -285,15 +260,11 @@ export function useBuildLogs(buildId: string, options?: { enabled?: boolean }) {
           },
           { signal },
         )
-        total = page.total
-        if (page.logs.length === 0) break
-        allLogs = allLogs.concat(page.logs)
-        afterSeq = page.logs[page.logs.length - 1].sequence
-        // If we got fewer than requested, we've reached the end
-        if (page.logs.length < pageSize) break
-      }
+        logs.push(...page.logs)
+        afterSeq = page.logs.at(-1)?.sequence ?? afterSeq
+      } while (page.logs.length === pageSize)
 
-      return { logs: allLogs, total }
+      return { logs, total: page.total }
     },
     enabled: (options?.enabled ?? true) && !!baseUrl && !!token && !!buildId,
   })
@@ -303,9 +274,7 @@ export function useArtifacts(
   buildId: string,
   options?: { refetchInterval?: number | false },
 ) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'artifacts', buildId],
@@ -318,9 +287,7 @@ export function useArtifacts(
 }
 
 export function useProjectArtifacts(projectId: string, limit = 50) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [
@@ -337,9 +304,7 @@ export function useProjectArtifacts(projectId: string, limit = 50) {
 }
 
 export function useArtifactsForBuilds(buildIds: Array<string>) {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
-  const instance = useActiveInstance()
+  const { baseUrl, instance, token } = useApiContext()
 
   return useQuery({
     queryKey: [instance?.id ?? '__none__', 'build-artifacts', buildIds],
@@ -351,8 +316,7 @@ export function useArtifactsForBuilds(buildIds: Array<string>) {
 }
 
 export function useArtifactDownloadLink() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
+  const { baseUrl, token } = useApiContext()
 
   return useMutation({
     mutationFn: (artifactId: string) => {
@@ -364,10 +328,8 @@ export function useArtifactDownloadLink() {
 }
 
 export function useArtifactInstallLink() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
+  const { baseUrl, instance, token } = useApiContext()
   const queryClient = useQueryClient()
-  const instance = useActiveInstance()
 
   return useMutation({
     mutationFn: (artifactId: string) => {
@@ -383,10 +345,8 @@ export function useArtifactInstallLink() {
 }
 
 export function useCreateScopedDownloadToken() {
-  const baseUrl = useBaseUrl()
-  const token = useAuthToken()
+  const { baseUrl, instance, token } = useApiContext()
   const queryClient = useQueryClient()
-  const instance = useActiveInstance()
 
   return useMutation({
     mutationFn: ({

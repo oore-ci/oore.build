@@ -1,38 +1,48 @@
 ---
 layout: home
 status: implemented
-description: 'Documentation for Oore CI, a self-hosted Flutter-first mobile CI and internal app distribution platform.'
+title: Oore CI documentation
+description: 'Task guides and reference for installing, operating, and integrating Oore CI.'
 hero:
-  name: Oore CI
-  text: Flutter-first mobile CI
-  tagline: Self-hosted build system with internal app distribution. OIDC or trusted-proxy auth for remote access, macOS-native, no vendor lock-in.
+  name: Oore CI documentation
+  text: Build, sign, and distribute Flutter apps from your Mac.
+  tagline: Practical guides for running your own Oore CI instance, from first install to daily operations.
   actions:
     - theme: brand
-      text: Get Started
+      text: Get started
       link: /getting-started/
     - theme: alt
-      text: View on GitHub
-      link: https://github.com/oore-ci/oore.build
-
-features:
-  - title: Self-Hosted CI
-    details: Run your own build infrastructure on macOS. Full control over signing keys, build artifacts, and distribution — nothing leaves your network unless you choose.
-  - title: Flutter-First
-    details: Purpose-built for Flutter. Android, iOS, and macOS builds with automatic Flutter version management via FVM and file-first pipeline configuration.
-  - title: Remote Auth
-    details: OIDC or trusted-proxy auth for Remote access, loopback login for Local Only onboarding, and host-authorized one-use recovery. No local passwords, ever.
+      text: Browse reference
+      link: /reference/
 ---
 
-## Who is this for?
+## Start with a task
 
-<div class="vp-doc">
-
-| I want to...                                         | Start here                                                                 |
-| ---------------------------------------------------- | -------------------------------------------------------------------------- |
-| **Set up Oore CI for the first time**                | [Getting Started](/getting-started/)                                       |
-| **Configure my OIDC provider**                       | [OIDC Guides](/guides/oidc/)                                               |
-| **Split backend and web UI across hosts**            | [Split Backend and Frontend](/operations/split-roles)                      |
-| **Deploy on a Mac Studio behind NetBird + Warpgate** | [Mac Studio + NetBird + Warpgate](/operations/mac-studio-netbird-warpgate) |
-| **Look up an API endpoint or CLI flag**              | [Reference](/reference/api/)                                               |
-
+<div class="docs-task-grid">
+  <a class="docs-task-link" href="/getting-started/install">
+    <strong>Install on one Mac</strong>
+    <span>Run the default installer and open the local UI.</span>
+  </a>
+  <a class="docs-task-link" href="/getting-started/first-build">
+    <strong>Run your first build</strong>
+    <span>Connect a repository, configure a pipeline, and verify the runner.</span>
+  </a>
+  <a class="docs-task-link" href="/guides/integrations/github-app">
+    <strong>Connect a source</strong>
+    <span>Configure GitHub, GitLab, or a local repository.</span>
+  </a>
+  <a class="docs-task-link" href="/operations/">
+    <strong>Operate an instance</strong>
+    <span>Deploy, update, monitor, back up, and troubleshoot Oore.</span>
+  </a>
+  <a class="docs-task-link" href="/reference/cli/">
+    <strong>Look up a command</strong>
+    <span>Find CLI behavior, flags, configuration, and state reference.</span>
+  </a>
+  <a class="docs-task-link" href="/openapi/">
+    <strong>Use the API</strong>
+    <span>Browse the generated OpenAPI reference or download the specification.</span>
+  </a>
 </div>
+
+Oore CI is in public alpha. Review the [known limitations](/operations/known-limitations) before production-like use.

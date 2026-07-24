@@ -1,11 +1,10 @@
 import { Suspense, lazy, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Download04Icon,
-  File01Icon,
-  Share08Icon,
-} from '@hugeicons/core-free-icons'
+  Download as Download04Icon,
+  File as File01Icon,
+  Share2 as Share08Icon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import type { Artifact, BuildStatus } from '@/lib/types'
@@ -17,6 +16,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from '@/components/ui/item'
 
 const loadArtifactShareMenu = () => import('./artifact-share-menu')
 const ArtifactShareMenu = lazy(loadArtifactShareMenu)
@@ -68,7 +74,7 @@ function ArtifactShareControl({ artifact }: { artifact: Artifact }) {
         setOpen(true)
       }}
     >
-      <HugeiconsIcon icon={Share08Icon} />
+      <Share08Icon />
     </Button>
   )
 
@@ -101,30 +107,30 @@ function ArtifactRow({
   const installReady = artifactInstallReadiness(artifact).ready
 
   return (
-    <div
-      className={`flex items-center gap-2 border p-2 ${expired ? 'opacity-50' : ''}`}
+    <Item
+      variant="outline"
+      size="xs"
+      className={expired ? 'opacity-50' : undefined}
     >
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium">{artifact.name}</p>
-        <div className="mt-0.5 flex items-center gap-1.5">
+      <ItemContent>
+        <ItemTitle>{artifact.name}</ItemTitle>
+        <ItemDescription className="flex items-center gap-1.5">
           <Badge variant="outline" className="text-[10px]">
             {artifact.artifact_type}
           </Badge>
-          <span className="text-[10px] text-muted-foreground">
+          <span>
             {artifact.file_size != null
               ? formatFileSize(artifact.file_size)
               : '—'}
           </span>
           {expiryLabel ? (
-            <span
-              className={`text-[10px] ${expired ? 'text-destructive' : 'text-muted-foreground'}`}
-            >
+            <span className={expired ? 'text-destructive' : undefined}>
               {expiryLabel}
             </span>
           ) : null}
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
+        </ItemDescription>
+      </ItemContent>
+      <ItemActions>
         {installReady ? (
           <Button
             variant="outline"
@@ -143,7 +149,7 @@ function ArtifactRow({
             aria-label={`Install ${artifact.name}`}
             title="Install"
           >
-            <HugeiconsIcon icon={Download04Icon} />
+            <Download04Icon />
           </Button>
         ) : (
           <Button
@@ -154,18 +160,14 @@ function ArtifactRow({
             onClick={() => onDownload(artifact.id, artifact.name)}
             disabled={isDownloadPending || expired}
           >
-            {isDownloadPending ? (
-              <Spinner />
-            ) : (
-              <HugeiconsIcon icon={Download04Icon} />
-            )}
+            {isDownloadPending ? <Spinner /> : <Download04Icon />}
           </Button>
         )}
         {canManageShareLinks ? (
           <ArtifactShareControl artifact={artifact} />
         ) : null}
-      </div>
-    </div>
+      </ItemActions>
+    </Item>
   )
 }
 
@@ -196,8 +198,8 @@ export function ArtifactsPanel({
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-muted-foreground">
-          <HugeiconsIcon icon={File01Icon} size={14} />
+        <CardTitle className="flex items-center gap-2">
+          <File01Icon size={14} />
           Artifacts
           {artifacts.length > 0 ? (
             <Badge variant="secondary" className="text-[10px]">

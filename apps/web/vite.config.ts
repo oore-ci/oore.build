@@ -1,4 +1,3 @@
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { URL, fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import { devtools } from '@tanstack/devtools-vite'
@@ -8,106 +7,39 @@ import tailwindcss from '@tailwindcss/vite'
 
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 
-import type { Plugin } from 'vite'
+type ReleaseChannel = 'alpha' | 'beta' | 'stable' | 'dev'
 
-/**
- * Post-build plugin that generates sitemap.xml from the public routes list.
- * For an SPA behind auth, only explicitly-listed public routes are included.
- * This runs at build time so the sitemap always stays in sync with deploys.
- */
-function sitemapPlugin(): Plugin {
-  const HOSTNAME = 'https://ci.oore.build'
-  const PUBLIC_ROUTES: Array<{
-    path: string
-    changefreq: string
-    priority: string
-  }> = [
-    { path: '/', changefreq: 'weekly', priority: '1.0' },
-    { path: '/login', changefreq: 'monthly', priority: '0.5' },
-  ]
-
-  return {
-    name: 'generate-sitemap',
-    apply: 'build',
-    enforce: 'post',
-    closeBundle() {
-      const outDir = 'dist'
-      const urls = PUBLIC_ROUTES.map(
-        (r) =>
-          `  <url>\n    <loc>${HOSTNAME}${r.path}</loc>\n    <changefreq>${r.changefreq}</changefreq>\n    <priority>${r.priority}</priority>\n  </url>`,
-      ).join('\n')
-
-      const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`
-      writeFileSync(`${outDir}/sitemap.xml`, sitemap)
-    },
+function getReleaseChannel(): ReleaseChannel {
+  const configuredChannel = process.env.OORE_WEB_RELEASE_CHANNEL
+  if (
+    configuredChannel === 'alpha' ||
+    configuredChannel === 'beta' ||
+    configuredChannel === 'stable'
+  ) {
+    return configuredChannel
   }
-}
 
-/**
- * Post-build plugin that optimises the production HTML:
- * 1. Preloads the primary font (Google Sans Flex latin) to eliminate FOUT.
- */
-function htmlOptimisePlugin(): Plugin {
-  return {
-    name: 'html-optimise',
-    apply: 'build',
-    enforce: 'post',
-    closeBundle() {
-      const outDir = 'dist'
-      const htmlPath = `${outDir}/index.html`
-
-      let html: string
-      try {
-        html = readFileSync(htmlPath, 'utf-8')
-      } catch {
-        return
-      }
-
-      // Find the hashed font filename and inject a preload hint
-      const assetFiles = readdirSync(`${outDir}/assets`)
-      const fontFile = assetFiles.find(
-        (f) =>
-          f.startsWith('google-sans-flex-latin-') &&
-          f.endsWith('.woff2') &&
-          !f.includes('ext'),
-      )
-      if (fontFile) {
-        const preload = `    <link rel="preload" href="/assets/${fontFile}" as="font" type="font/woff2" crossorigin>\n`
-        html = html.replace(/(\s*<link rel="stylesheet")/, `\n${preload}$1`)
-      }
-
-      writeFileSync(htmlPath, html)
-    },
-  }
+  const releaseTag = process.env.RELEASE_TAG
+  if (releaseTag?.includes('-alpha.')) return 'alpha'
+  if (releaseTag?.includes('-beta.')) return 'beta'
+  if (releaseTag?.startsWith('v')) return 'stable'
+  return 'dev'
 }
 
 // https://vitejs.dev/config/
 export default defineConfig({
   define: {
-    'import.meta.env.VITE_RELEASE_CHANNEL': JSON.stringify(
-      process.env.OORE_WEB_RELEASE_CHANNEL === 'alpha' ||
-        process.env.OORE_WEB_RELEASE_CHANNEL === 'beta' ||
-        process.env.OORE_WEB_RELEASE_CHANNEL === 'stable'
-        ? process.env.OORE_WEB_RELEASE_CHANNEL
-        : process.env.RELEASE_TAG?.includes('-alpha.')
-          ? 'alpha'
-          : process.env.RELEASE_TAG?.includes('-beta.')
-            ? 'beta'
-            : process.env.RELEASE_TAG?.startsWith('v')
-              ? 'stable'
-              : 'dev',
-    ),
+    'import.meta.env.VITE_RELEASE_CHANNEL': JSON.stringify(getReleaseChannel()),
   },
   plugins: [
     devtools(),
     tanstackRouter({
       target: 'react',
       autoCodeSplitting: true,
+      quoteStyle: 'single',
     }),
     viteReact(),
     tailwindcss(),
-    htmlOptimisePlugin(),
-    sitemapPlugin(),
   ],
   build: {
     manifest: true,
@@ -128,8 +60,6 @@ export default defineConfig({
             id.includes('/@tanstack/react-router/') ||
             id.includes('/@tanstack/router-') ||
             id.includes('/@tanstack/history') ||
-            id.includes('/@tanstack/react-store') ||
-            id.includes('/@tanstack/store') ||
             id.includes('/tiny-invariant/') ||
             id.includes('/tiny-warning/')
           )

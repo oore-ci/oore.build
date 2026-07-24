@@ -1,5 +1,8 @@
-import type { PreferencesPageState } from '@/routes/settings/preferences'
+import type { SubmitHandler, UseFormReturn } from 'react-hook-form'
+import type { TrustedProxySettingsPublic } from '@/lib/types'
+import type { TrustedProxyFormValues } from '@/routes/settings/preferences'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
@@ -23,51 +26,51 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 
 export default function TrustedProxySettingsDialog({
-  state,
+  form,
+  isOwner,
+  isPending,
+  onOpenChange,
+  onSubmit,
+  open,
+  settings,
 }: {
-  state: PreferencesPageState
+  form: UseFormReturn<TrustedProxyFormValues>
+  isOwner: boolean
+  isPending: boolean
+  onOpenChange: (open: boolean) => void
+  onSubmit: SubmitHandler<TrustedProxyFormValues>
+  open: boolean
+  settings: TrustedProxySettingsPublic | undefined
 }) {
-  const {
-    isOwner,
-    onSubmitTrustedProxy,
-    setTrustedProxyDialogOpen,
-    trustedProxyDialogOpen,
-    trustedProxyForm,
-    trustedProxySettings,
-    updateTrustedProxyMutation,
-  } = state
-  const userEmailHeader = trustedProxyForm.watch('user_email_header')
-  const clearWarpgateTicket = trustedProxyForm.watch('clear_warpgate_ticket')
+  const userEmailHeader = form.watch('user_email_header')
+  const clearWarpgateTicket = form.watch('clear_warpgate_ticket')
   const isWarpgate =
     userEmailHeader.trim().toLowerCase() === 'x-warpgate-username'
   return (
     <Dialog
-      open={trustedProxyDialogOpen}
+      open={open}
       onOpenChange={(open) => {
-        setTrustedProxyDialogOpen(open)
+        onOpenChange(open)
         if (!open) {
-          trustedProxyForm.setValue('shared_secret', '')
-          trustedProxyForm.setValue('warpgate_ticket', '')
-          trustedProxyForm.setValue('clear_warpgate_ticket', false)
+          form.setValue('shared_secret', '')
+          form.setValue('warpgate_ticket', '')
+          form.setValue('clear_warpgate_ticket', false)
         }
       }}
     >
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Trusted Proxy Identity Settings</DialogTitle>
+          <DialogTitle>Trusted Proxy identity settings</DialogTitle>
           <DialogDescription>
             Configure the backend trust contract used when an upstream proxy
             provides the signed-in user email.
           </DialogDescription>
         </DialogHeader>
 
-        <Form {...trustedProxyForm}>
-          <form
-            onSubmit={trustedProxyForm.handleSubmit(onSubmitTrustedProxy)}
-            className="space-y-4"
-          >
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <FormField
-              control={trustedProxyForm.control}
+              control={form.control}
               name="user_email_header"
               render={({ field }) => (
                 <FormItem>
@@ -76,7 +79,7 @@ export default function TrustedProxySettingsDialog({
                     <Input
                       placeholder="x-oore-user-email"
                       {...field}
-                      disabled={updateTrustedProxyMutation.isPending}
+                      disabled={isPending}
                     />
                   </FormControl>
                   <FormDescription>
@@ -89,7 +92,7 @@ export default function TrustedProxySettingsDialog({
             />
 
             <FormField
-              control={trustedProxyForm.control}
+              control={form.control}
               name="trusted_proxy_cidrs"
               render={({ field }) => (
                 <FormItem>
@@ -99,7 +102,7 @@ export default function TrustedProxySettingsDialog({
                       rows={4}
                       placeholder="127.0.0.1/32&#10;10.0.0.10/32"
                       {...field}
-                      disabled={updateTrustedProxyMutation.isPending}
+                      disabled={isPending}
                     />
                   </FormControl>
                   <FormDescription>
@@ -112,7 +115,7 @@ export default function TrustedProxySettingsDialog({
             />
 
             <FormField
-              control={trustedProxyForm.control}
+              control={form.control}
               name="shared_secret"
               render={({ field }) => (
                 <FormItem>
@@ -121,12 +124,12 @@ export default function TrustedProxySettingsDialog({
                     <Input
                       type="password"
                       placeholder={
-                        trustedProxySettings?.has_shared_secret
+                        settings?.has_shared_secret
                           ? 'Leave empty to keep existing secret'
                           : 'Paste shared secret'
                       }
                       {...field}
-                      disabled={updateTrustedProxyMutation.isPending}
+                      disabled={isPending}
                     />
                   </FormControl>
                   <FormDescription>
@@ -139,85 +142,80 @@ export default function TrustedProxySettingsDialog({
             />
 
             {isWarpgate ? (
-              <div className="space-y-3 border p-3">
-                <FormField
-                  control={trustedProxyForm.control}
-                  name="warpgate_ticket"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>iOS install access ticket</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="password"
-                          placeholder={
-                            trustedProxySettings?.has_warpgate_ticket
-                              ? 'Leave empty to keep existing ticket'
-                              : 'Paste Warpgate access ticket'
-                          }
-                          autoComplete="off"
-                          {...field}
-                          disabled={
-                            updateTrustedProxyMutation.isPending ||
-                            clearWarpgateTicket
-                          }
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        {trustedProxySettings?.warpgate_ticket_source ===
-                        'environment'
-                          ? 'Currently supplied by OORE_WARPGATE_TICKET. Saving a value here stores an encrypted override.'
-                          : trustedProxySettings?.has_warpgate_ticket
-                            ? 'Stored encrypted. Leave empty to keep it; enter a value only to rotate it.'
-                            : 'Optional. Lets the iOS installer fetch the manifest and IPA through Warpgate without an interactive login.'}
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {trustedProxySettings?.warpgate_ticket_source === 'database' ? (
+              <Card size="sm">
+                <CardContent className="space-y-3">
                   <FormField
-                    control={trustedProxyForm.control}
-                    name="clear_warpgate_ticket"
+                    control={form.control}
+                    name="warpgate_ticket"
                     render={({ field }) => (
                       <FormItem>
-                        <label className="flex items-center gap-2 text-sm font-medium">
-                          <FormControl>
-                            <Checkbox
-                              checked={field.value}
-                              onCheckedChange={(checked) =>
-                                field.onChange(!!checked)
-                              }
-                              disabled={updateTrustedProxyMutation.isPending}
-                            />
-                          </FormControl>
-                          Remove stored install ticket
-                        </label>
+                        <FormLabel>iOS install access ticket</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="password"
+                            placeholder={
+                              settings?.has_warpgate_ticket
+                                ? 'Leave empty to keep existing ticket'
+                                : 'Paste Warpgate access ticket'
+                            }
+                            autoComplete="off"
+                            {...field}
+                            disabled={isPending || clearWarpgateTicket}
+                          />
+                        </FormControl>
                         <FormDescription>
-                          Environment configuration will become active if
-                          OORE_WARPGATE_TICKET is also set.
+                          {settings?.warpgate_ticket_source === 'environment'
+                            ? 'Currently supplied by OORE_WARPGATE_TICKET. Saving a value here stores an encrypted override.'
+                            : settings?.has_warpgate_ticket
+                              ? 'Stored encrypted. Leave empty to keep it; enter a value only to rotate it.'
+                              : 'Optional. Lets the iOS installer fetch the manifest and IPA through Warpgate without an interactive login.'}
                         </FormDescription>
+                        <FormMessage />
                       </FormItem>
                     )}
                   />
-                ) : null}
-              </div>
+
+                  {settings?.warpgate_ticket_source === 'database' ? (
+                    <FormField
+                      control={form.control}
+                      name="clear_warpgate_ticket"
+                      render={({ field }) => (
+                        <FormItem>
+                          <label className="flex items-center gap-2 text-sm font-medium">
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value}
+                                onCheckedChange={(checked) =>
+                                  field.onChange(!!checked)
+                                }
+                                disabled={isPending}
+                              />
+                            </FormControl>
+                            Remove stored install ticket
+                          </label>
+                          <FormDescription>
+                            Environment configuration will become active if
+                            OORE_WARPGATE_TICKET is also set.
+                          </FormDescription>
+                        </FormItem>
+                      )}
+                    />
+                  ) : null}
+                </CardContent>
+              </Card>
             ) : null}
 
             <DialogFooter>
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setTrustedProxyDialogOpen(false)}
-                disabled={updateTrustedProxyMutation.isPending}
+                onClick={() => onOpenChange(false)}
+                disabled={isPending}
               >
                 Cancel
               </Button>
-              <Button
-                type="submit"
-                disabled={!isOwner || updateTrustedProxyMutation.isPending}
-              >
-                {updateTrustedProxyMutation.isPending ? (
+              <Button type="submit" disabled={!isOwner || isPending}>
+                {isPending ? (
                   <>
                     <Spinner className="size-4" />
                     Saving...

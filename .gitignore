@@ -19,7 +19,10 @@ Thumbs.db
 
 # editors
 .idea/
-.vscode/
+!.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 *.swp
 *.swo
 *~
@@ -37,3 +40,5 @@ dist/releases
 
 package-lock.json
 
+# Agent specific
+.agents/skills/

@@ -41,6 +41,8 @@ export const pipelineFormSchema = z
     macos_command_override: z.string().optional(),
     env_vars: z.string().optional(),
     artifact_patterns: z.string().optional(),
+    trigger_events: z.array(z.string()),
+    cancel_previous: z.boolean(),
     branches: z.string().optional(),
     max_concurrent: z
       .string()

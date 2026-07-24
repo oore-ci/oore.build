@@ -25,7 +25,7 @@ function BuildIdentity({ build }: { build: Build }) {
     <Link
       to="/builds/$buildId"
       params={{ buildId: build.id }}
-      className="group block rounded-sm font-mono outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="group block rounded-md font-mono outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
     >
       <span className="block text-sm group-hover:underline">
         #{build.build_number}

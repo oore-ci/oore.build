@@ -120,8 +120,7 @@ impl FromRequestParts<Arc<AppState>> for RunnerAuth {
 
             let token_hash = hash_token(token);
 
-            let store = state.store.lock().await;
-            let pool = store.pool();
+            let pool = &state.db;
 
             let row = sqlx::query("SELECT id, name FROM runners WHERE token_hash = ?1")
                 .bind(&token_hash)
@@ -207,8 +206,7 @@ pub async fn register_runner(
     let now = now_unix();
     let caps_str = serde_json::to_string(&req.capabilities).unwrap_or_else(|_| "{}".to_string());
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     sqlx::query(
         "INSERT INTO runners (id, name, token_hash, status, capabilities, registered_by, created_at, updated_at) \
@@ -287,8 +285,7 @@ pub async fn runner_heartbeat(
     let now = now_unix();
     let has_capabilities = req.capabilities.as_object().is_some_and(|o| !o.is_empty());
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     // Only overwrite capabilities when the runner sends a non-empty object
     let result = if has_capabilities {
@@ -435,8 +432,7 @@ pub async fn claim_job(
         ));
     }
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     // A missing repository remains ineligible. Missing preferences means the
     // ordinary running state. Filtering before ordering prevents blocked work
@@ -606,8 +602,7 @@ pub async fn update_job_status(
         ));
     }
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     // Verify build exists and belongs to this runner
     let build_row = sqlx::query("SELECT runner_id FROM builds WHERE id = ?1")
@@ -750,8 +745,7 @@ pub async fn get_job_status(
         ));
     }
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let row = sqlx::query("SELECT status, runner_id FROM builds WHERE id = ?1")
         .bind(&job_id)
@@ -788,8 +782,7 @@ pub async fn get_runner(
 ) -> ApiResult<UpdateRunnerResponse> {
     check_permission(&state.enforcer, &auth.0.role, "runners", "read").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let row = sqlx::query("SELECT * FROM runners WHERE id = ?1")
         .bind(&runner_id)
@@ -817,8 +810,7 @@ pub async fn list_runners(
 ) -> ApiResult<ListRunnersResponse> {
     check_permission(&state.enforcer, &auth.0.role, "runners", "read").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let rows = sqlx::query("SELECT * FROM runners ORDER BY created_at DESC")
         .fetch_all(pool)
@@ -867,8 +859,7 @@ pub async fn update_runner(
     }
 
     let now = now_unix();
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let existing = sqlx::query("SELECT name, registered_by FROM runners WHERE id = ?1")
         .bind(&runner_id)

@@ -1,17 +1,13 @@
 import {
-  ArrowDown01Icon,
-  ArrowUp01Icon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  ArrowDown as ArrowDown01Icon,
+  ArrowUp as ArrowUp01Icon,
+} from 'lucide-react'
 import type { Table } from '@tanstack/react-table'
-import { useState } from 'react'
 
+import { CollectionSearchInput } from '@/components/collection-search-input'
 import type { SortDirection } from '@/components/collection-controls'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
-import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
 import type { User } from '@/lib/types'
 import type { UserSort } from './users'
 
@@ -41,31 +37,17 @@ export function UsersToolbar({
   sort,
   table,
 }: UsersToolbarProps) {
-  const [value, setValue] = useState(initialSearch)
-  const debouncedSearch = useDebouncedCallback(onSearch, 300)
   const selectedRows = table.getFilteredSelectedRowModel().rows
+  const DirectionIcon = direction === 'asc' ? ArrowUp01Icon : ArrowDown01Icon
 
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-      <div className="relative w-full sm:max-w-sm">
-        <HugeiconsIcon
-          icon={Search01Icon}
-          className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-          aria-hidden
-        />
-        <Input
-          type="search"
-          value={value}
-          onChange={(event) => {
-            const next = event.target.value
-            setValue(next)
-            debouncedSearch(next)
-          }}
-          placeholder="Search users"
-          aria-label="Search users"
-          className="pl-9"
-        />
-      </div>
+      <CollectionSearchInput
+        initialValue={initialSearch}
+        onSearch={onSearch}
+        placeholder="Search users"
+        ariaLabel="Search users"
+      />
 
       <div className="grid grid-cols-[1fr_auto] gap-3 sm:hidden">
         <NativeSelect
@@ -92,9 +74,7 @@ export function UsersToolbar({
             onSortChange(sort, direction === 'asc' ? 'desc' : 'asc')
           }
         >
-          <HugeiconsIcon
-            icon={direction === 'asc' ? ArrowUp01Icon : ArrowDown01Icon}
-          />
+          <DirectionIcon />
         </Button>
       </div>
 

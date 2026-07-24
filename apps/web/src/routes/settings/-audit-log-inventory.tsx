@@ -17,7 +17,10 @@ import {
 import { relativeTime } from '@/lib/format-utils'
 
 export type AuditSort =
-  'created_at' | 'actor_email' | 'action' | 'resource_type'
+  | 'created_at'
+  | 'actor_email'
+  | 'action'
+  | 'resource_type'
 
 export function AuditLogInventory({
   direction,
@@ -154,7 +157,7 @@ export function AuditLogInventory({
                 ))
               : entries.map((entry) => (
                   <TableRow key={entry.id}>
-                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                    <TableCell className="text-sm whitespace-nowrap text-muted-foreground">
                       <time
                         dateTime={new Date(
                           entry.created_at * 1000,
@@ -177,10 +180,12 @@ export function AuditLogInventory({
                       <Badge variant="secondary">{entry.resource_type}</Badge>
                     </TableCell>
                     <TableCell className="hidden font-mono text-[11px] text-muted-foreground lg:table-cell">
-                      {entry.resource_id ? entry.resource_id.slice(0, 8) : '—'}
+                      {entry.resource_id
+                        ? entry.resource_id.slice(0, 8)
+                        : 'Not available'}
                     </TableCell>
                     <TableCell className="hidden max-w-xs truncate text-xs text-muted-foreground lg:table-cell">
-                      {entry.details ?? '—'}
+                      {entry.details ?? 'Not available'}
                     </TableCell>
                   </TableRow>
                 ))}

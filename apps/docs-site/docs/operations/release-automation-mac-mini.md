@@ -51,5 +51,4 @@ Set these in GitHub repo settings (Settings > Secrets and variables > Actions):
 
 ```bash
 make validate
-make release-smoke
 ```

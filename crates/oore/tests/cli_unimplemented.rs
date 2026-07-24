@@ -2,9 +2,10 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn run(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_oore"))
@@ -87,6 +88,27 @@ fn backup_create_and_verify_round_trip() {
     );
     assert_eq!(setup.status.code(), Some(0));
 
+    tokio::runtime::Runtime::new()
+        .expect("create test runtime")
+        .block_on(async {
+            let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", database.display()))
+                .await
+                .expect("open backup fixture database");
+            sqlx::query("CREATE TABLE backup_hash_fixture (payload BLOB NOT NULL)")
+                .execute(&pool)
+                .await
+                .expect("create backup fixture table");
+            sqlx::query("INSERT INTO backup_hash_fixture VALUES (zeroblob(131072))")
+                .execute(&pool)
+                .await
+                .expect("grow backup fixture beyond one hash chunk");
+            pool.close().await;
+        });
+    assert!(
+        fs::metadata(&database).expect("database metadata").len() > 64 * 1024,
+        "backup fixture must exercise more than one hashing chunk"
+    );
+
     let create = run_with_env(
         &[
             "backup",
@@ -119,6 +141,20 @@ fn http_reason(status: u16) -> &'static str {
     }
 }
 
+fn write_json_response(stream: &mut std::net::TcpStream, status: u16, body: &str) {
+    let response = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        status,
+        http_reason(status),
+        body.len(),
+        body
+    );
+    stream
+        .write_all(response.as_bytes())
+        .expect("write response");
+    stream.flush().expect("flush response");
+}
+
 fn spawn_stub_server<F>(expected_requests: usize, handler: F) -> (String, thread::JoinHandle<()>)
 where
     F: Fn(&str, &str, &str) -> (u16, String) + Send + 'static,
@@ -138,21 +174,103 @@ where
             let path = parts.next().unwrap_or("/");
             let (status, body) = handler(method, path, &req);
 
-            let response = format!(
-                "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                status,
-                http_reason(status),
-                body.len(),
-                body
-            );
-            stream
-                .write_all(response.as_bytes())
-                .expect("write response");
-            stream.flush().expect("flush response");
+            write_json_response(&mut stream, status, &body);
         }
     });
 
     (format!("http://{}", addr), handle)
+}
+
+fn spawn_concurrent_status_server() -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+    listener
+        .set_nonblocking(true)
+        .expect("set nonblocking listener");
+    let addr = listener.local_addr().expect("server local addr");
+    let detail_gate = Arc::new((Mutex::new(0usize), Condvar::new()));
+
+    let handle = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut workers = Vec::new();
+        while workers.len() < 6 && Instant::now() < deadline {
+            let (mut stream, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(error) => panic!("accept connection: {error}"),
+            };
+            let detail_gate = Arc::clone(&detail_gate);
+            workers.push(thread::spawn(move || {
+                let mut buf = [0u8; 16 * 1024];
+                let n = stream.read(&mut buf).expect("read request bytes");
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let path = req
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("/");
+
+                let (status, body, is_detail) = if path == "/v1/public/setup-status" {
+                    (
+                        200,
+                        r#"{"instance_id":"inst-concurrent","state":"ready","runtime_mode":"local","remote_auth_mode":"oidc","setup_mode":false,"is_configured":true}"#,
+                        false,
+                    )
+                } else if path == "/v1/users/me" {
+                    (
+                        200,
+                        r#"{"user":{"id":"u1","email":"owner@local","display_name":"Owner","role":"owner","status":"active","created_at":1,"updated_at":1}}"#,
+                        false,
+                    )
+                } else if path.contains("status=queued") {
+                    (200, r#"{"builds":[],"total":2}"#, true)
+                } else if path.contains("status=running") {
+                    (200, r#"{"builds":[],"total":1}"#, true)
+                } else if path == "/v1/runners" {
+                    (200, r#"{"runners":[]}"#, true)
+                } else if path.starts_with("/v1/builds?") {
+                    (200, r#"{"builds":[],"total":0}"#, true)
+                } else {
+                    (404, r#"{"error":"unexpected path"}"#, false)
+                };
+
+                if is_detail {
+                    let (count, ready) = &*detail_gate;
+                    let mut count = count.lock().expect("lock detail request count");
+                    *count += 1;
+                    ready.notify_all();
+                    let count = ready
+                        .wait_timeout_while(count, Duration::from_secs(2), |count| {
+                            *count < 4
+                        })
+                        .expect("wait for concurrent detail requests")
+                        .0;
+                    if *count < 4 {
+                        write_json_response(
+                            &mut stream,
+                            500,
+                            r#"{"error":"detail requests were serialized"}"#,
+                        );
+                        return;
+                    }
+                }
+                write_json_response(&mut stream, status, body);
+            }));
+        }
+
+        assert_eq!(
+            workers.len(),
+            6,
+            "status did not issue all expected requests"
+        );
+        for worker in workers {
+            worker.join().expect("status server worker");
+        }
+    });
+
+    (format!("http://{addr}"), handle)
 }
 
 #[test]
@@ -469,4 +587,43 @@ fn status_with_valid_token_prints_queue_build_and_runner_details() {
     assert!(stdout.contains("Runners:       2 total (1 online/busy)"));
     assert!(stdout.contains("Recent builds:"));
     assert!(stdout.contains("#42 succeeded (manual)"));
+}
+
+#[test]
+fn status_fetches_authenticated_details_concurrently() {
+    let (daemon_url, server) = spawn_concurrent_status_server();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_oore"))
+        .args([
+            "status",
+            "--daemon-url",
+            daemon_url.as_str(),
+            "--token",
+            "token-ok",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start oore status");
+
+    let deadline = Instant::now() + Duration::from_secs(7);
+    loop {
+        if child.try_wait().expect("poll oore status").is_some() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            child.kill().expect("kill stalled oore status");
+            panic!("oore status stalled instead of issuing concurrent detail requests");
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let output = child
+        .wait_with_output()
+        .expect("collect oore status output");
+    server.join().expect("status server thread");
+
+    assert!(
+        output.status.success(),
+        "oore status failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

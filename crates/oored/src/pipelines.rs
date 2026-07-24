@@ -370,6 +370,39 @@ fn shape_pipeline_response(mut pipeline: Pipeline, can_manage: bool) -> Pipeline
 pub struct ListPipelinesQuery {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    pub search: Option<String>,
+    pub sort: Option<String>,
+    pub direction: Option<String>,
+}
+
+fn pipeline_order_clause(
+    sort: Option<&str>,
+    direction: Option<&str>,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let column = match sort.unwrap_or("created_at") {
+        "created_at" => "p.created_at",
+        "name" => "p.name COLLATE NOCASE",
+        _ => {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "sort must be created_at or name",
+            ));
+        }
+    };
+    let direction = match direction.unwrap_or("desc") {
+        "asc" => "ASC",
+        "desc" => "DESC",
+        _ => {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "direction must be asc or desc",
+            ));
+        }
+    };
+
+    Ok(format!("{column} {direction}, p.id {direction}"))
 }
 
 // ── Handlers ────────────────────────────────────────────────────
@@ -381,10 +414,7 @@ pub async fn create_pipeline(
     Path(project_id): Path<String>,
     Json(req): Json<CreatePipelineRequest>,
 ) -> ApiResult<CreatePipelineResponse> {
-    let pool = {
-        let store = state.store.lock().await;
-        store.pool().clone()
-    };
+    let pool = state.db.clone();
 
     let effective = resolve_effective_project_role(
         &pool,
@@ -549,8 +579,7 @@ pub async fn list_pipelines(
     Path(project_id): Path<String>,
     Query(params): Query<ListPipelinesQuery>,
 ) -> ApiResult<ListPipelinesResponse> {
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let effective = resolve_effective_project_role(
         pool,
@@ -581,29 +610,67 @@ pub async fn list_pipelines(
 
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
+    let order_by = pipeline_order_clause(params.sort.as_deref(), params.direction.as_deref())?;
 
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pipelines WHERE project_id = ?1")
+    let (total, rows) = if let Some(search) = params
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|search| !search.is_empty())
+    {
+        let pattern = format!("%{search}%");
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pipelines WHERE project_id = ?1 AND name LIKE ?2",
+        )
         .bind(&project_id)
+        .bind(&pattern)
         .fetch_one(pool)
         .await
         .unwrap_or(0);
-
-    let rows = sqlx::query(
-        "SELECT * FROM pipelines WHERE project_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
-    )
-    .bind(&project_id)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to list pipelines");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to list pipelines",
-        )
-    })?;
+        let rows = sqlx::query(&format!(
+            "SELECT p.* FROM pipelines p WHERE p.project_id = ?1 AND p.name LIKE ?2 \
+             ORDER BY {order_by} LIMIT ?3 OFFSET ?4"
+        ))
+        .bind(&project_id)
+        .bind(&pattern)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to list pipelines");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to list pipelines",
+            )
+        })?;
+        (total, rows)
+    } else {
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pipelines WHERE project_id = ?1")
+            .bind(&project_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+        let rows = sqlx::query(&format!(
+            "SELECT p.* FROM pipelines p WHERE p.project_id = ?1 \
+             ORDER BY {order_by} LIMIT ?2 OFFSET ?3"
+        ))
+        .bind(&project_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to list pipelines");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to list pipelines",
+            )
+        })?;
+        (total, rows)
+    };
 
     let pipelines = rows
         .iter()
@@ -619,8 +686,7 @@ pub async fn get_pipeline(
     auth: AuthUser,
     Path(pipeline_id): Path<String>,
 ) -> ApiResult<PipelineDetailResponse> {
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
     let pipeline_row = sqlx::query("SELECT * FROM pipelines WHERE id = ?1")
         .bind(&pipeline_id)
         .fetch_optional(pool)
@@ -669,8 +735,7 @@ pub async fn update_pipeline(
     Path(pipeline_id): Path<String>,
     Json(req): Json<UpdatePipelineRequest>,
 ) -> ApiResult<CreatePipelineResponse> {
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
     require_pipeline_project_permission(
         pool,
         &auth.0.user_id,
@@ -871,8 +936,7 @@ pub async fn delete_pipeline(
 ) -> ApiResult<serde_json::Value> {
     check_permission(&state.enforcer, &auth.0.role, "pipelines", "delete").await?;
 
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     // Use a transaction so the active-build check, terminal-build cleanup,
     // and pipeline delete are atomic (prevents race with concurrent build creation).

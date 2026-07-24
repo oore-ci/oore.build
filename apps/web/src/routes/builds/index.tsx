@@ -1,7 +1,6 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { createFileRoute, redirect, useSearch } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { InformationCircleIcon, PlayIcon } from '@hugeicons/core-free-icons'
+import { Info as InformationCircleIcon, Play as PlayIcon } from 'lucide-react'
 
 import {
   getActiveInstanceOrRedirect,
@@ -9,7 +8,7 @@ import {
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
 import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
-import { useProjects } from '@/hooks/use-projects'
+import { useAllProjects } from '@/hooks/use-projects'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
@@ -23,7 +22,7 @@ import { PageMeta } from '@/lib/seo'
 import { BuildInventory } from './-build-inventory'
 import type { BuildSort } from './-build-inventory'
 import { BuildsEmptyState } from './-builds-empty-state'
-import { BuildFilters } from './-build-filters'
+import { BUILD_SORT_OPTIONS, BuildFilters } from './-build-filters'
 
 const loadTriggerBuildDialog = () => import('@/components/trigger-build-dialog')
 const TriggerBuildDialog = lazy(loadTriggerBuildDialog)
@@ -36,14 +35,6 @@ interface BuildsSearch {
   q?: string
   sort?: BuildSort
   status?: string
-}
-
-const BUILD_SORT_OPTIONS: Record<BuildSort, string> = {
-  created_at: 'Newest first',
-  status: 'Status',
-  project_name: 'Project',
-  pipeline_name: 'Pipeline',
-  branch: 'Branch',
 }
 
 const BUILD_SORT_VALUES = new Set<BuildSort>(
@@ -75,7 +66,6 @@ function parseSearch(search: Record<string, unknown>): BuildsSearch {
 }
 
 export const Route = createFileRoute('/builds/')({
-  staticData: { breadcrumbLabel: 'Builds' },
   validateSearch: parseSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
@@ -103,30 +93,28 @@ function OperationsBuildsPage() {
     limit: pageSize,
     offset: (page - 1) * pageSize,
   })
-  const projectsQuery = useProjects({
-    limit: 200,
+  const projectsQuery = useAllProjects({
     sort: 'name',
     direction: 'asc',
   })
   const setupStatusQuery = useSetupStatus()
   const canTriggerBuildGlobally = useHasPermission('builds', 'write')
+  const instanceRole = useAuthStore((state) => state.user?.role)
+  const canTriggerEveryProject =
+    instanceRole === 'owner' || instanceRole === 'admin'
   const canWriteProjects = useHasPermission('projects', 'write')
   const canWriteIntegrations = useHasPermission('integrations', 'write')
   const [triggerBuildOpen, setTriggerBuildOpen] = useState(false)
 
-  const builds = useMemo(
-    () => buildsQuery.data?.builds ?? [],
-    [buildsQuery.data?.builds],
-  )
-  const projects = useMemo(
-    () => projectsQuery.data?.projects ?? [],
-    [projectsQuery.data?.projects],
-  )
+  const builds = buildsQuery.data?.builds ?? []
+  const projects = projectsQuery.data?.projects ?? []
   const total = buildsQuery.data?.total ?? 0
   const canTriggerBuild =
     canTriggerBuildGlobally &&
-    projects.some((project) =>
-      hasProjectPermission(project.current_user_role, 'builds', 'write'),
+    projects.some(
+      (project) =>
+        canTriggerEveryProject ||
+        hasProjectPermission(project.current_user_role, 'builds', 'write'),
     )
   const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'local'
   const projectsResolved = !projectsQuery.isLoading && !projectsQuery.error
@@ -170,7 +158,7 @@ function OperationsBuildsPage() {
               onFocus={() => void loadTriggerBuildDialog()}
               onClick={() => setTriggerBuildOpen(true)}
             >
-              <HugeiconsIcon icon={PlayIcon} />
+              <PlayIcon />
               Run build
             </Button>
           ) : undefined
@@ -191,7 +179,7 @@ function OperationsBuildsPage() {
 
       {projectsQuery.error ? (
         <Alert>
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               Project filters and build actions are temporarily unavailable.
@@ -209,7 +197,7 @@ function OperationsBuildsPage() {
 
       {buildsQuery.error ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>Failed to load builds: {buildsQuery.error.message}</span>
             <Button

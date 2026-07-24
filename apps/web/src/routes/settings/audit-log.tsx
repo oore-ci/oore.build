@@ -1,11 +1,9 @@
-import { useMemo } from 'react'
 import {
-  Calendar03Icon,
-  InformationCircleIcon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { createFileRoute, redirect, useSearch } from '@tanstack/react-router'
+  CalendarDays as Calendar03Icon,
+  Info as InformationCircleIcon,
+  Search as Search01Icon,
+} from 'lucide-react'
+import { createFileRoute, useSearch } from '@tanstack/react-router'
 import { format } from 'date-fns'
 import type { DateRange } from 'react-day-picker'
 
@@ -40,10 +38,9 @@ import { CollectionSearchInput } from '@/components/collection-search-input'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import {
   getActiveInstanceOrRedirect,
-  requireAuthOrRedirect,
+  requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { PageMeta } from '@/lib/seo'
-import { useAuthStore } from '@/stores/auth-store'
 import { AuditLogInventory } from './-audit-log-inventory'
 import type { AuditSort } from './-audit-log-inventory'
 
@@ -119,15 +116,15 @@ function parseSearch(search: Record<string, unknown>): AuditLogSearch {
 }
 
 export const Route = createFileRoute('/settings/audit-log')({
-  staticData: { breadcrumbLabel: 'Audit Log' },
+  staticData: {
+    breadcrumb: {
+      title: 'Audit log',
+    },
+  },
   validateSearch: parseSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
-    const user = useAuthStore.getState().user
-    if (!user || (user.role !== 'owner' && user.role !== 'admin')) {
-      throw redirect({ to: '/' })
-    }
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
   },
   component: AuditLogPage,
 })
@@ -153,7 +150,7 @@ function AuditDateRangePicker({
     fromDate || toDate ? { from: fromDate, to: toDate } : undefined
   const label = fromDate
     ? toDate
-      ? `${format(fromDate, 'MMM d, yyyy')} – ${format(toDate, 'MMM d, yyyy')}`
+      ? `${format(fromDate, 'MMM d, yyyy')} to ${format(toDate, 'MMM d, yyyy')}`
       : `From ${format(fromDate, 'MMM d, yyyy')}`
     : toDate
       ? `Through ${format(toDate, 'MMM d, yyyy')}`
@@ -171,11 +168,7 @@ function AuditDateRangePicker({
           />
         }
       >
-        <HugeiconsIcon
-          icon={Calendar03Icon}
-          data-icon="inline-start"
-          aria-hidden
-        />
+        <Calendar03Icon data-icon="inline-start" aria-hidden />
         <span className="truncate">{label}</span>
       </PopoverTrigger>
       <PopoverContent
@@ -219,10 +212,7 @@ function AuditLogPage() {
     direction,
   })
 
-  const entries = useMemo(
-    () => auditQuery.data?.entries ?? [],
-    [auditQuery.data?.entries],
-  )
+  const entries = auditQuery.data?.entries ?? []
   const total = auditQuery.data?.total ?? 0
   const hasFilters =
     !!search.q || !!search.resource || !!search.from || !!search.to
@@ -258,15 +248,14 @@ function AuditLogPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Audit Log" noindex />
+      <PageMeta title="Audit log" noindex />
       <PageHeader
-        title="Audit Log"
+        title="Audit log"
         description="Activity trail of user and system actions for compliance and security auditing."
       />
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
         <CollectionSearchInput
-          key={search.q ?? ''}
           initialValue={search.q ?? ''}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })
@@ -359,7 +348,7 @@ function AuditLogPage() {
 
       {auditQuery.error ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>Failed to load audit log: {auditQuery.error.message}</span>
             <Button
@@ -374,10 +363,10 @@ function AuditLogPage() {
       ) : null}
 
       {showFilteredEmpty ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={Search01Icon} />
+              <Search01Icon />
             </EmptyMedia>
             <EmptyTitle>No matching activity</EmptyTitle>
             <EmptyDescription>
@@ -393,10 +382,10 @@ function AuditLogPage() {
       ) : null}
 
       {showTrueEmpty ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={InformationCircleIcon} />
+              <InformationCircleIcon />
             </EmptyMedia>
             <EmptyTitle>No activity yet</EmptyTitle>
             <EmptyDescription>

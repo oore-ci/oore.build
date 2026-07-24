@@ -1,36 +1,42 @@
-import { useCallback, useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Copy01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
+import { useState } from 'react'
+import { Copy as Copy01Icon, Check as Tick02Icon } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from '@/components/ui/input-group'
 
 export function CopyableOidcRedirectUri({ uri }: { uri: string }) {
   const [copied, setCopied] = useState(false)
 
-  const handleCopy = useCallback(() => {
+  function handleCopy() {
     void navigator.clipboard.writeText(uri).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
-  }, [uri])
+  }
 
   return (
-    <div className="flex items-center gap-2 bg-muted px-3 py-2">
-      <code className="flex-1 break-all font-mono text-xs">{uri}</code>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        onClick={handleCopy}
-        className="shrink-0 text-muted-foreground hover:text-foreground"
-        aria-label="Copy redirect URI"
-      >
-        {copied ? (
-          <HugeiconsIcon icon={Tick02Icon} size={14} className="text-primary" />
-        ) : (
-          <HugeiconsIcon icon={Copy01Icon} size={14} />
-        )}
-      </Button>
-    </div>
+    <InputGroup>
+      <InputGroupInput
+        value={uri}
+        readOnly
+        aria-label="OIDC redirect URI"
+        className="font-mono text-xs"
+      />
+      <InputGroupAddon align="inline-end">
+        <InputGroupButton
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          onClick={handleCopy}
+          aria-label="Copy redirect URI"
+        >
+          {copied ? <Tick02Icon className="text-primary" /> : <Copy01Icon />}
+        </InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>
   )
 }

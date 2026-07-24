@@ -64,7 +64,9 @@ function loadToken(instanceId: string | null): string | null {
 function loadExpiresAt(instanceId: string | null): number | null {
   try {
     const val = localStorage.getItem(expiresKey(instanceId))
-    return val ? Number(val) : null
+    if (!val) return null
+    const expiresAt = Number(val)
+    return Number.isFinite(expiresAt) ? expiresAt : null
   } catch {
     return null
   }
@@ -153,7 +155,7 @@ export function getLastAuthMetaForInstance(
   }
 }
 
-export const useAuthStore = create<AuthStoreState>((set, get) => ({
+export const useAuthStore = create<AuthStoreState>()((set, get) => ({
   instanceId: null,
   token: loadToken(null),
   expiresAt: loadExpiresAt(null),

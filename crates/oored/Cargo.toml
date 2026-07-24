@@ -37,7 +37,7 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 ring.workspace = true
 base64.workspace = true
-sqlx.workspace = true
+sqlx = { workspace = true, features = ["macros", "migrate"] }
 zeroize.workspace = true
 aws-sdk-s3.workspace = true
 utoipa.workspace = true
@@ -60,6 +60,6 @@ tower.workspace = true
 hyper.workspace = true
 http-body-util.workspace = true
 tempfile.workspace = true
-
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "2.11"
+opentelemetry-proto = { version = "0.28", default-features = false, features = ["gen-tonic", "trace"] }
+tokio-stream = { workspace = true, features = ["net"] }
+tonic = { version = "0.12", default-features = false, features = ["codegen", "prost", "transport"] }

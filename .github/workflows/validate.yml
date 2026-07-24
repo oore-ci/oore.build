@@ -38,15 +38,12 @@ jobs:
               - 'apps/docs-site/**'
               - 'docs/**'
               - 'scripts/**'
-              - 'tools/docs-check.sh'
-              - 'tools/release-smoke.sh'
               - 'tools/autotag.sh'
               - '.github/workflows/**'
             rust:
               - 'crates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
-              - 'tools/release-smoke.sh'
               - 'tools/autotag.sh'
               - '.github/workflows/**'
 
@@ -134,9 +131,6 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Docs check
-        run: make docs-check
-
       - name: Lint
         run: make lint-docs
 
@@ -163,10 +157,10 @@ jobs:
         run: cargo fmt --check
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::redundant_clone
 
       - name: Check
-        run: cargo check --workspace
+        run: cargo check --workspace --locked

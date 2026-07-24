@@ -1,5 +1,4 @@
-import { Copy01Icon } from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+import { Copy as Copy01Icon } from 'lucide-react'
 
 import { toast } from '@/lib/toast'
 import type { Integration } from '@/lib/types'
@@ -10,11 +9,11 @@ import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 
 function humanizeAuthMode(mode: string): string {
   const labels: Record<string, string> = {
-    github_app_manifest: 'GitHub App (Manifest)',
+    github_app_manifest: 'GitHub App manifest',
     github_app: 'GitHub App',
-    oauth_app: 'OAuth App',
-    pat: 'Personal Access Token',
-    personal_token: 'Personal Access Token',
+    oauth_app: 'OAuth app',
+    pat: 'Personal access token',
+    personal_token: 'Personal access token',
   }
   return (
     labels[mode] ??
@@ -22,6 +21,12 @@ function humanizeAuthMode(mode: string): string {
       .replace(/_/g, ' ')
       .replace(/\b\w/g, (character) => character.toUpperCase())
   )
+}
+
+function providerLabel(provider: Integration['provider']): string {
+  if (provider === 'github') return 'GitHub'
+  if (provider === 'gitlab') return 'GitLab'
+  return 'Local Git'
 }
 
 export function IntegrationConnectionDetails({
@@ -42,9 +47,9 @@ export function IntegrationConnectionDetails({
   onRetryNetworkSettings: () => void
 }) {
   return (
-    <Card>
+    <Card size="sm" aria-labelledby="connection-title">
       <CardHeader>
-        <CardTitle className="text-base">Connection</CardTitle>
+        <CardTitle id="connection-title">Connection</CardTitle>
       </CardHeader>
       <CardContent className="overflow-x-auto">
         <Table>
@@ -53,7 +58,7 @@ export function IntegrationConnectionDetails({
               <TableCell className="w-56 text-muted-foreground">
                 Provider
               </TableCell>
-              <TableCell>{integration.provider}</TableCell>
+              <TableCell>{providerLabel(integration.provider)}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell className="text-muted-foreground">Host URL</TableCell>
@@ -104,7 +109,7 @@ export function IntegrationConnectionDetails({
                               )
                           }}
                         >
-                          <HugeiconsIcon icon={Copy01Icon} />
+                          <Copy01Icon />
                         </Button>
                       </div>
                     ) : null}

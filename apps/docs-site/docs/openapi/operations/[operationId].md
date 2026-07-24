@@ -1,8 +1,8 @@
 ---
 aside: false
 outline: false
-title: vitepress-openapi
-description: Interactive documentation for an Oore CI API operation — request parameters, response schemas, and live playground.
+title: OpenAPI operation
+description: Generated request, response, and schema reference for an Oore CI API operation.
 ---
 
 <script setup lang="ts">
@@ -12,6 +12,8 @@ const route = useRoute()
 
 const operationId = route.data.params.operationId
 </script>
+
+<h1>{{ route.data.params.pageTitle }}</h1>
 
 <ClientOnly>
   <OAOperation :operationId="operationId" />

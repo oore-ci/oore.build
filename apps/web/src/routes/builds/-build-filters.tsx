@@ -29,7 +29,7 @@ interface BuildFiltersProps {
   sort: BuildSort
 }
 
-const BUILD_SORT_OPTIONS: Record<BuildSort, string> = {
+export const BUILD_SORT_OPTIONS: Record<BuildSort, string> = {
   created_at: 'Newest first',
   status: 'Status',
   project_name: 'Project',
@@ -58,7 +58,6 @@ export function BuildFilters({
   return (
     <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
       <CollectionSearchInput
-        key={filters.q ?? ''}
         initialValue={filters.q ?? ''}
         onSearch={(value) =>
           onChange({ q: value.trim() || undefined, page: undefined })

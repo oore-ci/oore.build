@@ -123,7 +123,7 @@ jobs:
 
       - name: Build Rust
         run: |
-          cargo build --release -p oored -p oore --target "${{ matrix.target }}"
+          cargo build --release -p oored -p oore --target "${{ matrix.target }}" --locked
           mkdir -p dist/rust
           cp "target/${{ matrix.target }}/release/oored" dist/rust/oored
           cp "target/${{ matrix.target }}/release/oore" dist/rust/oore

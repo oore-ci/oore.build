@@ -1,6 +1,6 @@
 import { HttpResponse, delay, http } from 'msw'
 import { ago } from '../seed'
-import { demoArtifacts } from '../data/artifacts'
+import { demoState } from '../state'
 
 export const artifactHandlers = [
   http.post('/v1/artifacts/:artifactId/download-link', async () => {
@@ -12,8 +12,8 @@ export const artifactHandlers = [
   }),
   http.post('/v1/artifacts/:artifactId/install-link', async ({ params }) => {
     await delay(200)
-    const artifact = Object.values(demoArtifacts)
-      .flat()
+    const artifact = Object.values(demoState.artifacts)
+      .flatMap((artifacts) => artifacts ?? [])
       .find((candidate) => candidate.id === params.artifactId)
     const ios = artifact?.artifact_type === 'ipa'
     return HttpResponse.json({
@@ -26,4 +26,32 @@ export const artifactHandlers = [
       expires_at: ago(-3600),
     })
   }),
+  http.post(
+    '/v1/artifacts/:artifactId/scoped-token',
+    async ({ params, request }) => {
+      await delay(200)
+      const artifact = Object.values(demoState.artifacts)
+        .flatMap((artifacts) => artifacts ?? [])
+        .find((candidate) => candidate.id === params.artifactId)
+      if (!artifact) {
+        return HttpResponse.json(
+          { error: 'Artifact not found', code: 'not_found' },
+          { status: 404 },
+        )
+      }
+      const body = (await request.json()) as {
+        ttl_secs?: number
+        single_use?: boolean
+      }
+      const token = `demo_${crypto.randomUUID().replaceAll('-', '')}`
+      return HttpResponse.json({
+        id: `artifact-token-${crypto.randomUUID().slice(0, 8)}`,
+        download_url: `/v1/artifacts/${artifact.id}/download?token=${token}`,
+        token,
+        prefix: token.slice(0, 12),
+        expires_at: ago(-(body.ttl_secs ?? 86400)),
+        single_use: body.single_use ?? false,
+      })
+    },
+  ),
 ]

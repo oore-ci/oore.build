@@ -1,4 +1,6 @@
+import { lazy, Suspense, useState } from 'react'
 import { Link } from '@tanstack/react-router'
+import { CircleEllipsis as MoreHorizontalCircle01Icon } from 'lucide-react'
 
 import type { Build, Project } from '@/lib/types'
 import type { SortDirection } from '@/components/collection-controls'
@@ -7,6 +9,7 @@ import {
   SortableTableHead,
 } from '@/components/collection-controls'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -23,12 +26,22 @@ import {
 } from '@/lib/status-variants'
 
 export type BuildSort =
-  'created_at' | 'status' | 'project_name' | 'pipeline_name' | 'branch'
+  | 'created_at'
+  | 'status'
+  | 'project_name'
+  | 'pipeline_name'
+  | 'branch'
 
-function projectName(build: Build, projects: Array<Project>) {
+const loadBuildActionsMenu = () => import('./-build-actions-menu')
+const BuildActionsMenu = lazy(loadBuildActionsMenu)
+
+function projectName(
+  build: Build,
+  projectNamesById: ReadonlyMap<string, string>,
+) {
   return (
     build.context?.project_name ??
-    projects.find((project) => project.id === build.project_id)?.name ??
+    projectNamesById.get(build.project_id) ??
     'Unknown project'
   )
 }
@@ -38,7 +51,7 @@ function BuildIdentity({ build }: { build: Build }) {
     <Link
       to="/builds/$buildId"
       params={{ buildId: build.id }}
-      className="group block rounded-sm font-mono outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="group block rounded-md font-mono outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
     >
       <span className="block text-sm group-hover:underline">
         #{build.build_number}
@@ -47,6 +60,36 @@ function BuildIdentity({ build }: { build: Build }) {
         {build.id.slice(0, 8)}
       </span>
     </Link>
+  )
+}
+
+function BuildActionsControl({ build }: { build: Build }) {
+  const [requested, setRequested] = useState(false)
+  const [open, setOpen] = useState(false)
+
+  const trigger = (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label={`Actions for build ${build.build_number}`}
+      title="Build actions"
+      onMouseEnter={() => void loadBuildActionsMenu()}
+      onFocus={() => void loadBuildActionsMenu()}
+      onClick={() => {
+        setRequested(true)
+        setOpen(true)
+      }}
+    >
+      <MoreHorizontalCircle01Icon />
+    </Button>
+  )
+
+  if (!requested) return trigger
+
+  return (
+    <Suspense fallback={trigger}>
+      <BuildActionsMenu build={build} open={open} onOpenChange={setOpen} />
+    </Suspense>
   )
 }
 
@@ -75,6 +118,10 @@ export function BuildInventory({
   sort: BuildSort
   total: number
 }) {
+  const projectNamesById = new Map(
+    projects.map((project) => [project.id, project.name]),
+  )
+
   return (
     <section aria-label="Build queue and history" className="min-w-0">
       <div className="divide-y sm:hidden">
@@ -89,9 +136,12 @@ export function BuildInventory({
               <div key={build.id} className="space-y-2 py-4">
                 <div className="flex items-start justify-between gap-4">
                   <BuildIdentity build={build} />
-                  <Badge variant={getStatusVariant(build.status)}>
-                    {build.status}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={getStatusVariant(build.status)}>
+                      {build.status}
+                    </Badge>
+                    <BuildActionsControl build={build} />
+                  </div>
                 </div>
                 {build.runner_policy_block_reason ? (
                   <p className="text-xs text-warning">
@@ -101,7 +151,7 @@ export function BuildInventory({
                   </p>
                 ) : null}
                 <p className="truncate text-sm">
-                  {projectName(build, projects)}
+                  {projectName(build, projectNamesById)}
                   {build.context?.pipeline_name ? (
                     <span className="text-muted-foreground">
                       {' · '}
@@ -161,6 +211,9 @@ export function BuildInventory({
               >
                 Created
               </SortableTableHead>
+              <TableHead className="w-10">
+                <span className="sr-only">Actions</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -188,6 +241,9 @@ export function BuildInventory({
                     <TableCell>
                       <Skeleton className="h-4 w-20" />
                     </TableCell>
+                    <TableCell>
+                      <Skeleton className="size-8" />
+                    </TableCell>
                   </TableRow>
                 ))
               : builds.map((build) => (
@@ -196,7 +252,9 @@ export function BuildInventory({
                       <BuildIdentity build={build} />
                     </TableCell>
                     <TableCell>
-                      <p className="text-sm">{projectName(build, projects)}</p>
+                      <p className="text-sm">
+                        {projectName(build, projectNamesById)}
+                      </p>
                       {build.context?.pipeline_name ? (
                         <p className="text-xs text-muted-foreground">
                           {build.context.pipeline_name}
@@ -226,6 +284,9 @@ export function BuildInventory({
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {relativeTime(build.created_at)}
+                    </TableCell>
+                    <TableCell>
+                      <BuildActionsControl build={build} />
                     </TableCell>
                   </TableRow>
                 ))}

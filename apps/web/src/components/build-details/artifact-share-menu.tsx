@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Copy01Icon, Share08Icon } from '@hugeicons/core-free-icons'
+import { Copy as Copy01Icon, Share2 as Share08Icon } from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import type { Artifact, CreateScopedDownloadTokenResponse } from '@/lib/types'
@@ -120,7 +119,7 @@ export default function ArtifactShareMenu({
             />
           }
         >
-          <HugeiconsIcon icon={Share08Icon} />
+          <Share08Icon />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-auto">
           <DropdownMenuGroup>
@@ -128,11 +127,11 @@ export default function ArtifactShareMenu({
               onClick={copyDownloadLink}
               disabled={downloadMutation.isPending}
             >
-              <HugeiconsIcon icon={Copy01Icon} />
+              <Copy01Icon />
               Copy download link
             </DropdownMenuItem>
             <DropdownMenuItem onClick={openShareDialog}>
-              <HugeiconsIcon icon={Share08Icon} />
+              <Share08Icon />
               Create share link
             </DropdownMenuItem>
           </DropdownMenuGroup>
@@ -155,7 +154,7 @@ export default function ArtifactShareMenu({
           {createdToken ? (
             <div className="space-y-3">
               <Alert>
-                <AlertDescription className="break-all text-xs font-mono">
+                <AlertDescription className="font-mono text-xs break-all">
                   {createdToken.download_url}
                 </AlertDescription>
               </Alert>
@@ -175,11 +174,7 @@ export default function ArtifactShareMenu({
                   Close
                 </Button>
                 <Button onClick={copyShareUrl}>
-                  <HugeiconsIcon
-                    icon={Copy01Icon}
-                    size={14}
-                    className="mr-1.5"
-                  />
+                  <Copy01Icon size={14} className="mr-1.5" />
                   Copy link
                 </Button>
               </DialogFooter>

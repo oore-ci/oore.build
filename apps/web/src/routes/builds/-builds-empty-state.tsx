@@ -1,11 +1,10 @@
 import { Link } from '@tanstack/react-router'
 import {
-  ArrowRight01Icon,
-  Link04Icon,
-  PlayIcon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  ArrowRight as ArrowRight01Icon,
+  Link2 as Link04Icon,
+  Play as PlayIcon,
+  Search as Search01Icon,
+} from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -40,11 +39,9 @@ export function BuildsEmptyState({
 }) {
   if (state === 'missing-projects') {
     return (
-      <Card>
+      <Card size="sm">
         <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            Create project first
-          </CardTitle>
+          <CardTitle>Create project first</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
@@ -66,7 +63,7 @@ export function BuildsEmptyState({
             {capabilities.writeProjects ? (
               <Button render={<Link to="/projects" />} nativeButton={false}>
                 Go to projects
-                <HugeiconsIcon icon={ArrowRight01Icon} />
+                <ArrowRight01Icon />
               </Button>
             ) : (
               <p className="text-xs text-muted-foreground">
@@ -79,7 +76,7 @@ export function BuildsEmptyState({
                 render={<Link to="/settings/integrations" />}
                 nativeButton={false}
               >
-                <HugeiconsIcon icon={Link04Icon} />
+                <Link04Icon />
                 Connect source
               </Button>
             ) : null}
@@ -91,10 +88,10 @@ export function BuildsEmptyState({
 
   if (state === 'no-builds') {
     return (
-      <Empty className="bg-card">
+      <Empty className="border bg-card">
         <EmptyHeader>
           <EmptyMedia variant="icon">
-            <HugeiconsIcon icon={PlayIcon} />
+            <PlayIcon />
           </EmptyMedia>
           <EmptyTitle>No builds yet</EmptyTitle>
           <EmptyDescription>
@@ -108,7 +105,7 @@ export function BuildsEmptyState({
               onFocus={onWarmBuildDialog}
               onClick={onRunBuild}
             >
-              <HugeiconsIcon icon={PlayIcon} />
+              <PlayIcon />
               Run first build
             </Button>
           </EmptyContent>
@@ -118,10 +115,10 @@ export function BuildsEmptyState({
   }
 
   return state === 'no-results' ? (
-    <Empty className="bg-card">
+    <Empty className="border bg-card">
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <HugeiconsIcon icon={Search01Icon} />
+          <Search01Icon />
         </EmptyMedia>
         <EmptyTitle>No matching builds</EmptyTitle>
         <EmptyDescription>

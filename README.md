@@ -35,10 +35,9 @@ Oore CI lets you run your own mobile CI server. V1 targets Android, iOS, and mac
 
 ## Screenshots
 
-| Dashboards | Builds |
-| --- | --- |
+| Dashboards                                                                             | Builds                                                                                |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | ![Oore CI demo dashboard screenshot](apps/site/public/product/demo-dashboard-720.webp) | ![Oore CI demo builds list screenshot](apps/site/public/product/demo-builds-720.webp) |
-
 
 Try the live demo first: [demo.oore.build](https://demo.oore.build)
 
@@ -100,7 +99,6 @@ make run-daemon       # Start oored with isolated dev data
 make run-cli          # Generate setup token against dev DB
 make dev-fresh-setup  # Clean dev state, local build, start daemon, start tunnel, generate setup token
 make dev-web          # Local web UI (http://localhost:3000)
-make clean-dev-state  # Remove isolated dev daemon data (~/.oore/dev.noindex)
 ```
 
 Notes:
@@ -123,27 +121,6 @@ crates/oored/       Daemon — Axum HTTP server
 crates/oore/        Operator CLI — Clap
 crates/oore-runner/ Build runner agent
 crates/oore-contract/ Shared data types (Serde structs)
-docs/               Internal docs pointers + change ledger (canonical docs live in Linear)
-```
-
-## Common Commands
-
-All commands are available as `make` targets:
-
-```bash
-make dev-web          # Web UI dev server (port 3000)
-make dev-docs         # Docs dev server (VitePress)
-make dev-site         # Landing site dev server (port 3002)
-make build            # Build everything (web + docs + site + cargo check)
-make check            # Lint web + cargo check
-make test-web         # Run web tests (Vitest)
-make test-rust        # Run Rust tests
-make cargo-check      # Type-check Rust workspace
-make run-daemon       # Start oored on 127.0.0.1:8787
-make run-cli          # Open a setup window (15 min TTL)
-make clean-dev-state  # Remove isolated dev daemon data directory
-make dev-fresh-setup  # Fresh local build + tunnel + token-first UI setup simulation
-make doctor           # Check system prerequisites
 ```
 
 ## Releases (macOS, Automated)
@@ -156,7 +133,7 @@ High-level flow:
 - Merge to `alpha` -> CI cuts `vX.Y.Z-alpha.N` tags (prerelease)
 - Merge to `beta` -> CI cuts `vX.Y.Z-beta.N` tags (prerelease)
 - Merge to `stable` -> CI cuts `vX.Y.Z` tags (stable), auto-incrementing patch when needed
-- Tag push -> CI builds macOS artifacts (arm64 + x86_64), deploys Pages targets (`oore`, `oore-docs`, `oore-ci`, `oore-demo`) with strict branch+commit verification, and publishes a GitHub Release with attached artifacts
+- Tag push -> CI builds macOS artifacts (arm64 + x86_64), deploys Pages targets (`oore`, `oore-docs`, `oore-ci`, `oore-demo`), and publishes a GitHub Release with attached artifacts
 
 Major/minor bumps are done by updating `Cargo.toml` `workspace.package.version` (for example `0.2.0`), then continuing the alpha -> beta -> stable promotion flow.
 

@@ -1,50 +1,64 @@
-import { HugeiconsIcon } from '@hugeicons/react'
-import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
-import type { PreferencesPageState } from '@/routes/settings/preferences'
+import { ArrowRight as ArrowRight01Icon } from 'lucide-react'
+import type {
+  useExternalAccessNetworkSettings,
+  useExternalAccessOidc,
+  useExternalAccessTrustedProxySettings,
+} from '@/hooks/use-artifact-storage'
+import type { RemoteAuthMode, TrustedProxySettingsPublic } from '@/lib/types'
 import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 export function ExternalAccessManagement({
-  state,
+  identityQuery,
+  isOwner,
+  networkSettingsQuery,
+  onEditIdentity,
+  onEditNetwork,
+  onPreloadIdentity,
+  onPreloadNetwork,
+  remoteAuthMode,
+  trustedProxySettings,
 }: {
-  state: PreferencesPageState
+  identityQuery:
+    | ReturnType<typeof useExternalAccessOidc>
+    | ReturnType<typeof useExternalAccessTrustedProxySettings>
+  isOwner: boolean
+  networkSettingsQuery: ReturnType<typeof useExternalAccessNetworkSettings>
+  onEditIdentity: () => void
+  onEditNetwork: () => void
+  onPreloadIdentity: () => void
+  onPreloadNetwork: () => void
+  remoteAuthMode: RemoteAuthMode
+  trustedProxySettings: TrustedProxySettingsPublic | undefined
 }) {
-  const {
-    isOwner,
-    networkSettings,
-    networkSettingsQuery,
-    preloadExternalAccessNetworkDialog,
-    preloadOidcSettingsDialog,
-    preloadTrustedProxySettingsDialog,
-    remoteAuthMode,
-    setNetworkEditorOpen,
-    setOidcDialogOpen,
-    setTrustedProxyDialogOpen,
-    trustedProxySettings,
-  } = state
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+      <h3 className="text-sm font-medium text-muted-foreground">
         Manage External Access
-      </p>
+      </h3>
       <div className="grid gap-1 md:grid-cols-2">
         <Button
           type="button"
           variant="ghost"
-          onMouseEnter={() => void preloadExternalAccessNetworkDialog()}
-          onFocus={() => void preloadExternalAccessNetworkDialog()}
-          onClick={() => setNetworkEditorOpen(true)}
-          disabled={!isOwner || networkSettingsQuery.isLoading}
-          className="group h-auto w-full justify-start whitespace-normal px-0 py-2 text-left"
+          onMouseEnter={onPreloadNetwork}
+          onFocus={onPreloadNetwork}
+          onClick={onEditNetwork}
+          disabled={
+            !isOwner ||
+            networkSettingsQuery.isLoading ||
+            !!networkSettingsQuery.error
+          }
+          className="group h-auto w-full justify-start px-0 py-2 text-left whitespace-normal"
         >
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-medium">Network settings</span>
             <span className="mt-1 block truncate text-xs text-muted-foreground">
-              {networkSettings?.public_url ??
+              {networkSettingsQuery.data?.public_url ??
                 'Set Public URL and allowed origins.'}
             </span>
             <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
               Edit
-              <HugeiconsIcon icon={ArrowRight01Icon} data-icon="inline-end" />
+              <ArrowRight01Icon data-icon="inline-end" />
             </span>
           </span>
         </Button>
@@ -52,23 +66,13 @@ export function ExternalAccessManagement({
         <Button
           type="button"
           variant="ghost"
-          onMouseEnter={() =>
-            void (remoteAuthMode === 'trusted_proxy'
-              ? preloadTrustedProxySettingsDialog()
-              : preloadOidcSettingsDialog())
+          onMouseEnter={onPreloadIdentity}
+          onFocus={onPreloadIdentity}
+          onClick={onEditIdentity}
+          disabled={
+            !isOwner || identityQuery.isLoading || !!identityQuery.error
           }
-          onFocus={() =>
-            void (remoteAuthMode === 'trusted_proxy'
-              ? preloadTrustedProxySettingsDialog()
-              : preloadOidcSettingsDialog())
-          }
-          onClick={() =>
-            remoteAuthMode === 'trusted_proxy'
-              ? setTrustedProxyDialogOpen(true)
-              : setOidcDialogOpen(true)
-          }
-          disabled={!isOwner}
-          className="group h-auto w-full justify-start whitespace-normal px-0 py-2 text-left"
+          className="group h-auto w-full justify-start px-0 py-2 text-left whitespace-normal"
         >
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-medium">Identity settings</span>
@@ -84,11 +88,46 @@ export function ExternalAccessManagement({
             </span>
             <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
               Edit
-              <HugeiconsIcon icon={ArrowRight01Icon} data-icon="inline-end" />
+              <ArrowRight01Icon data-icon="inline-end" />
             </span>
           </span>
         </Button>
       </div>
+      {networkSettingsQuery.error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Failed to load network settings:{' '}
+              {networkSettingsQuery.error.message}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void networkSettingsQuery.refetch()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {identityQuery.error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Failed to load identity settings: {identityQuery.error.message}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void identityQuery.refetch()}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
     </div>
   )
 }

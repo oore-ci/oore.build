@@ -217,6 +217,7 @@ fn oidc_admission_error(error: OidcAdmissionError) -> (StatusCode, Json<ApiError
 
 async fn auto_complete_local_setup_if_needed(
     store: &crate::store::SetupStore,
+    pool: &sqlx::SqlitePool,
     state_file: &mut oore_contract::SetupStateFile,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
     if state_file.setup_state == SetupState::Ready {
@@ -250,7 +251,6 @@ async fn auto_complete_local_setup_if_needed(
     });
 
     let user_id_seed = Uuid::new_v4().to_string();
-    let pool = store.pool();
     sqlx::query(
         "INSERT INTO users (id, email, oidc_subject, display_name, role, status, created_at, updated_at) \
          VALUES (?1, ?2, ?3, ?4, 'owner', 'active', ?5, ?5) \
@@ -359,16 +359,18 @@ async fn load_oidc_config_inner(
     state: &AppState,
     allow_setup: bool,
 ) -> Result<OidcConfig, (StatusCode, Json<ApiError>)> {
-    let store = state.store.lock().await;
-    let sf = store.load().await.map_err(|e| {
-        // M4: Log the full error server-side, return generic message to client
-        error!(error = %e, "failed to load setup state");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to load setup state",
-        )
-    })?;
+    let sf = {
+        let store = state.store.lock().await;
+        store.load().await.map_err(|e| {
+            // M4: Log the full error server-side, return generic message to client
+            error!(error = %e, "failed to load setup state");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load setup state",
+            )
+        })?
+    };
 
     let state_ok = if allow_setup {
         sf.setup_state == SetupState::Ready || sf.setup_state == SetupState::IdpConfigured
@@ -709,8 +711,7 @@ pub async fn oidc_callback(
     };
 
     // Look up user by oidc_subject
-    let store = state.store.lock().await;
-    let pool = store.pool();
+    let pool = &state.db;
 
     let user_row = sqlx::query(
         "SELECT id, email, role, avatar_url FROM users WHERE oidc_subject = ?1 AND status = 'active'",
@@ -799,8 +800,6 @@ pub async fn oidc_callback(
             ));
         }
     };
-    drop(store);
-
     // Create session linked to user_id
     let session_token = state
         .sessions
@@ -997,7 +996,7 @@ pub async fn local_login(
             "Failed to load setup state",
         )
     })?;
-    let mode = crate::instance_settings::load_runtime_mode(store.pool())
+    let mode = crate::instance_settings::load_runtime_mode(&state.db)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to load runtime mode");
@@ -1027,10 +1026,10 @@ pub async fn local_login(
                 "Local login during setup is only available in Local Only mode",
             ));
         }
-        auto_complete_local_setup_if_needed(&store, &mut sf).await?;
+        auto_complete_local_setup_if_needed(&store, &state.db, &mut sf).await?;
     }
 
-    let pool = store.pool().clone();
+    let pool = state.db.clone();
     drop(store);
 
     let mut recovery_id = None;
@@ -1301,7 +1300,7 @@ pub async fn trusted_proxy_login(
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Json<LocalLoginResponse>, (StatusCode, Json<ApiError>)> {
-    let pool = {
+    let setup_state = {
         let store = state.store.lock().await;
         let sf = store.load().await.map_err(|e| {
             error!(error = %e, "failed to load setup state for trusted proxy login");
@@ -1311,54 +1310,56 @@ pub async fn trusted_proxy_login(
                 "Failed to load setup state",
             )
         })?;
-        if sf.setup_state != SetupState::Ready {
-            return Err(api_err(
-                StatusCode::CONFLICT,
-                "setup_incomplete",
-                "Auth endpoints are only available after setup is complete",
-            ));
-        }
-
-        let runtime_mode = crate::instance_settings::load_runtime_mode(store.pool())
-            .await
-            .map_err(|e| {
-                error!(error = %e, "failed to load runtime mode for trusted proxy login");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "store_error",
-                    "Failed to determine runtime mode",
-                )
-            })?;
-        if runtime_mode != RuntimeMode::Remote {
-            return Err(api_err(
-                StatusCode::FORBIDDEN,
-                "mode_restricted",
-                "Trusted proxy login is only available in External Access mode",
-            ));
-        }
-
-        let remote_auth_mode = crate::instance_settings::load_remote_auth_mode(store.pool())
-            .await
-            .map_err(|e| {
-                error!(error = %e, "failed to load remote auth mode for trusted proxy login");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "store_error",
-                    "Failed to determine remote auth mode",
-                )
-            })?;
-        if remote_auth_mode != RemoteAuthMode::TrustedProxy {
-            return Err(api_err(
-                StatusCode::FORBIDDEN,
-                "mode_restricted",
-                "Trusted proxy login is not enabled for this instance",
-            ));
-        }
-
-        store.pool().clone()
+        sf.setup_state
     };
 
-    let proxy_settings = crate::instance_settings::load_effective_trusted_proxy_settings(&pool)
+    if setup_state != SetupState::Ready {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "setup_incomplete",
+            "Auth endpoints are only available after setup is complete",
+        ));
+    }
+
+    let runtime_mode = crate::instance_settings::load_runtime_mode(&state.db)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to load runtime mode for trusted proxy login");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to determine runtime mode",
+            )
+        })?;
+    if runtime_mode != RuntimeMode::Remote {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "mode_restricted",
+            "Trusted proxy login is only available in External Access mode",
+        ));
+    }
+
+    let remote_auth_mode = crate::instance_settings::load_remote_auth_mode(&state.db)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to load remote auth mode for trusted proxy login");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to determine remote auth mode",
+            )
+        })?;
+    if remote_auth_mode != RemoteAuthMode::TrustedProxy {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "mode_restricted",
+            "Trusted proxy login is not enabled for this instance",
+        ));
+    }
+
+    let pool = &state.db;
+
+    let proxy_settings = crate::instance_settings::load_effective_trusted_proxy_settings(pool)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to load trusted proxy settings");
@@ -1375,7 +1376,7 @@ pub async fn trusted_proxy_login(
         })
         .to_string();
         let _ = write_audit_log(
-            &pool,
+            pool,
             None,
             "trusted_proxy_login_blocked_untrusted_peer",
             "auth",
@@ -1405,7 +1406,7 @@ pub async fn trusted_proxy_login(
          FROM users WHERE lower(email) = lower(?1) LIMIT 1",
     )
     .bind(&email)
-    .fetch_optional(&pool)
+    .fetch_optional(pool)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to look up user for trusted proxy login");
@@ -1446,7 +1447,7 @@ pub async fn trusted_proxy_login(
         .bind(&subject)
         .bind(now)
         .bind(&user_id)
-        .execute(&pool)
+        .execute(pool)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to activate invited trusted proxy user");
@@ -1458,7 +1459,7 @@ pub async fn trusted_proxy_login(
         })?;
 
         let _ = write_audit_log(
-            &pool,
+            pool,
             Some(&user_id),
             "user_activated",
             "user",
@@ -1510,7 +1511,7 @@ pub async fn trusted_proxy_login(
     })
     .to_string();
     let _ = write_audit_log(
-        &pool,
+        pool,
         Some(&user_id),
         "trusted_proxy_login_succeeded",
         "auth",

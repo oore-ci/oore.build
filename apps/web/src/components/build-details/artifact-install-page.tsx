@@ -1,19 +1,14 @@
 import { Suspense, lazy, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  ArrowLeft01Icon,
-  Copy01Icon,
-  Globe02Icon,
-  InformationCircleIcon,
-  SmartPhone01Icon,
-} from '@hugeicons/core-free-icons'
+  ArrowLeft as ArrowLeft01Icon,
+  Smartphone as SmartPhone01Icon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import {
   artifactInstallReadiness,
   detectInstallDevice,
-  getIosAppMetadata,
   selectInstallArtifact,
 } from '@/lib/artifact-install'
 import {
@@ -29,18 +24,27 @@ import { qaBuildVersion, qaProjectVersionBase } from '@/lib/qa-releases'
 import { PageMeta } from '@/lib/seo'
 import { getStatusVariant } from '@/lib/status-variants'
 import type { Artifact, Build, Project } from '@/lib/types'
-import { useBreadcrumbLabel } from '@/hooks/use-breadcrumb-label'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import PageLayout from '@/components/page-layout'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuthStore } from '@/stores/auth-store'
 
 const ChangelogMarkdown = lazy(() => import('./changelog-markdown'))
 const QaBuildLogs = lazy(() => import('./qa-build-logs'))
+const QaArtifactUnavailableAlert = lazy(
+  () => import('./qa-artifact-unavailable-alert'),
+)
+const QaInstallReadinessAlerts = lazy(
+  () => import('./qa-install-readiness-alerts'),
+)
+const OperatorArtifactInstallPage = lazy(
+  () => import('./artifact-install-operator-page'),
+)
 const expiryFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
   timeStyle: 'short',
@@ -49,79 +53,6 @@ const expiryFormatter = new Intl.DateTimeFormat(undefined, {
 function expiryLabel(expiresAt: number | undefined): string {
   if (expiresAt == null) return 'No scheduled expiry'
   return `Available until ${expiryFormatter.format(new Date(expiresAt * 1000))}`
-}
-
-function displayName(name: string): string {
-  return name.replace(/\.(apk|ipa)$/i, '')
-}
-
-function copyPageLink() {
-  void navigator.clipboard.writeText(window.location.href).then(
-    () => toast.success('Install page link copied'),
-    () => toast.error('Failed to copy install page link'),
-  )
-}
-
-function QaInstallReadinessAlerts({
-  conditions,
-  platform,
-  readiness,
-}: {
-  conditions: {
-    desktopIos: boolean
-    expired: boolean
-    needsSafari: boolean
-    wrongPhone: boolean
-  }
-  platform: 'iOS' | 'Android'
-  readiness: ReturnType<typeof artifactInstallReadiness> | null
-}) {
-  return (
-    <>
-      {readiness && !readiness.ready ? (
-        <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertTitle>Not install-ready</AlertTitle>
-          <AlertDescription>{readiness.reason}</AlertDescription>
-        </Alert>
-      ) : null}
-      {conditions.expired ? (
-        <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertTitle>Artifact expired</AlertTitle>
-          <AlertDescription>
-            Ask a developer to run a fresh build before installing.
-          </AlertDescription>
-        </Alert>
-      ) : null}
-      {conditions.needsSafari ? (
-        <Alert>
-          <HugeiconsIcon icon={Globe02Icon} />
-          <AlertTitle>Open this page in Safari</AlertTitle>
-          <AlertDescription>
-            iOS installation can only start from Safari on this iPhone.
-          </AlertDescription>
-        </Alert>
-      ) : null}
-      {conditions.desktopIos ? (
-        <Alert>
-          <HugeiconsIcon icon={SmartPhone01Icon} />
-          <AlertTitle>Open this page on the registered iPhone</AlertTitle>
-          <AlertDescription>
-            Use Safari on a device included in this version’s provisioning
-            profile.
-          </AlertDescription>
-        </Alert>
-      ) : null}
-      {conditions.wrongPhone ? (
-        <Alert>
-          <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertTitle>Open this page on the right device</AlertTitle>
-          <AlertDescription>This version is for {platform}.</AlertDescription>
-        </Alert>
-      ) : null}
-    </>
-  )
 }
 
 function ArtifactInstallLoading() {
@@ -145,7 +76,6 @@ function ArtifactInstallError({
     <PageLayout width="narrow">
       <PageMeta title="Install artifact" noindex />
       <Alert variant="destructive">
-        <HugeiconsIcon icon={InformationCircleIcon} />
         <AlertDescription>
           Failed to load this build: {message}
         </AlertDescription>
@@ -197,6 +127,12 @@ function QaReleaseDetail({
     !wrongPhone &&
     !needsSafari &&
     !isDesktopIos
+  const hasInstallGuidance =
+    (readiness != null && !readiness.ready) ||
+    expired ||
+    wrongPhone ||
+    needsSafari ||
+    isDesktopIos
   const appName = qaBuildVersion(
     build,
     artifacts,
@@ -236,45 +172,27 @@ function QaReleaseDetail({
         nativeButton={false}
         className="hidden w-fit sm:inline-flex"
       >
-        <HugeiconsIcon icon={ArrowLeft01Icon} />
+        <ArrowLeft01Icon />
         Back to apps
       </Button>
 
-      <div
-        role="tablist"
-        aria-label="Release details"
-        className="flex gap-1 border-b pt-2 sm:pt-6"
+      <Tabs
+        value={section}
+        onValueChange={(value) => setSection(value as 'release' | 'logs')}
+        className="gap-5"
       >
-        <Button
-          role="tab"
-          aria-selected={section === 'release'}
-          aria-controls="qa-release-panel"
-          variant="ghost"
-          className={section === 'release' ? 'border-b-2 border-b-primary' : ''}
-          onClick={() => setSection('release')}
-        >
-          Release
-        </Button>
-        <Button
-          role="tab"
-          aria-selected={section === 'logs'}
-          aria-controls="qa-logs-panel"
-          variant="ghost"
-          className={section === 'logs' ? 'border-b-2 border-b-primary' : ''}
-          onMouseEnter={() => void import('./qa-build-logs')}
-          onFocus={() => void import('./qa-build-logs')}
-          onClick={() => setSection('logs')}
-        >
-          Logs
-        </Button>
-      </div>
+        <TabsList variant="line" aria-label="Release details">
+          <TabsTrigger value="release">Release</TabsTrigger>
+          <TabsTrigger
+            value="logs"
+            onMouseEnter={() => void import('./qa-build-logs')}
+            onFocus={() => void import('./qa-build-logs')}
+          >
+            Logs
+          </TabsTrigger>
+        </TabsList>
 
-      {section === 'release' ? (
-        <div
-          id="qa-release-panel"
-          role="tabpanel"
-          className="flex flex-col gap-5"
-        >
+        <TabsContent value="release" className="flex flex-col gap-5">
           <header>
             {project ? (
               <div className="mb-6 flex items-center gap-3">
@@ -302,7 +220,7 @@ function QaReleaseDetail({
                 <Badge variant="outline">{isIos ? 'iOS' : 'Android'}</Badge>
               ) : null}
             </div>
-            <p className="mt-3 wrap-break-word text-2xl font-bold tracking-tight sm:text-3xl">
+            <p className="mt-3 text-2xl font-bold tracking-tight wrap-break-word sm:text-3xl">
               {appName}
             </p>
             {artifact ? (
@@ -333,37 +251,39 @@ function QaReleaseDetail({
           )}
 
           {!artifact ? (
-            <Alert
-              variant={build.status === 'failed' ? 'destructive' : 'default'}
+            <Suspense
+              fallback={
+                <Alert>
+                  <AlertDescription>
+                    Checking artifact availability
+                  </AlertDescription>
+                </Alert>
+              }
             >
-              <HugeiconsIcon icon={InformationCircleIcon} />
-              <AlertTitle>
-                {build.status === 'failed'
-                  ? 'Build failed'
-                  : isTerminalStatus(build.status)
-                    ? 'No installable artifact'
-                    : 'Build is still in progress'}
-              </AlertTitle>
-              <AlertDescription>
-                {build.status === 'failed'
-                  ? 'Open Logs for diagnostic output from this build.'
-                  : isTerminalStatus(build.status)
-                    ? 'This build finished without an installable APK or IPA.'
-                    : 'Installation becomes available here when a signed APK or IPA is ready.'}
-              </AlertDescription>
-            </Alert>
+              <QaArtifactUnavailableAlert buildStatus={build.status} />
+            </Suspense>
           ) : null}
 
-          <QaInstallReadinessAlerts
-            conditions={{
-              desktopIos: isDesktopIos,
-              expired,
-              needsSafari,
-              wrongPhone,
-            }}
-            platform={isIos ? 'iOS' : 'Android'}
-            readiness={readiness}
-          />
+          {hasInstallGuidance ? (
+            <Suspense
+              fallback={
+                <Alert>
+                  <AlertDescription>Loading install guidance</AlertDescription>
+                </Alert>
+              }
+            >
+              <QaInstallReadinessAlerts
+                conditions={{
+                  desktopIos: isDesktopIos,
+                  expired,
+                  needsSafari,
+                  wrongPhone,
+                }}
+                platform={isIos ? 'iOS' : 'Android'}
+                readiness={readiness}
+              />
+            </Suspense>
+          ) : null}
 
           {artifact ? (
             <>
@@ -398,7 +318,7 @@ function QaReleaseDetail({
                     aria-label="Back to apps"
                     className="min-h-11 sm:hidden"
                   >
-                    <HugeiconsIcon icon={ArrowLeft01Icon} />
+                    <ArrowLeft01Icon />
                   </Button>
                   <Button
                     size="lg"
@@ -409,7 +329,7 @@ function QaReleaseDetail({
                     {installMutation.isPending ? (
                       <Spinner />
                     ) : (
-                      <HugeiconsIcon icon={SmartPhone01Icon} />
+                      <SmartPhone01Icon />
                     )}
                     {primaryLabel}
                   </Button>
@@ -424,14 +344,13 @@ function QaReleaseDetail({
               not affect installation.
             </p>
           ) : null}
-        </div>
-      ) : (
-        <div id="qa-logs-panel" role="tabpanel" className="min-h-96">
+        </TabsContent>
+        <TabsContent value="logs" className="min-h-96">
           <Suspense fallback={<Skeleton className="h-96 w-full" />}>
             <QaBuildLogs build={build} />
           </Suspense>
-        </div>
-      )}
+        </TabsContent>
+      </Tabs>
     </PageLayout>
   )
 }
@@ -443,7 +362,6 @@ export function ArtifactInstallPage({
   buildId: string
   artifactId?: string
 }) {
-  useBreadcrumbLabel('/builds/$buildId', 'Install')
   const buildQuery = useBuild(buildId, {
     refetchInterval: (query) =>
       query.state.data && isTerminalStatus(query.state.data.build.status)
@@ -456,26 +374,19 @@ export function ArtifactInstallPage({
   const artifactsQuery = useArtifacts(buildId, {
     refetchInterval: isTerminal ? false : 3000,
   })
-  const installMutation = useArtifactInstallLink()
   const isQaViewer = useAuthStore((state) => state.user?.role === 'qa_viewer')
-  const projectQuery = useProject(
-    isQaViewer ? (buildQuery.data?.build.project_id ?? '') : '',
-  )
-  const projectArtifactsQuery = useProjectArtifacts(
-    isQaViewer ? (buildQuery.data?.build.project_id ?? '') : '',
-  )
+  const qaProjectId = isQaViewer
+    ? (buildQuery.data?.build.project_id ?? '')
+    : ''
+  const projectQuery = useProject(qaProjectId)
+  const projectArtifactsQuery = useProjectArtifacts(qaProjectId)
+  const artifacts = artifactsQuery.data?.artifacts ?? []
   const device = detectInstallDevice(
     typeof navigator === 'undefined' ? '' : navigator.userAgent,
   )
   const artifact = isQaViewer
-    ? selectInstallArtifact(
-        artifactsQuery.data?.artifacts ?? [],
-        device,
-        artifactId,
-      )
-    : artifactsQuery.data?.artifacts.find(
-        (candidate) => candidate.id === artifactId,
-      )
+    ? selectInstallArtifact(artifacts, device, artifactId)
+    : artifacts.find((candidate) => candidate.id === artifactId)
 
   if (buildQuery.isLoading || artifactsQuery.isLoading) {
     return <ArtifactInstallLoading />
@@ -502,7 +413,7 @@ export function ArtifactInstallPage({
     return (
       <QaReleaseDetail
         artifact={artifact}
-        artifacts={artifactsQuery.data?.artifacts ?? []}
+        artifacts={artifacts}
         build={build}
         historyArtifacts={projectArtifactsQuery.data?.artifacts ?? []}
         historyError={projectArtifactsQuery.isError}
@@ -517,7 +428,6 @@ export function ArtifactInstallPage({
       <PageLayout width="narrow">
         <PageMeta title="Artifact unavailable" noindex />
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} />
           <AlertDescription>
             This artifact is unavailable or has been removed.
           </AlertDescription>
@@ -526,213 +436,14 @@ export function ArtifactInstallPage({
     )
   }
 
-  const readiness = artifactInstallReadiness(artifact)
-  const iosApp = getIosAppMetadata(artifact)
-  const isIos = artifact.artifact_type === 'ipa'
-  const isAndroid = artifact.artifact_type === 'apk'
-  const expired =
-    artifact.expires_at != null &&
-    artifact.expires_at <= Math.floor(Date.now() / 1000)
-  const wrongPhone =
-    (isIos && device === 'android') ||
-    (isAndroid && (device === 'iphone-safari' || device === 'iphone-other'))
-  const needsSafari = isIos && device === 'iphone-other'
-  const isDesktopIos = isIos && device === 'other'
-  const canInstall =
-    readiness.ready && !expired && !wrongPhone && !needsSafari && !isDesktopIos
-  const appName = iosApp?.displayName ?? displayName(artifact.name)
-  const selectedArtifactId = artifact.id
-
-  function handleInstall() {
-    installMutation.mutate(selectedArtifactId, {
-      onSuccess: (response) => {
-        window.location.assign(response.install_url)
-      },
-      onError: (error) => {
-        toast.error(`Could not start installation: ${error.message}`)
-      },
-    })
-  }
-
-  const primaryLabel = isIos
-    ? 'Install'
-    : device === 'other'
-      ? 'Download APK'
-      : 'Install'
-
   return (
-    <PageLayout width="narrow" className="px-4 pt-4 pb-28 sm:px-6 sm:py-10">
-      <PageMeta title={`Install ${appName}`} noindex />
-
-      <Button
-        variant="ghost"
-        size="sm"
-        render={
-          <Link
-            to="/builds/$buildId"
-            params={{ buildId }}
-            search={{}}
-            resetScroll
-          />
-        }
-        nativeButton={false}
-        className="hidden w-fit sm:inline-flex"
-      >
-        <HugeiconsIcon icon={ArrowLeft01Icon} />
-        Build #{build.build_number}
-      </Button>
-
-      <section className="flex flex-col gap-5 pt-2 sm:pt-6">
-        <header>
-          <Badge variant="outline">{isIos ? 'iOS' : 'Android'}</Badge>
-          <h1 className="mt-3 wrap-break-word text-2xl font-bold tracking-tight sm:text-3xl">
-            {appName}
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {artifact.file_size != null
-              ? formatFileSize(artifact.file_size)
-              : 'Size unavailable'}
-            {artifact.expires_at != null
-              ? ` · ${expiryLabel(artifact.expires_at)}`
-              : ''}
-          </p>
-          {iosApp ? (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {iosApp.version}+{iosApp.buildNumber}
-            </p>
-          ) : null}
-        </header>
-
-        {!readiness.ready ? (
-          <Alert variant="destructive">
-            <HugeiconsIcon icon={InformationCircleIcon} />
-            <AlertTitle>Not install-ready</AlertTitle>
-            <AlertDescription>{readiness.reason}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {expired ? (
-          <Alert variant="destructive">
-            <HugeiconsIcon icon={InformationCircleIcon} />
-            <AlertTitle>Artifact expired</AlertTitle>
-            <AlertDescription>
-              Ask a developer to run a fresh build before installing.
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        {needsSafari ? (
-          <Alert>
-            <HugeiconsIcon icon={Globe02Icon} />
-            <AlertTitle>Open this page in Safari</AlertTitle>
-            <AlertDescription>
-              iOS installation can only start from Safari on this iPhone.
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        {isDesktopIos ? (
-          <Alert>
-            <HugeiconsIcon icon={SmartPhone01Icon} />
-            <AlertTitle>Open this page on the registered iPhone</AlertTitle>
-            <AlertDescription>
-              Use Safari on a device included in this version’s provisioning
-              profile.
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        {wrongPhone ? (
-          <Alert>
-            <HugeiconsIcon icon={InformationCircleIcon} />
-            <AlertTitle>Open this page on the right device</AlertTitle>
-            <AlertDescription>
-              This version is for {isIos ? 'iOS' : 'Android'}.
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        <div className="fixed inset-x-0 bottom-0 z-60 border-t bg-background/95 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="icon-lg"
-              render={
-                <Link
-                  to="/builds/$buildId"
-                  params={{ buildId }}
-                  search={{}}
-                  resetScroll
-                />
-              }
-              nativeButton={false}
-              aria-label="Back to build"
-              className="min-h-11 sm:hidden"
-            >
-              <HugeiconsIcon icon={ArrowLeft01Icon} />
-            </Button>
-            <Button
-              size="lg"
-              onClick={handleInstall}
-              disabled={!canInstall || installMutation.isPending}
-              className="min-h-11 min-w-0 flex-1 sm:w-full"
-            >
-              {installMutation.isPending ? (
-                <Spinner />
-              ) : (
-                <HugeiconsIcon icon={SmartPhone01Icon} />
-              )}
-              {primaryLabel}
-            </Button>
-          </div>
-          <Button
-            variant="ghost"
-            onClick={copyPageLink}
-            className="mt-2 w-full"
-          >
-            <HugeiconsIcon icon={Copy01Icon} />
-            Copy install page link
-          </Button>
-        </div>
-      </section>
-
-      <section className="flex flex-col gap-4 pt-1">
-        <h2 className="text-sm font-medium">Before you install</h2>
-        {isIos ? (
-          <ol className="flex flex-col gap-3 text-sm text-muted-foreground">
-            <li className="flex gap-3">
-              <span className="font-mono text-foreground">01</span>
-              <span>Use Safari on the registered iPhone.</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="font-mono text-foreground">02</span>
-              <span>Tap Install and confirm the iOS prompt.</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="font-mono text-foreground">03</span>
-              <span>
-                Enable Developer Mode if iOS asks. The device must be included
-                in this version’s provisioning profile.
-              </span>
-            </li>
-          </ol>
-        ) : (
-          <ol className="flex flex-col gap-3 text-sm text-muted-foreground">
-            <li className="flex gap-3">
-              <span className="font-mono text-foreground">01</span>
-              <span>Tap Install to download the APK.</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="font-mono text-foreground">02</span>
-              <span>Allow this browser to install unknown apps if asked.</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="font-mono text-foreground">03</span>
-              <span>Open the APK and confirm installation.</span>
-            </li>
-          </ol>
-        )}
-      </section>
-    </PageLayout>
+    <Suspense fallback={<ArtifactInstallLoading />}>
+      <OperatorArtifactInstallPage
+        artifact={artifact}
+        build={build}
+        buildId={buildId}
+        device={device}
+      />
+    </Suspense>
   )
 }

@@ -5,7 +5,7 @@ import {
   SidebarHeader,
   SidebarRail,
 } from '@/components/ui/sidebar'
-import InstanceSwitcher from '@/components/InstanceSwitcher'
+import InstanceSwitcher from '@/components/instance-switcher'
 import NavMain from '@/components/nav-main'
 import NavUser from '@/components/nav-user'
 import RuntimeUpdateNotice from '@/components/runtime-update-notice'
@@ -16,13 +16,13 @@ export default function AppSidebar(
   props: React.ComponentProps<typeof Sidebar>,
 ) {
   const instance = useActiveInstance()
-  const authToken = useAuthStore((s) => s.token)
-  const authUser = useAuthStore((s) => s.user)
+  const token = useAuthStore((state) => state.token)
+  const user = useAuthStore((state) => state.user)
 
-  if (!instance || !authToken || !authUser) return null
+  if (!instance || !token || !user) return null
 
   return (
-    <Sidebar collapsible="icon" {...props}>
+    <Sidebar collapsible="offcanvas" {...props}>
       <SidebarHeader>
         <InstanceSwitcher />
       </SidebarHeader>
@@ -30,7 +30,7 @@ export default function AppSidebar(
         <NavMain />
       </SidebarContent>
       <SidebarFooter>
-        {authUser.role === 'owner' ? <RuntimeUpdateNotice /> : null}
+        {user.role === 'owner' && <RuntimeUpdateNotice />}
         <NavUser />
       </SidebarFooter>
       <SidebarRail />

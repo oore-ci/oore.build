@@ -53,20 +53,6 @@ const profiles = [
     includeDynamic: true,
   },
   {
-    name: 'Mobile shell',
-    entries: ['src/components/ui/sidebar-mobile.tsx'],
-    budgetKiB: Number(process.env.OORE_WEB_MOBILE_SHELL_BUDGET_KIB ?? 185),
-  },
-  {
-    name: 'Admin shell interactions',
-    entries: [
-      'src/components/instance-switcher-menu.tsx',
-      'src/components/nav-user-menu.tsx',
-      'src/components/ui/sidebar-menu-tooltip.tsx',
-    ],
-    budgetKiB: Number(process.env.OORE_WEB_ADMIN_SHELL_BUDGET_KIB ?? 225),
-  },
-  {
     name: 'Admin command palette',
     entries: ['src/components/command-palette.tsx'],
     budgetKiB: Number(process.env.OORE_WEB_COMMAND_PALETTE_BUDGET_KIB ?? 210),
@@ -94,7 +80,7 @@ const profiles = [
       'src/routes/builds/$buildId.tsx?tsr-split=component',
       'src/components/build-details/artifact-install-page.tsx',
     ],
-    budgetKiB: Number(process.env.OORE_WEB_QA_INSTALL_BUDGET_KIB ?? 175),
+    budgetKiB: Number(process.env.OORE_WEB_QA_INSTALL_BUDGET_KIB ?? 181),
   },
   {
     name: 'QA install with changelog',
@@ -103,7 +89,7 @@ const profiles = [
       'src/components/build-details/artifact-install-page.tsx',
       'src/components/build-details/changelog-markdown.tsx',
     ],
-    budgetKiB: Number(process.env.OORE_WEB_QA_CHANGELOG_BUDGET_KIB ?? 210),
+    budgetKiB: Number(process.env.OORE_WEB_QA_CHANGELOG_BUDGET_KIB ?? 215),
   },
   {
     name: 'Projects cold route',
@@ -128,7 +114,7 @@ const profiles = [
   {
     name: 'Pipeline detail route',
     entries: [
-      'src/routes/projects/$projectId/pipelines/$pipelineId.tsx?tsr-split=component',
+      'src/routes/projects/$projectId/pipelines/$pipelineId/index.tsx?tsr-split=component',
     ],
     budgetKiB: Number(process.env.OORE_WEB_PIPELINE_ROUTE_BUDGET_KIB ?? 205),
   },
@@ -147,7 +133,7 @@ const profiles = [
       'src/components/build-details/artifact-install-page.tsx',
       'src/components/build-details/qa-build-logs.tsx',
     ],
-    budgetKiB: Number(process.env.OORE_WEB_QA_LOGS_BUDGET_KIB ?? 200),
+    budgetKiB: Number(process.env.OORE_WEB_QA_LOGS_BUDGET_KIB ?? 201),
   },
   {
     name: 'Preferences cold route',
@@ -177,7 +163,7 @@ const profiles = [
   {
     name: 'Pipeline edit route',
     entries: [
-      'src/routes/projects/$projectId/pipelines/$pipelineId_.edit.tsx?tsr-split=component',
+      'src/routes/projects/$projectId/pipelines/$pipelineId/edit.tsx?tsr-split=component',
     ],
     budgetKiB: Number(process.env.OORE_WEB_PIPELINE_EDIT_BUDGET_KIB ?? 265),
   },

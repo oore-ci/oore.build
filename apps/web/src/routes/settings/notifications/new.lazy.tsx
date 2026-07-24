@@ -47,9 +47,9 @@ const NOTIFICATION_EVENTS = [
   { value: 'succeeded', label: 'Succeeded' },
   { value: 'failed', label: 'Failed' },
   { value: 'canceled', label: 'Canceled' },
-  { value: 'timed_out', label: 'Timed Out' },
+  { value: 'timed_out', label: 'Timed out' },
   { value: 'expired', label: 'Expired' },
-  { value: 'runner_offline', label: 'Runner Offline' },
+  { value: 'runner_offline', label: 'Runner offline' },
 ] as const
 
 const schema = z.object({
@@ -114,7 +114,7 @@ function NotificationChannelFields({
             name="secret"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>HMAC Secret (optional)</FormLabel>
+                <FormLabel>HMAC secret (optional)</FormLabel>
                 <FormControl>
                   <Input
                     type="password"
@@ -144,7 +144,7 @@ function NotificationChannelFields({
           name="smtp_host"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>SMTP Host</FormLabel>
+              <FormLabel>SMTP host</FormLabel>
               <FormControl>
                 <Input placeholder="smtp.example.com" {...field} />
               </FormControl>
@@ -201,7 +201,7 @@ function NotificationChannelFields({
         name="smtp_tls_mode"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>TLS Mode</FormLabel>
+            <FormLabel>TLS mode</FormLabel>
             <Select
               value={field.value}
               onValueChange={(value) => field.onChange(value)}
@@ -227,7 +227,7 @@ function NotificationChannelFields({
         name="smtp_from_address"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>From Address</FormLabel>
+            <FormLabel>From address</FormLabel>
             <FormControl>
               <Input type="email" placeholder="ci@example.com" {...field} />
             </FormControl>
@@ -260,7 +260,7 @@ function NotificationChannelFields({
   )
 }
 
-function useNewNotificationChannelPageState() {
+function NewNotificationChannelPage() {
   const navigate = useNavigate()
   const createMutation = useCreateNotificationChannel()
 
@@ -379,27 +379,17 @@ function useNewNotificationChannelPageState() {
     }
   }
 
-  return { channelType, createMutation, form, isEmail, navigate, onSubmit }
-}
-
-function NewNotificationChannelPage() {
-  const pageState = useNewNotificationChannelPageState()
-  const { channelType, createMutation, form, isEmail, navigate, onSubmit } =
-    pageState
-
   return (
     <PageLayout width="wide">
-      <PageMeta title="New Notification Channel" noindex />
+      <PageMeta title="New notification channel" noindex />
       <PageHeader
-        title="New Notification Channel"
+        title="New notification channel"
         description="Configure a notification channel to receive build and runner status updates."
       />
 
-      <Card>
+      <Card size="sm" aria-labelledby="channel-config-title">
         <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            Channel Configuration
-          </CardTitle>
+          <CardTitle id="channel-config-title">Channel configuration</CardTitle>
         </CardHeader>
         <CardContent>
           <Form {...form}>
@@ -465,7 +455,7 @@ function NewNotificationChannelPage() {
                 name="events"
                 render={() => (
                   <FormItem>
-                    <FormLabel>Event Filter</FormLabel>
+                    <FormLabel>Event filter</FormLabel>
                     <FormDescription>
                       Select which events trigger this channel. Leave all
                       unchecked to receive all events.

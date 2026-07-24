@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react'
 import { Link, createFileRoute, useSearch } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  Add01Icon,
-  InformationCircleIcon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
+  Plus as Add01Icon,
+  Info as InformationCircleIcon,
+  Search as Search01Icon,
+} from 'lucide-react'
 import { toast } from '@/lib/toast'
 
 import type { NotificationChannel } from '@/lib/types'
@@ -86,7 +85,6 @@ function parseSearch(search: Record<string, unknown>): NotificationsSearch {
 }
 
 export const Route = createFileRoute('/settings/notifications/')({
-  staticData: { breadcrumbLabel: 'Notifications' },
   validateSearch: parseSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
@@ -215,7 +213,7 @@ function NotificationsPage() {
             render={<Link to="/settings/notifications/new" />}
             nativeButton={false}
           >
-            <HugeiconsIcon icon={Add01Icon} />
+            <Add01Icon />
             Add channel
           </Button>
         }
@@ -223,7 +221,6 @@ function NotificationsPage() {
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <CollectionSearchInput
-          key={search.q ?? ''}
           initialValue={search.q ?? ''}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })
@@ -249,7 +246,7 @@ function NotificationsPage() {
 
       {channelsQuery.error ? (
         <Alert variant="destructive">
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <InformationCircleIcon size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               Failed to load notification channels:{' '}
@@ -267,10 +264,10 @@ function NotificationsPage() {
       ) : null}
 
       {showTrueEmpty ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={InformationCircleIcon} />
+              <InformationCircleIcon />
             </EmptyMedia>
             <EmptyTitle>No notification channels</EmptyTitle>
             <EmptyDescription>
@@ -282,7 +279,7 @@ function NotificationsPage() {
               render={<Link to="/settings/notifications/new" />}
               nativeButton={false}
             >
-              <HugeiconsIcon icon={Add01Icon} />
+              <Add01Icon />
               Add channel
             </Button>
           </EmptyContent>
@@ -290,10 +287,10 @@ function NotificationsPage() {
       ) : null}
 
       {showFilteredEmpty ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={Search01Icon} />
+              <Search01Icon />
             </EmptyMedia>
             <EmptyTitle>No matching channels</EmptyTitle>
             <EmptyDescription>

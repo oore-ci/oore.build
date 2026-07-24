@@ -4,8 +4,21 @@ import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import {
   defaultArtifactPatterns,
   executionConfigFromForm,
+  hasSigningFileChanges,
   previewPlatformCommands,
 } from '@/lib/pipeline-form-utils'
+
+describe('hasSigningFileChanges', () => {
+  it('detects signing files even when ordinary form values are unchanged', () => {
+    const file = new File(['secret'], 'signing.p12')
+
+    expect(hasSigningFileChanges([null, null], {})).toBe(false)
+    expect(hasSigningFileChanges([file, null], {})).toBe(true)
+    expect(hasSigningFileChanges([null], { 'com.example.app': file })).toBe(
+      true,
+    )
+  })
+})
 
 const defaults: PipelineFormValues = {
   name: 'Debug APK',
@@ -42,6 +55,8 @@ const defaults: PipelineFormValues = {
   macos_command_override: '',
   env_vars: '',
   artifact_patterns: '',
+  trigger_events: [],
+  cancel_previous: true,
   branches: '',
   max_concurrent: undefined,
 }

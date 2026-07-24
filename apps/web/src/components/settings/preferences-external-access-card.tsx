@@ -1,39 +1,51 @@
-import type { PreferencesPageState } from '@/routes/settings/preferences'
+import type { ReactNode } from 'react'
+import type { RemoteAuthMode } from '@/lib/types'
 import {
   authModeDescription,
   authModeLabel,
 } from '@/components/settings/preferences-utils'
-import { ExternalAccessManagement } from '@/components/settings/preferences-external-access-management'
-import { ExternalAccessSetup } from '@/components/settings/preferences-external-access-setup'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 
-export function ExternalAccessCard({ state }: { state: PreferencesPageState }) {
-  const {
-    externalAccessEnabled,
-    handleExternalAccessToggle,
-    isOwner,
-    preflightQuery,
-    readinessReady,
-    remoteAuthMode,
-    updatePreferencesMutation,
-  } = state
+export function ExternalAccessCard({
+  children,
+  externalAccessEnabled,
+  isOwner,
+  onToggle,
+  preflightLoading,
+  readinessReady,
+  remoteAuthMode,
+  updatePending,
+}: {
+  children: ReactNode
+  externalAccessEnabled: boolean
+  isOwner: boolean
+  onToggle: () => void
+  preflightLoading: boolean
+  readinessReady: boolean
+  remoteAuthMode: RemoteAuthMode
+  updatePending: boolean
+}) {
   return (
-    <Card>
+    <Card size="sm" aria-labelledby="external-access-title">
       <CardHeader>
-        <div className="flex items-center justify-between gap-3">
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            External Access
-          </CardTitle>
+        <CardTitle id="external-access-title">External access</CardTitle>
+        <CardAction>
           <Badge variant={externalAccessEnabled ? 'secondary' : 'outline'}>
             {externalAccessEnabled
-              ? `External Access - ${authModeLabel(remoteAuthMode)}`
+              ? `External Access: ${authModeLabel(remoteAuthMode)}`
               : 'Local Only'}
           </Badge>
-        </div>
+        </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -48,14 +60,14 @@ export function ExternalAccessCard({ state }: { state: PreferencesPageState }) {
           {isOwner ? (
             <Button
               type="button"
-              onClick={handleExternalAccessToggle}
+              onClick={onToggle}
               disabled={
-                updatePreferencesMutation.isPending ||
+                updatePending ||
                 (!externalAccessEnabled &&
-                  (!readinessReady || preflightQuery.isLoading))
+                  (!readinessReady || preflightLoading))
               }
             >
-              {updatePreferencesMutation.isPending ? (
+              {updatePending ? (
                 <>
                   <Spinner className="size-4" />
                   Saving...
@@ -75,11 +87,7 @@ export function ExternalAccessCard({ state }: { state: PreferencesPageState }) {
             </AlertDescription>
           </Alert>
         ) : null}
-        {externalAccessEnabled ? (
-          <ExternalAccessManagement state={state} />
-        ) : (
-          <ExternalAccessSetup state={state} />
-        )}
+        {children}
       </CardContent>
     </Card>
   )

@@ -370,6 +370,64 @@ async fn test_get_project() {
 }
 
 #[tokio::test]
+async fn test_project_list_and_detail_report_effective_current_user_role() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("test.db");
+    let app = create_test_app(&db_path).await;
+    let pool = connect_pool(&db_path).await;
+    let owner_id = seed_test_user(&pool).await;
+    let project_id = uuid::Uuid::new_v4().to_string();
+    let now = common::now_unix();
+    sqlx::query(
+        "INSERT INTO projects (id, name, settings, created_by, created_at, updated_at) \
+         VALUES (?1, 'Role Contract Project', '{}', ?2, ?3, ?3)",
+    )
+    .bind(&project_id)
+    .bind(&owner_id)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let admin_id = seed_user_with_role(&pool, "role-admin@example.com", "admin").await;
+    let maintainer_id =
+        seed_user_with_role(&pool, "role-maintainer@example.com", "developer").await;
+    let viewer_id = seed_user_with_role(&pool, "role-viewer@example.com", "developer").await;
+    let qa_id = seed_user_with_role(&pool, "role-qa@example.com", "qa_viewer").await;
+
+    seed_project_member(&pool, &project_id, &maintainer_id, &owner_id, "maintainer").await;
+    seed_project_member(&pool, &project_id, &viewer_id, &owner_id, "viewer").await;
+    // Simulate legacy elevated data: effective QA authority must still be Viewer.
+    seed_project_member(&pool, &project_id, &qa_id, &owner_id, "maintainer").await;
+
+    for (user_id, expected_role) in [
+        (owner_id.as_str(), "maintainer"),
+        (admin_id.as_str(), "maintainer"),
+        (maintainer_id.as_str(), "maintainer"),
+        (viewer_id.as_str(), "viewer"),
+        (qa_id.as_str(), "viewer"),
+    ] {
+        let token = create_session_token(&pool, user_id).await;
+        let (status, list) = json_request(&app, "GET", "/v1/projects", &token, None).await;
+        assert_eq!(status, StatusCode::OK, "list response: {list}");
+        assert_eq!(list["projects"].as_array().unwrap().len(), 1);
+        assert_eq!(list["projects"][0]["current_user_role"], expected_role);
+
+        let (status, detail) = json_request(
+            &app,
+            "GET",
+            &format!("/v1/projects/{project_id}"),
+            &token,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "detail response: {detail}");
+        assert_eq!(detail["project"]["current_user_role"], expected_role);
+        assert_eq!(detail["current_user_role"], expected_role);
+    }
+}
+
+#[tokio::test]
 async fn test_update_project() {
     let dir = tempfile::tempdir().unwrap();
     let repo_path = init_test_git_repo(dir.path());
@@ -801,6 +859,60 @@ async fn test_create_and_list_pipelines() {
     let pipelines = json["pipelines"].as_array().unwrap();
     assert_eq!(pipelines.len(), 1);
     assert_eq!(pipelines[0]["id"].as_str().unwrap(), pipeline_id);
+
+    for name in ["Deploy Staging", "Deploy Production"] {
+        let (status, json) = json_request(
+            &app,
+            "POST",
+            &format!("/v1/projects/{project_id}/pipelines"),
+            &token,
+            Some(serde_json::json!({
+                "name": name,
+                "trigger_config": { "events": [], "branches": [] },
+                "concurrency": { "cancel_previous": true, "max_concurrent": 1 }
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "create {name}: {json}");
+    }
+
+    let (status, json) = json_request(
+        &app,
+        "GET",
+        &format!(
+            "/v1/projects/{project_id}/pipelines?search=deploy&sort=name&direction=asc&limit=1"
+        ),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "filtered list: {json}");
+    assert_eq!(json["total"].as_i64(), Some(2));
+    assert_eq!(json["pipelines"].as_array().unwrap().len(), 1);
+    assert_eq!(json["pipelines"][0]["name"], "Deploy Production");
+
+    let (status, json) = json_request(
+        &app,
+        "GET",
+        &format!(
+            "/v1/projects/{project_id}/pipelines?search=deploy&sort=name&direction=asc&limit=1&offset=1"
+        ),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "second page: {json}");
+    assert_eq!(json["pipelines"][0]["name"], "Deploy Staging");
+
+    let (status, _) = json_request(
+        &app,
+        "GET",
+        &format!("/v1/projects/{project_id}/pipelines?sort=updated_at"),
+        &token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
@@ -34,7 +34,7 @@ use tokio::net::{TcpListener, UnixStream};
 
 mod update_supervisor;
 
-const FAVICON_DATA_URI: &str = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CiAgPGRlZnM+CiAgICA8Y2lyY2xlIGlkPSJjdXQiIGN4PSIxNiIgY3k9IjE2IiByPSI3IiAvPgogICAgPG1hc2sgaWQ9ImhvbGUiPgogICAgICA8cmVjdCB4PSIwIiB5PSIwIiB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIGZpbGw9IndoaXRlIiAvPgogICAgICA8dXNlIGhyZWY9IiNjdXQiIGZpbGw9ImJsYWNrIiAvPgogICAgPC9tYXNrPgogICAgPGNsaXBQYXRoIGlkPSJsZWZ0Ij4KICAgICAgPHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjE1IiBoZWlnaHQ9IjMyIiAvPgogICAgPC9jbGlwUGF0aD4KICAgIDxjbGlwUGF0aCBpZD0icmlnaHQiPgogICAgICA8cmVjdCB4PSIxNyIgeT0iMCIgd2lkdGg9IjE1IiBoZWlnaHQ9IjMyIiAvPgogICAgPC9jbGlwUGF0aD4KICA8L2RlZnM+CiAgPHJlY3QKICAgIHg9IjIiCiAgICB5PSIyIgogICAgd2lkdGg9IjI4IgogICAgaGVpZ2h0PSIyOCIKICAgIHJ4PSI2IgogICAgZmlsbD0iI2Y0OWYxZSIKICAgIGNsaXAtcGF0aD0idXJsKCNsZWZ0KSIKICAgIG1hc2s9InVybCgjaG9sZSkiCiAgLz4KICA8cmVjdAogICAgeD0iMiIKICAgIHk9IjIiCiAgICB3aWR0aD0iMjgiCiAgICBoZWlnaHQ9IjI4IgogICAgcng9IjYiCiAgICBmaWxsPSIjZjQ5ZjFlIgogICAgY2xpcC1wYXRoPSJ1cmwoI3JpZ2h0KSIKICAgIG1hc2s9InVybCgjaG9sZSkiCiAgLz4KPC9zdmc+Cg==";
+const FAVICON_DATA_URI: &str = "data:image/svg+xml;base64,PHN2ZwogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB2aWV3Qm94PSIxMDAgMTAwIDMyMCAzMjAiCiAgcm9sZT0iaW1nIgogIGFyaWEtbGFiZWxsZWRieT0idGl0bGUgZGVzY3JpcHRpb24iCj4KICA8dGl0bGUgaWQ9InRpdGxlIj5Pb3JlPC90aXRsZT4KICA8ZGVzYyBpZD0iZGVzY3JpcHRpb24iPgogICAgQSBjaXJjdWxhciBidWlsZCBzd2VlcCBjb25uZWN0aW5nIGEgc291cmNlIGNvbW1pdCB0byBhbiBhcnRpZmFjdC4KICA8L2Rlc2M+CiAgPGRlZnM+CiAgICA8bWFzawogICAgICBpZD0iY3V0b3V0cyIKICAgICAgeD0iMCIKICAgICAgeT0iMCIKICAgICAgd2lkdGg9IjUxMiIKICAgICAgaGVpZ2h0PSI1MTIiCiAgICAgIG1hc2tVbml0cz0idXNlclNwYWNlT25Vc2UiCiAgICA+CiAgICAgIDxyZWN0IHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiBmaWxsPSJ3aGl0ZSIgLz4KICAgICAgPGNpcmNsZSBjeD0iMTczIiBjeT0iMzQ5IiByPSIxNiIgZmlsbD0iYmxhY2siIC8+CiAgICAgIDxyZWN0IHg9IjMyOSIgeT0iMTk3IiB3aWR0aD0iNjYiIGhlaWdodD0iMTEiIGZpbGw9ImJsYWNrIiAvPgogICAgPC9tYXNrPgogIDwvZGVmcz4KICA8ZyBmaWxsPSIjYmI0ZDAwIiBtYXNrPSJ1cmwoI2N1dG91dHMpIj4KICAgIDxjaXJjbGUKICAgICAgY3g9IjI1NCIKICAgICAgY3k9IjI2MCIKICAgICAgcj0iMTE5IgogICAgICBmaWxsPSJub25lIgogICAgICBzdHJva2U9IiNiYjRkMDAiCiAgICAgIHN0cm9rZS13aWR0aD0iMjIiCiAgICAvPgogICAgPGNpcmNsZSBjeD0iMTczIiBjeT0iMzQ5IiByPSIzNSIgLz4KICAgIDxyZWN0IHg9IjMxNSIgeT0iMTcwIiB3aWR0aD0iNzkiIGhlaWdodD0iOTAiIHJ4PSIxNSIgLz4KICA8L2c+Cjwvc3ZnPgo=";
 const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:8787";
 const CONFIG_KEY_DAEMON_URL: &str = "daemon_url";
 const CONFIG_KEY_SESSION_TOKEN: &str = "session_token";
@@ -545,9 +545,13 @@ fn recovery_socket_path(override_path: Option<&str>) -> anyhow::Result<PathBuf> 
         .join(LOCAL_RECOVERY_SOCKET_FILE))
 }
 
+fn current_effective_uid() -> u32 {
+    // SAFETY: `geteuid` has no arguments, pointer requirements, or failure state.
+    unsafe { libc::geteuid() }
+}
+
 fn validate_recovery_socket(path: &Path) -> anyhow::Result<()> {
-    // SAFETY: geteuid has no preconditions and does not dereference memory.
-    let expected_uid = unsafe { libc::geteuid() };
+    let expected_uid = current_effective_uid();
     let parent = path
         .parent()
         .context("management socket path has no parent directory")?;
@@ -1662,7 +1666,7 @@ async fn wait_for_oidc_callback(listener: TcpListener) -> anyhow::Result<(String
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n\
             <!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
             <link rel=\"icon\" href=\"{favicon}\"><link rel=\"apple-touch-icon\" href=\"{favicon}\">\
-            <meta name=\"theme-color\" content=\"#dc7702\"><title>Authentication failed</title></head>\
+            <meta name=\"theme-color\" content=\"#2457c5\"><title>Authentication failed</title></head>\
             <body><h2>Authentication failed</h2><p>{error}{desc}</p><p>You can close this tab.</p></body></html>",
             favicon = FAVICON_DATA_URI,
             error = error,
@@ -1687,7 +1691,7 @@ async fn wait_for_oidc_callback(listener: TcpListener) -> anyhow::Result<(String
         "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n\
         <!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
         <link rel=\"icon\" href=\"{favicon}\"><link rel=\"apple-touch-icon\" href=\"{favicon}\">\
-        <meta name=\"theme-color\" content=\"#dc7702\"><title>Authentication successful</title></head>\
+        <meta name=\"theme-color\" content=\"#2457c5\"><title>Authentication successful</title></head>\
         <body><h2>Authentication successful</h2><p>You can close this tab and return to the terminal.</p></body></html>",
         favicon = FAVICON_DATA_URI,
     );
@@ -2560,12 +2564,12 @@ async fn handle_status(args: StatusArgs) -> anyhow::Result<()> {
         match fetch_user_profile(&client, &daemon_url, token).await {
             Ok(_) => {
                 summary.authenticated = true;
-                let queued =
-                    fetch_build_list(&client, &daemon_url, token, Some("queued"), Some(1)).await?;
-                let running =
-                    fetch_build_list(&client, &daemon_url, token, Some("running"), Some(1)).await?;
-                let recent = fetch_build_list(&client, &daemon_url, token, None, Some(5)).await?;
-                let runners = fetch_runner_list(&client, &daemon_url, token).await?;
+                let (queued, running, recent, runners) = tokio::try_join!(
+                    fetch_build_list(&client, &daemon_url, token, Some("queued"), Some(1)),
+                    fetch_build_list(&client, &daemon_url, token, Some("running"), Some(1)),
+                    fetch_build_list(&client, &daemon_url, token, None, Some(5)),
+                    fetch_runner_list(&client, &daemon_url, token),
+                )?;
                 summary.queue_depth = Some(queued.total);
                 summary.active_builds = Some(queued.total + running.total);
                 summary.recent_builds = Some(recent.builds);
@@ -4073,6 +4077,23 @@ fn parse_checksum(text: &str, filename: &str) -> anyhow::Result<String> {
     anyhow::bail!("checksum not found for {filename} in checksums.txt")
 }
 
+fn sha256_file(path: &Path) -> anyhow::Result<String> {
+    let mut file = fs::File::open(path)
+        .with_context(|| format!("failed to open {} for hashing", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let bytes_read = file
+            .read(&mut buffer)
+            .with_context(|| format!("failed to read {} for hashing", path.display()))?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
 fn endpoint_url(base_url: &str, path: &str) -> String {
     format!("{}{}", base_url.trim_end_matches('/'), path)
 }
@@ -4372,10 +4393,7 @@ fn unpack_backup(input: &Path, destination: &Path) -> anyhow::Result<BackupManif
             .files
             .get(name)
             .with_context(|| format!("backup manifest is missing checksum for {name}"))?;
-        let actual = hex::encode(Sha256::digest(
-            fs::read(destination.join(name))
-                .with_context(|| format!("failed to read backup {name}"))?,
-        ));
+        let actual = sha256_file(&destination.join(name))?;
         if expected != &actual {
             anyhow::bail!("backup checksum mismatch for {name}");
         }
@@ -4415,10 +4433,7 @@ fn create_backup_archive(database: &Path, key: &Path, output: &Path) -> anyhow::
 
     let mut files = HashMap::new();
     for name in [BACKUP_DATABASE_FILE, BACKUP_KEY_FILE] {
-        files.insert(
-            name.to_string(),
-            hex::encode(Sha256::digest(fs::read(stage.path().join(name))?)),
-        );
+        files.insert(name.to_string(), sha256_file(&stage.path().join(name))?);
     }
     let manifest = BackupManifest {
         format: "oore-backup-v1".to_string(),
@@ -4941,26 +4956,11 @@ fn render_runner_launch_daemon(
 }
 
 fn current_user_launchd_domain() -> anyhow::Result<(String, String)> {
-    let uid = current_user_id()?;
+    let uid = current_effective_uid();
     Ok((
         format!("gui/{uid}"),
         format!("gui/{uid}/{RUNNER_SERVICE_LABEL}"),
     ))
-}
-
-fn current_user_id() -> anyhow::Result<String> {
-    let output = std::process::Command::new("/usr/bin/id")
-        .arg("-u")
-        .output()
-        .context("failed to determine current user id")?;
-    if !output.status.success() {
-        anyhow::bail!("failed to determine current user id");
-    }
-    let uid = String::from_utf8(output.stdout)
-        .context("current user id was not valid UTF-8")?
-        .trim()
-        .to_string();
-    Ok(uid)
 }
 
 fn current_user_name() -> anyhow::Result<String> {
@@ -5933,10 +5933,7 @@ fn launchd_service_loaded(label: &str) -> bool {
     let service = if system {
         format!("system/{label}")
     } else {
-        let Ok(uid) = std::process::Command::new("/usr/bin/id").arg("-u").output() else {
-            return false;
-        };
-        let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+        let uid = current_effective_uid();
         format!("gui/{uid}/{label}")
     };
     std::process::Command::new("/bin/launchctl")
@@ -5957,11 +5954,7 @@ fn restart_launchd_service(label: &str) -> anyhow::Result<()> {
     let (service, domain) = if system {
         (format!("system/{label}"), "system".to_string())
     } else {
-        let uid = std::process::Command::new("/usr/bin/id")
-            .arg("-u")
-            .output()
-            .context("failed to determine current user id")?;
-        let uid = String::from_utf8_lossy(&uid.stdout).trim().to_string();
+        let uid = current_effective_uid();
         (format!("gui/{uid}/{label}"), format!("gui/{uid}"))
     };
     let command = if system {
@@ -8253,6 +8246,19 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sha256_file_hashes_multiple_chunks() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("large.bin");
+        let contents = vec![0x5au8; 64 * 1024 + 17];
+        fs::write(&path, &contents).unwrap();
+
+        assert_eq!(
+            sha256_file(&path).unwrap(),
+            hex::encode(Sha256::digest(&contents))
+        );
+    }
 
     #[test]
     fn package_version_probe_supports_legacy_daemons() {

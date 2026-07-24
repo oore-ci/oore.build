@@ -1,10 +1,9 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
-  Add01Icon,
-  Delete02Icon,
-  MoreHorizontalCircle01Icon,
-} from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
+  Plus as Add01Icon,
+  Trash2 as Delete02Icon,
+  CircleEllipsis as MoreHorizontalCircle01Icon,
+} from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from '@/lib/toast'
@@ -198,7 +197,7 @@ function MemberActions({
           />
         }
       >
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+        <MoreHorizontalCircle01Icon />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {!isQaViewer ? (
@@ -224,7 +223,7 @@ function MemberActions({
           </>
         ) : null}
         <DropdownMenuItem variant="destructive" onClick={onRemove}>
-          <HugeiconsIcon icon={Delete02Icon} />
+          <Delete02Icon />
           Remove access
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -240,13 +239,16 @@ function AddProjectMemberDialog({ projectId }: { projectId: string }) {
     resolver: zodResolver(accessSchema),
     defaultValues: { user_id: '', role: 'viewer' },
   })
-  const candidates = useMemo(
-    () => candidatesQuery.data?.candidates ?? [],
-    [candidatesQuery.data],
-  )
+  const candidates = candidatesQuery.data?.candidates ?? []
   const candidatesById = useMemo(
-    () => new Map(candidates.map((candidate) => [candidate.id, candidate])),
-    [candidates],
+    () =>
+      new Map(
+        (candidatesQuery.data?.candidates ?? []).map((candidate) => [
+          candidate.id,
+          candidate,
+        ]),
+      ),
+    [candidatesQuery.data?.candidates],
   )
   const selectedUser = candidatesById.get(form.watch('user_id'))
   const availableRoles =
@@ -287,7 +289,7 @@ function AddProjectMemberDialog({ projectId }: { projectId: string }) {
           />
         }
       >
-        <HugeiconsIcon icon={Add01Icon} aria-hidden />
+        <Add01Icon aria-hidden />
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
@@ -427,10 +429,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
   const [memberToRemove, setMemberToRemove] = useState<ProjectMember | null>(
     null,
   )
-  const members = useMemo(
-    () => membersQuery.data?.members ?? [],
-    [membersQuery.data],
-  )
+  const members = membersQuery.data?.members ?? []
 
   function updateRole(member: ProjectMember, role: ProjectRole) {
     if (role === member.role) return
@@ -460,11 +459,9 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
 
   return (
     <>
-      <Card>
+      <Card size="sm">
         <CardHeader>
-          <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
-            Project access
-          </CardTitle>
+          <CardTitle>Project access</CardTitle>
           <CardDescription>
             Grant developers or QA viewers access to this project.
           </CardDescription>

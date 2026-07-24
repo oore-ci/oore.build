@@ -1,29 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 
 import type { Instance, SetupStatus } from '@/lib/types'
 import { localLogin, trustedProxyLogin } from '@/lib/api'
+import { isLoopbackHostname, resolveUrlHostname } from '@/lib/connectivity'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useAuthStore } from '@/stores/auth-store'
-
-function isLoopbackHostname(hostname: string): boolean {
-  return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname === '[::1]'
-  )
-}
-
-function resolveBackendHostname(rawUrl: string): string {
-  const trimmed = rawUrl.trim()
-  if (!trimmed) return window.location.hostname
-  try {
-    return new URL(trimmed).hostname
-  } catch {
-    return ''
-  }
-}
 
 /**
  * Sanctioned reactive effect for the index page auth guard.
@@ -41,8 +23,8 @@ function resolveBackendHostname(rawUrl: string): string {
 export function useIndexAuthGuard(
   status: SetupStatus | undefined,
   instance: Instance | null,
-  setIsAutoSigningIn: (v: boolean) => void,
 ) {
+  const [isAutoSigningIn, setIsAutoSigningIn] = useState(false)
   const navigate = useNavigate()
   const autoLoginInstanceRef = useRef<string | null>(null)
   const authToken = useAuthStore((s) => s.token)
@@ -66,9 +48,7 @@ export function useIndexAuthGuard(
 
     if (status.runtime_mode === 'local') {
       const uiIsLoopback = isLoopbackHostname(window.location.hostname)
-      const backendIsLoopback = isLoopbackHostname(
-        resolveBackendHostname(baseUrl),
-      )
+      const backendIsLoopback = isLoopbackHostname(resolveUrlHostname(baseUrl))
 
       if (!uiIsLoopback || !backendIsLoopback) {
         if (!hasValidToken) {
@@ -165,5 +145,5 @@ export function useIndexAuthGuard(
     setIsAutoSigningIn,
   ])
 
-  return autoLoginInstanceRef
+  return isAutoSigningIn
 }

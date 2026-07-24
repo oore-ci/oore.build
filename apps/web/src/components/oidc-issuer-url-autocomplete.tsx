@@ -1,7 +1,12 @@
 import * as React from 'react'
-import { Autocomplete as AutocompletePrimitive } from '@base-ui/react/autocomplete'
-
-import { cn } from '@/lib/utils'
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from '@/components/ui/combobox'
 
 type IssuerPresetKind = 'quick' | 'template'
 
@@ -54,6 +59,10 @@ const ISSUER_PRESETS: ReadonlyArray<IssuerPreset> = [
   },
 ] as const
 
+const ISSUER_PRESETS_BY_VALUE = new Map(
+  ISSUER_PRESETS.map((preset) => [preset.value, preset]),
+)
+
 export type OidcIssuerUrlAutocompleteProps = Omit<
   React.ComponentProps<'input'>,
   'value' | 'defaultValue'
@@ -70,22 +79,27 @@ export const OidcIssuerUrlAutocomplete = React.forwardRef<
   forwardedRef,
 ) {
   return (
-    <AutocompletePrimitive.Root
-      items={ISSUER_PRESETS}
+    <Combobox
+      items={ISSUER_PRESETS.map((preset) => preset.value)}
       value={value}
-      onValueChange={(next) => onValueChange(next)}
+      inputValue={value}
+      onInputValueChange={onValueChange}
+      onValueChange={(next) => {
+        if (typeof next === 'string') onValueChange(next)
+      }}
       openOnInputClick
-      itemToStringValue={(item) => item.value}
+      itemToStringValue={(item) => item}
       filter={(item, query) => {
+        const preset = ISSUER_PRESETS_BY_VALUE.get(item)
         const q = query.trim().toLowerCase()
         if (!q) return true
         return (
-          item.label.toLowerCase().includes(q) ||
-          item.value.toLowerCase().includes(q)
+          preset?.label.toLowerCase().includes(q) ||
+          item.toLowerCase().includes(q)
         )
       }}
     >
-      <AutocompletePrimitive.Input
+      <ComboboxInput
         {...inputProps}
         ref={forwardedRef}
         type="url"
@@ -94,58 +108,39 @@ export const OidcIssuerUrlAutocomplete = React.forwardRef<
         autoCorrect="off"
         spellCheck={false}
         disabled={disabled}
+        showTrigger={false}
         placeholder="https://accounts.google.com"
-        className={cn(
-          'dark:bg-input/30 border-input focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:aria-invalid:border-destructive/50 h-9 rounded-md border bg-transparent px-2.5 py-1 text-base shadow-xs transition-[color,box-shadow] focus-visible:ring-3 aria-invalid:ring-3 md:text-sm placeholder:text-muted-foreground w-full min-w-0 outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
-          className,
-        )}
+        className={className}
       />
 
-      <AutocompletePrimitive.Portal>
-        <AutocompletePrimitive.Positioner
-          side="bottom"
-          sideOffset={4}
-          align="start"
-          className="isolate z-50"
-        >
-          <AutocompletePrimitive.Popup
-            className={cn(
-              'bg-popover text-popover-foreground ring-foreground/10 w-(--anchor-width) origin-(--transform-origin) rounded-md shadow-md ring-1',
-              'data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0',
-              'data-closed:zoom-out-95 data-open:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2',
-              'max-h-(--available-height) overflow-x-hidden overflow-y-auto p-1 duration-100',
-            )}
-          >
-            <AutocompletePrimitive.Empty className="text-muted-foreground px-2 py-2 text-xs">
-              No matches. Enter a custom issuer URL.
-            </AutocompletePrimitive.Empty>
-
-            <AutocompletePrimitive.List className="space-y-0.5">
-              {(item: IssuerPreset) => (
-                <AutocompletePrimitive.Item
-                  key={`${item.kind}:${item.label}`}
-                  value={item}
-                  className={cn(
-                    'relative flex w-full cursor-default select-none flex-col gap-0.5 rounded-sm px-2 py-1.5 outline-none',
-                    'data-disabled:pointer-events-none data-disabled:opacity-50',
-                    'data-highlighted:bg-accent data-highlighted:text-accent-foreground',
-                  )}
-                >
-                  <span className="text-sm">{item.label}</span>
-                  <span className="text-muted-foreground text-xs font-mono break-all">
-                    {item.value}
+      <ComboboxContent sideOffset={4}>
+        <ComboboxEmpty>No matches. Enter a custom issuer URL.</ComboboxEmpty>
+        <ComboboxList>
+          {(item: string) => {
+            const preset = ISSUER_PRESETS_BY_VALUE.get(item)
+            if (!preset) return null
+            return (
+              <ComboboxItem
+                key={`${preset.kind}:${preset.label}`}
+                value={item}
+                className="items-start pr-2"
+              >
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span>{preset.label}</span>
+                  <span className="font-mono text-xs break-all text-muted-foreground">
+                    {preset.value}
                   </span>
-                  {item.hint ? (
-                    <span className="text-muted-foreground text-[11px]">
-                      {item.hint}
+                  {preset.hint ? (
+                    <span className="text-[11px] text-muted-foreground">
+                      {preset.hint}
                     </span>
                   ) : null}
-                </AutocompletePrimitive.Item>
-              )}
-            </AutocompletePrimitive.List>
-          </AutocompletePrimitive.Popup>
-        </AutocompletePrimitive.Positioner>
-      </AutocompletePrimitive.Portal>
-    </AutocompletePrimitive.Root>
+                </span>
+              </ComboboxItem>
+            )
+          }}
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
   )
 })
