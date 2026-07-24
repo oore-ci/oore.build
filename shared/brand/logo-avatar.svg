@@ -6,7 +6,7 @@
 >
   <title id="title">Oore app icon</title>
   <desc id="description">
-    The Oore source-to-artifact mark on an amber rounded square.
+    The Oore source-to-artifact mark on a solid amber background.
   </desc>
   <defs>
     <mask
@@ -22,7 +22,7 @@
       <rect x="329" y="197" width="66" height="11" fill="black" />
     </mask>
   </defs>
-  <rect x="16" y="16" width="480" height="480" rx="96" fill="#bb4d00" />
+  <rect width="512" height="512" fill="#bb4d00" />
   <g transform="translate(-26 -26) scale(1.1)">
     <g fill="#fffbeb" mask="url(#cutouts)">
       <circle
