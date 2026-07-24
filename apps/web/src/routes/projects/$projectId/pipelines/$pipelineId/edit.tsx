@@ -678,28 +678,26 @@ function EditPipelinePage() {
                       Loading devices...
                     </p>
                   ) : iosDevicesQuery.data?.devices.length ? (
-                    <div className="rounded-md border">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Name</TableHead>
-                            <TableHead>UDID</TableHead>
-                            <TableHead>Status</TableHead>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Name</TableHead>
+                          <TableHead>UDID</TableHead>
+                          <TableHead>Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {iosDevicesQuery.data.devices.map((device) => (
+                          <TableRow key={device.id}>
+                            <TableCell>{device.name}</TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {device.udid}
+                            </TableCell>
+                            <TableCell>{device.status}</TableCell>
                           </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {iosDevicesQuery.data.devices.map((device) => (
-                            <TableRow key={device.id}>
-                              <TableCell>{device.name}</TableCell>
-                              <TableCell className="font-mono text-xs">
-                                {device.udid}
-                              </TableCell>
-                              <TableCell>{device.status}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
+                        ))}
+                      </TableBody>
+                    </Table>
                   ) : (
                     <p className="text-xs text-muted-foreground">
                       No iOS devices registered for this pipeline.

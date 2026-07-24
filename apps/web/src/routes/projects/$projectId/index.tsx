@@ -612,7 +612,7 @@ function ProjectDetailPage() {
                     }}
                   />
                 ) : (
-                  <Card>
+                  <Card size="sm">
                     <CardContent className="text-sm text-muted-foreground">
                       You do not have permission to edit this project.
                     </CardContent>
@@ -623,7 +623,7 @@ function ProjectDetailPage() {
 
             {canDeleteProjects ? (
               <Collapsible open={dangerOpen} onOpenChange={setDangerOpen}>
-                <Card className="border-destructive/40">
+                <Card size="sm" className="ring-destructive/40">
                   <CardContent>
                     <CollapsibleTrigger className="flex w-full items-center justify-between text-sm font-medium text-destructive">
                       Danger zone

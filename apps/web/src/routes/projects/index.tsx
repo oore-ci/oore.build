@@ -237,7 +237,7 @@ function ProjectsListPage() {
       ) : null}
 
       {showTrueEmpty ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <Folder02Icon />
@@ -285,7 +285,7 @@ function ProjectsListPage() {
       ) : null}
 
       {showFilteredEmpty ? (
-        <Empty className="bg-card">
+        <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <Search01Icon />

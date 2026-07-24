@@ -39,11 +39,9 @@ export function BuildsEmptyState({
 }) {
   if (state === 'missing-projects') {
     return (
-      <Card>
+      <Card size="sm">
         <CardHeader>
-          <CardTitle className="text-sm font-medium text-muted-foreground">
-            Create project first
-          </CardTitle>
+          <CardTitle>Create project first</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
@@ -90,7 +88,7 @@ export function BuildsEmptyState({
 
   if (state === 'no-builds') {
     return (
-      <Empty className="bg-card">
+      <Empty className="border bg-card">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <PlayIcon />
@@ -117,7 +115,7 @@ export function BuildsEmptyState({
   }
 
   return state === 'no-results' ? (
-    <Empty className="bg-card">
+    <Empty className="border bg-card">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <Search01Icon />

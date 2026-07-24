@@ -58,9 +58,7 @@ function RuntimeUpdateCard({
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="text-sm font-medium text-muted-foreground">
-          {name}
-        </CardTitle>
+        <CardTitle>{name}</CardTitle>
         <CardDescription>{release.channel} channel</CardDescription>
         <CardAction>
           <Badge variant="outline">Update available</Badge>
@@ -220,7 +218,7 @@ export default function RuntimeUpdateDialog({
                     <ArrowUpRight01Icon data-icon="inline-end" />
                   </Badge>
                 </div>
-                <ScrollArea className="max-h-52 border bg-muted/30">
+                <ScrollArea className="max-h-52 rounded-lg bg-muted/30 ring-1 ring-foreground/10">
                   <p className="p-4 text-sm leading-6 whitespace-pre-wrap">
                     {notes ||
                       'No release notes were published for this version.'}

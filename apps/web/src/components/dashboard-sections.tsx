@@ -37,19 +37,17 @@ export function DashboardGettingStarted({
 }) {
   const hasSourceStep = runtimeMode === 'remote' && noConnectedSources
   return (
-    <Card>
+    <Card size="sm">
       <CardHeader>
-        <CardTitle className="text-sm font-medium text-muted-foreground">
-          Getting started
-        </CardTitle>
+        <CardTitle>Getting started</CardTitle>
       </CardHeader>
       <CardContent>
         <ol className="space-y-3 text-sm">
           {hasSourceStep ? (
             <li className="flex items-start gap-3">
-              <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+              <Badge variant="outline" className="mt-0.5 size-5 px-0">
                 1
-              </span>
+              </Badge>
               <div className="space-y-1.5">
                 <p className="font-medium">Connect a source</p>
                 <p className="text-xs text-muted-foreground">
@@ -74,9 +72,9 @@ export function DashboardGettingStarted({
             </li>
           ) : null}
           <li className="flex items-start gap-3">
-            <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+            <Badge variant="outline" className="mt-0.5 size-5 px-0">
               {hasSourceStep ? '2' : '1'}
-            </span>
+            </Badge>
             <div className="space-y-1.5">
               <p className="font-medium">Create a project</p>
               <p className="text-xs text-muted-foreground">
@@ -101,9 +99,9 @@ export function DashboardGettingStarted({
             </div>
           </li>
           <li className="flex items-start gap-3">
-            <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+            <Badge variant="outline" className="mt-0.5 size-5 px-0">
               {hasSourceStep ? '3' : '2'}
-            </span>
+            </Badge>
             <div className="space-y-1.5">
               <p className="font-medium">Add a pipeline</p>
               <p className="text-xs text-muted-foreground">
@@ -113,9 +111,9 @@ export function DashboardGettingStarted({
             </div>
           </li>
           <li className="flex items-start gap-3">
-            <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center border text-[11px] font-medium text-muted-foreground">
+            <Badge variant="outline" className="mt-0.5 size-5 px-0">
               {hasSourceStep ? '4' : '3'}
-            </span>
+            </Badge>
             <div className="space-y-1.5">
               <p className="font-medium">Run your first build</p>
               <p className="text-xs text-muted-foreground">

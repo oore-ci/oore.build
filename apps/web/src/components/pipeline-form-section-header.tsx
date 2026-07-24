@@ -22,9 +22,7 @@ export function PipelineFormSectionHeader({
   return (
     <div className="flex w-full items-center justify-between">
       <div className="flex items-center gap-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">
-          {title}
-        </CardTitle>
+        <CardTitle>{title}</CardTitle>
         {errorCount && errorCount > 0 ? (
           <Badge variant="destructive" className="text-[10px]">
             {errorCount} {errorCount === 1 ? 'error' : 'errors'}

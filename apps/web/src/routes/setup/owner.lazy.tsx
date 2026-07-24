@@ -184,7 +184,7 @@ function OwnerStep() {
     <div className="space-y-4">
       <PageMeta title="Setup Owner" />
       <div className="space-y-1">
-        <h2 className="text-lg font-medium">Owner Account</h2>
+        <h2 className="text-lg font-medium">Owner account</h2>
         <p className="text-sm text-muted-foreground">
           {isLocalMode
             ? 'Create a local owner account to finish setup without OIDC.'

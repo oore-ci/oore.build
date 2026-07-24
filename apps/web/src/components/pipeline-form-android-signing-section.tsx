@@ -190,86 +190,92 @@ function SigningCredentials({
   const keyPasswordName = `${fieldPrefix}_key_password` as const
 
   return (
-    <div className="grid gap-3 border p-3">
-      <FormItem>
-        <FormLabel>{title} keystore (.jks)</FormLabel>
-        <FormControl>
-          <Input
-            type="file"
-            accept=".jks,.keystore"
-            onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
-          />
-        </FormControl>
-        <p className="text-xs text-muted-foreground">
-          {file
-            ? `Selected: ${file.name}`
-            : stored?.has_keystore
-              ? 'Keep existing keystore or select a new file'
-              : 'Select a JKS/keystore file'}
-        </p>
-      </FormItem>
-      <FormField
-        control={form.control}
-        name={aliasName}
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>{title} key alias</FormLabel>
-            <FormControl>
-              <Input
-                placeholder={kind === 'release' ? 'upload' : 'androiddebugkey'}
-                className="font-mono"
-                {...field}
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-      <FormField
-        control={form.control}
-        name={storePasswordName}
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>{title} store password</FormLabel>
-            <FormControl>
-              <Input
-                type="password"
-                placeholder={
-                  stored?.has_store_password
-                    ? 'Leave empty to keep existing password'
-                    : ''
-                }
-                className="font-mono"
-                {...field}
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-      <FormField
-        control={form.control}
-        name={keyPasswordName}
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>{title} key password</FormLabel>
-            <FormControl>
-              <Input
-                type="password"
-                placeholder={
-                  stored?.has_key_password
-                    ? 'Leave empty to keep existing password'
-                    : ''
-                }
-                className="font-mono"
-                {...field}
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-    </div>
+    <Card size="sm">
+      <CardContent className="grid gap-3">
+        <FormItem>
+          <FormLabel>{title} keystore (.jks)</FormLabel>
+          <FormControl>
+            <Input
+              type="file"
+              accept=".jks,.keystore"
+              onChange={(event) =>
+                onFileChange(event.target.files?.[0] ?? null)
+              }
+            />
+          </FormControl>
+          <p className="text-xs text-muted-foreground">
+            {file
+              ? `Selected: ${file.name}`
+              : stored?.has_keystore
+                ? 'Keep existing keystore or select a new file'
+                : 'Select a JKS/keystore file'}
+          </p>
+        </FormItem>
+        <FormField
+          control={form.control}
+          name={aliasName}
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{title} key alias</FormLabel>
+              <FormControl>
+                <Input
+                  placeholder={
+                    kind === 'release' ? 'upload' : 'androiddebugkey'
+                  }
+                  className="font-mono"
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name={storePasswordName}
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{title} store password</FormLabel>
+              <FormControl>
+                <Input
+                  type="password"
+                  placeholder={
+                    stored?.has_store_password
+                      ? 'Leave empty to keep existing password'
+                      : ''
+                  }
+                  className="font-mono"
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name={keyPasswordName}
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{title} key password</FormLabel>
+              <FormControl>
+                <Input
+                  type="password"
+                  placeholder={
+                    stored?.has_key_password
+                      ? 'Leave empty to keep existing password'
+                      : ''
+                  }
+                  className="font-mono"
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </CardContent>
+    </Card>
   )
 }
 

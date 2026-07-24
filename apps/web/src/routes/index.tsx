@@ -202,11 +202,9 @@ function IndexPage() {
             </p>
           </div>
 
-          <Card>
+          <Card size="sm">
             <CardHeader>
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Instance registry
-              </CardTitle>
+              <CardTitle>Instance registry</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">

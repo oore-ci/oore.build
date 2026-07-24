@@ -1,8 +1,9 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
-import { buttonVariants } from '@/components/ui/button-variants'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Separator } from '@/components/ui/separator'
 import {
   useCompleteSetup,
   useSetupStatus,
@@ -59,7 +60,7 @@ function CompleteStep() {
     <div className="space-y-4">
       <PageMeta title="Setup Complete" />
       <div className="space-y-1">
-        <h2 className="text-lg font-medium">Complete Setup</h2>
+        <h2 className="text-lg font-medium">Complete setup</h2>
         <p className="text-sm text-muted-foreground">
           Review your configuration and finalize the instance.
         </p>
@@ -82,49 +83,52 @@ function CompleteStep() {
             </Badge>
           </div>
 
-          <div className="border-t pt-4">
-            <Link to="/" className={buttonVariants({ className: 'w-full' })}>
+          <div className="space-y-4">
+            <Separator />
+            <Button render={<Link to="/" />} className="w-full">
               Go to Dashboard
-            </Link>
+            </Button>
           </div>
         </div>
       ) : (
         <div className="space-y-4">
           {/* Configuration review */}
           {status || summary ? (
-            <div className="space-y-2 border p-3 text-sm">
-              <p className="text-xs font-medium text-muted-foreground">
-                Configuration summary
-              </p>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">State</span>
-                <Badge variant="secondary" className="text-xs">
-                  {status?.state ?? summary?.state}
-                </Badge>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Instance</span>
-                <code className="font-mono text-xs">
-                  {summary?.instance_id ?? status?.instance_id}
-                </code>
-              </div>
-              {summary?.issuer_url ? (
-                <div className="flex justify-between gap-4">
-                  <span className="shrink-0 text-muted-foreground">
-                    OIDC Issuer
-                  </span>
-                  <code className="truncate font-mono text-xs">
-                    {summary.issuer_url}
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle>Configuration summary</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">State</span>
+                  <Badge variant="secondary" className="text-xs">
+                    {status?.state ?? summary?.state}
+                  </Badge>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Instance</span>
+                  <code className="font-mono text-xs">
+                    {summary?.instance_id ?? status?.instance_id}
                   </code>
                 </div>
-              ) : null}
-              {summary?.owner_email ? (
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Owner</span>
-                  <span className="text-xs">{summary.owner_email}</span>
-                </div>
-              ) : null}
-            </div>
+                {summary?.issuer_url ? (
+                  <div className="flex justify-between gap-4">
+                    <span className="shrink-0 text-muted-foreground">
+                      OIDC Issuer
+                    </span>
+                    <code className="truncate font-mono text-xs">
+                      {summary.issuer_url}
+                    </code>
+                  </div>
+                ) : null}
+                {summary?.owner_email ? (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Owner</span>
+                    <span className="text-xs">{summary.owner_email}</span>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
           ) : null}
 
           <Alert>

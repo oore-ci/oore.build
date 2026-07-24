@@ -137,7 +137,7 @@ function SetupTrustedProxyStep() {
     <div className="space-y-4">
       <PageMeta title="Setup Trusted Proxy" />
       <div className="space-y-1">
-        <h2 className="text-lg font-medium">Trusted Proxy Configuration</h2>
+        <h2 className="text-lg font-medium">Trusted Proxy configuration</h2>
         <p className="text-sm text-muted-foreground">
           Configure how Oore reads identity headers forwarded by your
           authentication proxy.

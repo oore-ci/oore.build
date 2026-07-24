@@ -137,14 +137,14 @@ export function SetupRouteError({ error }: { error: Error }) {
           <AlertDescription>{issue.description}</AlertDescription>
         </Alert>
 
-        <Card>
+        <Card size="sm">
           <CardContent className="space-y-4">
             <div className="space-y-1">
               <p className="text-sm font-medium">Use CLI setup</p>
               <p className="text-sm text-muted-foreground">
                 Complete first-run setup directly on the backend host:
               </p>
-              <code className="block bg-muted px-2 py-1 text-xs">
+              <code className="block rounded-md bg-muted px-2 py-1 text-xs">
                 oore setup
               </code>
             </div>
@@ -153,7 +153,7 @@ export function SetupRouteError({ error }: { error: Error }) {
               <p className="text-sm text-muted-foreground">
                 Use a tunnel and reconnect with the assigned HTTPS URL:
               </p>
-              <code className="block bg-muted px-2 py-1 text-xs">
+              <code className="block rounded-md bg-muted px-2 py-1 text-xs">
                 cloudflared tunnel --url {backendUrlArgument}
               </code>
             </div>
@@ -166,7 +166,7 @@ export function SetupRouteError({ error }: { error: Error }) {
                   If backend stays local-only, run the bundled local web
                   launcher:
                 </p>
-                <code className="block bg-muted px-2 py-1 text-xs">
+                <code className="block rounded-md bg-muted px-2 py-1 text-xs">
                   oore-web --backend-url {backendUrlArgument}
                 </code>
               </div>

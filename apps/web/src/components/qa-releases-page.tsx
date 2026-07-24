@@ -38,9 +38,15 @@ import RepositoryAvatar from '@/components/repository-avatar'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from '@/components/ui/item'
 import {
   Empty,
   EmptyDescription,
@@ -193,34 +199,35 @@ function QaActivityRow({
   })()
 
   return (
-    <Link
-      to="/builds/$buildId"
-      params={{ buildId: build.id }}
-      search={artifact ? { install: artifact.id } : {}}
-      resetScroll
-      className="flex min-h-16 items-center justify-between gap-3 p-3 transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset sm:px-4"
+    <Item
+      render={
+        <Link
+          to="/builds/$buildId"
+          params={{ buildId: build.id }}
+          search={artifact ? { install: artifact.id } : {}}
+          resetScroll
+        />
+      }
+      size="sm"
       aria-label={`Open ${version}`}
     >
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="font-semibold tracking-tight">{version}</p>
+      <ItemContent>
+        <ItemTitle>
+          {version}
           {isLatestInstallable ? (
             <Badge variant="secondary">Latest</Badge>
           ) : null}
           <Badge variant={getStatusVariant(build.status)}>{build.status}</Badge>
-        </div>
-        <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
-          {guidance}
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">
+        </ItemTitle>
+        <ItemDescription>{guidance}</ItemDescription>
+        <ItemDescription>
           {relativeTime(build.finished_at ?? build.created_at)}
-        </p>
-      </div>
-      <ArrowRight01Icon
-        className="shrink-0 text-muted-foreground"
-        aria-hidden
-      />
-    </Link>
+        </ItemDescription>
+      </ItemContent>
+      <ItemActions>
+        <ArrowRight01Icon className="text-muted-foreground" aria-hidden />
+      </ItemActions>
+    </Item>
   )
 }
 
@@ -290,8 +297,8 @@ function ActivityPanel({
   usePageClamp(page, RELEASES_PER_PAGE, buildsQuery.data?.total, setPage)
 
   return (
-    <Card className="min-w-0 bg-transparent shadow-none ring-0">
-      <CardHeader className="grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-0">
+    <section className="min-w-0 space-y-4">
+      <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
         {pickerReady ? (
           <Suspense fallback={<Skeleton className="h-9 w-full" />}>
             <QaProjectPicker
@@ -421,8 +428,8 @@ function ActivityPanel({
             </SheetFooter>
           </SheetContent>
         </Sheet>
-      </CardHeader>
-      <CardContent>
+      </header>
+      <div className="space-y-4">
         {buildsQuery.error ? (
           <Alert variant="destructive">
             <AlertDescription className="flex items-center justify-between gap-3">
@@ -511,8 +518,8 @@ function ActivityPanel({
           page={page}
           totalPages={totalPages}
         />
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }
 
@@ -566,20 +573,18 @@ export default function QaReleasesPage() {
       {!projectsQuery.isLoading &&
       !projectsQuery.error &&
       projects.length === 0 ? (
-        <div className="border">
-          <Empty className="py-12">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <SmartPhone01Icon />
-              </EmptyMedia>
-              <EmptyTitle>No apps shared with you yet</EmptyTitle>
-              <EmptyDescription>
-                Ask an owner or admin to add you to a project. Its builds will
-                appear here automatically.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        </div>
+        <Empty className="border py-12">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <SmartPhone01Icon />
+            </EmptyMedia>
+            <EmptyTitle>No apps shared with you yet</EmptyTitle>
+            <EmptyDescription>
+              Ask an owner or admin to add you to a project. Its builds will
+              appear here automatically.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : null}
 
       {selectedProject ? (

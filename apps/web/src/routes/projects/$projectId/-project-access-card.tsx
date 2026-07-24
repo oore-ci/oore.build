@@ -459,11 +459,9 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
 
   return (
     <>
-      <Card>
+      <Card size="sm">
         <CardHeader>
-          <CardTitle className="text-sm font-medium text-muted-foreground">
-            Project access
-          </CardTitle>
+          <CardTitle>Project access</CardTitle>
           <CardDescription>
             Grant developers or QA viewers access to this project.
           </CardDescription>
