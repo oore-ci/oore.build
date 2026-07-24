@@ -207,6 +207,92 @@ test.describe('Chromium layout boundaries', () => {
   }
 })
 
+test.describe('sidebar information architecture', () => {
+  test.skip(({ browserName }) => browserName !== 'chromium')
+
+  test('shows the full grouped settings hierarchy and owns deep-route state', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await signIn(page, PERSONAS.owner)
+    await page.goto('/settings/integrations/github')
+    await waitForStableUi(page)
+
+    const sidebar = page.locator('[data-slot="sidebar-inner"]')
+    await expect(sidebar.getByText('Workspace', { exact: true })).toBeVisible()
+    await expect(sidebar.getByText('Settings', { exact: true })).toBeVisible()
+
+    for (const name of [
+      'Overview',
+      'General',
+      'Runners',
+      'Sources',
+      'Artifact storage',
+      'Retention',
+      'Users',
+      'API tokens',
+      'Notifications',
+      'Audit log',
+    ]) {
+      await expect(
+        sidebar.getByRole('link', { name, exact: true }),
+      ).toBeVisible()
+    }
+
+    await expect(
+      sidebar.getByRole('link', { name: 'Sources', exact: true }),
+    ).toHaveAttribute('data-active')
+    await expect(
+      sidebar.getByRole('link', { name: 'Overview', exact: true }),
+    ).not.toHaveAttribute('data-active')
+  })
+
+  test('limits developer settings navigation to guarded routes', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await signIn(page, PERSONAS.developer)
+
+    const sidebar = page.locator('[data-slot="sidebar-inner"]')
+    for (const name of ['Overview', 'Runners', 'Sources', 'API tokens']) {
+      await expect(
+        sidebar.getByRole('link', { name, exact: true }),
+      ).toBeVisible()
+    }
+    for (const name of [
+      'General',
+      'Artifact storage',
+      'Retention',
+      'Users',
+      'Notifications',
+      'Audit log',
+    ]) {
+      await expect(
+        sidebar.getByRole('link', { name, exact: true }),
+      ).toHaveCount(0)
+    }
+  })
+
+  test('exposes the same grouped navigation in the mobile sheet', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await signIn(page, PERSONAS.owner)
+    await page.getByRole('button', { name: 'Toggle Sidebar' }).click()
+
+    const sidebar = page.locator('[data-slot="sidebar"][data-mobile="true"]')
+    await expect(sidebar).toBeVisible()
+    await expect(sidebar.getByText('Workspace', { exact: true })).toBeVisible()
+    await expect(sidebar.getByText('Settings', { exact: true })).toBeVisible()
+    await expect(
+      sidebar.getByRole('link', { name: 'Notifications', exact: true }),
+    ).toBeVisible()
+    await expect(
+      sidebar.getByRole('link', { name: 'Audit log', exact: true }),
+    ).toBeVisible()
+  })
+})
+
 test.describe('role and direct-route policy', () => {
   test.skip(({ browserName }) => browserName !== 'chromium')
 
