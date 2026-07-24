@@ -3,7 +3,6 @@ import {
   Command as CommandLineIcon,
   LayoutDashboard as DashboardSquare01Icon,
   Folder as Folder02Icon,
-  Settings as Settings01Icon,
 } from 'lucide-react'
 import {
   SidebarGroup,
@@ -49,14 +48,7 @@ export function sidebarGroupsForRole(
     { title: 'Workspace', items: WORKSPACE_ITEMS },
     {
       title: 'Settings',
-      items: [
-        {
-          title: 'Overview',
-          to: '/settings',
-          icon: Settings01Icon,
-        },
-        ...settingsItems,
-      ],
+      items: settingsItems,
     },
   ]
 }
@@ -66,7 +58,6 @@ export function isSidebarItemActive(pathname: string, to: string): boolean {
     pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
 
   if (to === '/') return normalizedPathname === '/'
-  if (to === '/settings') return normalizedPathname === '/settings'
 
   return normalizedPathname === to || normalizedPathname.startsWith(`${to}/`)
 }

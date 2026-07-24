@@ -223,7 +223,6 @@ test.describe('sidebar information architecture', () => {
     await expect(sidebar.getByText('Settings', { exact: true })).toBeVisible()
 
     for (const name of [
-      'Overview',
       'General',
       'Runners',
       'Sources',
@@ -244,7 +243,7 @@ test.describe('sidebar information architecture', () => {
     ).toHaveAttribute('data-active')
     await expect(
       sidebar.getByRole('link', { name: 'Overview', exact: true }),
-    ).not.toHaveAttribute('data-active')
+    ).toHaveCount(0)
   })
 
   test('limits developer settings navigation to guarded routes', async ({
@@ -254,12 +253,13 @@ test.describe('sidebar information architecture', () => {
     await signIn(page, PERSONAS.developer)
 
     const sidebar = page.locator('[data-slot="sidebar-inner"]')
-    for (const name of ['Overview', 'Runners', 'Sources', 'API tokens']) {
+    for (const name of ['Runners', 'Sources', 'API tokens']) {
       await expect(
         sidebar.getByRole('link', { name, exact: true }),
       ).toBeVisible()
     }
     for (const name of [
+      'Overview',
       'General',
       'Artifact storage',
       'Retention',

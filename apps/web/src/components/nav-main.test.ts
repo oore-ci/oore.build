@@ -26,7 +26,6 @@ describe('sidebar navigation', () => {
       {
         title: 'Settings',
         items: [
-          { title: 'Overview', to: '/settings' },
           { title: 'General', to: '/settings/preferences' },
           { title: 'Runners', to: '/settings/runners' },
           { title: 'Sources', to: '/settings/integrations' },
@@ -57,7 +56,6 @@ describe('sidebar navigation', () => {
       {
         title: 'Settings',
         items: [
-          { title: 'Overview', to: '/settings' },
           { title: 'Runners', to: '/settings/runners' },
           { title: 'Sources', to: '/settings/integrations' },
           { title: 'API tokens', to: '/settings/api-tokens' },
@@ -70,11 +68,17 @@ describe('sidebar navigation', () => {
     expect(navigationFor('qa_viewer')).toEqual([])
   })
 
-  it('activates exact overview routes and the owning entry for deep routes', () => {
+  it('activates owning entries without competing with the retained settings hub', () => {
     expect(isSidebarItemActive('/', '/')).toBe(true)
     expect(isSidebarItemActive('/projects/project-1', '/projects')).toBe(true)
     expect(isSidebarItemActive('/builds/build-1', '/builds')).toBe(true)
-    expect(isSidebarItemActive('/settings', '/settings')).toBe(true)
+    expect(isSidebarItemActive('/settings', '/settings/preferences')).toBe(
+      false,
+    )
+    expect(isSidebarItemActive('/settings', '/settings/runners')).toBe(false)
+    expect(isSidebarItemActive('/settings', '/settings/integrations')).toBe(
+      false,
+    )
     expect(
       isSidebarItemActive(
         '/settings/integrations/integration-1',
@@ -87,9 +91,6 @@ describe('sidebar navigation', () => {
         '/settings/notifications',
       ),
     ).toBe(true)
-    expect(
-      isSidebarItemActive('/settings/integrations/integration-1', '/settings'),
-    ).toBe(false)
     expect(isSidebarItemActive('/projects-old', '/projects')).toBe(false)
   })
 })
