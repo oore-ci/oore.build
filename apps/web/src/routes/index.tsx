@@ -388,6 +388,22 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
     (build) => build.runner_policy_block_reason,
   )
 
+  if (
+    projectsQuery.isLoading ||
+    recentBuildsQuery.isLoading ||
+    runnersQuery.isLoading
+  ) {
+    return (
+      <PageLayout width="wide">
+        <PageHeader title="Home" />
+        <div className="space-y-8" role="status" aria-label="Loading Home">
+          <Skeleton className="h-48 w-full" />
+          <Skeleton className="h-80 w-full" />
+        </div>
+      </PageLayout>
+    )
+  }
+
   return (
     <PageLayout width="wide">
       <div className="flex flex-col gap-8">

@@ -50,14 +50,14 @@ export function EventTimeline({ events }: { events: Array<BuildEvent> }) {
                       {event.to_status}
                     </p>
                     <span
-                      className="shrink-0 text-[10px] text-muted-foreground"
+                      className="shrink-0 text-xs text-muted-foreground"
                       title={new Date(event.created_at * 1000).toLocaleString()}
                     >
                       {relativeTime(event.created_at)}
                     </span>
                   </div>
                   {event.reason ? (
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    <p className="mt-0.5 text-sm text-muted-foreground">
                       <EventReason reason={event.reason} />
                     </p>
                   ) : null}

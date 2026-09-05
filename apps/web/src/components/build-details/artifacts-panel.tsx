@@ -107,11 +107,7 @@ function ArtifactRow({
   const installReady = artifactInstallReadiness(artifact).ready
 
   return (
-    <Item
-      variant="outline"
-      size="xs"
-      className={expired ? 'flex-wrap opacity-50' : 'flex-wrap'}
-    >
+    <Item variant="outline" size="xs" className="flex-wrap">
       <ItemContent className="min-w-0 basis-40">
         <ItemTitle className="break-all">{artifact.name}</ItemTitle>
         <ItemDescription className="flex flex-wrap items-center gap-1.5">

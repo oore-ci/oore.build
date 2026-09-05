@@ -63,7 +63,7 @@ export function RuntimeOverview({
               </ItemDescription>
               {runtimeUpdates.frontendRelease.data?.update_available ? (
                 <>
-                  <ItemDescription className="line-clamp-none text-primary">
+                  <ItemDescription className="line-clamp-none text-foreground">
                     {runtimeUpdates.frontendRelease.data.latest_version} is
                     available
                   </ItemDescription>
@@ -127,7 +127,7 @@ export function RuntimeOverview({
               </ItemDescription>
               {runtimeUpdates.backendRelease.data?.update_available ? (
                 <>
-                  <ItemDescription className="line-clamp-none text-primary">
+                  <ItemDescription className="line-clamp-none text-foreground">
                     {runtimeUpdates.backendRelease.data.latest_version} is
                     available
                   </ItemDescription>

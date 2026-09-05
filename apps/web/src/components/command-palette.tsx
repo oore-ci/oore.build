@@ -126,6 +126,7 @@ export default function CommandPalette({
     >
       <Command>
         <CommandInput
+          aria-label="Find a page, project, or action"
           placeholder={
             isQaViewer
               ? 'Find a page...'

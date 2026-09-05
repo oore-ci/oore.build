@@ -335,7 +335,7 @@ function OidcConfigStep() {
               href={`https://docs.oore.build${provider.docsPath}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="shrink-0 text-xs text-primary underline underline-offset-2"
+              className="shrink-0 text-xs text-foreground underline underline-offset-2"
             >
               Setup guide
             </a>
