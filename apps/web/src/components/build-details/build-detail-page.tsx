@@ -9,6 +9,7 @@ import { toast } from '@/lib/toast'
 
 import { ArtifactsPanel } from './artifacts-panel'
 import { AppOutputs } from './app-outputs'
+import { buildStateDescription } from '@/lib/build-state-description'
 import { BuildSummary } from './build-summary'
 import { EventTimeline } from './event-timeline'
 import type { BuildLogChunk } from '@oore/client/models'
@@ -87,6 +88,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
   const { refetch: refetchArtifacts } = artifactsQuery
   const cancelMutation = useCancelBuild()
   const [cancelOpen, setCancelOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState<string | number>('logs')
 
   const label = data?.build.build_number
     ? `Build #${data.build.build_number}`
@@ -179,17 +181,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
   const duration = build.started_at
     ? (build.finished_at ?? Math.floor(time / 1000)) - build.started_at
     : null
-  const failureReason =
-    build.status === 'failed'
-      ? ([...events].reverse().find((event) => event.reason)?.reason ??
-        `Build failed${build.exit_code != null ? ` with exit code ${build.exit_code}` : ''}.`)
-      : build.status === 'timed_out'
-        ? ([...events].reverse().find((event) => event.reason)?.reason ??
-          'Build timed out.')
-        : build.status === 'canceled'
-          ? ([...events].reverse().find((event) => event.reason)?.reason ??
-            'Build was canceled.')
-          : undefined
+  const stateDescription = buildStateDescription(build, events)
 
   return (
     <PageLayout
@@ -301,10 +293,23 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
         </Alert>
       ) : null}
 
-      {failureReason ? (
-        <Alert variant="destructive">
+      {stateDescription ? (
+        <Alert
+          variant={
+            isTerminal && build.status !== 'succeeded'
+              ? 'destructive'
+              : 'default'
+          }
+        >
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription>{failureReason}</AlertDescription>
+          <AlertDescription className="flex flex-col gap-2">
+            <p role="status">{stateDescription}</p>
+            {isTerminal && build.status !== 'succeeded' ? (
+              <p>
+                Review the logs and Timeline before running this build again.
+              </p>
+            ) : null}
+          </AlertDescription>
         </Alert>
       ) : null}
 
@@ -333,11 +338,13 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
       ) : null}
 
       <Tabs
-        key={usesTabbedArtifacts ? 'compact' : 'desktop'}
-        defaultValue="logs"
+        value={
+          !usesTabbedArtifacts && activeTab === 'artifacts' ? 'logs' : activeTab
+        }
+        onValueChange={setActiveTab}
         className={cn('gap-3', usesTabbedArtifacts && 'min-h-0 flex-1')}
       >
-        <TabsList variant="line">
+        <TabsList variant="line" aria-label="Build details">
           <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="timeline">
             Timeline{events.length > 0 ? ` (${events.length})` : ''}
@@ -360,6 +367,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
           >
             <TabsContent
               value="logs"
+              keepMounted
               className={cn(usesTabbedArtifacts && 'h-full min-h-0')}
             >
               <TerminalLogViewer
@@ -369,6 +377,7 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
                 fillAvailableHeight={usesTabbedArtifacts}
                 isLoading={isTerminal && fullLogsQuery.isLoading}
                 logsUnavailable={fullLogsQuery.isError}
+                onRetryLogs={() => void fullLogsQuery.refetch()}
                 isTerminal={isTerminal}
               />
             </TabsContent>

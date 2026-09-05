@@ -7,6 +7,7 @@ export interface TerminalLogViewerProps {
   fillAvailableHeight?: boolean
   isLoading?: boolean
   logsUnavailable?: boolean
+  onRetryLogs?: () => void
   isTerminal?: boolean
 }
 

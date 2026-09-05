@@ -91,9 +91,11 @@ export default function DashboardBuildIncident({
 
         {visibleBuilds.map((build) => {
           const projectName = build.context?.project_name ?? build.project_id
-          const issue = getRunnerPolicyBlockLabel(
-            build.runner_policy_block_reason!,
-          )
+          const issue = build.runner_policy_block_reason
+            ? getRunnerPolicyBlockLabel(build.runner_policy_block_reason)
+            : build.status === 'timed_out'
+              ? 'Timed out'
+              : 'Failed'
           const pipelineName = build.context?.pipeline_name ?? 'Build pipeline'
           const branch = build.branch ?? 'No branch'
           const blockedFor = formatDuration(
@@ -127,8 +129,13 @@ export default function DashboardBuildIncident({
                 <ItemDescription className="line-clamp-1">
                   {build.runner_policy_block_reason === 'repository_unavailable'
                     ? "Oore couldn't check out this project's source."
-                    : 'Direct runner execution is paused.'}{' '}
-                  · {pipelineName} · {branch} · Blocked {blockedFor}
+                    : build.runner_policy_block_reason === 'instance_paused'
+                      ? 'Direct runner execution is paused.'
+                      : 'Review the failure and build logs.'}{' '}
+                  · {pipelineName} · {branch} ·{' '}
+                  {build.runner_policy_block_reason
+                    ? `Blocked ${blockedFor}`
+                    : 'Open build'}
                 </ItemDescription>
               </ItemContent>
               <ItemActions>

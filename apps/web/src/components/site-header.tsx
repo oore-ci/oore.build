@@ -31,13 +31,14 @@ export default function SiteHeader() {
           <Button
             variant="outline"
             size="default"
-            className="hidden sm:flex"
+            className="flex"
+            aria-label="Quick open"
             aria-haspopup="dialog"
             aria-expanded={commandPaletteOpen}
             onClick={openCommandPalette}
           >
             <HugeiconsIcon icon={SearchIcon} data-icon="inline-start" />
-            <span className="hidden sm:inline">Search</span>
+            <span className="hidden sm:inline">Quick open</span>
             <Kbd className="hidden sm:inline-flex">⌘K</Kbd>
           </Button>
         </div>

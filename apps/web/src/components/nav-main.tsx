@@ -4,6 +4,7 @@ import {
   CommandLineIcon,
   DashboardSquare02Icon,
   Folder02Icon,
+  Settings01Icon,
 } from '@hugeicons/core-free-icons'
 import {
   SidebarGroup,
@@ -16,7 +17,6 @@ import {
 } from '@/components/ui/sidebar'
 import { useAuthStore } from '@/stores/auth-store'
 import { useBuilds } from '@/hooks/use-builds'
-import { settingsGroupsForRole } from '@/components/settings/settings-navigation'
 import type { UserRole } from '@oore/client/models'
 
 interface NavItem {
@@ -31,7 +31,7 @@ interface NavGroup {
 }
 
 const WORKSPACE_ITEMS: Array<NavItem> = [
-  { title: 'Dashboard', to: '/', icon: DashboardSquare02Icon },
+  { title: 'Home', to: '/', icon: DashboardSquare02Icon },
   { title: 'Projects', to: '/projects', icon: Folder02Icon },
   { title: 'Builds', to: '/builds', icon: CommandLineIcon },
 ]
@@ -41,15 +41,11 @@ export function sidebarGroupsForRole(
 ): Array<NavGroup> {
   if (!role || role === 'qa_viewer') return []
 
-  const settingsItems = settingsGroupsForRole(role).flatMap(
-    (group) => group.items,
-  )
-
   return [
     { title: 'Workspace', items: WORKSPACE_ITEMS },
     {
       title: 'Settings',
-      items: settingsItems,
+      items: [{ title: 'Settings', to: '/settings', icon: Settings01Icon }],
     },
   ]
 }
@@ -64,8 +60,8 @@ export function isSidebarItemActive(pathname: string, to: string): boolean {
 }
 
 function ActiveBuildBadge() {
-  const { data } = useBuilds({ status: 'running', limit: 100 })
-  const count = data?.builds.length ?? 0
+  const { data } = useBuilds({ status: 'running', limit: 1 })
+  const count = data?.total ?? 0
   if (count === 0) return null
   return <SidebarMenuBadge>{count}</SidebarMenuBadge>
 }

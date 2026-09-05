@@ -22,6 +22,7 @@ export default function QaBuildLogs({ build }: { build: Build }) {
       isStreaming={isStreaming && !isTerminal}
       isLoading={isTerminal && fullLogsQuery.isLoading}
       logsUnavailable={fullLogsQuery.isError}
+      onRetryLogs={() => void fullLogsQuery.refetch()}
       isTerminal={isTerminal}
     />
   )
