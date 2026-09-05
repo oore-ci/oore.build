@@ -58,6 +58,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ProjectPipelinesTab } from './-project-pipelines-tab'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 
+const ProjectOverview = lazy(() => import('./-project-overview'))
+
 const FirstAppProgress = lazy(() => import('@/components/first-app-progress'))
 
 import type { ProjectBuildSort } from './-project-build-sort'
@@ -82,7 +84,7 @@ const ProjectAccessCard = lazy(() =>
   })),
 )
 
-const TAB_VALUES = ['pipelines', 'builds', 'settings'] as const
+const TAB_VALUES = ['overview', 'pipelines', 'builds', 'settings'] as const
 type TabValue = (typeof TAB_VALUES)[number]
 
 interface ProjectDetailSearch {
@@ -129,7 +131,7 @@ function selectProjectBuildSummary({ builds, total }: ListBuildsResponse) {
     }
   }
 
-  return { buildCount: total, lastBuildByPipeline }
+  return { buildCount: total, lastBuildByPipeline, builds }
 }
 
 function validateProjectSearch(search: SearchInput): ProjectDetailSearch {
@@ -204,13 +206,14 @@ function ProjectDetailPage() {
     offset: (pipelinePage - 1) * pipelinePageSize,
   })
   const { data: pipelinesData } = pipelinesQuery
-  const { data: buildSummary } = useBuilds(
+  const buildSummaryQuery = useBuilds(
     { project_id: projectId, limit: 20 },
     {
       refetchInterval: 15_000,
       select: selectProjectBuildSummary,
     },
   )
+  const buildSummary = buildSummaryQuery.data
   const deleteMutation = useDeleteProject()
   const [
     canWritePipelinesGlobally,
@@ -276,7 +279,7 @@ function ProjectDetailPage() {
       }),
   )
 
-  const activeTab: TabValue = tab ?? 'pipelines'
+  const activeTab: TabValue = tab ?? 'overview'
 
   const label = data?.project.name ?? 'Project Details'
 
@@ -349,7 +352,7 @@ function ProjectDetailPage() {
       params: { projectId },
       search: (previous) => ({
         ...previous,
-        tab: value === 'pipelines' ? undefined : value,
+        tab: value === 'overview' ? undefined : value,
       }),
       replace: true,
     })
@@ -531,7 +534,7 @@ function ProjectDetailPage() {
         </Alert>
       ) : null}
 
-      {activeTab === 'pipelines' &&
+      {(activeTab === 'overview' || activeTab === 'pipelines') &&
       (buildCount === 0 || guidedProjectId === projectId) ? (
         <Suspense fallback={<Skeleton className="h-40 w-full" />}>
           <FirstAppProgress projectId={projectId} />
@@ -547,6 +550,7 @@ function ProjectDetailPage() {
         className={activeTab === 'builds' ? 'min-h-0 flex-1' : undefined}
       >
         <TabsList variant="line">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="pipelines">
             Pipelines
             {pipelineCount > 0 ? ` (${pipelineCount})` : ''}
@@ -556,6 +560,21 @@ function ProjectDetailPage() {
           </TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="overview">
+          {activeTab === 'overview' ? (
+            <Suspense fallback={<Skeleton className="h-64 w-full" />}>
+              <ProjectOverview
+                projectId={projectId}
+                projectName={project.name}
+                builds={buildSummary?.builds ?? []}
+                loading={buildSummaryQuery.isLoading}
+                error={buildSummaryQuery.error}
+                onRetry={() => void buildSummaryQuery.refetch()}
+              />
+            </Suspense>
+          ) : null}
+        </TabsContent>
 
         <ProjectPipelinesTab
           canTriggerBuild={canTriggerBuild}

@@ -1,4 +1,4 @@
-import { isMatch, Link, useMatches } from '@tanstack/react-router'
+import { isMatch, Link, useMatches, useParams } from '@tanstack/react-router'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -7,8 +7,11 @@ import {
   BreadcrumbSeparator,
   BreadcrumbPage,
 } from '@/components/ui/breadcrumb'
+import { useProject } from '@/hooks/use-projects'
 
 export default function PageBreadcrumb() {
+  const { projectId } = useParams({ strict: false })
+  const project = useProject(projectId ?? '')
   const breadcrumbs = useMatches({
     select: (matches) =>
       matches
@@ -26,16 +29,22 @@ export default function PageBreadcrumb() {
           index !== breadcrumbs.length - 1 && (
             <BreadcrumbItem key={item.href}>
               <BreadcrumbLink render={<Link to={item.href} />}>
-                {item.label}
+                {projectId &&
+                item.href.replace(/\/$/, '') === `/projects/${projectId}`
+                  ? (project.data?.project.name ?? item.label)
+                  : item.label}
               </BreadcrumbLink>
             </BreadcrumbItem>
           ),
           index === breadcrumbs.length - 1 && (
-            <BreadcrumbPage key={item.href}>
-              <BreadcrumbLink render={<Link to={item.href} />}>
-                {item.label}
-              </BreadcrumbLink>
-            </BreadcrumbPage>
+            <BreadcrumbItem key={item.href}>
+              <BreadcrumbPage>
+                {projectId &&
+                item.href.replace(/\/$/, '') === `/projects/${projectId}`
+                  ? (project.data?.project.name ?? item.label)
+                  : item.label}
+              </BreadcrumbPage>
+            </BreadcrumbItem>
           ),
           index < breadcrumbs.length - 1 && (
             <BreadcrumbSeparator key={item.href + '_separator'} />

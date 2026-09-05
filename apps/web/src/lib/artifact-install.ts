@@ -67,6 +67,21 @@ export function getIosAppMetadata(artifact: Artifact): IosAppMetadata | null {
 export function artifactInstallReadiness(
   artifact: Artifact,
 ): ArtifactInstallReadiness {
+  if (artifact.state !== 'available') {
+    return {
+      ready: false,
+      reason: 'This file is no longer available. Open a newer build.',
+    }
+  }
+  if (
+    artifact.expires_at != null &&
+    artifact.expires_at <= Math.floor(Date.now() / 1000)
+  ) {
+    return {
+      ready: false,
+      reason: 'This file has expired. Ask a developer for a fresh build.',
+    }
+  }
   if (artifact.artifact_type === 'apk') return { ready: true }
   if (artifact.artifact_type !== 'ipa') {
     return {
