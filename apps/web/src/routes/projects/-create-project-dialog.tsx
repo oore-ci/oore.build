@@ -20,13 +20,13 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/drawer'
 import {
   Select,
   SelectContent,
@@ -44,6 +44,7 @@ import { isLoopbackHostname, resolveUrlHostname } from '@/lib/connectivity'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { isNearScrollEnd } from '@/lib/scroll'
 import { useActiveInstance } from '@/stores/instance-store'
+import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 
 const createProjectSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -71,6 +72,9 @@ export default function CreateProjectDialog({
   onOpenChange,
 }: CreateProjectDialogProps) {
   const titleRef = useRef<HTMLHeadingElement>(null)
+  const scope = useFirstAppScope()
+  const draft = useFirstAppStore((state) => state.progress[scope]?.projectDraft)
+  const updateProgress = useFirstAppStore((state) => state.update)
   const navigate = useNavigate()
   const createMutation = useCreateProject()
   const setupStatusQuery = useSetupStatus()
@@ -106,11 +110,11 @@ export default function CreateProjectDialog({
   const form = useForm<CreateProjectForm>({
     resolver: zodResolver(createProjectSchema),
     defaultValues: {
-      name: '',
-      description: '',
-      default_branch: '',
-      local_repository_path: '',
-      repository_id: '',
+      name: draft?.name ?? '',
+      description: draft?.description ?? '',
+      default_branch: draft?.default_branch ?? '',
+      local_repository_path: draft?.local_repository_path ?? '',
+      repository_id: draft?.repository_id ?? '',
     },
     mode: 'onBlur',
   })
@@ -153,6 +157,11 @@ export default function CreateProjectDialog({
       },
       {
         onSuccess: (response) => {
+          updateProgress(scope, {
+            projectId: response.project.id,
+            hidden: false,
+            projectDraft: undefined,
+          })
           toast.success('Project created')
           form.reset()
           onOpenChange(false)
@@ -170,6 +179,7 @@ export default function CreateProjectDialog({
 
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
+      updateProgress(scope, { projectDraft: undefined })
       form.reset()
       setPickerOpen(false)
     }
@@ -178,234 +188,273 @@ export default function CreateProjectDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent initialFocus={titleRef}>
-          <DialogHeader>
-            <DialogTitle ref={titleRef} tabIndex={-1}>
+      <Drawer
+        swipeDirection="right"
+        open={open}
+        onOpenChange={handleOpenChange}
+      >
+        <DrawerContent
+          initialFocus={titleRef}
+          className="data-[swipe-axis=x]:[--drawer-content-width:calc(100%-1rem)] data-[swipe-axis=x]:sm:[--drawer-content-width:30rem]"
+        >
+          <DrawerHeader>
+            <DrawerTitle ref={titleRef} tabIndex={-1} className="outline-none">
               Create project
-            </DialogTitle>
-            <DialogDescription>
+            </DrawerTitle>
+            <DrawerDescription>
               {isRemoteMode
                 ? "Choose a repository from a connected source. Creating the project trusts its build commands to run with the runner account's macOS permissions."
                 : "Choose a repository on this Mac. Creating the project trusts its build commands to run with the runner account's macOS permissions."}
-            </DialogDescription>
-          </DialogHeader>
+            </DrawerDescription>
+          </DrawerHeader>
 
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              {isRemoteMode ? (
-                <FormField
-                  control={form.control}
-                  name="repository_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Repository</FormLabel>
-                      {repositoriesQuery.isLoading ? (
-                        <div className="flex items-center gap-2 py-2">
-                          <Spinner className="size-4" />
-                          <span className="text-sm text-muted-foreground">
-                            Loading repositories...
-                          </span>
-                        </div>
-                      ) : repositoriesQuery.error ? (
-                        <Alert variant="destructive">
-                          <AlertDescription className="flex items-center justify-between gap-3">
-                            <span>
-                              Failed to load repositories:{' '}
-                              {repositoriesQuery.error.message}
+            <form
+              onSubmit={form.handleSubmit(onSubmit)}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <div className="flex-1 scroll-fade space-y-4 overflow-y-auto p-4">
+                {isRemoteMode ? (
+                  <FormField
+                    control={form.control}
+                    name="repository_id"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Repository</FormLabel>
+                        {repositoriesQuery.isLoading ? (
+                          <div className="flex items-center gap-2 py-2">
+                            <Spinner className="size-4" />
+                            <span className="text-sm text-muted-foreground">
+                              Loading repositories...
                             </span>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => void repositoriesQuery.refetch()}
-                            >
-                              Retry
-                            </Button>
-                          </AlertDescription>
-                        </Alert>
-                      ) : hasRepos ? (
-                        <Select
-                          value={field.value}
-                          onValueChange={(value) => {
-                            field.onChange(value ?? '')
-                            const repository = repos?.find(
-                              (repo) => repo.id === value,
-                            )
-                            if (!repository) return
-                            if (!form.getFieldState('name').isDirty) {
-                              form.setValue(
-                                'name',
-                                repository.full_name
-                                  .split('/')
-                                  .filter(Boolean)
-                                  .at(-1) ?? '',
+                          </div>
+                        ) : repositoriesQuery.error ? (
+                          <Alert variant="destructive">
+                            <AlertDescription className="flex items-center justify-between gap-3">
+                              <span>
+                                Failed to load repositories:{' '}
+                                {repositoriesQuery.error.message}
+                              </span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void repositoriesQuery.refetch()}
+                              >
+                                Retry
+                              </Button>
+                            </AlertDescription>
+                          </Alert>
+                        ) : hasRepos ? (
+                          <Select
+                            value={field.value}
+                            onValueChange={(value) => {
+                              field.onChange(value ?? '')
+                              const repository = repos?.find(
+                                (repo) => repo.id === value,
                               )
-                            }
-                            if (!form.getFieldState('default_branch').isDirty) {
-                              form.setValue(
-                                'default_branch',
-                                repository.default_branch ?? '',
-                              )
-                            }
-                          }}
-                          items={repoItems}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select a repository..." />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent
-                            onScroll={(event) => {
-                              const target = event.currentTarget
+                              if (!repository) return
                               if (
-                                isNearScrollEnd(target) &&
-                                repositoriesQuery.hasNextPage &&
-                                !repositoriesQuery.isFetchingNextPage
+                                !form.getFieldState('name').isDirty &&
+                                !draft?.name
                               ) {
-                                void repositoriesQuery.fetchNextPage()
+                                form.setValue(
+                                  'name',
+                                  repository.full_name
+                                    .split('/')
+                                    .filter(Boolean)
+                                    .at(-1) ?? '',
+                                )
+                              }
+                              if (
+                                !form.getFieldState('default_branch').isDirty &&
+                                !draft?.default_branch
+                              ) {
+                                form.setValue(
+                                  'default_branch',
+                                  repository.default_branch ?? '',
+                                )
                               }
                             }}
+                            items={repoItems}
                           >
-                            {(repos ?? []).map((repo) => (
-                              <SelectItem key={repo.id} value={repo.id}>
-                                <RepositoryAvatar
-                                  fullName={repo.full_name}
-                                  avatarUrl={repo.avatar_url}
-                                  repositoryId={repo.id}
-                                  provider={repo.provider}
-                                />
-                                <span>{repo.full_name}</span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <div className="space-y-3">
-                          <FormDescription>
-                            No repositories are available. Connect a source and
-                            sync its repositories first.
-                          </FormDescription>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            render={<Link to="/settings/integrations" />}
-                            nativeButton={false}
-                          >
-                            <HugeiconsIcon icon={Link04Icon} />
-                            Connect source
-                          </Button>
-                        </div>
-                      )}
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              ) : null}
-
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Name</FormLabel>
-                    <FormControl>
-                      <Input placeholder="My App" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="description"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      Description{' '}
-                      <span className="font-normal text-muted-foreground">
-                        (optional)
-                      </span>
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="A brief description of this project"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              {!isRemoteMode ? (
-                <FormField
-                  control={form.control}
-                  name="local_repository_path"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Path</FormLabel>
-                      <div className="flex flex-col gap-2 md:flex-row">
-                        <FormControl>
-                          <Input
-                            {...field}
-                            placeholder="/absolute/path/to/repository"
-                            className="font-mono text-xs"
-                          />
-                        </FormControl>
-                        {canBrowseLocalFs ? (
-                          <div className="flex gap-2">
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select a repository..." />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent
+                              onScroll={(event) => {
+                                const target = event.currentTarget
+                                if (
+                                  isNearScrollEnd(target) &&
+                                  repositoriesQuery.hasNextPage &&
+                                  !repositoriesQuery.isFetchingNextPage
+                                ) {
+                                  void repositoriesQuery.fetchNextPage()
+                                }
+                              }}
+                            >
+                              {(repos ?? []).map((repo) => (
+                                <SelectItem key={repo.id} value={repo.id}>
+                                  <RepositoryAvatar
+                                    fullName={repo.full_name}
+                                    avatarUrl={repo.avatar_url}
+                                    repositoryId={repo.id}
+                                    provider={repo.provider}
+                                  />
+                                  <span>{repo.full_name}</span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <div className="space-y-3">
+                            <FormDescription>
+                              No repositories are available. Connect a source
+                              and sync its repositories first.
+                            </FormDescription>
                             <Button
                               type="button"
                               variant="outline"
-                              size="icon"
-                              aria-label="Browse"
-                              title="Browse"
-                              onClick={handleOpenPicker}
+                              render={<Link to="/settings/integrations" />}
+                              nativeButton={false}
+                              onClick={() =>
+                                updateProgress(scope, {
+                                  projectDraft: form.getValues(),
+                                })
+                              }
                             >
-                              <HugeiconsIcon icon={Folder02Icon} />
+                              <HugeiconsIcon icon={Link04Icon} />
+                              Connect source
                             </Button>
                           </div>
+                        )}
+                        {hasRepos ? (
+                          <Button
+                            type="button"
+                            variant="link"
+                            size="sm"
+                            className="h-auto p-0"
+                            render={<Link to="/settings/integrations" />}
+                            nativeButton={false}
+                            onClick={() =>
+                              updateProgress(scope, {
+                                projectDraft: form.getValues(),
+                              })
+                            }
+                          >
+                            Connect another source
+                          </Button>
                         ) : null}
-                      </div>
-                      <FormDescription>
-                        Absolute path to the Git repository.
-                        {!canBrowseLocalFs ? (
-                          <>
-                            {' '}
-                            For security, folder browsing is only available from
-                            localhost.
-                          </>
-                        ) : null}
-                      </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ) : null}
+
+                <FormField
+                  control={form.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="My App" {...field} />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-              ) : null}
 
-              <FormField
-                control={form.control}
-                name="default_branch"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      Default branch{' '}
-                      <span className="font-normal text-muted-foreground">
-                        (optional)
-                      </span>
-                    </FormLabel>
-                    <FormControl>
-                      <Input placeholder="main" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                <FormField
+                  control={form.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        Description{' '}
+                        <span className="font-normal text-muted-foreground">
+                          (optional)
+                        </span>
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="A brief description of this project"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-              <DialogFooter>
+                {!isRemoteMode ? (
+                  <FormField
+                    control={form.control}
+                    name="local_repository_path"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Path</FormLabel>
+                        <div className="flex flex-col gap-2 md:flex-row">
+                          <FormControl>
+                            <Input
+                              {...field}
+                              placeholder="/absolute/path/to/repository"
+                              className="font-mono text-xs"
+                            />
+                          </FormControl>
+                          {canBrowseLocalFs ? (
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                aria-label="Browse"
+                                title="Browse"
+                                onClick={handleOpenPicker}
+                              >
+                                <HugeiconsIcon icon={Folder02Icon} />
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+                        <FormDescription>
+                          Absolute path to the Git repository.
+                          {!canBrowseLocalFs ? (
+                            <>
+                              {' '}
+                              For security, folder browsing is only available
+                              from localhost.
+                            </>
+                          ) : null}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ) : null}
+
+                <FormField
+                  control={form.control}
+                  name="default_branch"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        Default branch{' '}
+                        <span className="font-normal text-muted-foreground">
+                          (optional)
+                        </span>
+                      </FormLabel>
+                      <FormControl>
+                        <Input placeholder="main" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <DrawerFooter>
                 <Button
                   type="button"
                   variant="outline"
@@ -432,11 +481,11 @@ export default function CreateProjectDialog({
                     'Create project'
                   )}
                 </Button>
-              </DialogFooter>
+              </DrawerFooter>
             </form>
           </Form>
-        </DialogContent>
-      </Dialog>
+        </DrawerContent>
+      </Drawer>
 
       <LocalFolderPickerDialog
         open={pickerOpen}

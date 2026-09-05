@@ -225,7 +225,7 @@ function CompleteStep() {
                     nativeButton={false}
                     className="w-full"
                   >
-                    Go to Dashboard
+                    Build your first app
                   </Button>
                 )}
               </div>

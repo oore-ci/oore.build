@@ -41,6 +41,9 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 import { OperatorIncidentAlert } from '@/components/operator-incident-alert'
 import { createWebOoreClient } from '@/lib/api-client/client'
+import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
+
+const FirstAppProgress = lazy(() => import('@/components/first-app-progress'))
 
 const QaReleasesPage = lazy(() => import('@/components/qa-releases-page'))
 const TriggerBuildDrawer = lazy(
@@ -118,7 +121,7 @@ async function detectReachableLocalDaemonUrl(): Promise<string | null> {
 
 function IndexPage() {
   const instance = useActiveInstance()
-  const { data: status, isLoading, error } = useSetupStatus()
+  const { data: status, isLoading, error, refetch } = useSetupStatus()
   const [showAddInstance, setShowAddInstance] = useState(false)
   const [isDetectingLocalInstance, setIsDetectingLocalInstance] =
     useState(false)
@@ -166,7 +169,7 @@ function IndexPage() {
         <div className="flex items-center gap-3">
           <Spinner className="size-5" />
           <p className="text-sm text-muted-foreground">
-            Detecting local daemon...
+            Looking for Oore on this Mac...
           </p>
         </div>
       </div>
@@ -196,30 +199,49 @@ function IndexPage() {
             </div>
             <h1 className="text-3xl font-bold tracking-tight">Oore CI</h1>
             <p className="text-sm text-muted-foreground">
-              Self-hosted mobile CI and app distribution platform.
-              <br />
-              Connect a backend instance to begin.
+              Build your mobile app on a Mac you control. Share an install link
+              with your team.
             </p>
           </div>
 
           <Card size="sm">
             <CardHeader>
-              <CardTitle>Instance registry</CardTitle>
+              <CardTitle>Join your team</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Add a backend instance to start setup or connect to an
-                already-configured daemon.
+                Have an Oore address? Connect and sign in to find your team’s
+                projects and builds.
               </p>
               <Button
                 onClick={() => setShowAddInstance(true)}
                 className="w-full"
               >
                 <HugeiconsIcon icon={Add01Icon} />
-                Add instance
+                Connect to Oore
               </Button>
             </CardContent>
           </Card>
+          <div className="space-y-3 text-center">
+            <h2 className="font-medium">Set up Oore on your Mac</h2>
+            <p className="text-sm text-muted-foreground">
+              Install Oore and start the service on macOS. Keep the Mac running
+              while it builds your apps. The browser provides the interface.
+            </p>
+            <Button
+              variant="outline"
+              render={
+                <a
+                  href="https://docs.oore.build/start/install"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                />
+              }
+              nativeButton={false}
+            >
+              Open setup guide
+            </Button>
+          </div>
         </div>
 
         <AddInstanceDialog
@@ -236,9 +258,7 @@ function IndexPage() {
         <PageMeta />
         <div className="flex items-center gap-3">
           <Spinner className="size-5" />
-          <p className="text-sm text-muted-foreground">
-            Connecting to backend...
-          </p>
+          <p className="text-sm text-muted-foreground">Connecting to Oore...</p>
         </div>
       </div>
     )
@@ -257,6 +277,16 @@ function IndexPage() {
               running.
             </AlertDescription>
           </Alert>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button onClick={() => void refetch()}>Retry connection</Button>
+            <Button variant="outline" onClick={() => setShowAddInstance(true)}>
+              Change connection
+            </Button>
+          </div>
+          <AddInstanceDialog
+            open={showAddInstance}
+            onOpenChange={setShowAddInstance}
+          />
         </div>
       </div>
     )
@@ -305,7 +335,14 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
   })
   const markIncidentRead = useMarkOperatorIncidentRead()
 
-  const projectsQuery = useProjects({ limit: 1 })
+  const scope = useFirstAppScope()
+  const progress = useFirstAppStore((state) => state.progress[scope])
+  const updateProgress = useFirstAppStore((state) => state.update)
+  const projectsQuery = useProjects({
+    limit: 1,
+    sort: 'created_at',
+    direction: 'desc',
+  })
   const projects = projectsQuery.data?.projects ?? []
   const integrationsQuery = useIntegrations(
     { limit: 1 },
@@ -395,6 +432,29 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
             noConnectedSources={noConnectedSources}
             runtimeMode={runtimeMode}
           />
+        ) : null}
+
+        {hasProjects &&
+        (progress?.projectId || recentBuildsQuery.data?.builds.length === 0) ? (
+          <Suspense fallback={<Skeleton className="h-40 w-full" />}>
+            <FirstAppProgress
+              projectId={progress?.projectId ?? projects[0].id}
+            />
+          </Suspense>
+        ) : hasProjects ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="self-start"
+            onClick={() =>
+              updateProgress(scope, {
+                projectId: projects[0].id,
+                hidden: false,
+              })
+            }
+          >
+            Set up an app
+          </Button>
         ) : null}
 
         {projectsQuery.error ? (

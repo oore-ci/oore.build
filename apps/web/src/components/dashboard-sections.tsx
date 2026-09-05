@@ -24,6 +24,7 @@ import {
 import { ItemGroup } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { RuntimeMode } from '@oore/client/models'
+import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 import type { Build } from '@oore/client/models'
 
 export function DashboardGettingStarted({
@@ -37,12 +38,14 @@ export function DashboardGettingStarted({
   noConnectedSources: boolean
   runtimeMode: RuntimeMode
 }) {
+  const scope = useFirstAppScope()
+  const updateProgress = useFirstAppStore((state) => state.update)
   const hasSourceStep = runtimeMode === 'remote' && noConnectedSources
 
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle>Getting started</CardTitle>
+        <CardTitle>Build and share your first app</CardTitle>
       </CardHeader>
       <CardContent>
         <ol className="flex flex-col gap-3 text-sm">
@@ -60,6 +63,9 @@ export function DashboardGettingStarted({
                 {canWriteIntegrations ? (
                   <Button
                     size="sm"
+                    onClick={() =>
+                      updateProgress(scope, { projectDraft: { name: '' } })
+                    }
                     render={<Link to="/settings/integrations" />}
                     nativeButton={false}
                   >
@@ -123,10 +129,10 @@ export function DashboardGettingStarted({
               {hasSourceStep ? '4' : '3'}
             </Badge>
             <div className="flex flex-col gap-1.5">
-              <p className="font-medium">Run your first build</p>
+              <p className="font-medium">Run and install your app</p>
               <p className="text-xs text-muted-foreground">
-                Trigger a build manually or push to your repository to start
-                automatically.
+                Review and run the build, then open the app output to install it
+                or share it with a tester.
               </p>
             </div>
           </li>

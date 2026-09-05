@@ -29,6 +29,7 @@ import {
   getPipelineIosSigningOptions,
   getPipelineIosSigningQueryKey,
   getPipelineOptions,
+  getProjectQueryKey,
   getPipelineQueryKey,
   listPipelineIosDevicesOptions,
   listPipelineIosDevicesQueryKey,
@@ -166,6 +167,15 @@ export function useCreatePipeline() {
       void queryClient.invalidateQueries({
         queryKey: scopeOoreQueryKey(
           instanceId,
+          getProjectQueryKey({
+            client,
+            path: { project_id: variables.projectId },
+          }),
+        ),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(
+          instanceId,
           listPipelinesQueryKey({
             client,
             path: { project_id: variables.projectId },
@@ -230,6 +240,15 @@ export function useDeletePipeline() {
       return deletePipeline({ client, path: { pipeline_id: pipelineId } })
     },
     onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(
+          instanceId,
+          getProjectQueryKey({
+            client,
+            path: { project_id: variables.projectId },
+          }),
+        ),
+      })
       void queryClient.invalidateQueries({
         queryKey: scopeOoreQueryKey(
           instanceId,

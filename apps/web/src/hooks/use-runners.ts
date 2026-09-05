@@ -20,7 +20,10 @@ type ListRunnersParams = NonNullable<ListRunnersData['query']>
 
 export function useRunners<TData = ListRunnersResponse>(
   params?: ListRunnersParams,
-  options?: { select?: (data: ListRunnersResponse) => TData },
+  options?: {
+    enabled?: boolean
+    select?: (data: ListRunnersResponse) => TData
+  },
 ) {
   const { baseUrl, client, instanceId, token } = useApiContext()
   const query = scopeOoreQueryOptions(
@@ -30,7 +33,7 @@ export function useRunners<TData = ListRunnersResponse>(
 
   return useQuery<ListRunnersResponse, Error, TData>({
     ...query,
-    enabled: !!baseUrl && !!token,
+    enabled: !!baseUrl && !!token && (options?.enabled ?? true),
     refetchInterval: 15_000,
     select: options?.select,
   })

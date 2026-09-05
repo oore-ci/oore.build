@@ -25,6 +25,7 @@ import {
 } from '@/hooks/use-permissions'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { usePageClamp } from '@/hooks/use-page-clamp'
+import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { searchChoice, searchNumber, searchString } from '@/lib/search-input'
 import type { SearchInput } from '@/lib/search-input'
@@ -83,7 +84,7 @@ function parseSearch(search: SearchInput): ProjectsSearch {
     direction,
     page: Number.isInteger(page) && page > 1 ? page : undefined,
     pageSize: pageSize === 50 || pageSize === 100 ? pageSize : undefined,
-    openCreate: searchString(search, 'openCreate') === '1' ? '1' : undefined,
+    openCreate: searchNumber(search, 'openCreate') === 1 ? '1' : undefined,
   }
 }
 
@@ -100,6 +101,8 @@ export const Route = createFileRoute('/projects/')({
 })
 
 function ProjectsListPage() {
+  const scope = useFirstAppScope()
+  const updateProgress = useFirstAppStore((state) => state.update)
   const search = useSearch({ from: '/projects/' })
   const navigate = Route.useNavigate()
   const page = search.page ?? 1
@@ -225,6 +228,9 @@ function ProjectsListPage() {
                   canWriteIntegrations ? (
                     <Button
                       render={<Link to="/settings/integrations" />}
+                      onClick={() =>
+                        updateProgress(scope, { projectDraft: { name: '' } })
+                      }
                       nativeButton={false}
                     >
                       <HugeiconsIcon icon={Link04Icon} />

@@ -36,11 +36,13 @@ const CONFIG_SOURCES = {
 } satisfies Record<string, string>
 
 export function PipelineIdentityAndConfigSection({
+  defaultOpen = true,
   configMode,
   platforms,
   previewDefaults,
   repositoryWorkflow,
 }: {
+  defaultOpen?: boolean
   configMode: PipelineFormValues['config_mode']
   platforms: Array<string>
   previewDefaults: Array<string>
@@ -67,7 +69,7 @@ export function PipelineIdentityAndConfigSection({
         </CardContent>
       </Card>
 
-      <Collapsible defaultOpen>
+      <Collapsible defaultOpen={defaultOpen}>
         <Card>
           <CollapsibleTrigger className="w-full cursor-pointer">
             <CardHeader>

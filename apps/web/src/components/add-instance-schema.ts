@@ -12,7 +12,7 @@ export function addInstanceSchema(frontendOrigin: string) {
 
   return z
     .object({
-      label: z.string().min(1, 'Label is required'),
+      label: z.string().trim(),
       url: z
         .string()
         .transform((v) => v.replace(/\/+$/, ''))

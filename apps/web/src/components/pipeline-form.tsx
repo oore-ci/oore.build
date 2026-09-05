@@ -50,6 +50,7 @@ import {
 } from '@/components/ui/alert-dialog'
 
 interface PipelineFormProps {
+  compactSetup?: boolean
   initialValues: PipelineFormValues
   onSubmit: (
     data: PipelineFormValues,
@@ -76,6 +77,7 @@ interface PipelineFormProps {
 }
 
 export default function PipelineForm({
+  compactSetup = false,
   initialValues,
   onSubmit,
   onCancel,
@@ -159,6 +161,7 @@ export default function PipelineForm({
         className="space-y-4 pb-8"
       >
         <PipelineIdentityAndConfigSection
+          defaultOpen={!compactSetup}
           configMode={configMode}
           platforms={platforms}
           previewDefaults={previewDefaults}

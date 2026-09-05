@@ -9,6 +9,7 @@ import {
   RefreshIcon,
 } from '@hugeicons/core-free-icons'
 import { toast } from '@/lib/toast'
+import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 
 import type { RepositoryWorkflowPreview } from '@oore/client/models'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
@@ -114,9 +115,9 @@ const emptyDefaults: PipelineFormValues = {
 const PIPELINE_TEMPLATES = [
   {
     key: 'debug-apk',
-    label: 'Quick Debug APK',
+    label: 'Android test app',
     description:
-      'Android debug build. No uploaded release-signing material required.',
+      'A Flutter debug APK for your Android device. No release-signing upload.',
     values: {
       ...emptyDefaults,
       name: 'Debug APK',
@@ -127,7 +128,7 @@ const PIPELINE_TEMPLATES = [
       android_command_override: 'flutter build apk --debug',
       artifact_patterns: 'build/app/outputs/flutter-apk/*.apk',
     } satisfies PipelineFormValues,
-    events: ['push'],
+    events: [],
   },
   {
     key: 'release-android',
@@ -284,6 +285,8 @@ function RepositoryWorkflowSummary({
 }
 
 function NewPipelinePage() {
+  const scope = useFirstAppScope()
+  const updateProgress = useFirstAppStore((state) => state.update)
   const { projectId } = Route.useParams()
   const navigate = useNavigate()
   const { data: projectData } = useProject(projectId)
@@ -298,7 +301,7 @@ function NewPipelinePage() {
   const updateIosSigningMutation = useUpdatePipelineIosSigning()
   const [validationErrors, setValidationErrors] = useState<Array<string>>([])
   const createdPipelineId = useRef<string | null>(null)
-  const [selectedTemplate, setSelectedTemplate] = useState<string>('custom')
+  const [selectedTemplate, setSelectedTemplate] = useState<string>('debug-apk')
   const [selectedWorkflowPath, setSelectedWorkflowPath] = useState<
     string | null
   >(null)
@@ -387,8 +390,13 @@ function NewPipelinePage() {
           data: iosSigningPayload,
         })
       }
+      updateProgress(scope, { projectId, hidden: false })
       toast.success('Pipeline created')
-      await navigate({ to: '/projects/$projectId', params: { projectId } })
+      await navigate({
+        to: '/projects/$projectId',
+        params: { projectId },
+        search: { run: '1', runPipeline: created.pipeline.id },
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error'
       const signing = signingPayload ? 'android' : 'ios'
@@ -582,6 +590,7 @@ function NewPipelinePage() {
                 : [...activeTemplate.events],
             }}
             manualOnlyTriggers={manualOnlyTriggers}
+            compactSetup={activeTemplate.key === 'debug-apk'}
             onSubmit={handleSubmit}
             onCancel={() =>
               void navigate({
@@ -589,7 +598,7 @@ function NewPipelinePage() {
                 params: { projectId },
               })
             }
-            submitLabel="Create"
+            submitLabel="Create and review first run"
             isPending={
               createMutation.isPending ||
               updateSigningMutation.isPending ||
