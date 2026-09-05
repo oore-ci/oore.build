@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -46,13 +45,7 @@ function waitingContext(build: Build): string | undefined {
   return undefined
 }
 
-export function BuildItem({
-  action,
-  build,
-}: {
-  action?: ReactNode
-  build: Build
-}) {
+export function BuildItem({ build }: { build: Build }) {
   const projectName = build.context?.project_name ?? build.project_id
   const pipelineName = build.context?.pipeline_name ?? 'Build pipeline'
   const commitLabel = build.commit_sha
@@ -70,86 +63,85 @@ export function BuildItem({
     relativeTime(build.finished_at ?? build.updated_at)
 
   return (
-    <Item
-      role="listitem"
-      variant="outline"
-      size="default"
-      className="min-h-16 xl:grid xl:grid-cols-[auto_minmax(15rem,1.4fr)_minmax(7rem,0.5fr)_minmax(9rem,0.75fr)_4.5rem_minmax(5.5rem,auto)_2rem] xl:gap-3"
-      render={
-        <Link
-          to="/builds/$buildId"
-          params={{ buildId: build.id }}
-          aria-label={`Open ${projectName} build #${build.build_number}`}
-        />
-      }
-    >
-      <ItemMedia>
-        <RepositoryAvatar
-          fullName={build.context?.repository_full_name ?? projectName}
-          avatarUrl={build.context?.project_avatar_url}
-          repositoryId={build.context?.repository_id}
-          provider={build.context?.repository_provider}
-          size="sm"
-        />
-      </ItemMedia>
+    <div role="listitem">
+      <Item
+        variant="outline"
+        size="default"
+        className="min-h-16 xl:grid xl:grid-cols-[auto_minmax(15rem,1.4fr)_minmax(7rem,0.5fr)_minmax(9rem,0.75fr)_4.5rem_minmax(5.5rem,auto)_2rem] xl:gap-3"
+        render={
+          <Link
+            to="/builds/$buildId"
+            params={{ buildId: build.id }}
+            aria-label={`Open ${projectName} build #${build.build_number}`}
+          />
+        }
+      >
+        <ItemMedia>
+          <RepositoryAvatar
+            fullName={build.context?.repository_full_name ?? projectName}
+            avatarUrl={build.context?.project_avatar_url}
+            repositoryId={build.context?.repository_id}
+            provider={build.context?.repository_provider}
+            size="sm"
+          />
+        </ItemMedia>
 
-      <ItemContent className="min-w-0">
-        <ItemTitle>
-          {projectName}{' '}
-          <span className="font-mono text-xs text-muted-foreground">
-            #{build.build_number}
+        <ItemContent className="min-w-0">
+          <ItemTitle>
+            {projectName}{' '}
+            <span className="font-mono text-xs text-muted-foreground">
+              #{build.build_number}
+            </span>
+          </ItemTitle>
+          <ItemDescription className="line-clamp-1">
+            {pipelineName} · {build.branch ?? 'No branch'} ·{' '}
+            <span className="font-mono">{commitLabel}</span>
+          </ItemDescription>
+          {platforms.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5 xl:hidden">
+              {platforms.map((platform) => (
+                <Badge key={platform} variant="secondary">
+                  {BUILD_PLATFORM_LABELS[platform]}
+                </Badge>
+              ))}
+            </div>
+          ) : null}
+        </ItemContent>
+
+        <div className="hidden flex-wrap items-center gap-1.5 xl:flex">
+          {platforms.map((platform) => (
+            <Badge key={platform} variant="secondary">
+              {BUILD_PLATFORM_LABELS[platform]}
+            </Badge>
+          ))}
+        </div>
+
+        <div className="hidden min-w-0 items-center xl:flex">
+          {runnerName ? (
+            <Badge variant="outline" className="max-w-full min-w-0">
+              <HugeiconsIcon icon={ServerIcon} data-icon="inline-start" />
+              <span className="truncate">{activityContext}</span>
+            </Badge>
+          ) : (
+            <span className="truncate text-xs text-muted-foreground">
+              {activityContext}
+            </span>
+          )}
+        </div>
+
+        <ItemActions className="ml-auto xl:contents">
+          <span className="hidden justify-self-end font-mono text-xs text-muted-foreground tabular-nums sm:inline">
+            {buildTiming(build)}
           </span>
-        </ItemTitle>
-        <ItemDescription className="line-clamp-1">
-          {pipelineName} · {build.branch ?? 'No branch'} ·{' '}
-          <span className="font-mono">{commitLabel}</span>
-        </ItemDescription>
-        {platforms.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5 xl:hidden">
-            {platforms.map((platform) => (
-              <Badge key={platform} variant="secondary">
-                {BUILD_PLATFORM_LABELS[platform]}
-              </Badge>
-            ))}
-          </div>
-        ) : null}
-      </ItemContent>
-
-      <div className="hidden flex-wrap items-center gap-1.5 xl:flex">
-        {platforms.map((platform) => (
-          <Badge key={platform} variant="secondary">
-            {BUILD_PLATFORM_LABELS[platform]}
+          <Badge
+            variant={getStatusVariant(build.status)}
+            className="justify-self-end"
+          >
+            {BUILD_STATUS_FILTER_OPTIONS[build.status]}
           </Badge>
-        ))}
-      </div>
-
-      <div className="hidden min-w-0 items-center xl:flex">
-        {runnerName ? (
-          <Badge variant="outline" className="max-w-full min-w-0">
-            <HugeiconsIcon icon={ServerIcon} data-icon="inline-start" />
-            <span className="truncate">{activityContext}</span>
-          </Badge>
-        ) : (
-          <span className="truncate text-xs text-muted-foreground">
-            {activityContext}
-          </span>
-        )}
-      </div>
-
-      <ItemActions className="ml-auto xl:contents">
-        <span className="hidden justify-self-end font-mono text-xs text-muted-foreground tabular-nums sm:inline">
-          {buildTiming(build)}
-        </span>
-        <Badge
-          variant={getStatusVariant(build.status)}
-          className="justify-self-end"
-        >
-          {BUILD_STATUS_FILTER_OPTIONS[build.status]}
-        </Badge>
-        {action ?? (
           <HugeiconsIcon icon={ChevronRightIcon} className="justify-self-end" />
-        )}
-      </ItemActions>
-    </Item>
+        </ItemActions>
+      </Item>
+    </div>
   )
 }

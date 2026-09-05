@@ -17,6 +17,7 @@ import type {
   ProjectRetentionOverride,
   RetentionCleanupSummary,
   RetentionPolicy,
+  RepositoryWorkflowPreview,
   Runner,
   SetupStatus,
   TrustedProxySettingsPublic,
@@ -81,13 +82,6 @@ export interface DemoPersona {
   projectRoles: Partial<Record<string, ProjectRole>>
 }
 
-interface DemoRepositoryWorkflow {
-  path: string
-  valid: boolean
-  errors: Array<string>
-  execution: JsonObject
-}
-
 interface DemoOidcSettings {
   configured: boolean
   issuer: string
@@ -102,7 +96,7 @@ interface DemoState {
   projects: Array<DemoProject>
   projectRoles: Partial<Record<string, Record<string, ProjectRole>>>
   pipelines: Array<Pipeline>
-  repositoryWorkflows: Partial<Record<string, Array<DemoRepositoryWorkflow>>>
+  repositoryWorkflows: Partial<Record<string, Array<RepositoryWorkflowPreview>>>
   builds: Array<Build>
   buildEvents: Partial<Record<string, Array<BuildEvent>>>
   buildLogs: Partial<Record<string, Array<BuildLogChunk>>>
@@ -616,7 +610,14 @@ export function createDemoState(
           execution: {
             platforms: ['android', 'ios'],
             flutter_version: '3.24.3',
-            commands: { pre_build: ['flutter pub get'], build: [] },
+            commands: {
+              pre_build: ['flutter pub get'],
+              build: [],
+              post_build: [],
+            },
+            platform_build_args: { android: [], ios: [], macos: [] },
+            platform_commands: {},
+            env_keys: [],
             artifact_patterns: [
               'build/app/outputs/**/*.apk',
               'build/ios/**/*.ipa',
@@ -627,7 +628,6 @@ export function createDemoState(
           path: '.oore/invalid.yaml',
           valid: false,
           errors: ['execution.platforms must contain at least one platform'],
-          execution: {},
         },
       ],
     },

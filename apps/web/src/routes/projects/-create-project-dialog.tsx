@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
@@ -70,6 +70,7 @@ export default function CreateProjectDialog({
   open,
   onOpenChange,
 }: CreateProjectDialogProps) {
+  const titleRef = useRef<HTMLHeadingElement>(null)
   const navigate = useNavigate()
   const createMutation = useCreateProject()
   const setupStatusQuery = useSetupStatus()
@@ -178,9 +179,11 @@ export default function CreateProjectDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent>
+        <DialogContent initialFocus={titleRef}>
           <DialogHeader>
-            <DialogTitle>Create project</DialogTitle>
+            <DialogTitle ref={titleRef} tabIndex={-1}>
+              Create project
+            </DialogTitle>
             <DialogDescription>
               {isRemoteMode
                 ? "Choose a repository from a connected source. Creating the project trusts its build commands to run with the runner account's macOS permissions."
@@ -249,7 +252,7 @@ export default function CreateProjectDialog({
                           items={repoItems}
                         >
                           <FormControl>
-                            <SelectTrigger autoFocus>
+                            <SelectTrigger>
                               <SelectValue placeholder="Select a repository..." />
                             </SelectTrigger>
                           </FormControl>
@@ -308,11 +311,7 @@ export default function CreateProjectDialog({
                   <FormItem>
                     <FormLabel>Name</FormLabel>
                     <FormControl>
-                      <Input
-                        placeholder="My App"
-                        autoFocus={!isRemoteMode}
-                        {...field}
-                      />
+                      <Input placeholder="My App" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
