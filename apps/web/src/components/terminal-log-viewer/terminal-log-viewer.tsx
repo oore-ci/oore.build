@@ -14,6 +14,7 @@ import { LogToolbar } from './log-toolbar'
 import { defaultSelectedStep, groupLogs } from './log-model'
 import { StepNavigation } from './step-navigation'
 import type { SelectedStepMeta, TerminalLogViewerProps } from './types'
+import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAutoScroll } from '@/hooks/use-auto-scroll'
@@ -34,6 +35,7 @@ export default function TerminalLogViewer({
   fillAvailableHeight = false,
   isLoading = false,
   logsUnavailable = false,
+  onRetryLogs,
   isTerminal = false,
 }: TerminalLogViewerProps) {
   const [userSelectedStep, setUserSelectedStep] = useState<string | null>(null)
@@ -235,6 +237,27 @@ export default function TerminalLogViewer({
           />
         </div>
       </div>
+
+      {logsUnavailable ? (
+        <div
+          className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2"
+          role="status"
+        >
+          <p className="text-sm">Logs could not be loaded.</p>
+          {onRetryLogs ? (
+            <Button variant="outline" size="sm" onClick={onRetryLogs}>
+              Retry logs
+            </Button>
+          ) : null}
+        </div>
+      ) : !isTerminal && !isStreaming ? (
+        <p
+          className="shrink-0 border-b px-3 py-2 text-sm text-muted-foreground"
+          role="status"
+        >
+          Live log connection unavailable. Checking for updates periodically.
+        </p>
+      ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {hasSteps ? (

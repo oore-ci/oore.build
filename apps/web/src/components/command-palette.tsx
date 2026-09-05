@@ -2,12 +2,8 @@ import { useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   CommandLineIcon,
-  ComputerIcon,
   FolderLibraryIcon,
   Home01Icon,
-  LinkSquare01Icon,
-  Settings01Icon,
-  UserMultiple02Icon,
 } from '@hugeicons/core-free-icons'
 
 import {
@@ -21,6 +17,7 @@ import {
   CommandSeparator,
 } from '@/components/ui/command'
 import { useProjects } from '@/hooks/use-projects'
+import { settingsGroupsForRole } from '@/components/settings/settings-navigation'
 import { useAuthStore } from '@/stores/auth-store'
 import { useHasPermission } from '@/hooks/use-permissions'
 import type { Project } from '@oore/client/models'
@@ -45,14 +42,14 @@ export default function CommandPalette({
   const navigate = useNavigate()
   const authUser = useAuthStore((s) => s.user)
 
-  const isAdmin = authUser?.role === 'owner' || authUser?.role === 'admin'
   const isQaViewer = authUser?.role === 'qa_viewer'
   const canWriteProjects = useHasPermission('projects:write')
 
-  const { data: projectsData } = useProjects(
-    { limit: 50 },
-    { enabled: !isQaViewer },
-  )
+  const {
+    data: projectsData,
+    isLoading,
+    error,
+  } = useProjects({ limit: 50 }, { enabled: open && !isQaViewer })
   const projects = projectsData?.projects ?? EMPTY_PROJECTS
 
   function go(to: string) {
@@ -65,7 +62,7 @@ export default function CommandPalette({
       ? [
           {
             id: 'nav-dashboard',
-            label: 'Dashboard',
+            label: 'Home',
             icon: Home01Icon,
             action: () => go('/'),
             keywords: 'home overview',
@@ -88,38 +85,15 @@ export default function CommandPalette({
     },
   ]
 
-  const adminItems: Array<PaletteItem> = isAdmin
-    ? [
-        {
-          id: 'nav-users',
-          label: 'Users',
-          icon: UserMultiple02Icon,
-          action: () => go('/settings/users'),
-          keywords: 'team members invite',
-        },
-        {
-          id: 'nav-runners',
-          label: 'Runners',
-          icon: ComputerIcon,
-          action: () => go('/settings/runners'),
-          keywords: 'machines agents workers',
-        },
-        {
-          id: 'nav-sources',
-          label: 'Sources',
-          icon: LinkSquare01Icon,
-          action: () => go('/settings/integrations'),
-          keywords: 'github gitlab integrations',
-        },
-        {
-          id: 'nav-preferences',
-          label: 'Preferences',
-          icon: Settings01Icon,
-          action: () => go('/settings/preferences'),
-          keywords: 'settings config',
-        },
-      ]
-    : []
+  const adminItems: Array<PaletteItem> = settingsGroupsForRole(authUser?.role)
+    .flatMap((group) => group.items)
+    .map((item) => ({
+      id: item.to,
+      label: item.title,
+      icon: item.icon,
+      action: () => go(item.to),
+      keywords: item.description,
+    }))
 
   const actionItems: Array<PaletteItem> = canWriteProjects
     ? [
@@ -144,15 +118,29 @@ export default function CommandPalette({
   )
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange}>
+    <CommandDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Quick open"
+      description="Open a page, project, or action."
+    >
       <Command>
         <CommandInput
           placeholder={
             isQaViewer
-              ? 'Search builds and pages...'
-              : 'Search projects, pages, actions...'
+              ? 'Find a page...'
+              : 'Find recent projects, pages, actions...'
           }
         />
+        {!isQaViewer ? (
+          <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
+            {error
+              ? 'Projects could not be loaded. Open Projects to retry.'
+              : isLoading
+                ? 'Loading recent projects…'
+                : 'Includes up to 50 recent projects. Open Projects to search all.'}
+          </p>
+        ) : null}
         <CommandList>
           <CommandEmpty>No results found.</CommandEmpty>
           <CommandGroup heading="Navigation">
@@ -179,7 +167,7 @@ export default function CommandPalette({
           {adminItems.length > 0 ? (
             <>
               <CommandSeparator />
-              <CommandGroup heading="Admin">
+              <CommandGroup heading="Settings">
                 {adminItems.map((item) => {
                   const Icon = item.icon
 

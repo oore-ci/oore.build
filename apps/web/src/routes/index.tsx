@@ -53,7 +53,7 @@ const TriggerBuildDrawer = lazy(
 export const Route = createFileRoute('/')({
   staticData: {
     breadcrumb: {
-      title: 'Dashboard',
+      title: 'Home',
     },
   },
   component: IndexPage,
@@ -392,7 +392,7 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
     <PageLayout width="wide">
       <div className="flex flex-col gap-8">
         <PageHeader
-          title="Dashboard"
+          title="Home"
           actions={
             canShowRunBuild ? (
               <Suspense fallback={null}>
