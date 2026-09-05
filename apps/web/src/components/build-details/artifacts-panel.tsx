@@ -64,7 +64,7 @@ function ArtifactShareControl({ artifact }: { artifact: Artifact }) {
   const trigger = (
     <Button
       variant="outline"
-      size="icon-xs"
+      size="sm"
       aria-label={`Share options for ${artifact.name}`}
       title="Share options"
       disabled={expired}
@@ -74,6 +74,7 @@ function ArtifactShareControl({ artifact }: { artifact: Artifact }) {
       }}
     >
       <HugeiconsIcon icon={Share08Icon} />
+      Share
     </Button>
   )
 
@@ -109,11 +110,11 @@ function ArtifactRow({
     <Item
       variant="outline"
       size="xs"
-      className={expired ? 'opacity-50' : undefined}
+      className={expired ? 'flex-wrap opacity-50' : 'flex-wrap'}
     >
-      <ItemContent>
-        <ItemTitle>{artifact.name}</ItemTitle>
-        <ItemDescription className="flex items-center gap-1.5">
+      <ItemContent className="min-w-0 basis-40">
+        <ItemTitle className="break-all">{artifact.name}</ItemTitle>
+        <ItemDescription className="flex flex-wrap items-center gap-1.5">
           <Badge variant="outline" className="text-[10px]">
             {artifact.artifact_type}
           </Badge>
@@ -133,7 +134,7 @@ function ArtifactRow({
         {installReady ? (
           <Button
             variant="outline"
-            size="icon-xs"
+            size="sm"
             render={
               <Link
                 to="/builds/$buildId"
@@ -149,11 +150,12 @@ function ArtifactRow({
             title="Install"
           >
             <HugeiconsIcon icon={Download04Icon} />
+            Install
           </Button>
         ) : (
           <Button
             variant="outline"
-            size="icon-xs"
+            size="sm"
             title="Download"
             aria-label={`Download ${artifact.name}`}
             onClick={() => onDownload(artifact.id, artifact.name)}
@@ -164,6 +166,7 @@ function ArtifactRow({
             ) : (
               <HugeiconsIcon icon={Download04Icon} />
             )}
+            Download
           </Button>
         )}
         {canManageShareLinks ? (
@@ -223,15 +226,21 @@ export function ArtifactsPanel({
           </p>
         ) : (
           <div className="space-y-2">
-            {artifacts.map((artifact) => (
-              <ArtifactRow
-                key={artifact.id}
-                artifact={artifact}
-                isDownloadPending={downloadMutation.isPending}
-                onDownload={handleDownload}
-                canManageShareLinks={canManageShareLinks}
-              />
-            ))}
+            {[...artifacts]
+              .sort(
+                (a, b) =>
+                  Number(artifactInstallReadiness(b).ready) -
+                  Number(artifactInstallReadiness(a).ready),
+              )
+              .map((artifact) => (
+                <ArtifactRow
+                  key={artifact.id}
+                  artifact={artifact}
+                  isDownloadPending={downloadMutation.isPending}
+                  onDownload={handleDownload}
+                  canManageShareLinks={canManageShareLinks}
+                />
+              ))}
           </div>
         )}
       </CardContent>

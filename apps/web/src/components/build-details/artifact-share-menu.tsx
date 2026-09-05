@@ -117,13 +117,14 @@ export default function ArtifactShareMenu({
           render={
             <Button
               variant="outline"
-              size="icon-xs"
+              size="sm"
               aria-label={`Share options for ${artifact.name}`}
               title="Share options"
             />
           }
         >
           <HugeiconsIcon icon={Share08Icon} />
+          Share
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-auto">
           <DropdownMenuGroup>
@@ -132,7 +133,7 @@ export default function ArtifactShareMenu({
               disabled={downloadMutation.isPending}
             >
               <HugeiconsIcon icon={Copy01Icon} />
-              Copy download link
+              Copy temporary download link
             </DropdownMenuItem>
             <DropdownMenuItem onClick={openShareDialog}>
               <HugeiconsIcon icon={Share08Icon} />
@@ -151,7 +152,7 @@ export default function ArtifactShareMenu({
             <DialogDescription>
               {createdToken
                 ? 'Copy this link to share. It will not be shown again.'
-                : `Generate a scoped download link for "${artifact.name}".`}
+                : `Anyone with this link can download "${artifact.name}" without signing in until it expires or is revoked. Share it only with intended recipients.`}
             </DialogDescription>
           </DialogHeader>
 

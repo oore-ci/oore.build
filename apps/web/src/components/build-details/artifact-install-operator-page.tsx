@@ -69,7 +69,9 @@ export default function OperatorArtifactInstallPage({
   const canInstall =
     readiness.ready && !expired && !wrongPhone && !needsSafari && !isDesktopIos
   const appName =
-    iosApp?.displayName ?? artifact.name.replace(/\.(apk|ipa)$/i, '')
+    iosApp?.displayName ??
+    build.context?.project_name ??
+    artifact.name.replace(/\.(apk|ipa)$/i, '')
 
   function handleInstall() {
     installMutation.mutate(artifact.id, {
@@ -123,6 +125,9 @@ export default function OperatorArtifactInstallPage({
             {artifact.expires_at != null
               ? ` · ${expiryLabel(artifact.expires_at)}`
               : ''}
+          </p>
+          <p className="mt-1 text-sm break-all text-muted-foreground">
+            Build #{build.build_number} · {artifact.name}
           </p>
           {iosApp ? (
             <p className="mt-1 text-xs text-muted-foreground">
@@ -225,6 +230,10 @@ export default function OperatorArtifactInstallPage({
       </section>
 
       <section className="flex flex-col gap-4 pt-1">
+        <p className="text-sm text-muted-foreground">
+          An install page link requires Oore sign-in and access to this project.
+          The file must still be available when your teammate opens it.
+        </p>
         <h2 className="text-sm font-medium">Before you install</h2>
         {isIos ? (
           <ol className="flex flex-col gap-3 text-sm text-muted-foreground">
@@ -248,11 +257,18 @@ export default function OperatorArtifactInstallPage({
           <ol className="flex flex-col gap-3 text-sm text-muted-foreground">
             <li className="flex gap-3">
               <span className="font-mono text-foreground">01</span>
-              <span>Tap Install to download the APK.</span>
+              <span>
+                {device === 'other'
+                  ? 'Choose Download APK, then transfer the file to your Android device.'
+                  : 'Tap Install to download the APK.'}
+              </span>
             </li>
             <li className="flex gap-3">
               <span className="font-mono text-foreground">02</span>
-              <span>Allow this browser to install unknown apps if asked.</span>
+              <span>
+                On Android, allow the browser or file manager to install this
+                app if asked.
+              </span>
             </li>
             <li className="flex gap-3">
               <span className="font-mono text-foreground">03</span>
