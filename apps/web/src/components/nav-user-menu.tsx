@@ -220,21 +220,27 @@ export default function NavUserMenu({
                 <HugeiconsIcon icon={Sun03Icon} size={16} />
                 Light
                 {theme === 'light' ? (
-                  <span className="ml-auto text-xs text-primary">Active</span>
+                  <span className="ml-auto text-xs text-foreground">
+                    Active
+                  </span>
                 ) : null}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setTheme('dark')}>
                 <HugeiconsIcon icon={Moon02Icon} size={16} />
                 Dark
                 {theme === 'dark' ? (
-                  <span className="ml-auto text-xs text-primary">Active</span>
+                  <span className="ml-auto text-xs text-foreground">
+                    Active
+                  </span>
                 ) : null}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setTheme('system')}>
                 <HugeiconsIcon icon={SmartPhone01Icon} size={16} />
                 System
                 {theme === 'system' ? (
-                  <span className="ml-auto text-xs text-primary">Active</span>
+                  <span className="ml-auto text-xs text-foreground">
+                    Active
+                  </span>
                 ) : null}
               </DropdownMenuItem>
             </DropdownMenuGroup>

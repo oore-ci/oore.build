@@ -507,7 +507,7 @@ function LoginPage() {
                       href="https://docs.oore.build/operate/access/cloudflare-access"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-block text-xs text-primary underline underline-offset-2"
+                      className="inline-block text-xs text-foreground underline underline-offset-2"
                     >
                       Open the Cloudflare Access guide
                     </a>
@@ -605,7 +605,7 @@ function LoginPage() {
                       </ItemContent>
                       <ItemActions>
                         {isActive ? (
-                          <span className="flex items-center gap-1 text-xs text-primary">
+                          <span className="flex items-center gap-1 text-xs text-foreground">
                             <HugeiconsIcon icon={Tick02Icon} size={14} />
                             Active
                           </span>
