@@ -38,6 +38,8 @@ export default function TerminalLogViewer({
   onRetryLogs,
   isTerminal = false,
 }: TerminalLogViewerProps) {
+  'use no memo' // TanStack Virtual updates its instance in place.
+
   const [userSelectedStep, setUserSelectedStep] = useState<string | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [wrapLines, setWrapLines] = useState(false)
