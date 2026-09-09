@@ -2629,18 +2629,44 @@ export function spaCacheControl(pathname) {
 export function spaResponseHeaders(pathname) {
   return {
     'Cache-Control': spaCacheControl(pathname),
+    Vary: 'Accept-Encoding',
     'Content-Security-Policy': "frame-ancestors 'none'",
     'X-Frame-Options': 'DENY',
   }
 }
 
-function spaFileResponse(filePath, pathname) {
-  return new Response(Bun.file(filePath), {
-    headers: spaResponseHeaders(pathname),
-  })
+export function spaFileResponse(filePath, pathname, acceptEncoding = '') {
+  const file = Bun.file(filePath)
+  const headers = { ...spaResponseHeaders(pathname), 'Content-Type': file.type }
+  const encodings = new Map(
+    acceptEncoding
+      .toLowerCase()
+      .split(',')
+      .map((part) => {
+        const [name, ...parameters] = part.trim().split(';')
+        const quality = parameters.find((parameter) =>
+          parameter.trim().startsWith('q='),
+        )
+        return [name.trim(), quality ? Number(quality.trim().slice(2)) : 1]
+      }),
+  )
+  const gzipQuality = encodings.get('gzip') ?? encodings.get('*') ?? 0
+  if (
+    gzipQuality > 0 &&
+    gzipQuality <= 1 &&
+    file.size >= 1024 &&
+    /\.(?:html|js|css|json|svg|txt|xml)$/.test(filePath)
+  ) {
+    headers['Content-Encoding'] = 'gzip'
+    return new Response(
+      file.stream().pipeThrough(new CompressionStream('gzip')),
+      { headers },
+    )
+  }
+  return new Response(file, { headers })
 }
 
-function serveSpa(distDir, pathname, acceptHeader) {
+function serveSpa(distDir, pathname, acceptHeader, acceptEncoding) {
   const assetPath = resolveAssetPath(distDir, pathname)
   if (!assetPath) {
     return new Response('Not found', { status: 404 })
@@ -2649,12 +2675,12 @@ function serveSpa(distDir, pathname, acceptHeader) {
   if (isDirectory(assetPath)) {
     const indexPath = path.join(assetPath, 'index.html')
     if (fileExists(indexPath)) {
-      return spaFileResponse(indexPath, '/')
+      return spaFileResponse(indexPath, '/', acceptEncoding)
     }
   }
 
   if (fileExists(assetPath)) {
-    return spaFileResponse(assetPath, pathname)
+    return spaFileResponse(assetPath, pathname, acceptEncoding)
   }
 
   const wantsHtml =
@@ -2664,7 +2690,7 @@ function serveSpa(distDir, pathname, acceptHeader) {
     if (!fileExists(indexPath)) {
       return new Response('index.html not found', { status: 500 })
     }
-    return spaFileResponse(indexPath, '/')
+    return spaFileResponse(indexPath, '/', acceptEncoding)
   }
 
   return new Response('Not found', { status: 404 })
@@ -2872,7 +2898,12 @@ async function main() {
       }
 
       const acceptHeader = request.headers.get('accept') || ''
-      return serveSpa(distDir, url.pathname, acceptHeader)
+      return serveSpa(
+        distDir,
+        url.pathname,
+        acceptHeader,
+        request.headers.get('accept-encoding') || '',
+      )
     },
   })
 

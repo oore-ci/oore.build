@@ -268,6 +268,7 @@ validate-shell:
 validate-ci: validate-workflows validate-shell test-deployment-headers
 
 validate-web-launcher: build-web
+	bun test apps/web/tools/oore-web.test.js
 	bash tools/validate-standalone-web.sh
 
 validate-frontend: format-check lint-web validate-web-launcher

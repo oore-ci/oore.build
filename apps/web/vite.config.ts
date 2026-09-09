@@ -46,6 +46,13 @@ export default defineConfig({
   ],
   build: {
     manifest: true,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [{ name: 'initial', tags: ['$initial'] }],
+        },
+      },
+    },
   },
   resolve: {
     alias: {
