@@ -647,7 +647,7 @@ fn recovery_privileges_check(service_user: &str) -> RuntimeUpdateCheck {
             denied.join(", ")
         )),
         fix: Some(format!(
-            "If a web update fails during restart, check logs/update-supervisor.log and run `sudo launchctl kickstart -k system/{DAEMON_SERVICE_LABEL}` from Terminal on the backend Mac."
+            "Run `oore setup` again from Terminal on the backend Mac to grant the rollback rule in /etc/sudoers.d/oore-update-recovery. Until then, if an update fails during restart, run `sudo launchctl kickstart -k system/{DAEMON_SERVICE_LABEL}`."
         )),
     }
 }
