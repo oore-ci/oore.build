@@ -3791,7 +3791,7 @@ impl BuildAuthorityState {
     fn transient_failure(&self) -> anyhow::Result<()> {
         let failures = self
             .consecutive_failures
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 Some(value.saturating_add(1))
             })
             .unwrap_or(u8::MAX)
