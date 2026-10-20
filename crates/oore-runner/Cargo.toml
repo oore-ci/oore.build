@@ -14,6 +14,7 @@ base64.workspace = true
 hex.workspace = true
 libc = "0.2"
 oore-contract = { path = "../oore-contract" }
+oore-google-play = { path = "../oore-google-play" }
 reqwest.workspace = true
 rand.workspace = true
 serde.workspace = true

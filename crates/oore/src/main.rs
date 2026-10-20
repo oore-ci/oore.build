@@ -9516,7 +9516,7 @@ fn daemon_data_paths_from_plist(
     };
     let data_dir = env_value("OORED_DATA_DIR")
         .or_else(|| env_value("OORE_DATA_DIR"))
-        .map(&absolute)
+        .map(absolute)
         .or_else(|| {
             env_value("HOME").map(|home| {
                 absolute(home)
@@ -9529,10 +9529,10 @@ fn daemon_data_paths_from_plist(
     let database = value_from_program_arguments(&program_arguments, "--state-file")
         .as_deref()
         .or_else(|| env_value("OORE_SETUP_STATE_FILE"))
-        .map(&absolute)
+        .map(absolute)
         .unwrap_or_else(|| data_dir.join(BACKUP_DATABASE_FILE));
     let key = env_value("OORE_ENCRYPTION_KEY_FILE")
-        .map(&absolute)
+        .map(absolute)
         .unwrap_or_else(|| data_dir.join(BACKUP_KEY_FILE));
     Ok((database, key))
 }
@@ -11734,27 +11734,84 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
 
 async fn handle_deferred_update(args: UpdateArgs) -> anyhow::Result<()> {
     let install_root = resolve_install_root()?;
-    let _lifecycle_lock = install_lock::InstallLock::acquire(&install_root)?;
     let status_path =
         require_deferred_path(args.deferred_status_file.as_ref(), "deferred-status-file")?;
-    update_supervisor::record_owned_result(&status_path, run_deferred_update(&args, &status_path))
-        .await
+    update_supervisor::record_owned_result(&status_path, async {
+        let _lifecycle_lock = install_lock::InstallLock::acquire(&install_root)?;
+        run_deferred_update(&args, &status_path).await
+    })
+    .await
 }
 
 async fn handle_update_supervisor(args: UpdateSupervisorArgs) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
+    supervise_update_request(&resolve_install_root()?, &args.request_file).await
+}
 
-    let install_root = resolve_install_root()?;
+async fn supervise_update_request(install_root: &Path, request_file: &Path) -> anyhow::Result<()> {
+    let status_path = install_root.join(".runtime-update-status.json");
     let expected = install_root
         .join("run/runtime-update-queue")
         .join("request.json");
+    // A launch with nothing queued has no attempt to report on.
     anyhow::ensure!(
-        args.request_file == expected,
+        install_path_exists(&expected)?,
+        "no runtime update request is queued at {}",
+        expected.display()
+    );
+    let claimed = claim_update_request(install_root, request_file, &expected).and_then(|active| {
+        match read_claimed_update_request(&active, &status_path) {
+            Ok(request) => Ok((active, request)),
+            Err(error) => {
+                let _ = fs::remove_file(&active);
+                Err(error)
+            }
+        }
+    });
+    let (active, request) = match claimed {
+        Ok(claimed) => claimed,
+        Err(error) => {
+            // Drop the unusable request so the next click can queue a fresh attempt.
+            let _ = fs::remove_file(&expected);
+            update_supervisor::record_failure(&status_path, &error)?;
+            return Err(error);
+        }
+    };
+    let result = handle_deferred_update(UpdateArgs {
+        check: false,
+        force: false,
+        channel: None,
+        repo: None,
+        staged_release: None,
+        ensure_managed_runner: false,
+        deferred_parent_pid: Some(request.parent_pid),
+        deferred_state_file: Some(request.database),
+        deferred_key_file: Some(request.key),
+        deferred_daemon_url: Some(request.daemon_url),
+        deferred_status_file: Some(request.status),
+    })
+    .await;
+    let cleanup = fs::remove_file(&active).context("failed to clear runtime update request");
+    match (result, cleanup) {
+        (Err(error), _) => Err(error),
+        (Ok(()), Err(error)) => Err(error),
+        (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
+fn claim_update_request(
+    install_root: &Path,
+    request_file: &Path,
+    expected: &Path,
+) -> anyhow::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    anyhow::ensure!(
+        request_file == expected,
         "runtime update request must be {}",
         expected.display()
     );
-    let metadata = fs::symlink_metadata(&args.request_file)
-        .with_context(|| format!("failed to inspect {}", args.request_file.display()))?;
+    let metadata = fs::symlink_metadata(request_file)
+        .with_context(|| format!("failed to inspect {}", request_file.display()))?;
     anyhow::ensure!(
         metadata.file_type().is_file(),
         "runtime update request is not a file"
@@ -11771,34 +11828,23 @@ async fn handle_update_supervisor(args: UpdateSupervisorArgs) -> anyhow::Result<
     let active = install_root
         .join("run")
         .join(format!("runtime-update-active-{}.json", std::process::id()));
-    fs::rename(&args.request_file, &active).context("failed to claim runtime update request")?;
-    let result = async {
-        let request: DeferredRuntimeUpdateRequest = serde_json::from_slice(
-            &fs::read(&active).context("failed to read runtime update request")?,
-        )
-        .context("invalid runtime update request")?;
-        handle_deferred_update(UpdateArgs {
-            check: false,
-            force: false,
-            channel: None,
-            repo: None,
-            staged_release: None,
-            ensure_managed_runner: false,
-            deferred_parent_pid: Some(request.parent_pid),
-            deferred_state_file: Some(request.database),
-            deferred_key_file: Some(request.key),
-            deferred_daemon_url: Some(request.daemon_url),
-            deferred_status_file: Some(request.status),
-        })
-        .await
-    }
-    .await;
-    let cleanup = fs::remove_file(&active).context("failed to clear runtime update request");
-    match (result, cleanup) {
-        (Err(error), _) => Err(error),
-        (Ok(()), Err(error)) => Err(error),
-        (Ok(()), Ok(())) => Ok(()),
-    }
+    fs::rename(request_file, &active).context("failed to claim runtime update request")?;
+    Ok(active)
+}
+
+fn read_claimed_update_request(
+    active: &Path,
+    status_path: &Path,
+) -> anyhow::Result<DeferredRuntimeUpdateRequest> {
+    let request: DeferredRuntimeUpdateRequest =
+        serde_json::from_slice(&fs::read(active).context("failed to read runtime update request")?)
+            .context("invalid runtime update request")?;
+    anyhow::ensure!(
+        request.status == status_path,
+        "runtime update status file must be {}",
+        status_path.display()
+    );
+    Ok(request)
 }
 
 async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
@@ -12455,6 +12501,106 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn queue_update_request(
+        install_root: &Path,
+        request: &serde_json::Value,
+        mode: u32,
+    ) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let request_file = install_root.join("run/runtime-update-queue/request.json");
+        fs::create_dir_all(request_file.parent().unwrap()).unwrap();
+        fs::write(&request_file, serde_json::to_vec(request).unwrap()).unwrap();
+        fs::set_permissions(&request_file, fs::Permissions::from_mode(mode)).unwrap();
+        request_file
+    }
+
+    fn recorded_update_status(install_root: &Path) -> oore_contract::RuntimeUpdateStatus {
+        serde_json::from_slice(&fs::read(install_root.join(".runtime-update-status.json")).unwrap())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn update_supervisor_records_failed_pre_checks_and_clears_the_request() {
+        let install_root = tempfile::tempdir().unwrap();
+        let status = install_root.path().join(".runtime-update-status.json");
+        let request = serde_json::json!({
+            "parent_pid": 4242,
+            "database": "/tmp/oore.db",
+            "key": "/tmp/oore.key",
+            "daemon_url": "http://127.0.0.1:8787",
+            "status": status,
+        });
+        let request_file = queue_update_request(install_root.path(), &request, 0o644);
+
+        let error = supervise_update_request(install_root.path(), &request_file)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "runtime update request permissions are too broad"
+        );
+        let recorded = recorded_update_status(install_root.path());
+        assert_eq!(recorded.phase, oore_contract::RuntimeUpdatePhase::Failed);
+        assert_eq!(
+            recorded.error.as_deref(),
+            Some("runtime update request permissions are too broad")
+        );
+        assert!(!request_file.exists());
+    }
+
+    #[tokio::test]
+    async fn update_supervisor_without_a_request_keeps_the_last_status() {
+        let install_root = tempfile::tempdir().unwrap();
+        let request_file = install_root
+            .path()
+            .join("run/runtime-update-queue/request.json");
+
+        supervise_update_request(install_root.path(), &request_file)
+            .await
+            .unwrap_err();
+
+        assert!(
+            !install_root
+                .path()
+                .join(".runtime-update-status.json")
+                .exists()
+        );
+    }
+
+    #[tokio::test]
+    async fn update_supervisor_records_invalid_requests_and_clears_the_claim() {
+        let install_root = tempfile::tempdir().unwrap();
+        let request = serde_json::json!({ "parent_pid": 4242 });
+        let request_file = queue_update_request(install_root.path(), &request, 0o600);
+
+        supervise_update_request(install_root.path(), &request_file)
+            .await
+            .unwrap_err();
+
+        let recorded = recorded_update_status(install_root.path());
+        assert_eq!(recorded.phase, oore_contract::RuntimeUpdatePhase::Failed);
+        assert!(
+            recorded
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("invalid runtime update request"))
+        );
+        assert!(!request_file.exists());
+        assert_eq!(
+            fs::read_dir(install_root.path().join("run"))
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("runtime-update-active-"))
+                .count(),
+            0
+        );
+    }
 
     #[tokio::test]
     async fn setup_states_keep_their_database_encoding() {

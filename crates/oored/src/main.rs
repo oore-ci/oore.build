@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -216,11 +216,8 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
 }
 
 fn loopback_companion_addr(addr: SocketAddr) -> Option<SocketAddr> {
-    match addr.ip() {
-        ip if ip.is_loopback() || ip.is_unspecified() => None,
-        IpAddr::V4(_) => Some(SocketAddr::from(([127, 0, 0, 1], addr.port()))),
-        IpAddr::V6(_) => Some(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], addr.port()))),
-    }
+    let ip = addr.ip();
+    (!ip.is_loopback() && !ip.is_unspecified()).then(|| oored::loopback_maintenance_addr(addr))
 }
 
 fn validate_runner_mode(value: Result<String, std::env::VarError>) -> anyhow::Result<()> {
@@ -895,11 +892,7 @@ async fn verify_daemon_health(listen: &str) -> anyhow::Result<()> {
     let address: SocketAddr = listen
         .parse()
         .with_context(|| format!("invalid daemon listen address: {listen}"))?;
-    let loopback = match address.ip() {
-        IpAddr::V4(_) => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-        IpAddr::V6(_) => IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
-    };
-    let base = format!("http://{}", SocketAddr::new(loopback, address.port()));
+    let base = format!("http://{}", oored::loopback_maintenance_addr(address));
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(3))
@@ -1181,10 +1174,27 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_runner_mode;
+    use super::{loopback_companion_addr, validate_runner_mode};
     use std::env::VarError;
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
+
+    #[test]
+    fn private_interface_listeners_get_a_loopback_companion() {
+        let netbird = "100.92.14.7:8787".parse().unwrap();
+        assert_eq!(
+            loopback_companion_addr(netbird),
+            Some("127.0.0.1:8787".parse().unwrap())
+        );
+        let ipv6 = "[fd7a:115c:a1e0::1]:8787".parse().unwrap();
+        assert_eq!(
+            loopback_companion_addr(ipv6),
+            Some("[::1]:8787".parse().unwrap())
+        );
+        for listen in ["127.0.0.1:8787", "0.0.0.0:8787", "[::]:8787"] {
+            assert_eq!(loopback_companion_addr(listen.parse().unwrap()), None);
+        }
+    }
 
     #[test]
     fn runner_mode_keeps_external_only_compatibility() {

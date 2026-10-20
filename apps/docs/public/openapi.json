@@ -3972,6 +3972,395 @@
         ]
       }
     },
+    "/v1/pipelines/{pipeline_id}/publish/google-play": {
+      "get": {
+        "tags": [
+          "Pipeline Publishing"
+        ],
+        "summary": "Get Google Play publish settings",
+        "description": "Requires project read access. Also reports whether the referenced\nservice account secret exists in a visible scope.",
+        "operationId": "get_pipeline_google_play_publish",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Google Play publish settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineGooglePlayPublishResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Pipeline Publishing"
+        ],
+        "summary": "Update Google Play publish settings",
+        "description": "Requires the manage pipelines project permission. The service account\nJSON is stored separately as a secret and referenced by name.",
+        "operationId": "update_pipeline_google_play_publish",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GooglePlayPublishConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineGooglePlayPublishResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/pipelines/{pipeline_id}/secrets": {
+      "get": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "List pipeline secrets",
+        "description": "Returns secret names and timestamps. Values are never returned. Requires project read access.",
+        "operationId": "list_pipeline_secrets",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSecretsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Create pipeline secret",
+        "description": "Stores an encrypted value. The response never contains it. Requires the manage pipelines project permission.",
+        "operationId": "create_pipeline_secret",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Secret created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name or value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A secret with this name already exists in this scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/pipelines/{pipeline_id}/secrets/{name}": {
+      "put": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Rotate pipeline secret",
+        "description": "Replaces the stored value. Requires the manage pipelines project permission.",
+        "operationId": "rotate_pipeline_secret",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Secret rotated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Delete pipeline secret",
+        "operationId": "delete_pipeline_secret",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects": {
       "get": {
         "tags": [
@@ -5147,6 +5536,271 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/secrets": {
+      "get": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "List project secrets",
+        "description": "Returns secret names and timestamps. Values are never returned. Requires project read access.",
+        "operationId": "list_project_secrets",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSecretsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Create project secret",
+        "description": "Stores an encrypted value. The response never contains it. Requires the manage pipelines project permission.",
+        "operationId": "create_project_secret",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Secret created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name or value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A secret with this name already exists in this scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/secrets/{name}": {
+      "put": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Rotate project secret",
+        "description": "Replaces the stored value. Requires the manage pipelines project permission.",
+        "operationId": "rotate_project_secret",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Secret rotated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Delete project secret",
+        "operationId": "delete_project_secret",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/public/setup-status": {
       "get": {
         "tags": [
@@ -5177,6 +5831,903 @@
             }
           }
         }
+      }
+    },
+    "/v1/release-events": {
+      "get": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "List release events",
+        "description": "Recent release history entries across projects the caller can read, newest first.",
+        "operationId": "list_release_events",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "description": "Filter by project",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 200 (default 50)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Release activity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListReleaseActivityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/releases": {
+      "get": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "List releases",
+        "description": "Releases in projects the caller can read, newest first.",
+        "operationId": "list_releases",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "description": "Filter by project",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "build_id",
+            "in": "query",
+            "description": "Filter by build",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Filter by one state or comma-separated states",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 200 (default 50)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Page offset (default 0)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Release list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListReleasesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Create release",
+        "description": "Records a release for a succeeded build. Requires the project maintainer role.",
+        "operationId": "create_release",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReleaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Created release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Build has not succeeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/releases/{release_id}": {
+      "get": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Get release",
+        "description": "Release detail with its full state history, oldest first.",
+        "operationId": "get_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Release detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseDetailResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/releases/{release_id}/approve": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Approve release",
+        "description": "Records the maintainer approval required by the release policy. Writes history, an audit log entry, and a release event.",
+        "operationId": "approve_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `fraction` is accepted by raise only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/releases/{release_id}/complete": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Complete rollout",
+        "description": "Rolls out to 100%. Requires maintainer. Writes history, an audit log entry, and a release event.",
+        "operationId": "complete_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `fraction` is accepted by raise only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/releases/{release_id}/halt": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Halt rollout",
+        "description": "Halts the rollout at the store. A halted release never advances until resumed. Requires developer or maintainer. Writes history, an audit log entry, and a release event.",
+        "operationId": "halt_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `fraction` is accepted by raise only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/releases/{release_id}/pause": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Pause rollout",
+        "description": "Stops scheduled steps. Requires developer or maintainer. Writes history, an audit log entry, and a release event.",
+        "operationId": "pause_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `fraction` is accepted by raise only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/releases/{release_id}/raise": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Raise rollout",
+        "description": "Raises the rollout to `fraction`, or to the next policy step. Raising to 1 completes the release. Requires maintainer. Writes history, an audit log entry, and a release event.",
+        "operationId": "raise_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `fraction` is accepted by raise only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/releases/{release_id}/resume": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Resume rollout",
+        "description": "Resumes a paused or halted release; the next step is one interval away. Requires maintainer. Writes history, an audit log entry, and a release event.",
+        "operationId": "resume_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `fraction` is accepted by raise only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
       }
     },
     "/v1/runners": {
@@ -6176,6 +7727,294 @@
         ]
       }
     },
+    "/v1/runners/{runner_id}/jobs/{job_id}/publish": {
+      "get": {
+        "tags": [
+          "Pipeline Publishing"
+        ],
+        "summary": "Get job publish plan",
+        "description": "Returns enabled store publish settings and the build changelog to the\nassigned runner while the job is active.",
+        "operationId": "get_job_publish_plan",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-oore-signing-token",
+            "in": "header",
+            "description": "Job-scoped signing grant",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Publish plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerPublishPlan"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Runner authentication or signing grant is missing or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Runner does not match the active assignment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job is not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/runners/{runner_id}/jobs/{job_id}/publish-results": {
+      "post": {
+        "tags": [
+          "Pipeline Publishing"
+        ],
+        "summary": "Report a store upload",
+        "description": "Records a completed store upload for an active job.",
+        "operationId": "report_job_publish_result",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-oore-signing-token",
+            "in": "header",
+            "description": "Job-scoped signing grant",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerPublishResult"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Runner authentication or signing grant is missing or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Runner does not match the active assignment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job is not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/runners/{runner_id}/jobs/{job_id}/secrets": {
+      "get": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Get job-scoped secrets",
+        "description": "Returns resolved instance, project and pipeline secrets (narrowest scope\nwins) only to the assigned runner while the job is active. Both the runner\nbearer token and job-scoped signing grant are required.",
+        "operationId": "get_job_secrets",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-oore-signing-token",
+            "in": "header",
+            "description": "Job-scoped signing grant",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resolved secrets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerJobSecretsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Runner authentication or signing grant is missing or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Runner does not match the active assignment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job is not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Secrets could not be loaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/runners/{runner_id}/jobs/{job_id}/status": {
       "post": {
         "tags": [
@@ -6227,6 +8066,231 @@
           },
           "409": {
             "description": "Invalid state transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/secrets": {
+      "get": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "List instance secrets",
+        "description": "Returns secret names and timestamps. Values are never returned. Requires instance settings read access.",
+        "operationId": "list_instance_secrets",
+        "responses": {
+          "200": {
+            "description": "Secret names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSecretsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Create instance secret",
+        "description": "Stores an encrypted value. The response never contains it. Requires instance settings write access.",
+        "operationId": "create_instance_secret",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Secret created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name or value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A secret with this name already exists in this scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/secrets/{name}": {
+      "put": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Rotate instance secret",
+        "description": "Replaces the stored value. Requires instance settings write access.",
+        "operationId": "rotate_instance_secret",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Secret rotated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Delete instance secret",
+        "operationId": "delete_instance_secret",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -10053,17 +12117,24 @@
             "items": {
               "type": "string"
             },
-            "description": "Terminal build statuses to notify on. Empty or omitted means all terminal events."
+            "description": "Events to notify on. Empty or omitted means all events."
           },
           "name": {
             "type": "string"
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Scope the channel to one project. Omit for an instance-wide channel."
           },
           "secret": {
             "type": [
               "string",
               "null"
             ],
-            "description": "HMAC secret for signing webhook payloads (webhook only, optional)."
+            "description": "Webhook: HMAC secret for signing payloads. Slack: bot token with\n`users:read.email`, used to mention the triggering user. Optional."
           },
           "smtp_config": {
             "oneOf": [
@@ -10081,7 +12152,7 @@
               "string",
               "null"
             ],
-            "description": "Webhook/Mattermost incoming webhook URL (required for webhook/mattermost)."
+            "description": "Incoming webhook URL (required for webhook, mattermost and slack)."
           }
         }
       },
@@ -10195,6 +12266,85 @@
           }
         }
       },
+      "CreateReleaseRequest": {
+        "type": "object",
+        "required": [
+          "build_id",
+          "store",
+          "track"
+        ],
+        "properties": {
+          "artifact_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_id": {
+            "type": "string"
+          },
+          "package_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReleasePolicy"
+              }
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rollout_fraction": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Initial fraction; defaults to the first policy step."
+          },
+          "state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReleaseState",
+                "description": "Initial state; defaults to `rolling`."
+              }
+            ]
+          },
+          "store": {
+            "$ref": "#/components/schemas/ReleaseStore"
+          },
+          "track": {
+            "type": "string"
+          },
+          "version_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "version_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "CreateScopedDownloadTokenRequest": {
         "type": "object",
         "properties": {
@@ -10243,6 +12393,22 @@
             "type": "string"
           }
         }
+      },
+      "CreateSecretRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "DeleteNotificationChannelResponse": {
         "type": "object",
@@ -10655,6 +12821,92 @@
             "type": "string"
           }
         }
+      },
+      "GooglePlayPublishConfig": {
+        "type": "object",
+        "description": "Per-pipeline Google Play upload settings. Credentials are referenced by\nsecret name and never stored here.",
+        "required": [
+          "service_account_secret",
+          "track"
+        ],
+        "properties": {
+          "draft": {
+            "type": "boolean",
+            "description": "Create a draft release instead of rolling out."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "in_app_update_priority": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "In-app update priority, 0 to 5.",
+            "minimum": 0
+          },
+          "package_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Expected application id. When omitted, the AAB's package is used."
+          },
+          "release_notes": {
+            "$ref": "#/components/schemas/GooglePlayReleaseNotesSource"
+          },
+          "release_notes_dir": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_notes_locale": {
+            "type": "string"
+          },
+          "rollout_percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Initial staged rollout, 0 < percent <= 100. Omitted means 100."
+          },
+          "rollout_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReleasePolicy",
+                "description": "Staged rollout schedule, crash-rate halt and approval gate for the\nrelease record. Omitted means the default schedule with no halt."
+              }
+            ]
+          },
+          "service_account_secret": {
+            "type": "string",
+            "description": "Name of the secret holding the service account JSON key."
+          },
+          "track": {
+            "type": "string",
+            "description": "`internal`, `closed`, `open`, `production`, or a custom track name."
+          },
+          "upload_mapping": {
+            "type": "boolean",
+            "description": "Upload R8/ProGuard `mapping.txt` when the build produced one."
+          }
+        },
+        "additionalProperties": false
+      },
+      "GooglePlayReleaseNotesSource": {
+        "type": "string",
+        "description": "Where Google Play release notes come from.",
+        "enum": [
+          "none",
+          "changelog",
+          "repo_files"
+        ]
       },
       "HealthResponse": {
         "type": "object",
@@ -11367,6 +13619,39 @@
           }
         }
       },
+      "ListReleaseActivityResponse": {
+        "type": "object",
+        "required": [
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseActivityEvent"
+            }
+          }
+        }
+      },
+      "ListReleasesResponse": {
+        "type": "object",
+        "required": [
+          "releases",
+          "total"
+        ],
+        "properties": {
+          "releases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Release"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ListRepositoriesResponse": {
         "type": "object",
         "required": [
@@ -11407,6 +13692,20 @@
           "total": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ListSecretsResponse": {
+        "type": "object",
+        "required": [
+          "secrets"
+        ],
+        "properties": {
+          "secrets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecretSummary"
+            }
           }
         }
       },
@@ -11568,11 +13867,11 @@
             "items": {
               "type": "string"
             },
-            "description": "Which terminal build statuses trigger this channel. Empty means all."
+            "description": "Which events trigger this channel. Empty means all."
           },
           "has_secret": {
             "type": "boolean",
-            "description": "True if the channel has an HMAC secret configured (webhook only)."
+            "description": "True if the channel has a secret configured: the HMAC secret for\nwebhook channels, or the bot token used for mentions on Slack channels."
           },
           "has_smtp_config": {
             "type": "boolean",
@@ -11587,6 +13886,13 @@
           },
           "name": {
             "type": "string"
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Project this channel is scoped to. Absent means the channel receives\nevents from every project, plus instance-wide events such as runner\noffline."
           },
           "updated_at": {
             "type": "integer",
@@ -11610,7 +13916,8 @@
         "enum": [
           "webhook",
           "mattermost",
-          "email"
+          "email",
+          "slack"
         ]
       },
       "NotificationDelivery": {
@@ -11655,6 +13962,12 @@
             "type": "string"
           },
           "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_id": {
             "type": [
               "string",
               "null"
@@ -12025,6 +14338,40 @@
             "items": {
               "$ref": "#/components/schemas/BuildPlatform"
             }
+          }
+        }
+      },
+      "PipelineGooglePlayPublishResponse": {
+        "type": "object",
+        "required": [
+          "pipeline_id",
+          "service_account_secret_present"
+        ],
+        "properties": {
+          "config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GooglePlayPublishConfig",
+                "description": "Absent until publish settings are saved."
+              }
+            ]
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "service_account_secret_present": {
+            "type": "boolean",
+            "description": "Whether the referenced service account secret exists in a visible scope."
+          },
+          "updated_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           }
         }
       },
@@ -12437,6 +14784,13 @@
           "viewer"
         ]
       },
+      "PublishStore": {
+        "type": "string",
+        "enum": [
+          "google_play",
+          "app_store"
+        ]
+      },
       "ReEnableUserResponse": {
         "type": "object",
         "required": [
@@ -12454,7 +14808,9 @@
           "ok",
           "database",
           "migrations",
-          "encryption"
+          "encryption",
+          "version",
+          "package_version"
         ],
         "properties": {
           "database": {
@@ -12468,6 +14824,14 @@
           },
           "ok": {
             "type": "boolean"
+          },
+          "package_version": {
+            "type": "string",
+            "description": "Version of the running `oored` binary."
+          },
+          "version": {
+            "type": "string",
+            "description": "Installed release version from the install root's `VERSION` file."
           }
         }
       },
@@ -12584,6 +14948,387 @@
             "type": "string"
           }
         }
+      },
+      "Release": {
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "build_id",
+          "platform",
+          "store",
+          "track",
+          "state",
+          "rollout_fraction",
+          "policy",
+          "health",
+          "awaiting_approval",
+          "allowed_actions",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseAction"
+            },
+            "description": "Actions the caller may take now, from their project role and the state."
+          },
+          "approved_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "approved_by_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artifact_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "awaiting_approval": {
+            "type": "boolean"
+          },
+          "build_id": {
+            "type": "string"
+          },
+          "build_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "crash_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "crash_rate_threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "health": {
+            "$ref": "#/components/schemas/ReleaseHealth"
+          },
+          "id": {
+            "type": "string"
+          },
+          "next_fraction": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "next_step_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "package_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "platform": {
+            "type": "string",
+            "description": "`android` or `ios`, derived from the store."
+          },
+          "policy": {
+            "$ref": "#/components/schemas/ReleasePolicy"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rollout_fraction": {
+            "type": "number",
+            "format": "double",
+            "description": "Fraction of users, 0..1."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReleaseState"
+          },
+          "store": {
+            "$ref": "#/components/schemas/ReleaseStore"
+          },
+          "track": {
+            "type": "string",
+            "description": "Play track, or TestFlight group / `app_store`."
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "version_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "version_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ReleaseAction": {
+        "type": "string",
+        "description": "Manual controls on a release.",
+        "enum": [
+          "raise",
+          "pause",
+          "resume",
+          "halt",
+          "complete",
+          "approve"
+        ]
+      },
+      "ReleaseActionRequest": {
+        "type": "object",
+        "properties": {
+          "fraction": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Raise only: target fraction (0..1]. Defaults to the next policy step."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ReleaseActivityEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ReleaseHistoryEntry"
+          },
+          {
+            "type": "object",
+            "required": [
+              "release_id",
+              "project_id",
+              "build_id",
+              "store",
+              "track"
+            ],
+            "properties": {
+              "build_id": {
+                "type": "string"
+              },
+              "project_id": {
+                "type": "string"
+              },
+              "project_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "release_id": {
+                "type": "string"
+              },
+              "store": {
+                "$ref": "#/components/schemas/ReleaseStore"
+              },
+              "track": {
+                "type": "string"
+              },
+              "version_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A history entry with the release it belongs to, for activity feeds."
+      },
+      "ReleaseApprovalGate": {
+        "type": "string",
+        "description": "Where a maintainer approval is required, if anywhere.",
+        "enum": [
+          "none",
+          "before_upload",
+          "before_production"
+        ]
+      },
+      "ReleaseDetailResponse": {
+        "type": "object",
+        "required": [
+          "release",
+          "history"
+        ],
+        "properties": {
+          "history": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseHistoryEntry"
+            }
+          },
+          "release": {
+            "$ref": "#/components/schemas/Release"
+          }
+        }
+      },
+      "ReleaseHealth": {
+        "type": "string",
+        "enum": [
+          "unknown",
+          "healthy",
+          "warning",
+          "breached"
+        ]
+      },
+      "ReleaseHistoryEntry": {
+        "type": "object",
+        "required": [
+          "id",
+          "at",
+          "to_state"
+        ],
+        "properties": {
+          "actor_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "actor_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null when the daemon or a store made the change."
+          },
+          "at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "from_fraction": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "from_state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReleaseState",
+                "description": "Null for the entry that created the release."
+              }
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_fraction": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "to_state": {
+            "$ref": "#/components/schemas/ReleaseState"
+          }
+        }
+      },
+      "ReleasePolicy": {
+        "type": "object",
+        "description": "Staged rollout policy stored with each release.",
+        "properties": {
+          "approval": {
+            "$ref": "#/components/schemas/ReleaseApprovalGate"
+          },
+          "crash_rate_threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Crash rate (0..1) at or above which the daemon halts the rollout."
+          },
+          "interval_hours": {
+            "type": "number",
+            "format": "double",
+            "description": "Hours between automatic steps."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "Ascending rollout fractions in (0, 1]; the last step must be 1."
+          }
+        }
+      },
+      "ReleaseState": {
+        "type": "string",
+        "enum": [
+          "uploading",
+          "processing",
+          "in_review",
+          "rolling",
+          "paused",
+          "halted",
+          "complete",
+          "failed"
+        ]
+      },
+      "ReleaseStore": {
+        "type": "string",
+        "description": "Store a release is published to.",
+        "enum": [
+          "google_play",
+          "app_store"
+        ]
       },
       "RemoteAuthMode": {
         "type": "string",
@@ -12857,6 +15602,19 @@
           }
         }
       },
+      "RotateSecretRequest": {
+        "type": "object",
+        "description": "Replace a secret's value (rotation).",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "Runner": {
         "type": "object",
         "required": [
@@ -13064,12 +15822,114 @@
           }
         }
       },
+      "RunnerJobSecret": {
+        "type": "object",
+        "description": "A resolved secret delivered to the runner assigned to an active job.",
+        "required": [
+          "name",
+          "value",
+          "scope"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SecretScope"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "RunnerJobSecretsResponse": {
+        "type": "object",
+        "required": [
+          "secrets"
+        ],
+        "properties": {
+          "secrets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunnerJobSecret"
+            }
+          }
+        }
+      },
       "RunnerPolicyBlockReason": {
         "type": "string",
         "enum": [
           "instance_paused",
           "repository_unavailable"
         ]
+      },
+      "RunnerPublishPlan": {
+        "type": "object",
+        "description": "Publish work for the runner, fetched with the job-scoped grant.",
+        "properties": {
+          "changelog": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "google_play": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GooglePlayPublishConfig",
+                "description": "Present only when Google Play publishing is enabled."
+              }
+            ]
+          }
+        }
+      },
+      "RunnerPublishResult": {
+        "type": "object",
+        "description": "Outcome of a store upload, reported by the runner.",
+        "required": [
+          "store",
+          "track",
+          "package_name",
+          "version_code",
+          "status"
+        ],
+        "properties": {
+          "package_name": {
+            "type": "string"
+          },
+          "rollout_fraction": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Staged rollout fraction, 0 < f <= 1. Absent for drafts."
+          },
+          "status": {
+            "type": "string",
+            "description": "`completed`, `in_progress` or `draft`."
+          },
+          "store": {
+            "$ref": "#/components/schemas/PublishStore"
+          },
+          "track": {
+            "type": "string",
+            "description": "Store track as sent to the store (for Play: internal, alpha, beta, production or custom)."
+          },
+          "version_code": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "version_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       },
       "RunnerStatus": {
         "type": "string",
@@ -13124,6 +15984,64 @@
           "gitlab",
           "local_git"
         ]
+      },
+      "SecretResponse": {
+        "type": "object",
+        "required": [
+          "secret"
+        ],
+        "properties": {
+          "secret": {
+            "$ref": "#/components/schemas/SecretSummary"
+          }
+        }
+      },
+      "SecretScope": {
+        "type": "string",
+        "description": "Where a secret is defined. A job sees instance, project and pipeline secrets;\non a name clash the narrower scope wins.",
+        "enum": [
+          "instance",
+          "project",
+          "pipeline"
+        ]
+      },
+      "SecretSummary": {
+        "type": "object",
+        "description": "Secret metadata. Values are write-only and never returned by the user API.",
+        "required": [
+          "name",
+          "scope",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pipeline_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SecretScope"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       },
       "SetupCompleteResponse": {
         "type": "object",
@@ -13947,12 +16865,19 @@
               "null"
             ]
           },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New project scope. Omit to keep existing; pass empty string to make\nthe channel instance-wide."
+          },
           "secret": {
             "type": [
               "string",
               "null"
             ],
-            "description": "New HMAC secret. Omit to keep existing; pass empty string to clear."
+            "description": "New HMAC secret (webhook) or bot token (slack). Omit to keep existing;\npass empty string to clear."
           },
           "smtp_config": {
             "oneOf": [
@@ -14628,12 +17553,24 @@
       "description": "Pipeline configuration — build platforms, commands, triggers, concurrency."
     },
     {
+      "name": "Pipeline Publishing",
+      "description": "Store publishing settings. The runner uploads from its own host after a successful build."
+    },
+    {
+      "name": "Secrets",
+      "description": "Write-only secrets scoped to the instance, a project or a pipeline. Values are encrypted at rest, referenced as ${{ secrets.NAME }} and never returned."
+    },
+    {
       "name": "Pipeline Signing",
       "description": "Code signing configuration — Android keystores, iOS certificates/profiles."
     },
     {
       "name": "Builds",
       "description": "Build lifecycle — queue, list, detail, cancel."
+    },
+    {
+      "name": "Releases",
+      "description": "Store releases — staged rollout records with pause, halt, resume, complete and approval."
     },
     {
       "name": "Runners",
