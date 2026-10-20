@@ -18,14 +18,16 @@ use oore_contract::{
     PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
     PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
     RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse,
-    RunnerJobSecretsResponse, StepResult, artifact_pattern_matches, is_valid_pipeline_env_key,
-    parse_repository_pipeline_yaml, replace_secret_references, validate_artifact_pattern,
-    validate_repository_config_path,
+    RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult, StepResult,
+    artifact_pattern_matches, is_valid_pipeline_env_key, parse_repository_pipeline_yaml,
+    replace_secret_references, validate_artifact_pattern, validate_repository_config_path,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use zeroize::Zeroize;
+
+mod publish;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
 const OORE_ANDROID_KEYSTORE_PATH_ENV: &str = "OORE_ANDROID_KEYSTORE_PATH";
@@ -5075,7 +5077,185 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
         return (steps, Err(error));
     }
 
+    // Publishing runs only after every build, signing and artifact step
+    // succeeded; any earlier failure has already returned.
+    let publish_plan = match fetch_job_publish_plan(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &job.signing_token,
+    )
+    .await
+    {
+        Ok(plan) => plan,
+        Err(error) => {
+            return (
+                steps,
+                Err(anyhow::anyhow!(
+                    "Failed to load publish settings for this build: {error}"
+                )),
+            );
+        }
+    };
+    if let Some(play) = &publish_plan.google_play {
+        let step_name = "publish-play";
+        let started = now_unix();
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stdout",
+            &step_start_marker(step_name, "Upload the App Bundle to Google Play"),
+        )
+        .await;
+        let mut lines = Vec::new();
+        let result = publish::publish_to_google_play(
+            client,
+            &workspace,
+            &secrets,
+            publish_plan.changelog.as_deref(),
+            play,
+            &mut lines,
+        )
+        .await;
+        for line in lines {
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &line,
+            )
+            .await;
+        }
+        let finished = now_unix();
+        steps.push(StepResult {
+            name: step_name.to_string(),
+            status: if result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            }
+            .to_string(),
+            exit_code: Some(if result.is_ok() { 0 } else { 1 }),
+            started_at: started,
+            finished_at: finished,
+            duration_ms: (finished - started) * 1000,
+        });
+        match result {
+            Ok(published) => {
+                if let Err(error) = report_publish_result(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    &job.signing_token,
+                    &published,
+                )
+                .await
+                {
+                    let _ = append_runner_log_line(
+                        client,
+                        daemon_url,
+                        config,
+                        &job.build_id,
+                        log_seq,
+                        "stderr",
+                        &format!(
+                            "[oore-publish] Uploaded, but recording the release failed: {error:#}"
+                        ),
+                    )
+                    .await;
+                }
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &step_end_marker(step_name, "succeeded", Some(0)),
+                )
+                .await;
+            }
+            Err(error) => {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stderr",
+                    &format!("[oore-publish] {error:#}"),
+                )
+                .await;
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &step_end_marker(step_name, "failed", Some(1)),
+                )
+                .await;
+                return (steps, Err(error.context("publish-play failed")));
+            }
+        }
+    }
+
     (steps, Ok(()))
+}
+
+async fn fetch_job_publish_plan(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    signing_token: &str,
+) -> anyhow::Result<RunnerPublishPlan> {
+    let resp = client
+        .get(format!(
+            "{}/v1/runners/{}/jobs/{}/publish",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .header("x-oore-signing-token", signing_token)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("publish settings lookup failed: {}", resp.status());
+    }
+    Ok(resp.json().await?)
+}
+
+async fn report_publish_result(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    signing_token: &str,
+    result: &RunnerPublishResult,
+) -> anyhow::Result<()> {
+    let resp = client
+        .post(format!(
+            "{}/v1/runners/{}/jobs/{}/publish-results",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .header("x-oore-signing-token", signing_token)
+        .json(result)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("publish result report failed: {}", resp.status());
+    }
+    Ok(())
 }
 
 fn step_start_marker(name: &str, command: &str) -> String {
