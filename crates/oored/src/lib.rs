@@ -2531,6 +2531,10 @@ pub async fn build_router_with_recovery(
             "/v1/system/update",
             get(runtime_updates::get_status).post(runtime_updates::start_update),
         )
+        .route(
+            "/v1/system/update/preflight",
+            get(runtime_updates::get_preflight),
+        )
         .route("/v1/users", get(users::list_users))
         .route("/v1/users/invite", post(users::invite_user))
         .route(

@@ -160,6 +160,27 @@ async function refetchAfterPhaseSettles(
   }
 }
 
+// TODO(oore-client-js): switch to the generated operation once the client is
+// regenerated with `GET /v1/system/update/preflight`.
+const runtimeUpdatePreflightSchema = z.object({
+  ready: z.boolean(),
+  checked_at: z.number(),
+  checks: z.array(
+    z.object({
+      id: z.string(),
+      label: z.string(),
+      status: z.enum(['pass', 'warn', 'fail']),
+      detail: z.string().nullish(),
+      fix: z.string().nullish(),
+    }),
+  ),
+})
+
+export type RuntimeUpdatePreflight = z.infer<
+  typeof runtimeUpdatePreflightSchema
+>
+export type RuntimeUpdateCheck = RuntimeUpdatePreflight['checks'][number]
+
 async function fetchRuntimeHealth(
   path: string,
   signal?: AbortSignal,
@@ -315,6 +336,25 @@ export function useRuntimeUpdates() {
         : false,
   })
 
+  const backendPreflight = useQuery({
+    queryKey: scopeOoreQueryKey(instanceId, [
+      'runtime-update',
+      'backend-preflight',
+    ]),
+    queryFn: async ({ signal }) =>
+      runtimeUpdatePreflightSchema.parse(
+        await client.get({
+          responseStyle: 'data',
+          security: [{ scheme: 'bearer', type: 'http' }],
+          url: '/v1/system/update/preflight',
+          signal,
+        }),
+      ),
+    enabled: !!baseUrl && !!token && isOwner,
+    retry: false,
+    staleTime: 30_000,
+  })
+
   const startFrontendUpdate = useMutation({
     mutationFn: () => localUpdateRequest<RuntimeUpdateStatus>(token!, 'POST'),
     onSuccess: () => {
@@ -332,6 +372,15 @@ export function useRuntimeUpdates() {
       })
       void queryClient.invalidateQueries({ queryKey: backendUpdateKey })
     },
+    // A refused start usually means a check changed; show the current reason.
+    onError: () => {
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(instanceId, [
+          'runtime-update',
+          'backend-preflight',
+        ]),
+      })
+    },
   })
 
   const frontendOffered = releaseIsOffered(
@@ -344,7 +393,9 @@ export function useRuntimeUpdates() {
     backend: backendRelease.data,
     frontendOffered,
     backendOffered,
-    backendManaged: backendUpdate.data?.managed_service === true,
+    backendManaged:
+      backendPreflight.data?.ready ??
+      backendUpdate.data?.managed_service === true,
   })
 
   const coordinated = useRuntimeUpdateStore()
@@ -393,6 +444,7 @@ export function useRuntimeUpdates() {
     frontendRelease,
     backendRelease,
     backendUpdate,
+    backendPreflight,
     startFrontendUpdate,
     startBackendUpdate: startBackendUpdateMutation,
     frontendOffered,

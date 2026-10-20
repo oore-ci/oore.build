@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 
+pub mod runtime_update_preflight;
+
 // ── Setup state machine ─────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -647,6 +649,37 @@ pub struct RuntimeUpdateStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub managed_service: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeUpdateCheckStatus {
+    Pass,
+    /// Does not block the one-click update, but limits recovery.
+    Warn,
+    Fail,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RuntimeUpdateCheck {
+    /// Stable identifier, for example `updater_definition`.
+    pub id: String,
+    pub label: String,
+    pub status: RuntimeUpdateCheckStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// What to run or change on the backend Mac to make the check pass.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RuntimeUpdatePreflight {
+    /// True when no check failed, so a one-click backend update can start.
+    pub ready: bool,
+    /// Unix timestamp, in seconds, of when the checks ran.
+    pub checked_at: i64,
+    pub checks: Vec<RuntimeUpdateCheck>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

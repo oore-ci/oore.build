@@ -56,6 +56,7 @@ use utoipa::{
         // ── Runtime updates ──
         operations::get_runtime_update_status,
         operations::start_runtime_update,
+        operations::get_runtime_update_preflight,
         // ── Users ──
         operations::get_me,
         operations::list_users,
@@ -272,6 +273,9 @@ use utoipa::{
         // Runtime updates
         oore_contract::RuntimeUpdatePhase,
         oore_contract::RuntimeUpdateStatus,
+        oore_contract::RuntimeUpdateCheckStatus,
+        oore_contract::RuntimeUpdateCheck,
+        oore_contract::RuntimeUpdatePreflight,
         // Users
         oore_contract::UserRole,
         oore_contract::UserStatus,
@@ -925,6 +929,21 @@ mod operations {
         )
     )]
     pub(super) fn start_runtime_update() {}
+
+    /// Check whether a one-click backend update can start
+    ///
+    /// Runs the named preflight checks for the managed macOS update
+    /// supervisor, each with a fix hint. Results are cached for 30 seconds.
+    /// Requires owner role.
+    #[utoipa::path(get, path = "/v1/system/update/preflight", tag = "System",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Backend update preflight checks", body = RuntimeUpdatePreflight),
+            (status = 401, description = "Not authenticated", body = ApiError),
+            (status = 403, description = "Owner role required", body = ApiError),
+        )
+    )]
+    pub(super) fn get_runtime_update_preflight() {}
 
     // ── Users ──
 

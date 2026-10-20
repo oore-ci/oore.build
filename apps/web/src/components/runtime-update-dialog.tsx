@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowRight01Icon,
@@ -30,6 +31,10 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { formatReleaseNotes } from '@/components/runtime-update-utils'
+import {
+  RuntimeUpdatePreflightChecks,
+  backendUpdateReady,
+} from '@/components/runtime-update-preflight'
 
 function updateButtonLabel(phase: string | undefined, pending: boolean) {
   if (pending) return 'Starting...'
@@ -57,6 +62,7 @@ function RuntimeUpdateCard({
   unmanagedHint = "Run Oore setup from Terminal to repair this device's managed services. No reinstall is required.",
   locked,
   secondary,
+  checks,
   onUpdate,
 }: {
   name: string
@@ -68,6 +74,7 @@ function RuntimeUpdateCard({
   unmanagedHint?: string
   locked: boolean
   secondary: boolean
+  checks?: ReactNode
   onUpdate: () => void
 }) {
   const busy = phase === 'updating' || phase === 'restarting' || pending
@@ -100,7 +107,8 @@ function RuntimeUpdateCard({
             {failure || 'The last update stopped before completion.'}
           </p>
         ) : null}
-        {!managed ? (
+        {checks}
+        {!managed && !checks ? (
           <div className="mt-2 space-y-2 text-xs text-muted-foreground">
             <p>{unmanagedHint}</p>
           </div>
@@ -234,9 +242,18 @@ export default function RuntimeUpdateDialog({
               phase={backendPhase}
               failure={updates.backendUpdate.data?.error}
               pending={updates.startBackendUpdate.isPending}
-              managed={updates.backendUpdate.data?.managed_service === true}
+              managed={backendUpdateReady(
+                updates.backendPreflight,
+                updates.backendUpdate.data?.managed_service,
+              )}
               locked={coordinatedRunning}
               secondary={plan.kind === 'ready'}
+              checks={
+                <RuntimeUpdatePreflightChecks
+                  className="mt-2"
+                  preflight={updates.backendPreflight}
+                />
+              }
               onUpdate={() =>
                 updates.startBackendUpdate.mutate(undefined, {
                   onSuccess: () =>

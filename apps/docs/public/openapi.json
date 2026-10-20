@@ -10127,6 +10127,53 @@
         ]
       }
     },
+    "/v1/system/update/preflight": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Check whether a one-click backend update can start",
+        "description": "Runs the named preflight checks for the managed macOS update\nsupervisor, each with a fix hint. Results are cached for 30 seconds.\nRequires owner role.",
+        "operationId": "get_runtime_update_preflight",
+        "responses": {
+          "200": {
+            "description": "Backend update preflight checks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeUpdatePreflight"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/users": {
       "get": {
         "tags": [
@@ -15956,6 +16003,47 @@
           "remote"
         ]
       },
+      "RuntimeUpdateCheck": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "status"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to run or change on the backend Mac to make the check pass."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identifier, for example `updater_definition`."
+          },
+          "label": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RuntimeUpdateCheckStatus"
+          }
+        }
+      },
+      "RuntimeUpdateCheckStatus": {
+        "type": "string",
+        "enum": [
+          "pass",
+          "warn",
+          "fail"
+        ]
+      },
       "RuntimeUpdatePhase": {
         "type": "string",
         "enum": [
@@ -15964,6 +16052,31 @@
           "restarting",
           "failed"
         ]
+      },
+      "RuntimeUpdatePreflight": {
+        "type": "object",
+        "required": [
+          "ready",
+          "checked_at",
+          "checks"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix timestamp, in seconds, of when the checks ran."
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeUpdateCheck"
+            }
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "True when no check failed, so a one-click backend update can start."
+          }
+        }
       },
       "RuntimeUpdateStatus": {
         "type": "object",
