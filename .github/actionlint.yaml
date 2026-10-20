@@ -1,3 +1,7 @@
+self-hosted-runner:
+  labels:
+    - oore-linux
+    - oore-mac
 paths:
   .github/workflows/autotag.yml:
     ignore:
