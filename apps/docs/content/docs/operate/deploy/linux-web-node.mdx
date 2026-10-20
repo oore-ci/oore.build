@@ -1,0 +1,120 @@
+---
+title: 'Run a Web node on Linux'
+status: implemented
+description: 'Run oore-web from the Linux web archive under systemd and update it from the web UI.'
+---
+
+Use a Linux Web node when the browser ingress runs on a Linux host, for example a cloud VM in front of a private control plane.
+
+The control plane still runs on a Mac. The Linux host runs only `oore-web`, which serves the web UI and proxies API requests to `oored`.
+
+`oore install` does not manage Linux hosts. You install the archive and the systemd unit once. After that, `oore-web update` and the web UI update the Web node in place.
+
+## What you need
+
+- A Linux host on `x86_64` or `arm64` with systemd.
+- `ssh-keygen` from OpenSSH. `oore-web update` uses it to verify signed release metadata.
+- A protected network path from the host to the control plane, such as a private overlay network.
+- A ready control plane that uses Identity provider or Trusted Proxy access.
+- For Trusted Proxy access, the backend proof file and the upstream proof file described in [Trusted Proxy](/team/access/trusted-proxy).
+
+## 1. Install the archive
+
+Create a service account and an install root that it owns:
+
+```bash
+sudo useradd --system --home-dir /opt/oore-web --shell /usr/sbin/nologin oore-web
+sudo install -d -o oore-web -g oore-web -m 0750 /opt/oore-web
+```
+
+Download `oore-web_<version>_linux_x86_64.tar.gz` (or `_linux_arm64`) and `oore_<version>_checksums.txt` from the release. Verify the archive, then extract it as the service account:
+
+```bash
+sha256sum --ignore-missing -c oore_<version>_checksums.txt
+sudo -u oore-web tar -xzf oore-web_<version>_linux_x86_64.tar.gz -C /opt/oore-web
+```
+
+The service account must own the install root. The web UI update replaces `bin/oore-web` and `web-dist` as that account.
+
+Store each proof in a file that only the service account can read:
+
+```bash
+sudo install -d -o root -g oore-web -m 0750 /etc/oore-web
+sudo install -o oore-web -g oore-web -m 0400 backend-proof /etc/oore-web/backend-proof
+sudo install -o oore-web -g oore-web -m 0400 upstream-proof /etc/oore-web/upstream-proof
+```
+
+## 2. Install the systemd unit
+
+Save this unit as `/etc/systemd/system/oore-web.service`. Replace the backend URL with the control plane's address on the protected network:
+
+```ini
+[Unit]
+Description=Oore web node
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=oore-web
+Group=oore-web
+Environment=OORE_INSTALL_ROOT=/opt/oore-web
+ExecStart=/opt/oore-web/bin/oore-web serve \
+  --listen 127.0.0.1:4173 \
+  --backend-url http://100.64.10.20:8787 \
+  --backend-transport-protected \
+  --trusted-proxy-secret-file /etc/oore-web/backend-proof \
+  --upstream-trusted-proxy-secret-file /etc/oore-web/upstream-proof
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Omit both proof options for Identity provider access.
+
+The unit must be named `oore-web.service`, must run `oore-web` directly, and must use `Restart=on-failure` or `Restart=always`. After an update, `oore-web` exits with status 75 and relies on systemd to start the new release.
+
+Start the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now oore-web
+```
+
+Keep the listener on loopback. Terminate TLS and authenticate users at the ingress proxy on the same host, then forward to `127.0.0.1:4173`.
+
+A user unit in `~/.config/systemd/user` also works when lingering is on for that account (`loginctl enable-linger <user>`). Without lingering, the unit stops when the account logs out, so Oore does not offer updates from the web UI.
+
+## 3. Verify the Web node
+
+```bash
+/opt/oore-web/bin/oore-web status --url http://127.0.0.1:4173
+```
+
+Sign in as the instance owner and open **Settings > General**. The Runtime section shows the frontend version. When an update is available, **Update frontend** is enabled.
+
+## Update the Web node
+
+From the web UI, select **Update frontend**. `oore-web` downloads and verifies the release, replaces its files, and exits so systemd restarts it.
+
+From a shell, run the update as the service account, then restart the unit:
+
+```bash
+sudo -u oore-web OORE_INSTALL_ROOT=/opt/oore-web /opt/oore-web/bin/oore-web update
+sudo systemctl restart oore-web
+```
+
+`oore-web update` warns when it cannot find a suitable `oore-web.service` unit.
+
+## Troubleshooting
+
+If **Update frontend** stays disabled, the Runtime section shows the reason. Common reasons are a unit with another name, a unit without a restart policy, a user unit without lingering, and an `oore-web` process started from a shell instead of by systemd.
+
+If the update fails, Oore keeps the previous release and shows the failure after the next restart. The full output is in `/opt/oore-web/logs/oore-web-update.log`.
+
+If Oore says that only the instance owner can manage updates, read the reason it gives. Behind a Trusted Proxy, `oore-web` forwards the identity header only when the upstream proxy also sends the upstream proof. Without `--upstream-trusted-proxy-secret-file`, it strips the header and the control plane does not recognize the session.
+
+Containers and process managers such as pm2 are not supported for updates from the web UI. Replace the container image or archive instead.

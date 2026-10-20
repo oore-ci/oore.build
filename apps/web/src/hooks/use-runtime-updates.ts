@@ -31,6 +31,10 @@ export interface RuntimeReleaseStatus extends RuntimeUpdateStatus {
   release_notes: string
   release_url: string
   changelog_url: string
+  /** Why oore-web cannot update itself from the UI, when it cannot. */
+  managed_service_reason?: string | null
+  /** Update log on the web node, kept after a failed update. */
+  log_path?: string | null
 }
 
 const HEALTH_REFRESH_INTERVAL = 60_000
