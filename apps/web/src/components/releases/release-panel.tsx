@@ -132,8 +132,11 @@ function ReleaseCard({ release }: { release: Release }) {
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
-          Schedule: {current.policy.steps.map(formatRolloutPercent).join(' → ')}
-          , every {current.policy.interval_hours}h
+          Schedule:{' '}
+          {(current.policy.steps ?? []).map(formatRolloutPercent).join(' → ')}
+          {current.policy.interval_hours != null
+            ? `, every ${current.policy.interval_hours}h`
+            : ''}
           {current.approved_by_email
             ? ` · Approved by ${current.approved_by_email}`
             : ''}

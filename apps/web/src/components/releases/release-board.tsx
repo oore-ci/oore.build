@@ -20,7 +20,9 @@ import {
   LIVE_RELEASE_STATES,
   RELEASE_HEALTH_LABEL,
   RELEASE_STORE_LABEL,
+  releaseAppName,
   releaseNextStep,
+  releaseVersionLabel,
 } from '@/lib/releases'
 
 const LIVE_STATE_QUERY = LIVE_RELEASE_STATES.join(',')
@@ -42,7 +44,7 @@ function getReleaseColumns(
           params={{ releaseId: row.original.id }}
           className="font-medium underline-offset-4 hover:underline"
         >
-          {row.original.project_name}
+          {releaseAppName(row.original)}
         </Link>
       ),
       enableHiding: false,
@@ -71,11 +73,7 @@ function getReleaseColumns(
       header: 'Version',
       cell: ({ row }) => (
         <span className="font-mono text-xs tabular-nums">
-          {row.original.version_name}
-          <span className="text-muted-foreground">
-            {' '}
-            ({row.original.version_code})
-          </span>
+          {releaseVersionLabel(row.original)}
         </span>
       ),
       enableSorting: false,

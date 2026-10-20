@@ -12,7 +12,11 @@ import {
 } from '@/components/ui/item'
 import { useReleaseEvents } from '@/hooks/use-releases'
 import { relativeTime } from '@/lib/format-utils'
-import { RELEASE_STORE_LABEL, releaseTransitionLabel } from '@/lib/releases'
+import {
+  RELEASE_STORE_LABEL,
+  releaseAppName,
+  releaseTransitionLabel,
+} from '@/lib/releases'
 
 /**
  * Recent release and rollout changes. Renders nothing until there is
@@ -75,9 +79,9 @@ function ReleaseActivityItem({
     >
       <ItemContent>
         <ItemTitle>
-          {showProject ? `${event.project_name} ` : ''}
+          {showProject ? `${releaseAppName(event)} ` : ''}
           <span className="font-mono text-xs tabular-nums">
-            {event.version_name}
+            {event.version_name ?? 'Unversioned'}
           </span>
           <span className="text-muted-foreground">
             {' '}

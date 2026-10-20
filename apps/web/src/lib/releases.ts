@@ -81,7 +81,15 @@ export function formatRolloutPercent(fraction: number): string {
 export function releaseVersionLabel(
   release: Pick<Release, 'version_code' | 'version_name'>,
 ): string {
-  return `${release.version_name} (${release.version_code})`
+  const name = release.version_name ?? 'Unversioned'
+  return release.version_code == null
+    ? name
+    : `${name} (${release.version_code})`
+}
+
+/** Release rows can predate their project lookup; never render "null". */
+export function releaseAppName(release: { project_name?: string | null }) {
+  return release.project_name ?? 'Unknown app'
 }
 
 /** One line telling the reader what happens next without opening the release. */

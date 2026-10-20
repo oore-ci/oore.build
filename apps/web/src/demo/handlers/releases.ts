@@ -76,7 +76,9 @@ function notFound() {
 
 function nextFraction(release: DemoRelease): number | null {
   return (
-    release.policy.steps.find((step) => step > release.rollout_fraction) ?? null
+    (release.policy.steps ?? []).find(
+      (step) => step > release.rollout_fraction,
+    ) ?? null
   )
 }
 
@@ -157,7 +159,7 @@ function releaseActionHandler(action: ReleaseAction) {
     release.next_step_at =
       release.next_fraction == null
         ? null
-        : ago(-3600 * release.policy.interval_hours)
+        : ago(-3600 * (release.policy.interval_hours ?? 24))
     release.updated_at = ago(0)
     return HttpResponse.json(withReleaseContext(release, persona))
   }
