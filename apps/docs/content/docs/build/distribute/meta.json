@@ -1,4 +1,10 @@
 {
   "title": "Distribute builds",
-  "pages": ["ios-devices", "download", "install/android", "install/ios"]
+  "pages": [
+    "google-play",
+    "ios-devices",
+    "download",
+    "install/android",
+    "install/ios"
+  ]
 }

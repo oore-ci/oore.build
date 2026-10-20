@@ -21,6 +21,7 @@ pub mod observability;
 pub mod oidc;
 pub mod operator;
 pub mod pipeline_ios_signing;
+pub mod pipeline_publish;
 pub mod pipeline_signing;
 pub mod pipelines;
 pub mod project_members;
@@ -2717,6 +2718,11 @@ pub async fn build_router_with_recovery(
             "/v1/pipelines/{pipeline_id}/ios-signing/devices/register",
             post(pipeline_ios_signing::register_pipeline_ios_device),
         )
+        .route(
+            "/v1/pipelines/{pipeline_id}/publish/google-play",
+            get(pipeline_publish::get_pipeline_google_play_publish)
+                .put(pipeline_publish::update_pipeline_google_play_publish),
+        )
         // Secret endpoints (write-only; values are never returned)
         .route(
             "/v1/secrets",
@@ -2806,6 +2812,14 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/secrets",
             get(secrets::get_job_secrets),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/publish",
+            get(pipeline_publish::get_job_publish_plan),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/publish-results",
+            post(pipeline_publish::report_job_publish_result),
         )
         .route("/v1/runners", get(runners::list_runners))
         // Build log endpoints

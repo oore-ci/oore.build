@@ -2938,6 +2938,169 @@ pub fn replace_secret_references(
     Ok(out)
 }
 
+// ── Pipeline publish types ──────────────────────────────────────
+
+/// Where Google Play release notes come from.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GooglePlayReleaseNotesSource {
+    /// No release notes.
+    #[default]
+    None,
+    /// The build changelog, under `release_notes_locale`.
+    Changelog,
+    /// One `<locale>.txt` file per language in `release_notes_dir`.
+    RepoFiles,
+}
+
+/// Per-pipeline Google Play upload settings. Credentials are referenced by
+/// secret name and never stored here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GooglePlayPublishConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Name of the secret holding the service account JSON key.
+    pub service_account_secret: String,
+    /// Expected application id. When omitted, the AAB's package is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+    /// `internal`, `closed`, `open`, `production`, or a custom track name.
+    pub track: String,
+    /// Initial staged rollout, 0 < percent <= 100. Omitted means 100.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_percent: Option<f64>,
+    /// Create a draft release instead of rolling out.
+    #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub release_notes: GooglePlayReleaseNotesSource,
+    #[serde(default = "default_release_notes_locale")]
+    pub release_notes_locale: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_notes_dir: Option<String>,
+    /// Upload R8/ProGuard `mapping.txt` when the build produced one.
+    #[serde(default = "default_true")]
+    pub upload_mapping: bool,
+    /// In-app update priority, 0 to 5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_app_update_priority: Option<u8>,
+}
+
+fn default_release_notes_locale() -> String {
+    "en-US".to_string()
+}
+
+/// Validate Google Play publish settings, returning every problem found.
+pub fn validate_google_play_publish_config(config: &GooglePlayPublishConfig) -> Vec<String> {
+    let mut errors = Vec::new();
+    if let Err(error) = validate_secret_name(config.service_account_secret.trim()) {
+        errors.push(format!("service_account_secret {error}"));
+    }
+    if let Some(package) = &config.package_name {
+        let valid = package.split('.').count() >= 2
+            && package.split('.').all(|part| {
+                part.chars()
+                    .next()
+                    .is_some_and(|first| first.is_ascii_alphabetic())
+                    && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            });
+        if !valid {
+            errors.push(
+                "package_name must be an Android application id such as com.example.app"
+                    .to_string(),
+            );
+        }
+    }
+    let track = config.track.trim();
+    if track.is_empty()
+        || track.len() > 128
+        || !track
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':'))
+    {
+        errors.push(
+            "track must be internal, closed, open, production, or a custom track name".to_string(),
+        );
+    }
+    if let Some(percent) = config.rollout_percent {
+        if !(percent > 0.0 && percent <= 100.0) {
+            errors.push("rollout_percent must be greater than 0 and at most 100".to_string());
+        } else if percent < 100.0 && track == "internal" {
+            errors.push("the internal track does not support staged rollouts".to_string());
+        } else if percent < 100.0 && config.draft {
+            errors.push("a draft release cannot have a staged rollout".to_string());
+        }
+    }
+    if config.release_notes_locale.trim().is_empty() || config.release_notes_locale.len() > 16 {
+        errors.push("release_notes_locale must be a Play language code such as en-US".to_string());
+    }
+    if config.release_notes == GooglePlayReleaseNotesSource::RepoFiles {
+        match config.release_notes_dir.as_deref() {
+            Some(dir) => {
+                if let Err(error) = validate_repository_config_path(dir) {
+                    errors.push(format!("release_notes_dir {error}"));
+                }
+            }
+            None => errors
+                .push("release_notes_dir is required for repo_files release notes".to_string()),
+        }
+    }
+    if config
+        .in_app_update_priority
+        .is_some_and(|priority| priority > 5)
+    {
+        errors.push("in_app_update_priority must be between 0 and 5".to_string());
+    }
+    errors
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelineGooglePlayPublishResponse {
+    pub pipeline_id: String,
+    /// Absent until publish settings are saved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<GooglePlayPublishConfig>,
+    /// Whether the referenced service account secret exists in a visible scope.
+    pub service_account_secret_present: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+/// Publish work for the runner, fetched with the job-scoped grant.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerPublishPlan {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changelog: Option<String>,
+    /// Present only when Google Play publishing is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub google_play: Option<GooglePlayPublishConfig>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PublishStore {
+    GooglePlay,
+    AppStore,
+}
+
+/// Outcome of a store upload, reported by the runner.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerPublishResult {
+    pub store: PublishStore,
+    /// Store track as sent to the store (for Play: internal, alpha, beta, production or custom).
+    pub track: String,
+    pub package_name: String,
+    pub version_code: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    /// Staged rollout fraction, 0 < f <= 1. Absent for drafts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rollout_fraction: Option<f64>,
+    /// `completed`, `in_progress` or `draft`.
+    pub status: String,
+}
+
 // ── Pipeline Android signing types ──────────────────────────────
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -3682,6 +3845,64 @@ pub struct RevokeApiTokenResponse {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn google_play_publish_config_validation() {
+        let parse = |value: serde_json::Value| -> super::GooglePlayPublishConfig {
+            serde_json::from_value(value).unwrap()
+        };
+        let base = serde_json::json!({
+            "enabled": true,
+            "service_account_secret": "PLAY_SERVICE_ACCOUNT",
+            "track": "production",
+            "rollout_percent": 5.0,
+        });
+        let config = parse(base.clone());
+        assert!(super::validate_google_play_publish_config(&config).is_empty());
+        assert_eq!(config.release_notes_locale, "en-US");
+        assert!(config.upload_mapping);
+
+        for (patch, expected) in [
+            (
+                serde_json::json!({"service_account_secret": "bad name"}),
+                "service_account_secret",
+            ),
+            (serde_json::json!({"track": "internal"}), "internal track"),
+            (
+                serde_json::json!({"rollout_percent": 0.0}),
+                "rollout_percent",
+            ),
+            (serde_json::json!({"draft": true}), "draft"),
+            (
+                serde_json::json!({"package_name": "nodots"}),
+                "package_name",
+            ),
+            (
+                serde_json::json!({"release_notes": "repo_files"}),
+                "release_notes_dir",
+            ),
+            (
+                serde_json::json!({"in_app_update_priority": 6}),
+                "in_app_update_priority",
+            ),
+        ] {
+            let mut value = base.clone();
+            for (key, field) in patch.as_object().unwrap() {
+                value[key] = field.clone();
+            }
+            let errors = super::validate_google_play_publish_config(&parse(value));
+            assert!(
+                errors.iter().any(|error| error.contains(expected)),
+                "{expected}: {errors:?}"
+            );
+        }
+        assert!(
+            serde_json::from_value::<super::GooglePlayPublishConfig>(serde_json::json!({
+                "service_account_secret": "X", "track": "internal", "unknown": 1
+            }))
+            .is_err()
+        );
+    }
 
     #[test]
     fn secret_references_parse_and_reject_other_expressions() {
