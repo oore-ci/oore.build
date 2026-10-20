@@ -181,6 +181,15 @@ export type RuntimeUpdatePreflight = z.infer<
 >
 export type RuntimeUpdateCheck = RuntimeUpdatePreflight['checks'][number]
 
+function backendFailedCheckReason(
+  preflight: RuntimeUpdatePreflight | undefined,
+) {
+  const failed = preflight?.checks.find((check) => check.status === 'fail')
+  return failed
+    ? `The backend update check "${failed.label}" failed. The Backend card below says what to run.`
+    : undefined
+}
+
 async function fetchRuntimeHealth(
   path: string,
   signal?: AbortSignal,
@@ -396,6 +405,7 @@ export function useRuntimeUpdates() {
     backendManaged:
       backendPreflight.data?.ready ??
       backendUpdate.data?.managed_service === true,
+    backendUnavailableReason: backendFailedCheckReason(backendPreflight.data),
   })
 
   const coordinated = useRuntimeUpdateStore()
