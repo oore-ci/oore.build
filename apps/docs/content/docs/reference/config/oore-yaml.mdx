@@ -86,7 +86,9 @@ env:
 ```
 
 Keys must match `[A-Za-z_][A-Za-z0-9_]*` and must be unique. These values are
-repository-owned build inputs; do not put credentials in the file.
+repository-owned build inputs; do not put credentials in the file. Reference a
+stored secret instead with `${{ secrets.NAME }}`, in an env value or a command.
+See [Use secrets in a pipeline](/build/pipelines/secrets).
 Oore-managed signing credentials are injected only into the signing seam and
 are scrubbed from repository command stages.
 
