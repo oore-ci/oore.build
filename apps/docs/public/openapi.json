@@ -14808,7 +14808,9 @@
           "ok",
           "database",
           "migrations",
-          "encryption"
+          "encryption",
+          "version",
+          "package_version"
         ],
         "properties": {
           "database": {
@@ -14822,6 +14824,14 @@
           },
           "ok": {
             "type": "boolean"
+          },
+          "package_version": {
+            "type": "string",
+            "description": "Version of the running `oored` binary."
+          },
+          "version": {
+            "type": "string",
+            "description": "Installed release version from the install root's `VERSION` file."
           }
         }
       },

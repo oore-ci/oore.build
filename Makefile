@@ -10,7 +10,7 @@
 	package-release-assets preview-docs preview-site preview-web \
 	register-runner release-smoke run-daemon run-runner setup-token \
 	rust-target-size clean-rust-debug-dry-run clean-rust-debug \
-	test-deployment-headers test-rust test-site \
+	test-deployment-headers test-rust test-site test-web \
 	validate validate-ci validate-docs validate-frontend validate-rust \
 	validate-shell validate-web-launcher validate-workflows
 
@@ -94,6 +94,9 @@ deploy-demo-dist:
 
 lint-web:
 	cd apps/web && bun run lint
+
+test-web:
+	cd apps/web && bun test src
 
 # Documentation and public site
 dev-docs:
@@ -271,7 +274,7 @@ validate-web-launcher: build-web
 	bun test apps/web/tools/oore-web.test.js
 	bash tools/validate-standalone-web.sh
 
-validate-frontend: format-check lint-web validate-web-launcher
+validate-frontend: format-check lint-web test-web validate-web-launcher
 
 validate-docs: format-check lint-docs lint-site test-site check-docs-types build-docs build-site
 
