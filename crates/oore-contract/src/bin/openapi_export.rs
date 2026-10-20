@@ -346,6 +346,7 @@ use utoipa::{
         oore_contract::PipelineAndroidSigningResponse,
         // iOS Signing
         oore_contract::IosSigningMode,
+        oore_contract::IosExportMethod,
         oore_contract::IosCertificateInput,
         oore_contract::IosProvisioningProfileInput,
         oore_contract::IosApiCredentialInput,

@@ -1,3 +1,5 @@
+mod app_store_upload;
+
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
@@ -14,9 +16,9 @@ use anyhow::Context;
 use base64::Engine as _;
 use oore_contract::{
     AndroidSigningBuildType, BuildPlatform, BuildStatus, ClaimJobRequest, ClaimJobResponse,
-    ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse, JobStatusResponse,
-    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
-    PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
+    ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse, IosExportMethod,
+    JobStatusResponse, PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig,
+    PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
     RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse, StepResult,
     artifact_pattern_matches, is_valid_pipeline_env_key, parse_repository_pipeline_yaml,
     validate_artifact_pattern, validate_repository_config_path,
@@ -1687,21 +1689,26 @@ fn random_password_hex() -> String {
     hex::encode(bytes)
 }
 
-fn choose_ios_export_method(help_text: &str) -> &'static str {
-    if help_text.to_ascii_lowercase().contains("release-testing") {
-        "release-testing"
-    } else {
-        "ad-hoc"
+/// Xcode 15.3 renamed `ad-hoc` to `release-testing` and `app-store` to
+/// `app-store-connect`; older toolchains only know the original names.
+fn choose_ios_export_method(help_text: &str, export_method: IosExportMethod) -> &'static str {
+    let help_text = help_text.to_ascii_lowercase();
+    match export_method {
+        IosExportMethod::AdHoc if help_text.contains("release-testing") => "release-testing",
+        IosExportMethod::AdHoc => "ad-hoc",
+        IosExportMethod::AppStore if help_text.contains("app-store-connect") => "app-store-connect",
+        IosExportMethod::AppStore => "app-store",
     }
 }
 
-fn resolve_ios_export_method() -> String {
-    match Command::new("xcodebuild").arg("-help").output() {
+fn resolve_ios_export_method(export_method: IosExportMethod) -> String {
+    let help_text = match Command::new("xcodebuild").arg("-help").output() {
         Ok(output) if output.status.success() => {
-            choose_ios_export_method(&String::from_utf8_lossy(&output.stdout)).to_string()
+            String::from_utf8_lossy(&output.stdout).into_owned()
         }
-        _ => "ad-hoc".to_string(),
-    }
+        _ => String::new(),
+    };
+    choose_ios_export_method(&help_text, export_method).to_string()
 }
 
 fn decode_runner_b64(value: &str, field_name: &str) -> anyhow::Result<Vec<u8>> {
@@ -2027,7 +2034,7 @@ fn install_ios_signing_bundle_with_session_check(
         )?;
         let _ = fs::remove_file(signing_preflight_path);
 
-        let effective_export_method = resolve_ios_export_method();
+        let effective_export_method = resolve_ios_export_method(bundle.export_method);
         let export_options_plist_path = signing_dir.join("ExportOptions.plist");
         write_export_options_plist(
             &export_options_plist_path,
@@ -5552,8 +5559,30 @@ async fn run_and_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::load_ui_execution_config;
+    use super::{choose_ios_export_method, load_ui_execution_config};
+    use oore_contract::IosExportMethod;
     use serde_json::json;
+
+    #[test]
+    fn export_method_follows_pipeline_and_xcode_naming() {
+        let current = "-exportArchive ... release-testing, app-store-connect, debugging";
+        assert_eq!(
+            choose_ios_export_method(current, IosExportMethod::AdHoc),
+            "release-testing"
+        );
+        assert_eq!(
+            choose_ios_export_method(current, IosExportMethod::AppStore),
+            "app-store-connect"
+        );
+        assert_eq!(
+            choose_ios_export_method("", IosExportMethod::AdHoc),
+            "ad-hoc"
+        );
+        assert_eq!(
+            choose_ios_export_method("", IosExportMethod::AppStore),
+            "app-store"
+        );
+    }
 
     #[test]
     fn snapshot_config_preserves_defaults_trimming_and_field_errors() {

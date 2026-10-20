@@ -2807,6 +2807,37 @@ pub enum IosSigningMode {
     Hybrid,
 }
 
+/// How a signed iOS archive is distributed.
+///
+/// `ad_hoc` IPAs install on registered devices through Oore. `app_store` IPAs
+/// are signed with an App Store distribution profile and can only be uploaded
+/// to App Store Connect for TestFlight or App Store release.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IosExportMethod {
+    #[default]
+    AdHoc,
+    AppStore,
+}
+
+impl IosExportMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AdHoc => "ad_hoc",
+            Self::AppStore => "app_store",
+        }
+    }
+
+    /// Parses a stored value. Unknown values fall back to ad hoc so a newer
+    /// database never makes an older daemon produce App Store builds.
+    pub fn from_stored(raw: &str) -> Self {
+        match raw {
+            "app_store" => Self::AppStore,
+            _ => Self::AdHoc,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Default, ToSchema)]
 pub struct IosCertificateInput {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2878,6 +2909,10 @@ pub struct UpdatePipelineIosSigningRequest {
     #[serde(default)]
     pub enabled: bool,
     pub mode: IosSigningMode,
+    /// Omit to keep the stored export method. Changing it discards stored
+    /// provisioning profiles because ad hoc and App Store profiles differ.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export_method: Option<IosExportMethod>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team_id: Option<String>,
     #[serde(default)]
@@ -2915,7 +2950,7 @@ pub struct PipelineIosSigningResponse {
     pub mode: IosSigningMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team_id: Option<String>,
-    pub export_method: String,
+    pub export_method: IosExportMethod,
     #[serde(default)]
     #[schema(required = true)]
     pub bundle_ids: Vec<String>,
@@ -2955,7 +2990,7 @@ pub struct RunnerIosSigningBundle {
     pub enabled: bool,
     pub mode: IosSigningMode,
     pub team_id: String,
-    pub export_method: String,
+    pub export_method: IosExportMethod,
     pub p12_filename: String,
     pub p12_base64: String,
     pub p12_password: String,
@@ -3017,6 +3052,106 @@ pub struct SyncPipelineIosSigningResponse {
     #[serde(default)]
     #[schema(required = true)]
     pub warnings: Vec<String>,
+}
+
+// ── Pipeline App Store publishing types ─────────────────────────
+
+/// Where an App Store Connect upload goes once Apple finishes processing it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AppStoreDestination {
+    /// Add the build to the named TestFlight groups.
+    #[default]
+    Testflight,
+    /// Attach the build to the App Store version matching its version string.
+    AppStore,
+}
+
+impl AppStoreDestination {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Testflight => "testflight",
+            Self::AppStore => "app_store",
+        }
+    }
+
+    pub fn from_stored(raw: &str) -> Self {
+        match raw {
+            "app_store" => Self::AppStore,
+            _ => Self::Testflight,
+        }
+    }
+}
+
+/// Release notes for one App Store Connect locale, such as `en-US`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct AppStoreReleaseNote {
+    pub locale: String,
+    pub whats_new: String,
+}
+
+/// App Store publishing settings for a pipeline, stored as the `app_store`
+/// publish target. Uploads use the App Store Connect API key from the
+/// pipeline's iOS signing settings and require the `app_store` export method.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+pub struct AppStorePublishConfig {
+    pub enabled: bool,
+    #[serde(default)]
+    pub destination: AppStoreDestination,
+    /// TestFlight group names. Used when `destination` is `testflight`.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub testflight_groups: Vec<String>,
+    /// TestFlight "What to Test" or App Store "What's New", per locale.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub release_notes: Vec<AppStoreReleaseNote>,
+    /// Export compliance answer set on each processed build.
+    #[serde(default)]
+    pub uses_non_exempt_encryption: bool,
+    /// Submit the App Store version for review once the build is attached.
+    #[serde(default)]
+    pub submit_for_review: bool,
+    /// Release the approved version with Apple's seven-day phased release.
+    #[serde(default)]
+    pub phased_release: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelineAppStorePublishResponse {
+    pub pipeline_id: String,
+    pub config: AppStorePublishConfig,
+    /// Whether the pipeline's iOS signing has an App Store Connect API key.
+    pub has_api_key: bool,
+    /// Whether the pipeline's iOS signing exports App Store IPAs.
+    pub app_store_export: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+/// App Store Connect API key handed to the runner for `altool` upload.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerAppStoreUploadCredentials {
+    pub key_id: String,
+    pub issuer_id: String,
+    pub private_key_pem: String,
+}
+
+impl fmt::Debug for RunnerAppStoreUploadCredentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RunnerAppStoreUploadCredentials")
+            .field("key_id", &self.key_id)
+            .field("issuer_id", &self.issuer_id)
+            .field("private_key_pem", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// What the runner needs to upload the job's IPA to App Store Connect.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerAppStorePublishPlan {
+    pub config: AppStorePublishConfig,
+    pub credentials: RunnerAppStoreUploadCredentials,
 }
 
 // ── Build log types ─────────────────────────────────────────────
