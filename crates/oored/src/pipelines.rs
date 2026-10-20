@@ -9,7 +9,7 @@ use oore_contract::{
     ListPipelinesResponse, OkResponse, Pipeline, PipelineDetailResponse, PipelineExecutionConfig,
     TriggerConfig, UpdatePipelineRequest, ValidatePipelineRequest, ValidatePipelineResponse,
     is_valid_pipeline_env_key, parse_repository_pipeline_yaml, secret_expression_errors,
-    validate_artifact_pattern, validate_repository_config_path,
+    validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -153,6 +153,10 @@ fn validate_execution_config(cfg: &PipelineExecutionConfig) -> Vec<String> {
     validate_platform_command_override("android", &cfg.platform_commands.android, &mut errors);
     validate_platform_command_override("ios", &cfg.platform_commands.ios, &mut errors);
     validate_platform_command_override("macos", &cfg.platform_commands.macos, &mut errors);
+
+    if let Err(error) = validate_build_number_offset(cfg.build_number_offset) {
+        errors.push(format!("execution_config.build_number_offset {error}"));
+    }
 
     if cfg.artifact_patterns.len() > MAX_ARTIFACT_PATTERNS {
         errors.push(format!(

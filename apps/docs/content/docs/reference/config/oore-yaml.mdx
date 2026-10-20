@@ -25,6 +25,9 @@ commands:
 platform_build_args:
   android:
     - '--split-per-abi'
+    - '--build-number=$OORE_VERSION_CODE'
+
+build_number_offset: 4000
 
 env:
   - key: BUILD_FLAVOR
@@ -50,6 +53,7 @@ The schema rejects unknown fields.
 | `platform_commands`   | object   | No       | No overrides                    |
 | `env`                 | object[] | No       | `[]`                            |
 | `artifacts`           | object   | No       | Platform-specific default globs |
+| `build_number_offset` | integer  | No       | `0`                             |
 
 `platforms` accepts `android`, `ios`, and `macos`.
 
@@ -91,6 +95,27 @@ stored secret instead with `${{ secrets.NAME }}`, in an env value or a command.
 See [Use secrets in a pipeline](/build/pipelines/secrets).
 Oore-managed signing credentials are injected only into the signing seam and
 are scrubbed from repository command stages.
+
+## Version codes
+
+Every build gets `OORE_VERSION_CODE`, which is the project build number plus
+`build_number_offset`. The project build number starts at 1 and has no relation
+to the Google Play `versionCode` or Apple `CFBundleVersion` an app already
+shipped, so set the offset above the highest version code the store holds
+before the first upload. Pass the value to Flutter with
+`--build-number=$OORE_VERSION_CODE`.
+
+The offset must be between 0 and 2,099,999,999, and a build fails before its
+commands run when the sum exceeds 2,100,000,000, the highest version code
+Google Play accepts.
+
+When `pubspec.yaml` at the repository root has a `version`, Oore also exports
+its name part as `OORE_VERSION_NAME` (`1.4.0` for `version: 1.4.0+12`).
+
+Before a Google Play upload, the runner reads the version codes Play already
+holds for the app. The publish step fails before anything is uploaded when the
+App Bundle's version code is not higher than the highest one on the target
+track, or was already uploaded, and the message names both numbers.
 
 ## Artifacts
 
