@@ -20,8 +20,9 @@ and public CLI contract. These are the maintained public boundaries for Oore
 
 - Guided bootstrap, install, setup, and service management support macOS on
   `arm64` and `x86_64` in v0.1.42.
-- Published Linux web archives are standalone assets. They are not a guided
-  Web node installation and do not have the managed lifecycle.
+- `oore install` does not manage Linux hosts. A Linux Web node runs the
+  published web archive under a systemd unit that you install once; see
+  [Run a Web node on Linux](/operate/deploy/linux-web-node).
 - The five guided profiles are Complete, Control plane, Runner, Web node, and
   CLI only.
 - Embedded and hybrid build execution are unsupported.
