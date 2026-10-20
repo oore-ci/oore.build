@@ -108,6 +108,9 @@ fn parse_ios_manifest_metadata(metadata: &Value) -> Result<IosManifestMetadata, 
         .ok_or("Signed iOS metadata is missing")?;
     let export_method = required_metadata_string(signing, "effective_export_method")
         .ok_or("iOS export method is missing")?;
+    if matches!(export_method.as_str(), "app-store-connect" | "app-store") {
+        return Err("This IPA was exported for App Store Connect; install it through TestFlight");
+    }
     if !matches!(export_method.as_str(), "ad-hoc" | "release-testing") {
         return Err("The IPA was not exported for ad-hoc device installation");
     }

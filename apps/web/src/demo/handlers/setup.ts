@@ -57,6 +57,20 @@ export const setupHandlers = [
         : { phase: 'idle', managed_service: true },
     ),
   ),
+  http.get('*/v1/system/update/preflight', () =>
+    HttpResponse.json({
+      ready: true,
+      checked_at: Math.floor(Date.now() / 1000),
+      checks: [
+        {
+          id: 'updater_loaded',
+          label: 'Update supervisor loaded',
+          status: 'pass',
+          detail: 'system/build.oore.oore-updater',
+        },
+      ],
+    }),
+  ),
   demoApi.getSetupStatus(async () => {
     await delay(100)
     return HttpResponse.json(demoState.setupStatus)

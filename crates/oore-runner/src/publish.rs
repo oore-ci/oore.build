@@ -14,6 +14,8 @@ use oore_google_play::{
     play_track_name, read_aab_manifest,
 };
 
+use crate::store_version::{ensure_play_version_code, fetch_play_version_codes};
+
 const BUNDLE_OUTPUT_DIR: &str = "build/app/outputs/bundle";
 const MAPPING_OUTPUT_DIR: &str = "build/app/outputs/mapping";
 
@@ -196,6 +198,14 @@ pub(crate) async fn publish_to_google_play(
     ));
 
     let token = access_token(http, service_account).await?;
+    let store_codes =
+        fetch_play_version_codes(http, &token, &manifest.package_name, &track).await?;
+    if let Some(highest) = store_codes.track_highest {
+        log.push(format!(
+            "[oore-publish] Highest versionCode on track {track}: {highest}"
+        ));
+    }
+    ensure_play_version_code(manifest.version_code, &store_codes, &track)?;
     let edits = PlayEdits::insert(http, &token, &manifest.package_name).await?;
     let uploaded = async {
         let version_code = edits.upload_bundle(&bundle).await?;

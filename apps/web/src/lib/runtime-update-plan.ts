@@ -63,12 +63,15 @@ export function planCoordinatedUpdate({
   frontendOffered,
   backendOffered,
   backendManaged,
+  backendUnavailableReason,
 }: {
   frontend: RuntimeComponentRelease | undefined
   backend: RuntimeComponentRelease | undefined
   frontendOffered: boolean
   backendOffered: boolean
   backendManaged: boolean
+  /** The failing update preflight check, when one is known. */
+  backendUnavailableReason?: string
 }): CoordinatedUpdatePlan {
   if (!frontend || !backend) {
     return {
@@ -97,6 +100,7 @@ export function planCoordinatedUpdate({
     return {
       kind: 'unavailable',
       reason:
+        backendUnavailableReason ??
         'The backend is not running as a managed service. Run Oore setup from Terminal to repair it.',
     }
   }
