@@ -33,13 +33,9 @@ const PLATFORM_ARGUMENT_FIELDS = [
   [
     'ios_build_args',
     'iOS build args',
-    '--flavor=production\n--build-number=$PROJECT_BUILD_NUMBER',
+    '--flavor=production\n--build-number=$OORE_VERSION_CODE',
   ],
-  [
-    'macos_build_args',
-    'macOS build args',
-    '--build-number=$PROJECT_BUILD_NUMBER',
-  ],
+  ['macos_build_args', 'macOS build args', '--build-number=$OORE_VERSION_CODE'],
 ] as const
 
 const PLATFORM_COMMAND_OVERRIDES = [

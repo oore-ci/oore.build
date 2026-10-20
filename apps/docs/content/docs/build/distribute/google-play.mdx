@@ -85,7 +85,13 @@ After the build, signing and artifact steps succeed, the runner adds a
 1. Picks the release App Bundle under `build/app/outputs/bundle` and reads its
    package name, `versionCode` and `versionName`.
 2. Exchanges the service account key for an access token.
-3. Opens a Play edit, uploads the bundle and `mapping.txt`, sets the track
+3. Reads the version codes Play already holds and stops if the bundle's
+   `versionCode` is not higher than the highest one on the target track, or
+   was already uploaded. The error names both numbers. Set
+   `build_number_offset` and build with `--build-number=$OORE_VERSION_CODE` to
+   start above the store; see the
+   [`.oore.yaml` reference](/reference/config/oore-yaml#version-codes).
+4. Opens a Play edit, uploads the bundle and `mapping.txt`, sets the track
    release with the configured status and rollout, and commits the edit.
 
 If any earlier step fails, nothing is uploaded. If a Play call fails, the

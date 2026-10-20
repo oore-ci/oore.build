@@ -29,6 +29,15 @@ export const pipelineFormSchema = z
       .string()
       .optional()
       .refine((v) => !v || v.trim().length <= 64, 'Max 64 characters'),
+    build_number_offset: z
+      .string()
+      .optional()
+      .refine(
+        (v) =>
+          !v?.trim() ||
+          (/^\d+$/.test(v.trim()) && Number(v.trim()) < 2_100_000_000),
+        'Must be a whole number below 2,100,000,000',
+      ),
     enable_customization: z.boolean(),
     pre_build_commands: z.string().optional(),
     build_commands: z.string().optional(),

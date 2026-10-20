@@ -2354,6 +2354,10 @@ pub struct PipelineExecutionConfig {
     #[serde(default = "default_artifact_patterns")]
     #[schema(required = true)]
     pub artifact_patterns: Vec<String>,
+    /// Added to the project build number to form `OORE_VERSION_CODE`, so the
+    /// first store upload can start above the store's existing version code.
+    #[serde(default)]
+    pub build_number_offset: i64,
 }
 
 /// Secret-free representation of a repository-owned pipeline config.
@@ -2377,6 +2381,8 @@ pub struct RepositoryWorkflowExecutionPreview {
     pub platform_commands: PlatformBuildCommands,
     pub env_keys: Vec<String>,
     pub artifact_patterns: Vec<String>,
+    #[serde(default)]
+    pub build_number_offset: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -2432,6 +2438,8 @@ struct RepositoryPipelineConfig {
     env: Vec<PipelineEnvVar>,
     #[serde(default)]
     artifacts: Option<RepositoryArtifacts>,
+    #[serde(default)]
+    build_number_offset: i64,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2463,6 +2471,7 @@ pub fn parse_repository_pipeline_yaml(raw: &str) -> Result<PipelineExecutionConf
         platform_commands: parsed.platform_commands,
         env: parsed.env,
         artifact_patterns,
+        build_number_offset: parsed.build_number_offset,
     };
     let errors = validate_repository_execution_config(&config);
     if errors.is_empty() {
@@ -2470,6 +2479,33 @@ pub fn parse_repository_pipeline_yaml(raw: &str) -> Result<PipelineExecutionConf
     } else {
         Err(errors.join("\n"))
     }
+}
+
+/// Highest `versionCode` Google Play accepts. Apple build numbers have no
+/// lower ceiling that matters here, so this bounds every store.
+pub const MAX_STORE_VERSION_CODE: i64 = 2_100_000_000;
+
+pub fn validate_build_number_offset(offset: i64) -> Result<(), String> {
+    if !(0..MAX_STORE_VERSION_CODE).contains(&offset) {
+        return Err(format!(
+            "must be between 0 and {}",
+            MAX_STORE_VERSION_CODE - 1
+        ));
+    }
+    Ok(())
+}
+
+/// The version code a build sends to stores: its project build number plus the
+/// pipeline offset, rejected when it exceeds what Google Play accepts.
+pub fn store_version_code(build_number: i64, offset: i64) -> Result<i64, String> {
+    validate_build_number_offset(offset).map_err(|error| format!("build_number_offset {error}"))?;
+    let code = build_number.saturating_add(offset);
+    if !(1..=MAX_STORE_VERSION_CODE).contains(&code) {
+        return Err(format!(
+            "version code {code} (build {build_number} + offset {offset}) is outside the store range 1..={MAX_STORE_VERSION_CODE}"
+        ));
+    }
+    Ok(code)
 }
 
 pub fn validate_artifact_pattern(pattern: &str) -> Result<(), String> {
@@ -2601,6 +2637,9 @@ fn validate_repository_execution_config(config: &PipelineExecutionConfig) -> Vec
             errors.push(format!("artifacts.patterns[{index}] {error}"));
         }
     }
+    if let Err(error) = validate_build_number_offset(config.build_number_offset) {
+        errors.push(format!("build_number_offset {error}"));
+    }
     let mut env_keys = std::collections::HashSet::new();
     for (index, entry) in config.env.iter().enumerate() {
         let key = entry.key.trim();
@@ -2626,6 +2665,7 @@ impl Default for PipelineExecutionConfig {
             platform_commands: PlatformBuildCommands::default(),
             env: Vec::new(),
             artifact_patterns: default_artifact_patterns(),
+            build_number_offset: 0,
         }
     }
 }
@@ -4374,7 +4414,35 @@ mod tests {
             .contains("commands.build[0]")
         );
     }
-    use super::parse_repository_pipeline_yaml;
+    use super::{MAX_STORE_VERSION_CODE, parse_repository_pipeline_yaml, store_version_code};
+
+    #[test]
+    fn repository_config_reads_build_number_offset() {
+        let config = parse_repository_pipeline_yaml(
+            "version: 1\nplatforms: [android]\nbuild_number_offset: 4000\n",
+        )
+        .unwrap();
+        assert_eq!(config.build_number_offset, 4000);
+
+        let error = parse_repository_pipeline_yaml(
+            "version: 1\nplatforms: [android]\nbuild_number_offset: -1\n",
+        )
+        .unwrap_err();
+        assert!(error.starts_with("build_number_offset must be between 0 and"));
+    }
+
+    #[test]
+    fn store_version_code_adds_offset_within_play_range() {
+        assert_eq!(store_version_code(12, 0), Ok(12));
+        assert_eq!(store_version_code(12, 4000), Ok(4012));
+        assert_eq!(
+            store_version_code(1, MAX_STORE_VERSION_CODE - 1),
+            Ok(MAX_STORE_VERSION_CODE)
+        );
+        let error = store_version_code(2, MAX_STORE_VERSION_CODE - 1).unwrap_err();
+        assert!(error.contains("outside the store range"), "{error}");
+        assert!(store_version_code(1, -5).is_err());
+    }
 
     #[test]
     fn repository_environment_keys_keep_shell_identifier_rules() {

@@ -10,6 +10,8 @@ use std::sync::{
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+pub mod store_version;
+
 use anyhow::Context;
 use base64::Engine as _;
 use oore_contract::{
@@ -20,7 +22,8 @@ use oore_contract::{
     RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse,
     RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult, StepResult,
     artifact_pattern_matches, is_valid_pipeline_env_key, parse_repository_pipeline_yaml,
-    replace_secret_references, validate_artifact_pattern, validate_repository_config_path,
+    replace_secret_references, store_version_code, validate_artifact_pattern,
+    validate_build_number_offset, validate_repository_config_path,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -3357,6 +3360,7 @@ struct ResolvedExecutionPlan {
     secret_env: Vec<(String, String)>,
     /// Env keys whose values came from a secret.
     secret_env_keys: std::collections::HashSet<String>,
+    build_number_offset: i64,
     source: String,
 }
 
@@ -3576,6 +3580,20 @@ fn read_fvmrc_version(workspace: &Path) -> anyhow::Result<Option<String>> {
     normalize_flutter_version(Some(trimmed), ".fvmrc")
 }
 
+/// The version name from `pubspec.yaml` (`version: 1.4.0+12` gives `1.4.0`),
+/// when the workspace root has one.
+fn read_pubspec_version_name(workspace: &Path) -> Option<String> {
+    let raw = fs::read_to_string(workspace.join("pubspec.yaml")).ok()?;
+    pubspec_version_name(&raw)
+}
+
+fn pubspec_version_name(raw: &str) -> Option<String> {
+    let value = raw.lines().find_map(|line| line.strip_prefix("version:"))?;
+    let value = value.split(" #").next()?.trim().trim_matches(['"', '\'']);
+    let name = value.split('+').next()?.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 fn maybe_wrap_with_fvm(command: &str) -> String {
     let trimmed = command.trim();
     if trimmed == "flutter" {
@@ -3731,6 +3749,8 @@ fn normalize_execution_config(
     let artifact_patterns = validate_artifact_patterns(&config.artifact_patterns)?;
     let flutter_version =
         normalize_flutter_version(config.flutter_version.as_deref(), "flutter_version")?;
+    validate_build_number_offset(config.build_number_offset)
+        .map_err(|error| anyhow::anyhow!("build_number_offset {error}"))?;
 
     Ok(PipelineExecutionConfig {
         platforms: config.platforms,
@@ -3740,6 +3760,7 @@ fn normalize_execution_config(
         platform_commands,
         env,
         artifact_patterns,
+        build_number_offset: config.build_number_offset,
     })
 }
 
@@ -3919,6 +3940,7 @@ fn resolve_execution_plan(
             env: file_config.env,
             secret_env: Vec::new(),
             secret_env_keys: Default::default(),
+            build_number_offset: file_config.build_number_offset,
             source: format!("file:{}", full_path.display()),
         });
     }
@@ -3937,6 +3959,7 @@ fn resolve_execution_plan(
         env: fallback.env,
         secret_env: Vec::new(),
         secret_env_keys: Default::default(),
+        build_number_offset: fallback.build_number_offset,
         source: "ui_fallback".to_string(),
     })
 }
@@ -4423,6 +4446,17 @@ async fn execute_build_steps(
         Ok(plan) => plan,
         Err(e) => return (steps, Err(e)),
     };
+    let version_code =
+        match store_version_code(job.build_number, execution_plan.build_number_offset) {
+            Ok(code) => code,
+            Err(error) => {
+                return (
+                    steps,
+                    Err(anyhow::anyhow!("Invalid store version code: {error}")),
+                );
+            }
+        };
+    let version_name = read_pubspec_version_name(&workspace);
     let requires_managed_fvm = execution_plan
         .stage_commands
         .pre_build
@@ -4564,7 +4598,15 @@ async fn execute_build_steps(
             job.build_number.to_string(),
         ),
         ("BUILD_NUMBER".to_string(), job.build_number.to_string()),
+        ("OORE_VERSION_CODE".to_string(), version_code.to_string()),
     ];
+    println!(
+        "Store version code {version_code} (build {} + offset {})",
+        job.build_number, execution_plan.build_number_offset
+    );
+    if let Some(name) = &version_name {
+        step_env.push(("OORE_VERSION_NAME".to_string(), name.clone()));
+    }
     if let Some(branch) = &job.branch {
         step_env.push(("BRANCH".to_string(), branch.clone()));
     }
@@ -5946,8 +5988,36 @@ async fn run_and_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::load_ui_execution_config;
+    use super::{load_ui_execution_config, pubspec_version_name};
     use serde_json::json;
+
+    #[test]
+    fn pubspec_version_name_drops_build_number() {
+        assert_eq!(
+            pubspec_version_name("name: app\nversion: 1.4.0+12\n").as_deref(),
+            Some("1.4.0")
+        );
+        assert_eq!(
+            pubspec_version_name("version: \"2.0.1\" # release\n").as_deref(),
+            Some("2.0.1")
+        );
+        assert_eq!(
+            pubspec_version_name("dependencies:\n  version: 1.0.0\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn ui_config_rejects_negative_build_number_offset() {
+        let error =
+            load_ui_execution_config(&json!({"ui_execution_config": {"build_number_offset": -3}}))
+                .unwrap_err()
+                .to_string();
+        assert!(
+            error.starts_with("build_number_offset must be between 0"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn snapshot_config_preserves_defaults_trimming_and_field_errors() {
@@ -6009,6 +6079,7 @@ mod secret_tests {
                 .collect(),
             secret_env: vec![],
             secret_env_keys: Default::default(),
+            build_number_offset: 0,
             source: "test".to_string(),
         }
     }

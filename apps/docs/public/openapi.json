@@ -14312,6 +14312,11 @@
               "type": "string"
             }
           },
+          "build_number_offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Added to the project build number to form `OORE_VERSION_CODE`, so the\nfirst store upload can start above the store's existing version code."
+          },
           "commands": {
             "$ref": "#/components/schemas/PipelineCommandStages"
           },
@@ -15376,6 +15381,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "build_number_offset": {
+            "type": "integer",
+            "format": "int64"
           },
           "commands": {
             "$ref": "#/components/schemas/PipelineCommandStages"
