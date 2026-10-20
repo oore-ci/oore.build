@@ -1564,7 +1564,7 @@ pub struct RunnerHeartbeatRequest {
     pub capabilities: serde_json::Value,
 }
 
-pub const RUNNER_PROTOCOL_VERSION: u32 = 4;
+pub const RUNNER_PROTOCOL_VERSION: u32 = 5;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ClaimJobRequest {
@@ -2612,6 +2612,7 @@ fn validate_repository_execution_config(config: &PipelineExecutionConfig) -> Vec
             errors.push(format!("env contains duplicate key '{key}'"));
         }
     }
+    errors.extend(secret_expression_errors(config));
     errors
 }
 
@@ -2718,6 +2719,223 @@ pub struct ValidatePipelineRequest {
 pub struct ValidatePipelineResponse {
     pub valid: bool,
     pub errors: Vec<String>,
+}
+
+// ── Secret types ────────────────────────────────────────────────
+
+/// Maximum secret value size. Large enough for a Google Play service account JSON.
+pub const MAX_SECRET_VALUE_BYTES: usize = 64 * 1024;
+/// Maximum secret name length.
+pub const MAX_SECRET_NAME_LENGTH: usize = 128;
+
+/// Where a secret is defined. A job sees instance, project and pipeline secrets;
+/// on a name clash the narrower scope wins.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretScope {
+    Instance,
+    Project,
+    Pipeline,
+}
+
+impl SecretScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Instance => "instance",
+            Self::Project => "project",
+            Self::Pipeline => "pipeline",
+        }
+    }
+}
+
+/// Secret metadata. Values are write-only and never returned by the user API.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SecretSummary {
+    pub name: String,
+    pub scope: SecretScope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListSecretsResponse {
+    pub secrets: Vec<SecretSummary>,
+}
+
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateSecretRequest {
+    pub name: String,
+    pub value: String,
+}
+
+impl fmt::Debug for CreateSecretRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateSecretRequest")
+            .field("name", &self.name)
+            .field("value", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Replace a secret's value (rotation).
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RotateSecretRequest {
+    pub value: String,
+}
+
+impl fmt::Debug for RotateSecretRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RotateSecretRequest")
+            .field("value", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SecretResponse {
+    pub secret: SecretSummary,
+}
+
+/// A resolved secret delivered to the runner assigned to an active job.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerJobSecret {
+    pub name: String,
+    pub value: String,
+    pub scope: SecretScope,
+}
+
+impl fmt::Debug for RunnerJobSecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RunnerJobSecret")
+            .field("name", &self.name)
+            .field("value", &"[REDACTED]")
+            .field("scope", &self.scope)
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerJobSecretsResponse {
+    pub secrets: Vec<RunnerJobSecret>,
+}
+
+/// Validate a secret name. Names follow environment variable rules.
+pub fn validate_secret_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("must not be empty".to_string());
+    }
+    if name.len() > MAX_SECRET_NAME_LENGTH {
+        return Err(format!("is too long (max {MAX_SECRET_NAME_LENGTH} chars)"));
+    }
+    if !is_valid_pipeline_env_key(name) {
+        return Err("must match [A-Za-z_][A-Za-z0-9_]*".to_string());
+    }
+    Ok(())
+}
+
+/// A `${{ secrets.NAME }}` reference found in a command or env value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretReference {
+    /// Byte offset of `$`.
+    pub start: usize,
+    /// Byte offset just past the closing `}}`.
+    pub end: usize,
+    pub name: String,
+}
+
+/// Parse every `${{ ... }}` expression in `text`. Only `secrets.NAME` is
+/// supported; any other expression is an error so it never reaches a shell.
+pub fn parse_secret_references(text: &str) -> Result<Vec<SecretReference>, String> {
+    let mut references = Vec::new();
+    let mut cursor = 0;
+    while let Some(offset) = text[cursor..].find("${{") {
+        let start = cursor + offset;
+        let body_start = start + 3;
+        let Some(close) = text[body_start..].find("}}") else {
+            return Err("has an unterminated ${{ expression".to_string());
+        };
+        let end = body_start + close + 2;
+        let expression = text[body_start..body_start + close].trim();
+        let name = expression
+            .strip_prefix("secrets.")
+            .filter(|name| is_valid_pipeline_env_key(name))
+            .ok_or_else(|| {
+                format!(
+                    "has unsupported expression '${{{{ {expression} }}}}'; only ${{{{ secrets.NAME }}}} is supported"
+                )
+            })?;
+        references.push(SecretReference {
+            start,
+            end,
+            name: name.to_string(),
+        });
+        cursor = end;
+    }
+    Ok(references)
+}
+
+/// Report malformed `${{ }}` expressions in commands and env values.
+pub fn secret_expression_errors(config: &PipelineExecutionConfig) -> Vec<String> {
+    let mut errors = Vec::new();
+    let mut check = |path: String, text: &str| {
+        if let Err(error) = parse_secret_references(text) {
+            errors.push(format!("{path} {error}"));
+        }
+    };
+    for (stage, commands) in [
+        ("pre_build", &config.commands.pre_build),
+        ("build", &config.commands.build),
+        ("post_build", &config.commands.post_build),
+    ] {
+        for (index, command) in commands.iter().enumerate() {
+            check(format!("commands.{stage}[{index}]"), command);
+        }
+    }
+    for (platform, args) in [
+        ("android", &config.platform_build_args.android),
+        ("ios", &config.platform_build_args.ios),
+        ("macos", &config.platform_build_args.macos),
+    ] {
+        for (index, arg) in args.iter().enumerate() {
+            check(format!("platform_build_args.{platform}[{index}]"), arg);
+        }
+    }
+    for (platform, command) in [
+        ("android", &config.platform_commands.android),
+        ("ios", &config.platform_commands.ios),
+        ("macos", &config.platform_commands.macos),
+    ] {
+        if let Some(command) = command {
+            check(format!("platform_commands.{platform}"), command);
+        }
+    }
+    for (index, entry) in config.env.iter().enumerate() {
+        check(format!("env[{index}].value"), &entry.value);
+    }
+    errors
+}
+
+/// Replace each `${{ secrets.NAME }}` reference with `replacement(NAME)`.
+pub fn replace_secret_references(
+    text: &str,
+    mut replacement: impl FnMut(&str) -> String,
+) -> Result<String, String> {
+    let references = parse_secret_references(text)?;
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for reference in references {
+        out.push_str(&text[cursor..reference.start]);
+        out.push_str(&replacement(&reference.name));
+        cursor = reference.end;
+    }
+    out.push_str(&text[cursor..]);
+    Ok(out)
 }
 
 // ── Pipeline Android signing types ──────────────────────────────
@@ -3464,6 +3682,35 @@ pub struct RevokeApiTokenResponse {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn secret_references_parse_and_reject_other_expressions() {
+        let text = "a ${{ secrets.ONE }} b ${{secrets.TWO}}";
+        let names: Vec<String> = super::parse_secret_references(text)
+            .unwrap()
+            .into_iter()
+            .map(|reference| reference.name)
+            .collect();
+        assert_eq!(names, vec!["ONE", "TWO"]);
+        assert_eq!(
+            super::replace_secret_references(text, |name| name.to_lowercase()).unwrap(),
+            "a one b two"
+        );
+        assert_eq!(
+            super::replace_secret_references("echo $HOME ${PATH}", |_| unreachable!()).unwrap(),
+            "echo $HOME ${PATH}"
+        );
+        assert!(super::parse_secret_references("${{ env.X }}").is_err());
+        assert!(super::parse_secret_references("${{ secrets.1BAD }}").is_err());
+        assert!(super::parse_secret_references("${{ secrets.X").is_err());
+        assert!(
+            super::parse_repository_pipeline_yaml(
+                "version: 1\nplatforms: [android]\ncommands:\n  build: ['echo ${{ vars.X }}']\n"
+            )
+            .unwrap_err()
+            .contains("commands.build[0]")
+        );
+    }
     use super::parse_repository_pipeline_yaml;
 
     #[test]

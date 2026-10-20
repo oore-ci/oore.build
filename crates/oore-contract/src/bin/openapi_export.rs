@@ -138,6 +138,19 @@ use utoipa::{
         operations::sync_pipeline_ios_signing,
         operations::list_pipeline_ios_devices,
         operations::register_pipeline_ios_device,
+        // ── Secrets ──
+        operations::list_instance_secrets,
+        operations::create_instance_secret,
+        operations::rotate_instance_secret,
+        operations::delete_instance_secret,
+        operations::list_project_secrets,
+        operations::create_project_secret,
+        operations::rotate_project_secret,
+        operations::delete_project_secret,
+        operations::list_pipeline_secrets,
+        operations::create_pipeline_secret,
+        operations::rotate_pipeline_secret,
+        operations::delete_pipeline_secret,
         // ── Builds ──
         operations::create_build,
         operations::preview_build_changelog,
@@ -165,6 +178,7 @@ use utoipa::{
         operations::get_job_status,
         operations::get_job_android_signing,
         operations::get_job_ios_signing,
+        operations::get_job_secrets,
         // ── Build Logs ──
         operations::append_build_logs,
         operations::get_build_logs,
@@ -327,6 +341,15 @@ use utoipa::{
         oore_contract::ListPipelinesResponse,
         oore_contract::ValidatePipelineRequest,
         oore_contract::ValidatePipelineResponse,
+        // Secrets
+        oore_contract::SecretScope,
+        oore_contract::SecretSummary,
+        oore_contract::ListSecretsResponse,
+        oore_contract::CreateSecretRequest,
+        oore_contract::RotateSecretRequest,
+        oore_contract::SecretResponse,
+        oore_contract::RunnerJobSecret,
+        oore_contract::RunnerJobSecretsResponse,
         // Android Signing
         oore_contract::AndroidSigningBuildType,
         oore_contract::AndroidSigningProfileInput,
@@ -475,6 +498,7 @@ use utoipa::{
         (name = "Projects", description = "Project CRUD — each project groups one or more pipelines."),
         (name = "Project Members", description = "Per-project role assignments for granular RBAC."),
         (name = "Pipelines", description = "Pipeline configuration — build platforms, commands, triggers, concurrency."),
+        (name = "Secrets", description = "Write-only secrets scoped to the instance, a project or a pipeline. Values are encrypted at rest, referenced as ${{ secrets.NAME }} and never returned."),
         (name = "Pipeline Signing", description = "Code signing configuration — Android keystores, iOS certificates/profiles."),
         (name = "Builds", description = "Build lifecycle — queue, list, detail, cancel."),
         (name = "Runners", description = "Build runner management — register, heartbeat, job claim/status."),
@@ -1737,6 +1761,174 @@ mod operations {
     )]
     pub(super) fn validate_pipeline() {}
 
+    // ── Secrets ──
+
+    /// List instance secrets
+    ///
+    /// Returns secret names and timestamps. Values are never returned. Requires instance settings read access.
+    #[utoipa::path(get, path = "/v1/secrets", tag = "Secrets",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret names", body = ListSecretsResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+        )
+    )]
+    pub(super) fn list_instance_secrets() {}
+
+    /// Create instance secret
+    ///
+    /// Stores an encrypted value. The response never contains it. Requires instance settings write access.
+    #[utoipa::path(post, path = "/v1/secrets", tag = "Secrets",
+        request_body = CreateSecretRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Secret created", body = SecretResponse),
+            (status = 400, description = "Invalid name or value", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 409, description = "A secret with this name already exists in this scope", body = ApiError),
+        )
+    )]
+    pub(super) fn create_instance_secret() {}
+
+    /// Rotate instance secret
+    ///
+    /// Replaces the stored value. Requires instance settings write access.
+    #[utoipa::path(put, path = "/v1/secrets/{name}", tag = "Secrets",
+        params(("name" = String, Path, description = "Secret name")),
+        request_body = RotateSecretRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret rotated", body = SecretResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Secret not found", body = ApiError),
+        )
+    )]
+    pub(super) fn rotate_instance_secret() {}
+
+    /// Delete instance secret
+    #[utoipa::path(delete, path = "/v1/secrets/{name}", tag = "Secrets",
+        params(("name" = String, Path, description = "Secret name")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret deleted", body = OkResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Secret not found", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_instance_secret() {}
+
+    /// List project secrets
+    ///
+    /// Returns secret names and timestamps. Values are never returned. Requires project read access.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/secrets", tag = "Secrets",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret names", body = ListSecretsResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+        )
+    )]
+    pub(super) fn list_project_secrets() {}
+
+    /// Create project secret
+    ///
+    /// Stores an encrypted value. The response never contains it. Requires the manage pipelines project permission.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/secrets", tag = "Secrets",
+        params(("project_id" = String, Path, description = "Project ID")),
+        request_body = CreateSecretRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Secret created", body = SecretResponse),
+            (status = 400, description = "Invalid name or value", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 409, description = "A secret with this name already exists in this scope", body = ApiError),
+        )
+    )]
+    pub(super) fn create_project_secret() {}
+
+    /// Rotate project secret
+    ///
+    /// Replaces the stored value. Requires the manage pipelines project permission.
+    #[utoipa::path(put, path = "/v1/projects/{project_id}/secrets/{name}", tag = "Secrets",
+        params(("project_id" = String, Path, description = "Project ID"), ("name" = String, Path, description = "Secret name")),
+        request_body = RotateSecretRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret rotated", body = SecretResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Secret not found", body = ApiError),
+        )
+    )]
+    pub(super) fn rotate_project_secret() {}
+
+    /// Delete project secret
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/secrets/{name}", tag = "Secrets",
+        params(("project_id" = String, Path, description = "Project ID"), ("name" = String, Path, description = "Secret name")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret deleted", body = OkResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Secret not found", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_project_secret() {}
+
+    /// List pipeline secrets
+    ///
+    /// Returns secret names and timestamps. Values are never returned. Requires project read access.
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/secrets", tag = "Secrets",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret names", body = ListSecretsResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+        )
+    )]
+    pub(super) fn list_pipeline_secrets() {}
+
+    /// Create pipeline secret
+    ///
+    /// Stores an encrypted value. The response never contains it. Requires the manage pipelines project permission.
+    #[utoipa::path(post, path = "/v1/pipelines/{pipeline_id}/secrets", tag = "Secrets",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        request_body = CreateSecretRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Secret created", body = SecretResponse),
+            (status = 400, description = "Invalid name or value", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 409, description = "A secret with this name already exists in this scope", body = ApiError),
+        )
+    )]
+    pub(super) fn create_pipeline_secret() {}
+
+    /// Rotate pipeline secret
+    ///
+    /// Replaces the stored value. Requires the manage pipelines project permission.
+    #[utoipa::path(put, path = "/v1/pipelines/{pipeline_id}/secrets/{name}", tag = "Secrets",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID"), ("name" = String, Path, description = "Secret name")),
+        request_body = RotateSecretRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret rotated", body = SecretResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Secret not found", body = ApiError),
+        )
+    )]
+    pub(super) fn rotate_pipeline_secret() {}
+
+    /// Delete pipeline secret
+    #[utoipa::path(delete, path = "/v1/pipelines/{pipeline_id}/secrets/{name}", tag = "Secrets",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID"), ("name" = String, Path, description = "Secret name")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret deleted", body = OkResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Secret not found", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_pipeline_secret() {}
+
     // ── Pipeline Signing (Android) ──
 
     /// Get Android signing config
@@ -2102,6 +2294,29 @@ mod operations {
         )
     )]
     pub(super) fn get_job_android_signing() {}
+
+    /// Get job-scoped secrets
+    ///
+    /// Returns resolved instance, project and pipeline secrets (narrowest scope
+    /// wins) only to the assigned runner while the job is active. Both the runner
+    /// bearer token and job-scoped signing grant are required.
+    #[utoipa::path(get, path = "/v1/runners/{runner_id}/jobs/{job_id}/secrets", tag = "Secrets",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("x-oore-signing-token" = String, Header, description = "Job-scoped signing grant"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Resolved secrets", body = RunnerJobSecretsResponse),
+            (status = 401, description = "Runner authentication or signing grant is missing or invalid", body = ApiError),
+            (status = 403, description = "Runner does not match the active assignment", body = ApiError),
+            (status = 404, description = "Build not found", body = ApiError),
+            (status = 409, description = "Job is not active", body = ApiError),
+            (status = 500, description = "Secrets could not be loaded", body = ApiError),
+        )
+    )]
+    pub(super) fn get_job_secrets() {}
 
     /// Get job-scoped iOS signing material
     ///
