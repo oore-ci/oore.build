@@ -3,8 +3,12 @@ name: Validate
 on:
   pull_request:
     branches: [master, alpha, beta, stable]
+    # Drafts are skipped below, so marking a PR ready must start a run.
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Every change reaches master through a validated PR, so only the release
+  # branches validate again after a push.
   push:
-    branches: [master, alpha, beta, stable]
+    branches: [alpha, beta, stable]
   workflow_dispatch:
 
 # Same-repo branches run on the self-hosted oore-linux (x64) and oore-mac
@@ -28,10 +32,12 @@ jobs:
       - uses: dorny/paths-filter@v4
         id: filter
         with:
-          # On a PR update, compare only the new commit range. On PR open or
-          # reopen, compare the PR base. Branch events use the prior commit.
+          # PRs always compare against the PR base: a newer push cancels the
+          # previous run, so diffing only the latest commit range could skip
+          # checks for files changed in the cancelled run. Branch events use
+          # the prior commit.
           token: ''
-          base: ${{ github.event.action == 'synchronize' && github.event.before || github.event.pull_request.base.sha || github.ref }}
+          base: ${{ github.event.pull_request.base.sha || github.event.before || github.ref }}
           filters: |
             frontend:
               - 'apps/web/**'
@@ -39,6 +45,7 @@ jobs:
               - 'tools/validate-standalone-web.sh'
               - 'bun.lock'
               - 'package.json'
+              - '.github/workflows/validate.yml'
             docs:
               - 'apps/docs/**'
               - 'apps/web/components.json'
@@ -49,11 +56,13 @@ jobs:
               - 'bun.lock'
               - 'package.json'
               - '.oxfmtrc.json'
+              - '.github/workflows/validate.yml'
             rust:
               - 'crates/**'
               - 'apps/docs/public/openapi.json'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - '.github/workflows/validate.yml'
 
   frontend:
     name: Frontend
@@ -63,10 +72,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Self-hosted runners keep Bun's install cache on disk, so skip the
+      # upload to the Actions cache.
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
+          no-cache: ${{ runner.environment == 'self-hosted' }}
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -88,10 +100,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Self-hosted runners keep Bun's install cache on disk, so skip the
+      # upload to the Actions cache.
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
+          no-cache: ${{ runner.environment == 'self-hosted' }}
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -122,10 +137,30 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # Self-hosted runners reuse a per-runner target directory outside the
+      # workspace (checkout's clean would delete target/), so they skip the
+      # Actions cache round trip and start from the previous build.
+      - name: Use persistent target directory
+        if: runner.environment == 'self-hosted'
+        run: |
+          target_dir="$HOME/.cache/oore-ci/cargo-target/$RUNNER_NAME"
+          mkdir -p "$target_dir"
+          # Start over once the directory passes 30 GiB.
+          if [ "$(du -sk "$target_dir" | cut -f1)" -gt 31457280 ]; then
+            rm -rf "$target_dir"
+            mkdir -p "$target_dir"
+          fi
+          echo "CARGO_TARGET_DIR=$target_dir" >> "$GITHUB_ENV"
+
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           cache-bin: false
           cache-on-failure: true
+
+      # The Makefile caps local builds at 4 jobs; CI uses every core.
+      - name: Use all CPU cores
+        run: echo "CARGO_BUILD_JOBS=$(getconf _NPROCESSORS_ONLN)" >> "$GITHUB_ENV"
 
       - name: Format check
         run: make format-rust-check
