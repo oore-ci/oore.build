@@ -29,6 +29,7 @@ const NOTIFICATION_SORTS = [
 function channelTypeLabel(type: string): string {
   if (type === 'webhook') return 'Webhook'
   if (type === 'mattermost') return 'Mattermost'
+  if (type === 'slack') return 'Slack'
   if (type === 'email') return 'Email (SMTP)'
   return type
 }

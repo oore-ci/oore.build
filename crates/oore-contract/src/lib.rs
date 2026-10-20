@@ -3614,6 +3614,7 @@ pub enum NotificationChannelType {
     Webhook,
     Mattermost,
     Email,
+    Slack,
 }
 
 impl fmt::Display for NotificationChannelType {
@@ -3622,6 +3623,7 @@ impl fmt::Display for NotificationChannelType {
             Self::Webhook => f.write_str("webhook"),
             Self::Mattermost => f.write_str("mattermost"),
             Self::Email => f.write_str("email"),
+            Self::Slack => f.write_str("slack"),
         }
     }
 }
@@ -3633,6 +3635,7 @@ impl FromStr for NotificationChannelType {
             "webhook" => Ok(Self::Webhook),
             "mattermost" => Ok(Self::Mattermost),
             "email" => Ok(Self::Email),
+            "slack" => Ok(Self::Slack),
             other => Err(format!("unknown notification channel type: {other}")),
         }
     }
@@ -3699,13 +3702,19 @@ pub struct NotificationChannel {
     pub name: String,
     pub channel_type: NotificationChannelType,
     pub enabled: bool,
-    /// Which terminal build statuses trigger this channel. Empty means all.
+    /// Which events trigger this channel. Empty means all.
     #[serde(default)]
     #[schema(required = true)]
     pub events: Vec<String>,
+    /// Project this channel is scoped to. Absent means the channel receives
+    /// events from every project, plus instance-wide events such as runner
+    /// offline.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     /// True if the channel has a URL configured (the actual URL is never exposed).
     pub has_url: bool,
-    /// True if the channel has an HMAC secret configured (webhook only).
+    /// True if the channel has a secret configured: the HMAC secret for
+    /// webhook channels, or the bot token used for mentions on Slack channels.
     pub has_secret: bool,
     /// True if the channel has SMTP configuration (email only).
     pub has_smtp_config: bool,
@@ -3721,13 +3730,17 @@ pub struct CreateNotificationChannelRequest {
     pub channel_type: NotificationChannelType,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Terminal build statuses to notify on. Empty or omitted means all terminal events.
+    /// Events to notify on. Empty or omitted means all events.
     #[serde(default)]
     pub events: Vec<String>,
-    /// Webhook/Mattermost incoming webhook URL (required for webhook/mattermost).
+    /// Scope the channel to one project. Omit for an instance-wide channel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// Incoming webhook URL (required for webhook, mattermost and slack).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// HMAC secret for signing webhook payloads (webhook only, optional).
+    /// Webhook: HMAC secret for signing payloads. Slack: bot token with
+    /// `users:read.email`, used to mention the triggering user. Optional.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
     /// SMTP configuration (required for email channel type).
@@ -3747,10 +3760,15 @@ pub struct UpdateNotificationChannelRequest {
     pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub events: Option<Vec<String>>,
+    /// New project scope. Omit to keep existing; pass empty string to make
+    /// the channel instance-wide.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     /// New URL. Omit to keep existing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// New HMAC secret. Omit to keep existing; pass empty string to clear.
+    /// New HMAC secret (webhook) or bot token (slack). Omit to keep existing;
+    /// pass empty string to clear.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
     /// Partial SMTP configuration update (email only). Omit fields to keep existing.
@@ -3787,6 +3805,8 @@ pub struct NotificationDelivery {
     pub channel_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_id: Option<String>,
     pub event_type: String,
     pub status: NotificationDeliveryStatus,
     pub attempt_count: i64,
