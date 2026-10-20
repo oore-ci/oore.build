@@ -59,15 +59,17 @@ where
     write_status(status_path, RuntimeUpdatePhase::Updating, None)?;
     match operation.await {
         Ok(()) => write_status(status_path, RuntimeUpdatePhase::Idle, None),
-        Err(error) => {
-            let diagnostic = format!("{error:#}");
-            write_status(
-                status_path,
-                RuntimeUpdatePhase::Failed,
-                Some(diagnostic.chars().take(2_000).collect()),
-            )
-        }
+        Err(error) => record_failure(status_path, &error),
     }
+}
+
+pub(crate) fn record_failure(status_path: &Path, error: &anyhow::Error) -> anyhow::Result<()> {
+    let diagnostic = format!("{error:#}");
+    write_status(
+        status_path,
+        RuntimeUpdatePhase::Failed,
+        Some(diagnostic.chars().take(2_000).collect()),
+    )
 }
 
 #[cfg(target_os = "macos")]
