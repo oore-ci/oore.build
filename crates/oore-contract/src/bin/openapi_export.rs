@@ -145,6 +145,17 @@ use utoipa::{
         operations::get_build,
         operations::cancel_build,
         operations::rerun_build,
+        // ── Releases ──
+        operations::list_releases,
+        operations::create_release,
+        operations::get_release,
+        operations::raise_release,
+        operations::pause_release,
+        operations::resume_release,
+        operations::halt_release,
+        operations::complete_release,
+        operations::approve_release,
+        operations::list_release_events,
         // ── Audit Logs ──
         operations::list_audit_logs,
         // ── API Tokens ──
@@ -360,6 +371,21 @@ use utoipa::{
         oore_contract::CancelBuildResponse,
         oore_contract::RerunBuildResponse,
         oore_contract::StepResult,
+        // Releases
+        oore_contract::ReleaseStore,
+        oore_contract::ReleaseState,
+        oore_contract::ReleaseAction,
+        oore_contract::ReleaseHealth,
+        oore_contract::ReleaseApprovalGate,
+        oore_contract::ReleasePolicy,
+        oore_contract::Release,
+        oore_contract::ReleaseHistoryEntry,
+        oore_contract::ReleaseActivityEvent,
+        oore_contract::ListReleasesResponse,
+        oore_contract::ReleaseDetailResponse,
+        oore_contract::ListReleaseActivityResponse,
+        oore_contract::ReleaseActionRequest,
+        oore_contract::CreateReleaseRequest,
         // Runners
         oore_contract::RunnerStatus,
         oore_contract::Runner,
@@ -477,6 +503,7 @@ use utoipa::{
         (name = "Pipelines", description = "Pipeline configuration — build platforms, commands, triggers, concurrency."),
         (name = "Pipeline Signing", description = "Code signing configuration — Android keystores, iOS certificates/profiles."),
         (name = "Builds", description = "Build lifecycle — queue, list, detail, cancel."),
+        (name = "Releases", description = "Store releases — staged rollout records with pause, halt, resume, complete and approval."),
         (name = "Runners", description = "Build runner management — register, heartbeat, job claim/status."),
         (name = "Build Logs", description = "Build log ingestion and retrieval — append, paginated fetch, SSE streaming."),
         (name = "Artifacts", description = "Build artifact management — upload, list, download via signed URLs."),
@@ -1903,6 +1930,178 @@ mod operations {
         )
     )]
     pub(super) fn cancel_build() {}
+
+    /// List releases
+    ///
+    /// Releases in projects the caller can read, newest first.
+    #[utoipa::path(get, path = "/v1/releases", tag = "Releases",
+        params(
+            ("project_id" = Option<String>, Query, description = "Filter by project"),
+            ("build_id" = Option<String>, Query, description = "Filter by build"),
+            ("state" = Option<String>, Query, description = "Filter by one state or comma-separated states"),
+            ("limit" = Option<i64>, Query, description = "Page size, 1 to 200 (default 50)"),
+            ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Release list", body = ListReleasesResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+        )
+    )]
+    pub(super) fn list_releases() {}
+
+    /// Create release
+    ///
+    /// Records a release for a succeeded build. Requires the project maintainer role.
+    #[utoipa::path(post, path = "/v1/releases", tag = "Releases",
+        request_body = CreateReleaseRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Created release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Build not found", body = ApiError),
+            (status = 409, description = "Build has not succeeded", body = ApiError),
+        )
+    )]
+    pub(super) fn create_release() {}
+
+    /// Get release
+    ///
+    /// Release detail with its full state history, oldest first.
+    #[utoipa::path(get, path = "/v1/releases/{release_id}", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Release detail", body = ReleaseDetailResponse),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_release() {}
+
+    /// Raise rollout
+    ///
+    /// Raises the rollout to `fraction`, or to the next policy step. Raising to 1 completes the release. Requires maintainer. Writes history, an audit log entry, and a release event.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/raise", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn raise_release() {}
+
+    /// Pause rollout
+    ///
+    /// Stops scheduled steps. Requires developer or maintainer. Writes history, an audit log entry, and a release event.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/pause", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn pause_release() {}
+
+    /// Resume rollout
+    ///
+    /// Resumes a paused or halted release; the next step is one interval away. Requires maintainer. Writes history, an audit log entry, and a release event.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/resume", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn resume_release() {}
+
+    /// Halt rollout
+    ///
+    /// Halts the rollout at the store. A halted release never advances until resumed. Requires developer or maintainer. Writes history, an audit log entry, and a release event.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/halt", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn halt_release() {}
+
+    /// Complete rollout
+    ///
+    /// Rolls out to 100%. Requires maintainer. Writes history, an audit log entry, and a release event.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/complete", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn complete_release() {}
+
+    /// Approve release
+    ///
+    /// Records the maintainer approval required by the release policy. Writes history, an audit log entry, and a release event.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/approve", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn approve_release() {}
+
+    /// List release events
+    ///
+    /// Recent release history entries across projects the caller can read, newest first.
+    #[utoipa::path(get, path = "/v1/release-events", tag = "Releases",
+        params(
+            ("project_id" = Option<String>, Query, description = "Filter by project"),
+            ("limit" = Option<i64>, Query, description = "Page size, 1 to 200 (default 50)"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Release activity", body = ListReleaseActivityResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+        )
+    )]
+    pub(super) fn list_release_events() {}
 
     /// Re-run build
     ///

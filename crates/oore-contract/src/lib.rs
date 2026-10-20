@@ -3413,6 +3413,419 @@ pub struct ListNotificationDeliveriesResponse {
     pub total: i64,
 }
 
+// ── Release domain types ────────────────────────────────────────
+
+/// Store a release is published to.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseStore {
+    GooglePlay,
+    AppStore,
+}
+
+impl ReleaseStore {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GooglePlay => "google_play",
+            Self::AppStore => "app_store",
+        }
+    }
+
+    /// Build platform the store distributes.
+    pub fn platform(self) -> &'static str {
+        match self {
+            Self::GooglePlay => "android",
+            Self::AppStore => "ios",
+        }
+    }
+}
+
+impl fmt::Display for ReleaseStore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ReleaseStore {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "google_play" => Ok(Self::GooglePlay),
+            "app_store" => Ok(Self::AppStore),
+            other => Err(format!("unknown release store: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseState {
+    Uploading,
+    Processing,
+    InReview,
+    Rolling,
+    Paused,
+    Halted,
+    Complete,
+    Failed,
+}
+
+impl ReleaseState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Uploading => "uploading",
+            Self::Processing => "processing",
+            Self::InReview => "in_review",
+            Self::Rolling => "rolling",
+            Self::Paused => "paused",
+            Self::Halted => "halted",
+            Self::Complete => "complete",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Complete | Self::Failed)
+    }
+
+    /// States this state can move to. `Rolling -> Rolling` is a fraction change.
+    /// A halted release only leaves through an explicit resume (or failure).
+    pub fn valid_transitions(self) -> &'static [ReleaseState] {
+        match self {
+            Self::Uploading => &[
+                Self::Processing,
+                Self::InReview,
+                Self::Rolling,
+                Self::Failed,
+            ],
+            Self::Processing => &[Self::InReview, Self::Rolling, Self::Failed],
+            Self::InReview => &[Self::Rolling, Self::Failed],
+            Self::Rolling => &[
+                Self::Rolling,
+                Self::Paused,
+                Self::Halted,
+                Self::Complete,
+                Self::Failed,
+            ],
+            Self::Paused => &[Self::Rolling, Self::Halted, Self::Complete, Self::Failed],
+            Self::Halted => &[Self::Rolling, Self::Failed],
+            Self::Complete | Self::Failed => &[],
+        }
+    }
+
+    pub fn can_transition_to(self, target: ReleaseState) -> bool {
+        self.valid_transitions().contains(&target)
+    }
+}
+
+impl fmt::Display for ReleaseState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ReleaseState {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "uploading" => Ok(Self::Uploading),
+            "processing" => Ok(Self::Processing),
+            "in_review" => Ok(Self::InReview),
+            "rolling" => Ok(Self::Rolling),
+            "paused" => Ok(Self::Paused),
+            "halted" => Ok(Self::Halted),
+            "complete" => Ok(Self::Complete),
+            "failed" => Ok(Self::Failed),
+            other => Err(format!("unknown release state: {other}")),
+        }
+    }
+}
+
+/// Manual controls on a release.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseAction {
+    Raise,
+    Pause,
+    Resume,
+    Halt,
+    Complete,
+    Approve,
+}
+
+impl ReleaseAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Raise => "raise",
+            Self::Pause => "pause",
+            Self::Resume => "resume",
+            Self::Halt => "halt",
+            Self::Complete => "complete",
+            Self::Approve => "approve",
+        }
+    }
+}
+
+impl FromStr for ReleaseAction {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "raise" => Ok(Self::Raise),
+            "pause" => Ok(Self::Pause),
+            "resume" => Ok(Self::Resume),
+            "halt" => Ok(Self::Halt),
+            "complete" => Ok(Self::Complete),
+            "approve" => Ok(Self::Approve),
+            other => Err(format!("unknown release action: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseHealth {
+    Unknown,
+    Healthy,
+    Warning,
+    Breached,
+}
+
+impl ReleaseHealth {
+    /// Warning starts at three quarters of the threshold.
+    pub fn from_crash_rate(crash_rate: Option<f64>, threshold: Option<f64>) -> Self {
+        match (crash_rate, threshold) {
+            (Some(rate), Some(limit)) if rate >= limit => Self::Breached,
+            (Some(rate), Some(limit)) if rate >= limit * 0.75 => Self::Warning,
+            (Some(_), Some(_)) => Self::Healthy,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// Where a maintainer approval is required, if anywhere.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseApprovalGate {
+    #[default]
+    None,
+    /// Approval before the runner uploads (release waits in `uploading`).
+    BeforeUpload,
+    /// Approval before a `production` track release starts rolling out.
+    BeforeProduction,
+}
+
+/// Staged rollout policy stored with each release.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct ReleasePolicy {
+    /// Ascending rollout fractions in (0, 1]; the last step must be 1.
+    #[serde(default = "default_release_steps")]
+    pub steps: Vec<f64>,
+    /// Hours between automatic steps.
+    #[serde(default = "default_release_interval_hours")]
+    pub interval_hours: f64,
+    /// Crash rate (0..1) at or above which the daemon halts the rollout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crash_rate_threshold: Option<f64>,
+    #[serde(default)]
+    pub approval: ReleaseApprovalGate,
+}
+
+fn default_release_steps() -> Vec<f64> {
+    vec![0.01, 0.05, 0.2, 0.5, 1.0]
+}
+
+fn default_release_interval_hours() -> f64 {
+    24.0
+}
+
+impl Default for ReleasePolicy {
+    fn default() -> Self {
+        Self {
+            steps: default_release_steps(),
+            interval_hours: default_release_interval_hours(),
+            crash_rate_threshold: None,
+            approval: ReleaseApprovalGate::None,
+        }
+    }
+}
+
+impl ReleasePolicy {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.steps.is_empty() {
+            return Err("policy.steps must not be empty".into());
+        }
+        if self
+            .steps
+            .iter()
+            .any(|step| !step.is_finite() || *step <= 0.0 || *step > 1.0)
+        {
+            return Err("policy.steps must be fractions in (0, 1]".into());
+        }
+        if self.steps.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err("policy.steps must be strictly ascending".into());
+        }
+        if self.steps.last() != Some(&1.0) {
+            return Err("policy.steps must end at 1".into());
+        }
+        if !self.interval_hours.is_finite() || self.interval_hours <= 0.0 {
+            return Err("policy.interval_hours must be greater than zero".into());
+        }
+        if self
+            .crash_rate_threshold
+            .is_some_and(|limit| !limit.is_finite() || limit <= 0.0 || limit > 1.0)
+        {
+            return Err("policy.crash_rate_threshold must be a fraction in (0, 1]".into());
+        }
+        Ok(())
+    }
+
+    /// First policy step above `fraction`.
+    pub fn next_step(&self, fraction: f64) -> Option<f64> {
+        self.steps.iter().copied().find(|step| *step > fraction)
+    }
+
+    pub fn interval_secs(&self) -> i64 {
+        (self.interval_hours * 3600.0).round() as i64
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct Release {
+    pub id: String,
+    pub project_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    pub build_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_number: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
+    /// `android` or `ios`, derived from the store.
+    pub platform: String,
+    pub store: ReleaseStore,
+    /// Play track, or TestFlight group / `app_store`.
+    pub track: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_code: Option<i64>,
+    pub state: ReleaseState,
+    /// Fraction of users, 0..1.
+    pub rollout_fraction: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_fraction: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_step_at: Option<i64>,
+    pub policy: ReleasePolicy,
+    pub health: ReleaseHealth,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crash_rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crash_rate_threshold: Option<f64>,
+    pub awaiting_approval: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approved_by_email: Option<String>,
+    /// Actions the caller may take now, from their project role and the state.
+    pub allowed_actions: Vec<ReleaseAction>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ReleaseHistoryEntry {
+    pub id: String,
+    pub at: i64,
+    /// Null when the daemon or a store made the change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor_email: Option<String>,
+    /// Null for the entry that created the release.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_state: Option<ReleaseState>,
+    pub to_state: ReleaseState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_fraction: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_fraction: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// A history entry with the release it belongs to, for activity feeds.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ReleaseActivityEvent {
+    #[serde(flatten)]
+    pub entry: ReleaseHistoryEntry,
+    pub release_id: String,
+    pub project_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    pub build_id: String,
+    pub store: ReleaseStore,
+    pub track: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListReleasesResponse {
+    pub releases: Vec<Release>,
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ReleaseDetailResponse {
+    pub release: Release,
+    pub history: Vec<ReleaseHistoryEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListReleaseActivityResponse {
+    pub events: Vec<ReleaseActivityEvent>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct ReleaseActionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Raise only: target fraction (0..1]. Defaults to the next policy step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fraction: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreateReleaseRequest {
+    pub build_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
+    pub store: ReleaseStore,
+    pub track: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_code: Option<i64>,
+    /// Initial state; defaults to `rolling`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<ReleaseState>,
+    /// Initial fraction; defaults to the first policy step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_fraction: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<ReleasePolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 // ── API Tokens ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

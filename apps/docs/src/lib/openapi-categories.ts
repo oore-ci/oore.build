@@ -13,6 +13,7 @@ export const OPENAPI_CATEGORIES = [
     tags: ['Auth', 'API Tokens'],
   },
   { slug: 'builds', title: 'Builds', tags: ['Builds'] },
+  { slug: 'releases', title: 'Releases', tags: ['Releases'] },
   { slug: 'users', title: 'Users', tags: ['Users'] },
   {
     slug: 'projects',

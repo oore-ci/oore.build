@@ -27,6 +27,7 @@ pub mod project_members;
 pub mod project_rbac;
 pub mod projects;
 pub mod rbac;
+pub mod releases;
 pub mod repository_workflows;
 pub mod retention;
 pub mod runners;
@@ -113,6 +114,8 @@ pub struct AppState {
     pub runtime_update: runtime_updates::RuntimeUpdateState,
     /// Short-lived, single-use local recovery capabilities minted over UDS.
     pub recovery_capabilities: local_recovery::RecoveryCapabilityStore,
+    /// Outbound store client for release rollout changes and health.
+    pub release_store: Arc<dyn releases::ReleaseStoreClient>,
 }
 
 // ── Constants ────────────────────────────────────────────────────
@@ -2382,6 +2385,7 @@ pub async fn build_router_with_recovery(
         public_url: public_url_state,
         runtime_update: runtime_updates::new_state(),
         recovery_capabilities,
+        release_store: Arc::new(releases::NoopReleaseStoreClient),
     });
 
     // Start background tasks (lease timeout, build timeout, heartbeat monitor)
@@ -2398,6 +2402,7 @@ pub async fn build_router_with_recovery(
             shared_state.encryption_key.to_vec(),
         );
         integrations::gitlab::start_credential_health_monitor(shared_state.clone());
+        background::start_release_rollout_monitor(shared_state.clone());
     }
 
     let allowed_origins_for_cors = allowed_origins_state.clone();
@@ -2718,6 +2723,16 @@ pub async fn build_router_with_recovery(
         .route("/v1/builds/{build_id}/rerun", post(builds::rerun_build))
         // Audit log endpoints
         .route("/v1/audit-logs", get(audit_logs::list_audit_logs))
+        .route(
+            "/v1/releases",
+            get(releases::list_releases).post(releases::create_release_handler),
+        )
+        .route("/v1/releases/{release_id}", get(releases::get_release))
+        .route(
+            "/v1/releases/{release_id}/{action}",
+            post(releases::release_action),
+        )
+        .route("/v1/release-events", get(releases::list_release_activity))
         // API token endpoints
         .route(
             "/v1/api-tokens",
