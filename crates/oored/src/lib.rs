@@ -773,6 +773,7 @@ async fn readyz(State(state): State<Arc<AppState>>) -> (StatusCode, Json<serde_j
     let db_ready = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
     let encryption_ready = state.encryption_key.len() == 32;
     let ready = db_ready && encryption_ready;
+    let runtime = installed_runtime_metadata();
     (
         if ready {
             StatusCode::OK
@@ -785,6 +786,10 @@ async fn readyz(State(state): State<Arc<AppState>>) -> (StatusCode, Json<serde_j
             // Migrations and the runtime key are completed before the router is built.
             "migrations": db_ready,
             "encryption": encryption_ready,
+            // The running binary's version, so update clients can tell a restarted
+            // daemon from the old process still serving after VERSION changed.
+            "version": runtime.version,
+            "package_version": runtime.package_version,
         })),
     )
 }
