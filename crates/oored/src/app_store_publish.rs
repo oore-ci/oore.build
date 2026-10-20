@@ -14,7 +14,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use oore_contract::{
     ApiError, AppStoreDestination, AppStorePublishConfig, AppStoreReleaseNote, IosExportMethod,
-    PipelineAppStorePublishResponse, ReleasePolicy, ReleaseState, ReleaseStore,
+    PipelineAppStorePublishResponse, Release, ReleasePolicy, ReleaseState, ReleaseStore,
     RunnerAppStorePublishPlan, RunnerAppStoreUploadCredentials,
 };
 use serde_json::Value;
@@ -22,12 +22,17 @@ use sqlx::{FromRow, SqlitePool};
 use tracing::{error, info, warn};
 
 use crate::AppState;
-use crate::app_store_connect::{AppStoreConnect, AscError, BuildProcessing, phased_release_fraction};
+use crate::app_store_connect::{
+    AppStoreConnect, AscError, BuildProcessing, phased_release_fraction,
+};
 use crate::apple_api::AppleApiCredentials;
 use crate::crypto;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{ProjectPermission, require_pipeline_project_permission};
-use crate::releases::{self, NewRelease, ReleaseActor, ReleaseChange};
+use crate::releases::{
+    self, BoxFuture, NewRelease, ReleaseActor, ReleaseChange, ReleaseDeps, ReleaseStoreClient,
+    StoreChange,
+};
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
@@ -60,7 +65,9 @@ fn is_valid_locale(locale: &str) -> bool {
 
 /// Trims and checks a config before it is stored. Returns every problem so
 /// the form can show them together.
-fn normalize_config(mut config: AppStorePublishConfig) -> Result<AppStorePublishConfig, Vec<String>> {
+fn normalize_config(
+    mut config: AppStorePublishConfig,
+) -> Result<AppStorePublishConfig, Vec<String>> {
     let mut errors = Vec::new();
 
     let mut groups: Vec<String> = Vec::new();
@@ -76,11 +83,11 @@ fn normalize_config(mut config: AppStorePublishConfig) -> Result<AppStorePublish
         }
     }
     if groups.len() > MAX_GROUPS {
-        errors.push(format!("At most {MAX_GROUPS} TestFlight groups are allowed"));
+        errors.push(format!(
+            "At most {MAX_GROUPS} TestFlight groups are allowed"
+        ));
     }
-    if config.enabled
-        && config.destination == AppStoreDestination::Testflight
-        && groups.is_empty()
+    if config.enabled && config.destination == AppStoreDestination::Testflight && groups.is_empty()
     {
         errors.push("TestFlight publishing needs at least one group".to_string());
     }
@@ -94,7 +101,9 @@ fn normalize_config(mut config: AppStorePublishConfig) -> Result<AppStorePublish
             continue;
         }
         if !is_valid_locale(locale) {
-            errors.push(format!("'{locale}' is not an App Store Connect locale such as en-US"));
+            errors.push(format!(
+                "'{locale}' is not an App Store Connect locale such as en-US"
+            ));
             continue;
         }
         if whats_new.chars().count() > MAX_WHATS_NEW_CHARS {
@@ -112,7 +121,9 @@ fn normalize_config(mut config: AppStorePublishConfig) -> Result<AppStorePublish
         });
     }
     if notes.len() > MAX_NOTES {
-        errors.push(format!("At most {MAX_NOTES} release note locales are allowed"));
+        errors.push(format!(
+            "At most {MAX_NOTES} release note locales are allowed"
+        ));
     }
     config.release_notes = notes;
 
@@ -392,7 +403,9 @@ pub(crate) async fn runner_plan(
         return Ok(None);
     }
     let Some(credentials) = decrypt_credentials(&signing, encryption_key)? else {
-        anyhow::bail!("App Store publishing is on but the pipeline has no App Store Connect API key");
+        anyhow::bail!(
+            "App Store publishing is on but the pipeline has no App Store Connect API key"
+        );
     };
     Ok(Some(RunnerAppStorePublishPlan {
         config,
@@ -482,13 +495,14 @@ pub(crate) async fn record_upload(
         ReleaseState::Processing
     };
     let release = releases::create_release(
-        state,
+        ReleaseDeps::from(state),
         NewRelease {
             project_id,
             build_id: build_id.to_string(),
             artifact_id: Some(ipa.artifact_id.clone()),
             store: ReleaseStore::AppStore,
             track,
+            package_name: Some(ipa.bundle_id.clone()),
             version_name: Some(ipa.version.clone()),
             version_code: ipa.build_number.parse().ok(),
             state: release_state,
@@ -496,10 +510,13 @@ pub(crate) async fn record_upload(
             policy: ReleasePolicy::default(),
         },
         &ReleaseActor::System,
-        Some(error_message.unwrap_or("Uploaded to App Store Connect; waiting for Apple to process the build")),
+        Some(
+            error_message
+                .unwrap_or("Uploaded to App Store Connect; waiting for Apple to process the build"),
+        ),
     )
     .await
-    .map_err(|error| anyhow::anyhow!("failed to create App Store release: {error}"))?;
+    .map_err(|error| anyhow::anyhow!("failed to create App Store release: {error:?}"))?;
 
     if error_message.is_none() {
         let now = now_unix();
@@ -575,11 +592,11 @@ fn review_outcome(version_state: &str) -> Option<(ReleaseState, &'static str)> {
     match version_state {
         "READY_FOR_SALE" | "READY_FOR_DISTRIBUTION" => None,
         "PREPARE_FOR_SUBMISSION" | "READY_FOR_REVIEW" => Some((
-            ReleaseState::Paused,
+            ReleaseState::InReview,
             "Build attached; submit the version for review in App Store Connect",
         )),
         "PENDING_DEVELOPER_RELEASE" => Some((
-            ReleaseState::Paused,
+            ReleaseState::InReview,
             "Approved by Apple; release the version in App Store Connect",
         )),
         "REJECTED" | "METADATA_REJECTED" | "INVALID_BINARY" => {
@@ -590,7 +607,10 @@ fn review_outcome(version_state: &str) -> Option<(ReleaseState, &'static str)> {
             "Withdrawn from review in App Store Connect",
         )),
         "REMOVED_FROM_SALE" | "DEVELOPER_REMOVED_FROM_SALE" | "REPLACED_WITH_NEW_VERSION" => {
-            Some((ReleaseState::Halted, "Version is no longer on the App Store"))
+            Some((
+                ReleaseState::Halted,
+                "Version is no longer on the App Store",
+            ))
         }
         _ => Some((ReleaseState::InReview, "In App Store review")),
     }
@@ -614,7 +634,11 @@ fn live_outcome(phased_state: Option<&str>, day: Option<i64>) -> (ReleaseState, 
             0.0,
             "Phased release waiting to start",
         ),
-        _ => (ReleaseState::Complete, 1.0, "Live for all users on the App Store"),
+        _ => (
+            ReleaseState::Complete,
+            1.0,
+            "Live for all users on the App Store",
+        ),
     }
 }
 
@@ -830,11 +854,11 @@ async fn distribute_testflight(
     let mut selected = Vec::new();
     let mut missing = Vec::new();
     for name in &config.testflight_groups {
-        match groups
-            .iter()
-            .find(|group| group.name == *name)
-            .or_else(|| groups.iter().find(|group| group.name.eq_ignore_ascii_case(name)))
-        {
+        match groups.iter().find(|group| group.name == *name).or_else(|| {
+            groups
+                .iter()
+                .find(|group| group.name.eq_ignore_ascii_case(name))
+        }) {
             Some(group) => selected.push(group),
             None => missing.push(name.as_str()),
         }
@@ -924,11 +948,14 @@ async fn distribute_app_store(
         step.transition = Some((
             ReleaseState::InReview,
             None,
-            format!("Submitted version {} for App Store review{suffix}", link.version),
+            format!(
+                "Submitted version {} for App Store review{suffix}",
+                link.version
+            ),
         ));
     } else {
         step.transition = Some((
-            ReleaseState::Paused,
+            ReleaseState::InReview,
             None,
             format!(
                 "Build attached to version {}; submit it for review in App Store Connect{suffix}",
@@ -939,28 +966,86 @@ async fn distribute_app_store(
     Ok(step)
 }
 
-fn state_matches(current: &str, fraction: f64, next: ReleaseState, next_fraction: Option<f64>) -> bool {
+/// The states to pass through to reach `target`. Release states only move
+/// forward one hop at a time, so a build that goes straight from processing
+/// to fully available passes through `rolling` at 100% on the way.
+fn transition_path(from: ReleaseState, target: ReleaseState) -> Vec<ReleaseState> {
+    if from.can_transition_to(target) {
+        return vec![target];
+    }
+    if matches!(target, ReleaseState::Complete | ReleaseState::Paused)
+        && from.can_transition_to(ReleaseState::Rolling)
+    {
+        return vec![ReleaseState::Rolling, target];
+    }
+    if target == ReleaseState::Halted && from.can_transition_to(ReleaseState::Failed) {
+        return vec![ReleaseState::Failed];
+    }
+    Vec::new()
+}
+
+fn state_matches(
+    current: &str,
+    fraction: f64,
+    next: ReleaseState,
+    next_fraction: Option<f64>,
+) -> bool {
     current == next.as_str()
         && next_fraction.is_none_or(|next_fraction| (next_fraction - fraction).abs() < f64::EPSILON)
 }
 
 async fn apply_step(state: &AppState, link: &LinkRow, step: Step) -> anyhow::Result<()> {
-    if let Some((to_state, to_fraction, reason)) = step.transition
-        && !state_matches(&link.release_state, link.rollout_fraction, to_state, to_fraction)
-    {
-        releases::transition_release(
-            state,
-            &link.release_id,
-            ReleaseChange {
-                to_state,
-                to_fraction,
-                audit_action: "app_store_release_updated",
-            },
-            &ReleaseActor::System,
-            Some(&reason),
+    if let Some((target, target_fraction, reason)) = step.transition
+        && !state_matches(
+            &link.release_state,
+            link.rollout_fraction,
+            target,
+            target_fraction,
         )
-        .await
-        .map_err(|error| anyhow::anyhow!("failed to update App Store release: {error}"))?;
+    {
+        let from: ReleaseState = link
+            .release_state
+            .parse()
+            .map_err(|error: String| anyhow::anyhow!(error))?;
+        let path = transition_path(from, target);
+        if path.is_empty() {
+            warn!(
+                release_id = %link.release_id,
+                from = %from,
+                to = %target,
+                "App Store state has no release transition"
+            );
+        }
+        for to_state in path {
+            let to_fraction = match to_state {
+                ReleaseState::Rolling if target != ReleaseState::Rolling => {
+                    target_fraction.or(Some(1.0))
+                }
+                _ => target_fraction,
+            };
+            // Apple only raises phased releases; never record a step down.
+            let to_fraction = match (from, to_state, to_fraction) {
+                (ReleaseState::Rolling, ReleaseState::Rolling, Some(fraction))
+                    if fraction <= link.rollout_fraction =>
+                {
+                    continue;
+                }
+                _ => to_fraction,
+            };
+            releases::transition_release(
+                ReleaseDeps::from(state),
+                &link.release_id,
+                ReleaseChange {
+                    to_state,
+                    to_fraction,
+                    audit_action: "app_store_release_updated",
+                },
+                &ReleaseActor::System,
+                Some(&reason),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to update App Store release: {error:?}"))?;
+        }
     }
     sqlx::query(
         "UPDATE app_store_release_links
@@ -1003,7 +1088,10 @@ async fn record_poll_error(pool: &SqlitePool, release_id: &str, message: &str) {
     }
 }
 
-async fn load_credentials(state: &AppState, pipeline_id: &str) -> anyhow::Result<AppleApiCredentials> {
+async fn load_credentials(
+    state: &AppState,
+    pipeline_id: &str,
+) -> anyhow::Result<AppleApiCredentials> {
     let row = load_signing_key_row(&state.db, pipeline_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("pipeline has no iOS signing settings"))?;
@@ -1093,57 +1181,121 @@ pub fn start_release_monitor(state: Arc<AppState>) {
     });
 }
 
-// ── Phased release controls ─────────────────────────────────────
+// ── Release controls ────────────────────────────────────────────
 
-/// Pause, resume or complete Apple's phased release for an `app_store`
-/// release. Called by the release controls before they record the change.
-pub(crate) async fn apply_phased_release_action(
-    state: &AppState,
-    release_id: &str,
-    to_state: ReleaseState,
-) -> Result<(), String> {
-    let target = match to_state {
-        ReleaseState::Paused => "PAUSED",
-        ReleaseState::Rolling => "ACTIVE",
-        ReleaseState::Complete => "COMPLETE",
-        _ => {
-            return Err(
-                "App Store releases can only be paused, resumed or completed".to_string(),
-            );
+/// Applies release controls to App Store Connect.
+///
+/// The monitor also records changes it read from Apple, so every call is
+/// idempotent: a change that already matches Apple's state is a no-op. Apple
+/// owns the phased release percentages, so a fraction change is only recorded.
+pub struct AppStoreReleaseClient {
+    pool: SqlitePool,
+    encryption_key: zeroize::Zeroizing<Vec<u8>>,
+    client: reqwest::Client,
+}
+
+impl AppStoreReleaseClient {
+    pub fn new(pool: SqlitePool, encryption_key: zeroize::Zeroizing<Vec<u8>>) -> Self {
+        Self {
+            pool,
+            encryption_key,
+            client: reqwest::Client::new(),
         }
-    };
-    let link: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT pipeline_id, asc_version_id FROM app_store_release_links WHERE release_id = ?1",
-    )
-    .bind(release_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|error| format!("Failed to load App Store release: {error}"))?;
-    let Some((pipeline_id, Some(version_id))) = link else {
-        return Err("This release has no App Store version yet".to_string());
-    };
-    let creds = load_credentials(state, &pipeline_id)
-        .await
-        .map_err(|error| error.to_string())?;
-    let client = reqwest::Client::new();
-    let asc = AppStoreConnect::new(&client, &creds);
-    let phased = asc
-        .phased_release(&version_id)
-        .await
-        .map_err(|error| error.0)?
-        .ok_or_else(|| "This App Store version does not use phased release".to_string())?;
-    asc.set_phased_release_state(&phased.id, target)
-        .await
-        .map_err(|error| error.0)?;
-    // Poll soon so the board reflects Apple's answer.
-    let _ = sqlx::query(
-        "UPDATE app_store_release_links SET next_poll_at = ?1 WHERE release_id = ?2",
-    )
-    .bind(now_unix())
-    .bind(release_id)
-    .execute(&state.db)
-    .await;
-    Ok(())
+    }
+
+    async fn apply_change(&self, release: &Release, change: StoreChange) -> anyhow::Result<()> {
+        let target = match change {
+            // Apple's schedule decides the percentage.
+            StoreChange::Rollout { .. } => return Ok(()),
+            StoreChange::Pause => "PAUSED",
+            StoreChange::Resume { .. } => "ACTIVE",
+            StoreChange::Complete => "COMPLETE",
+            StoreChange::Halt => anyhow::bail!(
+                "App Store releases cannot be halted from Oore; pause the phased release or remove the version from sale in App Store Connect"
+            ),
+        };
+        let link: Option<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT pipeline_id, stage, asc_version_id FROM app_store_release_links
+             WHERE release_id = ?1",
+        )
+        .bind(&release.id)
+        .fetch_optional(&self.pool)
+        .await?;
+        // TestFlight releases and versions that are not live have no phased
+        // release; the change mirrors what Apple already reported.
+        let Some((pipeline_id, stage, Some(version_id))) = link else {
+            return Ok(());
+        };
+        if !matches!(Stage::parse(&stage), Stage::Live | Stage::Done) {
+            return Ok(());
+        }
+        let row = load_signing_key_row(&self.pool, &pipeline_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("pipeline has no iOS signing settings"))?;
+        let creds = decrypt_credentials(&row, &self.encryption_key)?
+            .ok_or_else(|| anyhow::anyhow!("pipeline has no App Store Connect API key"))?;
+        let asc = AppStoreConnect::new(&self.client, &creds);
+        let Some(phased) = asc
+            .phased_release(&version_id)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.0))?
+        else {
+            if target == "COMPLETE" {
+                return Ok(());
+            }
+            anyhow::bail!("This App Store version does not use phased release");
+        };
+        if phased.state == target || phased.state == "COMPLETE" {
+            return Ok(());
+        }
+        asc.set_phased_release_state(&phased.id, target)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.0))?;
+        sqlx::query("UPDATE app_store_release_links SET next_poll_at = ?1 WHERE release_id = ?2")
+            .bind(now_unix())
+            .bind(&release.id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}
+
+/// Sends `app_store` releases to App Store Connect and every other store to
+/// `other`.
+pub struct StoreRouter {
+    app_store: AppStoreReleaseClient,
+    other: Arc<dyn ReleaseStoreClient>,
+}
+
+impl StoreRouter {
+    pub fn new(app_store: AppStoreReleaseClient, other: Arc<dyn ReleaseStoreClient>) -> Self {
+        Self { app_store, other }
+    }
+}
+
+impl ReleaseStoreClient for StoreRouter {
+    fn apply<'a>(
+        &'a self,
+        release: &'a Release,
+        change: StoreChange,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        if release.store == ReleaseStore::AppStore {
+            Box::pin(self.app_store.apply_change(release, change))
+        } else {
+            self.other.apply(release, change)
+        }
+    }
+
+    fn crash_rate<'a>(
+        &'a self,
+        release: &'a Release,
+    ) -> BoxFuture<'a, anyhow::Result<Option<f64>>> {
+        if release.store == ReleaseStore::AppStore {
+            Box::pin(async { Ok(None) })
+        } else {
+            self.other.crash_rate(release)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1257,15 +1409,42 @@ mod tests {
 
     #[test]
     fn phased_release_drives_rolling_paused_and_complete() {
-        assert_eq!(live_outcome(Some("ACTIVE"), Some(3)).0, ReleaseState::Rolling);
+        assert_eq!(
+            live_outcome(Some("ACTIVE"), Some(3)).0,
+            ReleaseState::Rolling
+        );
         assert_eq!(live_outcome(Some("ACTIVE"), Some(3)).1, 0.05);
-        assert_eq!(live_outcome(Some("PAUSED"), Some(5)).0, ReleaseState::Paused);
-        assert_eq!(live_outcome(Some("COMPLETE"), Some(7)).0, ReleaseState::Complete);
-        assert_eq!(live_outcome(None, None), (
-            ReleaseState::Complete,
-            1.0,
-            "Live for all users on the App Store"
-        ));
+        assert_eq!(
+            live_outcome(Some("PAUSED"), Some(5)).0,
+            ReleaseState::Paused
+        );
+        assert_eq!(
+            live_outcome(Some("COMPLETE"), Some(7)).0,
+            ReleaseState::Complete
+        );
+        assert_eq!(
+            live_outcome(None, None),
+            (
+                ReleaseState::Complete,
+                1.0,
+                "Live for all users on the App Store"
+            )
+        );
+    }
+
+    #[test]
+    fn transitions_hop_through_rolling_when_needed() {
+        use ReleaseState::*;
+        assert_eq!(transition_path(Processing, InReview), vec![InReview]);
+        assert_eq!(
+            transition_path(Processing, Complete),
+            vec![Rolling, Complete]
+        );
+        assert_eq!(transition_path(InReview, Complete), vec![Rolling, Complete]);
+        assert_eq!(transition_path(InReview, Paused), vec![Rolling, Paused]);
+        assert_eq!(transition_path(Rolling, Complete), vec![Complete]);
+        assert_eq!(transition_path(InReview, Halted), vec![Failed]);
+        assert_eq!(transition_path(Rolling, Halted), vec![Halted]);
     }
 
     #[test]

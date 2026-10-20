@@ -1,5 +1,6 @@
 pub mod api_tokens;
 pub mod app_store_connect;
+pub mod app_store_publish;
 pub mod apple_api;
 pub mod artifact_install;
 pub mod artifact_tokens;
@@ -2383,6 +2384,8 @@ pub async fn build_router_with_recovery(
 
     let db = store.pool().clone();
     let webhook_wake = integrations::webhooks::start_webhook_processor(db.clone());
+    let release_store_pool = db.clone();
+    let release_store_key = encryption_key.clone();
     let shared_state = Arc::new(AppState {
         store: Mutex::new(store),
         db,
@@ -2399,7 +2402,13 @@ pub async fn build_router_with_recovery(
         public_url: public_url_state,
         runtime_update: runtime_updates::new_state(),
         recovery_capabilities,
-        release_store: Arc::new(releases::NoopReleaseStoreClient),
+        release_store: Arc::new(app_store_publish::StoreRouter::new(
+            app_store_publish::AppStoreReleaseClient::new(
+                release_store_pool,
+                Zeroizing::new(release_store_key),
+            ),
+            Arc::new(releases::NoopReleaseStoreClient),
+        )),
     });
 
     // Start background tasks (lease timeout, build timeout, heartbeat monitor)
@@ -2416,6 +2425,7 @@ pub async fn build_router_with_recovery(
             shared_state.encryption_key.to_vec(),
         );
         integrations::gitlab::start_credential_health_monitor(shared_state.clone());
+        app_store_publish::start_release_monitor(shared_state.clone());
         background::start_release_rollout_monitor(shared_state.clone());
     }
 
@@ -2707,6 +2717,11 @@ pub async fn build_router_with_recovery(
                 .layer(DefaultBodyLimit::max(
                     pipeline_ios_signing::MAX_IOS_SIGNING_REQUEST_BYTES,
                 )),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/publish/app-store",
+            get(app_store_publish::get_pipeline_app_store_publish)
+                .put(app_store_publish::update_pipeline_app_store_publish),
         )
         .route(
             "/v1/pipelines/{pipeline_id}/ios-signing/sync",
