@@ -9516,7 +9516,7 @@ fn daemon_data_paths_from_plist(
     };
     let data_dir = env_value("OORED_DATA_DIR")
         .or_else(|| env_value("OORE_DATA_DIR"))
-        .map(&absolute)
+        .map(absolute)
         .or_else(|| {
             env_value("HOME").map(|home| {
                 absolute(home)
@@ -9529,10 +9529,10 @@ fn daemon_data_paths_from_plist(
     let database = value_from_program_arguments(&program_arguments, "--state-file")
         .as_deref()
         .or_else(|| env_value("OORE_SETUP_STATE_FILE"))
-        .map(&absolute)
+        .map(absolute)
         .unwrap_or_else(|| data_dir.join(BACKUP_DATABASE_FILE));
     let key = env_value("OORE_ENCRYPTION_KEY_FILE")
-        .map(&absolute)
+        .map(absolute)
         .unwrap_or_else(|| data_dir.join(BACKUP_KEY_FILE));
     Ok((database, key))
 }

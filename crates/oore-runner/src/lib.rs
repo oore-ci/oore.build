@@ -3789,6 +3789,9 @@ impl BuildAuthorityState {
     }
 
     fn transient_failure(&self) -> anyhow::Result<()> {
+        // `fetch_update` is deprecated in favor of `try_update` from Rust 1.99; keep the old
+        // name until local toolchains catch up with CI's stable.
+        #[allow(deprecated)]
         let failures = self
             .consecutive_failures
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
