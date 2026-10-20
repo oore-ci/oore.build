@@ -12873,6 +12873,17 @@
             "format": "double",
             "description": "Initial staged rollout, 0 < percent <= 100. Omitted means 100."
           },
+          "rollout_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReleasePolicy",
+                "description": "Staged rollout schedule, crash-rate halt and approval gate for the\nrelease record. Omitted means the default schedule with no halt."
+              }
+            ]
+          },
           "service_account_secret": {
             "type": "string",
             "description": "Name of the secret holding the service account JSON key."
