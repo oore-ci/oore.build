@@ -63,7 +63,10 @@ on the backend Mac as the account that owns the install, without `sudo`.
 Each check reports `ok`, `warning`, or `failed` with a detail and a fix. Only
 `failed` blocks the one-click update; the rollback check is a warning because
 an update can still start, but a failed restart then needs recovery from
-Terminal. The command fails when any check fails. `--json` prints the same
+Terminal. Setup grants that reload in `/etc/sudoers.d/oore-update-recovery`,
+which allows only the daemon's `launchctl bootout`, `bootstrap`, and
+`kickstart -k` commands, so rerun `oore setup` when the check warns. The
+command fails when any check fails. `--json` prints the same
 `ready`, `checked_at`, and `checks` object as `GET /v1/system/update/preflight`.
 
 ```bash

@@ -27,6 +27,7 @@ Default removal deletes only these owned items:
 - Component files recorded in the installation manifest.
 - Services recorded in the manifest, after ownership verification.
 - The owned update supervisor paired with a Complete or Control plane service.
+- The `/etc/sudoers.d/oore-update-recovery` rule that lets the update supervisor reload the daemon.
 - The exact recorded three-line Oore shell path block.
 
 It preserves these items:
