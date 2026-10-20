@@ -1,5 +1,5 @@
 {
   "title": "Deployment",
   "pagesIndex": "index",
-  "pages": ["index", "split-roles"]
+  "pages": ["index", "split-roles", "linux-web-node"]
 }

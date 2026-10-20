@@ -41,6 +41,7 @@ export function RuntimeOverview({
     runtimeUpdates.backendUpdate.data?.phase === 'failed'
       ? runtimeUpdates.backendUpdate.data.error
       : null
+  const frontendRelease = runtimeUpdates.frontendRelease.data
 
   return (
     <SettingsSection
@@ -69,10 +70,18 @@ export function RuntimeOverview({
                   </ItemDescription>
                   {!runtimeUpdates.frontendRelease.data.managed_service ? (
                     <ItemDescription className="line-clamp-none">
-                      Install oore-web as a managed service to update it here.
+                      {runtimeUpdates.frontendRelease.data
+                        .managed_service_reason ||
+                        'Install oore-web as a managed service to update it here.'}
                     </ItemDescription>
                   ) : null}
                 </>
+              ) : null}
+              {isOwner && runtimeUpdates.frontendRelease.isError ? (
+                <ItemDescription className="line-clamp-none">
+                  Could not check for frontend updates:{' '}
+                  {runtimeUpdates.frontendRelease.error.message}
+                </ItemDescription>
               ) : null}
             </ItemContent>
             {runtimeUpdates.frontendRelease.data?.update_available ? (
@@ -183,6 +192,27 @@ export function RuntimeOverview({
           </Item>
         </ItemGroup>
       </SettingsSurface>
+
+      {frontendRelease?.phase === 'failed' ? (
+        <Alert variant="destructive">
+          <AlertTitle>Frontend update failed</AlertTitle>
+          <AlertDescription className="flex flex-col gap-2 wrap-break-word">
+            <p>
+              {frontendRelease.error ||
+                'The frontend update stopped before completion.'}
+            </p>
+            {frontendRelease.log_path ? (
+              <p>
+                Check{' '}
+                <code className="font-mono text-[11px]">
+                  {frontendRelease.log_path}
+                </code>{' '}
+                on the web node for details, then retry.
+              </p>
+            ) : null}
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {runtimeUpdates.backendUpdate.data?.phase === 'failed' ? (
         <Alert variant="destructive">

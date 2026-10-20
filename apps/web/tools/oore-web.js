@@ -2382,10 +2382,9 @@ async function runUpdate(config, activeConfig = null) {
 
 async function runUpdateWithAcquiredLock(config, activeConfig = null) {
   const installRoot = resolveInstallRoot()
+  const log = config.log ?? console.log
   if (!config.check && recoverInterruptedUpdate(installRoot)) {
-    console.warn(
-      '[oore-web] restored the previous frontend after an interrupted update',
-    )
+    log('[oore-web] restored the previous frontend after an interrupted update')
   }
   const installed = readInstalledMetadata(installRoot)
   const currentRaw =
@@ -2400,20 +2399,20 @@ async function runUpdateWithAcquiredLock(config, activeConfig = null) {
     await fetchVerifiedWebRelease(channel, repo)
   validateManagedUpdateTransition(installed, latest, channel, repo)
 
-  console.log(`Channel:         ${channel}`)
-  console.log(`GitHub repo:     ${repo}`)
-  console.log(`Current version: ${current.raw}`)
-  console.log(`Latest version:  ${latest.raw} (${release.tag})`)
+  log(`Channel:         ${channel}`)
+  log(`GitHub repo:     ${repo}`)
+  log(`Current version: ${current.raw}`)
+  log(`Latest version:  ${latest.raw} (${release.tag})`)
 
   if (compareVersions(current, latest) >= 0 && !config.force) {
-    console.log('Already up to date.')
+    log('Already up to date.')
     return { current: current.raw, latest: latest.raw, updated: false }
   }
 
   if (compareVersions(current, latest) < 0) {
-    console.log(`Update available: ${current.raw} -> ${latest.raw}`)
+    log(`Update available: ${current.raw} -> ${latest.raw}`)
   } else {
-    console.log(`Reinstalling version ${latest.raw} (--force).`)
+    log(`Reinstalling version ${latest.raw} (--force).`)
   }
 
   const archiveUrl = findAssetUrl(release, archiveName)
@@ -2426,7 +2425,7 @@ async function runUpdateWithAcquiredLock(config, activeConfig = null) {
   try {
     const bundlePath = path.join(tmpDir, archiveName)
     const extractDir = path.join(tmpDir, 'extract')
-    console.log(`Downloading ${archiveName}...`)
+    log(`Downloading ${archiveName}...`)
     const actualHash = await downloadFileLimited(archiveUrl, bundlePath, {
       limit: MAX_RELEASE_ARCHIVE_BYTES,
       description: 'release archive',
@@ -2436,7 +2435,7 @@ async function runUpdateWithAcquiredLock(config, activeConfig = null) {
         `checksum mismatch for ${archiveName} (expected ${expectedHash}, got ${actualHash})`,
       )
     }
-    console.log('Checksum verified (SHA-256).')
+    log('Checksum verified (SHA-256).')
     await extractTarGz(bundlePath, extractDir, latest.raw)
 
     const extractedBinary = path.join(extractDir, 'bin', 'oore-web')
@@ -2460,27 +2459,300 @@ async function runUpdateWithAcquiredLock(config, activeConfig = null) {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   }
 
-  console.log(`Updated oore-web to ${latest.raw}.`)
-  console.log(
-    'If oore-web is running as a service, restart the service to use the updated launcher binary.',
-  )
+  log(`Updated oore-web to ${latest.raw}.`)
   return { current: current.raw, latest: latest.raw, updated: true }
 }
 
-function hasManagedWebService() {
-  return (
-    fileExists(
-      path.join(os.homedir(), '.config', 'systemd', 'user', 'oore-web.service'),
-    ) ||
-    fileExists(
-      path.join(
-        os.homedir(),
-        'Library',
-        'LaunchAgents',
-        'build.oore.oore-web.plist',
-      ),
-    )
+const WEB_SYSTEMD_UNIT = 'oore-web.service'
+const WEB_LAUNCHD_LABEL = 'build.oore.oore-web'
+const SYSTEMD_RESTART_POLICIES = new Set(['on-failure', 'always'])
+const MANAGED_SERVICE_CACHE_MS = 30_000
+
+export function parseSystemctlShow(output) {
+  const properties = {}
+  for (const line of output.split('\n')) {
+    const separator = line.indexOf('=')
+    if (separator > 0) {
+      properties[line.slice(0, separator)] = line.slice(separator + 1).trim()
+    }
+  }
+  return properties
+}
+
+// Checks an `oore-web.service` unit from `systemctl show`. Returns null when
+// the unit is not installed in that scope. With `pid`, the unit must be the
+// one running this process, so `process.exit(75)` leads to a restart.
+export function evaluateSystemdWebUnit(properties, { scope, pid, linger }) {
+  if (properties.LoadState !== 'loaded') return null
+  const service = `systemd ${scope} unit ${WEB_SYSTEMD_UNIT}`
+  const mainPid = Number.parseInt(properties.MainPID || '0', 10)
+  if (pid && mainPid !== pid) {
+    return {
+      managed: false,
+      service,
+      reason: `This oore-web process is not the one ${WEB_SYSTEMD_UNIT} runs. Start oore-web with systemctl instead of from a shell.`,
+    }
+  }
+  if (!SYSTEMD_RESTART_POLICIES.has(properties.Restart)) {
+    return {
+      managed: false,
+      service,
+      reason: `${WEB_SYSTEMD_UNIT} uses Restart=${properties.Restart || 'no'}. Set Restart=on-failure or Restart=always so it restarts after an update.`,
+    }
+  }
+  if (scope === 'user' && linger !== true) {
+    return {
+      managed: false,
+      service,
+      reason: `${WEB_SYSTEMD_UNIT} is a user unit without lingering, so it stops when you log out. Run loginctl enable-linger ${os.userInfo().username} or install it as a system unit.`,
+    }
+  }
+  return { managed: true, service, reason: null }
+}
+
+function systemctlShow(scopeArgs) {
+  const result = spawnSync(
+    'systemctl',
+    [
+      ...scopeArgs,
+      'show',
+      WEB_SYSTEMD_UNIT,
+      '--property=LoadState,Restart,MainPID',
+    ],
+    { encoding: 'utf8', timeout: 5000 },
   )
+  if (result.error || result.status !== 0) return {}
+  return parseSystemctlShow(result.stdout)
+}
+
+function userLingerEnabled() {
+  const result = spawnSync(
+    'loginctl',
+    ['show-user', String(process.getuid()), '--property=Linger', '--value'],
+    { encoding: 'utf8', timeout: 5000 },
+  )
+  return !result.error && result.status === 0 && result.stdout.trim() === 'yes'
+}
+
+function detectSystemdWebService(pid) {
+  const system = evaluateSystemdWebUnit(systemctlShow([]), {
+    scope: 'system',
+    pid,
+  })
+  if (system?.managed) return system
+  const userProperties = systemctlShow(['--user'])
+  const user =
+    userProperties.LoadState === 'loaded'
+      ? evaluateSystemdWebUnit(userProperties, {
+          scope: 'user',
+          pid,
+          linger: userLingerEnabled(),
+        })
+      : null
+  if (user?.managed) return user
+  return (
+    system ??
+    user ?? {
+      managed: false,
+      service: null,
+      reason: `No ${WEB_SYSTEMD_UNIT} systemd unit was found. Install the documented unit to update oore-web from the web UI.`,
+    }
+  )
+}
+
+function detectLaunchdWebService() {
+  // The installer writes a LaunchDaemon; older installs used a LaunchAgent.
+  // Both set KeepAlive, so exiting after an update restarts the launcher.
+  const definitions = [
+    path.join('/Library', 'LaunchDaemons', `${WEB_LAUNCHD_LABEL}.plist`),
+    path.join(
+      os.homedir(),
+      'Library',
+      'LaunchAgents',
+      `${WEB_LAUNCHD_LABEL}.plist`,
+    ),
+  ]
+  const definition = definitions.find(fileExists)
+  if (definition) {
+    return {
+      managed: true,
+      service: `launchd job ${WEB_LAUNCHD_LABEL}`,
+      reason: null,
+    }
+  }
+  return {
+    managed: false,
+    service: null,
+    reason:
+      'Run oore setup on this Mac to install oore-web as a managed service.',
+  }
+}
+
+// `pid` is set when the caller is the serving process that will exit after
+// an update; `oore-web update` from a shell only needs the unit to exist.
+export function detectManagedWebService({ pid = null } = {}) {
+  if (process.platform === 'darwin') return detectLaunchdWebService()
+  if (process.platform === 'linux') return detectSystemdWebService(pid)
+  return {
+    managed: false,
+    service: null,
+    reason: `Frontend updates from the web UI are not supported on ${process.platform}.`,
+  }
+}
+
+function webServiceRestartHint(service) {
+  if (!service?.managed) {
+    return 'Restart oore-web to use the updated launcher binary.'
+  }
+  if (service.service?.startsWith('systemd system')) {
+    return `Run sudo systemctl restart ${WEB_SYSTEMD_UNIT} to use the updated launcher binary.`
+  }
+  if (service.service?.startsWith('systemd user')) {
+    return `Run systemctl --user restart ${WEB_SYSTEMD_UNIT} to use the updated launcher binary.`
+  }
+  return `Restart the ${service.service} to use the updated launcher binary.`
+}
+
+let managedServiceCache = null
+
+function managedWebService() {
+  const now = Date.now()
+  if (!managedServiceCache || managedServiceCache.expires <= now) {
+    managedServiceCache = {
+      value: detectManagedWebService({ pid: process.pid }),
+      expires: now + MANAGED_SERVICE_CACHE_MS,
+    }
+  }
+  return managedServiceCache.value
+}
+
+function webUpdateStatePath(installRoot) {
+  return path.join(installRoot, 'WEB_UPDATE_STATE.json')
+}
+
+function webUpdateLogPath(installRoot) {
+  return path.join(installRoot, 'logs', 'oore-web-update.log')
+}
+
+function savedText(value) {
+  return value === undefined || value === null ? null : String(value)
+}
+
+// Reads WEB_UPDATE_STATE.json into the fields restoreWebUpdateState uses.
+export function parseSavedWebUpdateState(raw) {
+  if (!raw || Array.isArray(raw)) return null
+  return {
+    phase: savedText(raw.phase),
+    error: savedText(raw.error),
+    log_path: savedText(raw.log_path),
+    from_version: savedText(raw.from_version),
+    target_version: savedText(raw.target_version),
+  }
+}
+
+// Turns the update state saved before a restart into the state to report
+// now. A restart that landed on the target version is a finished update.
+export function restoreWebUpdateState(saved, installedVersion) {
+  const idle = { phase: 'idle', error: null, log_path: null }
+  if (!saved) return idle
+  const target = saved.target_version
+  const logPath = saved.log_path
+  if (target && target === installedVersion) return idle
+  // Another update, for example `oore-web update`, replaced the version
+  // that failed to update, so the saved failure no longer applies.
+  if (
+    saved.phase === 'failed' &&
+    saved.from_version &&
+    saved.from_version !== installedVersion
+  ) {
+    return idle
+  }
+  if (saved.phase === 'restarting') {
+    return {
+      phase: 'failed',
+      error: `oore-web restarted on ${installedVersion} instead of ${target || 'the new release'}.`,
+      log_path: logPath,
+      from_version: installedVersion,
+    }
+  }
+  if (saved.phase === 'updating') {
+    return {
+      phase: 'failed',
+      error:
+        'The frontend update was interrupted before it finished. The previous frontend was kept.',
+      log_path: logPath,
+      from_version: installedVersion,
+    }
+  }
+  if (saved.phase === 'failed') {
+    return {
+      phase: 'failed',
+      error: saved.error || 'Frontend update failed',
+      log_path: logPath,
+      from_version: saved.from_version,
+    }
+  }
+  return idle
+}
+
+function loadWebUpdateState(installRoot) {
+  const statePath = webUpdateStatePath(installRoot)
+  let saved = null
+  try {
+    if (fileExists(statePath)) {
+      saved = parseSavedWebUpdateState(
+        readJsonFile(statePath, 'frontend update state'),
+      )
+    }
+  } catch (error) {
+    console.warn(`[oore-web] ${errorMessage(error)}`)
+  }
+  const state = restoreWebUpdateState(
+    saved,
+    readInstalledMetadata(installRoot).version,
+  )
+  saveWebUpdateState(installRoot, state)
+  return state
+}
+
+function saveWebUpdateState(installRoot, state) {
+  const statePath = webUpdateStatePath(installRoot)
+  try {
+    if (state.phase === 'idle') {
+      fs.rmSync(statePath, { force: true })
+    } else {
+      writeJsonAtomic(statePath, state)
+    }
+  } catch (error) {
+    console.warn(
+      `[oore-web] failed to save the frontend update state: ${errorMessage(error)}`,
+    )
+  }
+}
+
+function openWebUpdateLog(installRoot) {
+  const logPath = webUpdateLogPath(installRoot)
+  let writable = true
+  try {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 })
+    fs.writeFileSync(logPath, '', { mode: 0o600 })
+  } catch (error) {
+    writable = false
+    console.warn(
+      `[oore-web] failed to open the update log at ${logPath}: ${errorMessage(error)}`,
+    )
+  }
+  const log = (...parts) => {
+    const line = parts.join(' ')
+    console.log(line)
+    if (!writable) return
+    try {
+      fs.appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`)
+    } catch {
+      writable = false
+    }
+  }
+  return { log, logPath: writable ? logPath : null }
 }
 
 export async function authorizeOwner(
@@ -2496,9 +2768,44 @@ export async function authorizeOwner(
   const requestInit = { headers }
   if (signal) requestInit.signal = signal
   const response = await fetch(new URL('/v1/users/me', backendUrl), requestInit)
-  if (!response.ok) return false
+  if (!response.ok) {
+    return {
+      owner: false,
+      reason: ownerCheckFailureReason(request, response.status, config),
+    }
+  }
   const profile = await response.json()
-  return profile?.user?.role === 'owner'
+  const role = profile?.user?.role
+  if (role === 'owner') return { owner: true, reason: null }
+  return {
+    owner: false,
+    reason: `Only the instance owner can manage runtime updates. This session has the ${role || 'unknown'} role.`,
+  }
+}
+
+// Explains why the backend did not recognise the session behind oore-web.
+// Behind a trusted proxy the identity header only reaches the backend when
+// the upstream proxy proves itself with the shared secret.
+export function ownerCheckFailureReason(request, status, config) {
+  if (status === 401 && config.trustedProxySecret?.trim()) {
+    const identityHeader = config.trustedProxyUserEmailHeader
+    const proofHeader = config.upstreamTrustedProxySecretHeader
+    const upstreamSecret = config.upstreamTrustedProxySecret?.trim() || ''
+    if (!upstreamSecret) {
+      return `The backend did not recognise this session. oore-web strips the ${identityHeader} header because it has no upstream trusted proxy secret; set --upstream-trusted-proxy-secret-file on oore-web.`
+    }
+    if (!request.headers.get(identityHeader)?.trim()) {
+      return `The backend did not recognise this session. The upstream proxy did not send the ${identityHeader} header to oore-web.`
+    }
+    const proof = request.headers.get(proofHeader)?.trim() || ''
+    if (!timingSafeStringEqual(proof, upstreamSecret)) {
+      return `The backend did not recognise this session. The upstream proxy sent ${identityHeader} without a matching ${proofHeader} header, so oore-web stripped it.`
+    }
+  }
+  if (status === 401) {
+    return 'The backend did not recognise this session. Sign in again, then retry.'
+  }
+  return `The backend rejected the owner check (HTTP ${status}).`
 }
 
 export async function getWebUpdateStatus(updateState, searchParams) {
@@ -2513,6 +2820,7 @@ export async function getWebUpdateStatus(updateState, searchParams) {
     searchParams.get('repo') || metadata.github_repo,
   )
   const { release, latest } = await fetchVerifiedWebRelease(channel, repo)
+  const service = managedWebService()
   return {
     ...metadata,
     version: current.raw,
@@ -2524,7 +2832,9 @@ export async function getWebUpdateStatus(updateState, searchParams) {
     release_notes: release.release_notes || '',
     release_url: release.release_url,
     changelog_url: release.changelog_url,
-    managed_service: hasManagedWebService(),
+    managed_service: service.managed,
+    managed_service_name: service.service,
+    managed_service_reason: service.reason,
     ...updateState,
   }
 }
@@ -2637,7 +2947,10 @@ export function spaResponseHeaders(pathname) {
 
 export function spaFileResponse(filePath, pathname, acceptEncoding = '') {
   const file = Bun.file(filePath)
-  const headers = { ...spaResponseHeaders(pathname), 'Content-Type': file.type }
+  const headers = {
+    ...spaResponseHeaders(pathname),
+    'Content-Type': file.type,
+  }
   const encodings = new Map(
     acceptEncoding
       .toLowerCase()
@@ -2742,7 +3055,12 @@ async function main() {
       printUpdateHelp()
       process.exit(2)
     }
-    await runUpdate(updateConfig)
+    const service = updateConfig.check ? null : detectManagedWebService()
+    if (service && !service.managed) {
+      console.warn(`[oore-web] ${service.reason}`)
+    }
+    const result = await runUpdate(updateConfig)
+    if (result.updated) console.log(webServiceRestartHint(service))
     return
   }
 
@@ -2798,7 +3116,7 @@ async function main() {
   }
   const { backendUrl, listen, distDir } = validated
 
-  const updateState = { phase: 'idle', error: null }
+  const updateState = loadWebUpdateState(installRoot)
   const server = Bun.serve({
     hostname: listen.hostname,
     port: listen.port,
@@ -2820,20 +3138,17 @@ async function main() {
       }
 
       if (url.pathname === '/__oore_web_update') {
-        let owner = false
+        let authorization
         try {
-          owner = await authorizeOwner(request, backendUrl, config)
+          authorization = await authorizeOwner(request, backendUrl, config)
         } catch {
           return Response.json(
             { error: 'Could not verify the current owner session' },
             { status: 502 },
           )
         }
-        if (!owner) {
-          return Response.json(
-            { error: 'Only the instance owner can manage runtime updates' },
-            { status: 403 },
-          )
+        if (!authorization.owner) {
+          return Response.json({ error: authorization.reason }, { status: 403 })
         }
 
         if (request.method === 'GET') {
@@ -2860,11 +3175,9 @@ async function main() {
         if (request.method !== 'POST') {
           return new Response('Method not allowed', { status: 405 })
         }
-        if (!hasManagedWebService()) {
-          return Response.json(
-            { error: 'Frontend updates require a managed service' },
-            { status: 409 },
-          )
+        const service = managedWebService()
+        if (!service.managed) {
+          return Response.json({ error: service.reason }, { status: 409 })
         }
         if (updateState.phase === 'updating') {
           return Response.json(
@@ -2873,21 +3186,37 @@ async function main() {
           )
         }
 
-        updateState.phase = 'updating'
-        updateState.error = null
-        void runUpdate({ check: false, force: false }, config).then(
+        const { log, logPath } = openWebUpdateLog(installRoot)
+        Object.assign(updateState, {
+          phase: 'updating',
+          error: null,
+          log_path: logPath,
+          from_version: readInstalledMetadata(installRoot).version,
+          target_version: null,
+        })
+        saveWebUpdateState(installRoot, updateState)
+        void runUpdate({ check: false, force: false, log }, config).then(
           (result) => {
             if (!result.updated) {
-              updateState.phase = 'idle'
+              Object.assign(updateState, { phase: 'idle', log_path: null })
+              saveWebUpdateState(installRoot, updateState)
               return
             }
-            updateState.phase = 'restarting'
+            Object.assign(updateState, {
+              phase: 'restarting',
+              target_version: result.latest,
+            })
+            saveWebUpdateState(installRoot, updateState)
             setTimeout(() => process.exit(75), 1000)
           },
           (error) => {
-            updateState.phase = 'failed'
-            updateState.error =
-              error instanceof Error ? error.message : 'Frontend update failed'
+            const message = errorMessage(error)
+            log(`Frontend update failed: ${message}`)
+            Object.assign(updateState, {
+              phase: 'failed',
+              error: message || 'Frontend update failed',
+            })
+            saveWebUpdateState(installRoot, updateState)
           },
         )
         return Response.json(updateState, { status: 202 })
