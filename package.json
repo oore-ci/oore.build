@@ -22,7 +22,9 @@
     "wrangler": "4.127.1"
   },
   "overrides": {
-    "vite": "8.2.0"
+    "sharp": "0.35.5",
+    "tinypool": "2.2.0",
+    "vite": "8.2.4"
   },
   "packageManager": "bun@1.4.0"
 }
