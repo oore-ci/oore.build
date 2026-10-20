@@ -8,8 +8,8 @@ use oore_contract::{
     ApiError, BuildPlatform, ConcurrencyPolicy, CreatePipelineRequest, CreatePipelineResponse,
     ListPipelinesResponse, OkResponse, Pipeline, PipelineDetailResponse, PipelineExecutionConfig,
     TriggerConfig, UpdatePipelineRequest, ValidatePipelineRequest, ValidatePipelineResponse,
-    is_valid_pipeline_env_key, parse_repository_pipeline_yaml, validate_artifact_pattern,
-    validate_repository_config_path,
+    is_valid_pipeline_env_key, parse_repository_pipeline_yaml, secret_expression_errors,
+    validate_artifact_pattern, validate_repository_config_path,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -203,6 +203,11 @@ fn validate_execution_config(cfg: &PipelineExecutionConfig) -> Vec<String> {
         }
     }
 
+    errors.extend(
+        secret_expression_errors(cfg)
+            .into_iter()
+            .map(|error| format!("execution_config.{error}")),
+    );
     errors
 }
 
