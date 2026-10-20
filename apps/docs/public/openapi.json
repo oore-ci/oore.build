@@ -3972,6 +3972,119 @@
         ]
       }
     },
+    "/v1/pipelines/{pipeline_id}/publish/app-store": {
+      "get": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "Get App Store publish settings",
+        "operationId": "get_pipeline_app_store_publish",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "App Store publish settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineAppStorePublishResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "Update App Store publish settings",
+        "description": "Publishing uploads the pipeline's App Store IPA to App Store Connect with\nthe API key from iOS signing, then sends it to TestFlight groups or an\nApp Store version. Enabling it requires iOS signing with the `app_store`\nexport method and an App Store Connect API key.",
+        "operationId": "update_pipeline_app_store_publish",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppStorePublishConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "App Store publish settings updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineAppStorePublishResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/pipelines/{pipeline_id}/publish/google-play": {
       "get": {
         "tags": [
@@ -10127,6 +10240,53 @@
         ]
       }
     },
+    "/v1/system/update/preflight": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Check whether a one-click backend update can start",
+        "description": "Runs the named preflight checks for the managed macOS update\nsupervisor, each with a fix hint. Results are cached for 30 seconds.\nRequires owner role.",
+        "operationId": "get_runtime_update_preflight",
+        "responses": {
+          "200": {
+            "description": "Backend update preflight checks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeUpdatePreflight"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/users": {
       "get": {
         "tags": [
@@ -10925,6 +11085,73 @@
           },
           "role": {
             "$ref": "#/components/schemas/UserRole"
+          }
+        }
+      },
+      "AppStoreDestination": {
+        "type": "string",
+        "description": "Where an App Store Connect upload goes once Apple finishes processing it.",
+        "enum": [
+          "testflight",
+          "app_store"
+        ]
+      },
+      "AppStorePublishConfig": {
+        "type": "object",
+        "description": "App Store publishing settings for a pipeline, stored as the `app_store`\npublish target. Uploads use the App Store Connect API key from the\npipeline's iOS signing settings and require the `app_store` export method.",
+        "required": [
+          "enabled",
+          "testflight_groups",
+          "release_notes"
+        ],
+        "properties": {
+          "destination": {
+            "$ref": "#/components/schemas/AppStoreDestination"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "phased_release": {
+            "type": "boolean",
+            "description": "Release the approved version with Apple's seven-day phased release."
+          },
+          "release_notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppStoreReleaseNote"
+            },
+            "description": "TestFlight \"What to Test\" or App Store \"What's New\", per locale."
+          },
+          "submit_for_review": {
+            "type": "boolean",
+            "description": "Submit the App Store version for review once the build is attached."
+          },
+          "testflight_groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "TestFlight group names. Used when `destination` is `testflight`."
+          },
+          "uses_non_exempt_encryption": {
+            "type": "boolean",
+            "description": "Export compliance answer set on each processed build."
+          }
+        }
+      },
+      "AppStoreReleaseNote": {
+        "type": "object",
+        "description": "Release notes for one App Store Connect locale, such as `en-US`.",
+        "required": [
+          "locale",
+          "whats_new"
+        ],
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "whats_new": {
+            "type": "string"
           }
         }
       },
@@ -13245,6 +13472,14 @@
           }
         }
       },
+      "IosExportMethod": {
+        "type": "string",
+        "description": "How a signed iOS archive is distributed.\n\n`ad_hoc` IPAs install on registered devices through Oore. `app_store` IPAs\nare signed with an App Store distribution profile and can only be uploaded\nto App Store Connect for TestFlight or App Store release.",
+        "enum": [
+          "ad_hoc",
+          "app_store"
+        ]
+      },
       "IosProvisioningProfileInput": {
         "type": "object",
         "required": [
@@ -14237,6 +14472,38 @@
           }
         }
       },
+      "PipelineAppStorePublishResponse": {
+        "type": "object",
+        "required": [
+          "pipeline_id",
+          "config",
+          "has_api_key",
+          "app_store_export"
+        ],
+        "properties": {
+          "app_store_export": {
+            "type": "boolean",
+            "description": "Whether the pipeline's iOS signing exports App Store IPAs."
+          },
+          "config": {
+            "$ref": "#/components/schemas/AppStorePublishConfig"
+          },
+          "has_api_key": {
+            "type": "boolean",
+            "description": "Whether the pipeline's iOS signing has an App Store Connect API key."
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
       "PipelineCommandStages": {
         "type": "object",
         "required": [
@@ -14311,6 +14578,11 @@
             "items": {
               "type": "string"
             }
+          },
+          "build_number_offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Added to the project build number to form `OORE_VERSION_CODE`, so the\nfirst store upload can start above the store's existing version code."
           },
           "commands": {
             "$ref": "#/components/schemas/PipelineCommandStages"
@@ -14411,7 +14683,7 @@
             "type": "boolean"
           },
           "export_method": {
-            "type": "string"
+            "$ref": "#/components/schemas/IosExportMethod"
           },
           "has_api_key": {
             "type": "boolean"
@@ -15377,6 +15649,10 @@
               "type": "string"
             }
           },
+          "build_number_offset": {
+            "type": "integer",
+            "format": "int64"
+          },
           "commands": {
             "$ref": "#/components/schemas/PipelineCommandStages"
           },
@@ -15721,6 +15997,42 @@
           }
         }
       },
+      "RunnerAppStorePublishPlan": {
+        "type": "object",
+        "description": "What the runner needs to upload the job's IPA to App Store Connect.",
+        "required": [
+          "config",
+          "credentials"
+        ],
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/AppStorePublishConfig"
+          },
+          "credentials": {
+            "$ref": "#/components/schemas/RunnerAppStoreUploadCredentials"
+          }
+        }
+      },
+      "RunnerAppStoreUploadCredentials": {
+        "type": "object",
+        "description": "App Store Connect API key handed to the runner for `altool` upload.",
+        "required": [
+          "key_id",
+          "issuer_id",
+          "private_key_pem"
+        ],
+        "properties": {
+          "issuer_id": {
+            "type": "string"
+          },
+          "key_id": {
+            "type": "string"
+          },
+          "private_key_pem": {
+            "type": "string"
+          }
+        }
+      },
       "RunnerHeartbeatRequest": {
         "type": "object",
         "required": [
@@ -15782,7 +16094,7 @@
             "type": "boolean"
           },
           "export_method": {
-            "type": "string"
+            "$ref": "#/components/schemas/IosExportMethod"
           },
           "mode": {
             "$ref": "#/components/schemas/IosSigningMode"
@@ -15867,6 +16179,17 @@
         "type": "object",
         "description": "Publish work for the runner, fetched with the job-scoped grant.",
         "properties": {
+          "app_store": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunnerAppStorePublishPlan",
+                "description": "Present only when App Store publishing is enabled for an App Store export."
+              }
+            ]
+          },
           "changelog": {
             "type": [
               "string",
@@ -15947,6 +16270,47 @@
           "remote"
         ]
       },
+      "RuntimeUpdateCheck": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "status"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to run or change on the backend Mac to make the check pass."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable identifier, for example `updater_definition`."
+          },
+          "label": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RuntimeUpdateCheckStatus"
+          }
+        }
+      },
+      "RuntimeUpdateCheckStatus": {
+        "type": "string",
+        "enum": [
+          "pass",
+          "warn",
+          "fail"
+        ]
+      },
       "RuntimeUpdatePhase": {
         "type": "string",
         "enum": [
@@ -15955,6 +16319,31 @@
           "restarting",
           "failed"
         ]
+      },
+      "RuntimeUpdatePreflight": {
+        "type": "object",
+        "required": [
+          "ready",
+          "checked_at",
+          "checks"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix timestamp, in seconds, of when the checks ran."
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeUpdateCheck"
+            }
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "True when no check failed, so a one-click backend update can start."
+          }
+        }
       },
       "RuntimeUpdateStatus": {
         "type": "object",
@@ -16958,6 +17347,17 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "export_method": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IosExportMethod",
+                "description": "Omit to keep the stored export method. Changing it discards stored\nprovisioning profiles because ad hoc and App Store profiles differ."
+              }
+            ]
           },
           "mode": {
             "$ref": "#/components/schemas/IosSigningMode"

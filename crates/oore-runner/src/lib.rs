@@ -10,23 +10,27 @@ use std::sync::{
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+pub mod store_version;
+
 use anyhow::Context;
 use base64::Engine as _;
 use oore_contract::{
     AndroidSigningBuildType, BuildPlatform, BuildStatus, ClaimJobRequest, ClaimJobResponse,
-    ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse, JobStatusResponse,
-    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
-    PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
+    ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse, IosExportMethod,
+    JobStatusResponse, PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig,
+    PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
     RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse,
     RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult, StepResult,
     artifact_pattern_matches, is_valid_pipeline_env_key, parse_repository_pipeline_yaml,
-    replace_secret_references, validate_artifact_pattern, validate_repository_config_path,
+    replace_secret_references, store_version_code, validate_artifact_pattern,
+    validate_build_number_offset, validate_repository_config_path,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use zeroize::Zeroize;
 
+mod app_store_upload;
 mod publish;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
@@ -1690,21 +1694,26 @@ fn random_password_hex() -> String {
     hex::encode(bytes)
 }
 
-fn choose_ios_export_method(help_text: &str) -> &'static str {
-    if help_text.to_ascii_lowercase().contains("release-testing") {
-        "release-testing"
-    } else {
-        "ad-hoc"
+/// Xcode 15.3 renamed `ad-hoc` to `release-testing` and `app-store` to
+/// `app-store-connect`; older toolchains only know the original names.
+fn choose_ios_export_method(help_text: &str, export_method: IosExportMethod) -> &'static str {
+    let help_text = help_text.to_ascii_lowercase();
+    match export_method {
+        IosExportMethod::AdHoc if help_text.contains("release-testing") => "release-testing",
+        IosExportMethod::AdHoc => "ad-hoc",
+        IosExportMethod::AppStore if help_text.contains("app-store-connect") => "app-store-connect",
+        IosExportMethod::AppStore => "app-store",
     }
 }
 
-fn resolve_ios_export_method() -> String {
-    match Command::new("xcodebuild").arg("-help").output() {
+fn resolve_ios_export_method(export_method: IosExportMethod) -> String {
+    let help_text = match Command::new("xcodebuild").arg("-help").output() {
         Ok(output) if output.status.success() => {
-            choose_ios_export_method(&String::from_utf8_lossy(&output.stdout)).to_string()
+            String::from_utf8_lossy(&output.stdout).into_owned()
         }
-        _ => "ad-hoc".to_string(),
-    }
+        _ => String::new(),
+    };
+    choose_ios_export_method(&help_text, export_method).to_string()
 }
 
 fn decode_runner_b64(value: &str, field_name: &str) -> anyhow::Result<Vec<u8>> {
@@ -2030,7 +2039,7 @@ fn install_ios_signing_bundle_with_session_check(
         )?;
         let _ = fs::remove_file(signing_preflight_path);
 
-        let effective_export_method = resolve_ios_export_method();
+        let effective_export_method = resolve_ios_export_method(bundle.export_method);
         let export_options_plist_path = signing_dir.join("ExportOptions.plist");
         write_export_options_plist(
             &export_options_plist_path,
@@ -3357,6 +3366,7 @@ struct ResolvedExecutionPlan {
     secret_env: Vec<(String, String)>,
     /// Env keys whose values came from a secret.
     secret_env_keys: std::collections::HashSet<String>,
+    build_number_offset: i64,
     source: String,
 }
 
@@ -3576,6 +3586,20 @@ fn read_fvmrc_version(workspace: &Path) -> anyhow::Result<Option<String>> {
     normalize_flutter_version(Some(trimmed), ".fvmrc")
 }
 
+/// The version name from `pubspec.yaml` (`version: 1.4.0+12` gives `1.4.0`),
+/// when the workspace root has one.
+fn read_pubspec_version_name(workspace: &Path) -> Option<String> {
+    let raw = fs::read_to_string(workspace.join("pubspec.yaml")).ok()?;
+    pubspec_version_name(&raw)
+}
+
+fn pubspec_version_name(raw: &str) -> Option<String> {
+    let value = raw.lines().find_map(|line| line.strip_prefix("version:"))?;
+    let value = value.split(" #").next()?.trim().trim_matches(['"', '\'']);
+    let name = value.split('+').next()?.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 fn maybe_wrap_with_fvm(command: &str) -> String {
     let trimmed = command.trim();
     if trimmed == "flutter" {
@@ -3731,6 +3755,8 @@ fn normalize_execution_config(
     let artifact_patterns = validate_artifact_patterns(&config.artifact_patterns)?;
     let flutter_version =
         normalize_flutter_version(config.flutter_version.as_deref(), "flutter_version")?;
+    validate_build_number_offset(config.build_number_offset)
+        .map_err(|error| anyhow::anyhow!("build_number_offset {error}"))?;
 
     Ok(PipelineExecutionConfig {
         platforms: config.platforms,
@@ -3740,6 +3766,7 @@ fn normalize_execution_config(
         platform_commands,
         env,
         artifact_patterns,
+        build_number_offset: config.build_number_offset,
     })
 }
 
@@ -3919,6 +3946,7 @@ fn resolve_execution_plan(
             env: file_config.env,
             secret_env: Vec::new(),
             secret_env_keys: Default::default(),
+            build_number_offset: file_config.build_number_offset,
             source: format!("file:{}", full_path.display()),
         });
     }
@@ -3937,6 +3965,7 @@ fn resolve_execution_plan(
         env: fallback.env,
         secret_env: Vec::new(),
         secret_env_keys: Default::default(),
+        build_number_offset: fallback.build_number_offset,
         source: "ui_fallback".to_string(),
     })
 }
@@ -4423,6 +4452,17 @@ async fn execute_build_steps(
         Ok(plan) => plan,
         Err(e) => return (steps, Err(e)),
     };
+    let version_code =
+        match store_version_code(job.build_number, execution_plan.build_number_offset) {
+            Ok(code) => code,
+            Err(error) => {
+                return (
+                    steps,
+                    Err(anyhow::anyhow!("Invalid store version code: {error}")),
+                );
+            }
+        };
+    let version_name = read_pubspec_version_name(&workspace);
     let requires_managed_fvm = execution_plan
         .stage_commands
         .pre_build
@@ -4564,7 +4604,15 @@ async fn execute_build_steps(
             job.build_number.to_string(),
         ),
         ("BUILD_NUMBER".to_string(), job.build_number.to_string()),
+        ("OORE_VERSION_CODE".to_string(), version_code.to_string()),
     ];
+    println!(
+        "Store version code {version_code} (build {} + offset {})",
+        job.build_number, execution_plan.build_number_offset
+    );
+    if let Some(name) = &version_name {
+        step_env.push(("OORE_VERSION_NAME".to_string(), name.clone()));
+    }
     if let Some(branch) = &job.branch {
         step_env.push(("BRANCH".to_string(), branch.clone()));
     }
@@ -4632,6 +4680,7 @@ async fn execute_build_steps(
     let mut ios_signing_command_applied = false;
     let ios_signing_expected = ios_signing_bundle.is_some();
     let mut ios_artifact_metadata: Option<serde_json::Value> = None;
+    let mut signed_ipa_path: Option<PathBuf> = None;
     for (stage_name, commands) in [
         (
             "pre_build",
@@ -4952,6 +5001,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     ),
                                 )
                                 .await;
+                                signed_ipa_path = Some(signed_archive.ipa_path.clone());
                                 let mut p12_bytes =
                                     match decode_runner_b64(&bundle.p12_base64, "p12") {
                                         Ok(bytes) => bytes,
@@ -5205,6 +5255,118 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                 )
                 .await;
                 return (steps, Err(error.context("publish-play failed")));
+            }
+        }
+    }
+
+    if let Some(app_store) = &publish_plan.app_store {
+        let step_name = "publish-app-store";
+        let started = now_unix();
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stdout",
+            &step_start_marker(step_name, "Upload the IPA to App Store Connect"),
+        )
+        .await;
+        let result = match (signed_ipa_path.as_deref(), ios_artifact_metadata.as_ref()) {
+            (Some(ipa), Some(metadata)) => {
+                let key_dir = signing_workspace.join(".oore").join("asc-keys");
+                match app_store_upload::upload_ipa(ipa, &app_store.credentials, &key_dir).await {
+                    Ok(message) => app_store_upload::publish_result(metadata, &app_store.config)
+                        .map(|result| (message, result)),
+                    Err(error) => Err(error),
+                }
+            }
+            _ => Err(anyhow::anyhow!(
+                "App Store publishing is on, but this build produced no signed App Store IPA"
+            )),
+        };
+        let finished = now_unix();
+        steps.push(StepResult {
+            name: step_name.to_string(),
+            status: if result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            }
+            .to_string(),
+            exit_code: Some(if result.is_ok() { 0 } else { 1 }),
+            started_at: started,
+            finished_at: finished,
+            duration_ms: (finished - started) * 1000,
+        });
+        match result {
+            Ok((message, published)) => {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &format!("[oore-publish] {message}"),
+                )
+                .await;
+                if let Err(error) = report_publish_result(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    &job.signing_token,
+                    &published,
+                )
+                .await
+                {
+                    let _ = append_runner_log_line(
+                        client,
+                        daemon_url,
+                        config,
+                        &job.build_id,
+                        log_seq,
+                        "stderr",
+                        &format!(
+                            "[oore-publish] Uploaded, but recording the release failed: {error:#}"
+                        ),
+                    )
+                    .await;
+                }
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &step_end_marker(step_name, "succeeded", Some(0)),
+                )
+                .await;
+            }
+            Err(error) => {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stderr",
+                    &format!("[oore-publish] {error:#}"),
+                )
+                .await;
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &step_end_marker(step_name, "failed", Some(1)),
+                )
+                .await;
+                return (steps, Err(error.context("publish-app-store failed")));
             }
         }
     }
@@ -5946,8 +6108,58 @@ async fn run_and_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::load_ui_execution_config;
+    use super::{choose_ios_export_method, load_ui_execution_config, pubspec_version_name};
+    use oore_contract::IosExportMethod;
     use serde_json::json;
+
+    #[test]
+    fn export_method_follows_pipeline_and_xcode_naming() {
+        let current = "-exportArchive ... release-testing, app-store-connect, debugging";
+        assert_eq!(
+            choose_ios_export_method(current, IosExportMethod::AdHoc),
+            "release-testing"
+        );
+        assert_eq!(
+            choose_ios_export_method(current, IosExportMethod::AppStore),
+            "app-store-connect"
+        );
+        assert_eq!(
+            choose_ios_export_method("", IosExportMethod::AdHoc),
+            "ad-hoc"
+        );
+        assert_eq!(
+            choose_ios_export_method("", IosExportMethod::AppStore),
+            "app-store"
+        );
+    }
+
+    #[test]
+    fn pubspec_version_name_drops_build_number() {
+        assert_eq!(
+            pubspec_version_name("name: app\nversion: 1.4.0+12\n").as_deref(),
+            Some("1.4.0")
+        );
+        assert_eq!(
+            pubspec_version_name("version: \"2.0.1\" # release\n").as_deref(),
+            Some("2.0.1")
+        );
+        assert_eq!(
+            pubspec_version_name("dependencies:\n  version: 1.0.0\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn ui_config_rejects_negative_build_number_offset() {
+        let error =
+            load_ui_execution_config(&json!({"ui_execution_config": {"build_number_offset": -3}}))
+                .unwrap_err()
+                .to_string();
+        assert!(
+            error.starts_with("build_number_offset must be between 0"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn snapshot_config_preserves_defaults_trimming_and_field_errors() {
@@ -6009,6 +6221,7 @@ mod secret_tests {
                 .collect(),
             secret_env: vec![],
             secret_env_keys: Default::default(),
+            build_number_offset: 0,
             source: "test".to_string(),
         }
     }

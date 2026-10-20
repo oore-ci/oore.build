@@ -16,6 +16,10 @@ import {
   ItemTitle,
 } from '@/components/ui/item'
 import {
+  RuntimeUpdatePreflightChecks,
+  backendUpdateReady,
+} from '@/components/runtime-update-preflight'
+import {
   SettingsSection,
   SettingsSurface,
 } from '@/components/settings/settings-section'
@@ -37,6 +41,10 @@ export function RuntimeOverview({
 }) {
   const webHealthQuery = runtimeUpdates.frontendHealth
   const backendHealthQuery = runtimeUpdates.backendHealth
+  const backendReady = backendUpdateReady(
+    runtimeUpdates.backendPreflight,
+    runtimeUpdates.backendUpdate.data?.managed_service,
+  )
   const backendUpdateFailure =
     runtimeUpdates.backendUpdate.data?.phase === 'failed'
       ? runtimeUpdates.backendUpdate.data.error
@@ -143,17 +151,12 @@ export function RuntimeOverview({
                     {runtimeUpdates.backendRelease.data.latest_version} is
                     available
                   </ItemDescription>
-                  {runtimeUpdates.backendUpdate.data &&
-                  !runtimeUpdates.backendUpdate.data.managed_service ? (
-                    <div className="flex flex-col gap-2 text-xs text-muted-foreground">
-                      <p>
-                        Run Oore setup from Terminal to repair this
-                        device&apos;s managed services. No reinstall is
-                        required.
-                      </p>
-                    </div>
-                  ) : null}
                 </>
+              ) : null}
+              {isOwner ? (
+                <RuntimeUpdatePreflightChecks
+                  preflight={runtimeUpdates.backendPreflight}
+                />
               ) : null}
             </ItemContent>
             {runtimeUpdates.backendOffered &&
@@ -163,7 +166,7 @@ export function RuntimeOverview({
                   size="sm"
                   disabled={
                     !isOwner ||
-                    !runtimeUpdates.backendUpdate.data?.managed_service ||
+                    !backendReady ||
                     runtimeUpdateActive(backendUpdatePhase) ||
                     runtimeUpdates.startBackendUpdate.isPending
                   }

@@ -1264,6 +1264,11 @@ struct DoctorArgs {
     /// Check Android, iOS, and macOS requirements.
     #[arg(long, conflicts_with = "platform")]
     all: bool,
+
+    /// Run the one-click backend update preflight that the web UI shows.
+    /// Run it as the account that owns the install, without sudo.
+    #[arg(long, conflicts_with_all = ["platform", "all"])]
+    update: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -5449,7 +5454,47 @@ fn add_signing_warnings(checks: &mut Vec<DoctorCheckResult>) {
     }
 }
 
+fn run_update_doctor(json: bool) -> anyhow::Result<()> {
+    use oore_contract::RuntimeUpdateCheckStatus;
+
+    let install_root = resolve_install_root()?;
+    let preflight = oore_contract::runtime_update_preflight::run(&install_root);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&preflight)?);
+    } else {
+        println!(
+            "oore doctor -- backend update preflight for {}",
+            install_root.display()
+        );
+        for check in &preflight.checks {
+            let status = match check.status {
+                RuntimeUpdateCheckStatus::Pass => "ok",
+                RuntimeUpdateCheckStatus::Warn => "warning",
+                RuntimeUpdateCheckStatus::Fail => "failed",
+            };
+            println!(
+                "  [{status}] {:<30} {}",
+                check.label,
+                check.detail.as_deref().unwrap_or("")
+            );
+            if let Some(fix) = check.fix.as_deref() {
+                println!("      Fix: {fix}");
+            }
+        }
+        if preflight.ready {
+            println!("One-click backend updates are available.");
+        }
+    }
+    match oore_contract::runtime_update_preflight::first_failure(&preflight) {
+        Some(check) => anyhow::bail!("backend update preflight failed: {}", check.label),
+        None => Ok(()),
+    }
+}
+
 fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
+    if args.update {
+        return run_update_doctor(args.json);
+    }
     let mut checks: Vec<DoctorCheckResult> = Vec::new();
 
     let base_checks: [(&str, &[&str], &str); 1] = [(

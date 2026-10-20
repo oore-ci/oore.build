@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 
+pub mod runtime_update_preflight;
+
 // ── Setup state machine ─────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -647,6 +649,37 @@ pub struct RuntimeUpdateStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub managed_service: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeUpdateCheckStatus {
+    Pass,
+    /// Does not block the one-click update, but limits recovery.
+    Warn,
+    Fail,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RuntimeUpdateCheck {
+    /// Stable identifier, for example `updater_definition`.
+    pub id: String,
+    pub label: String,
+    pub status: RuntimeUpdateCheckStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// What to run or change on the backend Mac to make the check pass.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RuntimeUpdatePreflight {
+    /// True when no check failed, so a one-click backend update can start.
+    pub ready: bool,
+    /// Unix timestamp, in seconds, of when the checks ran.
+    pub checked_at: i64,
+    pub checks: Vec<RuntimeUpdateCheck>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2354,6 +2387,10 @@ pub struct PipelineExecutionConfig {
     #[serde(default = "default_artifact_patterns")]
     #[schema(required = true)]
     pub artifact_patterns: Vec<String>,
+    /// Added to the project build number to form `OORE_VERSION_CODE`, so the
+    /// first store upload can start above the store's existing version code.
+    #[serde(default)]
+    pub build_number_offset: i64,
 }
 
 /// Secret-free representation of a repository-owned pipeline config.
@@ -2377,6 +2414,8 @@ pub struct RepositoryWorkflowExecutionPreview {
     pub platform_commands: PlatformBuildCommands,
     pub env_keys: Vec<String>,
     pub artifact_patterns: Vec<String>,
+    #[serde(default)]
+    pub build_number_offset: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -2432,6 +2471,8 @@ struct RepositoryPipelineConfig {
     env: Vec<PipelineEnvVar>,
     #[serde(default)]
     artifacts: Option<RepositoryArtifacts>,
+    #[serde(default)]
+    build_number_offset: i64,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2463,6 +2504,7 @@ pub fn parse_repository_pipeline_yaml(raw: &str) -> Result<PipelineExecutionConf
         platform_commands: parsed.platform_commands,
         env: parsed.env,
         artifact_patterns,
+        build_number_offset: parsed.build_number_offset,
     };
     let errors = validate_repository_execution_config(&config);
     if errors.is_empty() {
@@ -2470,6 +2512,33 @@ pub fn parse_repository_pipeline_yaml(raw: &str) -> Result<PipelineExecutionConf
     } else {
         Err(errors.join("\n"))
     }
+}
+
+/// Highest `versionCode` Google Play accepts. Apple build numbers have no
+/// lower ceiling that matters here, so this bounds every store.
+pub const MAX_STORE_VERSION_CODE: i64 = 2_100_000_000;
+
+pub fn validate_build_number_offset(offset: i64) -> Result<(), String> {
+    if !(0..MAX_STORE_VERSION_CODE).contains(&offset) {
+        return Err(format!(
+            "must be between 0 and {}",
+            MAX_STORE_VERSION_CODE - 1
+        ));
+    }
+    Ok(())
+}
+
+/// The version code a build sends to stores: its project build number plus the
+/// pipeline offset, rejected when it exceeds what Google Play accepts.
+pub fn store_version_code(build_number: i64, offset: i64) -> Result<i64, String> {
+    validate_build_number_offset(offset).map_err(|error| format!("build_number_offset {error}"))?;
+    let code = build_number.saturating_add(offset);
+    if !(1..=MAX_STORE_VERSION_CODE).contains(&code) {
+        return Err(format!(
+            "version code {code} (build {build_number} + offset {offset}) is outside the store range 1..={MAX_STORE_VERSION_CODE}"
+        ));
+    }
+    Ok(code)
 }
 
 pub fn validate_artifact_pattern(pattern: &str) -> Result<(), String> {
@@ -2601,6 +2670,9 @@ fn validate_repository_execution_config(config: &PipelineExecutionConfig) -> Vec
             errors.push(format!("artifacts.patterns[{index}] {error}"));
         }
     }
+    if let Err(error) = validate_build_number_offset(config.build_number_offset) {
+        errors.push(format!("build_number_offset {error}"));
+    }
     let mut env_keys = std::collections::HashSet::new();
     for (index, entry) in config.env.iter().enumerate() {
         let key = entry.key.trim();
@@ -2626,6 +2698,7 @@ impl Default for PipelineExecutionConfig {
             platform_commands: PlatformBuildCommands::default(),
             env: Vec::new(),
             artifact_patterns: default_artifact_patterns(),
+            build_number_offset: 0,
         }
     }
 }
@@ -3084,6 +3157,9 @@ pub struct RunnerPublishPlan {
     /// Present only when Google Play publishing is enabled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub google_play: Option<GooglePlayPublishConfig>,
+    /// Present only when App Store publishing is enabled for an App Store export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_store: Option<RunnerAppStorePublishPlan>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -3197,6 +3273,37 @@ pub enum IosSigningMode {
     Hybrid,
 }
 
+/// How a signed iOS archive is distributed.
+///
+/// `ad_hoc` IPAs install on registered devices through Oore. `app_store` IPAs
+/// are signed with an App Store distribution profile and can only be uploaded
+/// to App Store Connect for TestFlight or App Store release.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IosExportMethod {
+    #[default]
+    AdHoc,
+    AppStore,
+}
+
+impl IosExportMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AdHoc => "ad_hoc",
+            Self::AppStore => "app_store",
+        }
+    }
+
+    /// Parses a stored value. Unknown values fall back to ad hoc so a newer
+    /// database never makes an older daemon produce App Store builds.
+    pub fn from_stored(raw: &str) -> Self {
+        match raw {
+            "app_store" => Self::AppStore,
+            _ => Self::AdHoc,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Default, ToSchema)]
 pub struct IosCertificateInput {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3268,6 +3375,10 @@ pub struct UpdatePipelineIosSigningRequest {
     #[serde(default)]
     pub enabled: bool,
     pub mode: IosSigningMode,
+    /// Omit to keep the stored export method. Changing it discards stored
+    /// provisioning profiles because ad hoc and App Store profiles differ.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export_method: Option<IosExportMethod>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team_id: Option<String>,
     #[serde(default)]
@@ -3305,7 +3416,7 @@ pub struct PipelineIosSigningResponse {
     pub mode: IosSigningMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team_id: Option<String>,
-    pub export_method: String,
+    pub export_method: IosExportMethod,
     #[serde(default)]
     #[schema(required = true)]
     pub bundle_ids: Vec<String>,
@@ -3345,7 +3456,7 @@ pub struct RunnerIosSigningBundle {
     pub enabled: bool,
     pub mode: IosSigningMode,
     pub team_id: String,
-    pub export_method: String,
+    pub export_method: IosExportMethod,
     pub p12_filename: String,
     pub p12_base64: String,
     pub p12_password: String,
@@ -3407,6 +3518,106 @@ pub struct SyncPipelineIosSigningResponse {
     #[serde(default)]
     #[schema(required = true)]
     pub warnings: Vec<String>,
+}
+
+// ── Pipeline App Store publishing types ─────────────────────────
+
+/// Where an App Store Connect upload goes once Apple finishes processing it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AppStoreDestination {
+    /// Add the build to the named TestFlight groups.
+    #[default]
+    Testflight,
+    /// Attach the build to the App Store version matching its version string.
+    AppStore,
+}
+
+impl AppStoreDestination {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Testflight => "testflight",
+            Self::AppStore => "app_store",
+        }
+    }
+
+    pub fn from_stored(raw: &str) -> Self {
+        match raw {
+            "app_store" => Self::AppStore,
+            _ => Self::Testflight,
+        }
+    }
+}
+
+/// Release notes for one App Store Connect locale, such as `en-US`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct AppStoreReleaseNote {
+    pub locale: String,
+    pub whats_new: String,
+}
+
+/// App Store publishing settings for a pipeline, stored as the `app_store`
+/// publish target. Uploads use the App Store Connect API key from the
+/// pipeline's iOS signing settings and require the `app_store` export method.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+pub struct AppStorePublishConfig {
+    pub enabled: bool,
+    #[serde(default)]
+    pub destination: AppStoreDestination,
+    /// TestFlight group names. Used when `destination` is `testflight`.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub testflight_groups: Vec<String>,
+    /// TestFlight "What to Test" or App Store "What's New", per locale.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub release_notes: Vec<AppStoreReleaseNote>,
+    /// Export compliance answer set on each processed build.
+    #[serde(default)]
+    pub uses_non_exempt_encryption: bool,
+    /// Submit the App Store version for review once the build is attached.
+    #[serde(default)]
+    pub submit_for_review: bool,
+    /// Release the approved version with Apple's seven-day phased release.
+    #[serde(default)]
+    pub phased_release: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelineAppStorePublishResponse {
+    pub pipeline_id: String,
+    pub config: AppStorePublishConfig,
+    /// Whether the pipeline's iOS signing has an App Store Connect API key.
+    pub has_api_key: bool,
+    /// Whether the pipeline's iOS signing exports App Store IPAs.
+    pub app_store_export: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+/// App Store Connect API key handed to the runner for `altool` upload.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerAppStoreUploadCredentials {
+    pub key_id: String,
+    pub issuer_id: String,
+    pub private_key_pem: String,
+}
+
+impl fmt::Debug for RunnerAppStoreUploadCredentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RunnerAppStoreUploadCredentials")
+            .field("key_id", &self.key_id)
+            .field("issuer_id", &self.issuer_id)
+            .field("private_key_pem", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// What the runner needs to upload the job's IPA to App Store Connect.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerAppStorePublishPlan {
+    pub config: AppStorePublishConfig,
+    pub credentials: RunnerAppStoreUploadCredentials,
 }
 
 // ── Build log types ─────────────────────────────────────────────
@@ -4374,7 +4585,35 @@ mod tests {
             .contains("commands.build[0]")
         );
     }
-    use super::parse_repository_pipeline_yaml;
+    use super::{MAX_STORE_VERSION_CODE, parse_repository_pipeline_yaml, store_version_code};
+
+    #[test]
+    fn repository_config_reads_build_number_offset() {
+        let config = parse_repository_pipeline_yaml(
+            "version: 1\nplatforms: [android]\nbuild_number_offset: 4000\n",
+        )
+        .unwrap();
+        assert_eq!(config.build_number_offset, 4000);
+
+        let error = parse_repository_pipeline_yaml(
+            "version: 1\nplatforms: [android]\nbuild_number_offset: -1\n",
+        )
+        .unwrap_err();
+        assert!(error.starts_with("build_number_offset must be between 0 and"));
+    }
+
+    #[test]
+    fn store_version_code_adds_offset_within_play_range() {
+        assert_eq!(store_version_code(12, 0), Ok(12));
+        assert_eq!(store_version_code(12, 4000), Ok(4012));
+        assert_eq!(
+            store_version_code(1, MAX_STORE_VERSION_CODE - 1),
+            Ok(MAX_STORE_VERSION_CODE)
+        );
+        let error = store_version_code(2, MAX_STORE_VERSION_CODE - 1).unwrap_err();
+        assert!(error.contains("outside the store range"), "{error}");
+        assert!(store_version_code(1, -5).is_err());
+    }
 
     #[test]
     fn repository_environment_keys_keep_shell_identifier_rules() {

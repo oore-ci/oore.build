@@ -13,11 +13,11 @@ use axum::http::{HeaderMap, StatusCode};
 use base64::Engine as _;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use oore_contract::{
-    ApiError, IosProvisioningProfileInput, IosProvisioningProfileSummary, IosSigningMode,
-    ListPipelineIosDevicesResponse, PipelineIosSigningResponse, RegisterIosDeviceRequest,
-    RegisterIosDeviceResponse, RegisteredIosDevice, RunnerIosProvisioningProfile,
-    RunnerIosSigningBundle, RunnerIosSigningResponse, SyncPipelineIosSigningResponse,
-    UpdatePipelineIosSigningRequest,
+    ApiError, IosExportMethod, IosProvisioningProfileInput, IosProvisioningProfileSummary,
+    IosSigningMode, ListPipelineIosDevicesResponse, PipelineIosSigningResponse,
+    RegisterIosDeviceRequest, RegisterIosDeviceResponse, RegisteredIosDevice,
+    RunnerIosProvisioningProfile, RunnerIosSigningBundle, RunnerIosSigningResponse,
+    SyncPipelineIosSigningResponse, UpdatePipelineIosSigningRequest,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -97,6 +97,64 @@ struct ParsedProvisioningProfile {
     profile_name: Option<String>,
     team_id: Option<String>,
     expires_at: Option<i64>,
+    distribution: ProfileDistribution,
+}
+
+/// Distribution type read from a provisioning profile's plist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProfileDistribution {
+    Development,
+    AdHoc,
+    AppStore,
+    Enterprise,
+}
+
+impl ProfileDistribution {
+    fn from_profile_json(json: &serde_json::Value) -> Self {
+        if json
+            .get("ProvisionsAllDevices")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Self::Enterprise;
+        }
+        if json.get("ProvisionedDevices").is_none() {
+            return Self::AppStore;
+        }
+        let get_task_allow = json
+            .get("Entitlements")
+            .and_then(|entitlements| entitlements.get("get-task-allow"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if get_task_allow {
+            Self::Development
+        } else {
+            Self::AdHoc
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Development => "development",
+            Self::AdHoc => "ad hoc",
+            Self::AppStore => "App Store",
+            Self::Enterprise => "enterprise",
+        }
+    }
+
+    fn matches(self, export_method: IosExportMethod) -> bool {
+        match export_method {
+            IosExportMethod::AdHoc => self == Self::AdHoc,
+            IosExportMethod::AppStore => self == Self::AppStore,
+        }
+    }
+}
+
+fn expected_profile_label(export_method: IosExportMethod) -> &'static str {
+    match export_method {
+        IosExportMethod::AdHoc => "an ad hoc distribution",
+        IosExportMethod::AppStore => "an App Store distribution",
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -384,6 +442,7 @@ async fn parse_provisioning_profile(
             profile_name,
             team_id,
             expires_at,
+            distribution: ProfileDistribution::from_profile_json(&json),
         })
     })
     .await
@@ -868,13 +927,17 @@ fn parse_rfc3339_opt(value: Option<String>) -> Option<i64> {
         .map(|dt| dt.with_timezone(&Utc).timestamp())
 }
 
-fn profile_name_for_bundle(bundle_id: &str) -> String {
+fn profile_name_for_bundle(bundle_id: &str, export_method: IosExportMethod) -> String {
     let mut compact = bundle_id.replace(|ch: char| !ch.is_ascii_alphanumeric(), "-");
     if compact.len() > 32 {
         compact.truncate(32);
     }
     let digest = hex::encode(Sha256::digest(bundle_id.as_bytes()));
-    format!("oore-adhoc-{compact}-{}", &digest[..32])
+    let kind = match export_method {
+        IosExportMethod::AdHoc => "adhoc",
+        IosExportMethod::AppStore => "appstore",
+    };
+    format!("oore-{kind}-{compact}-{}", &digest[..32])
 }
 
 async fn generate_api_certificate_bundle(
@@ -1320,7 +1383,7 @@ fn default_ios_signing_response(pipeline_id: String) -> PipelineIosSigningRespon
         enabled: false,
         mode: IosSigningMode::Manual,
         team_id: None,
-        export_method: "ad_hoc".to_string(),
+        export_method: IosExportMethod::AdHoc,
         bundle_ids: Vec::new(),
         has_p12: false,
         p12_filename: None,
@@ -1350,7 +1413,7 @@ async fn build_public_response(
         enabled: settings.enabled != 0,
         mode: parse_mode(&settings.mode),
         team_id: settings.team_id,
-        export_method: settings.export_method,
+        export_method: IosExportMethod::from_stored(&settings.export_method),
         bundle_ids: parse_bundle_ids(&settings.bundle_ids_json),
         has_p12: settings.p12_encrypted.is_some(),
         p12_filename: settings.p12_filename,
@@ -1794,12 +1857,17 @@ async fn sync_ios_signing_assets(
         );
     }
 
-    let enabled_device_ids: Vec<String> = remote_devices
-        .iter()
-        .filter(|device| device.status.eq_ignore_ascii_case("ENABLED"))
-        .map(|device| device.device_id.clone())
-        .collect();
-    if enabled_device_ids.is_empty() {
+    let export_method = IosExportMethod::from_stored(&settings.export_method);
+    let enabled_device_ids: Vec<String> = match export_method {
+        IosExportMethod::AdHoc => remote_devices
+            .iter()
+            .filter(|device| device.status.eq_ignore_ascii_case("ENABLED"))
+            .map(|device| device.device_id.clone())
+            .collect(),
+        // App Store profiles must not list devices.
+        IosExportMethod::AppStore => Vec::new(),
+    };
+    if export_method == IosExportMethod::AdHoc && enabled_device_ids.is_empty() {
         warnings.push(
             "No enabled Apple devices found; generated profiles may not install on devices"
                 .to_string(),
@@ -1813,6 +1881,7 @@ async fn sync_ios_signing_assets(
         &bundle_by_identifier,
         &certificate_id,
         &enabled_device_ids,
+        export_method,
     )
     .await?;
     warnings.extend(profile_warnings);
@@ -1947,6 +2016,7 @@ async fn generate_ios_profiles(
     bundle_records: &HashMap<String, apple_api::AppleBundleIdRecord>,
     certificate_id: &str,
     device_ids: &[String],
+    export_method: IosExportMethod,
 ) -> Result<(Vec<GeneratedIosProfile>, Vec<String>), (StatusCode, Json<ApiError>)> {
     let mut profiles = Vec::with_capacity(bundle_ids.len());
     let mut warnings = Vec::new();
@@ -1959,10 +2029,11 @@ async fn generate_ios_profiles(
                 format!("Bundle identifier '{bundle_id}' is not available in Apple account"),
             )
         })?;
-        let created = apple_api::create_ad_hoc_profile(
+        let created = apple_api::create_profile(
             client,
             creds,
-            &profile_name_for_bundle(bundle_id),
+            apple_api::profile_type_for_export(export_method),
+            &profile_name_for_bundle(bundle_id, export_method),
             &bundle_record.bundle_id_id,
             &certificate_ids,
             device_ids,
@@ -2198,6 +2269,13 @@ pub async fn update_pipeline_ios_signing(
             format!("Invalid bundle identifiers: {e}"),
         )
     })?;
+    let previous_export_method = settings_existing
+        .as_ref()
+        .map(|settings| IosExportMethod::from_stored(&settings.export_method));
+    let export_method = req
+        .export_method
+        .or(previous_export_method)
+        .unwrap_or_default();
 
     let team_id = trim_opt(req.team_id.clone());
     if req.enabled {
@@ -2430,7 +2508,7 @@ pub async fn update_pipeline_ios_signing(
              SET enabled = ?1,
                  mode = ?2,
                  team_id = ?3,
-                 export_method = 'ad_hoc',
+                 export_method = ?16,
                  bundle_ids_json = ?4,
                  p12_filename = ?5,
                  p12_encrypted = ?6,
@@ -2459,6 +2537,7 @@ pub async fn update_pipeline_ios_signing(
         .bind(&auth.0.user_id)
         .bind(now)
         .bind(&settings_id)
+        .bind(export_method.as_str())
         .execute(&pool)
         .await
         .map_err(|e| {
@@ -2477,7 +2556,7 @@ pub async fn update_pipeline_ios_signing(
                 api_key_id, api_issuer_id, api_private_key_encrypted,
                 created_by, updated_by, created_at, updated_at
              ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, 'ad_hoc', ?6,
+                ?1, ?2, ?3, ?4, ?5, ?17, ?6,
                 ?7, ?8, ?9, ?10, ?11,
                 ?12, ?13, ?14,
                 ?15, ?15, ?16, ?16
@@ -2499,6 +2578,7 @@ pub async fn update_pipeline_ios_signing(
         .bind(api_private_key_encrypted.clone())
         .bind(&auth.0.user_id)
         .bind(now)
+        .bind(export_method.as_str())
         .execute(&pool)
         .await
         .map_err(|e| {
@@ -2519,6 +2599,23 @@ pub async fn update_pipeline_ios_signing(
         ));
     }
 
+    if previous_export_method.is_some_and(|previous| previous != export_method) {
+        // Ad hoc and App Store profiles are not interchangeable; stale ones
+        // must be replaced by an upload or an API sync before the next build.
+        sqlx::query("DELETE FROM pipeline_ios_provisioning_profiles WHERE pipeline_id = ?1")
+            .bind(&pipeline_id)
+            .execute(&pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to clear iOS profiles after export method change");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to reconcile iOS provisioning profiles",
+                )
+            })?;
+    }
+
     if !req.provisioning_profiles.is_empty() {
         for input in req.provisioning_profiles {
             upsert_profile(
@@ -2526,6 +2623,7 @@ pub async fn update_pipeline_ios_signing(
                 &state.encryption_key,
                 &pipeline_id,
                 &auth.0.user_id,
+                export_method,
                 input,
             )
             .await?;
@@ -2575,6 +2673,7 @@ pub async fn update_pipeline_ios_signing(
         "updated_by": &auth.0.email,
         "enabled": req.enabled,
         "mode": mode_str(req.mode),
+        "export_method": export_method.as_str(),
         "bundle_ids": bundle_ids,
     })
     .to_string();
@@ -2612,6 +2711,7 @@ async fn upsert_profile(
     encryption_key: &[u8],
     pipeline_id: &str,
     actor_id: &str,
+    export_method: IosExportMethod,
     input: IosProvisioningProfileInput,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
     let bundle_id = input.bundle_id.trim().to_string();
@@ -2663,6 +2763,17 @@ async fn upsert_profile(
             format!(
                 "Provisioning profile bundle mismatch for '{bundle_id}'; profile contains '{}'",
                 parsed.bundle_id
+            ),
+        ));
+    }
+    if !parsed.distribution.matches(export_method) {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_profiles",
+            format!(
+                "Provisioning profile for '{bundle_id}' is a {} profile; this pipeline exports with {} profile",
+                parsed.distribution.label(),
+                expected_profile_label(export_method)
             ),
         ));
     }
@@ -3345,7 +3456,7 @@ pub async fn get_job_ios_signing(
         enabled: true,
         mode: parse_mode(&settings.mode),
         team_id,
-        export_method: settings.export_method,
+        export_method: IosExportMethod::from_stored(&settings.export_method),
         p12_filename,
         p12_base64,
         p12_password,
@@ -3355,4 +3466,57 @@ pub async fn get_job_ios_signing(
     Ok(Json(RunnerIosSigningResponse {
         bundle: Some(bundle),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_distribution_is_read_from_profile_plist() {
+        let app_store = serde_json::json!({ "Entitlements": { "get-task-allow": false } });
+        let ad_hoc = serde_json::json!({
+            "ProvisionedDevices": ["00008110-000A"],
+            "Entitlements": { "get-task-allow": false }
+        });
+        let development = serde_json::json!({
+            "ProvisionedDevices": ["00008110-000A"],
+            "Entitlements": { "get-task-allow": true }
+        });
+        let enterprise = serde_json::json!({ "ProvisionsAllDevices": true });
+
+        assert_eq!(
+            ProfileDistribution::from_profile_json(&app_store),
+            ProfileDistribution::AppStore
+        );
+        assert_eq!(
+            ProfileDistribution::from_profile_json(&ad_hoc),
+            ProfileDistribution::AdHoc
+        );
+        assert_eq!(
+            ProfileDistribution::from_profile_json(&development),
+            ProfileDistribution::Development
+        );
+        assert_eq!(
+            ProfileDistribution::from_profile_json(&enterprise),
+            ProfileDistribution::Enterprise
+        );
+    }
+
+    #[test]
+    fn only_matching_profiles_are_accepted_for_an_export_method() {
+        assert!(ProfileDistribution::AdHoc.matches(IosExportMethod::AdHoc));
+        assert!(!ProfileDistribution::AdHoc.matches(IosExportMethod::AppStore));
+        assert!(ProfileDistribution::AppStore.matches(IosExportMethod::AppStore));
+        assert!(!ProfileDistribution::AppStore.matches(IosExportMethod::AdHoc));
+        assert!(!ProfileDistribution::Development.matches(IosExportMethod::AdHoc));
+    }
+
+    #[test]
+    fn generated_profile_names_differ_by_export_method() {
+        let ad_hoc = profile_name_for_bundle("com.example.app", IosExportMethod::AdHoc);
+        let app_store = profile_name_for_bundle("com.example.app", IosExportMethod::AppStore);
+        assert!(ad_hoc.starts_with("oore-adhoc-"));
+        assert!(app_store.starts_with("oore-appstore-"));
+    }
 }

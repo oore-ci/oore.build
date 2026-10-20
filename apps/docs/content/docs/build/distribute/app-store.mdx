@@ -1,0 +1,84 @@
+---
+title: 'Publish to TestFlight and the App Store'
+status: implemented
+description: 'Upload signed iOS builds to App Store Connect and follow them through TestFlight, review and phased release.'
+---
+
+A pipeline can upload its signed IPA to App Store Connect at the end of a
+build. Oore then sends the build to TestFlight groups or attaches it to an App
+Store version, and records each step as a release.
+
+All App Store Connect calls leave from the Direct macOS runner and the daemon
+host. Allow outbound HTTPS to `api.appstoreconnect.apple.com` and Apple's
+upload hosts.
+
+## What you need
+
+- iOS signing with an App Store Connect API key, as in
+  [Configure App Store Connect signing](/build/sign/ios/app-store-connect).
+- The app already exists in App Store Connect with the pipeline's bundle ID.
+- For TestFlight, the group names to distribute to.
+
+## 1. Export for the App Store
+
+Set the iOS signing export method to `app_store` with
+`PUT /v1/pipelines/{pipeline_id}/ios-signing` and `"export_method": "app_store"`.
+
+- In API mode, **Sync Profiles** then creates App Store distribution profiles.
+- In manual mode, upload an App Store distribution profile for each bundle ID.
+  Oore rejects ad hoc or development profiles for this export method.
+
+Changing the export method removes the stored profiles, because ad hoc and App
+Store profiles are not interchangeable. App Store IPAs cannot be installed
+from Oore; testers install them through TestFlight.
+
+## 2. Turn on publishing
+
+Send the settings with `PUT /v1/pipelines/{pipeline_id}/publish/app-store`:
+
+```json
+{
+  "enabled": true,
+  "destination": "testflight",
+  "testflight_groups": ["Internal QA"],
+  "release_notes": [{ "locale": "en-US", "whats_new": "Checkout fixes" }],
+  "uses_non_exempt_encryption": false
+}
+```
+
+For an App Store release, set `"destination": "app_store"`. Then
+`submit_for_review` submits the version once the build is attached, and
+`phased_release` turns on Apple's seven-day phased release.
+
+## What happens after a build
+
+1. The runner uploads the IPA with `xcrun altool` and the pipeline's API key.
+   The key is written to a private folder only for the upload.
+2. The release starts in **processing** while Apple processes the build.
+   Oore sets the export compliance answer once the build is valid.
+3. **TestFlight:** Oore adds the build to the groups and sets "What to Test".
+   Internal groups complete at once. External groups go to beta review
+   (**in review**) and complete when Apple approves.
+4. **App Store:** Oore finds or creates the version, attaches the build, sets
+   "What's New" and, if asked, submits it (**in review**). When the version is
+   live the release follows the phased release (**rolling** at 1, 2, 5, 10,
+   20, 50 and 100 percent) until it is **complete**.
+
+Pause, resume and complete on the release change Apple's phased release.
+Apple sets the percentages, so raising a step is not available.
+
+## Troubleshooting
+
+**The release fails with "has no app with bundle ID"**
+
+Create the app in App Store Connect with the same bundle ID, then rebuild.
+
+**The upload fails with a bundle version error**
+
+Each upload needs a higher build number than the last one for that version.
+Pass `--build-number` to `flutter build ipa`.
+
+**"What's New" is not set**
+
+Apple does not accept "What's New" on an app's first version. The release
+history notes the skipped field and the release continues.

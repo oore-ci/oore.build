@@ -1,7 +1,7 @@
 use axum::Json;
 use axum::http::StatusCode;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
-use oore_contract::ApiError;
+use oore_contract::{ApiError, IosExportMethod};
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 use uuid::Uuid;
@@ -149,11 +149,11 @@ fn app_store_connect_api_base() -> String {
         .unwrap_or_else(|| DEFAULT_APP_STORE_CONNECT_API_BASE.to_string())
 }
 
-fn endpoint(path: &str) -> String {
+pub(crate) fn endpoint(path: &str) -> String {
     format!("{}{}", app_store_connect_api_base(), path)
 }
 
-fn generate_app_store_connect_jwt(
+pub(crate) fn generate_app_store_connect_jwt(
     creds: &AppleApiCredentials,
 ) -> Result<String, (StatusCode, Json<ApiError>)> {
     let now = now_unix();
@@ -186,7 +186,7 @@ fn generate_app_store_connect_jwt(
     })
 }
 
-fn parse_apple_error(body: &str) -> String {
+pub(crate) fn parse_apple_error(body: &str) -> String {
     let parsed: Result<AppleApiErrorEnvelope, _> = serde_json::from_str(body);
     match parsed {
         Ok(payload) => {
@@ -568,9 +568,18 @@ pub async fn create_distribution_certificate(
     }))
 }
 
-pub async fn create_ad_hoc_profile(
+/// App Store Connect `profileType` for the profiles a pipeline exports with.
+pub fn profile_type_for_export(export_method: IosExportMethod) -> &'static str {
+    match export_method {
+        IosExportMethod::AdHoc => "IOS_APP_ADHOC",
+        IosExportMethod::AppStore => "IOS_APP_STORE",
+    }
+}
+
+pub async fn create_profile(
     client: &reqwest::Client,
     creds: &AppleApiCredentials,
+    profile_type: &str,
     profile_name: &str,
     bundle_id_id: &str,
     certificate_ids: &[String],
@@ -608,7 +617,7 @@ pub async fn create_ad_hoc_profile(
             "type": "profiles",
             "attributes": {
                 "name": profile_name,
-                "profileType": "IOS_APP_ADHOC"
+                "profileType": profile_type
             },
             "relationships": relationships
         }
@@ -625,7 +634,7 @@ pub async fn create_ad_hoc_profile(
             api_err(
                 StatusCode::BAD_GATEWAY,
                 "apple_api_error",
-                "Failed to create iOS ad hoc provisioning profile",
+                "Failed to create iOS provisioning profile",
             )
         })?;
 
@@ -645,7 +654,7 @@ pub async fn create_ad_hoc_profile(
             "Apple profile creation returned 409 Conflict; retrying with a unique name"
         );
         body["data"]["attributes"]["name"] =
-            serde_json::Value::String(format!("oore-adhoc-{}", Uuid::new_v4()));
+            serde_json::Value::String(format!("oore-{}", Uuid::new_v4()));
         let retry_jwt = generate_app_store_connect_jwt(creds)?;
         let retry_resp = client
             .post(endpoint("/v1/profiles"))
@@ -658,7 +667,7 @@ pub async fn create_ad_hoc_profile(
                 api_err(
                     StatusCode::BAD_GATEWAY,
                     "apple_api_error",
-                    "Failed to create iOS ad hoc provisioning profile on retry",
+                    "Failed to create iOS provisioning profile on retry",
                 )
             })?;
         if !retry_resp.status().is_success() {

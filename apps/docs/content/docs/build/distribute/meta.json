@@ -2,6 +2,7 @@
   "title": "Distribute builds",
   "pages": [
     "google-play",
+    "app-store",
     "ios-devices",
     "download",
     "install/android",

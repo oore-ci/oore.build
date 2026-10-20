@@ -209,9 +209,15 @@ pub async fn get_job_publish_plan(
         .map(|(config, _)| config)
         .filter(|config| config.enabled);
 
+    let app_store =
+        crate::app_store_publish::runner_plan(&state.db, &state.encryption_key, &pipeline_id)
+            .await
+            .map_err(|e| store_error("Failed to load App Store publish settings", e))?;
+
     Ok(Json(RunnerPublishPlan {
         changelog,
         google_play,
+        app_store,
     }))
 }
 
@@ -257,6 +263,11 @@ pub async fn report_job_publish_result(
         if let Err(error) = record_play_release(&state, &job_id, &pipeline_id, &result).await {
             error!(build_id = %job_id, error = ?error, "failed to record the Google Play release");
         }
+    }
+    if result.store == PublishStore::AppStore
+        && let Err(error) = crate::app_store_publish::record_upload(&state, &job_id).await
+    {
+        error!(build_id = %job_id, error = ?error, "failed to record the App Store release");
     }
     Ok(Json(OkResponse { ok: true }))
 }

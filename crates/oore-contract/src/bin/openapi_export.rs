@@ -56,6 +56,7 @@ use utoipa::{
         // ── Runtime updates ──
         operations::get_runtime_update_status,
         operations::start_runtime_update,
+        operations::get_runtime_update_preflight,
         // ── Users ──
         operations::get_me,
         operations::list_users,
@@ -136,6 +137,8 @@ use utoipa::{
         operations::get_pipeline_ios_signing,
         operations::update_pipeline_ios_signing,
         operations::sync_pipeline_ios_signing,
+        operations::get_pipeline_app_store_publish,
+        operations::update_pipeline_app_store_publish,
         operations::list_pipeline_ios_devices,
         operations::register_pipeline_ios_device,
         // ── Pipeline Publishing ──
@@ -272,6 +275,9 @@ use utoipa::{
         // Runtime updates
         oore_contract::RuntimeUpdatePhase,
         oore_contract::RuntimeUpdateStatus,
+        oore_contract::RuntimeUpdateCheckStatus,
+        oore_contract::RuntimeUpdateCheck,
+        oore_contract::RuntimeUpdatePreflight,
         // Users
         oore_contract::UserRole,
         oore_contract::UserStatus,
@@ -381,6 +387,7 @@ use utoipa::{
         oore_contract::PipelineAndroidSigningResponse,
         // iOS Signing
         oore_contract::IosSigningMode,
+        oore_contract::IosExportMethod,
         oore_contract::IosCertificateInput,
         oore_contract::IosProvisioningProfileInput,
         oore_contract::IosApiCredentialInput,
@@ -392,6 +399,12 @@ use utoipa::{
         oore_contract::RegisterIosDeviceRequest,
         oore_contract::RegisterIosDeviceResponse,
         oore_contract::SyncPipelineIosSigningResponse,
+        oore_contract::AppStoreDestination,
+        oore_contract::AppStoreReleaseNote,
+        oore_contract::AppStorePublishConfig,
+        oore_contract::PipelineAppStorePublishResponse,
+        oore_contract::RunnerAppStoreUploadCredentials,
+        oore_contract::RunnerAppStorePublishPlan,
         // Builds
         oore_contract::BuildStatus,
         oore_contract::RunnerPolicyBlockReason,
@@ -925,6 +938,21 @@ mod operations {
         )
     )]
     pub(super) fn start_runtime_update() {}
+
+    /// Check whether a one-click backend update can start
+    ///
+    /// Runs the named preflight checks for the managed macOS update
+    /// supervisor, each with a fix hint. Results are cached for 30 seconds.
+    /// Requires owner role.
+    #[utoipa::path(get, path = "/v1/system/update/preflight", tag = "System",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Backend update preflight checks", body = RuntimeUpdatePreflight),
+            (status = 401, description = "Not authenticated", body = ApiError),
+            (status = 403, description = "Owner role required", body = ApiError),
+        )
+    )]
+    pub(super) fn get_runtime_update_preflight() {}
 
     // ── Users ──
 
@@ -2056,6 +2084,37 @@ mod operations {
         )
     )]
     pub(super) fn update_pipeline_ios_signing() {}
+
+    // ── Pipeline publishing (App Store) ──
+
+    /// Get App Store publish settings
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/publish/app-store", tag = "Pipelines",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "App Store publish settings", body = PipelineAppStorePublishResponse),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_pipeline_app_store_publish() {}
+
+    /// Update App Store publish settings
+    ///
+    /// Publishing uploads the pipeline's App Store IPA to App Store Connect with
+    /// the API key from iOS signing, then sends it to TestFlight groups or an
+    /// App Store version. Enabling it requires iOS signing with the `app_store`
+    /// export method and an App Store Connect API key.
+    #[utoipa::path(put, path = "/v1/pipelines/{pipeline_id}/publish/app-store", tag = "Pipelines",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        request_body = AppStorePublishConfig,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "App Store publish settings updated", body = PipelineAppStorePublishResponse),
+            (status = 400, description = "Invalid settings", body = ApiError),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn update_pipeline_app_store_publish() {}
 
     /// Sync iOS provisioning profiles
     ///
