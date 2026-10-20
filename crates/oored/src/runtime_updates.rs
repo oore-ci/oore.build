@@ -1,11 +1,11 @@
 use std::fs;
 use std::io::Write;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use axum::Json;
@@ -29,6 +29,9 @@ const UPDATE_STATUS_FILE: &str = ".runtime-update-status.json";
 const UPDATE_REQUEST_DIR: &str = "run/runtime-update-queue";
 const UPDATE_REQUEST_FILE: &str = "request.json";
 const SERVICE_PATH: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+/// How long an update may go without progress before a stopped supervisor counts as gone.
+const ABANDONED_UPDATE_GRACE: Duration = Duration::from_secs(120);
+const ABANDONED_UPDATE_ERROR: &str = "The update supervisor stopped without reporting a result. Check logs/update-supervisor.log on the backend host, then try again.";
 
 pub type RuntimeUpdateState = Arc<RwLock<RuntimeUpdateStatus>>;
 
@@ -392,6 +395,81 @@ fn initial_status() -> RuntimeUpdateStatus {
     }
 }
 
+fn update_supervisor_running() -> Option<bool> {
+    let output = Command::new("/bin/launchctl")
+        .args(["print", UPDATE_SERVICE])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return Some(false);
+    }
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| line.trim().starts_with("pid = ")),
+    )
+}
+
+fn time_since_modified(path: &Path) -> Option<Duration> {
+    let modified = fs::symlink_metadata(path).ok()?.modified().ok()?;
+    Some(
+        SystemTime::now()
+            .duration_since(modified)
+            .unwrap_or_default(),
+    )
+}
+
+fn update_is_abandoned(quiet_for: Option<Duration>, supervisor_running: Option<bool>) -> bool {
+    supervisor_running == Some(false) && quiet_for.is_some_and(|age| age >= ABANDONED_UPDATE_GRACE)
+}
+
+/// Fail an update whose supervisor exited without reporting, and drop its queued request,
+/// so the UI stops polling and the next click starts a fresh attempt.
+fn reconcile_abandoned_update(
+    install_root: &Path,
+    supervisor_running: impl FnOnce() -> Option<bool>,
+) -> anyhow::Result<()> {
+    let status_path = install_root.join(UPDATE_STATUS_FILE);
+    let request_path = install_root
+        .join(UPDATE_REQUEST_DIR)
+        .join(UPDATE_REQUEST_FILE);
+    let in_flight = read_persisted_status(&status_path)?.filter(|status| {
+        matches!(
+            status.phase,
+            RuntimeUpdatePhase::Updating | RuntimeUpdatePhase::Restarting
+        )
+    });
+    let request_queued = fs::symlink_metadata(&request_path).is_ok();
+    if in_flight.is_none() && !request_queued {
+        return Ok(());
+    }
+    let quiet_for = [&status_path, &request_path]
+        .into_iter()
+        .filter_map(|path| time_since_modified(path))
+        .min();
+    if !update_is_abandoned(quiet_for, supervisor_running()) {
+        return Ok(());
+    }
+    match fs::remove_file(&request_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "failed to clear stale update request {}",
+                    request_path.display()
+                )
+            });
+        }
+    }
+    if let Some(mut status) = in_flight {
+        status.phase = RuntimeUpdatePhase::Failed;
+        status.error = Some(ABANDONED_UPDATE_ERROR.to_string());
+        write_persisted_status(&status_path, &status)?;
+    }
+    Ok(())
+}
+
 pub fn new_state() -> RuntimeUpdateState {
     Arc::new(RwLock::new(initial_status()))
 }
@@ -413,13 +491,9 @@ fn process_listen_address() -> anyhow::Result<SocketAddr> {
 
 fn loopback_daemon_url() -> anyhow::Result<String> {
     let listen = process_listen_address()?;
-    let loopback = match listen.ip() {
-        IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::LOCALHOST),
-        IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::LOCALHOST),
-    };
     Ok(format!(
         "http://{}",
-        SocketAddr::new(loopback, listen.port())
+        crate::loopback_maintenance_addr(listen)
     ))
 }
 
@@ -497,6 +571,14 @@ pub async fn get_status(
     auth: AuthUser,
 ) -> Result<Json<RuntimeUpdateStatus>, (StatusCode, Json<ApiError>)> {
     auth.require_owner()?;
+    if let Ok(install_root) = install_root_from_current_exe()
+        && let Err(error) = reconcile_abandoned_update(&install_root, update_supervisor_running)
+    {
+        tracing::warn!(
+            error = format!("{error:#}"),
+            "failed to reconcile an abandoned backend update"
+        );
+    }
     if let Ok(path) = update_status_path() {
         match read_persisted_status(&path) {
             Ok(Some(status)) => *state.runtime_update.write().await = status,
@@ -555,6 +637,13 @@ pub async fn start_update(
             StatusCode::INTERNAL_SERVER_ERROR,
             "runtime_update_unavailable",
             error.to_string(),
+        )
+    })?;
+    reconcile_abandoned_update(&install_root, update_supervisor_running).map_err(|error| {
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "runtime_update_status_failed",
+            format!("{error:#}"),
         )
     })?;
     let request_path = install_root
@@ -673,6 +762,102 @@ pub async fn start_update(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_update_fixture(
+        install_root: &Path,
+        phase: RuntimeUpdatePhase,
+        request_queued: bool,
+        age: Duration,
+    ) -> (PathBuf, PathBuf) {
+        let status_path = install_root.join(UPDATE_STATUS_FILE);
+        write_persisted_status(
+            &status_path,
+            &RuntimeUpdateStatus {
+                phase,
+                error: None,
+                managed_service: true,
+            },
+        )
+        .unwrap();
+        let request_path = install_root
+            .join(UPDATE_REQUEST_DIR)
+            .join(UPDATE_REQUEST_FILE);
+        fs::create_dir_all(request_path.parent().unwrap()).unwrap();
+        if request_queued {
+            fs::write(&request_path, b"{}").unwrap();
+        }
+        let modified = SystemTime::now() - age;
+        for path in [&status_path, &request_path] {
+            if let Ok(file) = fs::File::options().write(true).open(path) {
+                file.set_modified(modified).unwrap();
+            }
+        }
+        (status_path, request_path)
+    }
+
+    fn persisted_phase(path: &Path) -> (RuntimeUpdatePhase, Option<String>) {
+        let status = read_persisted_status(path).unwrap().unwrap();
+        (status.phase, status.error)
+    }
+
+    #[test]
+    fn abandoned_update_fails_and_clears_the_queued_request() {
+        let root = tempfile::tempdir().unwrap();
+        let (status_path, request_path) = write_update_fixture(
+            root.path(),
+            RuntimeUpdatePhase::Updating,
+            true,
+            Duration::from_secs(600),
+        );
+
+        reconcile_abandoned_update(root.path(), || Some(false)).unwrap();
+
+        assert_eq!(
+            persisted_phase(&status_path),
+            (
+                RuntimeUpdatePhase::Failed,
+                Some(ABANDONED_UPDATE_ERROR.to_string())
+            )
+        );
+        assert!(!request_path.exists());
+    }
+
+    #[test]
+    fn stale_request_is_cleared_after_a_reported_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let (status_path, request_path) = write_update_fixture(
+            root.path(),
+            RuntimeUpdatePhase::Failed,
+            true,
+            Duration::from_secs(600),
+        );
+
+        reconcile_abandoned_update(root.path(), || Some(false)).unwrap();
+
+        assert_eq!(persisted_phase(&status_path).0, RuntimeUpdatePhase::Failed);
+        assert!(!request_path.exists());
+    }
+
+    #[test]
+    fn running_recent_or_unknown_updates_are_left_alone() {
+        for (age, supervisor_running) in [
+            (Duration::from_secs(600), Some(true)),
+            (Duration::from_secs(600), None),
+            (Duration::from_secs(5), Some(false)),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let (status_path, request_path) =
+                write_update_fixture(root.path(), RuntimeUpdatePhase::Restarting, true, age);
+
+            reconcile_abandoned_update(root.path(), || supervisor_running).unwrap();
+
+            assert_eq!(
+                persisted_phase(&status_path),
+                (RuntimeUpdatePhase::Restarting, None)
+            );
+            assert!(request_path.exists());
+        }
+    }
 
     #[test]
     fn loaded_update_supervisor_must_match_the_managed_command() {

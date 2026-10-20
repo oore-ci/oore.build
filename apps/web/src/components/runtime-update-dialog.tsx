@@ -33,6 +33,7 @@ function updateButtonLabel(phase: string | undefined, pending: boolean) {
   if (pending) return 'Starting...'
   if (phase === 'restarting') return 'Restarting...'
   if (phase === 'updating') return 'Updating...'
+  if (phase === 'failed') return 'Retry update'
   return 'Update now'
 }
 
@@ -40,6 +41,7 @@ function RuntimeUpdateCard({
   name,
   release,
   phase,
+  failure,
   pending,
   managed,
   unmanagedHint = "Run Oore setup from Terminal to repair this device's managed services. No reinstall is required.",
@@ -48,6 +50,7 @@ function RuntimeUpdateCard({
   name: string
   release: RuntimeReleaseStatus
   phase?: string
+  failure?: string | null
   pending: boolean
   managed: boolean
   unmanagedHint?: string
@@ -78,6 +81,11 @@ function RuntimeUpdateCard({
             {release.latest_version}
           </span>
         </div>
+        {phase === 'failed' && !pending ? (
+          <p className="mt-2 text-xs wrap-break-word text-destructive">
+            {failure || 'The last update stopped before completion.'}
+          </p>
+        ) : null}
         {!managed ? (
           <div className="mt-2 space-y-2 text-xs text-muted-foreground">
             <p>{unmanagedHint}</p>
@@ -152,6 +160,7 @@ export default function RuntimeUpdateDialog({
               name="Frontend"
               release={frontend}
               phase={frontendPhase}
+              failure={frontend.error}
               pending={updates.startFrontendUpdate.isPending}
               managed={frontend.managed_service}
               unmanagedHint={frontend.managed_service_reason ?? undefined}
@@ -171,6 +180,7 @@ export default function RuntimeUpdateDialog({
               name="Backend"
               release={backend}
               phase={backendPhase}
+              failure={updates.backendUpdate.data?.error}
               pending={updates.startBackendUpdate.isPending}
               managed={updates.backendUpdate.data?.managed_service === true}
               onUpdate={() =>
