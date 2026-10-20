@@ -17,6 +17,12 @@ const API_BASE: &str = "https://androidpublisher.googleapis.com/androidpublisher
 const UPLOAD_BASE: &str =
     "https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications";
 const PUBLISHER_SCOPE: &str = "https://www.googleapis.com/auth/androidpublisher";
+/// Scope for the Play Developer Reporting API (vitals such as crash rate).
+pub const REPORTING_SCOPE: &str = "https://www.googleapis.com/auth/playdeveloperreporting";
+const REPORTING_BASE: &str = "https://playdeveloperreporting.googleapis.com/v1beta1/apps";
+/// Reporting API daily metrics are bucketed in Pacific time.
+const REPORTING_TIME_ZONE: &str = "America/Los_Angeles";
+const CRASH_RATE_LOOKBACK_DAYS: i64 = 7;
 const DEFAULT_TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
 
 /// Play limits release notes to 500 characters per language.
@@ -44,13 +50,22 @@ pub async fn access_token(
     http: &reqwest::Client,
     service_account_json: &str,
 ) -> anyhow::Result<String> {
+    access_token_with_scope(http, service_account_json, PUBLISHER_SCOPE).await
+}
+
+/// Exchange a service account JSON key for an access token with `scope`.
+pub async fn access_token_with_scope(
+    http: &reqwest::Client,
+    service_account_json: &str,
+    scope: &str,
+) -> anyhow::Result<String> {
     let key: ServiceAccountKey = serde_json::from_str(service_account_json)
         .context("the service account secret is not a Google service account JSON key")?;
     let token_uri = key.token_uri.as_deref().unwrap_or(DEFAULT_TOKEN_URI);
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let claims = JwtClaims {
         iss: &key.client_email,
-        scope: PUBLISHER_SCOPE,
+        scope,
         aud: token_uri,
         iat: now,
         exp: now + 3600,
@@ -325,6 +340,118 @@ impl<'a> PlayEdits<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+struct ReportingDate {
+    year: i32,
+    month: u32,
+    day: u32,
+}
+
+impl ReportingDate {
+    fn to_wire(self) -> serde_json::Value {
+        serde_json::json!({
+            "year": self.year,
+            "month": self.month,
+            "day": self.day,
+            "timeZone": {"id": REPORTING_TIME_ZONE},
+        })
+    }
+
+    fn days_before(self, days: i64) -> anyhow::Result<Self> {
+        use chrono::Datelike;
+        let date = chrono::NaiveDate::from_ymd_opt(self.year, self.month, self.day)
+            .context("invalid reporting date")?
+            - chrono::Duration::days(days);
+        Ok(Self {
+            year: date.year(),
+            month: date.month(),
+            day: date.day(),
+        })
+    }
+}
+
+/// Latest daily user-perceived crash rate (0..1) for one version code, or
+/// `None` when Play has no data for it yet.
+pub async fn crash_rate(
+    http: &reqwest::Client,
+    reporting_token: &str,
+    package_name: &str,
+    version_code: i64,
+) -> anyhow::Result<Option<f64>> {
+    // Querying past the freshest available day is an error, so read it first.
+    let metric_set: serde_json::Value = play_json(
+        http.get(format!(
+            "{REPORTING_BASE}/{package_name}/crashRateMetricSet"
+        ))
+        .bearer_auth(reporting_token),
+        "read crash rate freshness",
+    )
+    .await?;
+    let Some(end) = metric_set
+        .pointer("/freshnessInfo/freshnesses")
+        .and_then(|value| value.as_array())
+        .and_then(|freshnesses| {
+            freshnesses
+                .iter()
+                .find(|entry| entry["aggregationPeriod"] == "DAILY")
+        })
+        .and_then(|entry| {
+            serde_json::from_value::<ReportingDate>(entry["latestEndTime"].clone()).ok()
+        })
+    else {
+        return Ok(None);
+    };
+    let start = end.days_before(CRASH_RATE_LOOKBACK_DAYS)?;
+    let response: serde_json::Value = play_json(
+        http.post(format!(
+            "{REPORTING_BASE}/{package_name}/crashRateMetricSet:query"
+        ))
+        .bearer_auth(reporting_token)
+        .json(&serde_json::json!({
+            "timelineSpec": {
+                "aggregationPeriod": "DAILY",
+                "startTime": start.to_wire(),
+                "endTime": end.to_wire(),
+            },
+            "dimensions": ["versionCode"],
+            "metrics": ["userPerceivedCrashRate"],
+            "pageSize": 1000,
+        })),
+        "query crash rate",
+    )
+    .await?;
+    Ok(latest_crash_rate(&response, version_code))
+}
+
+fn latest_crash_rate(response: &serde_json::Value, version_code: i64) -> Option<f64> {
+    let code = version_code.to_string();
+    response["rows"]
+        .as_array()?
+        .iter()
+        .filter(|row| {
+            row["dimensions"].as_array().is_some_and(|dimensions| {
+                dimensions.iter().any(|dimension| {
+                    dimension["dimension"] == "versionCode"
+                        && dimension["stringValue"].as_str() == Some(&code)
+                })
+            })
+        })
+        .filter_map(|row| {
+            let date: ReportingDate = serde_json::from_value(row["startTime"].clone()).ok()?;
+            let rate = row["metrics"]
+                .as_array()?
+                .iter()
+                .find(|metric| metric["metric"] == "userPerceivedCrashRate")?
+                .pointer("/decimalValue/value")?
+                .as_str()?
+                .parse::<f64>()
+                .ok()?;
+            Some(((date.year, date.month, date.day), rate))
+        })
+        .max_by_key(|(date, _)| *date)
+        .map(|(_, rate)| rate)
+}
+
 async fn tokio_read(path: &Path) -> anyhow::Result<Vec<u8>> {
     tokio::fs::read(path)
         .await
@@ -361,6 +488,47 @@ mod tests {
         );
         let back: TrackRelease = serde_json::from_value(json).unwrap();
         assert_eq!(back, release);
+    }
+
+    #[test]
+    fn crash_rate_picks_latest_day_for_the_version() {
+        let response = serde_json::json!({
+            "rows": [
+                {
+                    "startTime": {"year": 2026, "month": 10, "day": 18},
+                    "dimensions": [{"dimension": "versionCode", "stringValue": "120"}],
+                    "metrics": [{"metric": "userPerceivedCrashRate", "decimalValue": {"value": "0.004"}}]
+                },
+                {
+                    "startTime": {"year": 2026, "month": 10, "day": 19},
+                    "dimensions": [{"dimension": "versionCode", "stringValue": "120"}],
+                    "metrics": [{"metric": "userPerceivedCrashRate", "decimalValue": {"value": "0.031"}}]
+                },
+                {
+                    "startTime": {"year": 2026, "month": 10, "day": 20},
+                    "dimensions": [{"dimension": "versionCode", "stringValue": "119"}],
+                    "metrics": [{"metric": "userPerceivedCrashRate", "decimalValue": {"value": "0.5"}}]
+                }
+            ]
+        });
+        assert_eq!(latest_crash_rate(&response, 120), Some(0.031));
+        assert_eq!(latest_crash_rate(&response, 121), None);
+        assert_eq!(latest_crash_rate(&serde_json::json!({}), 120), None);
+        let start = ReportingDate {
+            year: 2026,
+            month: 3,
+            day: 2,
+        }
+        .days_before(7)
+        .unwrap();
+        assert_eq!(
+            start,
+            ReportingDate {
+                year: 2026,
+                month: 2,
+                day: 23
+            }
+        );
     }
 
     #[test]

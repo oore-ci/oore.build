@@ -4,8 +4,9 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
-    ApiError, GooglePlayPublishConfig, OkResponse, PipelineGooglePlayPublishResponse,
-    RunnerPublishPlan, RunnerPublishResult, validate_google_play_publish_config,
+    ApiError, GooglePlayPublishConfig, OkResponse, PipelineGooglePlayPublishResponse, PublishStore,
+    ReleaseState, ReleaseStore, RunnerPublishPlan, RunnerPublishResult,
+    validate_google_play_publish_config,
 };
 use sqlx::{Row, SqlitePool};
 use tracing::{error, info};
@@ -14,6 +15,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{ProjectPermission, require_pipeline_project_permission};
+use crate::releases::{NewRelease, ReleaseActor, ReleaseDeps, create_release};
 use crate::runners::{RunnerAuth, require_active_job_signing_grant};
 use crate::secrets::resolve_secrets;
 use crate::store::write_audit_log;
@@ -29,7 +31,7 @@ fn store_error(context: &str, e: impl std::fmt::Display) -> ApiFailure {
     api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", context)
 }
 
-async fn load_google_play(
+pub(crate) async fn load_google_play(
     pool: &SqlitePool,
     pipeline_id: &str,
 ) -> anyhow::Result<Option<(GooglePlayPublishConfig, i64)>> {
@@ -250,5 +252,58 @@ pub async fn report_job_publish_result(
         version_code = result.version_code,
         "runner reported a store upload"
     );
+    if result.store == PublishStore::GooglePlay {
+        // The upload already happened; a failure to record it must not fail the job.
+        if let Err(error) = record_play_release(&state, &job_id, &pipeline_id, &result).await {
+            error!(build_id = %job_id, error = ?error, "failed to record the Google Play release");
+        }
+    }
     Ok(Json(OkResponse { ok: true }))
+}
+
+/// Create the release record for a finished Play upload. A draft is recorded
+/// as paused at 0% so nothing rolls out until a maintainer resumes it.
+async fn record_play_release(
+    state: &AppState,
+    build_id: &str,
+    pipeline_id: &str,
+    result: &RunnerPublishResult,
+) -> anyhow::Result<()> {
+    let project_id: String = sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
+        .bind(build_id)
+        .fetch_one(&state.db)
+        .await?;
+    let policy = load_google_play(&state.db, pipeline_id)
+        .await?
+        .and_then(|(config, _)| config.rollout_policy)
+        .unwrap_or_default();
+    let (release_state, rollout_fraction) = match result.status.as_str() {
+        "completed" => (ReleaseState::Complete, 1.0),
+        "draft" => (ReleaseState::Paused, 0.0),
+        _ => (
+            ReleaseState::Rolling,
+            result.rollout_fraction.unwrap_or(1.0),
+        ),
+    };
+    create_release(
+        ReleaseDeps::from(state),
+        NewRelease {
+            project_id,
+            build_id: build_id.to_string(),
+            artifact_id: None,
+            store: ReleaseStore::GooglePlay,
+            track: result.track.clone(),
+            package_name: Some(result.package_name.clone()),
+            version_name: result.version_name.clone(),
+            version_code: Some(result.version_code),
+            state: release_state,
+            rollout_fraction,
+            policy,
+        },
+        &ReleaseActor::System,
+        Some("uploaded by the runner"),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    Ok(())
 }

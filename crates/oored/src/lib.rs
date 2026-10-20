@@ -28,6 +28,7 @@ pub mod project_members;
 pub mod project_rbac;
 pub mod projects;
 pub mod rbac;
+pub mod release_store;
 pub mod releases;
 pub mod repository_workflows;
 pub mod retention;
@@ -2383,6 +2384,10 @@ pub async fn build_router_with_recovery(
     );
 
     let db = store.pool().clone();
+    let release_store = release_store::PlayReleaseStoreClient::new(
+        db.clone(),
+        Zeroizing::new(encryption_key.clone()),
+    )?;
     let webhook_wake = integrations::webhooks::start_webhook_processor(db.clone());
     let shared_state = Arc::new(AppState {
         store: Mutex::new(store),
@@ -2400,7 +2405,7 @@ pub async fn build_router_with_recovery(
         public_url: public_url_state,
         runtime_update: runtime_updates::new_state(),
         recovery_capabilities,
-        release_store: Arc::new(releases::NoopReleaseStoreClient),
+        release_store: Arc::new(release_store),
     });
 
     // Start background tasks (lease timeout, build timeout, heartbeat monitor)

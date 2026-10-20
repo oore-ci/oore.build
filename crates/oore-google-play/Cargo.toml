@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 flate2.workspace = true
 jsonwebtoken.workspace = true
 reqwest.workspace = true

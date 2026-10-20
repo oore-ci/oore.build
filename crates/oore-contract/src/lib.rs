@@ -2985,6 +2985,10 @@ pub struct GooglePlayPublishConfig {
     /// In-app update priority, 0 to 5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub in_app_update_priority: Option<u8>,
+    /// Staged rollout schedule, crash-rate halt and approval gate for the
+    /// release record. Omitted means the default schedule with no halt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_policy: Option<ReleasePolicy>,
 }
 
 fn default_release_notes_locale() -> String {
@@ -3031,6 +3035,11 @@ pub fn validate_google_play_publish_config(config: &GooglePlayPublishConfig) -> 
         } else if percent < 100.0 && config.draft {
             errors.push("a draft release cannot have a staged rollout".to_string());
         }
+    }
+    if let Some(policy) = &config.rollout_policy
+        && let Err(error) = policy.validate()
+    {
+        errors.push(error);
     }
     if config.release_notes_locale.trim().is_empty() || config.release_notes_locale.len() > 16 {
         errors.push("release_notes_locale must be a Play language code such as en-US".to_string());
