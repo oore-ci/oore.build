@@ -13,8 +13,6 @@ import {
   type UseQueryOptions,
 } from '@tanstack/react-query'
 
-import * as z from 'zod'
-
 import { READ_ONLY_REASON, isDemoMutationBlocked } from '@/lib/demo-mode'
 const appFetch: typeof fetch = async (input, init) => {
   const request = new Request(input, init)
@@ -118,35 +116,4 @@ export function scopeOoreInfiniteQueryOptions<
       return queryFn(generatedContext)
     },
   }
-}
-
-// For daemon operations the published @oore/client does not generate yet.
-// Drop each use once the client is regenerated.
-export async function requestOoreOperation<T>({
-  body,
-  client,
-  method,
-  schema,
-  signal,
-  url,
-}: {
-  body?: unknown
-  client: OoreClient
-  method: 'DELETE' | 'GET' | 'POST' | 'PUT'
-  schema: z.ZodType<T>
-  signal?: AbortSignal
-  url: string
-}): Promise<T> {
-  return schema.parse(
-    await client.request({
-      body,
-      headers:
-        body === undefined ? undefined : { 'Content-Type': 'application/json' },
-      method,
-      responseStyle: 'data',
-      security: [{ scheme: 'bearer', type: 'http' }],
-      signal,
-      url,
-    }),
-  )
 }

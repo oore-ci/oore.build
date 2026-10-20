@@ -14,8 +14,8 @@ import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { ago, PIPELINE_IDS, PROJECT_IDS } from '../seed'
 import { demoState } from '../state'
 
-// The published @oore/client has no MSW handlers for secrets or publish
-// settings yet, so these match the daemon routes directly.
+// One set of resolvers serves all three secret scopes, so these match the
+// daemon routes directly instead of using one generated handler per scope.
 
 const demoSecrets: Array<SecretSummary> = [
   {

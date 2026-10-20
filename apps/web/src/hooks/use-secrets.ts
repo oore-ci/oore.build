@@ -3,31 +3,31 @@ import {
   useQueries,
   useQuery,
   useQueryClient,
+  type Query,
 } from '@tanstack/react-query'
 import * as z from 'zod'
 
-import { useApiContext } from '@/hooks/use-api-context'
+import type { SecretSummary } from '@oore/client/models'
 import {
-  requestOoreOperation,
-  scopeOoreQueryKey,
-} from '@/lib/api-client/client'
+  createInstanceSecret,
+  createPipelineSecret,
+  createProjectSecret,
+  deleteInstanceSecret,
+  deletePipelineSecret,
+  deleteProjectSecret,
+  rotateInstanceSecret,
+  rotatePipelineSecret,
+  rotateProjectSecret,
+} from '@oore/client/operations'
+import {
+  listInstanceSecretsOptions,
+  listPipelineSecretsOptions,
+  listProjectSecretsOptions,
+} from '@oore/client/react-query'
+import { useApiContext } from '@/hooks/use-api-context'
+import { scopeOoreQueryOptions } from '@/lib/api-client/client'
 
-// TODO(oore-client-js): switch to the generated secret operations once the
-// client is regenerated from an OpenAPI that includes #467.
-const secretSummarySchema = z.object({
-  name: z.string(),
-  scope: z.enum(['instance', 'project', 'pipeline']),
-  project_id: z.string().nullish(),
-  pipeline_id: z.string().nullish(),
-  created_at: z.number(),
-  updated_at: z.number(),
-})
-const listSecretsSchema = z.object({ secrets: z.array(secretSummarySchema) })
-const secretResponseSchema = z.object({ secret: secretSummarySchema })
-const okResponseSchema = z.object({ ok: z.boolean() })
-
-export type SecretSummary = z.infer<typeof secretSummarySchema>
-export type SecretScope = SecretSummary['scope']
+export type { SecretScope, SecretSummary } from '@oore/client/models'
 
 export type SecretTarget =
   | { scope: 'instance' }
@@ -38,65 +38,72 @@ export const SECRET_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 export const SECRET_NAME_MAX_LENGTH = 128
 export const SECRET_VALUE_MAX_BYTES = 64 * 1024
 
-function secretsUrl(target: SecretTarget) {
-  switch (target.scope) {
-    case 'instance':
-      return '/v1/secrets'
-    case 'project':
-      return `/v1/projects/${encodeURIComponent(target.projectId)}/secrets`
-    case 'pipeline':
-      return `/v1/pipelines/${encodeURIComponent(target.pipelineId)}/secrets`
-  }
+// Generated query keys carry `{ _id: '<operation>' }`. Publish settings report
+// whether their referenced secret exists, so they depend on secrets too.
+const SECRET_DEPENDENT_OPERATIONS = new Set([
+  'listInstanceSecrets',
+  'listProjectSecrets',
+  'listPipelineSecrets',
+  'getPipelineGooglePlayPublish',
+])
+
+const generatedQueryKeySchema = z.object({ _id: z.string() })
+
+function isSecretDependentQuery(query: Query) {
+  return query.queryKey.some((part) => {
+    const operation = generatedQueryKeySchema.safeParse(part).data?._id
+    return !!operation && SECRET_DEPENDENT_OPERATIONS.has(operation)
+  })
 }
 
-function targetId(target: SecretTarget) {
-  switch (target.scope) {
-    case 'instance':
-      return 'instance'
-    case 'project':
-      return target.projectId
-    case 'pipeline':
-      return target.pipelineId
-  }
-}
-
-function secretsQueryKey(instanceId: string, target?: SecretTarget) {
-  return scopeOoreQueryKey(
-    instanceId,
-    target ? ['secrets', target.scope, targetId(target)] : ['secrets'],
-  )
+function selectSecrets(response: { secrets: Array<SecretSummary> }) {
+  return response.secrets
 }
 
 function secretsQueryOptions(
-  context: ReturnType<typeof useApiContext>,
+  { client, instanceId }: ReturnType<typeof useApiContext>,
   target: SecretTarget,
-  enabled: boolean,
 ) {
-  const { baseUrl, client, instanceId, token } = context
-  return {
-    queryKey: secretsQueryKey(instanceId, target),
-    queryFn: async ({ signal }: { signal: AbortSignal }) =>
-      (
-        await requestOoreOperation({
+  switch (target.scope) {
+    case 'instance':
+      return scopeOoreQueryOptions(
+        instanceId,
+        listInstanceSecretsOptions({ client }),
+      )
+    case 'project':
+      return scopeOoreQueryOptions(
+        instanceId,
+        listProjectSecretsOptions({
           client,
-          method: 'GET',
-          schema: listSecretsSchema,
-          signal,
-          url: secretsUrl(target),
-        })
-      ).secrets,
-    enabled: enabled && !!baseUrl && !!token,
+          path: { project_id: target.projectId },
+        }),
+      )
+    case 'pipeline':
+      return scopeOoreQueryOptions(
+        instanceId,
+        listPipelineSecretsOptions({
+          client,
+          path: { pipeline_id: target.pipelineId },
+        }),
+      )
   }
+}
+
+function useSecretsQueryFactory(enabled: boolean) {
+  const context = useApiContext()
+  return (target: SecretTarget) => ({
+    ...secretsQueryOptions(context, target),
+    enabled: enabled && !!context.baseUrl && !!context.token,
+    select: selectSecrets,
+  })
 }
 
 export function useSecrets(
   target: SecretTarget,
   options?: { enabled?: boolean },
 ) {
-  const context = useApiContext()
-  return useQuery(
-    secretsQueryOptions(context, target, options?.enabled ?? true),
-  )
+  const secretsQuery = useSecretsQueryFactory(options?.enabled ?? true)
+  return useQuery(secretsQuery(target))
 }
 
 /**
@@ -104,70 +111,96 @@ export function useSecrets(
  * read are left out rather than failing the whole list.
  */
 export function useInheritedSecrets(targets: Array<SecretTarget>) {
-  const context = useApiContext()
+  const secretsQuery = useSecretsQueryFactory(true)
   return useQueries({
-    queries: targets.map((target) =>
-      secretsQueryOptions(context, target, true),
-    ),
+    queries: targets.map(secretsQuery),
     combine: (results) => results.flatMap((result) => result.data ?? []),
   })
 }
 
+type OoreClient = ReturnType<typeof useApiContext>['client']
+
 function useSecretMutation<TVariables, TResult>(
-  request: (variables: TVariables) => {
-    body?: unknown
-    method: 'DELETE' | 'POST' | 'PUT'
-    schema: z.ZodType<TResult>
-    url: string
-  },
+  run: (client: OoreClient, variables: TVariables) => Promise<TResult>,
 ) {
   const queryClient = useQueryClient()
-  const { baseUrl, client, instanceId, token } = useApiContext()
+  const { baseUrl, client, token } = useApiContext()
 
   return useMutation({
     mutationFn: async (variables: TVariables) => {
       if (!baseUrl || !token) throw new Error('Not authenticated')
-      return requestOoreOperation({ client, ...request(variables) })
+      return run(client, variables)
     },
-    // Every scope's list can change what a pipeline resolves, and publish
-    // settings report whether their referenced secret exists.
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: secretsQueryKey(instanceId),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: scopeOoreQueryKey(instanceId, ['pipeline-publish']),
-      })
+      void queryClient.invalidateQueries({ predicate: isSecretDependentQuery })
     },
   })
 }
 
+interface SecretValue {
+  name: string
+  value: string
+}
+
 export function useCreateSecret(target: SecretTarget) {
-  return useSecretMutation(
-    ({ name, value }: { name: string; value: string }) => ({
-      body: { name, value },
-      method: 'POST',
-      schema: secretResponseSchema,
-      url: secretsUrl(target),
-    }),
-  )
+  return useSecretMutation((client, { name, value }: SecretValue) => {
+    const body = { name, value }
+    switch (target.scope) {
+      case 'instance':
+        return createInstanceSecret({ body, client })
+      case 'project':
+        return createProjectSecret({
+          body,
+          client,
+          path: { project_id: target.projectId },
+        })
+      case 'pipeline':
+        return createPipelineSecret({
+          body,
+          client,
+          path: { pipeline_id: target.pipelineId },
+        })
+    }
+  })
 }
 
 export function useRotateSecret(target: SecretTarget) {
-  return useSecretMutation(
-    ({ name, value }: { name: string; value: string }) => ({
-      body: { value },
-      method: 'PUT',
-      schema: secretResponseSchema,
-      url: `${secretsUrl(target)}/${encodeURIComponent(name)}`,
-    }),
-  )
+  return useSecretMutation((client, { name, value }: SecretValue) => {
+    const body = { value }
+    switch (target.scope) {
+      case 'instance':
+        return rotateInstanceSecret({ body, client, path: { name } })
+      case 'project':
+        return rotateProjectSecret({
+          body,
+          client,
+          path: { project_id: target.projectId, name },
+        })
+      case 'pipeline':
+        return rotatePipelineSecret({
+          body,
+          client,
+          path: { pipeline_id: target.pipelineId, name },
+        })
+    }
+  })
 }
 
 export function useDeleteSecret(target: SecretTarget) {
-  return useSecretMutation((name: string) => ({
-    method: 'DELETE',
-    schema: okResponseSchema,
-    url: `${secretsUrl(target)}/${encodeURIComponent(name)}`,
-  }))
+  return useSecretMutation((client, name: string) => {
+    switch (target.scope) {
+      case 'instance':
+        return deleteInstanceSecret({ client, path: { name } })
+      case 'project':
+        return deleteProjectSecret({
+          client,
+          path: { project_id: target.projectId, name },
+        })
+      case 'pipeline':
+        return deletePipelineSecret({
+          client,
+          path: { pipeline_id: target.pipelineId, name },
+        })
+    }
+  })
 }
