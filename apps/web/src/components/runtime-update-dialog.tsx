@@ -44,6 +44,7 @@ function RuntimeUpdateCard({
   failure,
   pending,
   managed,
+  unmanagedHint = "Run Oore setup from Terminal to repair this device's managed services. No reinstall is required.",
   onUpdate,
 }: {
   name: string
@@ -52,6 +53,7 @@ function RuntimeUpdateCard({
   failure?: string | null
   pending: boolean
   managed: boolean
+  unmanagedHint?: string
   onUpdate: () => void
 }) {
   const busy = phase === 'updating' || phase === 'restarting' || pending
@@ -86,10 +88,7 @@ function RuntimeUpdateCard({
         ) : null}
         {!managed ? (
           <div className="mt-2 space-y-2 text-xs text-muted-foreground">
-            <p>
-              Run Oore setup from Terminal to repair this device&apos;s managed
-              services. No reinstall is required.
-            </p>
+            <p>{unmanagedHint}</p>
           </div>
         ) : null}
       </CardContent>
@@ -164,6 +163,7 @@ export default function RuntimeUpdateDialog({
               failure={frontend.error}
               pending={updates.startFrontendUpdate.isPending}
               managed={frontend.managed_service}
+              unmanagedHint={frontend.managed_service_reason ?? undefined}
               onUpdate={() =>
                 updates.startFrontendUpdate.mutate(undefined, {
                   onSuccess: () =>
