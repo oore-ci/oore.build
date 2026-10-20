@@ -807,14 +807,12 @@ export function GooglePlayPublishSection({
   canReadInstanceSecrets,
   canWrite,
   pipelineId,
-  platforms,
   projectId,
 }: {
   androidSigning: PipelineAndroidSigningResponse | undefined
   canReadInstanceSecrets: boolean
   canWrite: boolean
   pipelineId: string
-  platforms: ReadonlyArray<string>
   projectId: string
 }) {
   const publishQuery = usePipelineGooglePlayPublish(pipelineId)
@@ -831,7 +829,6 @@ export function GooglePlayPublishSection({
       secretScopes.set(secret.name, secret.scope)
     }
   }
-  const builtForAndroid = platforms.includes('android')
   const releaseSigned =
     !!androidSigning?.release.enabled && androidSigning.release.has_keystore
 
@@ -840,15 +837,7 @@ export function GooglePlayPublishSection({
       title="Google Play"
       description="Upload the signed App Bundle from each successful build. Every Google Play call runs on the runner, so the service account key never leaves it."
     >
-      {!builtForAndroid ? (
-        <Alert>
-          <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertDescription>
-            This pipeline does not build for Android. Add Android to its
-            platforms before turning on Google Play publishing.
-          </AlertDescription>
-        </Alert>
-      ) : androidSigning && !releaseSigned ? (
+      {androidSigning && !releaseSigned ? (
         <Alert>
           <HugeiconsIcon icon={InformationCircleIcon} />
           <AlertDescription>

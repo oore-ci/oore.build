@@ -120,6 +120,11 @@ const GooglePlayPublishSection = lazy(() =>
     default: module.GooglePlayPublishSection,
   })),
 )
+const AppStorePublishSection = lazy(() =>
+  import('@/components/publish/app-store-publish-section').then((module) => ({
+    default: module.AppStorePublishSection,
+  })),
+)
 const SecretsPanel = lazy(() =>
   import('@/components/secrets/secrets-panel').then((module) => ({
     default: module.SecretsPanel,
@@ -217,6 +222,8 @@ function PipelineDetailPage() {
   if (!data) return null
 
   const { pipeline } = data
+  const buildsAndroid = pipeline.execution_config.platforms.includes('android')
+  const buildsIos = pipeline.execution_config.platforms.includes('ios')
   const builds = buildsData?.builds ?? []
   const projectHasSource = !!projectData?.project.repository_id
   const manualOnlyTriggers =
@@ -417,14 +424,34 @@ function PipelineDetailPage() {
         <TabsContent value="publishing" className="pt-2">
           {tab === 'publishing' ? (
             <Suspense fallback={<Skeleton className="h-96 w-full" />}>
-              <GooglePlayPublishSection
-                androidSigning={signingQuery.data}
-                canReadInstanceSecrets={canReadInstanceSettings}
-                canWrite={canWrite}
-                pipelineId={pipeline.id}
-                platforms={pipeline.execution_config.platforms}
-                projectId={projectId}
-              />
+              <div className="flex flex-col gap-8">
+                {buildsAndroid ? (
+                  <GooglePlayPublishSection
+                    androidSigning={signingQuery.data}
+                    canReadInstanceSecrets={canReadInstanceSettings}
+                    canWrite={canWrite}
+                    pipelineId={pipeline.id}
+                    projectId={projectId}
+                  />
+                ) : null}
+                {buildsIos ? (
+                  <AppStorePublishSection
+                    canWrite={canWrite}
+                    pipelineId={pipeline.id}
+                    projectId={projectId}
+                  />
+                ) : null}
+                {!buildsAndroid && !buildsIos ? (
+                  <Alert>
+                    <HugeiconsIcon icon={InformationCircleIcon} />
+                    <AlertDescription>
+                      Publishing is available for Android and iOS builds. Add
+                      one of them to this pipeline’s platforms to upload to
+                      Google Play or App Store Connect.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+              </div>
             </Suspense>
           ) : null}
         </TabsContent>

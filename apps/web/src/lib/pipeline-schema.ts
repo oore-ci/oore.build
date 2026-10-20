@@ -20,6 +20,7 @@ export const pipelineFormSchema = z
     android_signing_debug_key_password: z.string().optional(),
     ios_signing_enabled: z.boolean(),
     ios_signing_mode: z.enum(['manual', 'api', 'hybrid']),
+    ios_signing_export_method: z.enum(['ad_hoc', 'app_store']),
     ios_signing_team_id: z.string().optional(),
     ios_signing_bundle_ids: z.string().optional(),
     ios_signing_p12_password: z.string().optional(),

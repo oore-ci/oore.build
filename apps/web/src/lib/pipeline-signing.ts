@@ -174,6 +174,7 @@ export async function buildIosSigningPayload(
   const changed = previous
     ? values.ios_signing_enabled !== previous.enabled ||
       values.ios_signing_mode !== previous.mode ||
+      values.ios_signing_export_method !== previous.export_method ||
       bundleIds.join(',') !== previous.bundle_ids.join(',') ||
       teamId !== trimToUndefined(previous.team_id) ||
       apiKeyId !== trimToUndefined(previous.api_key_id) ||
@@ -181,6 +182,7 @@ export async function buildIosSigningPayload(
       !!p12Password ||
       hasFiles
     : values.ios_signing_enabled ||
+      values.ios_signing_export_method !== 'ad_hoc' ||
       bundleIds.length > 0 ||
       !!teamId ||
       !!p12Password ||
@@ -208,10 +210,15 @@ export async function buildIosSigningPayload(
     if (!p12Password && !previous?.has_p12_password) {
       errors.push('Manual/Hybrid iOS signing requires p12 password')
     }
+    // The daemon discards stored profiles when the export method changes.
+    const keepsStoredProfiles =
+      values.ios_signing_export_method === previous?.export_method
     for (const bundleId of bundleIds) {
-      const hasStoredProfile = previous?.provisioning_profiles.some(
-        (profile) => profile.bundle_id === bundleId && profile.has_profile,
-      )
+      const hasStoredProfile =
+        keepsStoredProfiles &&
+        previous?.provisioning_profiles.some(
+          (profile) => profile.bundle_id === bundleId && profile.has_profile,
+        )
       if (!files.profileFiles[bundleId] && !hasStoredProfile) {
         errors.push(
           `Manual/Hybrid iOS signing requires provisioning profile for ${bundleId}`,
@@ -260,6 +267,7 @@ export async function buildIosSigningPayload(
     payload: {
       enabled: values.ios_signing_enabled,
       mode: values.ios_signing_mode,
+      export_method: values.ios_signing_export_method,
       team_id: teamId,
       bundle_ids: bundleIds,
       certificate:

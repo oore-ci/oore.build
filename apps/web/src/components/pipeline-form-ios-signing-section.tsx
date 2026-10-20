@@ -2,6 +2,7 @@ import { useFormContext } from 'react-hook-form'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import type {
+  IosExportMethod,
   IosProvisioningProfileSummary,
   PipelineIosSigningResponse,
 } from '@oore/client/models'
@@ -16,6 +17,7 @@ import {
 } from '@/components/ui/collapsible'
 import {
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -31,6 +33,18 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+
+const EXPORT_METHODS = {
+  ad_hoc: 'Ad hoc',
+  app_store: 'App Store',
+} satisfies Record<IosExportMethod, string>
+
+const EXPORT_METHOD_EFFECTS = {
+  ad_hoc:
+    'Signed for the registered devices in your profiles. Testers install from Oore install links.',
+  app_store:
+    'Signed with an App Store distribution profile for TestFlight and App Store uploads. Oore install links do not work for these builds.',
+} satisfies Record<IosExportMethod, string>
 
 const SIGNING_MODES = {
   manual: 'Manual (.p12 + provisioning profiles)',
@@ -88,7 +102,9 @@ export function PipelineIosSigningSection({
             <IosSigningToggle enabled={enabled} signingData={signingData} />
             {enabled ? (
               <>
-                <IosSigningIdentityFields />
+                <IosSigningIdentityFields
+                  storedExportMethod={signingData?.export_method}
+                />
                 {mode === 'manual' || mode === 'hybrid' ? (
                   <IosCertificateFields
                     file={p12File}
@@ -139,7 +155,7 @@ function IosSigningToggle({
               checked={field.value}
               onCheckedChange={(checked) => field.onChange(!!checked)}
             />
-            Enable iOS ad hoc signing
+            Enable iOS signing
           </label>
           {signingData ? (
             <p className="text-xs text-muted-foreground">
@@ -161,10 +177,48 @@ function IosSigningToggle({
   )
 }
 
-function IosSigningIdentityFields() {
+function IosSigningIdentityFields({
+  storedExportMethod,
+}: {
+  storedExportMethod?: IosExportMethod
+}) {
   const form = useFormContext<PipelineFormValues>()
   return (
     <>
+      <FormField
+        control={form.control}
+        name="ios_signing_export_method"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Distribution</FormLabel>
+            <Select
+              value={field.value}
+              onValueChange={field.onChange}
+              items={EXPORT_METHODS}
+            >
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent>
+                {Object.entries(EXPORT_METHODS).map(([key, value]) => (
+                  <SelectItem key={key} value={key}>
+                    {value}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FormDescription>
+              {EXPORT_METHOD_EFFECTS[field.value]}
+              {storedExportMethod && storedExportMethod !== field.value
+                ? ' Saving discards the stored provisioning profiles, so add or sync profiles of the new type.'
+                : ''}
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
       <FormField
         control={form.control}
         name="ios_signing_mode"

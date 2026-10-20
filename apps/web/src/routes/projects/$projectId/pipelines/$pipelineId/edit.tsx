@@ -176,6 +176,7 @@ function EditPipelinePage() {
     android_signing_debug_key_password: '',
     ios_signing_enabled: iosSigningQuery.data?.enabled ?? false,
     ios_signing_mode: iosSigningQuery.data?.mode ?? 'manual',
+    ios_signing_export_method: iosSigningQuery.data?.export_method ?? 'ad_hoc',
     ios_signing_team_id: iosSigningQuery.data?.team_id ?? '',
     ios_signing_bundle_ids: (iosSigningQuery.data?.bundle_ids ?? []).join('\n'),
     ios_signing_p12_password: '',

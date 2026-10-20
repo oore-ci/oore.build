@@ -13,6 +13,7 @@ const values = pipelineFormSchema.parse({
   android_signing_debug_enabled: false,
   ios_signing_enabled: false,
   ios_signing_mode: 'manual',
+  ios_signing_export_method: 'ad_hoc',
   enable_customization: false,
   trigger_events: ['push'],
   cancel_previous: true,

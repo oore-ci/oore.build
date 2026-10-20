@@ -89,6 +89,7 @@ const emptyDefaults: PipelineFormValues = {
   android_signing_debug_key_password: '',
   ios_signing_enabled: false,
   ios_signing_mode: 'manual',
+  ios_signing_export_method: 'ad_hoc',
   ios_signing_team_id: '',
   ios_signing_bundle_ids: '',
   ios_signing_p12_password: '',

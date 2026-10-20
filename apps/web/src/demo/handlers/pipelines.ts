@@ -11,6 +11,7 @@ import { demoState } from '../state'
 import { parseDemoJsonObject } from '../request'
 import type { JsonObject } from '@/lib/types'
 import type {
+  AppStorePublishConfig,
   CreatePipelineRequest,
   Pipeline,
   RegisterIosDeviceRequest,
@@ -43,6 +44,7 @@ const executionConfigSchema = z.object({
     .optional(),
   env: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
   artifact_patterns: stringListSchema,
+  build_number_offset: z.number().int().optional(),
 })
 const triggerConfigSchema = z.object({
   events: stringListSchema,
@@ -144,6 +146,7 @@ const iosSigningByPipeline: IosSigningFixtures = {
   [PIPELINE_IDS.shopIos]: {
     enabled: true,
     mode: 'api',
+    export_method: 'ad_hoc',
     team_id: 'A1B2C3D4E5',
     bundle_ids: ['com.example.fluttershop'],
     has_p12: false,
@@ -166,6 +169,7 @@ const iosSigningByPipeline: IosSigningFixtures = {
   [PIPELINE_IDS.paymentsAll]: {
     enabled: true,
     mode: 'hybrid',
+    export_method: 'app_store',
     team_id: 'F6G7H8I9J0',
     bundle_ids: [
       'com.example.nativepayments',
@@ -181,22 +185,96 @@ const iosSigningByPipeline: IosSigningFixtures = {
       {
         bundle_id: 'com.example.nativepayments',
         has_profile: true,
-        profile_filename: 'NativePayments_AdHoc.mobileprovision',
+        profile_filename: 'NativePayments_AppStore.mobileprovision',
         profile_uuid: 'B2C3D4E5-F6A7-8901-BCDE-F12345678901',
-        profile_name: 'NativePayments Ad Hoc',
+        profile_name: 'NativePayments App Store',
         expires_at: ago(-365 * 86400),
       },
       {
         bundle_id: 'com.example.nativepayments.share',
         has_profile: true,
-        profile_filename: 'NativePayments_Share_AdHoc.mobileprovision',
+        profile_filename: 'NativePayments_Share_AppStore.mobileprovision',
         profile_uuid: 'C3D4E5F6-A7B8-9012-CDEF-123456789012',
-        profile_name: 'NativePayments Share Ad Hoc',
+        profile_name: 'NativePayments Share App Store',
         expires_at: ago(-365 * 86400),
       },
     ],
     updated_at: ago(86400 * 7),
   },
+}
+
+const demoAppStoreConfigs = new Map<
+  string,
+  { config: AppStorePublishConfig; updated_at: number }
+>([
+  [
+    PIPELINE_IDS.paymentsAll,
+    {
+      config: {
+        enabled: true,
+        destination: 'testflight',
+        testflight_groups: ['Internal QA', 'Payments beta'],
+        release_notes: [
+          {
+            locale: 'en-US',
+            whats_new: 'Checks the new card entry flow and saved cards.',
+          },
+        ],
+        uses_non_exempt_encryption: false,
+        submit_for_review: false,
+        phased_release: false,
+      },
+      updated_at: ago(86400 * 2),
+    },
+  ],
+])
+
+const appStoreConfigSchema = z.object({
+  enabled: z.boolean(),
+  destination: z.enum(['testflight', 'app_store']),
+  testflight_groups: z.array(z.string().min(1).max(128)).max(20),
+  release_notes: z
+    .array(z.object({ locale: z.string().min(1), whats_new: z.string() }))
+    .max(40),
+  uses_non_exempt_encryption: z.boolean(),
+  submit_for_review: z.boolean(),
+  phased_release: z.boolean(),
+})
+
+const iosSigningSummarySchema = z.object({
+  enabled: z.boolean().optional(),
+  export_method: z.string().optional(),
+  has_api_key: z.boolean().optional(),
+})
+
+function appStoreResponse(pipelineId: string) {
+  const signing = iosSigningSummarySchema.parse(
+    demoState.iosSigning[pipelineId] ?? iosSigningByPipeline[pipelineId] ?? {},
+  )
+  const saved = demoAppStoreConfigs.get(pipelineId)
+  return {
+    pipeline_id: pipelineId,
+    config: saved?.config ?? {
+      enabled: false,
+      destination: 'testflight' as const,
+      testflight_groups: [],
+      release_notes: [],
+      uses_non_exempt_encryption: false,
+      submit_for_review: false,
+      phased_release: false,
+    },
+    updated_at: saved?.updated_at,
+    has_api_key: signing.has_api_key ?? false,
+    app_store_export:
+      (signing.enabled ?? false) && signing.export_method === 'app_store',
+  }
+}
+
+function invalidPublishConfig(message: string): Response {
+  return HttpResponse.json(
+    { error: message, code: 'invalid_publish_config' },
+    { status: 400 },
+  )
 }
 
 const iosDevicesByPipeline: IosDeviceFixtures = {
@@ -513,6 +591,7 @@ export const pipelineHandlers = [
       pipeline_id: id,
       enabled: false,
       mode: 'manual',
+      export_method: 'ad_hoc',
       team_id: null,
       bundle_ids: [],
       has_p12: false,
@@ -531,14 +610,51 @@ export const pipelineHandlers = [
     if (forbidden) return forbidden
     const body = await parseDemoJsonObject(request)
     const existing = demoState.iosSigning[id] ?? iosSigningByPipeline[id] ?? {}
-    const merged = {
+    // Switching the export method discards profiles, like the daemon does.
+    const methodChanged =
+      body.export_method != null &&
+      body.export_method !== (existing.export_method ?? 'ad_hoc')
+    const merged: JsonObject = {
       pipeline_id: id,
       ...existing,
       ...body,
       updated_at: ago(0),
     }
+    if (methodChanged) merged.provisioning_profiles = []
     demoState.iosSigning[id] = merged
     return HttpResponse.json(merged)
+  }),
+
+  demoApi.getPipelineAppStorePublish(async ({ params }) => {
+    await delay(120)
+    return HttpResponse.json(appStoreResponse(String(params.pipeline_id)))
+  }),
+
+  demoApi.updatePipelineAppStorePublish(async ({ params, request }) => {
+    await delay(200)
+    const id = String(params.pipeline_id)
+    const forbidden = requirePipelinePermission(request, id, 'pipelines:write')
+    if (forbidden) return forbidden
+    const parsed = appStoreConfigSchema.safeParse(await request.json())
+    if (!parsed.success) {
+      return invalidPublishConfig(parsed.error.message)
+    }
+    const current = appStoreResponse(id)
+    if (parsed.data.enabled && !current.app_store_export) {
+      return invalidPublishConfig(
+        'App Store publishing needs iOS signing with the App Store export method.',
+      )
+    }
+    if (parsed.data.enabled && !current.has_api_key) {
+      return invalidPublishConfig(
+        'App Store publishing needs an App Store Connect API key in iOS signing.',
+      )
+    }
+    demoAppStoreConfigs.set(id, {
+      config: parsed.data,
+      updated_at: ago(0),
+    })
+    return HttpResponse.json(appStoreResponse(id))
   }),
 
   demoApi.syncPipelineIosSigning(async ({ params, request }) => {
