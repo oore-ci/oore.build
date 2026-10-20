@@ -16,6 +16,7 @@ import type {
   ProjectRetentionOverride,
   RetentionCleanupSummary,
   RetentionPolicy,
+  ReleaseHistoryEntry,
   RepositoryWorkflowPreview,
   Runner,
   SetupStatus,
@@ -40,6 +41,11 @@ import {
   demoNotificationDeliveries,
 } from './data/notification-channels'
 import { demoPipelines } from './data/pipelines'
+import {
+  demoReleaseHistory,
+  demoReleases,
+  type DemoRelease,
+} from './data/releases'
 import {
   demoProjects,
   GITHUB_DEMO_AVATAR_URL,
@@ -101,6 +107,8 @@ interface DemoState {
   buildEvents: Partial<Record<string, Array<BuildEvent>>>
   buildLogs: Partial<Record<string, Array<BuildLogChunk>>>
   artifacts: Partial<Record<string, Array<Artifact>>>
+  releases: Array<DemoRelease>
+  releaseHistory: Partial<Record<string, Array<ReleaseHistoryEntry>>>
   runners: Array<Runner>
   integrations: Array<Integration>
   installations: Partial<Record<string, Array<IntegrationInstallation>>>
@@ -633,6 +641,8 @@ export function createDemoState(
     },
     builds,
     buildEvents: clone(demoBuildEvents),
+    releases: clone(demoReleases),
+    releaseHistory: clone(demoReleaseHistory),
     buildLogs: clone(demoBuildLogs),
     artifacts,
     runners,
@@ -715,6 +725,8 @@ export function createDemoState(
     state.buildEvents = {}
     state.buildLogs = {}
     state.artifacts = {}
+    state.releases = []
+    state.releaseHistory = {}
     state.runners = []
     state.integrations = []
     state.installations = {}

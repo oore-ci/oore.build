@@ -20,6 +20,7 @@ import { Route as BuildsIndexRouteImport } from './routes/builds/index'
 import { Route as BuildsBuildIdRouteImport } from './routes/builds/$buildId'
 import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
 import { Route as ProjectsProjectIdRouteRouteImport } from './routes/projects/$projectId/route'
+import { Route as ReleasesReleaseIdRouteImport } from './routes/releases/$releaseId'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as SettingsApiTokensRouteImport } from './routes/settings/api-tokens'
 import { Route as SettingsArtifactsRouteImport } from './routes/settings/artifacts'
@@ -105,6 +106,11 @@ const ProjectsProjectIdRouteRoute = ProjectsProjectIdRouteRouteImport.update({
   id: '/$projectId',
   path: '/$projectId',
   getParentRoute: () => ProjectsRouteRoute,
+} as any)
+const ReleasesReleaseIdRoute = ReleasesReleaseIdRouteImport.update({
+  id: '/releases/$releaseId',
+  path: '/releases/$releaseId',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
   id: '/',
@@ -301,6 +307,7 @@ export interface FileRoutesByFullPath {
   '/settings/notifications': typeof SettingsNotificationsRouteRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/releases/$releaseId': typeof ReleasesReleaseIdRoute
   '/settings/api-tokens': typeof SettingsApiTokensRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
@@ -337,6 +344,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/releases/$releaseId': typeof ReleasesReleaseIdRoute
   '/settings/api-tokens': typeof SettingsApiTokensRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
@@ -380,6 +388,7 @@ export interface FileRoutesById {
   '/settings/notifications': typeof SettingsNotificationsRouteRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/releases/$releaseId': typeof ReleasesReleaseIdRoute
   '/settings/api-tokens': typeof SettingsApiTokensRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
@@ -425,6 +434,7 @@ export interface FileRouteTypes {
     | '/settings/notifications'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/releases/$releaseId'
     | '/settings/api-tokens'
     | '/settings/artifacts'
     | '/settings/audit-log'
@@ -461,6 +471,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/releases/$releaseId'
     | '/settings/api-tokens'
     | '/settings/artifacts'
     | '/settings/audit-log'
@@ -503,6 +514,7 @@ export interface FileRouteTypes {
     | '/settings/notifications'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/releases/$releaseId'
     | '/settings/api-tokens'
     | '/settings/artifacts'
     | '/settings/audit-log'
@@ -543,6 +555,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRouteWithChildren
   AuthCallbackRoute: typeof AuthCallbackRoute
+  ReleasesReleaseIdRoute: typeof ReleasesReleaseIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -623,6 +636,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/projects/$projectId'
       preLoaderRoute: typeof ProjectsProjectIdRouteRouteImport
       parentRoute: typeof ProjectsRouteRoute
+    }
+    '/releases/$releaseId': {
+      id: '/releases/$releaseId'
+      path: '/releases/$releaseId'
+      fullPath: '/releases/$releaseId'
+      preLoaderRoute: typeof ReleasesReleaseIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/settings/': {
       id: '/settings/'
@@ -1003,6 +1023,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   SetupRoute: SetupRouteWithChildren,
   AuthCallbackRoute: AuthCallbackRoute,
+  ReleasesReleaseIdRoute: ReleasesReleaseIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

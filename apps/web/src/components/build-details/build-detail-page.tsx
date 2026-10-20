@@ -24,6 +24,8 @@ import {
   useRerunBuild,
 } from '@/hooks/use-builds'
 import { useLogStream } from '@/hooks/use-log-stream'
+import { useReleases } from '@/hooks/use-releases'
+import { ReleasePanel } from '@/components/releases/release-panel'
 import {
   hasProjectPermission,
   useHasPermissions,
@@ -47,7 +49,15 @@ import { useTime } from '@/hooks/use-time'
 const loadCancelBuildDialog = () => import('./cancel-build-dialog')
 const CancelBuildDialog = lazy(loadCancelBuildDialog)
 
-export function BuildDetailPage({ buildId }: { buildId: string }) {
+export function BuildDetailPage({
+  buildId,
+  initialTab,
+  selectedReleaseId,
+}: {
+  buildId: string
+  initialTab?: string
+  selectedReleaseId?: string
+}) {
   const time = useTime()
   const navigate = useNavigate()
   const usesTabbedArtifacts = useIsBelowBreakpoint(1280)
@@ -88,7 +98,16 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
   const { refetch: refetchArtifacts } = artifactsQuery
   const cancelMutation = useCancelBuild()
   const [cancelOpen, setCancelOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<string | number>('logs')
+  const [activeTab, setActiveTab] = useState<string | number>(
+    initialTab ?? 'logs',
+  )
+  const releasesQuery = useReleases(
+    { build_id: buildId },
+    { enabled: buildStatus === 'succeeded' },
+  )
+  const releases = releasesQuery.data?.releases ?? []
+  const hasReleaseTab =
+    releases.length > 0 || releasesQuery.isError || initialTab === 'release'
 
   const label = data?.build.build_number
     ? `Build #${data.build.build_number}`
@@ -353,6 +372,11 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
               {artifacts.length ? ` (${artifacts.length})` : ''}
             </TabsTrigger>
           ) : null}
+          {hasReleaseTab ? (
+            <TabsTrigger value="release">
+              Release{releases.length ? ` (${releases.length})` : ''}
+            </TabsTrigger>
+          ) : null}
         </TabsList>
         <div
           className={cn(
@@ -382,6 +406,17 @@ export function BuildDetailPage({ buildId }: { buildId: string }) {
             <TabsContent value="timeline">
               <EventTimeline events={events} />
             </TabsContent>
+            {hasReleaseTab ? (
+              <TabsContent value="release">
+                <ReleasePanel
+                  error={releasesQuery.error}
+                  isLoading={releasesQuery.isLoading}
+                  onRetry={() => void releasesQuery.refetch()}
+                  releases={releases}
+                  selectedReleaseId={selectedReleaseId}
+                />
+              </TabsContent>
+            ) : null}
             {usesTabbedArtifacts ? (
               <TabsContent value="artifacts">
                 <ArtifactsPanel

@@ -4,6 +4,7 @@ import type { Build } from '@oore/client/models'
 import { useProjectArtifacts } from '@/hooks/use-builds'
 import { AppOutputs } from '@/components/build-details/app-outputs'
 import { BuildItem } from '@/components/build-item'
+import { ReleaseActivity } from '@/components/releases/release-activity'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -93,6 +94,7 @@ export default function ProjectOverview({
           </p>
         )}
       </section>
+      <ReleaseActivity projectId={projectId} />
     </div>
   )
 }

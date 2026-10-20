@@ -8,6 +8,7 @@ import { userHandlers } from './users'
 import { projectHandlers } from './projects'
 import { pipelineHandlers } from './pipelines'
 import { buildHandlers } from './builds'
+import { releaseHandlers } from './releases'
 import { artifactHandlers } from './artifacts'
 import { integrationHandlers } from './integrations'
 import { runnerHandlers } from './runners'
@@ -27,6 +28,7 @@ export const allHandlers = [
   ...projectHandlers,
   ...pipelineHandlers,
   ...buildHandlers,
+  ...releaseHandlers,
   ...artifactHandlers,
   ...integrationHandlers,
   ...runnerHandlers,
