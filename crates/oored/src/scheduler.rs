@@ -42,7 +42,7 @@ pub struct RunnerStateEvent {
     pub timestamp: i64,
 }
 
-/// What happened to a release, for notification fan-out.
+/// What happened to a release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReleaseEventKind {
     Created,
@@ -57,7 +57,7 @@ pub enum ReleaseEventKind {
     Failed,
 }
 
-/// A release state change event broadcast to all subscribers.
+/// A release or rollout state change broadcast to all subscribers.
 #[derive(Debug, Clone)]
 pub struct ReleaseEvent {
     pub kind: ReleaseEventKind,
@@ -67,9 +67,9 @@ pub struct ReleaseEvent {
     pub version_name: Option<String>,
     pub version_code: Option<i64>,
     pub track: Option<String>,
-    /// 0-100.
+    /// Rollout fraction as a percentage, 0-100.
     pub rollout_percent: Option<f64>,
-    /// User email, or `None` for the daemon.
+    /// Email of the user who caused the change, or `None` for the daemon.
     pub actor: Option<String>,
     pub reason: Option<String>,
     pub timestamp: i64,
@@ -133,12 +133,12 @@ impl Scheduler {
         let _ = self.runner_event_tx.send(event);
     }
 
-    /// Subscribe to release events.
+    /// Subscribe to release and rollout events.
     pub fn subscribe_release_events(&self) -> broadcast::Receiver<ReleaseEvent> {
         self.release_event_tx.subscribe()
     }
 
-    /// Publish a release event to all subscribers.
+    /// Publish a release or rollout event to all subscribers.
     pub fn publish_release_event(&self, event: ReleaseEvent) {
         let _ = self.release_event_tx.send(event);
     }

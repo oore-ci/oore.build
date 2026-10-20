@@ -598,6 +598,10 @@ mod operations {
         pub database: bool,
         pub migrations: bool,
         pub encryption: bool,
+        /// Installed release version from the install root's `VERSION` file.
+        pub version: String,
+        /// Version of the running `oored` binary.
+        pub package_version: String,
     }
 
     // ── Health ──

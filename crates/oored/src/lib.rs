@@ -30,6 +30,7 @@ pub mod project_members;
 pub mod project_rbac;
 pub mod projects;
 pub mod rbac;
+pub mod release_store;
 pub mod releases;
 pub mod repository_workflows;
 pub mod retention;
@@ -778,6 +779,7 @@ async fn readyz(State(state): State<Arc<AppState>>) -> (StatusCode, Json<serde_j
     let db_ready = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
     let encryption_ready = state.encryption_key.len() == 32;
     let ready = db_ready && encryption_ready;
+    let runtime = installed_runtime_metadata();
     (
         if ready {
             StatusCode::OK
@@ -790,6 +792,10 @@ async fn readyz(State(state): State<Arc<AppState>>) -> (StatusCode, Json<serde_j
             // Migrations and the runtime key are completed before the router is built.
             "migrations": db_ready,
             "encryption": encryption_ready,
+            // The running binary's version, so update clients can tell a restarted
+            // daemon from the old process still serving after VERSION changed.
+            "version": runtime.version,
+            "package_version": runtime.package_version,
         })),
     )
 }
@@ -2385,6 +2391,10 @@ pub async fn build_router_with_recovery(
     );
 
     let db = store.pool().clone();
+    let release_store = release_store::PlayReleaseStoreClient::new(
+        db.clone(),
+        Zeroizing::new(encryption_key.clone()),
+    )?;
     let webhook_wake = integrations::webhooks::start_webhook_processor(db.clone());
     let release_store_pool = db.clone();
     let release_store_key = encryption_key.clone();
@@ -2409,7 +2419,7 @@ pub async fn build_router_with_recovery(
                 release_store_pool,
                 Zeroizing::new(release_store_key),
             ),
-            Arc::new(releases::NoopReleaseStoreClient),
+            Arc::new(release_store),
         )),
     });
 

@@ -11,7 +11,6 @@ import type {
   Integration,
   IntegrationInstallation,
   IntegrationRepository,
-  NotificationChannel,
   NotificationDelivery,
   Pipeline,
   ProjectRetentionOverride,
@@ -24,6 +23,7 @@ import type {
   User,
   UserRole,
 } from '@oore/client/models'
+import type { NotificationChannel } from '@/lib/notification-channels'
 import type { JsonObject } from '@/lib/types'
 import type { Project, ProjectRole } from '@oore/client/models'
 import { demoArtifacts } from './data/artifacts'

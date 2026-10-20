@@ -1,19 +1,32 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as z from 'zod'
 
+import type { QueryClient } from '@tanstack/react-query'
 import type { RuntimeUpdateStatus } from '@oore/client/models'
-import { startRuntimeUpdate as startBackendUpdate } from '@oore/client/operations'
+import type { OoreClient } from '@oore/client'
 import {
-  getRuntimeUpdateStatusOptions,
+  getRuntimeUpdateStatus,
+  readyz,
+  startRuntimeUpdate as startBackendUpdate,
+} from '@oore/client/operations'
+import {
   getRuntimeUpdateStatusQueryKey,
   healthzOptions,
 } from '@oore/client/react-query'
+import { toast } from '@/lib/toast'
 import { useAuthStore } from '@/stores/auth-store'
+import { useRuntimeUpdateStore } from '@/stores/runtime-update-store'
 import { useApiContext } from '@/hooks/use-api-context'
 import {
   scopeOoreQueryKey,
   scopeOoreQueryOptions,
 } from '@/lib/api-client/client'
+import {
+  backendRunsRelease,
+  normalizeVersion,
+  planCoordinatedUpdate,
+  releaseIsOffered,
+} from '@/lib/runtime-update-plan'
 
 interface BackendRelease {
   version?: string
@@ -39,6 +52,10 @@ export interface RuntimeReleaseStatus extends RuntimeUpdateStatus {
 
 const HEALTH_REFRESH_INTERVAL = 60_000
 const RELEASE_REFRESH_INTERVAL = 5 * 60_000
+const UPDATE_POLL_INTERVAL = 3_000
+// The backend supervisor drains running builds before it restarts oored.
+const BACKEND_UPDATE_TIMEOUT = 30 * 60_000
+const FRONTEND_UPDATE_TIMEOUT = 10 * 60_000
 
 export interface RuntimeHealth extends BackendRelease {
   ok?: boolean
@@ -52,7 +69,96 @@ const runtimeHealthSchema = z.object({
   channel: z.string().nullable().optional(),
   github_repo: z.string().nullable().optional(),
 })
+const readinessSchema = z.object({
+  ok: z.boolean(),
+  version: z.string().optional(),
+  package_version: z.string().optional(),
+})
 const updateErrorSchema = z.object({ error: z.string().optional() })
+
+function isBusy(phase: string | undefined) {
+  return phase === 'updating' || phase === 'restarting'
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Polls until `check` returns true. Transient failures are retried; thrown errors from `check` end the wait. */
+async function waitUntil(
+  check: () => Promise<boolean>,
+  timeoutMs: number,
+  timeoutMessage: string,
+) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await check()) return
+    await delay(UPDATE_POLL_INTERVAL)
+  }
+  throw new Error(timeoutMessage)
+}
+
+async function waitForBackendRelease(client: OoreClient, target: string) {
+  await waitUntil(
+    async () => {
+      const status = await getRuntimeUpdateStatus({ client }).catch(() => null)
+      if (status?.phase === 'failed') {
+        throw new Error(status.error || 'The backend update failed')
+      }
+      if (status?.phase !== 'idle') return false
+      const ready = await readyz({ client })
+        .then((data) => readinessSchema.parse(data))
+        .catch(() => null)
+      if (!ready?.ok) return false
+      if (!backendRunsRelease(ready, target)) {
+        const running = normalizeVersion(ready.version) || 'an unknown version'
+        throw new Error(
+          `The backend finished on ${running} instead of ${target}. The frontend was not updated.`,
+        )
+      }
+      return true
+    },
+    BACKEND_UPDATE_TIMEOUT,
+    `The backend did not report ${target} as ready in time. Check Settings for its update status.`,
+  )
+}
+
+async function waitForFrontendRelease(token: string, target: string) {
+  await waitUntil(
+    async () => {
+      const status = await localUpdateRequest<RuntimeReleaseStatus>(
+        token,
+        'GET',
+      ).catch(() => null)
+      if (status?.phase === 'failed') {
+        throw new Error(status.error || 'The frontend update failed')
+      }
+      if (status?.phase !== 'idle') return false
+      const installed = normalizeVersion(status.version)
+      if (installed !== target) {
+        throw new Error(
+          `The frontend finished on ${installed} instead of ${target}.`,
+        )
+      }
+      return true
+    },
+    FRONTEND_UPDATE_TIMEOUT,
+    `The frontend did not restart on ${target} in time.`,
+  )
+}
+
+async function refetchAfterPhaseSettles(
+  queryClient: QueryClient,
+  previousPhase: string | undefined,
+  nextPhase: string | undefined,
+  queryKey: readonly unknown[],
+) {
+  // Refresh the reported version as soon as an update settles, so the release
+  // check is rekeyed before the badge can offer the update it just applied.
+  if (isBusy(previousPhase) && !isBusy(nextPhase)) {
+    await queryClient.refetchQueries({ queryKey, exact: true })
+  }
+}
 
 async function fetchRuntimeHealth(
   path: string,
@@ -100,8 +206,9 @@ export function useRuntimeUpdates() {
   const isOwner = useAuthStore((state) => state.user?.role === 'owner')
   const instanceKey = instance?.id ?? '__none__'
 
+  const frontendHealthKey = ['runtime-health', 'oore-web']
   const frontendHealth = useQuery({
-    queryKey: ['runtime-health', 'oore-web'],
+    queryKey: frontendHealthKey,
     queryFn: ({ signal }) => fetchRuntimeHealth('/__oore_web_healthz', signal),
     retry: false,
     staleTime: 30_000,
@@ -123,15 +230,26 @@ export function useRuntimeUpdates() {
 
   const backend = backendHealth.data ?? {}
 
+  const frontendReleaseKey = [instanceKey, 'runtime-update', 'frontend-release']
   const frontendRelease = useQuery({
-    queryKey: [instanceKey, 'runtime-update', 'frontend-release'],
-    queryFn: ({ signal }) =>
-      localUpdateRequest<RuntimeReleaseStatus>(
+    queryKey: frontendReleaseKey,
+    queryFn: async ({ signal }) => {
+      const previous =
+        queryClient.getQueryData<RuntimeReleaseStatus>(frontendReleaseKey)
+      const status = await localUpdateRequest<RuntimeReleaseStatus>(
         token!,
         'GET',
         undefined,
         signal,
-      ),
+      )
+      await refetchAfterPhaseSettles(
+        queryClient,
+        previous?.phase,
+        status.phase,
+        frontendHealthKey,
+      )
+      return status
+    },
     enabled: !!token && isOwner,
     staleTime: 60_000,
     refetchInterval: (query) =>
@@ -171,12 +289,24 @@ export function useRuntimeUpdates() {
     refetchInterval: RELEASE_REFRESH_INTERVAL,
   })
 
-  const backendUpdateQuery = scopeOoreQueryOptions(
+  const backendUpdateKey = scopeOoreQueryKey(
     instanceId,
-    getRuntimeUpdateStatusOptions({ client }),
+    getRuntimeUpdateStatusQueryKey({ client }),
   )
   const backendUpdate = useQuery({
-    ...backendUpdateQuery,
+    queryKey: backendUpdateKey,
+    queryFn: async ({ signal }) => {
+      const previous =
+        queryClient.getQueryData<RuntimeUpdateStatus>(backendUpdateKey)
+      const status = await getRuntimeUpdateStatus({ client, signal })
+      await refetchAfterPhaseSettles(
+        queryClient,
+        previous?.phase,
+        status.phase,
+        backendHealthOptions.queryKey,
+      )
+      return status
+    },
     enabled: !!baseUrl && !!token && isOwner,
     refetchInterval: (query) =>
       query.state.data?.phase === 'updating' ||
@@ -200,11 +330,59 @@ export function useRuntimeUpdates() {
       void queryClient.invalidateQueries({
         queryKey: [instanceKey, 'runtime-update'],
       })
+      void queryClient.invalidateQueries({ queryKey: backendUpdateKey })
+    },
+  })
+
+  const frontendOffered = releaseIsOffered(
+    frontendRelease.data,
+    frontendHealth.data,
+  )
+  const backendOffered = releaseIsOffered(backendRelease.data, backend)
+  const coordinatedPlan = planCoordinatedUpdate({
+    frontend: frontendRelease.data,
+    backend: backendRelease.data,
+    frontendOffered,
+    backendOffered,
+    backendManaged: backendUpdate.data?.managed_service === true,
+  })
+
+  const coordinated = useRuntimeUpdateStore()
+  const updateOore = useMutation({
+    mutationKey: [instanceKey, 'runtime-update', 'coordinated'],
+    mutationFn: async () => {
+      if (coordinatedPlan.kind !== 'ready') {
+        throw new Error(coordinatedPlan.reason)
+      }
+      const { target } = coordinatedPlan
+      // Backend first: the running frontend's client must never be newer
+      // than the API it talks to.
+      if (coordinatedPlan.backend) {
+        coordinated.setStep('backend', target)
+        await startBackendUpdate({ client })
+        await queryClient.invalidateQueries({ queryKey: backendUpdateKey })
+        await waitForBackendRelease(client, target)
+        await queryClient.refetchQueries({
+          queryKey: backendHealthOptions.queryKey,
+          exact: true,
+        })
+      }
+      if (coordinatedPlan.frontend) {
+        coordinated.setStep('frontend', target)
+        await localUpdateRequest<RuntimeUpdateStatus>(token!, 'POST')
+        await waitForFrontendRelease(token!, target)
+        // The page still runs the previous bundle; load the one just installed.
+        coordinated.setStep('reloading')
+        window.location.reload()
+        return
+      }
+      coordinated.setStep('idle', null)
+      toast.success(`Oore is now running ${target}.`)
+    },
+    onError: (error) => coordinated.fail(error.message),
+    onSettled: () => {
       void queryClient.invalidateQueries({
-        queryKey: scopeOoreQueryKey(
-          instanceId,
-          getRuntimeUpdateStatusQueryKey({ client }),
-        ),
+        queryKey: [instanceKey, 'runtime-update'],
       })
     },
   })
@@ -217,5 +395,12 @@ export function useRuntimeUpdates() {
     backendUpdate,
     startFrontendUpdate,
     startBackendUpdate: startBackendUpdateMutation,
+    frontendOffered,
+    backendOffered,
+    coordinatedPlan,
+    coordinatedStep: coordinated.step,
+    coordinatedTarget: coordinated.target,
+    coordinatedError: coordinated.error,
+    updateOore,
   }
 }

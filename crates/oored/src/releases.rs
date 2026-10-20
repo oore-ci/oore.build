@@ -405,11 +405,10 @@ pub async fn create_release(
     if input.track.trim().is_empty() {
         return Err(ReleaseError::Invalid("track must not be empty".into()));
     }
-    if input.state.is_terminal()
-        || matches!(input.state, ReleaseState::Paused | ReleaseState::Halted)
-    {
+    // `complete` covers an upload straight to 100%, `paused` a draft at 0%.
+    if matches!(input.state, ReleaseState::Halted | ReleaseState::Failed) {
         return Err(ReleaseError::Invalid(
-            "a release starts in uploading, processing, in_review or rolling".into(),
+            "a release cannot start halted or failed".into(),
         ));
     }
     let reason = clean_reason(reason);
@@ -486,6 +485,18 @@ pub async fn create_release(
         actor,
         reason.as_deref(),
     );
+    if matches!(
+        release.state,
+        ReleaseState::Rolling | ReleaseState::Complete
+    ) {
+        publish(
+            deps.scheduler,
+            &release,
+            ReleaseEventKind::Uploaded,
+            actor,
+            reason.as_deref(),
+        );
+    }
     if release.awaiting_approval {
         publish(
             deps.scheduler,
@@ -1204,9 +1215,12 @@ pub async fn release_action(
             to_fraction: None,
             audit_action: "release_paused",
         },
+        // A draft (0%) resumes at the first policy step.
         ReleaseAction::Resume => ReleaseChange {
             to_state: ReleaseState::Rolling,
-            to_fraction: None,
+            to_fraction: (current.rollout_fraction == 0.0)
+                .then(|| current.policy.steps.first().copied())
+                .flatten(),
             audit_action: "release_resumed",
         },
         ReleaseAction::Halt => ReleaseChange {
@@ -1641,6 +1655,10 @@ mod tests {
         assert!(release.awaiting_approval);
         assert_eq!(release.next_step_at, None);
         assert_eq!(events.recv().await.unwrap().kind, ReleaseEventKind::Created);
+        assert_eq!(
+            events.recv().await.unwrap().kind,
+            ReleaseEventKind::Uploaded
+        );
         assert_eq!(
             events.recv().await.unwrap().kind,
             ReleaseEventKind::ApprovalNeeded

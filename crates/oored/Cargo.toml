@@ -19,6 +19,7 @@ jsonwebtoken.workspace = true
 lettre.workspace = true
 libc.workspace = true
 oore-contract = { path = "../oore-contract" }
+oore-google-play = { path = "../oore-google-play" }
 openidconnect.workspace = true
 rand.workspace = true
 reqwest.workspace = true

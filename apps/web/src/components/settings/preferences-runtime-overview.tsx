@@ -62,7 +62,8 @@ export function RuntimeOverview({
                   ? `${webHealthQuery.data.channel} channel`
                   : 'Loaded oore-web bundle'}
               </ItemDescription>
-              {runtimeUpdates.frontendRelease.data?.update_available ? (
+              {runtimeUpdates.frontendOffered &&
+              runtimeUpdates.frontendRelease.data?.update_available ? (
                 <>
                   <ItemDescription className="line-clamp-none text-foreground">
                     {runtimeUpdates.frontendRelease.data.latest_version} is
@@ -84,7 +85,8 @@ export function RuntimeOverview({
                 </ItemDescription>
               ) : null}
             </ItemContent>
-            {runtimeUpdates.frontendRelease.data?.update_available ? (
+            {runtimeUpdates.frontendOffered &&
+            runtimeUpdates.frontendRelease.data?.update_available ? (
               <ItemActions>
                 <Button
                   size="sm"
@@ -134,7 +136,8 @@ export function RuntimeOverview({
                   ? `${backendHealthQuery.data.channel} channel`
                   : 'Loaded oored daemon'}
               </ItemDescription>
-              {runtimeUpdates.backendRelease.data?.update_available ? (
+              {runtimeUpdates.backendOffered &&
+              runtimeUpdates.backendRelease.data?.update_available ? (
                 <>
                   <ItemDescription className="line-clamp-none text-foreground">
                     {runtimeUpdates.backendRelease.data.latest_version} is
@@ -153,7 +156,8 @@ export function RuntimeOverview({
                 </>
               ) : null}
             </ItemContent>
-            {runtimeUpdates.backendRelease.data?.update_available ? (
+            {runtimeUpdates.backendOffered &&
+            runtimeUpdates.backendRelease.data?.update_available ? (
               <ItemActions>
                 <Button
                   size="sm"

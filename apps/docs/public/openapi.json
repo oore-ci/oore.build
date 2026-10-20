@@ -12297,17 +12297,24 @@
             "items": {
               "type": "string"
             },
-            "description": "Terminal build statuses to notify on. Empty or omitted means all terminal events."
+            "description": "Events to notify on. Empty or omitted means all events."
           },
           "name": {
             "type": "string"
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Scope the channel to one project. Omit for an instance-wide channel."
           },
           "secret": {
             "type": [
               "string",
               "null"
             ],
-            "description": "HMAC secret for signing webhook payloads (webhook only, optional)."
+            "description": "Webhook: HMAC secret for signing payloads. Slack: bot token with\n`users:read.email`, used to mention the triggering user. Optional."
           },
           "smtp_config": {
             "oneOf": [
@@ -12325,7 +12332,7 @@
               "string",
               "null"
             ],
-            "description": "Webhook/Mattermost incoming webhook URL (required for webhook/mattermost)."
+            "description": "Incoming webhook URL (required for webhook, mattermost and slack)."
           }
         }
       },
@@ -13045,6 +13052,17 @@
             ],
             "format": "double",
             "description": "Initial staged rollout, 0 < percent <= 100. Omitted means 100."
+          },
+          "rollout_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReleasePolicy",
+                "description": "Staged rollout schedule, crash-rate halt and approval gate for the\nrelease record. Omitted means the default schedule with no halt."
+              }
+            ]
           },
           "service_account_secret": {
             "type": "string",
@@ -14037,11 +14055,11 @@
             "items": {
               "type": "string"
             },
-            "description": "Which terminal build statuses trigger this channel. Empty means all."
+            "description": "Which events trigger this channel. Empty means all."
           },
           "has_secret": {
             "type": "boolean",
-            "description": "True if the channel has an HMAC secret configured (webhook only)."
+            "description": "True if the channel has a secret configured: the HMAC secret for\nwebhook channels, or the bot token used for mentions on Slack channels."
           },
           "has_smtp_config": {
             "type": "boolean",
@@ -14056,6 +14074,13 @@
           },
           "name": {
             "type": "string"
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Project this channel is scoped to. Absent means the channel receives\nevents from every project, plus instance-wide events such as runner\noffline."
           },
           "updated_at": {
             "type": "integer",
@@ -14079,7 +14104,8 @@
         "enum": [
           "webhook",
           "mattermost",
-          "email"
+          "email",
+          "slack"
         ]
       },
       "NotificationDelivery": {
@@ -14124,6 +14150,12 @@
             "type": "string"
           },
           "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_id": {
             "type": [
               "string",
               "null"
@@ -14996,7 +15028,9 @@
           "ok",
           "database",
           "migrations",
-          "encryption"
+          "encryption",
+          "version",
+          "package_version"
         ],
         "properties": {
           "database": {
@@ -15010,6 +15044,14 @@
           },
           "ok": {
             "type": "boolean"
+          },
+          "package_version": {
+            "type": "string",
+            "description": "Version of the running `oored` binary."
+          },
+          "version": {
+            "type": "string",
+            "description": "Installed release version from the install root's `VERSION` file."
           }
         }
       },
@@ -17090,12 +17132,19 @@
               "null"
             ]
           },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New project scope. Omit to keep existing; pass empty string to make\nthe channel instance-wide."
+          },
           "secret": {
             "type": [
               "string",
               "null"
             ],
-            "description": "New HMAC secret. Omit to keep existing; pass empty string to clear."
+            "description": "New HMAC secret (webhook) or bot token (slack). Omit to keep existing;\npass empty string to clear."
           },
           "smtp_config": {
             "oneOf": [
