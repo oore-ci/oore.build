@@ -11,16 +11,17 @@ import {
   listNotificationChannelsQueryKey,
   listNotificationDeliveriesOptions,
 } from '@oore/client/react-query'
-import type {
-  CreateNotificationChannelRequest,
-  ListNotificationChannelsData,
-  UpdateNotificationChannelRequest,
-} from '@oore/client/models'
+import type { ListNotificationChannelsData } from '@oore/client/models'
 import { useApiContext } from '@/hooks/use-api-context'
 import {
   scopeOoreQueryKey,
   scopeOoreQueryOptions,
 } from '@/lib/api-client/client'
+import {
+  toClientCreateRequest,
+  type CreateNotificationChannelRequest,
+  type UpdateNotificationChannelRequest,
+} from '@/lib/notification-channels'
 
 type ListNotificationChannelsParams = NonNullable<
   ListNotificationChannelsData['query']
@@ -62,7 +63,10 @@ export function useCreateNotificationChannel() {
     mutationFn: (data: CreateNotificationChannelRequest) => {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
-      return createNotificationChannel({ body: data, client })
+      return createNotificationChannel({
+        body: toClientCreateRequest(data),
+        client,
+      })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({
