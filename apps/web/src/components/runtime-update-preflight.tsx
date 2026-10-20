@@ -55,7 +55,12 @@ export function RuntimeUpdatePreflightChecks({
       className={cn('gap-1', className)}
     >
       {checks.map((check) => (
-        <Item key={check.id} size="xs" variant="muted" className="items-start">
+        <Item
+          key={check.id}
+          size="xs"
+          variant="muted"
+          className="flex-nowrap items-start"
+        >
           <ItemMedia variant="icon">
             <HugeiconsIcon
               icon={check.status === 'fail' ? AlertCircleIcon : Alert02Icon}
@@ -65,15 +70,15 @@ export function RuntimeUpdatePreflightChecks({
               aria-label={check.status === 'fail' ? 'Failed' : 'Warning'}
             />
           </ItemMedia>
-          <ItemContent>
+          <ItemContent className="min-w-0">
             <ItemTitle>{check.label}</ItemTitle>
             {check.detail ? (
-              <ItemDescription className="line-clamp-none wrap-break-word">
+              <ItemDescription className="line-clamp-none wrap-anywhere">
                 {withInlineCode(check.detail)}
               </ItemDescription>
             ) : null}
             {check.fix ? (
-              <ItemDescription className="line-clamp-none wrap-break-word text-foreground">
+              <ItemDescription className="line-clamp-none wrap-anywhere text-foreground">
                 {withInlineCode(check.fix)}
               </ItemDescription>
             ) : null}
