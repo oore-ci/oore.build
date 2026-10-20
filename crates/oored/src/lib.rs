@@ -203,6 +203,19 @@ pub fn is_loopback_client(peer_addr: SocketAddr) -> bool {
     peer_addr.ip().is_loopback()
 }
 
+/// The loopback address that reaches a daemon listening on `listen`.
+///
+/// A daemon bound to a specific non-loopback address (for example a NetBird
+/// interface) also binds this address, so the runner, CLI, and update
+/// supervisor on the same host never depend on the private interface.
+pub fn loopback_maintenance_addr(listen: SocketAddr) -> SocketAddr {
+    let loopback = match listen.ip() {
+        IpAddr::V4(_) => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        IpAddr::V6(_) => IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+    };
+    SocketAddr::new(loopback, listen.port())
+}
+
 fn parse_ip_from_header(headers: &HeaderMap, name: &str) -> Option<IpAddr> {
     headers
         .get(name)
