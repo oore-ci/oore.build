@@ -7,6 +7,9 @@ on:
     branches: [master, alpha, beta, stable]
   workflow_dispatch:
 
+# Same-repo branches run on the self-hosted oore-linux (x64) and oore-mac
+# (arm64) runners. Fork PRs never reach them: they fall back to GitHub-hosted
+# images so untrusted code cannot touch the persistent hosts.
 concurrency:
   group: validate-${{ github.ref }}
   cancel-in-progress: true
@@ -15,7 +18,7 @@ jobs:
   changes:
     name: Detect changes
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ${{ vars.RUNNER_LINUX || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || vars.RUNNER_LINUX || 'oore-linux' }}
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
       docs: ${{ steps.filter.outputs.docs }}
@@ -56,7 +59,7 @@ jobs:
     name: Frontend
     needs: changes
     if: needs.changes.result == 'success' && needs.changes.outputs.frontend == 'true'
-    runs-on: ${{ vars.RUNNER_LINUX || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || vars.RUNNER_LINUX || 'oore-linux' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -81,7 +84,7 @@ jobs:
     name: Docs
     needs: changes
     if: needs.changes.result == 'success' && needs.changes.outputs.docs == 'true'
-    runs-on: ${{ vars.RUNNER_LINUX || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || vars.RUNNER_LINUX || 'oore-linux' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -110,9 +113,14 @@ jobs:
     name: Rust
     needs: changes
     if: needs.changes.result == 'success' && needs.changes.outputs.rust == 'true'
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'macos-latest' || vars.RUNNER_MACOS || 'oore-mac' }}
     steps:
       - uses: actions/checkout@v6
+
+      # Self-hosted hosts have no preinstalled toolchain guarantee.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -132,7 +140,7 @@ jobs:
     name: Required validation
     if: ${{ always() && !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     needs: [changes, frontend, docs, rust]
-    runs-on: ${{ vars.RUNNER_LINUX || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || vars.RUNNER_LINUX || 'oore-linux' }}
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
       FRONTEND_RESULT: ${{ needs.frontend.result }}
