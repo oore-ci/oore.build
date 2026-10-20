@@ -3972,6 +3972,271 @@
         ]
       }
     },
+    "/v1/pipelines/{pipeline_id}/secrets": {
+      "get": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "List pipeline secrets",
+        "description": "Returns secret names and timestamps. Values are never returned. Requires project read access.",
+        "operationId": "list_pipeline_secrets",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSecretsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Create pipeline secret",
+        "description": "Stores an encrypted value. The response never contains it. Requires the manage pipelines project permission.",
+        "operationId": "create_pipeline_secret",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Secret created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name or value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A secret with this name already exists in this scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/pipelines/{pipeline_id}/secrets/{name}": {
+      "put": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Rotate pipeline secret",
+        "description": "Replaces the stored value. Requires the manage pipelines project permission.",
+        "operationId": "rotate_pipeline_secret",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Secret rotated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Delete pipeline secret",
+        "operationId": "delete_pipeline_secret",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects": {
       "get": {
         "tags": [
@@ -5147,6 +5412,271 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/secrets": {
+      "get": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "List project secrets",
+        "description": "Returns secret names and timestamps. Values are never returned. Requires project read access.",
+        "operationId": "list_project_secrets",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSecretsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Create project secret",
+        "description": "Stores an encrypted value. The response never contains it. Requires the manage pipelines project permission.",
+        "operationId": "create_project_secret",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Secret created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name or value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A secret with this name already exists in this scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/secrets/{name}": {
+      "put": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Rotate project secret",
+        "description": "Replaces the stored value. Requires the manage pipelines project permission.",
+        "operationId": "rotate_project_secret",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Secret rotated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Delete project secret",
+        "operationId": "delete_project_secret",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/public/setup-status": {
       "get": {
         "tags": [
@@ -6176,6 +6706,112 @@
         ]
       }
     },
+    "/v1/runners/{runner_id}/jobs/{job_id}/secrets": {
+      "get": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Get job-scoped secrets",
+        "description": "Returns resolved instance, project and pipeline secrets (narrowest scope\nwins) only to the assigned runner while the job is active. Both the runner\nbearer token and job-scoped signing grant are required.",
+        "operationId": "get_job_secrets",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-oore-signing-token",
+            "in": "header",
+            "description": "Job-scoped signing grant",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resolved secrets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerJobSecretsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Runner authentication or signing grant is missing or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Runner does not match the active assignment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job is not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Secrets could not be loaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/runners/{runner_id}/jobs/{job_id}/status": {
       "post": {
         "tags": [
@@ -6227,6 +6863,231 @@
           },
           "409": {
             "description": "Invalid state transition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/secrets": {
+      "get": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "List instance secrets",
+        "description": "Returns secret names and timestamps. Values are never returned. Requires instance settings read access.",
+        "operationId": "list_instance_secrets",
+        "responses": {
+          "200": {
+            "description": "Secret names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSecretsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Create instance secret",
+        "description": "Stores an encrypted value. The response never contains it. Requires instance settings write access.",
+        "operationId": "create_instance_secret",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Secret created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name or value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A secret with this name already exists in this scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/secrets/{name}": {
+      "put": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Rotate instance secret",
+        "description": "Replaces the stored value. Requires instance settings write access.",
+        "operationId": "rotate_instance_secret",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Secret rotated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Secrets"
+        ],
+        "summary": "Delete instance secret",
+        "operationId": "delete_instance_secret",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Secret name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Secret deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Secret not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -10244,6 +11105,22 @@
           }
         }
       },
+      "CreateSecretRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "DeleteNotificationChannelResponse": {
         "type": "object",
         "required": [
@@ -11407,6 +12284,20 @@
           "total": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ListSecretsResponse": {
+        "type": "object",
+        "required": [
+          "secrets"
+        ],
+        "properties": {
+          "secrets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecretSummary"
+            }
           }
         }
       },
@@ -12857,6 +13748,19 @@
           }
         }
       },
+      "RotateSecretRequest": {
+        "type": "object",
+        "description": "Replace a secret's value (rotation).",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "Runner": {
         "type": "object",
         "required": [
@@ -13064,6 +13968,40 @@
           }
         }
       },
+      "RunnerJobSecret": {
+        "type": "object",
+        "description": "A resolved secret delivered to the runner assigned to an active job.",
+        "required": [
+          "name",
+          "value",
+          "scope"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SecretScope"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "RunnerJobSecretsResponse": {
+        "type": "object",
+        "required": [
+          "secrets"
+        ],
+        "properties": {
+          "secrets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunnerJobSecret"
+            }
+          }
+        }
+      },
       "RunnerPolicyBlockReason": {
         "type": "string",
         "enum": [
@@ -13124,6 +14062,64 @@
           "gitlab",
           "local_git"
         ]
+      },
+      "SecretResponse": {
+        "type": "object",
+        "required": [
+          "secret"
+        ],
+        "properties": {
+          "secret": {
+            "$ref": "#/components/schemas/SecretSummary"
+          }
+        }
+      },
+      "SecretScope": {
+        "type": "string",
+        "description": "Where a secret is defined. A job sees instance, project and pipeline secrets;\non a name clash the narrower scope wins.",
+        "enum": [
+          "instance",
+          "project",
+          "pipeline"
+        ]
+      },
+      "SecretSummary": {
+        "type": "object",
+        "description": "Secret metadata. Values are write-only and never returned by the user API.",
+        "required": [
+          "name",
+          "scope",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pipeline_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SecretScope"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       },
       "SetupCompleteResponse": {
         "type": "object",
@@ -14626,6 +15622,10 @@
     {
       "name": "Pipelines",
       "description": "Pipeline configuration — build platforms, commands, triggers, concurrency."
+    },
+    {
+      "name": "Secrets",
+      "description": "Write-only secrets scoped to the instance, a project or a pipeline. Values are encrypted at rest, referenced as ${{ secrets.NAME }} and never returned."
     },
     {
       "name": "Pipeline Signing",
