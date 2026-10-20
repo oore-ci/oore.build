@@ -360,13 +360,17 @@ export function useArtifactDownloadLink() {
   const { baseUrl, client, token } = useApiContext()
 
   return useMutation({
-    mutationFn: (artifactId: string) => {
+    mutationFn: async (artifactId: string) => {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
-      return getArtifactDownloadLink({
+      const response = await getArtifactDownloadLink({
         client,
         path: { artifact_id: artifactId },
       })
+      return {
+        ...response,
+        download_url: new URL(response.download_url, baseUrl).href,
+      }
     },
   })
 }
@@ -375,13 +379,18 @@ export function useArtifactInstallLink() {
   const { baseUrl, client, token } = useApiContext()
 
   return useMutation({
-    mutationFn: (artifactId: string) => {
+    mutationFn: async (artifactId: string) => {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
-      return createArtifactInstallLink({
+      const response = await createArtifactInstallLink({
         client,
         path: { artifact_id: artifactId },
       })
+      return {
+        ...response,
+        download_url: new URL(response.download_url, baseUrl).href,
+        install_url: new URL(response.install_url, baseUrl).href,
+      }
     },
   })
 }

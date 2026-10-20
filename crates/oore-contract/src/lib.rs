@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 
+pub mod runtime_update_preflight;
+
 // ── Setup state machine ─────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -647,6 +649,37 @@ pub struct RuntimeUpdateStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub managed_service: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeUpdateCheckStatus {
+    Pass,
+    /// Does not block the one-click update, but limits recovery.
+    Warn,
+    Fail,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RuntimeUpdateCheck {
+    /// Stable identifier, for example `updater_definition`.
+    pub id: String,
+    pub label: String,
+    pub status: RuntimeUpdateCheckStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// What to run or change on the backend Mac to make the check pass.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RuntimeUpdatePreflight {
+    /// True when no check failed, so a one-click backend update can start.
+    pub ready: bool,
+    /// Unix timestamp, in seconds, of when the checks ran.
+    pub checked_at: i64,
+    pub checks: Vec<RuntimeUpdateCheck>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1564,7 +1597,7 @@ pub struct RunnerHeartbeatRequest {
     pub capabilities: serde_json::Value,
 }
 
-pub const RUNNER_PROTOCOL_VERSION: u32 = 4;
+pub const RUNNER_PROTOCOL_VERSION: u32 = 5;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ClaimJobRequest {
@@ -2354,6 +2387,10 @@ pub struct PipelineExecutionConfig {
     #[serde(default = "default_artifact_patterns")]
     #[schema(required = true)]
     pub artifact_patterns: Vec<String>,
+    /// Added to the project build number to form `OORE_VERSION_CODE`, so the
+    /// first store upload can start above the store's existing version code.
+    #[serde(default)]
+    pub build_number_offset: i64,
 }
 
 /// Secret-free representation of a repository-owned pipeline config.
@@ -2377,6 +2414,8 @@ pub struct RepositoryWorkflowExecutionPreview {
     pub platform_commands: PlatformBuildCommands,
     pub env_keys: Vec<String>,
     pub artifact_patterns: Vec<String>,
+    #[serde(default)]
+    pub build_number_offset: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -2432,6 +2471,8 @@ struct RepositoryPipelineConfig {
     env: Vec<PipelineEnvVar>,
     #[serde(default)]
     artifacts: Option<RepositoryArtifacts>,
+    #[serde(default)]
+    build_number_offset: i64,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2463,6 +2504,7 @@ pub fn parse_repository_pipeline_yaml(raw: &str) -> Result<PipelineExecutionConf
         platform_commands: parsed.platform_commands,
         env: parsed.env,
         artifact_patterns,
+        build_number_offset: parsed.build_number_offset,
     };
     let errors = validate_repository_execution_config(&config);
     if errors.is_empty() {
@@ -2470,6 +2512,33 @@ pub fn parse_repository_pipeline_yaml(raw: &str) -> Result<PipelineExecutionConf
     } else {
         Err(errors.join("\n"))
     }
+}
+
+/// Highest `versionCode` Google Play accepts. Apple build numbers have no
+/// lower ceiling that matters here, so this bounds every store.
+pub const MAX_STORE_VERSION_CODE: i64 = 2_100_000_000;
+
+pub fn validate_build_number_offset(offset: i64) -> Result<(), String> {
+    if !(0..MAX_STORE_VERSION_CODE).contains(&offset) {
+        return Err(format!(
+            "must be between 0 and {}",
+            MAX_STORE_VERSION_CODE - 1
+        ));
+    }
+    Ok(())
+}
+
+/// The version code a build sends to stores: its project build number plus the
+/// pipeline offset, rejected when it exceeds what Google Play accepts.
+pub fn store_version_code(build_number: i64, offset: i64) -> Result<i64, String> {
+    validate_build_number_offset(offset).map_err(|error| format!("build_number_offset {error}"))?;
+    let code = build_number.saturating_add(offset);
+    if !(1..=MAX_STORE_VERSION_CODE).contains(&code) {
+        return Err(format!(
+            "version code {code} (build {build_number} + offset {offset}) is outside the store range 1..={MAX_STORE_VERSION_CODE}"
+        ));
+    }
+    Ok(code)
 }
 
 pub fn validate_artifact_pattern(pattern: &str) -> Result<(), String> {
@@ -2601,6 +2670,9 @@ fn validate_repository_execution_config(config: &PipelineExecutionConfig) -> Vec
             errors.push(format!("artifacts.patterns[{index}] {error}"));
         }
     }
+    if let Err(error) = validate_build_number_offset(config.build_number_offset) {
+        errors.push(format!("build_number_offset {error}"));
+    }
     let mut env_keys = std::collections::HashSet::new();
     for (index, entry) in config.env.iter().enumerate() {
         let key = entry.key.trim();
@@ -2612,6 +2684,7 @@ fn validate_repository_execution_config(config: &PipelineExecutionConfig) -> Vec
             errors.push(format!("env contains duplicate key '{key}'"));
         }
     }
+    errors.extend(secret_expression_errors(config));
     errors
 }
 
@@ -2625,6 +2698,7 @@ impl Default for PipelineExecutionConfig {
             platform_commands: PlatformBuildCommands::default(),
             env: Vec::new(),
             artifact_patterns: default_artifact_patterns(),
+            build_number_offset: 0,
         }
     }
 }
@@ -2720,6 +2794,398 @@ pub struct ValidatePipelineResponse {
     pub errors: Vec<String>,
 }
 
+// ── Secret types ────────────────────────────────────────────────
+
+/// Maximum secret value size. Large enough for a Google Play service account JSON.
+pub const MAX_SECRET_VALUE_BYTES: usize = 64 * 1024;
+/// Maximum secret name length.
+pub const MAX_SECRET_NAME_LENGTH: usize = 128;
+
+/// Where a secret is defined. A job sees instance, project and pipeline secrets;
+/// on a name clash the narrower scope wins.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretScope {
+    Instance,
+    Project,
+    Pipeline,
+}
+
+impl SecretScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Instance => "instance",
+            Self::Project => "project",
+            Self::Pipeline => "pipeline",
+        }
+    }
+}
+
+/// Secret metadata. Values are write-only and never returned by the user API.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SecretSummary {
+    pub name: String,
+    pub scope: SecretScope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListSecretsResponse {
+    pub secrets: Vec<SecretSummary>,
+}
+
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateSecretRequest {
+    pub name: String,
+    pub value: String,
+}
+
+impl fmt::Debug for CreateSecretRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateSecretRequest")
+            .field("name", &self.name)
+            .field("value", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Replace a secret's value (rotation).
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RotateSecretRequest {
+    pub value: String,
+}
+
+impl fmt::Debug for RotateSecretRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RotateSecretRequest")
+            .field("value", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SecretResponse {
+    pub secret: SecretSummary,
+}
+
+/// A resolved secret delivered to the runner assigned to an active job.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerJobSecret {
+    pub name: String,
+    pub value: String,
+    pub scope: SecretScope,
+}
+
+impl fmt::Debug for RunnerJobSecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RunnerJobSecret")
+            .field("name", &self.name)
+            .field("value", &"[REDACTED]")
+            .field("scope", &self.scope)
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerJobSecretsResponse {
+    pub secrets: Vec<RunnerJobSecret>,
+}
+
+/// Validate a secret name. Names follow environment variable rules.
+pub fn validate_secret_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("must not be empty".to_string());
+    }
+    if name.len() > MAX_SECRET_NAME_LENGTH {
+        return Err(format!("is too long (max {MAX_SECRET_NAME_LENGTH} chars)"));
+    }
+    if !is_valid_pipeline_env_key(name) {
+        return Err("must match [A-Za-z_][A-Za-z0-9_]*".to_string());
+    }
+    Ok(())
+}
+
+/// A `${{ secrets.NAME }}` reference found in a command or env value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretReference {
+    /// Byte offset of `$`.
+    pub start: usize,
+    /// Byte offset just past the closing `}}`.
+    pub end: usize,
+    pub name: String,
+}
+
+/// Parse every `${{ ... }}` expression in `text`. Only `secrets.NAME` is
+/// supported; any other expression is an error so it never reaches a shell.
+pub fn parse_secret_references(text: &str) -> Result<Vec<SecretReference>, String> {
+    let mut references = Vec::new();
+    let mut cursor = 0;
+    while let Some(offset) = text[cursor..].find("${{") {
+        let start = cursor + offset;
+        let body_start = start + 3;
+        let Some(close) = text[body_start..].find("}}") else {
+            return Err("has an unterminated ${{ expression".to_string());
+        };
+        let end = body_start + close + 2;
+        let expression = text[body_start..body_start + close].trim();
+        let name = expression
+            .strip_prefix("secrets.")
+            .filter(|name| is_valid_pipeline_env_key(name))
+            .ok_or_else(|| {
+                format!(
+                    "has unsupported expression '${{{{ {expression} }}}}'; only ${{{{ secrets.NAME }}}} is supported"
+                )
+            })?;
+        references.push(SecretReference {
+            start,
+            end,
+            name: name.to_string(),
+        });
+        cursor = end;
+    }
+    Ok(references)
+}
+
+/// Report malformed `${{ }}` expressions in commands and env values.
+pub fn secret_expression_errors(config: &PipelineExecutionConfig) -> Vec<String> {
+    let mut errors = Vec::new();
+    let mut check = |path: String, text: &str| {
+        if let Err(error) = parse_secret_references(text) {
+            errors.push(format!("{path} {error}"));
+        }
+    };
+    for (stage, commands) in [
+        ("pre_build", &config.commands.pre_build),
+        ("build", &config.commands.build),
+        ("post_build", &config.commands.post_build),
+    ] {
+        for (index, command) in commands.iter().enumerate() {
+            check(format!("commands.{stage}[{index}]"), command);
+        }
+    }
+    for (platform, args) in [
+        ("android", &config.platform_build_args.android),
+        ("ios", &config.platform_build_args.ios),
+        ("macos", &config.platform_build_args.macos),
+    ] {
+        for (index, arg) in args.iter().enumerate() {
+            check(format!("platform_build_args.{platform}[{index}]"), arg);
+        }
+    }
+    for (platform, command) in [
+        ("android", &config.platform_commands.android),
+        ("ios", &config.platform_commands.ios),
+        ("macos", &config.platform_commands.macos),
+    ] {
+        if let Some(command) = command {
+            check(format!("platform_commands.{platform}"), command);
+        }
+    }
+    for (index, entry) in config.env.iter().enumerate() {
+        check(format!("env[{index}].value"), &entry.value);
+    }
+    errors
+}
+
+/// Replace each `${{ secrets.NAME }}` reference with `replacement(NAME)`.
+pub fn replace_secret_references(
+    text: &str,
+    mut replacement: impl FnMut(&str) -> String,
+) -> Result<String, String> {
+    let references = parse_secret_references(text)?;
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for reference in references {
+        out.push_str(&text[cursor..reference.start]);
+        out.push_str(&replacement(&reference.name));
+        cursor = reference.end;
+    }
+    out.push_str(&text[cursor..]);
+    Ok(out)
+}
+
+// ── Pipeline publish types ──────────────────────────────────────
+
+/// Where Google Play release notes come from.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GooglePlayReleaseNotesSource {
+    /// No release notes.
+    #[default]
+    None,
+    /// The build changelog, under `release_notes_locale`.
+    Changelog,
+    /// One `<locale>.txt` file per language in `release_notes_dir`.
+    RepoFiles,
+}
+
+/// Per-pipeline Google Play upload settings. Credentials are referenced by
+/// secret name and never stored here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GooglePlayPublishConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Name of the secret holding the service account JSON key.
+    pub service_account_secret: String,
+    /// Expected application id. When omitted, the AAB's package is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+    /// `internal`, `closed`, `open`, `production`, or a custom track name.
+    pub track: String,
+    /// Initial staged rollout, 0 < percent <= 100. Omitted means 100.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_percent: Option<f64>,
+    /// Create a draft release instead of rolling out.
+    #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub release_notes: GooglePlayReleaseNotesSource,
+    #[serde(default = "default_release_notes_locale")]
+    pub release_notes_locale: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_notes_dir: Option<String>,
+    /// Upload R8/ProGuard `mapping.txt` when the build produced one.
+    #[serde(default = "default_true")]
+    pub upload_mapping: bool,
+    /// In-app update priority, 0 to 5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_app_update_priority: Option<u8>,
+    /// Staged rollout schedule, crash-rate halt and approval gate for the
+    /// release record. Omitted means the default schedule with no halt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_policy: Option<ReleasePolicy>,
+}
+
+fn default_release_notes_locale() -> String {
+    "en-US".to_string()
+}
+
+/// Validate Google Play publish settings, returning every problem found.
+pub fn validate_google_play_publish_config(config: &GooglePlayPublishConfig) -> Vec<String> {
+    let mut errors = Vec::new();
+    if let Err(error) = validate_secret_name(config.service_account_secret.trim()) {
+        errors.push(format!("service_account_secret {error}"));
+    }
+    if let Some(package) = &config.package_name {
+        let valid = package.split('.').count() >= 2
+            && package.split('.').all(|part| {
+                part.chars()
+                    .next()
+                    .is_some_and(|first| first.is_ascii_alphabetic())
+                    && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            });
+        if !valid {
+            errors.push(
+                "package_name must be an Android application id such as com.example.app"
+                    .to_string(),
+            );
+        }
+    }
+    let track = config.track.trim();
+    if track.is_empty()
+        || track.len() > 128
+        || !track
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':'))
+    {
+        errors.push(
+            "track must be internal, closed, open, production, or a custom track name".to_string(),
+        );
+    }
+    if let Some(percent) = config.rollout_percent {
+        if !(percent > 0.0 && percent <= 100.0) {
+            errors.push("rollout_percent must be greater than 0 and at most 100".to_string());
+        } else if percent < 100.0 && track == "internal" {
+            errors.push("the internal track does not support staged rollouts".to_string());
+        } else if percent < 100.0 && config.draft {
+            errors.push("a draft release cannot have a staged rollout".to_string());
+        }
+    }
+    if let Some(policy) = &config.rollout_policy
+        && let Err(error) = policy.validate()
+    {
+        errors.push(error);
+    }
+    if config.release_notes_locale.trim().is_empty() || config.release_notes_locale.len() > 16 {
+        errors.push("release_notes_locale must be a Play language code such as en-US".to_string());
+    }
+    if config.release_notes == GooglePlayReleaseNotesSource::RepoFiles {
+        match config.release_notes_dir.as_deref() {
+            Some(dir) => {
+                if let Err(error) = validate_repository_config_path(dir) {
+                    errors.push(format!("release_notes_dir {error}"));
+                }
+            }
+            None => errors
+                .push("release_notes_dir is required for repo_files release notes".to_string()),
+        }
+    }
+    if config
+        .in_app_update_priority
+        .is_some_and(|priority| priority > 5)
+    {
+        errors.push("in_app_update_priority must be between 0 and 5".to_string());
+    }
+    errors
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelineGooglePlayPublishResponse {
+    pub pipeline_id: String,
+    /// Absent until publish settings are saved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<GooglePlayPublishConfig>,
+    /// Whether the referenced service account secret exists in a visible scope.
+    pub service_account_secret_present: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+/// Publish work for the runner, fetched with the job-scoped grant.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerPublishPlan {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changelog: Option<String>,
+    /// Present only when Google Play publishing is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub google_play: Option<GooglePlayPublishConfig>,
+    /// Present only when App Store publishing is enabled for an App Store export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_store: Option<RunnerAppStorePublishPlan>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PublishStore {
+    GooglePlay,
+    AppStore,
+}
+
+/// Outcome of a store upload, reported by the runner.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerPublishResult {
+    pub store: PublishStore,
+    /// Store track as sent to the store (for Play: internal, alpha, beta, production or custom).
+    pub track: String,
+    pub package_name: String,
+    pub version_code: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    /// Staged rollout fraction, 0 < f <= 1. Absent for drafts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rollout_fraction: Option<f64>,
+    /// `completed`, `in_progress` or `draft`.
+    pub status: String,
+}
+
 // ── Pipeline Android signing types ──────────────────────────────
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -2807,6 +3273,37 @@ pub enum IosSigningMode {
     Hybrid,
 }
 
+/// How a signed iOS archive is distributed.
+///
+/// `ad_hoc` IPAs install on registered devices through Oore. `app_store` IPAs
+/// are signed with an App Store distribution profile and can only be uploaded
+/// to App Store Connect for TestFlight or App Store release.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IosExportMethod {
+    #[default]
+    AdHoc,
+    AppStore,
+}
+
+impl IosExportMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AdHoc => "ad_hoc",
+            Self::AppStore => "app_store",
+        }
+    }
+
+    /// Parses a stored value. Unknown values fall back to ad hoc so a newer
+    /// database never makes an older daemon produce App Store builds.
+    pub fn from_stored(raw: &str) -> Self {
+        match raw {
+            "app_store" => Self::AppStore,
+            _ => Self::AdHoc,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Default, ToSchema)]
 pub struct IosCertificateInput {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2878,6 +3375,10 @@ pub struct UpdatePipelineIosSigningRequest {
     #[serde(default)]
     pub enabled: bool,
     pub mode: IosSigningMode,
+    /// Omit to keep the stored export method. Changing it discards stored
+    /// provisioning profiles because ad hoc and App Store profiles differ.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export_method: Option<IosExportMethod>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team_id: Option<String>,
     #[serde(default)]
@@ -2915,7 +3416,7 @@ pub struct PipelineIosSigningResponse {
     pub mode: IosSigningMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team_id: Option<String>,
-    pub export_method: String,
+    pub export_method: IosExportMethod,
     #[serde(default)]
     #[schema(required = true)]
     pub bundle_ids: Vec<String>,
@@ -2955,7 +3456,7 @@ pub struct RunnerIosSigningBundle {
     pub enabled: bool,
     pub mode: IosSigningMode,
     pub team_id: String,
-    pub export_method: String,
+    pub export_method: IosExportMethod,
     pub p12_filename: String,
     pub p12_base64: String,
     pub p12_password: String,
@@ -3017,6 +3518,106 @@ pub struct SyncPipelineIosSigningResponse {
     #[serde(default)]
     #[schema(required = true)]
     pub warnings: Vec<String>,
+}
+
+// ── Pipeline App Store publishing types ─────────────────────────
+
+/// Where an App Store Connect upload goes once Apple finishes processing it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AppStoreDestination {
+    /// Add the build to the named TestFlight groups.
+    #[default]
+    Testflight,
+    /// Attach the build to the App Store version matching its version string.
+    AppStore,
+}
+
+impl AppStoreDestination {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Testflight => "testflight",
+            Self::AppStore => "app_store",
+        }
+    }
+
+    pub fn from_stored(raw: &str) -> Self {
+        match raw {
+            "app_store" => Self::AppStore,
+            _ => Self::Testflight,
+        }
+    }
+}
+
+/// Release notes for one App Store Connect locale, such as `en-US`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct AppStoreReleaseNote {
+    pub locale: String,
+    pub whats_new: String,
+}
+
+/// App Store publishing settings for a pipeline, stored as the `app_store`
+/// publish target. Uploads use the App Store Connect API key from the
+/// pipeline's iOS signing settings and require the `app_store` export method.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+pub struct AppStorePublishConfig {
+    pub enabled: bool,
+    #[serde(default)]
+    pub destination: AppStoreDestination,
+    /// TestFlight group names. Used when `destination` is `testflight`.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub testflight_groups: Vec<String>,
+    /// TestFlight "What to Test" or App Store "What's New", per locale.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub release_notes: Vec<AppStoreReleaseNote>,
+    /// Export compliance answer set on each processed build.
+    #[serde(default)]
+    pub uses_non_exempt_encryption: bool,
+    /// Submit the App Store version for review once the build is attached.
+    #[serde(default)]
+    pub submit_for_review: bool,
+    /// Release the approved version with Apple's seven-day phased release.
+    #[serde(default)]
+    pub phased_release: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelineAppStorePublishResponse {
+    pub pipeline_id: String,
+    pub config: AppStorePublishConfig,
+    /// Whether the pipeline's iOS signing has an App Store Connect API key.
+    pub has_api_key: bool,
+    /// Whether the pipeline's iOS signing exports App Store IPAs.
+    pub app_store_export: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+/// App Store Connect API key handed to the runner for `altool` upload.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerAppStoreUploadCredentials {
+    pub key_id: String,
+    pub issuer_id: String,
+    pub private_key_pem: String,
+}
+
+impl fmt::Debug for RunnerAppStoreUploadCredentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RunnerAppStoreUploadCredentials")
+            .field("key_id", &self.key_id)
+            .field("issuer_id", &self.issuer_id)
+            .field("private_key_pem", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// What the runner needs to upload the job's IPA to App Store Connect.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerAppStorePublishPlan {
+    pub config: AppStorePublishConfig,
+    pub credentials: RunnerAppStoreUploadCredentials,
 }
 
 // ── Build log types ─────────────────────────────────────────────
@@ -3224,6 +3825,7 @@ pub enum NotificationChannelType {
     Webhook,
     Mattermost,
     Email,
+    Slack,
 }
 
 impl fmt::Display for NotificationChannelType {
@@ -3232,6 +3834,7 @@ impl fmt::Display for NotificationChannelType {
             Self::Webhook => f.write_str("webhook"),
             Self::Mattermost => f.write_str("mattermost"),
             Self::Email => f.write_str("email"),
+            Self::Slack => f.write_str("slack"),
         }
     }
 }
@@ -3243,6 +3846,7 @@ impl FromStr for NotificationChannelType {
             "webhook" => Ok(Self::Webhook),
             "mattermost" => Ok(Self::Mattermost),
             "email" => Ok(Self::Email),
+            "slack" => Ok(Self::Slack),
             other => Err(format!("unknown notification channel type: {other}")),
         }
     }
@@ -3309,13 +3913,19 @@ pub struct NotificationChannel {
     pub name: String,
     pub channel_type: NotificationChannelType,
     pub enabled: bool,
-    /// Which terminal build statuses trigger this channel. Empty means all.
+    /// Which events trigger this channel. Empty means all.
     #[serde(default)]
     #[schema(required = true)]
     pub events: Vec<String>,
+    /// Project this channel is scoped to. Absent means the channel receives
+    /// events from every project, plus instance-wide events such as runner
+    /// offline.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     /// True if the channel has a URL configured (the actual URL is never exposed).
     pub has_url: bool,
-    /// True if the channel has an HMAC secret configured (webhook only).
+    /// True if the channel has a secret configured: the HMAC secret for
+    /// webhook channels, or the bot token used for mentions on Slack channels.
     pub has_secret: bool,
     /// True if the channel has SMTP configuration (email only).
     pub has_smtp_config: bool,
@@ -3331,13 +3941,17 @@ pub struct CreateNotificationChannelRequest {
     pub channel_type: NotificationChannelType,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Terminal build statuses to notify on. Empty or omitted means all terminal events.
+    /// Events to notify on. Empty or omitted means all events.
     #[serde(default)]
     pub events: Vec<String>,
-    /// Webhook/Mattermost incoming webhook URL (required for webhook/mattermost).
+    /// Scope the channel to one project. Omit for an instance-wide channel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// Incoming webhook URL (required for webhook, mattermost and slack).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// HMAC secret for signing webhook payloads (webhook only, optional).
+    /// Webhook: HMAC secret for signing payloads. Slack: bot token with
+    /// `users:read.email`, used to mention the triggering user. Optional.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
     /// SMTP configuration (required for email channel type).
@@ -3357,10 +3971,15 @@ pub struct UpdateNotificationChannelRequest {
     pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub events: Option<Vec<String>>,
+    /// New project scope. Omit to keep existing; pass empty string to make
+    /// the channel instance-wide.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     /// New URL. Omit to keep existing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// New HMAC secret. Omit to keep existing; pass empty string to clear.
+    /// New HMAC secret (webhook) or bot token (slack). Omit to keep existing;
+    /// pass empty string to clear.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
     /// Partial SMTP configuration update (email only). Omit fields to keep existing.
@@ -3397,6 +4016,8 @@ pub struct NotificationDelivery {
     pub channel_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_id: Option<String>,
     pub event_type: String,
     pub status: NotificationDeliveryStatus,
     pub attempt_count: i64,
@@ -3411,6 +4032,419 @@ pub struct NotificationDelivery {
 pub struct ListNotificationDeliveriesResponse {
     pub deliveries: Vec<NotificationDelivery>,
     pub total: i64,
+}
+
+// ── Release domain types ────────────────────────────────────────
+
+/// Store a release is published to.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseStore {
+    GooglePlay,
+    AppStore,
+}
+
+impl ReleaseStore {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GooglePlay => "google_play",
+            Self::AppStore => "app_store",
+        }
+    }
+
+    /// Build platform the store distributes.
+    pub fn platform(self) -> &'static str {
+        match self {
+            Self::GooglePlay => "android",
+            Self::AppStore => "ios",
+        }
+    }
+}
+
+impl fmt::Display for ReleaseStore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ReleaseStore {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "google_play" => Ok(Self::GooglePlay),
+            "app_store" => Ok(Self::AppStore),
+            other => Err(format!("unknown release store: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseState {
+    Uploading,
+    Processing,
+    InReview,
+    Rolling,
+    Paused,
+    Halted,
+    Complete,
+    Failed,
+}
+
+impl ReleaseState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Uploading => "uploading",
+            Self::Processing => "processing",
+            Self::InReview => "in_review",
+            Self::Rolling => "rolling",
+            Self::Paused => "paused",
+            Self::Halted => "halted",
+            Self::Complete => "complete",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Complete | Self::Failed)
+    }
+
+    /// States this state can move to. `Rolling -> Rolling` is a fraction change.
+    /// A halted release only leaves through an explicit resume (or failure).
+    pub fn valid_transitions(self) -> &'static [ReleaseState] {
+        match self {
+            Self::Uploading => &[
+                Self::Processing,
+                Self::InReview,
+                Self::Rolling,
+                Self::Failed,
+            ],
+            Self::Processing => &[Self::InReview, Self::Rolling, Self::Failed],
+            Self::InReview => &[Self::Rolling, Self::Failed],
+            Self::Rolling => &[
+                Self::Rolling,
+                Self::Paused,
+                Self::Halted,
+                Self::Complete,
+                Self::Failed,
+            ],
+            Self::Paused => &[Self::Rolling, Self::Halted, Self::Complete, Self::Failed],
+            Self::Halted => &[Self::Rolling, Self::Failed],
+            Self::Complete | Self::Failed => &[],
+        }
+    }
+
+    pub fn can_transition_to(self, target: ReleaseState) -> bool {
+        self.valid_transitions().contains(&target)
+    }
+}
+
+impl fmt::Display for ReleaseState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ReleaseState {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "uploading" => Ok(Self::Uploading),
+            "processing" => Ok(Self::Processing),
+            "in_review" => Ok(Self::InReview),
+            "rolling" => Ok(Self::Rolling),
+            "paused" => Ok(Self::Paused),
+            "halted" => Ok(Self::Halted),
+            "complete" => Ok(Self::Complete),
+            "failed" => Ok(Self::Failed),
+            other => Err(format!("unknown release state: {other}")),
+        }
+    }
+}
+
+/// Manual controls on a release.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseAction {
+    Raise,
+    Pause,
+    Resume,
+    Halt,
+    Complete,
+    Approve,
+}
+
+impl ReleaseAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Raise => "raise",
+            Self::Pause => "pause",
+            Self::Resume => "resume",
+            Self::Halt => "halt",
+            Self::Complete => "complete",
+            Self::Approve => "approve",
+        }
+    }
+}
+
+impl FromStr for ReleaseAction {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "raise" => Ok(Self::Raise),
+            "pause" => Ok(Self::Pause),
+            "resume" => Ok(Self::Resume),
+            "halt" => Ok(Self::Halt),
+            "complete" => Ok(Self::Complete),
+            "approve" => Ok(Self::Approve),
+            other => Err(format!("unknown release action: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseHealth {
+    Unknown,
+    Healthy,
+    Warning,
+    Breached,
+}
+
+impl ReleaseHealth {
+    /// Warning starts at three quarters of the threshold.
+    pub fn from_crash_rate(crash_rate: Option<f64>, threshold: Option<f64>) -> Self {
+        match (crash_rate, threshold) {
+            (Some(rate), Some(limit)) if rate >= limit => Self::Breached,
+            (Some(rate), Some(limit)) if rate >= limit * 0.75 => Self::Warning,
+            (Some(_), Some(_)) => Self::Healthy,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// Where a maintainer approval is required, if anywhere.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseApprovalGate {
+    #[default]
+    None,
+    /// Approval before the runner uploads (release waits in `uploading`).
+    BeforeUpload,
+    /// Approval before a `production` track release starts rolling out.
+    BeforeProduction,
+}
+
+/// Staged rollout policy stored with each release.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct ReleasePolicy {
+    /// Ascending rollout fractions in (0, 1]; the last step must be 1.
+    #[serde(default = "default_release_steps")]
+    pub steps: Vec<f64>,
+    /// Hours between automatic steps.
+    #[serde(default = "default_release_interval_hours")]
+    pub interval_hours: f64,
+    /// Crash rate (0..1) at or above which the daemon halts the rollout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crash_rate_threshold: Option<f64>,
+    #[serde(default)]
+    pub approval: ReleaseApprovalGate,
+}
+
+fn default_release_steps() -> Vec<f64> {
+    vec![0.01, 0.05, 0.2, 0.5, 1.0]
+}
+
+fn default_release_interval_hours() -> f64 {
+    24.0
+}
+
+impl Default for ReleasePolicy {
+    fn default() -> Self {
+        Self {
+            steps: default_release_steps(),
+            interval_hours: default_release_interval_hours(),
+            crash_rate_threshold: None,
+            approval: ReleaseApprovalGate::None,
+        }
+    }
+}
+
+impl ReleasePolicy {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.steps.is_empty() {
+            return Err("policy.steps must not be empty".into());
+        }
+        if self
+            .steps
+            .iter()
+            .any(|step| !step.is_finite() || *step <= 0.0 || *step > 1.0)
+        {
+            return Err("policy.steps must be fractions in (0, 1]".into());
+        }
+        if self.steps.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err("policy.steps must be strictly ascending".into());
+        }
+        if self.steps.last() != Some(&1.0) {
+            return Err("policy.steps must end at 1".into());
+        }
+        if !self.interval_hours.is_finite() || self.interval_hours <= 0.0 {
+            return Err("policy.interval_hours must be greater than zero".into());
+        }
+        if self
+            .crash_rate_threshold
+            .is_some_and(|limit| !limit.is_finite() || limit <= 0.0 || limit > 1.0)
+        {
+            return Err("policy.crash_rate_threshold must be a fraction in (0, 1]".into());
+        }
+        Ok(())
+    }
+
+    /// First policy step above `fraction`.
+    pub fn next_step(&self, fraction: f64) -> Option<f64> {
+        self.steps.iter().copied().find(|step| *step > fraction)
+    }
+
+    pub fn interval_secs(&self) -> i64 {
+        (self.interval_hours * 3600.0).round() as i64
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct Release {
+    pub id: String,
+    pub project_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    pub build_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_number: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
+    /// `android` or `ios`, derived from the store.
+    pub platform: String,
+    pub store: ReleaseStore,
+    /// Play track, or TestFlight group / `app_store`.
+    pub track: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_code: Option<i64>,
+    pub state: ReleaseState,
+    /// Fraction of users, 0..1.
+    pub rollout_fraction: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_fraction: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_step_at: Option<i64>,
+    pub policy: ReleasePolicy,
+    pub health: ReleaseHealth,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crash_rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crash_rate_threshold: Option<f64>,
+    pub awaiting_approval: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approved_by_email: Option<String>,
+    /// Actions the caller may take now, from their project role and the state.
+    pub allowed_actions: Vec<ReleaseAction>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ReleaseHistoryEntry {
+    pub id: String,
+    pub at: i64,
+    /// Null when the daemon or a store made the change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor_email: Option<String>,
+    /// Null for the entry that created the release.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_state: Option<ReleaseState>,
+    pub to_state: ReleaseState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_fraction: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_fraction: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// A history entry with the release it belongs to, for activity feeds.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ReleaseActivityEvent {
+    #[serde(flatten)]
+    pub entry: ReleaseHistoryEntry,
+    pub release_id: String,
+    pub project_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    pub build_id: String,
+    pub store: ReleaseStore,
+    pub track: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListReleasesResponse {
+    pub releases: Vec<Release>,
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ReleaseDetailResponse {
+    pub release: Release,
+    pub history: Vec<ReleaseHistoryEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListReleaseActivityResponse {
+    pub events: Vec<ReleaseActivityEvent>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct ReleaseActionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Raise only: target fraction (0..1]. Defaults to the next policy step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fraction: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreateReleaseRequest {
+    pub build_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
+    pub store: ReleaseStore,
+    pub track: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_code: Option<i64>,
+    /// Initial state; defaults to `rolling`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<ReleaseState>,
+    /// Initial fraction; defaults to the first policy step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_fraction: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<ReleasePolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 // ── API Tokens ──────────────────────────────────────────────────
@@ -3464,7 +4498,122 @@ pub struct RevokeApiTokenResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_repository_pipeline_yaml;
+
+    #[test]
+    fn google_play_publish_config_validation() {
+        let parse = |value: serde_json::Value| -> super::GooglePlayPublishConfig {
+            serde_json::from_value(value).unwrap()
+        };
+        let base = serde_json::json!({
+            "enabled": true,
+            "service_account_secret": "PLAY_SERVICE_ACCOUNT",
+            "track": "production",
+            "rollout_percent": 5.0,
+        });
+        let config = parse(base.clone());
+        assert!(super::validate_google_play_publish_config(&config).is_empty());
+        assert_eq!(config.release_notes_locale, "en-US");
+        assert!(config.upload_mapping);
+
+        for (patch, expected) in [
+            (
+                serde_json::json!({"service_account_secret": "bad name"}),
+                "service_account_secret",
+            ),
+            (serde_json::json!({"track": "internal"}), "internal track"),
+            (
+                serde_json::json!({"rollout_percent": 0.0}),
+                "rollout_percent",
+            ),
+            (serde_json::json!({"draft": true}), "draft"),
+            (
+                serde_json::json!({"package_name": "nodots"}),
+                "package_name",
+            ),
+            (
+                serde_json::json!({"release_notes": "repo_files"}),
+                "release_notes_dir",
+            ),
+            (
+                serde_json::json!({"in_app_update_priority": 6}),
+                "in_app_update_priority",
+            ),
+        ] {
+            let mut value = base.clone();
+            for (key, field) in patch.as_object().unwrap() {
+                value[key] = field.clone();
+            }
+            let errors = super::validate_google_play_publish_config(&parse(value));
+            assert!(
+                errors.iter().any(|error| error.contains(expected)),
+                "{expected}: {errors:?}"
+            );
+        }
+        assert!(
+            serde_json::from_value::<super::GooglePlayPublishConfig>(serde_json::json!({
+                "service_account_secret": "X", "track": "internal", "unknown": 1
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn secret_references_parse_and_reject_other_expressions() {
+        let text = "a ${{ secrets.ONE }} b ${{secrets.TWO}}";
+        let names: Vec<String> = super::parse_secret_references(text)
+            .unwrap()
+            .into_iter()
+            .map(|reference| reference.name)
+            .collect();
+        assert_eq!(names, vec!["ONE", "TWO"]);
+        assert_eq!(
+            super::replace_secret_references(text, |name| name.to_lowercase()).unwrap(),
+            "a one b two"
+        );
+        assert_eq!(
+            super::replace_secret_references("echo $HOME ${PATH}", |_| unreachable!()).unwrap(),
+            "echo $HOME ${PATH}"
+        );
+        assert!(super::parse_secret_references("${{ env.X }}").is_err());
+        assert!(super::parse_secret_references("${{ secrets.1BAD }}").is_err());
+        assert!(super::parse_secret_references("${{ secrets.X").is_err());
+        assert!(
+            super::parse_repository_pipeline_yaml(
+                "version: 1\nplatforms: [android]\ncommands:\n  build: ['echo ${{ vars.X }}']\n"
+            )
+            .unwrap_err()
+            .contains("commands.build[0]")
+        );
+    }
+    use super::{MAX_STORE_VERSION_CODE, parse_repository_pipeline_yaml, store_version_code};
+
+    #[test]
+    fn repository_config_reads_build_number_offset() {
+        let config = parse_repository_pipeline_yaml(
+            "version: 1\nplatforms: [android]\nbuild_number_offset: 4000\n",
+        )
+        .unwrap();
+        assert_eq!(config.build_number_offset, 4000);
+
+        let error = parse_repository_pipeline_yaml(
+            "version: 1\nplatforms: [android]\nbuild_number_offset: -1\n",
+        )
+        .unwrap_err();
+        assert!(error.starts_with("build_number_offset must be between 0 and"));
+    }
+
+    #[test]
+    fn store_version_code_adds_offset_within_play_range() {
+        assert_eq!(store_version_code(12, 0), Ok(12));
+        assert_eq!(store_version_code(12, 4000), Ok(4012));
+        assert_eq!(
+            store_version_code(1, MAX_STORE_VERSION_CODE - 1),
+            Ok(MAX_STORE_VERSION_CODE)
+        );
+        let error = store_version_code(2, MAX_STORE_VERSION_CODE - 1).unwrap_err();
+        assert!(error.contains("outside the store range"), "{error}");
+        assert!(store_version_code(1, -5).is_err());
+    }
 
     #[test]
     fn repository_environment_keys_keep_shell_identifier_rules() {

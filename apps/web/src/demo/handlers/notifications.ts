@@ -5,11 +5,11 @@ import type {
   CreateNotificationChannelRequest,
   NotificationChannel,
   UpdateNotificationChannelRequest,
-} from '@oore/client/models'
+} from '@/lib/notification-channels'
 import { requireDemoInstancePermission } from '../authorization'
 import { demoState } from '../state'
 
-const channelTypeSchema = z.enum(['webhook', 'mattermost', 'email'])
+const channelTypeSchema = z.enum(['webhook', 'mattermost', 'email', 'slack'])
 const smtpTlsModeSchema = z.enum(['none', 'start_tls', 'tls'])
 const smtpConfigSchema = z.object({
   from_address: z.string(),
@@ -35,6 +35,7 @@ const createChannelSchema = z.toZod<CreateNotificationChannelRequest>()(
     channel_type: channelTypeSchema,
     enabled: z.boolean().optional(),
     events: z.array(z.string()).optional(),
+    project_id: z.string().nullish(),
     url: z.string().nullish(),
     secret: z.string().nullish(),
     smtp_config: smtpConfigSchema.nullish(),
@@ -45,6 +46,7 @@ const updateChannelSchema = z.toZod<UpdateNotificationChannelRequest>()(
     name: z.string().nullish(),
     enabled: z.boolean().nullish(),
     events: z.array(z.string()).nullish(),
+    project_id: z.string().nullish(),
     url: z.string().nullish(),
     secret: z.string().nullish(),
     smtp_config: updateSmtpConfigSchema.nullish(),
@@ -113,6 +115,7 @@ export const notificationHandlers = [
       channel_type: body.channel_type,
       enabled: body.enabled ?? true,
       events: body.events ?? [],
+      project_id: body.project_id || undefined,
       has_url: !!body.url,
       has_secret: !!body.secret,
       has_smtp_config: !!body.smtp_config,
@@ -163,6 +166,10 @@ export const notificationHandlers = [
       name: body.name ?? existing.name,
       enabled: body.enabled ?? existing.enabled,
       events: body.events ?? existing.events,
+      project_id:
+        body.project_id === undefined
+          ? existing.project_id
+          : body.project_id || undefined,
       has_url: body.url ? true : existing.has_url,
       has_secret: body.secret ? true : existing.has_secret,
       has_smtp_config: body.smtp_config ? true : existing.has_smtp_config,

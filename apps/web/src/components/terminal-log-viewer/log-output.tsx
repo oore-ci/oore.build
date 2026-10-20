@@ -50,6 +50,8 @@ export function LogOutput({
   scrollContainerRef,
   virtualizer,
 }: LogOutputProps) {
+  'use no memo' // Read fresh row positions from the mutable virtualizer.
+
   const verticalPadding = 8
   const maxSeq = logs.length > 0 ? logs[logs.length - 1].sequence : 0
   const lineNumWidth = Math.max(String(maxSeq).length, 3)
@@ -131,7 +133,7 @@ export function LogOutput({
                   </span>
                   <span
                     className={cn(
-                      'pr-4 pl-3',
+                      'min-w-0 pr-4 pl-3',
                       wrapLines
                         ? 'break-all whitespace-pre-wrap'
                         : 'whitespace-pre',

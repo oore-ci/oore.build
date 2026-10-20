@@ -11,6 +11,8 @@ import type { SearchInput } from '@/lib/search-input'
 
 interface BuildDetailSearch {
   install?: string
+  release?: string
+  tab?: string
 }
 
 export const Route = createFileRoute('/builds/$buildId')({
@@ -31,6 +33,8 @@ export const Route = createFileRoute('/builds/$buildId')({
   },
   validateSearch: (search: SearchInput): BuildDetailSearch => ({
     install: searchString(search, 'install'),
+    release: searchString(search, 'release'),
+    tab: searchString(search, 'tab'),
   }),
   component: BuildDetailRoute,
 })

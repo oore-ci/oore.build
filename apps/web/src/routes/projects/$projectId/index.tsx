@@ -77,6 +77,11 @@ const ProjectSettingsForm = lazy(() =>
     default: module.ProjectSettingsForm,
   })),
 )
+const ProjectSecretsPanel = lazy(() =>
+  import('@/components/secrets/secrets-panel').then((module) => ({
+    default: module.SecretsPanel,
+  })),
+)
 const loadProjectAccessCard = () => import('./-project-access-card')
 const ProjectAccessCard = lazy(() =>
   loadProjectAccessCard().then((module) => ({
@@ -659,6 +664,14 @@ function ProjectDetailPage() {
                     </CardContent>
                   </Card>
                 )}
+                <ProjectSecretsPanel
+                  canWrite={canWritePipelines}
+                  inheritedFrom={
+                    canReadInstanceSettings ? [{ scope: 'instance' }] : []
+                  }
+                  target={{ scope: 'project', projectId }}
+                  title="Project secrets"
+                />
               </Suspense>
             ) : null}
 

@@ -70,7 +70,10 @@ export function PipelineEnvironmentSection({
                         Oore also injects <code>PROJECT_ID</code>,{' '}
                         <code>PIPELINE_ID</code>, <code>BUILD_ID</code>,{' '}
                         <code>PROJECT_BUILD_NUMBER</code>,{' '}
-                        <code>BUILD_NUMBER</code>, <code>CI=true</code>, and
+                        <code>BUILD_NUMBER</code>,{' '}
+                        <code>OORE_VERSION_CODE</code> (build number plus
+                        offset), <code>OORE_VERSION_NAME</code> (from{' '}
+                        <code>pubspec.yaml</code>), <code>CI=true</code>, and
                         branch/commit values when present.
                       </span>,
                       'Use this section for app-specific values such as API_BASE_URL, APP_FLAVOR, SENTRY_DSN, or feature flags.',

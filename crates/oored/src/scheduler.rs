@@ -42,6 +42,39 @@ pub struct RunnerStateEvent {
     pub timestamp: i64,
 }
 
+/// What happened to a release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseEventKind {
+    Created,
+    Uploaded,
+    RolloutStepRaised,
+    RolloutPaused,
+    RolloutResumed,
+    RolloutHalted,
+    RolloutCompleted,
+    ApprovalNeeded,
+    Approved,
+    Failed,
+}
+
+/// A release or rollout state change broadcast to all subscribers.
+#[derive(Debug, Clone)]
+pub struct ReleaseEvent {
+    pub kind: ReleaseEventKind,
+    pub project_id: String,
+    pub release_id: String,
+    pub build_id: Option<String>,
+    pub version_name: Option<String>,
+    pub version_code: Option<i64>,
+    pub track: Option<String>,
+    /// Rollout fraction as a percentage, 0-100.
+    pub rollout_percent: Option<f64>,
+    /// Email of the user who caused the change, or `None` for the daemon.
+    pub actor: Option<String>,
+    pub reason: Option<String>,
+    pub timestamp: i64,
+}
+
 /// Central scheduler managing the build and runner event buses.
 ///
 /// Job dispatch uses SQLite directly (via `runners::claim_job`) with optimistic
@@ -51,6 +84,7 @@ pub struct Scheduler {
     event_tx: broadcast::Sender<BuildStateEvent>,
     log_event_tx: broadcast::Sender<BuildLogEvent>,
     runner_event_tx: broadcast::Sender<RunnerStateEvent>,
+    release_event_tx: broadcast::Sender<ReleaseEvent>,
 }
 
 impl Scheduler {
@@ -59,10 +93,12 @@ impl Scheduler {
         let (event_tx, _) = broadcast::channel(capacity);
         let (log_event_tx, _) = broadcast::channel(capacity);
         let (runner_event_tx, _) = broadcast::channel(16);
+        let (release_event_tx, _) = broadcast::channel(64);
         Arc::new(Self {
             event_tx,
             log_event_tx,
             runner_event_tx,
+            release_event_tx,
         })
     }
 
@@ -95,6 +131,16 @@ impl Scheduler {
     /// Publish a runner state event to all subscribers.
     pub fn publish_runner_event(&self, event: RunnerStateEvent) {
         let _ = self.runner_event_tx.send(event);
+    }
+
+    /// Subscribe to release and rollout events.
+    pub fn subscribe_release_events(&self) -> broadcast::Receiver<ReleaseEvent> {
+        self.release_event_tx.subscribe()
+    }
+
+    /// Publish a release or rollout event to all subscribers.
+    pub fn publish_release_event(&self, event: ReleaseEvent) {
+        let _ = self.release_event_tx.send(event);
     }
 
     /// Recover stale builds on daemon startup.

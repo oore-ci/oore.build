@@ -16,6 +16,7 @@ import PageHeader from '@/components/page-header'
 import {
   SettingsSection,
   SettingsSurface,
+  SettingsSurfaceSeparator,
 } from '@/components/settings/settings-section'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -41,7 +42,6 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
-import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { RetentionSummaryCard } from './-retention-summary-card'
 
@@ -159,7 +159,7 @@ function EnabledRetentionFields({
         </div>
       </SettingsSection>
 
-      <Separator className="-mx-4 w-auto sm:-mx-5" />
+      <SettingsSurfaceSeparator />
 
       <SettingsSection
         title="Cleanup behavior"
@@ -234,7 +234,7 @@ function EnabledRetentionFields({
         </div>
       </SettingsSection>
 
-      <Separator className="-mx-4 w-auto sm:-mx-5" />
+      <SettingsSurfaceSeparator />
 
       <SettingsSection
         title="Protected statuses"
@@ -273,7 +273,7 @@ function EnabledRetentionFields({
         />
       </SettingsSection>
 
-      <Separator className="-mx-4 w-auto sm:-mx-5" />
+      <SettingsSurfaceSeparator />
 
       <SettingsSection
         title="Dry run"
@@ -485,12 +485,12 @@ function RetentionPage() {
 
             {enabled ? (
               <>
-                <Separator className="-mx-4 w-auto sm:-mx-5" />
+                <SettingsSurfaceSeparator />
                 <EnabledRetentionFields form={form} />
               </>
             ) : null}
 
-            <Separator className="-mx-4 w-auto sm:-mx-5" />
+            <SettingsSurfaceSeparator />
 
             <div className="flex justify-end">
               <Button type="submit" disabled={updateMutation.isPending}>

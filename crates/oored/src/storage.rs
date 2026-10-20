@@ -355,7 +355,8 @@ impl LocalStorageClient {
 
     pub async fn generate_download_url(&self, key: &str, ttl_secs: u64) -> String {
         let token = Self::issue_token(&self.download_tokens, key, ttl_secs).await;
-        format!("{}/v1/artifacts/download/{token}", self.public_base_url)
+        // Resolve browser downloads against the requesting instance, including custom ports.
+        format!("/v1/artifacts/download/{token}")
     }
 
     pub async fn generate_download_url_with_base(
@@ -369,7 +370,7 @@ impl LocalStorageClient {
         let base = public_base_url
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .unwrap_or(&self.public_base_url)
+            .unwrap_or("")
             .trim_end_matches('/');
         let mut url = format!("{base}/install/download/{token}");
         if let Some((key, value)) = query_pair {
@@ -548,6 +549,50 @@ impl LocalStorageClient {
 pub struct LocalDownloadPayload {
     pub bytes: Body,
     pub file_name: String,
+}
+
+#[tokio::test]
+async fn local_download_links_preserve_origin_and_token_checks() {
+    let directory = std::env::temp_dir().join(format!("oore-download-{}", uuid::Uuid::new_v4()));
+    let client = LocalStorageClient::new(directory.clone(), None).unwrap();
+    std::fs::write(directory.join("app.apk"), b"apk content").unwrap();
+    let direct = client.generate_download_url("app.apk", 60).await;
+    let install = client
+        .generate_download_url_with_base("app.apk", 60, None, None)
+        .await;
+    assert!(direct.starts_with("/v1/artifacts/download/"));
+    assert!(install.starts_with("/install/download/"));
+    for link in [&direct, &install] {
+        let token = link.rsplit('/').next().unwrap();
+        let payload = client.handle_download(token).await.unwrap().unwrap();
+        assert_eq!(
+            axum::body::to_bytes(payload.bytes, 100)
+                .await
+                .unwrap()
+                .as_ref(),
+            b"apk content"
+        );
+    }
+    let remote = client
+        .generate_download_url_with_base(
+            "app.apk",
+            60,
+            Some("https://files.example.com"),
+            Some(("warpgate-ticket", "ticket")),
+        )
+        .await;
+    assert!(remote.starts_with("https://files.example.com/install/download/"));
+    assert!(remote.ends_with("?warpgate-ticket=ticket"));
+    let expired = client.generate_download_url("app.apk", 0).await;
+    assert!(
+        client
+            .handle_download(expired.rsplit('/').next().unwrap())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(client.handle_download("invalid").await.unwrap().is_none());
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[derive(Clone)]

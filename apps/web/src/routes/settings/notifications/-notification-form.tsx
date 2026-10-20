@@ -1,14 +1,7 @@
 import type { UseFormReturn } from 'react-hook-form'
 import { useWatch } from 'react-hook-form'
 import * as z from 'zod'
-import type {
-  CreateNotificationChannelRequest,
-  NotificationChannel,
-  NotificationChannelType,
-  SmtpConfig,
-  UpdateNotificationChannelRequest,
-  UpdateSmtpConfig,
-} from '@oore/client/models'
+import type { SmtpConfig, UpdateSmtpConfig } from '@oore/client/models'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -28,12 +21,22 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { useProjects } from '@/hooks/use-projects'
+import type {
+  CreateNotificationChannelRequest,
+  NotificationChannel,
+  NotificationChannelType,
+  UpdateNotificationChannelRequest,
+} from '@/lib/notification-channels'
 
 const CHANNEL_TYPES = {
+  slack: 'Slack',
   webhook: 'Webhook (Generic HTTP POST)',
-  mattermost: 'Mattermost / Slack',
+  mattermost: 'Mattermost',
   email: 'Email (SMTP)',
 } satisfies Record<NotificationChannelType, string>
+
+const ALL_PROJECTS = 'all'
 
 const NOTIFICATION_EVENTS = [
   { value: 'succeeded', label: 'Succeeded' },
@@ -42,12 +45,19 @@ const NOTIFICATION_EVENTS = [
   { value: 'timed_out', label: 'Timed out' },
   { value: 'expired', label: 'Expired' },
   { value: 'runner_offline', label: 'Runner offline' },
+  { value: 'release_uploaded', label: 'Release uploaded' },
+  { value: 'rollout_step_raised', label: 'Rollout raised' },
+  { value: 'rollout_halted', label: 'Rollout halted' },
+  { value: 'rollout_completed', label: 'Rollout complete' },
+  { value: 'release_approval_needed', label: 'Approval needed' },
+  { value: 'release_failed', label: 'Release failed' },
 ] as const
 
 export const notificationChannelSchema = z.object({
   name: z.string().min(1, 'Name is required').max(200, 'Name too long'),
-  channel_type: z.enum(['webhook', 'mattermost', 'email']),
+  channel_type: z.enum(['slack', 'webhook', 'mattermost', 'email']),
   enabled: z.boolean(),
+  project_id: z.string(),
   url: z.string().optional(),
   secret: z.string().optional(),
   remove_secret: z.boolean(),
@@ -111,8 +121,9 @@ export type NotificationChannelFormValues = z.infer<
 
 export const notificationChannelDefaults: NotificationChannelFormValues = {
   name: '',
-  channel_type: 'webhook',
+  channel_type: 'slack',
   enabled: true,
+  project_id: ALL_PROJECTS,
   url: '',
   secret: '',
   remove_secret: false,
@@ -134,6 +145,7 @@ export function notificationChannelEditValues(
     name: channel.name,
     channel_type: channel.channel_type,
     enabled: channel.enabled,
+    project_id: channel.project_id ?? ALL_PROJECTS,
     events: channel.events,
     smtp_port: '',
     smtp_tls_mode: undefined,
@@ -157,6 +169,8 @@ export function createNotificationChannelRequest(
     channel_type: values.channel_type,
     events: values.events,
     enabled: values.enabled,
+    project_id:
+      values.project_id === ALL_PROJECTS ? undefined : values.project_id,
   }
   if (values.channel_type !== 'email') {
     return { ...request, url: values.url, secret: values.secret || undefined }
@@ -181,6 +195,7 @@ export function updateNotificationChannelRequest(
     name: values.name,
     enabled: values.enabled,
     events: values.events,
+    project_id: values.project_id === ALL_PROJECTS ? '' : values.project_id,
   }
   if (values.channel_type !== 'email') {
     return {
@@ -211,7 +226,60 @@ export function channelTypeLabel(type: NotificationChannelType): string {
     ? 'Webhook'
     : type === 'mattermost'
       ? 'Mattermost'
-      : 'Email (SMTP)'
+      : type === 'slack'
+        ? 'Slack'
+        : 'Email (SMTP)'
+}
+
+function ProjectScopeField({
+  form,
+}: {
+  form: UseFormReturn<NotificationChannelFormValues>
+}) {
+  const projectsQuery = useProjects({ limit: 100 })
+  const projects = projectsQuery.data?.projects ?? []
+  const items = {
+    [ALL_PROJECTS]: 'All projects',
+    ...Object.fromEntries(
+      projects.map((project) => [project.id, project.name]),
+    ),
+  }
+
+  return (
+    <FormField
+      control={form.control}
+      name="project_id"
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>Project</FormLabel>
+          <Select
+            value={field.value}
+            onValueChange={field.onChange}
+            items={items}
+          >
+            <FormControl>
+              <SelectTrigger>
+                <SelectValue placeholder="All projects" />
+              </SelectTrigger>
+            </FormControl>
+            <SelectContent>
+              {Object.entries(items).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <FormDescription>
+            {field.value === ALL_PROJECTS
+              ? 'Receives events from every project, plus runner alerts.'
+              : 'Receives build and release events for this project only.'}
+          </FormDescription>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
 }
 
 export function NotificationChannelFormFields({
@@ -290,17 +358,21 @@ export function NotificationChannelFormFields({
                 </SelectContent>
               </Select>
               <FormDescription>
-                {channelType === 'webhook'
-                  ? 'Sends a JSON payload with build details to your URL.'
-                  : channelType === 'mattermost'
-                    ? 'Sends a formatted message to a Mattermost or Slack incoming webhook.'
-                    : 'Sends HTML email notifications via SMTP.'}
+                {channelType === 'slack'
+                  ? 'Posts Slack messages with a link to the build or release and a mention of the person who triggered it.'
+                  : channelType === 'webhook'
+                    ? 'Sends a JSON payload with event details to your URL.'
+                    : channelType === 'mattermost'
+                      ? 'Sends a formatted message to a Mattermost incoming webhook.'
+                      : 'Sends HTML email notifications via SMTP.'}
               </FormDescription>
               <FormMessage />
             </FormItem>
           )}
         />
       )}
+
+      <ProjectScopeField form={form} />
 
       {channelType === 'email' ? (
         <>
@@ -469,9 +541,9 @@ export function NotificationChannelFormFields({
                 <FormLabel>
                   {editing
                     ? 'New URL (leave blank to keep existing)'
-                    : channelType === 'mattermost'
-                      ? 'Incoming Webhook URL'
-                      : 'Webhook URL'}
+                    : channelType === 'webhook'
+                      ? 'Webhook URL'
+                      : 'Incoming webhook URL'}
                 </FormLabel>
                 <FormControl>
                   <Input
@@ -479,9 +551,11 @@ export function NotificationChannelFormFields({
                     placeholder={
                       editing
                         ? 'https://...'
-                        : channelType === 'mattermost'
-                          ? 'https://mattermost.example.com/hooks/...'
-                          : 'https://example.com/webhook'
+                        : channelType === 'slack'
+                          ? 'https://hooks.slack.com/services/...'
+                          : channelType === 'mattermost'
+                            ? 'https://mattermost.example.com/hooks/...'
+                            : 'https://example.com/webhook'
                     }
                     {...field}
                   />
@@ -550,6 +624,62 @@ export function NotificationChannelFormFields({
                         <FormDescription>
                           Future webhook deliveries will no longer include an
                           HMAC signature.
+                        </FormDescription>
+                      </div>
+                    </FormItem>
+                  )}
+                />
+              ) : null}
+            </>
+          ) : null}
+
+          {channelType === 'slack' ? (
+            <>
+              <FormField
+                control={form.control}
+                name="secret"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      {editing ? 'New bot token' : 'Bot token (optional)'}
+                    </FormLabel>
+                    <FormControl>
+                      <Input
+                        type="password"
+                        placeholder={editing ? undefined : 'xoxb-...'}
+                        autoComplete="off"
+                        disabled={removeSecret}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {channel?.has_secret
+                        ? removeSecret
+                          ? 'The bot token will be removed when you save.'
+                          : 'Leave blank to keep the configured bot token.'
+                        : 'A bot token with the users:read.email scope lets Oore mention the person who triggered a build by matching their sign-in email. Without it, messages name them by email.'}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              {channel?.has_secret ? (
+                <FormField
+                  control={form.control}
+                  name="remove_secret"
+                  render={({ field }) => (
+                    <FormItem className="flex items-start gap-3">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                      <div className="space-y-0.5">
+                        <FormLabel>Remove configured bot token</FormLabel>
+                        <FormDescription>
+                          Messages will name people by email instead of
+                          mentioning them.
                         </FormDescription>
                       </div>
                     </FormItem>

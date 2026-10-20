@@ -8,8 +8,8 @@ use oore_contract::{
     ApiError, BuildPlatform, ConcurrencyPolicy, CreatePipelineRequest, CreatePipelineResponse,
     ListPipelinesResponse, OkResponse, Pipeline, PipelineDetailResponse, PipelineExecutionConfig,
     TriggerConfig, UpdatePipelineRequest, ValidatePipelineRequest, ValidatePipelineResponse,
-    is_valid_pipeline_env_key, parse_repository_pipeline_yaml, validate_artifact_pattern,
-    validate_repository_config_path,
+    is_valid_pipeline_env_key, parse_repository_pipeline_yaml, secret_expression_errors,
+    validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -154,6 +154,10 @@ fn validate_execution_config(cfg: &PipelineExecutionConfig) -> Vec<String> {
     validate_platform_command_override("ios", &cfg.platform_commands.ios, &mut errors);
     validate_platform_command_override("macos", &cfg.platform_commands.macos, &mut errors);
 
+    if let Err(error) = validate_build_number_offset(cfg.build_number_offset) {
+        errors.push(format!("execution_config.build_number_offset {error}"));
+    }
+
     if cfg.artifact_patterns.len() > MAX_ARTIFACT_PATTERNS {
         errors.push(format!(
             "execution_config.artifact_patterns has too many entries (max {MAX_ARTIFACT_PATTERNS})"
@@ -203,6 +207,11 @@ fn validate_execution_config(cfg: &PipelineExecutionConfig) -> Vec<String> {
         }
     }
 
+    errors.extend(
+        secret_expression_errors(cfg)
+            .into_iter()
+            .map(|error| format!("execution_config.{error}")),
+    );
     errors
 }
 

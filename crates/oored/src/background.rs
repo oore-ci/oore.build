@@ -65,6 +65,30 @@ pub fn start_background_tasks(
     tokio::spawn(expired_artifact_monitor(pool, storage));
 }
 
+/// Start the release rollout monitor. It needs the store client, so it takes
+/// the whole app state rather than the pool.
+pub fn start_release_rollout_monitor(state: Arc<crate::AppState>) {
+    tokio::spawn(release_rollout_monitor(state));
+}
+
+/// Advance staged Google Play rollouts on schedule and halt on crash rate.
+///
+/// Runs every 60 seconds. See `releases::run_rollout_tick`.
+async fn release_rollout_monitor(state: Arc<crate::AppState>) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        if let Err(error) = crate::releases::run_rollout_tick(
+            crate::releases::ReleaseDeps::from(&*state),
+            now_unix(),
+            MONITOR_BATCH_SIZE,
+        )
+        .await
+        {
+            error!(error = %error, "release_rollout_monitor: tick failed");
+        }
+    }
+}
+
 async fn stale_pending_artifact_monitor(pool: SqlitePool, storage: Arc<RwLock<StorageBackend>>) {
     loop {
         tokio::time::sleep(Duration::from_secs(60)).await;

@@ -44,6 +44,16 @@ import { createWebOoreClient } from '@/lib/api-client/client'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 
 const FirstAppProgress = lazy(() => import('@/components/first-app-progress'))
+const ReleaseBoard = lazy(() =>
+  import('@/components/releases/release-board').then((module) => ({
+    default: module.ReleaseBoard,
+  })),
+)
+const ReleaseActivity = lazy(() =>
+  import('@/components/releases/release-activity').then((module) => ({
+    default: module.ReleaseActivity,
+  })),
+)
 
 const QaReleasesPage = lazy(() => import('@/components/qa-releases-page'))
 const TriggerBuildDrawer = lazy(
@@ -487,6 +497,12 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
           </Alert>
         ) : null}
 
+        {hasProjects ? (
+          <Suspense fallback={null}>
+            <ReleaseBoard />
+          </Suspense>
+        ) : null}
+
         {hasProjects || projectsQuery.isLoading || projectsQuery.error ? (
           <DashboardBuildOverview
             activeBuilds={activeBuilds}
@@ -511,6 +527,12 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
             totalRunners={totalRunners}
             waitingBuilds={waitingBuildsQuery.data ?? 0}
           />
+        ) : null}
+
+        {hasProjects ? (
+          <Suspense fallback={null}>
+            <ReleaseActivity showProject />
+          </Suspense>
         ) : null}
       </div>
     </PageLayout>

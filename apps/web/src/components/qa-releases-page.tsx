@@ -12,9 +12,10 @@ import {
   SmartPhone01Icon,
 } from '@hugeicons/core-free-icons'
 
-import type { Artifact, Build } from '@oore/client/models'
+import type { Artifact, Build, Release } from '@oore/client/models'
 import { useArtifactsForBuilds, useBuilds } from '@/hooks/use-builds'
 import { useProject, useProjects } from '@/hooks/use-projects'
+import { useReleases } from '@/hooks/use-releases'
 import { useQaReleasesStore } from '@/stores/qa-releases-store'
 import {
   artifactInstallReadiness,
@@ -31,6 +32,7 @@ import {
   qaBuildVersion,
   qaProjectVersionBase,
 } from '@/lib/qa-releases'
+import { releaseAudienceLabel } from '@/lib/releases'
 import { PageMeta } from '@/lib/seo'
 import { getStatusVariant } from '@/lib/status-variants'
 import PageLayout from '@/components/page-layout'
@@ -108,13 +110,41 @@ function statusLabel(status: string) {
   return status.replaceAll('_', ' ')
 }
 
+/** Newest store release per build, so QA sees where a version stands. */
+function storeReleasesByBuild(releases: Array<Release>) {
+  const byBuild = new Map<string, Release>()
+  for (const release of [...releases].sort(
+    (left, right) => right.updated_at - left.updated_at,
+  )) {
+    if (!byBuild.has(release.build_id)) byBuild.set(release.build_id, release)
+  }
+  return byBuild
+}
+
+function StoreReleaseBadge({ release }: { release?: Release }) {
+  if (!release) return null
+  return (
+    <Badge
+      variant={
+        release.state === 'halted' || release.state === 'failed'
+          ? 'destructive'
+          : 'outline'
+      }
+    >
+      {releaseAudienceLabel(release)}
+    </Badge>
+  )
+}
+
 function CurrentRelease({
   artifacts,
   build,
+  storeRelease,
   versionBase,
 }: {
   artifacts: Array<Artifact>
   build: Build
+  storeRelease?: Release
   versionBase: string | null
 }) {
   const version = qaBuildVersion(build, artifacts, versionBase)
@@ -139,6 +169,7 @@ function CurrentRelease({
               <HugeiconsIcon icon={CheckmarkCircle02Icon} />
               Ready
             </Badge>
+            <StoreReleaseBadge release={storeRelease} />
           </CardTitle>
           <CardDescription>
             Released {relativeTime(releasedAt)}
@@ -391,11 +422,13 @@ function RecentReleases({
   artifactsByBuild,
   buildsByNewest,
   currentBuildId,
+  storeReleases,
   versionBase,
 }: {
   artifactsByBuild: Map<string, Array<Artifact>>
   buildsByNewest: Array<Build>
   currentBuildId: string
+  storeReleases: Map<string, Release>
   versionBase: string | null
 }) {
   const releases = buildsByNewest
@@ -443,6 +476,7 @@ function RecentReleases({
                 </ItemDescription>
               </ItemContent>
               <ItemActions>
+                <StoreReleaseBadge release={storeReleases.get(build.id)} />
                 {platforms.android ? (
                   <Badge variant="outline">Android</Badge>
                 ) : null}
@@ -475,6 +509,15 @@ function ReleaseWorkspace({
     (build) => artifactsByBuild.get(build.id) ?? [],
   )
   const versionBase = qaProjectVersionBase(projectArtifacts)
+  const projectId = projectBuilds.at(0)?.project_id
+  const storeReleasesQuery = useReleases(
+    { project_id: projectId, limit: 50 },
+    { enabled: !!projectId, select: (data) => data.releases },
+  )
+  const storeReleases = useMemo(
+    () => storeReleasesByBuild(storeReleasesQuery.data ?? []),
+    [storeReleasesQuery.data],
+  )
   const release = projectBuilds.find(
     (build) =>
       build.status === 'succeeded' &&
@@ -528,6 +571,7 @@ function ReleaseWorkspace({
       <CurrentRelease
         artifacts={artifactsByBuild.get(release.id) ?? []}
         build={release}
+        storeRelease={storeReleases.get(release.id)}
         versionBase={versionBase}
       />
       <NewerBuildActivity builds={newerBuilds} versionBase={versionBase} />
@@ -536,6 +580,7 @@ function ReleaseWorkspace({
         artifactsByBuild={artifactsByBuild}
         buildsByNewest={projectBuilds}
         currentBuildId={release.id}
+        storeReleases={storeReleases}
         versionBase={versionBase}
       />
     </div>

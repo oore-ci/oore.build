@@ -198,6 +198,35 @@ export function PipelineIdentityAndConfigSection({
                     )}
                   />
 
+                  <FormField
+                    control={form.control}
+                    name="build_number_offset"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Build number offset (optional)</FormLabel>
+                        <FormControl>
+                          <Input
+                            inputMode="numeric"
+                            placeholder="0"
+                            className="font-mono"
+                            {...field}
+                          />
+                        </FormControl>
+                        <p className="text-xs text-muted-foreground">
+                          Added to the build number to form{' '}
+                          <span className="font-mono">OORE_VERSION_CODE</span>.
+                          Set it above the version code your app already has in
+                          the store, then pass{' '}
+                          <span className="font-mono">
+                            --build-number=$OORE_VERSION_CODE
+                          </span>{' '}
+                          to <span className="font-mono">flutter build</span>.
+                        </p>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
                   {previewDefaults.length > 0 ? (
                     <Alert>
                       <AlertTitle>Default build commands</AlertTitle>

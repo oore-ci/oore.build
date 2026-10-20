@@ -20,6 +20,7 @@ export const pipelineFormSchema = z
     android_signing_debug_key_password: z.string().optional(),
     ios_signing_enabled: z.boolean(),
     ios_signing_mode: z.enum(['manual', 'api', 'hybrid']),
+    ios_signing_export_method: z.enum(['ad_hoc', 'app_store']),
     ios_signing_team_id: z.string().optional(),
     ios_signing_bundle_ids: z.string().optional(),
     ios_signing_p12_password: z.string().optional(),
@@ -29,6 +30,15 @@ export const pipelineFormSchema = z
       .string()
       .optional()
       .refine((v) => !v || v.trim().length <= 64, 'Max 64 characters'),
+    build_number_offset: z
+      .string()
+      .optional()
+      .refine(
+        (v) =>
+          !v?.trim() ||
+          (/^\d+$/.test(v.trim()) && Number(v.trim()) < 2_100_000_000),
+        'Must be a whole number below 2,100,000,000',
+      ),
     enable_customization: z.boolean(),
     pre_build_commands: z.string().optional(),
     build_commands: z.string().optional(),

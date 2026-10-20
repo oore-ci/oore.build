@@ -1,0 +1,56 @@
+---
+title: 'Send Notifications to Slack'
+description: 'Post build failures, release uploads, and rollout changes to a Slack channel and mention the person who triggered them.'
+status: implemented
+---
+
+Slack channels post a message when a build finishes, a runner goes offline, or a release or rollout changes state. Each message links to the build or release in Oore. When a bot token is set, the message mentions the person who triggered the build or release.
+
+Oore sends every request from the backend host. Slack never calls back into Oore, so the backend stays private.
+
+## What you need
+
+- A Slack app with an incoming webhook for the target channel
+- Optionally, a bot token from the same app with the `users:read.email` scope
+- A **Public URL (HTTPS)** set to the browser-visible Oore URL under **Settings > General > Network settings**, so messages can link to the build or release
+- The Owner or Admin role in Oore
+
+## 1. Create the Slack app
+
+1. In Slack, create an app for your workspace.
+2. Under **Incoming Webhooks**, turn webhooks on and add a webhook for the channel. Copy the webhook URL.
+3. To mention people, add the `users:read.email` bot scope under **OAuth & Permissions**, install the app, and copy the bot token. It starts with `xoxb-`.
+
+## 2. Add the channel in Oore
+
+1. Open **Settings > Notifications** and select **Add channel**.
+2. Set **Type** to **Slack**.
+3. Choose a **Project** to post only that project's events, or keep **All projects**. Runner alerts only go to channels for all projects.
+4. Paste the webhook URL and, if you have one, the bot token.
+5. Pick the events to send, or leave them all unchecked to send every event.
+6. Save, then select **Test**.
+
+The test message says whether mentions work. Oore looks up the email you signed in with, so a mismatch between your Oore email and your Slack email shows up here.
+
+## Events
+
+| Event            | Sent when                                          |
+| ---------------- | -------------------------------------------------- |
+| Succeeded        | A build succeeds                                   |
+| Failed           | A build fails; the message links to the build logs |
+| Canceled         | A build is canceled                                |
+| Timed out        | A build exceeds its timeout                        |
+| Expired          | A queued build expires                             |
+| Runner offline   | A runner stops reporting (all-projects channels)   |
+| Release uploaded | A release is uploaded to a store track             |
+| Rollout raised   | A staged rollout moves to a higher percentage      |
+| Rollout halted   | A staged rollout is halted                         |
+| Rollout complete | A rollout reaches 100%                             |
+| Approval needed  | A release waits for approval                       |
+| Release failed   | A release fails                                    |
+
+Messages post as soon as the change happens. Delivery history for each channel is on its settings page.
+
+## Mentions
+
+Oore mentions the person whose Oore email triggered the build or release, using Slack's `users.lookupByEmail`. Builds triggered by a Git push carry the Git username rather than an email, so those messages do not mention anyone. Without a bot token, or when the lookup fails, the message names the person by email instead.

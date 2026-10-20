@@ -56,6 +56,7 @@ use utoipa::{
         // ── Runtime updates ──
         operations::get_runtime_update_status,
         operations::start_runtime_update,
+        operations::get_runtime_update_preflight,
         // ── Users ──
         operations::get_me,
         operations::list_users,
@@ -136,8 +137,26 @@ use utoipa::{
         operations::get_pipeline_ios_signing,
         operations::update_pipeline_ios_signing,
         operations::sync_pipeline_ios_signing,
+        operations::get_pipeline_app_store_publish,
+        operations::update_pipeline_app_store_publish,
         operations::list_pipeline_ios_devices,
         operations::register_pipeline_ios_device,
+        // ── Pipeline Publishing ──
+        operations::get_pipeline_google_play_publish,
+        operations::update_pipeline_google_play_publish,
+        // ── Secrets ──
+        operations::list_instance_secrets,
+        operations::create_instance_secret,
+        operations::rotate_instance_secret,
+        operations::delete_instance_secret,
+        operations::list_project_secrets,
+        operations::create_project_secret,
+        operations::rotate_project_secret,
+        operations::delete_project_secret,
+        operations::list_pipeline_secrets,
+        operations::create_pipeline_secret,
+        operations::rotate_pipeline_secret,
+        operations::delete_pipeline_secret,
         // ── Builds ──
         operations::create_build,
         operations::preview_build_changelog,
@@ -145,6 +164,17 @@ use utoipa::{
         operations::get_build,
         operations::cancel_build,
         operations::rerun_build,
+        // ── Releases ──
+        operations::list_releases,
+        operations::create_release,
+        operations::get_release,
+        operations::raise_release,
+        operations::pause_release,
+        operations::resume_release,
+        operations::halt_release,
+        operations::complete_release,
+        operations::approve_release,
+        operations::list_release_events,
         // ── Audit Logs ──
         operations::list_audit_logs,
         // ── API Tokens ──
@@ -165,6 +195,9 @@ use utoipa::{
         operations::get_job_status,
         operations::get_job_android_signing,
         operations::get_job_ios_signing,
+        operations::get_job_secrets,
+        operations::get_job_publish_plan,
+        operations::report_job_publish_result,
         // ── Build Logs ──
         operations::append_build_logs,
         operations::get_build_logs,
@@ -242,6 +275,9 @@ use utoipa::{
         // Runtime updates
         oore_contract::RuntimeUpdatePhase,
         oore_contract::RuntimeUpdateStatus,
+        oore_contract::RuntimeUpdateCheckStatus,
+        oore_contract::RuntimeUpdateCheck,
+        oore_contract::RuntimeUpdatePreflight,
         // Users
         oore_contract::UserRole,
         oore_contract::UserStatus,
@@ -327,6 +363,22 @@ use utoipa::{
         oore_contract::ListPipelinesResponse,
         oore_contract::ValidatePipelineRequest,
         oore_contract::ValidatePipelineResponse,
+        // Publishing
+        oore_contract::GooglePlayReleaseNotesSource,
+        oore_contract::GooglePlayPublishConfig,
+        oore_contract::PipelineGooglePlayPublishResponse,
+        oore_contract::RunnerPublishPlan,
+        oore_contract::PublishStore,
+        oore_contract::RunnerPublishResult,
+        // Secrets
+        oore_contract::SecretScope,
+        oore_contract::SecretSummary,
+        oore_contract::ListSecretsResponse,
+        oore_contract::CreateSecretRequest,
+        oore_contract::RotateSecretRequest,
+        oore_contract::SecretResponse,
+        oore_contract::RunnerJobSecret,
+        oore_contract::RunnerJobSecretsResponse,
         // Android Signing
         oore_contract::AndroidSigningBuildType,
         oore_contract::AndroidSigningProfileInput,
@@ -335,6 +387,7 @@ use utoipa::{
         oore_contract::PipelineAndroidSigningResponse,
         // iOS Signing
         oore_contract::IosSigningMode,
+        oore_contract::IosExportMethod,
         oore_contract::IosCertificateInput,
         oore_contract::IosProvisioningProfileInput,
         oore_contract::IosApiCredentialInput,
@@ -346,6 +399,12 @@ use utoipa::{
         oore_contract::RegisterIosDeviceRequest,
         oore_contract::RegisterIosDeviceResponse,
         oore_contract::SyncPipelineIosSigningResponse,
+        oore_contract::AppStoreDestination,
+        oore_contract::AppStoreReleaseNote,
+        oore_contract::AppStorePublishConfig,
+        oore_contract::PipelineAppStorePublishResponse,
+        oore_contract::RunnerAppStoreUploadCredentials,
+        oore_contract::RunnerAppStorePublishPlan,
         // Builds
         oore_contract::BuildStatus,
         oore_contract::RunnerPolicyBlockReason,
@@ -360,6 +419,21 @@ use utoipa::{
         oore_contract::CancelBuildResponse,
         oore_contract::RerunBuildResponse,
         oore_contract::StepResult,
+        // Releases
+        oore_contract::ReleaseStore,
+        oore_contract::ReleaseState,
+        oore_contract::ReleaseAction,
+        oore_contract::ReleaseHealth,
+        oore_contract::ReleaseApprovalGate,
+        oore_contract::ReleasePolicy,
+        oore_contract::Release,
+        oore_contract::ReleaseHistoryEntry,
+        oore_contract::ReleaseActivityEvent,
+        oore_contract::ListReleasesResponse,
+        oore_contract::ReleaseDetailResponse,
+        oore_contract::ListReleaseActivityResponse,
+        oore_contract::ReleaseActionRequest,
+        oore_contract::CreateReleaseRequest,
         // Runners
         oore_contract::RunnerStatus,
         oore_contract::Runner,
@@ -475,8 +549,11 @@ use utoipa::{
         (name = "Projects", description = "Project CRUD — each project groups one or more pipelines."),
         (name = "Project Members", description = "Per-project role assignments for granular RBAC."),
         (name = "Pipelines", description = "Pipeline configuration — build platforms, commands, triggers, concurrency."),
+        (name = "Pipeline Publishing", description = "Store publishing settings. The runner uploads from its own host after a successful build."),
+        (name = "Secrets", description = "Write-only secrets scoped to the instance, a project or a pipeline. Values are encrypted at rest, referenced as ${{ secrets.NAME }} and never returned."),
         (name = "Pipeline Signing", description = "Code signing configuration — Android keystores, iOS certificates/profiles."),
         (name = "Builds", description = "Build lifecycle — queue, list, detail, cancel."),
+        (name = "Releases", description = "Store releases — staged rollout records with pause, halt, resume, complete and approval."),
         (name = "Runners", description = "Build runner management — register, heartbeat, job claim/status."),
         (name = "Build Logs", description = "Build log ingestion and retrieval — append, paginated fetch, SSE streaming."),
         (name = "Artifacts", description = "Build artifact management — upload, list, download via signed URLs."),
@@ -525,6 +602,10 @@ mod operations {
         pub database: bool,
         pub migrations: bool,
         pub encryption: bool,
+        /// Installed release version from the install root's `VERSION` file.
+        pub version: String,
+        /// Version of the running `oored` binary.
+        pub package_version: String,
     }
 
     // ── Health ──
@@ -857,6 +938,21 @@ mod operations {
         )
     )]
     pub(super) fn start_runtime_update() {}
+
+    /// Check whether a one-click backend update can start
+    ///
+    /// Runs the named preflight checks for the managed macOS update
+    /// supervisor, each with a fix hint. Results are cached for 30 seconds.
+    /// Requires owner role.
+    #[utoipa::path(get, path = "/v1/system/update/preflight", tag = "System",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Backend update preflight checks", body = RuntimeUpdatePreflight),
+            (status = 401, description = "Not authenticated", body = ApiError),
+            (status = 403, description = "Owner role required", body = ApiError),
+        )
+    )]
+    pub(super) fn get_runtime_update_preflight() {}
 
     // ── Users ──
 
@@ -1737,6 +1833,207 @@ mod operations {
     )]
     pub(super) fn validate_pipeline() {}
 
+    // ── Pipeline Publishing ──
+
+    /// Get Google Play publish settings
+    ///
+    /// Requires project read access. Also reports whether the referenced
+    /// service account secret exists in a visible scope.
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/publish/google-play", tag = "Pipeline Publishing",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Google Play publish settings", body = PipelineGooglePlayPublishResponse),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_pipeline_google_play_publish() {}
+
+    /// Update Google Play publish settings
+    ///
+    /// Requires the manage pipelines project permission. The service account
+    /// JSON is stored separately as a secret and referenced by name.
+    #[utoipa::path(put, path = "/v1/pipelines/{pipeline_id}/publish/google-play", tag = "Pipeline Publishing",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        request_body = GooglePlayPublishConfig,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Saved settings", body = PipelineGooglePlayPublishResponse),
+            (status = 400, description = "Invalid settings", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn update_pipeline_google_play_publish() {}
+
+    // ── Secrets ──
+
+    /// List instance secrets
+    ///
+    /// Returns secret names and timestamps. Values are never returned. Requires instance settings read access.
+    #[utoipa::path(get, path = "/v1/secrets", tag = "Secrets",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret names", body = ListSecretsResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+        )
+    )]
+    pub(super) fn list_instance_secrets() {}
+
+    /// Create instance secret
+    ///
+    /// Stores an encrypted value. The response never contains it. Requires instance settings write access.
+    #[utoipa::path(post, path = "/v1/secrets", tag = "Secrets",
+        request_body = CreateSecretRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Secret created", body = SecretResponse),
+            (status = 400, description = "Invalid name or value", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 409, description = "A secret with this name already exists in this scope", body = ApiError),
+        )
+    )]
+    pub(super) fn create_instance_secret() {}
+
+    /// Rotate instance secret
+    ///
+    /// Replaces the stored value. Requires instance settings write access.
+    #[utoipa::path(put, path = "/v1/secrets/{name}", tag = "Secrets",
+        params(("name" = String, Path, description = "Secret name")),
+        request_body = RotateSecretRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret rotated", body = SecretResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Secret not found", body = ApiError),
+        )
+    )]
+    pub(super) fn rotate_instance_secret() {}
+
+    /// Delete instance secret
+    #[utoipa::path(delete, path = "/v1/secrets/{name}", tag = "Secrets",
+        params(("name" = String, Path, description = "Secret name")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret deleted", body = OkResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Secret not found", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_instance_secret() {}
+
+    /// List project secrets
+    ///
+    /// Returns secret names and timestamps. Values are never returned. Requires project read access.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/secrets", tag = "Secrets",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret names", body = ListSecretsResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+        )
+    )]
+    pub(super) fn list_project_secrets() {}
+
+    /// Create project secret
+    ///
+    /// Stores an encrypted value. The response never contains it. Requires the manage pipelines project permission.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/secrets", tag = "Secrets",
+        params(("project_id" = String, Path, description = "Project ID")),
+        request_body = CreateSecretRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Secret created", body = SecretResponse),
+            (status = 400, description = "Invalid name or value", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 409, description = "A secret with this name already exists in this scope", body = ApiError),
+        )
+    )]
+    pub(super) fn create_project_secret() {}
+
+    /// Rotate project secret
+    ///
+    /// Replaces the stored value. Requires the manage pipelines project permission.
+    #[utoipa::path(put, path = "/v1/projects/{project_id}/secrets/{name}", tag = "Secrets",
+        params(("project_id" = String, Path, description = "Project ID"), ("name" = String, Path, description = "Secret name")),
+        request_body = RotateSecretRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret rotated", body = SecretResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Secret not found", body = ApiError),
+        )
+    )]
+    pub(super) fn rotate_project_secret() {}
+
+    /// Delete project secret
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/secrets/{name}", tag = "Secrets",
+        params(("project_id" = String, Path, description = "Project ID"), ("name" = String, Path, description = "Secret name")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret deleted", body = OkResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Secret not found", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_project_secret() {}
+
+    /// List pipeline secrets
+    ///
+    /// Returns secret names and timestamps. Values are never returned. Requires project read access.
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/secrets", tag = "Secrets",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret names", body = ListSecretsResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+        )
+    )]
+    pub(super) fn list_pipeline_secrets() {}
+
+    /// Create pipeline secret
+    ///
+    /// Stores an encrypted value. The response never contains it. Requires the manage pipelines project permission.
+    #[utoipa::path(post, path = "/v1/pipelines/{pipeline_id}/secrets", tag = "Secrets",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        request_body = CreateSecretRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Secret created", body = SecretResponse),
+            (status = 400, description = "Invalid name or value", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 409, description = "A secret with this name already exists in this scope", body = ApiError),
+        )
+    )]
+    pub(super) fn create_pipeline_secret() {}
+
+    /// Rotate pipeline secret
+    ///
+    /// Replaces the stored value. Requires the manage pipelines project permission.
+    #[utoipa::path(put, path = "/v1/pipelines/{pipeline_id}/secrets/{name}", tag = "Secrets",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID"), ("name" = String, Path, description = "Secret name")),
+        request_body = RotateSecretRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret rotated", body = SecretResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Secret not found", body = ApiError),
+        )
+    )]
+    pub(super) fn rotate_pipeline_secret() {}
+
+    /// Delete pipeline secret
+    #[utoipa::path(delete, path = "/v1/pipelines/{pipeline_id}/secrets/{name}", tag = "Secrets",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID"), ("name" = String, Path, description = "Secret name")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Secret deleted", body = OkResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Secret not found", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_pipeline_secret() {}
+
     // ── Pipeline Signing (Android) ──
 
     /// Get Android signing config
@@ -1787,6 +2084,37 @@ mod operations {
         )
     )]
     pub(super) fn update_pipeline_ios_signing() {}
+
+    // ── Pipeline publishing (App Store) ──
+
+    /// Get App Store publish settings
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/publish/app-store", tag = "Pipelines",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "App Store publish settings", body = PipelineAppStorePublishResponse),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_pipeline_app_store_publish() {}
+
+    /// Update App Store publish settings
+    ///
+    /// Publishing uploads the pipeline's App Store IPA to App Store Connect with
+    /// the API key from iOS signing, then sends it to TestFlight groups or an
+    /// App Store version. Enabling it requires iOS signing with the `app_store`
+    /// export method and an App Store Connect API key.
+    #[utoipa::path(put, path = "/v1/pipelines/{pipeline_id}/publish/app-store", tag = "Pipelines",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        request_body = AppStorePublishConfig,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "App Store publish settings updated", body = PipelineAppStorePublishResponse),
+            (status = 400, description = "Invalid settings", body = ApiError),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn update_pipeline_app_store_publish() {}
 
     /// Sync iOS provisioning profiles
     ///
@@ -1903,6 +2231,178 @@ mod operations {
         )
     )]
     pub(super) fn cancel_build() {}
+
+    /// List releases
+    ///
+    /// Releases in projects the caller can read, newest first.
+    #[utoipa::path(get, path = "/v1/releases", tag = "Releases",
+        params(
+            ("project_id" = Option<String>, Query, description = "Filter by project"),
+            ("build_id" = Option<String>, Query, description = "Filter by build"),
+            ("state" = Option<String>, Query, description = "Filter by one state or comma-separated states"),
+            ("limit" = Option<i64>, Query, description = "Page size, 1 to 200 (default 50)"),
+            ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Release list", body = ListReleasesResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+        )
+    )]
+    pub(super) fn list_releases() {}
+
+    /// Create release
+    ///
+    /// Records a release for a succeeded build. Requires the project maintainer role.
+    #[utoipa::path(post, path = "/v1/releases", tag = "Releases",
+        request_body = CreateReleaseRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Created release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Build not found", body = ApiError),
+            (status = 409, description = "Build has not succeeded", body = ApiError),
+        )
+    )]
+    pub(super) fn create_release() {}
+
+    /// Get release
+    ///
+    /// Release detail with its full state history, oldest first.
+    #[utoipa::path(get, path = "/v1/releases/{release_id}", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Release detail", body = ReleaseDetailResponse),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_release() {}
+
+    /// Raise rollout
+    ///
+    /// Raises the rollout to `fraction`, or to the next policy step. Raising to 1 completes the release. Requires maintainer. Writes history, an audit log entry, and a release event.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/raise", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn raise_release() {}
+
+    /// Pause rollout
+    ///
+    /// Stops scheduled steps. Requires developer or maintainer. Writes history, an audit log entry, and a release event.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/pause", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn pause_release() {}
+
+    /// Resume rollout
+    ///
+    /// Resumes a paused or halted release; the next step is one interval away. Requires maintainer. Writes history, an audit log entry, and a release event.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/resume", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn resume_release() {}
+
+    /// Halt rollout
+    ///
+    /// Halts the rollout at the store. A halted release never advances until resumed. Requires developer or maintainer. Writes history, an audit log entry, and a release event.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/halt", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn halt_release() {}
+
+    /// Complete rollout
+    ///
+    /// Rolls out to 100%. Requires maintainer. Writes history, an audit log entry, and a release event.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/complete", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn complete_release() {}
+
+    /// Approve release
+    ///
+    /// Records the maintainer approval required by the release policy. Writes history, an audit log entry, and a release event.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/approve", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn approve_release() {}
+
+    /// List release events
+    ///
+    /// Recent release history entries across projects the caller can read, newest first.
+    #[utoipa::path(get, path = "/v1/release-events", tag = "Releases",
+        params(
+            ("project_id" = Option<String>, Query, description = "Filter by project"),
+            ("limit" = Option<i64>, Query, description = "Page size, 1 to 200 (default 50)"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Release activity", body = ListReleaseActivityResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+        )
+    )]
+    pub(super) fn list_release_events() {}
 
     /// Re-run build
     ///
@@ -2102,6 +2602,69 @@ mod operations {
         )
     )]
     pub(super) fn get_job_android_signing() {}
+
+    /// Get job-scoped secrets
+    ///
+    /// Returns resolved instance, project and pipeline secrets (narrowest scope
+    /// wins) only to the assigned runner while the job is active. Both the runner
+    /// bearer token and job-scoped signing grant are required.
+    #[utoipa::path(get, path = "/v1/runners/{runner_id}/jobs/{job_id}/secrets", tag = "Secrets",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("x-oore-signing-token" = String, Header, description = "Job-scoped signing grant"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Resolved secrets", body = RunnerJobSecretsResponse),
+            (status = 401, description = "Runner authentication or signing grant is missing or invalid", body = ApiError),
+            (status = 403, description = "Runner does not match the active assignment", body = ApiError),
+            (status = 404, description = "Build not found", body = ApiError),
+            (status = 409, description = "Job is not active", body = ApiError),
+            (status = 500, description = "Secrets could not be loaded", body = ApiError),
+        )
+    )]
+    pub(super) fn get_job_secrets() {}
+
+    /// Get job publish plan
+    ///
+    /// Returns enabled store publish settings and the build changelog to the
+    /// assigned runner while the job is active.
+    #[utoipa::path(get, path = "/v1/runners/{runner_id}/jobs/{job_id}/publish", tag = "Pipeline Publishing",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("x-oore-signing-token" = String, Header, description = "Job-scoped signing grant"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Publish plan", body = RunnerPublishPlan),
+            (status = 401, description = "Runner authentication or signing grant is missing or invalid", body = ApiError),
+            (status = 403, description = "Runner does not match the active assignment", body = ApiError),
+            (status = 409, description = "Job is not active", body = ApiError),
+        )
+    )]
+    pub(super) fn get_job_publish_plan() {}
+
+    /// Report a store upload
+    ///
+    /// Records a completed store upload for an active job.
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/publish-results", tag = "Pipeline Publishing",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("x-oore-signing-token" = String, Header, description = "Job-scoped signing grant"),
+        ),
+        request_body = RunnerPublishResult,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Recorded", body = OkResponse),
+            (status = 401, description = "Runner authentication or signing grant is missing or invalid", body = ApiError),
+            (status = 403, description = "Runner does not match the active assignment", body = ApiError),
+            (status = 409, description = "Job is not active", body = ApiError),
+        )
+    )]
+    pub(super) fn report_job_publish_result() {}
 
     /// Get job-scoped iOS signing material
     ///

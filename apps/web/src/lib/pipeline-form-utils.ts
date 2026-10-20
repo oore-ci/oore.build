@@ -3,8 +3,24 @@ import type {
   CreatePipelineRequest,
   Pipeline,
   PipelineExecutionConfig,
+  RepositoryWorkflowExecutionPreview,
 } from '@oore/client/models'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
+
+// The API returns `build_number_offset` before the published client types do.
+interface BuildNumberOffset {
+  build_number_offset?: number
+}
+type VersionedExecutionConfig = PipelineExecutionConfig & BuildNumberOffset
+
+export function buildNumberOffsetField(
+  config?:
+    | ((PipelineExecutionConfig | RepositoryWorkflowExecutionPreview) &
+        BuildNumberOffset)
+    | null,
+): string {
+  return config?.build_number_offset ? String(config.build_number_offset) : ''
+}
 
 export function parseMultiline(raw?: string): Array<string> {
   if (!raw) return []
@@ -109,7 +125,7 @@ export function defaultArtifactPatterns(
 
 export function executionConfigFromForm(
   data: PipelineFormValues,
-): PipelineExecutionConfig {
+): VersionedExecutionConfig {
   const platforms = selectedPlatforms(data)
   const artifactPatterns = parseMultiline(data.artifact_patterns)
 
@@ -138,6 +154,7 @@ export function executionConfigFromForm(
       artifactPatterns.length > 0
         ? artifactPatterns
         : defaultArtifactPatterns(platforms),
+    build_number_offset: Number(data.build_number_offset?.trim() || 0),
   }
 }
 

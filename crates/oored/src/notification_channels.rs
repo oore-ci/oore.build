@@ -48,6 +48,7 @@ fn row_to_channel(row: &sqlx::sqlite::SqliteRow) -> NotificationChannel {
         channel_type,
         enabled: enabled_int != 0,
         events,
+        project_id: row.try_get("project_id").ok().flatten(),
         has_url: encrypted_url.is_some(),
         has_secret: encrypted_secret.is_some(),
         has_smtp_config: encrypted_config.is_some(),
@@ -69,6 +70,7 @@ fn row_to_delivery(row: &sqlx::sqlite::SqliteRow) -> NotificationDelivery {
         id: row.get("id"),
         channel_id: row.get("channel_id"),
         build_id: row.try_get("build_id").ok().flatten(),
+        release_id: row.try_get("release_id").ok().flatten(),
         event_type: row.get("event_type"),
         status,
         attempt_count: row.get("attempt_count"),
@@ -87,6 +89,12 @@ const VALID_EVENTS: &[&str] = &[
     "timed_out",
     "expired",
     "runner_offline",
+    "release_uploaded",
+    "rollout_step_raised",
+    "rollout_halted",
+    "rollout_completed",
+    "release_approval_needed",
+    "release_failed",
 ];
 
 fn validate_events(events: &[String]) -> Result<(), (StatusCode, Json<ApiError>)> {
@@ -120,6 +128,55 @@ fn validate_url(url: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
             StatusCode::BAD_REQUEST,
             "invalid_input",
             "URL must use http or https scheme",
+        ));
+    }
+    Ok(())
+}
+
+/// Check that a project scope names an existing project. `None` and empty
+/// strings mean instance-wide.
+async fn validate_project_scope(
+    pool: &sqlx::SqlitePool,
+    project_id: Option<&str>,
+) -> Result<Option<String>, (StatusCode, Json<ApiError>)> {
+    let Some(project_id) = project_id.map(str::trim).filter(|id| !id.is_empty()) else {
+        return Ok(None);
+    };
+    let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM projects WHERE id = ?1")
+        .bind(project_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to check notification channel project");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to check project",
+            )
+        })?;
+    if exists == 0 {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "project_id does not match a project",
+        ));
+    }
+    Ok(Some(project_id.to_string()))
+}
+
+fn validate_slack_bot_token(
+    channel_type: NotificationChannelType,
+    secret: Option<&str>,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let token = secret.unwrap_or_default();
+    if channel_type == NotificationChannelType::Slack
+        && !token.is_empty()
+        && !token.starts_with("xoxb-")
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "Slack bot token must start with xoxb-",
         ));
     }
     Ok(())
@@ -188,6 +245,7 @@ pub async fn create_notification_channel(
     validate_events(&req.events)?;
 
     let pool = &state.db;
+    let project_id = validate_project_scope(pool, req.project_id.as_deref()).await?;
 
     let id = Uuid::new_v4().to_string();
     let now = now_unix();
@@ -195,22 +253,25 @@ pub async fn create_notification_channel(
 
     // Branch on channel type for field validation and encryption
     let (encrypted_url, encrypted_secret, encrypted_config) = match req.channel_type {
-        NotificationChannelType::Webhook | NotificationChannelType::Mattermost => {
+        NotificationChannelType::Webhook
+        | NotificationChannelType::Mattermost
+        | NotificationChannelType::Slack => {
             let url = req.url.as_deref().ok_or_else(|| {
                 api_err(
                     StatusCode::BAD_REQUEST,
                     "invalid_input",
-                    "url is required for webhook/mattermost channels",
+                    "url is required for webhook, mattermost and slack channels",
                 )
             })?;
             if req.smtp_config.is_some() {
                 return Err(api_err(
                     StatusCode::BAD_REQUEST,
                     "invalid_input",
-                    "smtp_config is not allowed for webhook/mattermost channels",
+                    "smtp_config is not allowed for webhook, mattermost and slack channels",
                 ));
             }
             validate_url(url)?;
+            validate_slack_bot_token(req.channel_type, req.secret.as_deref())?;
 
             let enc_url = crypto::encrypt(url, &state.encryption_key).map_err(|e| {
                 error!(error = %e, "failed to encrypt notification channel URL");
@@ -284,14 +345,15 @@ pub async fn create_notification_channel(
 
     sqlx::query(
         "INSERT INTO notification_channels \
-         (id, name, channel_type, enabled, event_filter_json, encrypted_url, encrypted_secret, encrypted_config, created_by, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+         (id, name, channel_type, enabled, event_filter_json, project_id, encrypted_url, encrypted_secret, encrypted_config, created_by, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
     )
     .bind(&id)
     .bind(name)
     .bind(&channel_type_str)
     .bind(req.enabled as i32)
     .bind(&events_json)
+    .bind(&project_id)
     .bind(&encrypted_url)
     .bind(&encrypted_secret)
     .bind(&encrypted_config)
@@ -326,6 +388,7 @@ pub async fn create_notification_channel(
         channel_type: req.channel_type,
         enabled: req.enabled,
         events: req.events,
+        project_id,
         has_url: encrypted_url.is_some(),
         has_secret: encrypted_secret.is_some(),
         has_smtp_config: encrypted_config.is_some(),
@@ -519,6 +582,14 @@ pub async fn update_notification_channel(
         existing.get::<Option<String>, _>("event_filter_json")
     };
 
+    let project_id = match req.project_id.as_deref() {
+        Some(project_id) => validate_project_scope(pool, Some(project_id)).await?,
+        None => existing
+            .try_get::<Option<String>, _>("project_id")
+            .ok()
+            .flatten(),
+    };
+
     // Determine existing channel type for field-level validation
     let channel_type_str: String = existing.get("channel_type");
     let channel_type = channel_type_str
@@ -526,12 +597,14 @@ pub async fn update_notification_channel(
         .unwrap_or(NotificationChannelType::Webhook);
 
     let (encrypted_url, encrypted_secret, encrypted_config) = match channel_type {
-        NotificationChannelType::Webhook | NotificationChannelType::Mattermost => {
+        NotificationChannelType::Webhook
+        | NotificationChannelType::Mattermost
+        | NotificationChannelType::Slack => {
             if req.smtp_config.is_some() {
                 return Err(api_err(
                     StatusCode::BAD_REQUEST,
                     "invalid_input",
-                    "smtp_config is not allowed for webhook/mattermost channels",
+                    "smtp_config is not allowed for webhook, mattermost and slack channels",
                 ));
             }
 
@@ -549,6 +622,7 @@ pub async fn update_notification_channel(
                 existing.get::<Option<String>, _>("encrypted_url")
             };
 
+            validate_slack_bot_token(channel_type, req.secret.as_deref())?;
             let enc_secret = if let Some(ref secret) = req.secret {
                 if secret.is_empty() {
                     None
@@ -698,7 +772,8 @@ pub async fn update_notification_channel(
     sqlx::query(
         "UPDATE notification_channels \
          SET name = ?1, enabled = ?2, event_filter_json = ?3, \
-             encrypted_url = ?4, encrypted_secret = ?5, encrypted_config = ?6, updated_at = ?7 \
+             encrypted_url = ?4, encrypted_secret = ?5, encrypted_config = ?6, updated_at = ?7, \
+             project_id = ?9 \
          WHERE id = ?8",
     )
     .bind(name)
@@ -709,6 +784,7 @@ pub async fn update_notification_channel(
     .bind(&encrypted_config)
     .bind(now)
     .bind(&id)
+    .bind(&project_id)
     .execute(pool)
     .await
     .map_err(|e| {
@@ -903,13 +979,22 @@ pub async fn test_notification_channel(
                     )
                 })?;
 
-            crate::notification_dispatch::send_notification(
-                &url,
-                secret.as_deref(),
-                channel_type,
-                &crate::notification_dispatch::test_payload(),
-            )
-            .await
+            if channel_type == NotificationChannelType::Slack {
+                crate::notification_dispatch::send_slack_test(
+                    &url,
+                    secret.as_deref(),
+                    &auth.0.email,
+                )
+                .await
+            } else {
+                crate::notification_dispatch::send_notification(
+                    &url,
+                    secret.as_deref(),
+                    channel_type,
+                    &crate::notification_dispatch::test_payload(),
+                )
+                .await
+            }
         }
     };
 
