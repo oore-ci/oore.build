@@ -2464,6 +2464,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oore-google-play"
+version = "0.1.46"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "jsonwebtoken",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "oore-runner"
 version = "0.1.46"
 dependencies = [
@@ -2473,6 +2486,7 @@ dependencies = [
  "hex",
  "libc",
  "oore-contract",
+ "oore-google-play",
  "rand 0.8.7",
  "reqwest",
  "serde",

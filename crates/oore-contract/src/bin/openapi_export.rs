@@ -138,6 +138,9 @@ use utoipa::{
         operations::sync_pipeline_ios_signing,
         operations::list_pipeline_ios_devices,
         operations::register_pipeline_ios_device,
+        // ── Pipeline Publishing ──
+        operations::get_pipeline_google_play_publish,
+        operations::update_pipeline_google_play_publish,
         // ── Secrets ──
         operations::list_instance_secrets,
         operations::create_instance_secret,
@@ -179,6 +182,8 @@ use utoipa::{
         operations::get_job_android_signing,
         operations::get_job_ios_signing,
         operations::get_job_secrets,
+        operations::get_job_publish_plan,
+        operations::report_job_publish_result,
         // ── Build Logs ──
         operations::append_build_logs,
         operations::get_build_logs,
@@ -341,6 +346,13 @@ use utoipa::{
         oore_contract::ListPipelinesResponse,
         oore_contract::ValidatePipelineRequest,
         oore_contract::ValidatePipelineResponse,
+        // Publishing
+        oore_contract::GooglePlayReleaseNotesSource,
+        oore_contract::GooglePlayPublishConfig,
+        oore_contract::PipelineGooglePlayPublishResponse,
+        oore_contract::RunnerPublishPlan,
+        oore_contract::PublishStore,
+        oore_contract::RunnerPublishResult,
         // Secrets
         oore_contract::SecretScope,
         oore_contract::SecretSummary,
@@ -498,6 +510,7 @@ use utoipa::{
         (name = "Projects", description = "Project CRUD — each project groups one or more pipelines."),
         (name = "Project Members", description = "Per-project role assignments for granular RBAC."),
         (name = "Pipelines", description = "Pipeline configuration — build platforms, commands, triggers, concurrency."),
+        (name = "Pipeline Publishing", description = "Store publishing settings. The runner uploads from its own host after a successful build."),
         (name = "Secrets", description = "Write-only secrets scoped to the instance, a project or a pipeline. Values are encrypted at rest, referenced as ${{ secrets.NAME }} and never returned."),
         (name = "Pipeline Signing", description = "Code signing configuration — Android keystores, iOS certificates/profiles."),
         (name = "Builds", description = "Build lifecycle — queue, list, detail, cancel."),
@@ -1761,6 +1774,39 @@ mod operations {
     )]
     pub(super) fn validate_pipeline() {}
 
+    // ── Pipeline Publishing ──
+
+    /// Get Google Play publish settings
+    ///
+    /// Requires project read access. Also reports whether the referenced
+    /// service account secret exists in a visible scope.
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/publish/google-play", tag = "Pipeline Publishing",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Google Play publish settings", body = PipelineGooglePlayPublishResponse),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_pipeline_google_play_publish() {}
+
+    /// Update Google Play publish settings
+    ///
+    /// Requires the manage pipelines project permission. The service account
+    /// JSON is stored separately as a secret and referenced by name.
+    #[utoipa::path(put, path = "/v1/pipelines/{pipeline_id}/publish/google-play", tag = "Pipeline Publishing",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        request_body = GooglePlayPublishConfig,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Saved settings", body = PipelineGooglePlayPublishResponse),
+            (status = 400, description = "Invalid settings", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn update_pipeline_google_play_publish() {}
+
     // ── Secrets ──
 
     /// List instance secrets
@@ -2317,6 +2363,46 @@ mod operations {
         )
     )]
     pub(super) fn get_job_secrets() {}
+
+    /// Get job publish plan
+    ///
+    /// Returns enabled store publish settings and the build changelog to the
+    /// assigned runner while the job is active.
+    #[utoipa::path(get, path = "/v1/runners/{runner_id}/jobs/{job_id}/publish", tag = "Pipeline Publishing",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("x-oore-signing-token" = String, Header, description = "Job-scoped signing grant"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Publish plan", body = RunnerPublishPlan),
+            (status = 401, description = "Runner authentication or signing grant is missing or invalid", body = ApiError),
+            (status = 403, description = "Runner does not match the active assignment", body = ApiError),
+            (status = 409, description = "Job is not active", body = ApiError),
+        )
+    )]
+    pub(super) fn get_job_publish_plan() {}
+
+    /// Report a store upload
+    ///
+    /// Records a completed store upload for an active job.
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/publish-results", tag = "Pipeline Publishing",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("x-oore-signing-token" = String, Header, description = "Job-scoped signing grant"),
+        ),
+        request_body = RunnerPublishResult,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Recorded", body = OkResponse),
+            (status = 401, description = "Runner authentication or signing grant is missing or invalid", body = ApiError),
+            (status = 403, description = "Runner does not match the active assignment", body = ApiError),
+            (status = 409, description = "Job is not active", body = ApiError),
+        )
+    )]
+    pub(super) fn report_job_publish_result() {}
 
     /// Get job-scoped iOS signing material
     ///
