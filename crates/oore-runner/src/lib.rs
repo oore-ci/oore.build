@@ -3794,7 +3794,7 @@ impl BuildAuthorityState {
         #[allow(deprecated)]
         let failures = self
             .consecutive_failures
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 Some(value.saturating_add(1))
             })
             .unwrap_or(u8::MAX)
