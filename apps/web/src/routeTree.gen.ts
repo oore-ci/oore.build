@@ -29,6 +29,7 @@ import { Route as SettingsNotificationsRouteRouteImport } from './routes/setting
 import { Route as SettingsPreferencesRouteImport } from './routes/settings/preferences'
 import { Route as SettingsRetentionRouteImport } from './routes/settings/retention'
 import { Route as SettingsRunnersRouteImport } from './routes/settings/runners'
+import { Route as SettingsSecretsRouteImport } from './routes/settings/secrets'
 import { Route as SettingsUsersRouteImport } from './routes/settings/users'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as SetupCompleteRouteImport } from './routes/setup/complete'
@@ -159,6 +160,13 @@ const SettingsRunnersRoute = SettingsRunnersRouteImport.update({
   getParentRoute: () => SettingsRouteRoute,
 } as any).lazy(() =>
   import('./routes/settings/runners.lazy').then((d) => d.Route),
+)
+const SettingsSecretsRoute = SettingsSecretsRouteImport.update({
+  id: '/secrets',
+  path: '/secrets',
+  getParentRoute: () => SettingsRouteRoute,
+} as any).lazy(() =>
+  import('./routes/settings/secrets.lazy').then((d) => d.Route),
 )
 const SettingsUsersRoute = SettingsUsersRouteImport.update({
   id: '/users',
@@ -299,6 +307,7 @@ export interface FileRoutesByFullPath {
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
+  '/settings/secrets': typeof SettingsSecretsRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -334,6 +343,7 @@ export interface FileRoutesByTo {
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
+  '/settings/secrets': typeof SettingsSecretsRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -376,6 +386,7 @@ export interface FileRoutesById {
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
+  '/settings/secrets': typeof SettingsSecretsRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -420,6 +431,7 @@ export interface FileRouteTypes {
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
+    | '/settings/secrets'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -455,6 +467,7 @@ export interface FileRouteTypes {
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
+    | '/settings/secrets'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -496,6 +509,7 @@ export interface FileRouteTypes {
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
+    | '/settings/secrets'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -671,6 +685,13 @@ declare module '@tanstack/react-router' {
       path: '/runners'
       fullPath: '/settings/runners'
       preLoaderRoute: typeof SettingsRunnersRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/secrets': {
+      id: '/settings/secrets'
+      path: '/secrets'
+      fullPath: '/settings/secrets'
+      preLoaderRoute: typeof SettingsSecretsRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/users': {
@@ -931,6 +952,7 @@ interface SettingsRouteRouteChildren {
   SettingsPreferencesRoute: typeof SettingsPreferencesRoute
   SettingsRetentionRoute: typeof SettingsRetentionRoute
   SettingsRunnersRoute: typeof SettingsRunnersRoute
+  SettingsSecretsRoute: typeof SettingsSecretsRoute
   SettingsUsersRoute: typeof SettingsUsersRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
 }
@@ -944,6 +966,7 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsPreferencesRoute: SettingsPreferencesRoute,
   SettingsRetentionRoute: SettingsRetentionRoute,
   SettingsRunnersRoute: SettingsRunnersRoute,
+  SettingsSecretsRoute: SettingsSecretsRoute,
   SettingsUsersRoute: SettingsUsersRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 }

@@ -1,6 +1,7 @@
 import { useId } from 'react'
 
 import { cn } from '@/lib/utils'
+import { Separator } from '@/components/ui/separator'
 
 export function SettingsSurface({
   className,
@@ -18,6 +19,11 @@ export function SettingsSurface({
       {...props}
     />
   )
+}
+
+/** Divides subsections edge to edge inside an inset `SettingsSurface`. */
+export function SettingsSurfaceSeparator() {
+  return <Separator className="-mx-4 sm:-mx-5 data-horizontal:w-auto" />
 }
 
 export function SettingsSection({

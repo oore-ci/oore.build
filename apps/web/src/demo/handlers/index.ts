@@ -16,6 +16,7 @@ import { notificationHandlers } from './notifications'
 import { retentionHandlers } from './retention'
 import { auditLogHandlers } from './audit-logs'
 import { apiTokenHandlers } from './api-tokens'
+import { secretHandlersList } from './secrets'
 
 export const allHandlers = [
   ...demoReadOnlyGuardHandlers,
@@ -34,4 +35,5 @@ export const allHandlers = [
   ...retentionHandlers,
   ...auditLogHandlers,
   ...apiTokenHandlers,
+  ...secretHandlersList,
 ]

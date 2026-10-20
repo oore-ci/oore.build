@@ -63,6 +63,9 @@ import {
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { searchChoice } from '@/lib/search-input'
+import type { SearchInput } from '@/lib/search-input'
 import { PipelineConfigurationCard } from '../-pipeline-configuration-card'
 
 const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
@@ -112,10 +115,33 @@ function RecentBuildsTable({ builds }: { builds: Array<Build> }) {
 
 const loadTriggerBuildDrawer = () => import('@/components/trigger-build-drawer')
 const TriggerBuildDrawer = lazy(loadTriggerBuildDrawer)
+const GooglePlayPublishSection = lazy(() =>
+  import('@/components/publish/google-play-publish-section').then((module) => ({
+    default: module.GooglePlayPublishSection,
+  })),
+)
+const SecretsPanel = lazy(() =>
+  import('@/components/secrets/secrets-panel').then((module) => ({
+    default: module.SecretsPanel,
+  })),
+)
+
+const TAB_VALUES = ['overview', 'publishing', 'secrets'] as const
+type TabValue = (typeof TAB_VALUES)[number]
+
+interface PipelineDetailSearch {
+  tab?: TabValue
+}
+
+function validatePipelineSearch(search: SearchInput): PipelineDetailSearch {
+  const tab = searchChoice(search, 'tab', TAB_VALUES)
+  return { tab: tab === 'overview' ? undefined : tab }
+}
 
 export const Route = createFileRoute(
   '/projects/$projectId/pipelines/$pipelineId/',
 )({
+  validateSearch: validatePipelineSearch,
   beforeLoad: () => {
     const instance = getActiveInstanceOrRedirect()
     requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
@@ -130,11 +156,14 @@ export const Route = createFileRoute(
 function PipelineDetailPage() {
   const { projectId, pipelineId } = Route.useParams()
   const navigate = useNavigate()
+  const { tab = 'overview' } = Route.useSearch()
   const { data, isLoading, error } = usePipeline(pipelineId)
-  const [canWriteGlobally, canTriggerBuildGlobally] = useHasPermissions([
-    'pipelines:write',
-    'builds:write',
-  ])
+  const [canWriteGlobally, canTriggerBuildGlobally, canReadInstanceSettings] =
+    useHasPermissions([
+      'pipelines:write',
+      'builds:write',
+      'instance_settings:read',
+    ])
   const { data: projectData } = useProject(projectId)
   const projectRole = projectData?.project.current_user_role
   const canWrite =
@@ -324,42 +353,100 @@ function PipelineDetailPage() {
         </Alert>
       ) : null}
 
-      <PipelineConfigurationCard
-        androidSigning={signingQuery.data}
-        iosSigning={iosSigningQuery.data}
-        manualOnlyTriggers={manualOnlyTriggers}
-        pipeline={pipeline}
-      />
-      {/* Recent builds */}
-      <Card>
-        <CardContent>
-          <h3 className="pb-3 text-sm font-medium">Recent builds</h3>
-          {builds.length === 0 ? (
-            <Empty className="p-8">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <HugeiconsIcon icon={PlayIcon} />
-                </EmptyMedia>
-                <EmptyTitle>No builds yet</EmptyTitle>
-                <EmptyDescription>
-                  Run this pipeline to see its status, output, and artifacts
-                  here.
-                </EmptyDescription>
-              </EmptyHeader>
-              {canTriggerBuild && projectHasSource ? (
-                <EmptyContent>
-                  <Button size="sm" onClick={() => setBuildDrawerOpen(true)}>
-                    <HugeiconsIcon icon={PlayIcon} />
-                    Run first build
-                  </Button>
-                </EmptyContent>
-              ) : null}
-            </Empty>
-          ) : (
-            <RecentBuildsTable builds={builds} />
-          )}
-        </CardContent>
-      </Card>
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          const next = TAB_VALUES.find((candidate) => candidate === value)
+          if (!next) return
+          void navigate({
+            to: '/projects/$projectId/pipelines/$pipelineId',
+            params: { projectId, pipelineId },
+            search: { tab: next === 'overview' ? undefined : next },
+            replace: true,
+          })
+        }}
+      >
+        <TabsList variant="line">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="publishing">Publishing</TabsTrigger>
+          <TabsTrigger value="secrets">Secrets</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="flex flex-col gap-4 pt-2">
+          <PipelineConfigurationCard
+            androidSigning={signingQuery.data}
+            iosSigning={iosSigningQuery.data}
+            manualOnlyTriggers={manualOnlyTriggers}
+            pipeline={pipeline}
+          />
+          {/* Recent builds */}
+          <Card>
+            <CardContent>
+              <h3 className="pb-3 text-sm font-medium">Recent builds</h3>
+              {builds.length === 0 ? (
+                <Empty className="p-8">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <HugeiconsIcon icon={PlayIcon} />
+                    </EmptyMedia>
+                    <EmptyTitle>No builds yet</EmptyTitle>
+                    <EmptyDescription>
+                      Run this pipeline to see its status, output, and artifacts
+                      here.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                  {canTriggerBuild && projectHasSource ? (
+                    <EmptyContent>
+                      <Button
+                        size="sm"
+                        onClick={() => setBuildDrawerOpen(true)}
+                      >
+                        <HugeiconsIcon icon={PlayIcon} />
+                        Run first build
+                      </Button>
+                    </EmptyContent>
+                  ) : null}
+                </Empty>
+              ) : (
+                <RecentBuildsTable builds={builds} />
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="publishing" className="pt-2">
+          {tab === 'publishing' ? (
+            <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+              <GooglePlayPublishSection
+                androidSigning={signingQuery.data}
+                canReadInstanceSecrets={canReadInstanceSettings}
+                canWrite={canWrite}
+                pipelineId={pipeline.id}
+                platforms={pipeline.execution_config.platforms}
+                projectId={projectId}
+              />
+            </Suspense>
+          ) : null}
+        </TabsContent>
+
+        <TabsContent value="secrets" className="pt-2">
+          {tab === 'secrets' ? (
+            <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+              <SecretsPanel
+                canWrite={canWrite}
+                inheritedFrom={[
+                  { scope: 'project', projectId },
+                  ...(canReadInstanceSettings
+                    ? [{ scope: 'instance' as const }]
+                    : []),
+                ]}
+                target={{ scope: 'pipeline', pipelineId: pipeline.id }}
+                title="Pipeline secrets"
+              />
+            </Suspense>
+          ) : null}
+        </TabsContent>
+      </Tabs>
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
