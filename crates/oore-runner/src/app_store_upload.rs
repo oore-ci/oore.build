@@ -5,7 +5,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use oore_contract::RunnerAppStoreUploadCredentials;
+use oore_contract::{
+    AppStoreDestination, AppStorePublishConfig, PublishStore, RunnerAppStoreUploadCredentials,
+    RunnerPublishResult,
+};
 use serde_json::Value;
 
 /// `altool` looks for `AuthKey_<key id>.p8` in this directory.
@@ -161,6 +164,40 @@ pub(crate) async fn upload_ipa(
     Ok(message)
 }
 
+/// The publish result for an uploaded IPA, from the app identity the runner
+/// recorded when it signed the archive.
+pub(crate) fn publish_result(
+    ios_metadata: &Value,
+    config: &AppStorePublishConfig,
+) -> anyhow::Result<RunnerPublishResult> {
+    let field = |key: &str| {
+        ios_metadata
+            .pointer(&format!("/ios_app/{key}"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("signed IPA metadata has no {key}"))
+    };
+    let build_number = field("build_number")?;
+    // CFBundleVersion may be dotted (1.0.3); its leading number orders builds.
+    let version_code = build_number
+        .parse::<i64>()
+        .ok()
+        .or_else(|| build_number.split('.').next()?.parse().ok())
+        .unwrap_or(0);
+    Ok(RunnerPublishResult {
+        store: PublishStore::AppStore,
+        track: match config.destination {
+            AppStoreDestination::Testflight => config.testflight_groups.join(", "),
+            AppStoreDestination::AppStore => "app_store".to_string(),
+        },
+        package_name: field("bundle_identifier")?,
+        version_code,
+        version_name: Some(field("version")?),
+        rollout_fraction: None,
+        status: "uploaded".to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,6 +244,25 @@ mod tests {
         drop(key);
         assert!(!path.exists());
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn publish_result_uses_signed_app_identity() {
+        let metadata = serde_json::json!({
+            "ios_app": { "bundle_identifier": "com.example.app", "version": "1.2.0", "build_number": "42" }
+        });
+        let config = AppStorePublishConfig {
+            enabled: true,
+            testflight_groups: vec!["QA".to_string(), "Beta".to_string()],
+            ..AppStorePublishConfig::default()
+        };
+        let result = publish_result(&metadata, &config).unwrap();
+        assert_eq!(result.store, PublishStore::AppStore);
+        assert_eq!(result.track, "QA, Beta");
+        assert_eq!(result.package_name, "com.example.app");
+        assert_eq!(result.version_code, 42);
+        assert_eq!(result.version_name.as_deref(), Some("1.2.0"));
+        assert!(publish_result(&serde_json::json!({}), &config).is_err());
     }
 
     #[test]

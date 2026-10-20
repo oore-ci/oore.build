@@ -1,8 +1,9 @@
 {
   "title": "Distribute builds",
   "pages": [
-    "ios-devices",
+    "google-play",
     "app-store",
+    "ios-devices",
     "download",
     "install/android",
     "install/ios"

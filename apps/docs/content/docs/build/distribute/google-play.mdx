@@ -1,0 +1,107 @@
+---
+title: 'Publish to Google Play'
+status: implemented
+description: 'Upload a signed App Bundle to a Google Play track with a staged rollout and release notes.'
+---
+
+Turn on Google Play publishing for a pipeline so a successful Android build
+uploads its signed App Bundle to the track you choose. The runner makes every
+Google Play call from its own host, so the service account key never leaves
+the machine that built the app.
+
+## What you need
+
+- Project developer, maintainer, instance admin, or instance owner access.
+- An app that already exists in Play Console. Google Play does not let
+  the API create an app or upload its first release, so upload the first
+  bundle by hand.
+- A pipeline that runs `flutter build appbundle` and signs the bundle with
+  your upload key. See [Add Android signing](/build/sign/android).
+- A Google Cloud service account with a JSON key, invited in Play Console
+  under **Users and permissions** with release permissions for the app.
+- Outbound HTTPS from the runner host to `oauth2.googleapis.com` and
+  `androidpublisher.googleapis.com`.
+
+## 1. Store the service account key as a secret
+
+Store the whole JSON key file as a project secret. Any scope works; a
+project secret is shared by all of the project's pipelines.
+
+```bash
+jq -n --rawfile value play-service-account.json \
+  '{name: "PLAY_SERVICE_ACCOUNT", value: $value}' |
+  curl -X POST "$OORE_URL/v1/projects/$PROJECT_ID/secrets" \
+    -H "Authorization: Bearer $OORE_TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d @-
+```
+
+See [Use secrets in a pipeline](/build/pipelines/secrets) for scopes and
+rotation.
+
+## 2. Configure publishing
+
+Send the settings with the
+[Update Google Play publish settings](/openapi/operations/update_pipeline_google_play_publish)
+operation:
+
+```bash
+curl -X PUT "$OORE_URL/v1/pipelines/$PIPELINE_ID/publish/google-play" \
+  -H "Authorization: Bearer $OORE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "enabled": true,
+    "service_account_secret": "PLAY_SERVICE_ACCOUNT",
+    "track": "production",
+    "rollout_percent": 5,
+    "release_notes": "changelog"
+  }'
+```
+
+The response includes `service_account_secret_present`, which is `false` until
+the named secret exists in a scope this pipeline can see.
+
+| Field                    | Default | Meaning                                                                                                                                        |
+| ------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                | `false` | Upload after each successful build of this pipeline.                                                                                           |
+| `service_account_secret` |         | Name of the secret holding the service account JSON key.                                                                                       |
+| `track`                  |         | `internal`, `closed`, `open`, `production`, or the name of a custom closed track. `closed` is Play's `alpha` and `open` is `beta`.             |
+| `package_name`           | AAB     | Expected application id. When set, a bundle for a different package fails the upload.                                                          |
+| `rollout_percent`        | `100`   | Initial staged rollout. Below 100 creates an in-progress release for that share of users. The internal track does not support staged rollouts. |
+| `draft`                  | `false` | Create a draft release instead of rolling out.                                                                                                 |
+| `release_notes`          | `none`  | `none`, `changelog` (the build changelog) or `repo_files`.                                                                                     |
+| `release_notes_locale`   | `en-US` | Language for changelog release notes.                                                                                                          |
+| `release_notes_dir`      |         | For `repo_files`: a repository directory with one `<locale>.txt` file per language, such as `release-notes/en-US.txt`.                         |
+| `upload_mapping`         | `true`  | Upload `build/app/outputs/mapping/<variant>/mapping.txt` when the build produced it.                                                           |
+| `in_app_update_priority` |         | In-app update priority, 0 to 5.                                                                                                                |
+
+Release notes longer than Play's 500-character limit are shortened.
+
+## 3. Run a build
+
+After the build, signing and artifact steps succeed, the runner adds a
+`publish-play` step that:
+
+1. Picks the release App Bundle under `build/app/outputs/bundle` and reads its
+   package name, `versionCode` and `versionName`.
+2. Exchanges the service account key for an access token.
+3. Opens a Play edit, uploads the bundle and `mapping.txt`, sets the track
+   release with the configured status and rollout, and commits the edit.
+
+If any earlier step fails, nothing is uploaded. If a Play call fails, the
+`publish-play` step fails with the Play API's error text, and the edit is
+discarded so nothing is left half-staged in Play Console.
+
+## Verify the result
+
+- The build shows a succeeded `publish-play` step, and its log names the track
+  and rollout.
+- Play Console shows the version on the chosen track at the chosen rollout.
+- The audit log has a `store_upload_completed` entry for the build.
+
+## Limits
+
+- One App Bundle per publish. A pipeline that builds several release flavors
+  fails with a list of the bundles it found.
+- Raising, halting and completing a staged rollout after the upload are done
+  in Play Console for now.

@@ -103,7 +103,7 @@ impl<'a> AppStoreConnect<'a> {
 
     fn token(&self) -> AscResult<String> {
         apple_api::generate_app_store_connect_jwt(self.creds)
-            .map_err(|(_, body)| AscError(body.0.error.clone()))
+            .map_err(|(_, body)| AscError(body.0.error))
     }
 
     async fn send(

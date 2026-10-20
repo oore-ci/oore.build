@@ -23,6 +23,7 @@ pub mod observability;
 pub mod oidc;
 pub mod operator;
 pub mod pipeline_ios_signing;
+pub mod pipeline_publish;
 pub mod pipeline_signing;
 pub mod pipelines;
 pub mod project_members;
@@ -35,6 +36,7 @@ pub mod retention;
 pub mod runners;
 pub mod runtime_updates;
 pub mod scheduler;
+pub mod secrets;
 pub mod session;
 pub mod storage;
 pub mod store;
@@ -2737,6 +2739,39 @@ pub async fn build_router_with_recovery(
             "/v1/pipelines/{pipeline_id}/ios-signing/devices/register",
             post(pipeline_ios_signing::register_pipeline_ios_device),
         )
+        .route(
+            "/v1/pipelines/{pipeline_id}/publish/google-play",
+            get(pipeline_publish::get_pipeline_google_play_publish)
+                .put(pipeline_publish::update_pipeline_google_play_publish),
+        )
+        // Secret endpoints (write-only; values are never returned)
+        .route(
+            "/v1/secrets",
+            get(secrets::list_instance_secrets).post(secrets::create_instance_secret),
+        )
+        .route(
+            "/v1/secrets/{name}",
+            axum::routing::put(secrets::rotate_instance_secret)
+                .delete(secrets::delete_instance_secret),
+        )
+        .route(
+            "/v1/projects/{project_id}/secrets",
+            get(secrets::list_project_secrets).post(secrets::create_project_secret),
+        )
+        .route(
+            "/v1/projects/{project_id}/secrets/{name}",
+            axum::routing::put(secrets::rotate_project_secret)
+                .delete(secrets::delete_project_secret),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/secrets",
+            get(secrets::list_pipeline_secrets).post(secrets::create_pipeline_secret),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/secrets/{name}",
+            axum::routing::put(secrets::rotate_pipeline_secret)
+                .delete(secrets::delete_pipeline_secret),
+        )
         // Build endpoints
         .route(
             "/v1/projects/{project_id}/builds",
@@ -2804,6 +2839,18 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/ios-signing",
             get(pipeline_ios_signing::get_job_ios_signing),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/secrets",
+            get(secrets::get_job_secrets),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/publish",
+            get(pipeline_publish::get_job_publish_plan),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/publish-results",
+            post(pipeline_publish::report_job_publish_result),
         )
         .route("/v1/runners", get(runners::list_runners))
         // Build log endpoints

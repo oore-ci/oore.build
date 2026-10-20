@@ -469,13 +469,9 @@ async fn load_uploaded_ipa(pool: &SqlitePool, build_id: &str) -> anyhow::Result<
         .ok_or_else(|| anyhow::anyhow!("build has no App Store IPA artifact"))
 }
 
-/// Records the runner's upload outcome as an `app_store` release. A failed
-/// upload is recorded too, so the board shows why nothing reached Apple.
-pub(crate) async fn record_upload(
-    state: &AppState,
-    build_id: &str,
-    error_message: Option<&str>,
-) -> anyhow::Result<String> {
+/// Records a successful upload as an `app_store` release in `processing`.
+/// The monitor takes it from there.
+pub(crate) async fn record_upload(state: &AppState, build_id: &str) -> anyhow::Result<String> {
     let (project_id, pipeline_id): (String, String) =
         sqlx::query_as("SELECT project_id, pipeline_id FROM builds WHERE id = ?1")
             .bind(build_id)
@@ -489,11 +485,6 @@ pub(crate) async fn record_upload(
         AppStoreDestination::Testflight => config.testflight_groups.join(", "),
         AppStoreDestination::AppStore => "app_store".to_string(),
     };
-    let release_state = if error_message.is_some() {
-        ReleaseState::Failed
-    } else {
-        ReleaseState::Processing
-    };
     let release = releases::create_release(
         ReleaseDeps::from(state),
         NewRelease {
@@ -505,44 +496,38 @@ pub(crate) async fn record_upload(
             package_name: Some(ipa.bundle_id.clone()),
             version_name: Some(ipa.version.clone()),
             version_code: ipa.build_number.parse().ok(),
-            state: release_state,
+            state: ReleaseState::Processing,
             rollout_fraction: 0.0,
             policy: ReleasePolicy::default(),
         },
         &ReleaseActor::System,
-        Some(
-            error_message
-                .unwrap_or("Uploaded to App Store Connect; waiting for Apple to process the build"),
-        ),
+        Some("Uploaded to App Store Connect; waiting for Apple to process the build"),
     )
     .await
     .map_err(|error| anyhow::anyhow!("failed to create App Store release: {error:?}"))?;
 
-    if error_message.is_none() {
-        let now = now_unix();
-        sqlx::query(
-            "INSERT INTO app_store_release_links (
-                release_id, pipeline_id, bundle_id, version, build_number, config,
-                stage, next_poll_at, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'awaiting_build', ?7, ?7, ?7)",
-        )
-        .bind(&release.id)
-        .bind(&pipeline_id)
-        .bind(&ipa.bundle_id)
-        .bind(&ipa.version)
-        .bind(&ipa.build_number)
-        .bind(serde_json::to_string(&config)?)
-        .bind(now)
-        .execute(&state.db)
-        .await?;
-    }
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO app_store_release_links (
+            release_id, pipeline_id, bundle_id, version, build_number, config,
+            stage, next_poll_at, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'awaiting_build', ?7, ?7, ?7)",
+    )
+    .bind(&release.id)
+    .bind(&pipeline_id)
+    .bind(&ipa.bundle_id)
+    .bind(&ipa.version)
+    .bind(&ipa.build_number)
+    .bind(serde_json::to_string(&config)?)
+    .bind(now)
+    .execute(&state.db)
+    .await?;
     info!(
         build_id,
         release_id = %release.id,
         bundle_id = %ipa.bundle_id,
         version = %ipa.version,
         build_number = %ipa.build_number,
-        failed = error_message.is_some(),
         "recorded App Store Connect upload"
     );
     Ok(release.id)

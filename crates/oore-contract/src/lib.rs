@@ -1564,7 +1564,7 @@ pub struct RunnerHeartbeatRequest {
     pub capabilities: serde_json::Value,
 }
 
-pub const RUNNER_PROTOCOL_VERSION: u32 = 4;
+pub const RUNNER_PROTOCOL_VERSION: u32 = 5;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ClaimJobRequest {
@@ -2612,6 +2612,7 @@ fn validate_repository_execution_config(config: &PipelineExecutionConfig) -> Vec
             errors.push(format!("env contains duplicate key '{key}'"));
         }
     }
+    errors.extend(secret_expression_errors(config));
     errors
 }
 
@@ -2718,6 +2719,389 @@ pub struct ValidatePipelineRequest {
 pub struct ValidatePipelineResponse {
     pub valid: bool,
     pub errors: Vec<String>,
+}
+
+// ── Secret types ────────────────────────────────────────────────
+
+/// Maximum secret value size. Large enough for a Google Play service account JSON.
+pub const MAX_SECRET_VALUE_BYTES: usize = 64 * 1024;
+/// Maximum secret name length.
+pub const MAX_SECRET_NAME_LENGTH: usize = 128;
+
+/// Where a secret is defined. A job sees instance, project and pipeline secrets;
+/// on a name clash the narrower scope wins.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretScope {
+    Instance,
+    Project,
+    Pipeline,
+}
+
+impl SecretScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Instance => "instance",
+            Self::Project => "project",
+            Self::Pipeline => "pipeline",
+        }
+    }
+}
+
+/// Secret metadata. Values are write-only and never returned by the user API.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SecretSummary {
+    pub name: String,
+    pub scope: SecretScope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pipeline_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListSecretsResponse {
+    pub secrets: Vec<SecretSummary>,
+}
+
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateSecretRequest {
+    pub name: String,
+    pub value: String,
+}
+
+impl fmt::Debug for CreateSecretRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateSecretRequest")
+            .field("name", &self.name)
+            .field("value", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Replace a secret's value (rotation).
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RotateSecretRequest {
+    pub value: String,
+}
+
+impl fmt::Debug for RotateSecretRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RotateSecretRequest")
+            .field("value", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SecretResponse {
+    pub secret: SecretSummary,
+}
+
+/// A resolved secret delivered to the runner assigned to an active job.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerJobSecret {
+    pub name: String,
+    pub value: String,
+    pub scope: SecretScope,
+}
+
+impl fmt::Debug for RunnerJobSecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RunnerJobSecret")
+            .field("name", &self.name)
+            .field("value", &"[REDACTED]")
+            .field("scope", &self.scope)
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerJobSecretsResponse {
+    pub secrets: Vec<RunnerJobSecret>,
+}
+
+/// Validate a secret name. Names follow environment variable rules.
+pub fn validate_secret_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("must not be empty".to_string());
+    }
+    if name.len() > MAX_SECRET_NAME_LENGTH {
+        return Err(format!("is too long (max {MAX_SECRET_NAME_LENGTH} chars)"));
+    }
+    if !is_valid_pipeline_env_key(name) {
+        return Err("must match [A-Za-z_][A-Za-z0-9_]*".to_string());
+    }
+    Ok(())
+}
+
+/// A `${{ secrets.NAME }}` reference found in a command or env value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretReference {
+    /// Byte offset of `$`.
+    pub start: usize,
+    /// Byte offset just past the closing `}}`.
+    pub end: usize,
+    pub name: String,
+}
+
+/// Parse every `${{ ... }}` expression in `text`. Only `secrets.NAME` is
+/// supported; any other expression is an error so it never reaches a shell.
+pub fn parse_secret_references(text: &str) -> Result<Vec<SecretReference>, String> {
+    let mut references = Vec::new();
+    let mut cursor = 0;
+    while let Some(offset) = text[cursor..].find("${{") {
+        let start = cursor + offset;
+        let body_start = start + 3;
+        let Some(close) = text[body_start..].find("}}") else {
+            return Err("has an unterminated ${{ expression".to_string());
+        };
+        let end = body_start + close + 2;
+        let expression = text[body_start..body_start + close].trim();
+        let name = expression
+            .strip_prefix("secrets.")
+            .filter(|name| is_valid_pipeline_env_key(name))
+            .ok_or_else(|| {
+                format!(
+                    "has unsupported expression '${{{{ {expression} }}}}'; only ${{{{ secrets.NAME }}}} is supported"
+                )
+            })?;
+        references.push(SecretReference {
+            start,
+            end,
+            name: name.to_string(),
+        });
+        cursor = end;
+    }
+    Ok(references)
+}
+
+/// Report malformed `${{ }}` expressions in commands and env values.
+pub fn secret_expression_errors(config: &PipelineExecutionConfig) -> Vec<String> {
+    let mut errors = Vec::new();
+    let mut check = |path: String, text: &str| {
+        if let Err(error) = parse_secret_references(text) {
+            errors.push(format!("{path} {error}"));
+        }
+    };
+    for (stage, commands) in [
+        ("pre_build", &config.commands.pre_build),
+        ("build", &config.commands.build),
+        ("post_build", &config.commands.post_build),
+    ] {
+        for (index, command) in commands.iter().enumerate() {
+            check(format!("commands.{stage}[{index}]"), command);
+        }
+    }
+    for (platform, args) in [
+        ("android", &config.platform_build_args.android),
+        ("ios", &config.platform_build_args.ios),
+        ("macos", &config.platform_build_args.macos),
+    ] {
+        for (index, arg) in args.iter().enumerate() {
+            check(format!("platform_build_args.{platform}[{index}]"), arg);
+        }
+    }
+    for (platform, command) in [
+        ("android", &config.platform_commands.android),
+        ("ios", &config.platform_commands.ios),
+        ("macos", &config.platform_commands.macos),
+    ] {
+        if let Some(command) = command {
+            check(format!("platform_commands.{platform}"), command);
+        }
+    }
+    for (index, entry) in config.env.iter().enumerate() {
+        check(format!("env[{index}].value"), &entry.value);
+    }
+    errors
+}
+
+/// Replace each `${{ secrets.NAME }}` reference with `replacement(NAME)`.
+pub fn replace_secret_references(
+    text: &str,
+    mut replacement: impl FnMut(&str) -> String,
+) -> Result<String, String> {
+    let references = parse_secret_references(text)?;
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for reference in references {
+        out.push_str(&text[cursor..reference.start]);
+        out.push_str(&replacement(&reference.name));
+        cursor = reference.end;
+    }
+    out.push_str(&text[cursor..]);
+    Ok(out)
+}
+
+// ── Pipeline publish types ──────────────────────────────────────
+
+/// Where Google Play release notes come from.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GooglePlayReleaseNotesSource {
+    /// No release notes.
+    #[default]
+    None,
+    /// The build changelog, under `release_notes_locale`.
+    Changelog,
+    /// One `<locale>.txt` file per language in `release_notes_dir`.
+    RepoFiles,
+}
+
+/// Per-pipeline Google Play upload settings. Credentials are referenced by
+/// secret name and never stored here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GooglePlayPublishConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Name of the secret holding the service account JSON key.
+    pub service_account_secret: String,
+    /// Expected application id. When omitted, the AAB's package is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+    /// `internal`, `closed`, `open`, `production`, or a custom track name.
+    pub track: String,
+    /// Initial staged rollout, 0 < percent <= 100. Omitted means 100.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_percent: Option<f64>,
+    /// Create a draft release instead of rolling out.
+    #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub release_notes: GooglePlayReleaseNotesSource,
+    #[serde(default = "default_release_notes_locale")]
+    pub release_notes_locale: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_notes_dir: Option<String>,
+    /// Upload R8/ProGuard `mapping.txt` when the build produced one.
+    #[serde(default = "default_true")]
+    pub upload_mapping: bool,
+    /// In-app update priority, 0 to 5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_app_update_priority: Option<u8>,
+}
+
+fn default_release_notes_locale() -> String {
+    "en-US".to_string()
+}
+
+/// Validate Google Play publish settings, returning every problem found.
+pub fn validate_google_play_publish_config(config: &GooglePlayPublishConfig) -> Vec<String> {
+    let mut errors = Vec::new();
+    if let Err(error) = validate_secret_name(config.service_account_secret.trim()) {
+        errors.push(format!("service_account_secret {error}"));
+    }
+    if let Some(package) = &config.package_name {
+        let valid = package.split('.').count() >= 2
+            && package.split('.').all(|part| {
+                part.chars()
+                    .next()
+                    .is_some_and(|first| first.is_ascii_alphabetic())
+                    && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            });
+        if !valid {
+            errors.push(
+                "package_name must be an Android application id such as com.example.app"
+                    .to_string(),
+            );
+        }
+    }
+    let track = config.track.trim();
+    if track.is_empty()
+        || track.len() > 128
+        || !track
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':'))
+    {
+        errors.push(
+            "track must be internal, closed, open, production, or a custom track name".to_string(),
+        );
+    }
+    if let Some(percent) = config.rollout_percent {
+        if !(percent > 0.0 && percent <= 100.0) {
+            errors.push("rollout_percent must be greater than 0 and at most 100".to_string());
+        } else if percent < 100.0 && track == "internal" {
+            errors.push("the internal track does not support staged rollouts".to_string());
+        } else if percent < 100.0 && config.draft {
+            errors.push("a draft release cannot have a staged rollout".to_string());
+        }
+    }
+    if config.release_notes_locale.trim().is_empty() || config.release_notes_locale.len() > 16 {
+        errors.push("release_notes_locale must be a Play language code such as en-US".to_string());
+    }
+    if config.release_notes == GooglePlayReleaseNotesSource::RepoFiles {
+        match config.release_notes_dir.as_deref() {
+            Some(dir) => {
+                if let Err(error) = validate_repository_config_path(dir) {
+                    errors.push(format!("release_notes_dir {error}"));
+                }
+            }
+            None => errors
+                .push("release_notes_dir is required for repo_files release notes".to_string()),
+        }
+    }
+    if config
+        .in_app_update_priority
+        .is_some_and(|priority| priority > 5)
+    {
+        errors.push("in_app_update_priority must be between 0 and 5".to_string());
+    }
+    errors
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelineGooglePlayPublishResponse {
+    pub pipeline_id: String,
+    /// Absent until publish settings are saved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<GooglePlayPublishConfig>,
+    /// Whether the referenced service account secret exists in a visible scope.
+    pub service_account_secret_present: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+/// Publish work for the runner, fetched with the job-scoped grant.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerPublishPlan {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changelog: Option<String>,
+    /// Present only when Google Play publishing is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub google_play: Option<GooglePlayPublishConfig>,
+    /// Present only when App Store publishing is enabled for an App Store export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_store: Option<RunnerAppStorePublishPlan>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PublishStore {
+    GooglePlay,
+    AppStore,
+}
+
+/// Outcome of a store upload, reported by the runner.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerPublishResult {
+    pub store: PublishStore,
+    /// Store track as sent to the store (for Play: internal, alpha, beta, production or custom).
+    pub track: String,
+    pub package_name: String,
+    pub version_code: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    /// Staged rollout fraction, 0 < f <= 1. Absent for drafts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rollout_fraction: Option<f64>,
+    /// `completed`, `in_progress` or `draft`.
+    pub status: String,
 }
 
 // ── Pipeline Android signing types ──────────────────────────────
@@ -4012,6 +4396,93 @@ pub struct RevokeApiTokenResponse {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn google_play_publish_config_validation() {
+        let parse = |value: serde_json::Value| -> super::GooglePlayPublishConfig {
+            serde_json::from_value(value).unwrap()
+        };
+        let base = serde_json::json!({
+            "enabled": true,
+            "service_account_secret": "PLAY_SERVICE_ACCOUNT",
+            "track": "production",
+            "rollout_percent": 5.0,
+        });
+        let config = parse(base.clone());
+        assert!(super::validate_google_play_publish_config(&config).is_empty());
+        assert_eq!(config.release_notes_locale, "en-US");
+        assert!(config.upload_mapping);
+
+        for (patch, expected) in [
+            (
+                serde_json::json!({"service_account_secret": "bad name"}),
+                "service_account_secret",
+            ),
+            (serde_json::json!({"track": "internal"}), "internal track"),
+            (
+                serde_json::json!({"rollout_percent": 0.0}),
+                "rollout_percent",
+            ),
+            (serde_json::json!({"draft": true}), "draft"),
+            (
+                serde_json::json!({"package_name": "nodots"}),
+                "package_name",
+            ),
+            (
+                serde_json::json!({"release_notes": "repo_files"}),
+                "release_notes_dir",
+            ),
+            (
+                serde_json::json!({"in_app_update_priority": 6}),
+                "in_app_update_priority",
+            ),
+        ] {
+            let mut value = base.clone();
+            for (key, field) in patch.as_object().unwrap() {
+                value[key] = field.clone();
+            }
+            let errors = super::validate_google_play_publish_config(&parse(value));
+            assert!(
+                errors.iter().any(|error| error.contains(expected)),
+                "{expected}: {errors:?}"
+            );
+        }
+        assert!(
+            serde_json::from_value::<super::GooglePlayPublishConfig>(serde_json::json!({
+                "service_account_secret": "X", "track": "internal", "unknown": 1
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn secret_references_parse_and_reject_other_expressions() {
+        let text = "a ${{ secrets.ONE }} b ${{secrets.TWO}}";
+        let names: Vec<String> = super::parse_secret_references(text)
+            .unwrap()
+            .into_iter()
+            .map(|reference| reference.name)
+            .collect();
+        assert_eq!(names, vec!["ONE", "TWO"]);
+        assert_eq!(
+            super::replace_secret_references(text, |name| name.to_lowercase()).unwrap(),
+            "a one b two"
+        );
+        assert_eq!(
+            super::replace_secret_references("echo $HOME ${PATH}", |_| unreachable!()).unwrap(),
+            "echo $HOME ${PATH}"
+        );
+        assert!(super::parse_secret_references("${{ env.X }}").is_err());
+        assert!(super::parse_secret_references("${{ secrets.1BAD }}").is_err());
+        assert!(super::parse_secret_references("${{ secrets.X").is_err());
+        assert!(
+            super::parse_repository_pipeline_yaml(
+                "version: 1\nplatforms: [android]\ncommands:\n  build: ['echo ${{ vars.X }}']\n"
+            )
+            .unwrap_err()
+            .contains("commands.build[0]")
+        );
+    }
     use super::parse_repository_pipeline_yaml;
 
     #[test]

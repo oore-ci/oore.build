@@ -3,6 +3,7 @@ members = [
   "crates/oore",
   "crates/oore-cli-ui",
   "crates/oore-contract",
+  "crates/oore-google-play",
   "crates/oore-runner",
   "crates/oored",
 ]

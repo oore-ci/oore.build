@@ -1,5 +1,3 @@
-mod app_store_upload;
-
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
@@ -19,14 +17,18 @@ use oore_contract::{
     ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse, IosExportMethod,
     JobStatusResponse, PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig,
     PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
-    RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse, StepResult,
+    RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse,
+    RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult, StepResult,
     artifact_pattern_matches, is_valid_pipeline_env_key, parse_repository_pipeline_yaml,
-    validate_artifact_pattern, validate_repository_config_path,
+    replace_secret_references, validate_artifact_pattern, validate_repository_config_path,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use zeroize::Zeroize;
+
+mod app_store_upload;
+mod publish;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
 const OORE_ANDROID_KEYSTORE_PATH_ENV: &str = "OORE_ANDROID_KEYSTORE_PATH";
@@ -3357,7 +3359,163 @@ struct ResolvedExecutionPlan {
     stage_commands: PipelineCommandStages,
     artifact_patterns: Vec<String>,
     env: Vec<PipelineEnvVar>,
+    /// `OORE_SECRET_<NAME>` variables backing `${{ secrets.NAME }}` in commands.
+    secret_env: Vec<(String, String)>,
+    /// Env keys whose values came from a secret.
+    secret_env_keys: std::collections::HashSet<String>,
     source: String,
+}
+
+fn secret_env_var(name: &str) -> String {
+    format!("OORE_SECRET_{name}")
+}
+
+fn lookup_secret<'a>(
+    secrets: &'a std::collections::BTreeMap<String, String>,
+    name: &str,
+    path: &str,
+) -> anyhow::Result<&'a str> {
+    secrets.get(name).map(String::as_str).ok_or_else(|| {
+        anyhow::anyhow!(
+            "{path} references secret '{name}', which is not defined for this pipeline, its project or the instance"
+        )
+    })
+}
+
+/// Resolve `${{ secrets.NAME }}`. Env values receive the value itself. Commands
+/// receive a quoted-safe `${OORE_SECRET_NAME}` shell reference instead, so a value
+/// is never spliced into shell source.
+fn apply_secret_references(
+    mut plan: ResolvedExecutionPlan,
+    secrets: &std::collections::BTreeMap<String, String>,
+) -> anyhow::Result<ResolvedExecutionPlan> {
+    for (index, pair) in plan.env.iter_mut().enumerate() {
+        let path = format!("env[{index}].value");
+        let mut missing = None;
+        let resolved = replace_secret_references(&pair.value, |name| {
+            match lookup_secret(secrets, name, &path) {
+                Ok(value) => value.to_string(),
+                Err(error) => {
+                    missing.get_or_insert(error);
+                    String::new()
+                }
+            }
+        })
+        .map_err(|error| anyhow::anyhow!("{path} {error}"))?;
+        if let Some(error) = missing {
+            return Err(error);
+        }
+        if resolved != pair.value {
+            plan.secret_env_keys.insert(pair.key.clone());
+            pair.value = resolved;
+        }
+    }
+
+    let mut referenced = std::collections::BTreeSet::new();
+    for (stage, commands) in [
+        ("pre_build", &mut plan.stage_commands.pre_build),
+        ("build", &mut plan.stage_commands.build),
+        ("post_build", &mut plan.stage_commands.post_build),
+    ] {
+        for (index, command) in commands.iter_mut().enumerate() {
+            let path = format!("commands.{stage}[{index}]");
+            let mut names = Vec::new();
+            *command = replace_secret_references(command, |name| {
+                names.push(name.to_string());
+                format!("${{{}}}", secret_env_var(name))
+            })
+            .map_err(|error| anyhow::anyhow!("{path} {error}"))?;
+            for name in names {
+                lookup_secret(secrets, &name, &path)?;
+                referenced.insert(name);
+            }
+        }
+    }
+    plan.secret_env = referenced
+        .into_iter()
+        .map(|name| {
+            let value = secrets[&name].clone();
+            (secret_env_var(&name), value)
+        })
+        .collect();
+    Ok(plan)
+}
+
+/// Replaces secret values in log text with `***`.
+#[derive(Clone, Default)]
+struct SecretMasker {
+    patterns: Arc<Vec<String>>,
+}
+
+impl SecretMasker {
+    fn new<'a>(values: impl Iterator<Item = &'a str>) -> Self {
+        let mut patterns = std::collections::BTreeSet::new();
+        for value in values {
+            if value.is_empty() {
+                continue;
+            }
+            patterns.insert(value.to_string());
+            // Multi-line values (JSON keys, PEM blocks) are printed line by line.
+            if value.contains('\n') {
+                for line in value.lines().map(str::trim) {
+                    if line.len() >= 8 {
+                        patterns.insert(line.to_string());
+                    }
+                }
+            }
+        }
+        let mut patterns: Vec<String> = patterns.into_iter().collect();
+        patterns.sort_by_key(|pattern| std::cmp::Reverse(pattern.len()));
+        Self {
+            patterns: Arc::new(patterns),
+        }
+    }
+
+    fn mask(&self, text: &str) -> String {
+        let mut masked = text.to_string();
+        for pattern in self.patterns.iter() {
+            if masked.contains(pattern.as_str()) {
+                masked = masked.replace(pattern.as_str(), "***");
+            }
+        }
+        masked
+    }
+}
+
+/// Log sequence position plus the masker applied to every uploaded line.
+#[derive(Default)]
+struct BuildLogCursor {
+    seq: i64,
+    masker: SecretMasker,
+}
+
+async fn fetch_job_secrets(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    signing_token: &str,
+) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+    let resp = client
+        .get(format!(
+            "{}/v1/runners/{}/jobs/{}/secrets",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .header("x-oore-signing-token", signing_token)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("secret lookup failed: {}", resp.status());
+    }
+
+    let payload: RunnerJobSecretsResponse = resp.json().await?;
+    Ok(payload
+        .secrets
+        .into_iter()
+        .map(|secret| (secret.name, secret.value))
+        .collect())
 }
 
 fn validate_command_list(path: &str, commands: &[String]) -> anyhow::Result<Vec<String>> {
@@ -3765,6 +3923,8 @@ fn resolve_execution_plan(
             stage_commands,
             artifact_patterns: file_config.artifact_patterns,
             env: file_config.env,
+            secret_env: Vec::new(),
+            secret_env_keys: Default::default(),
             source: format!("file:{}", full_path.display()),
         });
     }
@@ -3781,6 +3941,8 @@ fn resolve_execution_plan(
         stage_commands,
         artifact_patterns: fallback.artifact_patterns,
         env: fallback.env,
+        secret_env: Vec::new(),
+        secret_env_keys: Default::default(),
         source: "ui_fallback".to_string(),
     })
 }
@@ -4005,6 +4167,26 @@ async fn execute_build(
     daemon_url: &str,
     config: &RunnerConfig,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
+    let mut log_seq = BuildLogCursor::default();
+    let (steps, result) = execute_build_steps(job, client, daemon_url, config, &mut log_seq).await;
+    // Error text reaches the build record and the runner log, so mask it too.
+    let result = result.map_err(|error| {
+        if error.downcast_ref::<BuildTerminated>().is_some() {
+            error
+        } else {
+            anyhow::anyhow!(log_seq.masker.mask(&format!("{error:#}")))
+        }
+    });
+    (steps, result)
+}
+
+async fn execute_build_steps(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+) -> (Vec<StepResult>, anyhow::Result<()>) {
     // Pin signer executables before any repository-controlled checkout or build stage runs.
     let android_signing_toolchain = AndroidSigningToolchain::discover();
     let runner_workspace_root = match prepare_runner_workspace_root() {
@@ -4033,7 +4215,6 @@ async fn execute_build(
 
     let snapshot = &job.config_snapshot;
     let mut steps = Vec::new();
-    let mut log_seq: i64 = 0;
     let mut ios_signing_source: Option<&str> = None;
     let mut ios_signing_bundle: Option<RunnerIosSigningBundle> = None;
     let ios_signing_checked_before_checkout = snapshot_requests_ios(snapshot);
@@ -4081,6 +4262,27 @@ async fn execute_build(
         }
     }
 
+    let secrets = match fetch_job_secrets(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &job.signing_token,
+    )
+    .await
+    {
+        Ok(secrets) => secrets,
+        Err(error) => {
+            return (
+                steps,
+                Err(anyhow::anyhow!(
+                    "Failed to load secrets for this build: {error}"
+                )),
+            );
+        }
+    };
+    log_seq.masker = SecretMasker::new(secrets.values().map(String::as_str));
+
     let repo_url = snapshot
         .get("repo_url")
         .and_then(|v| v.as_str())
@@ -4118,7 +4320,7 @@ async fn execute_build(
         daemon_url,
         config,
         &job.build_id,
-        &mut log_seq,
+        log_seq,
         "stdout",
         &step_start_marker("checkout", &checkout.preview_command),
     )
@@ -4128,7 +4330,7 @@ async fn execute_build(
         daemon_url,
         config,
         &job.build_id,
-        &mut log_seq,
+        log_seq,
         "stdout",
         &format!("$ {}", checkout.preview_command),
     )
@@ -4156,7 +4358,7 @@ async fn execute_build(
         daemon_url,
         config,
         &job.build_id,
-        &mut log_seq,
+        log_seq,
         poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
     )
     .await;
@@ -4177,7 +4379,7 @@ async fn execute_build(
                 daemon_url,
                 config,
                 &job.build_id,
-                &mut log_seq,
+                log_seq,
                 "stdout",
                 &step_end_marker("checkout", "canceled", None),
             )
@@ -4206,7 +4408,7 @@ async fn execute_build(
                 daemon_url,
                 config,
                 &job.build_id,
-                &mut log_seq,
+                log_seq,
                 "stdout",
                 &step_end_marker(
                     "checkout",
@@ -4221,7 +4423,9 @@ async fn execute_build(
         }
     }
 
-    let execution_plan = match resolve_execution_plan(&workspace, snapshot) {
+    let execution_plan = match resolve_execution_plan(&workspace, snapshot)
+        .and_then(|plan| apply_secret_references(plan, &secrets))
+    {
         Ok(plan) => plan,
         Err(e) => return (steps, Err(e)),
     };
@@ -4238,7 +4442,7 @@ async fn execute_build(
             daemon_url,
             config,
             &job.build_id,
-            &mut log_seq,
+            log_seq,
             "stdout",
             "Preparing Oore-managed Flutter tooling for this runner...",
         )
@@ -4250,7 +4454,7 @@ async fn execute_build(
                     daemon_url,
                     config,
                     &job.build_id,
-                    &mut log_seq,
+                    log_seq,
                     "stdout",
                     "Oore-managed Flutter tooling is ready.",
                 )
@@ -4376,6 +4580,9 @@ async fn execute_build(
     for pair in &execution_plan.env {
         step_env.push((pair.key.clone(), pair.value.clone()));
     }
+    for (key, value) in &execution_plan.secret_env {
+        step_env.push((key.clone(), value.clone()));
+    }
 
     if execution_plan.env.iter().all(|pair| pair.key != "CI") {
         step_env.push(("CI".to_string(), "true".to_string()));
@@ -4389,7 +4596,7 @@ async fn execute_build(
             daemon_url,
             config,
             &job.build_id,
-            &mut log_seq,
+            log_seq,
             "stdout",
             &android_signing_prepared_marker(source, variant),
         )
@@ -4398,11 +4605,18 @@ async fn execute_build(
 
     // Flutter expects dart-defines to be materialized in a file. When pipeline
     // env vars are provided, create a temporary .env and pass it to flutter build.
-    let dart_define_file = if execution_plan.env.is_empty() {
+    // Secret-backed values stay out of the define file so they are never
+    // compiled into the app; commands can still pass them explicitly.
+    let dart_defines: Vec<&PipelineEnvVar> = execution_plan
+        .env
+        .iter()
+        .filter(|pair| !execution_plan.secret_env_keys.contains(&pair.key))
+        .collect();
+    let dart_define_file = if dart_defines.is_empty() {
         None
     } else {
         let mut content = String::new();
-        for pair in &execution_plan.env {
+        for pair in dart_defines {
             content.push_str(&pair.key);
             content.push('=');
             content.push_str(&pair.value);
@@ -4424,6 +4638,7 @@ async fn execute_build(
     let mut ios_signing_command_applied = false;
     let ios_signing_expected = ios_signing_bundle.is_some();
     let mut ios_artifact_metadata: Option<serde_json::Value> = None;
+    let mut signed_ipa_path: Option<PathBuf> = None;
     for (stage_name, commands) in [
         (
             "pre_build",
@@ -4461,7 +4676,7 @@ async fn execute_build(
                 daemon_url,
                 config,
                 &job.build_id,
-                &mut log_seq,
+                log_seq,
                 "stdout",
                 &step_start_marker(&step_name, &normalized_command),
             )
@@ -4471,7 +4686,7 @@ async fn execute_build(
                 daemon_url,
                 config,
                 &job.build_id,
-                &mut log_seq,
+                log_seq,
                 "stdout",
                 &format!("$ {command_preview}"),
             )
@@ -4481,7 +4696,7 @@ async fn execute_build(
                 daemon_url,
                 config,
                 &job.build_id,
-                &mut log_seq,
+                log_seq,
                 "stdout",
                 &render_step_env_preview(&step_env),
             )
@@ -4507,7 +4722,7 @@ async fn execute_build(
                 daemon_url,
                 config,
                 &job.build_id,
-                &mut log_seq,
+                log_seq,
                 poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
             )
             .await;
@@ -4528,7 +4743,7 @@ async fn execute_build(
                         daemon_url,
                         config,
                         &job.build_id,
-                        &mut log_seq,
+                        log_seq,
                         "stdout",
                         &step_end_marker(&format!("{stage_name}-{}", index + 1), "canceled", None),
                     )
@@ -4562,7 +4777,7 @@ async fn execute_build(
                         daemon_url,
                         config,
                         &job.build_id,
-                        &mut log_seq,
+                        log_seq,
                         "stdout",
                         &step_end_marker(
                             &step_name,
@@ -4598,7 +4813,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             daemon_url,
                             config,
                             &job.build_id,
-                            &mut log_seq,
+                            log_seq,
                             "stdout",
                             &step_start_marker(
                                 signing_step_name,
@@ -4635,7 +4850,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     daemon_url,
                                     config,
                                     &job.build_id,
-                                    &mut log_seq,
+                                    log_seq,
                                     "stdout",
                                     &format!(
                                         "[oore-signing] Signed and verified {} Android artifact(s)",
@@ -4650,7 +4865,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     daemon_url,
                                     config,
                                     &job.build_id,
-                                    &mut log_seq,
+                                    log_seq,
                                     "stderr",
                                     &format!("[oore-signing] {error:#}"),
                                 )
@@ -4663,7 +4878,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             daemon_url,
                             config,
                             &job.build_id,
-                            &mut log_seq,
+                            log_seq,
                             "stdout",
                             &step_end_marker(signing_step_name, "succeeded", Some(0)),
                         )
@@ -4688,7 +4903,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             daemon_url,
                             config,
                             &job.build_id,
-                            &mut log_seq,
+                            log_seq,
                             "stdout",
                             &ios_signing_prepared_marker(
                                 ios_signing_source.unwrap_or("pipeline_profile"),
@@ -4704,7 +4919,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             daemon_url,
                             config,
                             &job.build_id,
-                            &mut log_seq,
+                            log_seq,
                             "stdout",
                             &step_start_marker(
                                 signing_step_name,
@@ -4736,7 +4951,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     daemon_url,
                                     config,
                                     &job.build_id,
-                                    &mut log_seq,
+                                    log_seq,
                                     "stdout",
                                     &format!(
                                         "[oore-signing] Signed IPA created at {}",
@@ -4744,6 +4959,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     ),
                                 )
                                 .await;
+                                signed_ipa_path = Some(signed_archive.ipa_path.clone());
                                 let mut p12_bytes =
                                     match decode_runner_b64(&bundle.p12_base64, "p12") {
                                         Ok(bytes) => bytes,
@@ -4788,7 +5004,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     daemon_url,
                                     config,
                                     &job.build_id,
-                                    &mut log_seq,
+                                    log_seq,
                                     "stderr",
                                     &format!("[oore-signing] {error:#}"),
                                 )
@@ -4798,7 +5014,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     daemon_url,
                                     config,
                                     &job.build_id,
-                                    &mut log_seq,
+                                    log_seq,
                                     "stdout",
                                     &step_end_marker(signing_step_name, "failed", Some(1)),
                                 )
@@ -4814,7 +5030,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             daemon_url,
                             config,
                             &job.build_id,
-                            &mut log_seq,
+                            log_seq,
                             "stdout",
                             &step_end_marker(signing_step_name, "succeeded", Some(0)),
                         )
@@ -4869,7 +5085,297 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
         return (steps, Err(error));
     }
 
+    // Publishing runs only after every build, signing and artifact step
+    // succeeded; any earlier failure has already returned.
+    let publish_plan = match fetch_job_publish_plan(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &job.signing_token,
+    )
+    .await
+    {
+        Ok(plan) => plan,
+        Err(error) => {
+            return (
+                steps,
+                Err(anyhow::anyhow!(
+                    "Failed to load publish settings for this build: {error}"
+                )),
+            );
+        }
+    };
+    if let Some(play) = &publish_plan.google_play {
+        let step_name = "publish-play";
+        let started = now_unix();
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stdout",
+            &step_start_marker(step_name, "Upload the App Bundle to Google Play"),
+        )
+        .await;
+        let mut lines = Vec::new();
+        let result = publish::publish_to_google_play(
+            client,
+            &workspace,
+            &secrets,
+            publish_plan.changelog.as_deref(),
+            play,
+            &mut lines,
+        )
+        .await;
+        for line in lines {
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &line,
+            )
+            .await;
+        }
+        let finished = now_unix();
+        steps.push(StepResult {
+            name: step_name.to_string(),
+            status: if result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            }
+            .to_string(),
+            exit_code: Some(if result.is_ok() { 0 } else { 1 }),
+            started_at: started,
+            finished_at: finished,
+            duration_ms: (finished - started) * 1000,
+        });
+        match result {
+            Ok(published) => {
+                if let Err(error) = report_publish_result(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    &job.signing_token,
+                    &published,
+                )
+                .await
+                {
+                    let _ = append_runner_log_line(
+                        client,
+                        daemon_url,
+                        config,
+                        &job.build_id,
+                        log_seq,
+                        "stderr",
+                        &format!(
+                            "[oore-publish] Uploaded, but recording the release failed: {error:#}"
+                        ),
+                    )
+                    .await;
+                }
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &step_end_marker(step_name, "succeeded", Some(0)),
+                )
+                .await;
+            }
+            Err(error) => {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stderr",
+                    &format!("[oore-publish] {error:#}"),
+                )
+                .await;
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &step_end_marker(step_name, "failed", Some(1)),
+                )
+                .await;
+                return (steps, Err(error.context("publish-play failed")));
+            }
+        }
+    }
+
+    if let Some(app_store) = &publish_plan.app_store {
+        let step_name = "publish-app-store";
+        let started = now_unix();
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stdout",
+            &step_start_marker(step_name, "Upload the IPA to App Store Connect"),
+        )
+        .await;
+        let result = match (signed_ipa_path.as_deref(), ios_artifact_metadata.as_ref()) {
+            (Some(ipa), Some(metadata)) => {
+                let key_dir = signing_workspace.join(".oore").join("asc-keys");
+                match app_store_upload::upload_ipa(ipa, &app_store.credentials, &key_dir).await {
+                    Ok(message) => app_store_upload::publish_result(metadata, &app_store.config)
+                        .map(|result| (message, result)),
+                    Err(error) => Err(error),
+                }
+            }
+            _ => Err(anyhow::anyhow!(
+                "App Store publishing is on, but this build produced no signed App Store IPA"
+            )),
+        };
+        let finished = now_unix();
+        steps.push(StepResult {
+            name: step_name.to_string(),
+            status: if result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            }
+            .to_string(),
+            exit_code: Some(if result.is_ok() { 0 } else { 1 }),
+            started_at: started,
+            finished_at: finished,
+            duration_ms: (finished - started) * 1000,
+        });
+        match result {
+            Ok((message, published)) => {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &format!("[oore-publish] {message}"),
+                )
+                .await;
+                if let Err(error) = report_publish_result(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    &job.signing_token,
+                    &published,
+                )
+                .await
+                {
+                    let _ = append_runner_log_line(
+                        client,
+                        daemon_url,
+                        config,
+                        &job.build_id,
+                        log_seq,
+                        "stderr",
+                        &format!(
+                            "[oore-publish] Uploaded, but recording the release failed: {error:#}"
+                        ),
+                    )
+                    .await;
+                }
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &step_end_marker(step_name, "succeeded", Some(0)),
+                )
+                .await;
+            }
+            Err(error) => {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stderr",
+                    &format!("[oore-publish] {error:#}"),
+                )
+                .await;
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &step_end_marker(step_name, "failed", Some(1)),
+                )
+                .await;
+                return (steps, Err(error.context("publish-app-store failed")));
+            }
+        }
+    }
+
     (steps, Ok(()))
+}
+
+async fn fetch_job_publish_plan(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    signing_token: &str,
+) -> anyhow::Result<RunnerPublishPlan> {
+    let resp = client
+        .get(format!(
+            "{}/v1/runners/{}/jobs/{}/publish",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .header("x-oore-signing-token", signing_token)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("publish settings lookup failed: {}", resp.status());
+    }
+    Ok(resp.json().await?)
+}
+
+async fn report_publish_result(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    signing_token: &str,
+    result: &RunnerPublishResult,
+) -> anyhow::Result<()> {
+    let resp = client
+        .post(format!(
+            "{}/v1/runners/{}/jobs/{}/publish-results",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .header("x-oore-signing-token", signing_token)
+        .json(result)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("publish result report failed: {}", resp.status());
+    }
+    Ok(())
 }
 
 fn step_start_marker(name: &str, command: &str) -> String {
@@ -5052,14 +5558,14 @@ async fn append_runner_log_line(
     daemon_url: &str,
     config: &RunnerConfig,
     build_id: &str,
-    seq: &mut i64,
+    cursor: &mut BuildLogCursor,
     stream: &str,
     content: &str,
 ) -> anyhow::Result<()> {
     let body = serde_json::json!({
         "chunks": [{
-            "sequence": *seq,
-            "content": content,
+            "sequence": cursor.seq,
+            "content": cursor.masker.mask(content),
             "stream": stream,
         }],
     });
@@ -5078,7 +5584,7 @@ async fn append_runner_log_line(
         anyhow::bail!("log append failed: {}", resp.status());
     }
 
-    *seq += 1;
+    cursor.seq += 1;
     Ok(())
 }
 
@@ -5425,7 +5931,7 @@ async fn run_and_stream(
     daemon_url: &str,
     config: &RunnerConfig,
     build_id: &str,
-    seq: &mut i64,
+    cursor: &mut BuildLogCursor,
     cancel_fut: impl std::future::Future<Output = ()>,
 ) -> Option<std::process::ExitStatus> {
     let stdout = child.stdout.take();
@@ -5472,7 +5978,8 @@ async fn run_and_stream(
     let upload_config_id = config_out_id;
     let upload_config_token = config_out_token;
     let upload_build = build_out;
-    let seq_start = *seq;
+    let seq_start = cursor.seq;
+    let masker = cursor.masker.clone();
     let upload_handle = tokio::spawn(async move {
         let mut local_seq = seq_start;
         let mut batch = Vec::new();
@@ -5485,7 +5992,7 @@ async fn run_and_stream(
                         Some((content, stream)) => {
                             batch.push(serde_json::json!({
                                 "sequence": local_seq,
-                                "content": content,
+                                "content": masker.mask(&content),
                                 "stream": stream,
                             }));
                             local_seq += 1;
@@ -5551,7 +6058,7 @@ async fn run_and_stream(
     };
 
     if let Ok(final_seq) = upload_handle.await {
-        *seq = final_seq;
+        cursor.seq = final_seq;
     }
 
     status
@@ -5618,5 +6125,94 @@ mod tests {
                 .to_string(),
             "artifacts.patterns[0] must not be empty"
         );
+    }
+}
+
+#[cfg(test)]
+mod secret_tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    fn plan(env: &[(&str, &str)], build: &[&str]) -> ResolvedExecutionPlan {
+        ResolvedExecutionPlan {
+            stage_commands: PipelineCommandStages {
+                pre_build: vec![],
+                build: build.iter().map(|c| c.to_string()).collect(),
+                post_build: vec![],
+            },
+            artifact_patterns: vec![],
+            env: env
+                .iter()
+                .map(|(key, value)| PipelineEnvVar {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                })
+                .collect(),
+            secret_env: vec![],
+            secret_env_keys: Default::default(),
+            source: "test".to_string(),
+        }
+    }
+
+    fn secrets() -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("API_TOKEN".to_string(), "s3cr3t-token".to_string()),
+            ("UNUSED".to_string(), "never-exposed".to_string()),
+        ])
+    }
+
+    #[test]
+    fn env_values_resolve_and_commands_use_shell_references() {
+        let resolved = apply_secret_references(
+            plan(
+                &[
+                    ("AUTH", "Bearer ${{ secrets.API_TOKEN }}"),
+                    ("FLAVOR", "prod"),
+                ],
+                &["curl -H \"X-Token: ${{secrets.API_TOKEN}}\" https://example.test"],
+            ),
+            &secrets(),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.env[0].value, "Bearer s3cr3t-token");
+        assert_eq!(resolved.env[1].value, "prod");
+        assert!(resolved.secret_env_keys.contains("AUTH"));
+        assert!(!resolved.secret_env_keys.contains("FLAVOR"));
+        assert_eq!(
+            resolved.stage_commands.build[0],
+            "curl -H \"X-Token: ${OORE_SECRET_API_TOKEN}\" https://example.test"
+        );
+        assert_eq!(
+            resolved.secret_env,
+            vec![(
+                "OORE_SECRET_API_TOKEN".to_string(),
+                "s3cr3t-token".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn unknown_secret_fails_before_any_step_runs() {
+        let error =
+            apply_secret_references(plan(&[], &["echo ${{ secrets.MISSING }}"]), &secrets())
+                .err()
+                .unwrap()
+                .to_string();
+        assert!(error.contains("commands.build[0]"), "{error}");
+        assert!(error.contains("'MISSING'"), "{error}");
+    }
+
+    #[test]
+    fn masker_hides_whole_values_and_lines_of_multiline_values() {
+        let json = "{\n  \"private_key\": \"-----BEGIN PRIVATE KEY-----abc\",\n  \"x\": 1\n}";
+        let masker = SecretMasker::new(["s3cr3t-token", json, ""].into_iter());
+        assert_eq!(masker.mask("token=s3cr3t-token done"), "token=*** done");
+        assert_eq!(
+            masker.mask("  \"private_key\": \"-----BEGIN PRIVATE KEY-----abc\","),
+            "  ***"
+        );
+        assert_eq!(masker.mask("nothing to hide"), "nothing to hide");
     }
 }
