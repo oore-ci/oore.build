@@ -28,7 +28,11 @@ function BuildDetailFallback() {
 
 export function BuildDetailRoute() {
   const { buildId } = useParams({ from: '/builds/$buildId' })
-  const { install: artifactId } = useSearch({ from: '/builds/$buildId' })
+  const {
+    install: artifactId,
+    release: releaseId,
+    tab,
+  } = useSearch({ from: '/builds/$buildId' })
   const isQaViewer = useAuthStore((state) => state.user?.role === 'qa_viewer')
   if (artifactId || isQaViewer) {
     return (
@@ -43,7 +47,12 @@ export function BuildDetailRoute() {
   }
   return (
     <Suspense fallback={<BuildDetailFallback />}>
-      <BuildDetailPage key={buildId} buildId={buildId} />
+      <BuildDetailPage
+        key={buildId}
+        buildId={buildId}
+        initialTab={tab}
+        selectedReleaseId={releaseId}
+      />
     </Suspense>
   )
 }
