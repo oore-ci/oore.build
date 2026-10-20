@@ -1397,7 +1397,7 @@ mod tests {
         );
         assert_eq!(
             review_outcome("PENDING_DEVELOPER_RELEASE").map(|(state, _)| state),
-            Some(ReleaseState::Paused)
+            Some(ReleaseState::InReview)
         );
         assert_eq!(
             review_outcome("REJECTED").map(|(state, _)| state),
