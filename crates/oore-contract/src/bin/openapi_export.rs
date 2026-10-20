@@ -136,6 +136,8 @@ use utoipa::{
         operations::get_pipeline_ios_signing,
         operations::update_pipeline_ios_signing,
         operations::sync_pipeline_ios_signing,
+        operations::get_pipeline_app_store_publish,
+        operations::update_pipeline_app_store_publish,
         operations::list_pipeline_ios_devices,
         operations::register_pipeline_ios_device,
         // ── Builds ──
@@ -358,6 +360,12 @@ use utoipa::{
         oore_contract::RegisterIosDeviceRequest,
         oore_contract::RegisterIosDeviceResponse,
         oore_contract::SyncPipelineIosSigningResponse,
+        oore_contract::AppStoreDestination,
+        oore_contract::AppStoreReleaseNote,
+        oore_contract::AppStorePublishConfig,
+        oore_contract::PipelineAppStorePublishResponse,
+        oore_contract::RunnerAppStoreUploadCredentials,
+        oore_contract::RunnerAppStorePublishPlan,
         // Builds
         oore_contract::BuildStatus,
         oore_contract::RunnerPolicyBlockReason,
@@ -1815,6 +1823,37 @@ mod operations {
         )
     )]
     pub(super) fn update_pipeline_ios_signing() {}
+
+    // ── Pipeline publishing (App Store) ──
+
+    /// Get App Store publish settings
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/publish/app-store", tag = "Pipelines",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "App Store publish settings", body = PipelineAppStorePublishResponse),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_pipeline_app_store_publish() {}
+
+    /// Update App Store publish settings
+    ///
+    /// Publishing uploads the pipeline's App Store IPA to App Store Connect with
+    /// the API key from iOS signing, then sends it to TestFlight groups or an
+    /// App Store version. Enabling it requires iOS signing with the `app_store`
+    /// export method and an App Store Connect API key.
+    #[utoipa::path(put, path = "/v1/pipelines/{pipeline_id}/publish/app-store", tag = "Pipelines",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        request_body = AppStorePublishConfig,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "App Store publish settings updated", body = PipelineAppStorePublishResponse),
+            (status = 400, description = "Invalid settings", body = ApiError),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn update_pipeline_app_store_publish() {}
 
     /// Sync iOS provisioning profiles
     ///
