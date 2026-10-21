@@ -259,8 +259,18 @@ export function useRuntimeUpdates() {
   })
 
   const backend = backendHealth.data ?? {}
+  // The frontend follows the backend's channel, so a backend that moved to
+  // another channel brings the frontend onto the same release stream.
+  const frontendSearch = backend.channel
+    ? new URLSearchParams({ channel: backend.channel })
+    : undefined
 
-  const frontendReleaseKey = [instanceKey, 'runtime-update', 'frontend-release']
+  const frontendReleaseKey = [
+    instanceKey,
+    'runtime-update',
+    'frontend-release',
+    backend.channel ?? null,
+  ]
   const frontendRelease = useQuery({
     queryKey: frontendReleaseKey,
     queryFn: async ({ signal }) => {
@@ -269,7 +279,7 @@ export function useRuntimeUpdates() {
       const status = await localUpdateRequest<RuntimeReleaseStatus>(
         token!,
         'GET',
-        undefined,
+        frontendSearch,
         signal,
       )
       await refetchAfterPhaseSettles(
@@ -365,7 +375,8 @@ export function useRuntimeUpdates() {
   })
 
   const startFrontendUpdate = useMutation({
-    mutationFn: () => localUpdateRequest<RuntimeUpdateStatus>(token!, 'POST'),
+    mutationFn: () =>
+      localUpdateRequest<RuntimeUpdateStatus>(token!, 'POST', frontendSearch),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: [instanceKey, 'runtime-update'],
@@ -430,7 +441,11 @@ export function useRuntimeUpdates() {
       }
       if (coordinatedPlan.frontend) {
         coordinated.setStep('frontend', target)
-        await localUpdateRequest<RuntimeUpdateStatus>(token!, 'POST')
+        await localUpdateRequest<RuntimeUpdateStatus>(
+          token!,
+          'POST',
+          frontendSearch,
+        )
         await waitForFrontendRelease(token!, target)
         // The page still runs the previous bundle; load the one just installed.
         coordinated.setStep('reloading')
