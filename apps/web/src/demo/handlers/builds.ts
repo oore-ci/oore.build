@@ -437,6 +437,22 @@ export const buildHandlers = [
     })
   }),
 
+  demoApi.getBuildTestResults(async ({ params, request }) => {
+    await delay(150)
+    const buildId = String(params.build_id)
+    const persona = getDemoPersonaFromRequest(request)
+    const build = demoState.builds.find((candidate) => candidate.id === buildId)
+    if (!build || !getDemoProjectRole(persona, build.project_id)) {
+      return HttpResponse.json(
+        { error: 'Build not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    return HttpResponse.json(
+      demoState.buildTests[buildId] ?? { failures: [], history_window: 20 },
+    )
+  }),
+
   demoApi.listArtifacts(async ({ params, request }) => {
     await delay(150)
     const buildId = String(params.build_id)

@@ -6,6 +6,7 @@ import type {
   Build,
   BuildEvent,
   BuildLogChunk,
+  BuildTestResultsResponse,
   ExternalAccessNetworkSettings,
   InstancePreferences,
   Integration,
@@ -30,6 +31,7 @@ import type { Project, ProjectRole } from '@oore/client/models'
 import { demoArtifacts } from './data/artifacts'
 import { demoAuditLogs } from './data/audit-logs'
 import { demoBuildLogs } from './data/build-logs'
+import { demoBuildTests } from './data/build-tests'
 import { demoBuildEvents, demoBuilds } from './data/builds'
 import {
   demoInstallations,
@@ -106,6 +108,7 @@ interface DemoState {
   builds: Array<Build>
   buildEvents: Partial<Record<string, Array<BuildEvent>>>
   buildLogs: Partial<Record<string, Array<BuildLogChunk>>>
+  buildTests: Partial<Record<string, BuildTestResultsResponse>>
   artifacts: Partial<Record<string, Array<Artifact>>>
   releases: Array<DemoRelease>
   releaseHistory: Partial<Record<string, Array<ReleaseHistoryEntry>>>
@@ -672,6 +675,7 @@ export function createDemoState(
     releases: clone(demoReleases),
     releaseHistory: clone(demoReleaseHistory),
     buildLogs: clone(demoBuildLogs),
+    buildTests: clone(demoBuildTests),
     artifacts,
     runners,
     integrations: clone(demoIntegrations),
@@ -752,6 +756,7 @@ export function createDemoState(
     state.builds = []
     state.buildEvents = {}
     state.buildLogs = {}
+    state.buildTests = {}
     state.artifacts = {}
     state.releases = []
     state.releaseHistory = {}

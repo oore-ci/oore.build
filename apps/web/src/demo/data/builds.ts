@@ -270,7 +270,7 @@ export const demoBuilds: Array<Build> = [
         duration_ms: 60000,
       },
       {
-        name: 'flutter analyze',
+        name: 'flutter test',
         status: 'failed',
         exit_code: 1,
         started_at: ago(43140),
@@ -615,7 +615,7 @@ export const demoBuildEvents = {
       build_id: BUILD_IDS.failed1,
       from_status: 'running',
       to_status: 'failed',
-      reason: 'flutter analyze exited with code 1',
+      reason: 'flutter test exited with code 1',
       created_at: ago(43080),
     },
   ],

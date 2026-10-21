@@ -32,6 +32,7 @@ import {
   getBuildOptions,
   getBuildLogsQueryKey,
   getBuildQueryKey,
+  getBuildTestResultsOptions,
   listArtifactsOptions,
   listBuildsOptions,
   listBuildsQueryKey,
@@ -348,6 +349,24 @@ export function useArtifacts(
   const query = scopeOoreQueryOptions(
     instanceId,
     listArtifactsOptions({ client, path: { build_id: buildId } }),
+  )
+
+  return useQuery({
+    ...query,
+    enabled: !!baseUrl && !!token && !!buildId,
+    staleTime: 5_000,
+    refetchInterval: options?.refetchInterval,
+  })
+}
+
+export function useBuildTests(
+  buildId: string,
+  options?: { refetchInterval?: number | false },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    getBuildTestResultsOptions({ client, path: { build_id: buildId } }),
   )
 
   return useQuery({

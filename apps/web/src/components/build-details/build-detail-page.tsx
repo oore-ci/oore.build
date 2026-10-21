@@ -12,6 +12,7 @@ import { AppOutputs } from './app-outputs'
 import { buildStateDescription } from '@/lib/build-state-description'
 import { BuildSummary } from './build-summary'
 import { EventTimeline } from './event-timeline'
+import { TestsPanel } from './tests-panel'
 import type { BuildLogChunk } from '@oore/client/models'
 import { useBuildNotification } from '@/hooks/use-build-notification'
 import { useIsBelowBreakpoint } from '@/hooks/use-mobile'
@@ -21,6 +22,7 @@ import {
   useBuild,
   useBuildApprovalDecision,
   useBuildLogs,
+  useBuildTests,
   useCancelBuild,
   useRerunBuild,
 } from '@/hooks/use-builds'
@@ -111,9 +113,19 @@ export function BuildDetailPage({
   const approveMutation = useBuildApprovalDecision('approve')
   const rejectMutation = useBuildApprovalDecision('reject')
   const [rejectOpen, setRejectOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<string | number>(
-    initialTab ?? 'logs',
+  const [chosenTab, setActiveTab] = useState<string | number | null>(
+    initialTab ?? null,
   )
+  const testsQuery = useBuildTests(buildId, {
+    refetchInterval: isTerminal ? false : 5000,
+  })
+  const testSummary = testsQuery.data?.summary
+  const hasTestsTab =
+    !!testSummary || testsQuery.isError || initialTab === 'tests'
+  // A failed build with failing tests opens on Tests until the user picks a tab.
+  const activeTab =
+    chosenTab ??
+    (buildStatus === 'failed' && testSummary?.failed ? 'tests' : 'logs')
   const releasesQuery = useReleases(
     { build_id: buildId },
     { enabled: buildStatus === 'succeeded' },
@@ -389,7 +401,11 @@ export function BuildDetailPage({
           <AlertDescription className="flex flex-col gap-2">
             <p role="status">{stateDescription}</p>
             {isTerminal && build.status !== 'succeeded' ? (
-              <p>Check Logs and Timeline before retrying.</p>
+              <p>
+                {testSummary?.failed
+                  ? `${testSummary.failed} tests failed. Check Tests and Logs before retrying.`
+                  : 'Check Logs and Timeline before retrying.'}
+              </p>
             ) : null}
           </AlertDescription>
         </Alert>
@@ -431,6 +447,16 @@ export function BuildDetailPage({
           <TabsTrigger value="timeline">
             Timeline{events.length > 0 ? ` (${events.length})` : ''}
           </TabsTrigger>
+          {hasTestsTab ? (
+            <TabsTrigger value="tests">
+              Tests
+              {testSummary?.failed
+                ? ` (${testSummary.failed} failed)`
+                : testSummary
+                  ? ` (${testSummary.total})`
+                  : ''}
+            </TabsTrigger>
+          ) : null}
           {usesTabbedArtifacts ? (
             <TabsTrigger value="artifacts">
               Artifacts
@@ -471,6 +497,17 @@ export function BuildDetailPage({
             <TabsContent value="timeline">
               <EventTimeline events={events} />
             </TabsContent>
+            {hasTestsTab ? (
+              <TabsContent value="tests">
+                <TestsPanel
+                  buildId={build.id}
+                  data={testsQuery.data}
+                  error={testsQuery.error}
+                  isLoading={testsQuery.isLoading}
+                  onRetry={() => void testsQuery.refetch()}
+                />
+              </TabsContent>
+            ) : null}
             {hasReleaseTab ? (
               <TabsContent value="release">
                 <ReleasePanel
