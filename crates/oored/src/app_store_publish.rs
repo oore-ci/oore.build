@@ -23,7 +23,7 @@ use tracing::{error, info, warn};
 
 use crate::AppState;
 use crate::app_store_connect::{
-    AppStoreConnect, AscError, BuildProcessing, phased_release_fraction,
+    AppStoreConnect, AscBetaDetail, AscError, BuildProcessing, phased_release_fraction,
 };
 use crate::apple_api::AppleApiCredentials;
 use crate::crypto;
@@ -677,6 +677,51 @@ fn beta_review_outcome(external_state: Option<&str>) -> Option<(ReleaseState, &'
     }
 }
 
+/// Whether a processed build is ready to hand out, from its TestFlight state.
+#[derive(Debug, PartialEq, Eq)]
+enum BetaReadiness {
+    Ready,
+    Wait,
+    Failed(&'static str),
+}
+
+/// Apple marks a build `VALID` before its TestFlight copy has finished
+/// processing and before export compliance is settled. Like fastlane's pilot
+/// and Codemagic's `wait_until_build_is_processed`, distribute only after the
+/// internal TestFlight state has moved past both.
+fn beta_readiness(detail: &AscBetaDetail, waited_secs: i64) -> BetaReadiness {
+    match detail.internal.as_deref() {
+        Some("PROCESSING_EXCEPTION") => BetaReadiness::Failed(
+            "Apple could not prepare the build for TestFlight; check App Store Connect",
+        ),
+        Some("MISSING_EXPORT_COMPLIANCE") if waited_secs > BUILD_DISCOVERY_TIMEOUT_SECS => {
+            BetaReadiness::Failed(
+                "Apple still needs export compliance for this build; answer it in App Store Connect or set ITSAppUsesNonExemptEncryption in Info.plist",
+            )
+        }
+        Some("PROCESSING") if waited_secs > BUILD_DISCOVERY_TIMEOUT_SECS => BetaReadiness::Failed(
+            "Apple did not finish processing the build for TestFlight within three hours",
+        ),
+        Some("PROCESSING" | "MISSING_EXPORT_COMPLIANCE") => BetaReadiness::Wait,
+        _ => BetaReadiness::Ready,
+    }
+}
+
+/// External states that mean the build was already submitted for (or has
+/// passed) TestFlight beta review, so it must not be submitted again.
+fn beta_review_already_submitted(external_state: Option<&str>) -> bool {
+    matches!(
+        external_state,
+        Some(
+            "WAITING_FOR_BETA_REVIEW"
+                | "IN_BETA_REVIEW"
+                | "BETA_APPROVED"
+                | "IN_BETA_TESTING"
+                | "BETA_REJECTED"
+        )
+    )
+}
+
 #[derive(Debug, Clone, FromRow)]
 struct LinkRow {
     release_id: String,
@@ -788,9 +833,19 @@ async fn advance(asc: &AppStoreConnect<'_>, link: &LinkRow) -> Result<Step, AscE
                 .asc_build_id
                 .clone()
                 .ok_or_else(|| AscError("App Store build ID was not recorded".to_string()))?;
+            let beta = asc.beta_detail(&build_id).await?;
+            match beta_readiness(&beta, now_unix() - link.created_at) {
+                BetaReadiness::Ready => {}
+                BetaReadiness::Wait => return Ok(step),
+                BetaReadiness::Failed(reason) => {
+                    step.stage = Some(Stage::Done);
+                    step.transition = Some((ReleaseState::Failed, None, reason.to_string()));
+                    return Ok(step);
+                }
+            }
             match config.destination {
                 AppStoreDestination::Testflight => {
-                    distribute_testflight(asc, &app_id, &build_id, &config, step).await
+                    distribute_testflight(asc, &app_id, &build_id, &beta, &config, step).await
                 }
                 AppStoreDestination::AppStore => {
                     distribute_app_store(asc, &app_id, &build_id, link, &config, step).await
@@ -804,7 +859,7 @@ async fn advance(asc: &AppStoreConnect<'_>, link: &LinkRow) -> Result<Step, AscE
                 .ok_or_else(|| AscError("App Store build ID was not recorded".to_string()))?;
             step.next_poll_in = POLL_REVIEW_SECS;
             if let Some((state, reason)) =
-                beta_review_outcome(asc.external_beta_state(&build_id).await?.as_deref())
+                beta_review_outcome(asc.beta_detail(&build_id).await?.external.as_deref())
             {
                 let fraction = (state == ReleaseState::Complete).then_some(1.0);
                 step.stage = Some(Stage::Done);
@@ -858,6 +913,7 @@ async fn distribute_testflight(
     asc: &AppStoreConnect<'_>,
     app_id: &str,
     build_id: &str,
+    beta: &AscBetaDetail,
     config: &AppStorePublishConfig,
     mut step: Step,
 ) -> Result<Step, AscError> {
@@ -908,7 +964,10 @@ async fn distribute_testflight(
         .map(|warning| format!(" (notes not set: {warning})"))
         .unwrap_or_default();
     if selected.iter().any(|group| !group.is_internal) {
-        asc.submit_for_beta_review(build_id).await?;
+        // A retry after a partial failure must not submit a second time.
+        if !beta_review_already_submitted(beta.external.as_deref()) {
+            asc.submit_for_beta_review(build_id).await?;
+        }
         step.stage = Some(Stage::BetaReview);
         step.next_poll_in = POLL_REVIEW_SECS;
         step.transition = Some((
@@ -958,6 +1017,9 @@ async fn distribute_app_store(
     }
     if config.phased_release {
         asc.enable_phased_release(&version_id).await?;
+    } else {
+        // A reused editable version may still carry an earlier phased release.
+        asc.disable_phased_release(&version_id).await?;
     }
     let suffix = notes_warning
         .map(|warning| format!(" (notes not set: {warning})"))
@@ -1467,6 +1529,50 @@ mod tests {
         assert_eq!(transition_path(Rolling, Complete), vec![Complete]);
         assert_eq!(transition_path(InReview, Halted), vec![Failed]);
         assert_eq!(transition_path(Rolling, Halted), vec![Halted]);
+    }
+
+    #[test]
+    fn distribution_waits_for_testflight_processing_and_export_compliance() {
+        let detail = |internal: &str| AscBetaDetail {
+            internal: Some(internal.to_string()),
+            external: None,
+        };
+        assert_eq!(
+            beta_readiness(&detail("PROCESSING"), 60),
+            BetaReadiness::Wait
+        );
+        assert_eq!(
+            beta_readiness(&detail("MISSING_EXPORT_COMPLIANCE"), 60),
+            BetaReadiness::Wait
+        );
+        assert!(matches!(
+            beta_readiness(&detail("MISSING_EXPORT_COMPLIANCE"), BUILD_DISCOVERY_TIMEOUT_SECS + 1),
+            BetaReadiness::Failed(reason) if reason.contains("export compliance")
+        ));
+        assert!(matches!(
+            beta_readiness(&detail("PROCESSING_EXCEPTION"), 0),
+            BetaReadiness::Failed(_)
+        ));
+        assert_eq!(
+            beta_readiness(&detail("READY_FOR_BETA_TESTING"), 0),
+            BetaReadiness::Ready
+        );
+        assert_eq!(
+            beta_readiness(&AscBetaDetail::default(), 0),
+            BetaReadiness::Ready
+        );
+    }
+
+    #[test]
+    fn beta_review_is_submitted_only_once() {
+        assert!(!beta_review_already_submitted(Some(
+            "READY_FOR_BETA_SUBMISSION"
+        )));
+        assert!(!beta_review_already_submitted(None));
+        assert!(beta_review_already_submitted(Some(
+            "WAITING_FOR_BETA_REVIEW"
+        )));
+        assert!(beta_review_already_submitted(Some("IN_BETA_TESTING")));
     }
 
     #[test]
