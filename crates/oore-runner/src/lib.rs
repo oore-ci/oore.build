@@ -4763,7 +4763,8 @@ async fn execute_build_steps(
                         for (key, value) in step_env.iter_mut() {
                             let is_host_cache =
                                 host_env.iter().any(|(k, v)| k == key && v == value);
-                            if let Some((_, guest)) = vm.guest_env().iter().find(|(k, _)| k == key)
+                            if let Some((_, guest)) =
+                                vm.vm.guest_env().iter().find(|(k, _)| k == key)
                                 && is_host_cache
                             {
                                 *value = guest.clone();
@@ -4845,7 +4846,7 @@ async fn execute_build_steps(
             .await;
 
             let spawned = match &vm {
-                Some(vm) => vm.spawn_step(&normalized_command, &step_env).await,
+                Some(vm) => vm.vm.spawn_step(&normalized_command, &step_env).await,
                 None => {
                     let mut step_cmd = repository_shell_command(&normalized_command, &workspace);
                     step_cmd
@@ -5490,7 +5491,32 @@ Install the required tooling on the runner, set isolation: vm, or override build
     (steps, Ok(()))
 }
 
-/// Waits for one of the host's macOS VM slots, then boots the build's VM.
+/// The build's VM and the host slot it occupies. The VM is declared first so
+/// it is deleted before the slot is released.
+struct BuildVm {
+    vm: tart::TartVm,
+    _slot: tart::VmSlot,
+}
+
+/// Reads the repository's optional `oore.image.yaml`.
+fn read_vm_image_config(
+    workspace: &Path,
+) -> anyhow::Result<Option<(String, oore_contract::VmImageConfig)>> {
+    let path = workspace.join(oore_contract::VM_IMAGE_CONFIG_PATH);
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
+    let config = oore_contract::parse_vm_image_yaml(&raw)
+        .map_err(|error| anyhow::anyhow!("Invalid {}: {error}", path.display()))?;
+    Ok(Some((raw, config)))
+}
+
+/// Waits for one of the host's macOS VM slots, builds the image if this host
+/// does not have it yet, then boots the build's VM.
 #[allow(clippy::too_many_arguments)]
 async fn start_build_vm(
     job: &ClaimedJob,
@@ -5498,11 +5524,11 @@ async fn start_build_vm(
     daemon_url: &str,
     config: &RunnerConfig,
     log_seq: &mut BuildLogCursor,
-    authority: &BuildAuthorityState,
+    authority: &Arc<BuildAuthorityState>,
     workspace: &Path,
     shares: &[tart::HostShare],
     flutter_version: &str,
-) -> anyhow::Result<tart::TartVm> {
+) -> anyhow::Result<BuildVm> {
     let tart_bin = tart::find_tart().with_context(|| {
         format!(
             "This pipeline runs in a VM (isolation: vm), but Tart is not installed on this runner; install Tart {} or newer",
@@ -5519,7 +5545,16 @@ async fn start_build_vm(
     // Virtualization.framework needs the runner account's GUI session, the
     // same one iOS signing uses; a bare launchd daemon context cannot boot VMs.
     require_gui_login_session("Running builds in a VM")?;
-    let image = tart::resolve_image(&tart::image_template(), flutter_version)?;
+    let image_config = read_vm_image_config(workspace)?;
+    let plan = tart::plan_image(
+        &tart::image_template(),
+        &tart::base_image(),
+        flutter_version,
+        &job.project_id,
+        image_config
+            .as_ref()
+            .map(|(raw, config)| (raw.as_str(), config.clone())),
+    )?;
     let _ = append_runner_log_line(
         client,
         daemon_url,
@@ -5527,7 +5562,15 @@ async fn start_build_vm(
         &job.build_id,
         log_seq,
         "stdout",
-        &format!("Flutter {flutter_version} uses VM image {image} (Tart {tart_version})"),
+        &format!(
+            "Flutter {flutter_version} uses VM image {} (Tart {tart_version}){}",
+            plan.name,
+            if plan.config.is_some() {
+                format!(", customised by {}", oore_contract::VM_IMAGE_CONFIG_PATH)
+            } else {
+                String::new()
+            }
+        ),
     )
     .await;
 
@@ -5558,6 +5601,12 @@ async fn start_build_vm(
     };
 
     let name = tart::vm_name(&config.runner_id, &job.build_id);
+    if !tart::is_registry_reference(&plan.name) {
+        ensure_vm_image(
+            job, client, daemon_url, config, log_seq, authority, &tart_bin, &slot_dir, &plan, &name,
+        )
+        .await?;
+    }
     let _ = append_runner_log_line(
         client,
         daemon_url,
@@ -5565,10 +5614,14 @@ async fn start_build_vm(
         &job.build_id,
         log_seq,
         "stdout",
-        &format!("Cloning {image} into {name} (VM slot {})", slot.index + 1),
+        &format!(
+            "Cloning {} into {name} (VM slot {})",
+            plan.name,
+            slot.index + 1
+        ),
     )
     .await;
-    let vm = tart::TartVm::start(tart_bin, &image, name, workspace, shares, slot).await?;
+    let vm = tart::TartVm::start(tart_bin, &plan.name, name, Some(workspace), shares).await?;
     let _ = append_runner_log_line(
         client,
         daemon_url,
@@ -5583,7 +5636,119 @@ async fn start_build_vm(
         ),
     )
     .await;
-    Ok(vm)
+    Ok(BuildVm { vm, _slot: slot })
+}
+
+/// Builds `plan.name` from its base image unless this host already has it.
+/// Runs inside the build's own VM slot.
+#[allow(clippy::too_many_arguments)]
+async fn ensure_vm_image(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    authority: &Arc<BuildAuthorityState>,
+    tart_bin: &Path,
+    lock_dir: &Path,
+    plan: &tart::ImagePlan,
+    vm_name: &str,
+) -> anyhow::Result<()> {
+    let mut waiting_logged = false;
+    let _image_lock = loop {
+        if tart::local_image_exists(tart_bin, &plan.name)? {
+            return Ok(());
+        }
+        if let Some(lock) = tart::try_lock_image(lock_dir, &plan.name)? {
+            break lock;
+        }
+        if !waiting_logged {
+            waiting_logged = true;
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &format!(
+                    "Another build is creating VM image {}; waiting for it",
+                    plan.name
+                ),
+            )
+            .await;
+        }
+        check_build_active(client, daemon_url, config, &job.build_id, authority).await?;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    };
+    // The build holding the lock before us may have just finished it.
+    if tart::local_image_exists(tart_bin, &plan.name)? {
+        return Ok(());
+    }
+
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!(
+            "This runner has no VM image {}; building it from {}. The first build of a new image downloads the base and Flutter and can take 20 minutes or more",
+            plan.name, plan.base
+        ),
+    )
+    .await;
+    let builder = tart::TartVm::start(
+        tart_bin.to_path_buf(),
+        &plan.base,
+        format!("{vm_name}-image"),
+        None,
+        &[],
+    )
+    .await
+    .with_context(|| format!("failed to start base image {}", plan.base))?;
+    let child = builder.spawn_script(&tart::provision_script(plan)).await?;
+    let status = run_and_stream(
+        child,
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
+    )
+    .await;
+    match status {
+        None => {
+            return Err(BuildTerminated {
+                status: "canceled".to_string(),
+            }
+            .into());
+        }
+        Some(status) if !status.success() => {
+            anyhow::bail!(
+                "Building VM image {} failed with {status}; see the log above",
+                plan.name
+            );
+        }
+        Some(_) => {}
+    }
+    let image = plan.name.clone();
+    tokio::task::spawn_blocking(move || builder.keep_as(&image))
+        .await
+        .context("saving the VM image failed")??;
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!("VM image {} is ready and cached on this runner", plan.name),
+    )
+    .await;
+    Ok(())
 }
 
 async fn fetch_job_publish_plan(

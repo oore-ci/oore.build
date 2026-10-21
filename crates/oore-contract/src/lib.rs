@@ -2745,6 +2745,72 @@ pub fn parse_repository_pipeline_yaml(raw: &str) -> Result<PipelineExecutionConf
     }
 }
 
+/// Repository-owned VM image customisation, read from `oore.image.yaml`.
+/// The Flutter version still comes from `.fvmrc` or the pipeline.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmImageConfig {
+    pub version: u32,
+    /// Tart image to start from, overriding the runner's base image.
+    #[serde(default)]
+    pub base: Option<String>,
+    /// Extra `sdkmanager` packages, such as `platforms;android-36`.
+    #[serde(default)]
+    pub android_packages: Vec<String>,
+    /// Extra Homebrew formulae.
+    #[serde(default)]
+    pub brew: Vec<String>,
+    /// Shell commands run last, after Flutter is installed.
+    #[serde(default)]
+    pub setup: Vec<String>,
+}
+
+pub const VM_IMAGE_CONFIG_PATH: &str = "oore.image.yaml";
+
+fn is_plain_package_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ';' | '@' | '/' | '+')
+        })
+}
+
+pub fn parse_vm_image_yaml(raw: &str) -> Result<VmImageConfig, String> {
+    let config: VmImageConfig =
+        serde_yaml::from_str(raw).map_err(|error| format!("YAML parse error: {error}"))?;
+    let mut errors = Vec::new();
+    if config.version != 1 {
+        errors.push(format!(
+            "unsupported image config version {}, expected 1",
+            config.version
+        ));
+    }
+    if let Some(base) = &config.base
+        && (base.trim().is_empty() || base.chars().any(char::is_whitespace))
+    {
+        errors.push("base must be a Tart image name or OCI reference".to_string());
+    }
+    for (field, values) in [
+        ("android_packages", &config.android_packages),
+        ("brew", &config.brew),
+    ] {
+        for (index, value) in values.iter().enumerate() {
+            if !is_plain_package_name(value) {
+                errors.push(format!("{field}[{index}] is not a package name: '{value}'"));
+            }
+        }
+    }
+    for (index, command) in config.setup.iter().enumerate() {
+        if command.trim().is_empty() {
+            errors.push(format!("setup[{index}] must not be empty"));
+        }
+    }
+    if errors.is_empty() {
+        Ok(config)
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
 /// Highest `versionCode` Google Play accepts. Apple build numbers have no
 /// lower ceiling that matters here, so this bounds every store.
 pub const MAX_STORE_VERSION_CODE: i64 = 2_100_000_000;
@@ -4789,6 +4855,18 @@ pub struct RevokeApiTokenResponse {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn vm_image_config_accepts_packages_and_rejects_injection() {
+        let config = super::parse_vm_image_yaml(
+            "version: 1\nbase: ghcr.io/acme/xcode:26.5\nandroid_packages: ['platforms;android-36']\nbrew: [graphicsmagick]\nsetup: ['gem install bundler']\n",
+        )
+        .unwrap();
+        assert_eq!(config.base.as_deref(), Some("ghcr.io/acme/xcode:26.5"));
+        assert_eq!(config.android_packages, vec!["platforms;android-36"]);
+        assert!(super::parse_vm_image_yaml("version: 1\nbrew: ['jq; rm -rf /']\n").is_err());
+        assert!(super::parse_vm_image_yaml("version: 2\n").is_err());
+        assert!(super::parse_vm_image_yaml("version: 1\nflutter: 3.47.7\n").is_err());
+    }
 
     #[test]
     fn runner_labels_come_from_capabilities_and_operators() {

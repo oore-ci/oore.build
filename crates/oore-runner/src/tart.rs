@@ -77,6 +77,140 @@ pub(crate) fn version_is_supported(version: &str) -> bool {
     }
 }
 
+/// Image every built Flutter image starts from: Xcode, CocoaPods, a JDK, the
+/// Android SDK and the Tart Guest Agent are already in it.
+pub(crate) const BASE_IMAGE_ENV: &str = "OORE_TART_BASE_IMAGE";
+pub(crate) const DEFAULT_BASE_IMAGE: &str = "ghcr.io/cirruslabs/macos-tahoe-xcode:26.5";
+
+pub(crate) fn base_image() -> String {
+    std::env::var(BASE_IMAGE_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_BASE_IMAGE.to_string())
+}
+
+/// OCI references contain a registry path; Tart pulls those itself.
+pub(crate) fn is_registry_reference(image: &str) -> bool {
+    image.contains('/')
+}
+
+/// The image a build runs in, and how to build it when it is missing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ImagePlan {
+    pub name: String,
+    pub base: String,
+    pub flutter_version: String,
+    pub config: Option<oore_contract::VmImageConfig>,
+}
+
+/// Picks the image for a build. A repository's `oore.image.yaml` makes the
+/// image its project's own: the name carries a hash of the project, base,
+/// Flutter version and file, so a changed file builds a new image.
+pub(crate) fn plan_image(
+    template: &str,
+    base: &str,
+    flutter_version: &str,
+    project_id: &str,
+    image_config: Option<(&str, oore_contract::VmImageConfig)>,
+) -> anyhow::Result<ImagePlan> {
+    let name = resolve_image(template, flutter_version)?;
+    let Some((raw, config)) = image_config else {
+        return Ok(ImagePlan {
+            name,
+            base: base.to_string(),
+            flutter_version: flutter_version.to_string(),
+            config: None,
+        });
+    };
+    let base = config.base.clone().unwrap_or_else(|| base.to_string());
+    let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+    for part in [project_id, base.as_str(), flutter_version, raw] {
+        sha2::Digest::update(&mut hasher, part.as_bytes());
+        sha2::Digest::update(&mut hasher, [0]);
+    }
+    let digest = hex::encode(sha2::Digest::finalize(hasher));
+    Ok(ImagePlan {
+        name: format!("oore-flutter-{flutter_version}-{}", &digest[..12]),
+        base,
+        flutter_version: flutter_version.to_string(),
+        config: Some(config),
+    })
+}
+
+const FLUTTER_CHANNELS: [&str; 4] = ["stable", "beta", "main", "master"];
+
+/// Script that turns a base image into one for `plan.flutter_version`.
+pub(crate) fn provision_script(plan: &ImagePlan) -> String {
+    let version = shell_quote(&plan.flutter_version);
+    let checkout = if FLUTTER_CHANNELS.contains(&plan.flutter_version.as_str()) {
+        format!("git checkout {version}\ngit pull --ff-only origin {version}")
+    } else {
+        format!("git fetch --no-tags origin tag {version}\ngit checkout --detach {version}")
+    };
+    let mut script = format!(
+        r#"set -e
+if [ ! -d "$HOME/flutter/.git" ]; then
+  git clone https://github.com/flutter/flutter.git "$HOME/flutter"
+fi
+cd "$HOME/flutter"
+{checkout}
+grep -q 'flutter/bin' "$HOME/.zprofile" 2>/dev/null || echo 'export PATH="$HOME/flutter/bin:$PATH"' >> "$HOME/.zprofile"
+export PATH="$HOME/flutter/bin:$PATH"
+flutter config --no-analytics
+flutter precache --ios --android
+yes | flutter doctor --android-licenses > /dev/null || true
+"#
+    );
+    if let Some(config) = &plan.config {
+        if !config.brew.is_empty() {
+            let packages = config
+                .brew
+                .iter()
+                .map(|p| shell_quote(p))
+                .collect::<Vec<_>>();
+            script.push_str(&format!("brew install {}\n", packages.join(" ")));
+        }
+        if !config.android_packages.is_empty() {
+            let packages = config
+                .android_packages
+                .iter()
+                .map(|p| shell_quote(p))
+                .collect::<Vec<_>>();
+            script.push_str(&format!("yes | sdkmanager {}\n", packages.join(" ")));
+        }
+        for command in &config.setup {
+            script.push_str(&format!("/bin/sh -c {}\n", shell_quote(command)));
+        }
+    }
+    script.push_str("cd \"$HOME\"\nflutter --version\n");
+    script
+}
+
+pub(crate) fn local_image_exists(tart: &Path, name: &str) -> anyhow::Result<bool> {
+    let listing = run_tart(tart, &["list", "--source", "local", "--quiet"])?;
+    Ok(listing.lines().any(|line| line.trim() == name))
+}
+
+/// Serialises image builds across this host's runners, so two builds that need
+/// the same missing image build it once.
+pub(crate) fn try_lock_image(dir: &Path, image: &str) -> anyhow::Result<Option<fs::File>> {
+    fs::create_dir_all(dir)?;
+    let path = dir.join(format!("image-{}.lock", name_component(image)));
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(fs::TryLockError::WouldBlock) => Ok(None),
+        Err(fs::TryLockError::Error(error)) => {
+            Err(error).with_context(|| format!("failed to lock {}", path.display()))
+        }
+    }
+}
+
 /// Maps the build's Flutter version to a Tart image through the template.
 pub(crate) fn resolve_image(template: &str, flutter_version: &str) -> anyhow::Result<String> {
     anyhow::ensure!(
@@ -248,24 +382,28 @@ pub(crate) struct TartVm {
     run_stderr: Arc<Mutex<String>>,
     guest_workspace: String,
     guest_env: Vec<(String, String)>,
-    _slot: VmSlot,
+    /// Set once the VM was kept as an image; nothing is deleted then.
+    kept: bool,
 }
 
 impl TartVm {
     /// Clones `image`, boots it headless with `workspace` shared, and waits
-    /// until the guest agent answers and the workspace is mounted.
+    /// until the guest agent answers and the workspace is mounted. The caller
+    /// holds a [`VmSlot`] for as long as the VM lives.
     pub(crate) async fn start(
         tart: PathBuf,
         image: &str,
         name: String,
-        workspace: &Path,
+        workspace: Option<&Path>,
         shares: &[HostShare],
-        slot: VmSlot,
     ) -> anyhow::Result<Self> {
-        let workspace = workspace
-            .to_str()
-            .context("build workspace path is not valid UTF-8")?;
-        let mut dir_args = vec![format!("--dir={workspace}:tag={WORKSPACE_TAG}")];
+        let mut dir_args = Vec::new();
+        if let Some(workspace) = workspace {
+            let workspace = workspace
+                .to_str()
+                .context("build workspace path is not valid UTF-8")?;
+            dir_args.push(format!("--dir={workspace}:tag={WORKSPACE_TAG}"));
+        }
         for share in shares {
             let host_dir = share
                 .host_dir
@@ -303,7 +441,7 @@ impl TartVm {
             run_stderr: Arc::new(Mutex::new(String::new())),
             guest_workspace: String::new(),
             guest_env: Vec::new(),
-            _slot: slot,
+            kept: false,
         };
         let mut child = Command::new(&vm.tart)
             .arg("run")
@@ -340,6 +478,10 @@ impl TartVm {
             "VM reported an unusable home directory '{home}'"
         );
         let home = home.trim_end_matches('/');
+        if workspace.is_none() {
+            vm.guest_workspace = home.to_string();
+            return Ok(vm);
+        }
         let guest_workspace = format!("{home}/{GUEST_WORKSPACE_DIR}");
         let mut mounts = vec![(WORKSPACE_TAG.to_string(), guest_workspace.clone())];
         for share in shares {
@@ -437,7 +579,12 @@ impl TartVm {
         env: &[(String, String)],
     ) -> anyhow::Result<tokio::process::Child> {
         let script = guest_step_script(&self.guest_workspace, command, env)?;
-        // A login shell picks up the image's PATH (Flutter, Homebrew, Ruby).
+        self.spawn_script(&script).await
+    }
+
+    /// Feeds `script` to a guest login shell, which picks up the image's PATH
+    /// (Flutter, Homebrew, Ruby).
+    pub(crate) async fn spawn_script(&self, script: &str) -> anyhow::Result<tokio::process::Child> {
         let mut child = tokio::process::Command::new(&self.tart)
             .args(["exec", "-i", &self.name, "/bin/zsh", "-l", "-s"])
             .stdin(Stdio::piped())
@@ -454,15 +601,32 @@ impl TartVm {
     }
 }
 
-impl Drop for TartVm {
-    fn drop(&mut self) {
-        let _ = run_tart(&self.tart, &["stop", "--timeout", "10", &self.name]);
+impl TartVm {
+    fn shut_down(&mut self, timeout_secs: &str) {
+        let _ = run_tart(&self.tart, &["stop", "--timeout", timeout_secs, &self.name]);
         if let Some(mut run) = self.run.take() {
             if run.try_wait().ok().flatten().is_none() {
                 let _ = run.kill();
             }
             let _ = run.wait();
         }
+    }
+
+    /// Shuts the guest down cleanly and keeps its disk as the local image `image`.
+    pub(crate) fn keep_as(mut self, image: &str) -> anyhow::Result<()> {
+        self.shut_down("120");
+        run_tart(&self.tart, &["rename", &self.name, image])?;
+        self.kept = true;
+        Ok(())
+    }
+}
+
+impl Drop for TartVm {
+    fn drop(&mut self) {
+        if self.kept {
+            return;
+        }
+        self.shut_down("10");
         if let Err(error) = run_tart(&self.tart, &["delete", &self.name]) {
             eprintln!("Warning: failed to delete VM {}: {error:#}", self.name);
         }
@@ -544,6 +708,60 @@ mod tests {
         assert_eq!(share_tag("cocoapods-specs"), "oore-cache-cocoapods-specs");
         // Virtualization.framework caps a virtiofs tag at 36 bytes.
         assert!(share_tag("cocoapods-specs").len() <= 36);
+    }
+
+    #[test]
+    fn repository_image_config_gets_a_project_scoped_image() {
+        let shared = plan_image(DEFAULT_IMAGE_TEMPLATE, "base:1", "3.47.7", "p1", None).unwrap();
+        assert_eq!(shared.name, "oore-flutter-3.47.7");
+        assert_eq!(shared.base, "base:1");
+
+        let raw = "version: 1\nbrew: [jq]\n";
+        let config = oore_contract::parse_vm_image_yaml(raw).unwrap();
+        let own = plan_image(
+            DEFAULT_IMAGE_TEMPLATE,
+            "base:1",
+            "3.47.7",
+            "p1",
+            Some((raw, config.clone())),
+        )
+        .unwrap();
+        assert!(own.name.starts_with("oore-flutter-3.47.7-"));
+        assert_eq!(own.name.len(), "oore-flutter-3.47.7-".len() + 12);
+        let other_project = plan_image(
+            DEFAULT_IMAGE_TEMPLATE,
+            "base:1",
+            "3.47.7",
+            "p2",
+            Some((raw, config)),
+        )
+        .unwrap();
+        assert_ne!(own.name, other_project.name);
+    }
+
+    #[test]
+    fn provision_script_checks_out_tags_and_channels() {
+        let mut plan = plan_image(DEFAULT_IMAGE_TEMPLATE, "base", "3.47.7", "p", None).unwrap();
+        let script = provision_script(&plan);
+        assert!(
+            script.contains(
+                "git fetch --no-tags origin tag '3.47.7'\ngit checkout --detach '3.47.7'"
+            )
+        );
+        assert!(script.contains("flutter precache --ios --android"));
+
+        plan.flutter_version = "stable".to_string();
+        plan.config = Some(
+            oore_contract::parse_vm_image_yaml(
+                "version: 1\nbrew: [jq]\nandroid_packages: ['platforms;android-36']\nsetup: ['echo hi']\n",
+            )
+            .unwrap(),
+        );
+        let script = provision_script(&plan);
+        assert!(script.contains("git checkout 'stable'\ngit pull --ff-only origin 'stable'"));
+        assert!(script.contains("brew install 'jq'\n"));
+        assert!(script.contains("yes | sdkmanager 'platforms;android-36'\n"));
+        assert!(script.contains("/bin/sh -c 'echo hi'\n"));
     }
 
     #[test]

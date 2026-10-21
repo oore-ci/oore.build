@@ -16,7 +16,8 @@ Tart and the images.
 - The Runner account logged in to macOS. Apple's Virtualization framework
   needs that login session, the same one iOS signing uses, so turn on
   automatic login for the Runner account on a dedicated build Mac.
-- One image per Flutter version your pipelines use (see below).
+- Disk space for the images: the Runner builds one per Flutter version on
+  first use (see below).
 
 `oore doctor` reports the installed Tart version.
 
@@ -39,14 +40,66 @@ checked-in `.fvmrc` wins, then `flutter_version` from the pipeline, then
 default template is `oore-flutter-{flutter}`, so a repository that pins
 `3.47.7` in `.fvmrc` builds in the local VM `oore-flutter-3.47.7`.
 
-The template can also name an OCI reference such as
-`ghcr.io/acme/flutter:{flutter}-xcode26`; Tart pulls it on first use and keeps
-it cached.
+### Built on first use
 
-An image must:
+When the Runner does not have the image yet, it builds it before the first
+build that needs it and keeps it for every later one:
+
+1. It clones the base image, `ghcr.io/cirruslabs/macos-tahoe-xcode:26.5` unless
+   `OORE_TART_BASE_IMAGE` on the Runner names another. That image already has
+   Xcode, CocoaPods, a JDK, the Android SDK, Flutter at `~/flutter` and the
+   Tart Guest Agent.
+2. It checks Flutter out at the requested tag (or channel), precaches the iOS
+   and Android artifacts and accepts the Android licenses.
+3. It saves the result as the local image and deletes nothing else.
+
+The output streams into the build log under `vm-start`. The very first image
+also downloads the base, which is tens of gigabytes, so expect that build to
+take 20 minutes or more. Two builds that need the same missing image build it
+once: the second waits for the first.
+
+To build an image ahead of time, start any `isolation: vm` build that uses the
+version. To rebuild one, delete it with `tart delete oore-flutter-3.47.7`.
+
+### Customise an app's image
+
+Add `oore.image.yaml` to the repository root when an app needs more than the
+base provides:
+
+```yaml
+version: 1
+base: ghcr.io/cirruslabs/macos-tahoe-xcode:26.5 # optional
+android_packages:
+  - 'platforms;android-36'
+  - 'ndk;28.2.13676358'
+brew:
+  - graphicsmagick
+setup:
+  - gem install bundler
+```
+
+| Field              | Meaning                                               |
+| ------------------ | ----------------------------------------------------- |
+| `version`          | Must be `1`                                           |
+| `base`             | Tart image to start from instead of the Runner's base |
+| `android_packages` | Extra `sdkmanager` packages                           |
+| `brew`             | Extra Homebrew formulae                               |
+| `setup`            | Shell commands run last, after Flutter is installed   |
+
+The Flutter version still comes from `.fvmrc` or the pipeline. With this file
+the image belongs to that project alone: its name adds a hash of the project,
+base, Flutter version and file, such as `oore-flutter-3.47.7-1a2b3c4d5e6f`, so
+editing the file builds a fresh image on the next build. Old images stay until
+you delete them with `tart delete`.
+
+### Use a prebuilt image
+
+`OORE_TART_IMAGE` can also name an OCI reference such as
+`ghcr.io/acme/flutter:{flutter}-xcode26`. Tart pulls it on first use and keeps
+it cached; the Runner does not build it. Such an image must:
 
 - run the [Tart Guest Agent](https://github.com/cirruslabs/tart-guest-agent)
-  as a launchd global agent, which the Cirrus Labs macOS images already do
+  as a launchd global agent
 - log in its build user automatically
 - have Flutter on the `PATH` of a zsh login shell, along with Xcode,
   CocoaPods, a JDK and the Android SDK your apps need
@@ -55,7 +108,8 @@ Each image carries exactly one Flutter SDK.
 
 ## How a build runs
 
-1. The Runner checks out the repository on the host and resolves the image.
+1. The Runner checks out the repository on the host and resolves the image,
+   building it first if this Runner does not have it.
 2. It waits for a free VM slot. Apple allows two macOS VMs per host, so a Mac
    runs at most two VM builds at a time across all of its Runners; a third
    build waits and its log says so.
