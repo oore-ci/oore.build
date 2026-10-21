@@ -14,10 +14,15 @@ import { InformationCircleIcon, Search01Icon } from '@hugeicons/core-free-icons'
 import type { Runner } from '@oore/client/models'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { usePageClamp } from '@/hooks/use-page-clamp'
-import { useRunners, useUpdateRunner } from '@/hooks/use-runners'
+import {
+  usePurgeRunnerCaches,
+  useRunners,
+  useUpdateRunner,
+} from '@/hooks/use-runners'
 import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { DirectRunnerPolicyPanel } from '@/components/settings/direct-runner-policy-panel'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -171,6 +176,8 @@ function RunnersSettingsPage() {
   const search = useSearch({ from: '/settings/runners' })
   const canWrite = useHasPermission('runners:write')
   const [selectedRunner, setSelectedRunner] = useState<Runner | null>(null)
+  const [purgeRunner, setPurgeRunner] = useState<Runner | null>(null)
+  const purgeCaches = usePurgeRunnerCaches()
 
   const page = search.page ?? 1
   const pageSize = search.pageSize ?? 20
@@ -288,6 +295,7 @@ function RunnersSettingsPage() {
           onPageChange={(nextPage) =>
             updateSearch({ page: nextPage > 1 ? nextPage : undefined })
           }
+          onPurgeCaches={setPurgeRunner}
           onRename={setSelectedRunner}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })
@@ -308,6 +316,34 @@ function RunnersSettingsPage() {
           onClose={() => setSelectedRunner(null)}
         />
       ) : null}
+
+      <ConfirmDialog
+        open={canWrite && purgeRunner !== null}
+        onOpenChange={(open) => {
+          if (!open) setPurgeRunner(null)
+        }}
+        title={`Purge caches on ${purgeRunner?.name ?? 'runner'}?`}
+        description="The runner deletes its pub, Gradle, CocoaPods and Xcode DerivedData caches before its next build. The next build of each project downloads its dependencies again."
+        confirmLabel="Purge cache"
+        confirmVariant="destructive"
+        isPending={purgeCaches.isPending}
+        onConfirm={() => {
+          if (!purgeRunner) return
+          purgeCaches.mutate(purgeRunner.id, {
+            onSuccess: () => {
+              toast.success('Cache purge requested')
+              setPurgeRunner(null)
+            },
+            onError: (error) => {
+              toast.error(
+                error instanceof Error
+                  ? error.message
+                  : 'Failed to request cache purge',
+              )
+            },
+          })
+        }}
+      />
     </PageLayout>
   )
 }
