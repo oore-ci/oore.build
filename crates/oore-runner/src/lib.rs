@@ -3560,6 +3560,9 @@ struct ResolvedExecutionPlan {
     secret_env_keys: std::collections::HashSet<String>,
     build_number_offset: i64,
     isolation: BuildIsolation,
+    /// Whether the build targets iOS or macOS. Only those need the Xcode VM
+    /// image; Android-only builds use a base about a third its size.
+    needs_xcode: bool,
     /// From `.fvmrc`, then the pipeline config, then `stable`. Picks the VM
     /// image; host builds check that the runner's Flutter matches it.
     flutter_version: String,
@@ -4105,6 +4108,7 @@ fn resolve_execution_plan(
             secret_env_keys: Default::default(),
             build_number_offset: file_config.build_number_offset,
             isolation: file_config.isolation,
+            needs_xcode: needs_xcode(&file_config.platforms),
             flutter_version: resolved_flutter_version,
             source: format!("file:{}", full_path.display()),
         });
@@ -4123,6 +4127,7 @@ fn resolve_execution_plan(
         secret_env_keys: Default::default(),
         build_number_offset: fallback.build_number_offset,
         isolation: fallback.isolation,
+        needs_xcode: needs_xcode(&fallback.platforms),
         flutter_version: resolved_flutter_version,
         source: "ui_fallback".to_string(),
     })
@@ -4326,6 +4331,12 @@ fn add_checkout_proxy_config(
             format!("Authorization: Bearer {runner_token}"),
         ),
     ]);
+}
+
+fn needs_xcode(platforms: &[BuildPlatform]) -> bool {
+    platforms
+        .iter()
+        .any(|platform| matches!(platform, BuildPlatform::Ios | BuildPlatform::Macos))
 }
 
 fn snapshot_requests_ios(snapshot: &serde_json::Value) -> bool {
@@ -4898,6 +4909,7 @@ async fn execute_build_steps(
                 &workspace,
                 &shares,
                 &execution_plan.flutter_version,
+                execution_plan.needs_xcode,
             )
             .await;
             let finished = now_unix();
@@ -5741,6 +5753,7 @@ async fn start_build_vm(
     workspace: &Path,
     shares: &[tart::HostShare],
     flutter_version: &str,
+    needs_xcode: bool,
 ) -> anyhow::Result<BuildVm> {
     let tart_bin = tart::find_tart().with_context(|| {
         format!(
@@ -5761,8 +5774,9 @@ async fn start_build_vm(
     let image_config = read_vm_image_config(workspace)?;
     let plan = tart::plan_image(
         &tart::image_template(),
-        &tart::base_image(),
+        &tart::base_image(needs_xcode),
         flutter_version,
+        !needs_xcode,
         &job.project_id,
         image_config
             .as_ref()
@@ -7046,6 +7060,7 @@ mod secret_tests {
             secret_env_keys: Default::default(),
             build_number_offset: 0,
             isolation: BuildIsolation::Host,
+            needs_xcode: false,
             flutter_version: "stable".to_string(),
             source: "test".to_string(),
         }
