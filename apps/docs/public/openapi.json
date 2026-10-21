@@ -11956,6 +11956,14 @@
           }
         }
       },
+      "BuildIsolation": {
+        "type": "string",
+        "description": "Where a build's steps run.",
+        "enum": [
+          "host",
+          "vm"
+        ]
+      },
       "BuildLogChunk": {
         "type": "object",
         "required": [
@@ -14674,6 +14682,9 @@
               "null"
             ]
           },
+          "isolation": {
+            "$ref": "#/components/schemas/BuildIsolation"
+          },
           "platform_build_args": {
             "$ref": "#/components/schemas/PlatformBuildArgs"
           },
@@ -15729,7 +15740,8 @@
           "platform_build_args",
           "platform_commands",
           "env_keys",
-          "artifact_patterns"
+          "artifact_patterns",
+          "isolation"
         ],
         "properties": {
           "artifact_patterns": {
@@ -15756,6 +15768,9 @@
               "string",
               "null"
             ]
+          },
+          "isolation": {
+            "$ref": "#/components/schemas/BuildIsolation"
           },
           "platform_build_args": {
             "$ref": "#/components/schemas/PlatformBuildArgs"

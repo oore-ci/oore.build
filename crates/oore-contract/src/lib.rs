@@ -2541,6 +2541,17 @@ pub struct PipelineCommandStages {
     pub post_build: Vec<String>,
 }
 
+/// Where a build's steps run.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildIsolation {
+    /// Directly on the runner host, with the host's toolchains.
+    #[default]
+    Host,
+    /// In a fresh Tart VM cloned from the image for the build's Flutter version.
+    Vm,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PlatformBuildArgs {
@@ -2599,6 +2610,8 @@ pub struct PipelineExecutionConfig {
     /// Runner labels a build needs, all of them. Empty means `macos`.
     #[serde(default, deserialize_with = "deserialize_runs_on")]
     pub runs_on: Vec<String>,
+    #[serde(default)]
+    pub isolation: BuildIsolation,
 }
 
 /// Secret-free representation of a repository-owned pipeline config.
@@ -2626,6 +2639,7 @@ pub struct RepositoryWorkflowExecutionPreview {
     pub build_number_offset: i64,
     #[serde(default)]
     pub runs_on: Vec<String>,
+    pub isolation: BuildIsolation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -2685,6 +2699,8 @@ struct RepositoryPipelineConfig {
     build_number_offset: i64,
     #[serde(default, deserialize_with = "deserialize_runs_on")]
     runs_on: Vec<String>,
+    #[serde(default)]
+    isolation: BuildIsolation,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2718,6 +2734,7 @@ pub fn parse_repository_pipeline_yaml(raw: &str) -> Result<PipelineExecutionConf
         artifact_patterns,
         build_number_offset: parsed.build_number_offset,
         runs_on: parsed.runs_on,
+        isolation: parsed.isolation,
     };
     let errors = validate_repository_execution_config(&config);
     if errors.is_empty() {
@@ -2917,6 +2934,7 @@ impl Default for PipelineExecutionConfig {
             artifact_patterns: default_artifact_patterns(),
             build_number_offset: 0,
             runs_on: Vec::new(),
+            isolation: BuildIsolation::Host,
         }
     }
 }
