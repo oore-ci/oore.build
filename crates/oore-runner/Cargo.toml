@@ -19,6 +19,7 @@ reqwest.workspace = true
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+xmlparser = "0.13"
 sha2.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "process", "sync", "time"] }
 zeroize.workspace = true

@@ -2198,6 +2198,54 @@
         ]
       }
     },
+    "/v1/builds/{build_id}/tests": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Get build test results",
+        "description": "Returns the test summary and failed tests of a build. Each failure\ncarries its outcome in recent test-reporting builds of the same\npipeline and whether it looks flaky.",
+        "operationId": "get_build_test_results",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Test results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildTestResultsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/events": {
       "get": {
         "tags": [
@@ -8486,6 +8534,93 @@
         ]
       }
     },
+    "/v1/runners/{runner_id}/jobs/{job_id}/test-results": {
+      "post": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Report test results",
+        "description": "Runner reports the tests parsed from one build step. Reports from\nseveral steps of a build add up. Only accepted while the build runs.",
+        "operationId": "report_job_test_results",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerTestReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Runner does not match the assignment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Build is not running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/secrets": {
       "get": {
         "tags": [
@@ -12384,6 +12519,121 @@
           "timed_out",
           "expired"
         ]
+      },
+      "BuildTestFailure": {
+        "type": "object",
+        "required": [
+          "suite",
+          "name",
+          "step",
+          "flaky",
+          "history"
+        ],
+        "properties": {
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "flaky": {
+            "type": "boolean",
+            "description": "The test failed, passed, then failed again within the history window."
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TestRunOutcome"
+            },
+            "description": "Recent builds of this pipeline that reported tests, oldest first, ending with this build."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "stack_trace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "step": {
+            "type": "string"
+          },
+          "suite": {
+            "type": "string"
+          }
+        }
+      },
+      "BuildTestResultsResponse": {
+        "type": "object",
+        "required": [
+          "failures",
+          "history_window"
+        ],
+        "properties": {
+          "failures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildTestFailure"
+            }
+          },
+          "history_window": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many recent test-reporting builds the history and flaky check cover."
+          },
+          "summary": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildTestSummary",
+                "description": "Absent when the build reported no test results."
+              }
+            ]
+          }
+        }
+      },
+      "BuildTestSummary": {
+        "type": "object",
+        "description": "Totals across every test report of a build.",
+        "required": [
+          "total",
+          "passed",
+          "failed",
+          "skipped",
+          "duration_ms"
+        ],
+        "properties": {
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "passed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       },
       "CancelBuildResponse": {
         "type": "object",
@@ -16975,6 +17225,88 @@
           "draining"
         ]
       },
+      "RunnerTestFailure": {
+        "type": "object",
+        "required": [
+          "suite",
+          "name"
+        ],
+        "properties": {
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Full test name, including group names."
+          },
+          "stack_trace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "suite": {
+            "type": "string",
+            "description": "Test file or suite, such as `test/login_test.dart`."
+          }
+        }
+      },
+      "RunnerTestReport": {
+        "type": "object",
+        "description": "Test results parsed by the runner from one build step.",
+        "required": [
+          "step",
+          "total",
+          "passed",
+          "failed",
+          "skipped",
+          "duration_ms",
+          "failures"
+        ],
+        "properties": {
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunnerTestFailure"
+            },
+            "description": "Failed tests. The daemon keeps at most 500 per build."
+          },
+          "passed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "step": {
+            "type": "string",
+            "description": "Step that produced the report, such as `build-2`."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "RuntimeMode": {
         "type": "string",
         "enum": [
@@ -17736,6 +18068,28 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "TestRunOutcome": {
+        "type": "object",
+        "description": "One earlier run of a test in the same pipeline.",
+        "required": [
+          "build_id",
+          "build_number",
+          "status"
+        ],
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "type": "string",
+            "description": "`failed`, or `passed` when the build reported tests and this one did not fail."
           }
         }
       },

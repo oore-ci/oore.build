@@ -2016,6 +2016,82 @@ pub struct StepResult {
     pub duration_ms: i64,
 }
 
+// ── Test results ────────────────────────────────────────────────
+
+/// Test results parsed by the runner from one build step.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct RunnerTestReport {
+    /// Step that produced the report, such as `build-2`.
+    pub step: String,
+    pub total: i64,
+    pub passed: i64,
+    pub failed: i64,
+    pub skipped: i64,
+    pub duration_ms: i64,
+    /// Failed tests. The daemon keeps at most 500 per build.
+    pub failures: Vec<RunnerTestFailure>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct RunnerTestFailure {
+    /// Test file or suite, such as `test/login_test.dart`.
+    pub suite: String,
+    /// Full test name, including group names.
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stack_trace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+}
+
+/// Totals across every test report of a build.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildTestSummary {
+    pub total: i64,
+    pub passed: i64,
+    pub failed: i64,
+    pub skipped: i64,
+    pub duration_ms: i64,
+}
+
+/// One earlier run of a test in the same pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct TestRunOutcome {
+    pub build_id: String,
+    pub build_number: i64,
+    /// `failed`, or `passed` when the build reported tests and this one did not fail.
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildTestFailure {
+    pub suite: String,
+    pub name: String,
+    pub step: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stack_trace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    /// The test failed, passed, then failed again within the history window.
+    pub flaky: bool,
+    /// Recent builds of this pipeline that reported tests, oldest first, ending with this build.
+    pub history: Vec<TestRunOutcome>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildTestResultsResponse {
+    /// Absent when the build reported no test results.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<BuildTestSummary>,
+    pub failures: Vec<BuildTestFailure>,
+    /// How many recent test-reporting builds the history and flaky check cover.
+    pub history_window: i64,
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListRunnersResponse {
     pub runners: Vec<Runner>,

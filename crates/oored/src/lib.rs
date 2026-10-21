@@ -44,6 +44,7 @@ pub mod secrets;
 pub mod session;
 pub mod storage;
 pub mod store;
+pub mod test_results;
 pub mod token;
 pub mod users;
 pub mod util;
@@ -2814,6 +2815,10 @@ pub async fn build_router_with_recovery(
         .route("/v1/builds/{build_id}/approve", post(builds::approve_build))
         .route("/v1/builds/{build_id}/reject", post(builds::reject_build))
         .route("/v1/builds/{build_id}/rerun", post(builds::rerun_build))
+        .route(
+            "/v1/builds/{build_id}/tests",
+            get(test_results::get_build_test_results),
+        )
         // Audit log endpoints
         .route("/v1/audit-logs", get(audit_logs::list_audit_logs))
         .route(
@@ -2884,6 +2889,10 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/publish-results",
             post(pipeline_publish::report_job_publish_result),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/test-results",
+            post(test_results::report_job_test_results),
         )
         .route("/v1/runners", get(runners::list_runners))
         // Build log endpoints

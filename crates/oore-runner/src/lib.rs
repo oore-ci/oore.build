@@ -37,6 +37,7 @@ mod caches;
 mod metrics;
 mod publish;
 mod tart;
+mod test_reports;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
 const OORE_ANDROID_KEYSTORE_PATH_ENV: &str = "OORE_ANDROID_KEYSTORE_PATH";
@@ -4408,6 +4409,14 @@ async fn execute_build_steps(
     let _signing_cleanup = WorkspaceCleanup {
         path: signing_workspace.clone(),
     };
+    let test_reports_dir =
+        match create_private_workspace_in(&runner_workspace_root, &config.runner_id) {
+            Ok(dir) => dir,
+            Err(error) => return (vec![], Err(error.into())),
+        };
+    let _test_reports_cleanup = WorkspaceCleanup {
+        path: test_reports_dir.clone(),
+    };
     let authority = Arc::new(BuildAuthorityState::default());
 
     let snapshot = &job.config_snapshot;
@@ -4754,6 +4763,10 @@ async fn execute_build_steps(
         ),
         ("BUILD_NUMBER".to_string(), job.build_number.to_string()),
         ("OORE_VERSION_CODE".to_string(), version_code.to_string()),
+        (
+            test_reports::TEST_REPORTS_DIR_ENV.to_string(),
+            test_reports_dir.display().to_string(),
+        ),
     ];
     // Before pipeline env, so a pipeline can still point a tool elsewhere.
     if let Some(caches) = caches {
@@ -4981,6 +4994,10 @@ async fn execute_build_steps(
                 Err(e) => return (steps, Err(e)),
             };
             ios_signing_command_applied |= command_applied;
+            let normalized_command = test_reports::with_test_file_reporter(
+                &normalized_command,
+                &test_reports_dir.join(format!("{step_name}.json")),
+            );
             let command_preview = render_command_preview(&normalized_command, &step_env);
 
             let _ = append_runner_log_line(
@@ -5076,6 +5093,17 @@ async fn execute_build_steps(
                 }
                 Some(status) => {
                     let exit_code = status.code().unwrap_or(-1);
+                    report_step_tests(
+                        client,
+                        daemon_url,
+                        config,
+                        &job.build_id,
+                        log_seq,
+                        &test_reports_dir,
+                        &workspace,
+                        &step_name,
+                    )
+                    .await;
                     steps.push(StepResult {
                         name: step_name,
                         status: if exit_code == 0 {
@@ -5970,6 +5998,71 @@ async fn report_publish_result(
         anyhow::bail!("publish result report failed: {}", resp.status());
     }
     Ok(())
+}
+
+/// Parse the reports a step wrote and send them to the daemon. Test reporting
+/// never fails the build; problems are logged instead.
+#[allow(clippy::too_many_arguments)]
+async fn report_step_tests(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    log_seq: &mut BuildLogCursor,
+    reports_dir: &Path,
+    workspace: &Path,
+    step_name: &str,
+) {
+    let Some(mut report) = test_reports::collect_test_reports(reports_dir, workspace, step_name)
+    else {
+        return;
+    };
+    for failure in &mut report.failures {
+        failure.message = failure.message.as_deref().map(|m| log_seq.masker.mask(m));
+        failure.stack_trace = failure
+            .stack_trace
+            .as_deref()
+            .map(|s| log_seq.masker.mask(s));
+    }
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        build_id,
+        log_seq,
+        "stdout",
+        &test_reports::summary_line(&report),
+    )
+    .await;
+    let result = client
+        .post(format!(
+            "{}/v1/runners/{}/jobs/{}/test-results",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .json(&report)
+        .send()
+        .await
+        .map_err(anyhow::Error::from)
+        .and_then(|resp| {
+            if resp.status().is_success() {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("{}", resp.status()))
+            }
+        });
+    if let Err(error) = result {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            build_id,
+            log_seq,
+            "stderr",
+            &format!("[oore-tests] Could not upload test results: {error}"),
+        )
+        .await;
+    }
 }
 
 fn step_start_marker(name: &str, command: &str) -> String {
