@@ -4958,7 +4958,7 @@ async fn execute_build_steps(
             )),
         );
     }
-    let guest_workspace = vm.as_ref().map(|vm| PathBuf::from(vm.guest_workspace()));
+    let guest_workspace = vm.as_ref().map(|vm| PathBuf::from(vm.vm.guest_workspace()));
     let step_test_reports_dir = guest_workspace
         .as_deref()
         .unwrap_or(&workspace)
