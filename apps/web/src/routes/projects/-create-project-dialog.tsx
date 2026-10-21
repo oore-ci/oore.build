@@ -159,7 +159,6 @@ export default function CreateProjectDialog({
         onSuccess: (response) => {
           updateProgress(scope, {
             projectId: response.project.id,
-            hidden: false,
             projectDraft: undefined,
           })
           toast.success('Project created')

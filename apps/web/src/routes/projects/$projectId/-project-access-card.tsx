@@ -42,13 +42,9 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+  SettingsSection,
+  SettingsSurface,
+} from '@/components/settings/settings-section'
 import {
   Combobox,
   ComboboxContent,
@@ -513,17 +509,12 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
 
   return (
     <>
-      <Card size="sm">
-        <CardHeader>
-          <CardTitle>Project access</CardTitle>
-          <CardDescription>
-            Grant developers or QA viewers access to this project.
-          </CardDescription>
-          <CardAction>
-            <AddProjectMemberDialog projectId={projectId} />
-          </CardAction>
-        </CardHeader>
-        <CardContent>
+      <SettingsSection
+        title="Access"
+        description="Grant developers or QA viewers access to this project."
+        actions={<AddProjectMemberDialog projectId={projectId} />}
+      >
+        <SettingsSurface>
           {isLoading ? (
             <div className="space-y-3">
               <Skeleton className="h-16 w-full" />
@@ -542,8 +533,8 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
           ) : (
             <DataTable table={memberTable} />
           )}
-        </CardContent>
-      </Card>
+        </SettingsSurface>
+      </SettingsSection>
 
       <AlertDialog
         open={memberToRemove !== null}

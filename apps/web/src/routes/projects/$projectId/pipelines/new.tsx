@@ -390,7 +390,7 @@ function NewPipelinePage() {
           data: iosSigningPayload,
         })
       }
-      updateProgress(scope, { projectId, hidden: false })
+      updateProgress(scope, { projectId })
       toast.success('Pipeline created')
       await navigate({
         to: '/projects/$projectId',

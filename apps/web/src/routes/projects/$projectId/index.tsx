@@ -2,6 +2,7 @@ import { lazy, Suspense, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  Add01Icon,
   Delete02Icon,
   InformationCircleIcon,
   PlayIcon,
@@ -42,8 +43,11 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { DangerZone } from '@/components/danger-zone'
+import {
+  SettingsSection,
+  SettingsSurface,
+} from '@/components/settings/settings-section'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import RepositoryAvatar from '@/components/repository-avatar'
@@ -54,7 +58,7 @@ import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 
 const ProjectOverview = lazy(() => import('./-project-overview'))
 
-const FirstAppProgress = lazy(() => import('@/components/first-app-progress'))
+const SetupChecklist = lazy(() => import('@/components/setup-checklist'))
 
 import type { ProjectBuildSort } from './-project-build-sort'
 
@@ -372,8 +376,74 @@ function ProjectDetailPage() {
     setBuildDrawerPipelineId(pipelineId ?? null)
   }
 
+  // The checklist lives at the top of Overview while the project is being set
+  // up. It never sits above the tabs, so switching tabs moves nothing.
+  const showSetup = buildCount === 0 || guidedProjectId === projectId
+  const canRunBuild = canTriggerBuild && projectHasSource && pipelineCount > 0
+
+  // One primary action, chosen by where the project is: connect a repository,
+  // add the first pipeline, or run a build. Never a disabled button with a
+  // tooltip explaining why.
+  const headerAction = canRunBuild ? (
+    <Suspense
+      fallback={
+        <Button disabled>
+          <HugeiconsIcon icon={PlayIcon} />
+          Run build
+        </Button>
+      }
+    >
+      <TriggerBuildDrawer
+        fixedProjectId={projectId}
+        defaultPipelineId={
+          search.runPipeline ?? buildDrawerPipelineId ?? pipelines[0]?.id
+        }
+        open={search.run === '1' || buildDrawerPipelineId !== undefined}
+        onOpenChange={(open) => {
+          if (!open && search.run)
+            void navigate({
+              search: (previous) => ({
+                ...previous,
+                run: undefined,
+                runPipeline: undefined,
+              }),
+              replace: true,
+            })
+          setBuildDrawerPipelineId(
+            open ? (buildDrawerPipelineId ?? null) : undefined,
+          )
+        }}
+        defaultBranch={project.default_branch ?? undefined}
+        description="Choose a pipeline and branch to build."
+        onBuildCreated={(buildId) => {
+          void navigate({
+            to: '/builds/$buildId',
+            params: { buildId },
+          })
+        }}
+      >
+        <Button>
+          <HugeiconsIcon icon={PlayIcon} />
+          Run build
+        </Button>
+      </TriggerBuildDrawer>
+    </Suspense>
+  ) : !project.repository_id && canWriteInstanceSettings ? (
+    <Button onClick={() => setTab('settings')}>Connect repository</Button>
+  ) : projectHasSource && pipelineCount === 0 && canWritePipelines ? (
+    <Button
+      nativeButton={false}
+      render={
+        <Link to="/projects/$projectId/pipelines/new" params={{ projectId }} />
+      }
+    >
+      <HugeiconsIcon icon={Add01Icon} />
+      Add pipeline
+    </Button>
+  ) : undefined
+
   return (
-    <PageLayout width="wide" fill={activeTab === 'builds'}>
+    <PageLayout width="wide" fill>
       <PageMeta title={label} noindex />
       <PageHeader
         title={project.name}
@@ -399,77 +469,17 @@ function ProjectDetailPage() {
             <span>Updated {relativeTime(project.updated_at)}</span>
           </>
         }
-        actions={
-          canTriggerBuild ? (
-            <span
-              title={
-                pipelineCount === 0
-                  ? 'Add a pipeline first before running builds'
-                  : !projectHasSource
-                    ? 'Connect a source repository first'
-                    : undefined
-              }
-            >
-              <Suspense
-                fallback={
-                  <Button disabled>
-                    <HugeiconsIcon icon={PlayIcon} />
-                    Run build
-                  </Button>
-                }
-              >
-                <TriggerBuildDrawer
-                  fixedProjectId={projectId}
-                  defaultPipelineId={
-                    search.runPipeline ??
-                    buildDrawerPipelineId ??
-                    pipelines[0]?.id
-                  }
-                  open={
-                    search.run === '1' || buildDrawerPipelineId !== undefined
-                  }
-                  onOpenChange={(open) => {
-                    if (!open && search.run)
-                      void navigate({
-                        search: (previous) => ({
-                          ...previous,
-                          run: undefined,
-                          runPipeline: undefined,
-                        }),
-                        replace: true,
-                      })
-                    setBuildDrawerPipelineId(
-                      open ? (buildDrawerPipelineId ?? null) : undefined,
-                    )
-                  }}
-                  defaultBranch={project.default_branch ?? undefined}
-                  description="Choose a pipeline and branch to build."
-                  onBuildCreated={(buildId) => {
-                    void navigate({
-                      to: '/builds/$buildId',
-                      params: { buildId },
-                    })
-                  }}
-                >
-                  <Button disabled={pipelineCount === 0 || !projectHasSource}>
-                    <HugeiconsIcon icon={PlayIcon} />
-                    Run build
-                  </Button>
-                </TriggerBuildDrawer>
-              </Suspense>
-            </span>
-          ) : undefined
-        }
+        actions={headerAction}
       />
-      {!project.repository_id ? (
-        <Alert variant="destructive">
+      {!project.repository_id && !showSetup ? (
+        <Alert>
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
-              This project has no linked source repository.{' '}
+              This project has no repository.{' '}
               {canWriteInstanceSettings
-                ? 'Choose a source before triggering builds.'
-                : 'Ask an owner or admin to choose one before triggering builds.'}
+                ? 'Connect one before running builds.'
+                : 'Ask an owner or admin to connect one before running builds.'}
             </span>
             {canWriteInstanceSettings ? (
               <Button
@@ -477,7 +487,7 @@ function ProjectDetailPage() {
                 variant="outline"
                 onClick={() => setTab('settings')}
               >
-                Choose source
+                Connect repository
               </Button>
             ) : null}
           </AlertDescription>
@@ -530,20 +540,13 @@ function ProjectDetailPage() {
         </Alert>
       ) : null}
 
-      {(activeTab === 'overview' || activeTab === 'pipelines') &&
-      (buildCount === 0 || guidedProjectId === projectId) ? (
-        <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-          <FirstAppProgress projectId={projectId} />
-        </Suspense>
-      ) : null}
-
       <Tabs
         value={activeTab}
         onValueChange={(value) => {
           const tabValue = TAB_VALUES.find((candidate) => candidate === value)
           if (tabValue) setTab(tabValue)
         }}
-        className={activeTab === 'builds' ? 'min-h-0 flex-1' : undefined}
+        className="min-h-0 flex-1"
       >
         <TabsList variant="line">
           <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -567,6 +570,9 @@ function ProjectDetailPage() {
                 loading={buildSummaryQuery.isLoading}
                 error={buildSummaryQuery.error}
                 onRetry={() => void buildSummaryQuery.refetch()}
+                setup={
+                  showSetup ? <SetupChecklist projectId={projectId} /> : null
+                }
               />
             </Suspense>
           ) : null}
@@ -629,14 +635,10 @@ function ProjectDetailPage() {
           </Suspense>
         ) : null}
 
-        {/* ---- Settings tab ---- */}
         <TabsContent value="settings">
-          <div className="space-y-4 pt-2">
+          <div className="flex flex-col gap-8 pt-2">
             {activeTab === 'settings' ? (
               <Suspense fallback={<Skeleton className="h-48 w-full" />}>
-                {canManageAccess ? (
-                  <ProjectAccessCard projectId={projectId} />
-                ) : null}
                 {canWriteProjects ? (
                   <ProjectSettingsForm
                     canChangeSource={canWriteInstanceSettings}
@@ -646,15 +648,38 @@ function ProjectDetailPage() {
                       description: project.description ?? undefined,
                       default_branch: project.default_branch ?? undefined,
                       repository_id: project.repository_id ?? undefined,
+                      repository_full_name:
+                        project.repository_full_name ?? undefined,
                     }}
                   />
                 ) : (
-                  <Card size="sm">
-                    <CardContent className="text-sm text-muted-foreground">
-                      You do not have permission to edit this project.
-                    </CardContent>
-                  </Card>
+                  <SettingsSection
+                    title="General"
+                    description="Only project maintainers can change these."
+                  >
+                    <SettingsSurface>
+                      <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[10rem_1fr]">
+                        <dt className="text-muted-foreground">Name</dt>
+                        <dd>{project.name}</dd>
+                        <dt className="text-muted-foreground">Description</dt>
+                        <dd>{project.description || 'None'}</dd>
+                        <dt className="text-muted-foreground">
+                          Default branch
+                        </dt>
+                        <dd className="font-mono">
+                          {project.default_branch || 'Not set'}
+                        </dd>
+                        <dt className="text-muted-foreground">Repository</dt>
+                        <dd>
+                          {project.repository_full_name || 'Not connected'}
+                        </dd>
+                      </dl>
+                    </SettingsSurface>
+                  </SettingsSection>
                 )}
+                {canManageAccess ? (
+                  <ProjectAccessCard projectId={projectId} />
+                ) : null}
                 <ProjectSecretsPanel
                   canWrite={canWritePipelines}
                   inheritedFrom={
