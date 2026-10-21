@@ -1581,6 +1581,9 @@ pub struct Runner {
     pub last_heartbeat_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registered_by: Option<String>,
+    /// Set while a dependency cache purge waits for the runner to pick it up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_purge_requested_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -1595,7 +1598,7 @@ pub struct RunnerMetrics {
     /// Free space on the volume that holds build workspaces.
     pub disk_free_bytes: u64,
     pub disk_total_bytes: u64,
-    /// Combined size of toolchain and dependency caches, when measured.
+    /// Size of the runner's dependency caches, when measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_bytes: Option<u64>,
     /// When the backend received these metrics. Set by the backend.
@@ -1779,6 +1782,15 @@ pub struct RunnerHeartbeatRequest {
     pub capabilities: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metrics: Option<RunnerMetrics>,
+}
+
+/// Heartbeat answer. Runners purge their dependency caches when
+/// `cache_purge_requested_at` is newer than their last purge, then report
+/// `capabilities.caches.purged_at` to clear the request.
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct RunnerHeartbeatResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_purge_requested_at: Option<i64>,
 }
 
 pub const RUNNER_PROTOCOL_VERSION: u32 = 5;

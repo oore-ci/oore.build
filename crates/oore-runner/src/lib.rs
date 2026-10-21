@@ -14,14 +14,15 @@ pub mod store_version;
 
 use anyhow::Context;
 use base64::Engine as _;
+use caches::{CacheObservation, CacheStats, RunnerCaches};
 use oore_contract::{
     AndroidSigningBuildType, BuildPlatform, BuildStatus, ClaimJobRequest, ClaimJobResponse,
     ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse, IosExportMethod,
     JobStatusResponse, PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig,
     PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
-    RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse,
-    RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult, StepResult,
-    artifact_pattern_matches, is_valid_pipeline_env_key, missing_runner_labels,
+    RunnerAndroidSigningResponse, RunnerHeartbeatResponse, RunnerIosSigningBundle,
+    RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult,
+    StepResult, artifact_pattern_matches, is_valid_pipeline_env_key, missing_runner_labels,
     normalize_runner_labels, parse_repository_pipeline_yaml, replace_secret_references,
     store_version_code, validate_artifact_pattern, validate_build_number_offset,
     validate_repository_config_path,
@@ -32,6 +33,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use zeroize::Zeroize;
 
 mod app_store_upload;
+mod caches;
 mod metrics;
 mod publish;
 
@@ -183,6 +185,36 @@ fn create_private_workspace_in(parent: &Path, runner_id: &str) -> std::io::Resul
         ErrorKind::AlreadyExists,
         "failed to allocate a unique runner workspace",
     ))
+}
+
+/// A build workspace whose path is the same for every build of a project on
+/// this runner, so Xcode keeps one DerivedData folder per project instead of
+/// starting a new one per build. Falls back to a random name if a previous
+/// workspace for the project is still present.
+fn create_project_workspace_in(
+    parent: &Path,
+    runner_id: &str,
+    project_id: &str,
+) -> std::io::Result<PathBuf> {
+    let digest = Sha256::digest(project_id.as_bytes());
+    let path = parent.join(format!(
+        "{}{}",
+        runner_workspace_prefix(runner_id),
+        hex::encode(&digest[..16])
+    ));
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(&path) {
+        Ok(()) => Ok(path),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            create_private_workspace_in(parent, runner_id)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn prepare_runner_workspace_root() -> anyhow::Result<PathBuf> {
@@ -3010,31 +3042,30 @@ fn terminal_runner_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<RunnerControlPlaneRejected>().is_some()
 }
 
-/// Size of toolchain and dependency caches, refreshed in the background
-/// because walking them takes too long for every heartbeat.
-type CacheBytes = Arc<std::sync::Mutex<Option<u64>>>;
+/// Cache sizes for the heartbeat and the purge the backend last asked for.
+#[derive(Debug, Default)]
+struct CacheReport {
+    stats: Option<CacheStats>,
+    purge_requested_at: Option<i64>,
+}
 
-const CACHE_SIZE_INTERVAL: Duration = Duration::from_secs(10 * 60);
+type SharedCacheReport = Arc<std::sync::Mutex<CacheReport>>;
 
-fn spawn_cache_size_monitor() -> CacheBytes {
-    let cache_bytes = CacheBytes::default();
-    let shared = cache_bytes.clone();
-    let install_root = std::env::current_exe()
+fn heartbeat_capabilities(
+    capabilities: &serde_json::Value,
+    cache_report: &SharedCacheReport,
+) -> serde_json::Value {
+    let mut capabilities = capabilities.clone();
+    let stats = cache_report
+        .lock()
         .ok()
-        .and_then(|executable| oore_install_root_for_executable(&executable));
-    tokio::spawn(async move {
-        loop {
-            let roots = metrics::cache_roots(install_root.as_deref());
-            if let Ok(bytes) =
-                tokio::task::spawn_blocking(move || metrics::directory_bytes(&roots)).await
-                && let Ok(mut current) = shared.lock()
-            {
-                *current = Some(bytes);
-            }
-            tokio::time::sleep(CACHE_SIZE_INTERVAL).await;
-        }
-    });
-    cache_bytes
+        .and_then(|report| report.stats.clone());
+    if let (Some(object), Some(stats)) = (capabilities.as_object_mut(), stats)
+        && let Ok(value) = serde_json::to_value(stats)
+    {
+        object.insert("caches".to_string(), value);
+    }
+    capabilities
 }
 
 async fn send_runner_heartbeat(
@@ -3042,9 +3073,13 @@ async fn send_runner_heartbeat(
     daemon_url: &str,
     config: &RunnerConfig,
     capabilities: &serde_json::Value,
-    cache_bytes: &CacheBytes,
+    cache_report: &SharedCacheReport,
 ) -> anyhow::Result<()> {
-    let cache_bytes = cache_bytes.lock().ok().and_then(|bytes| *bytes);
+    let capabilities = heartbeat_capabilities(capabilities, cache_report);
+    let cache_bytes = cache_report
+        .lock()
+        .ok()
+        .and_then(|report| report.stats.as_ref().map(|stats| stats.total_bytes));
     let metrics = metrics::sample_runner_metrics(&std::env::temp_dir(), cache_bytes);
     let response = client
         .post(format!(
@@ -3063,6 +3098,15 @@ async fn send_runner_heartbeat(
         .context("runner heartbeat could not reach the backend")?;
     let status = response.status();
     if status.is_success() {
+        // Older backends answer 204 with no body; that means no purge request.
+        let purge_requested_at = response
+            .json::<RunnerHeartbeatResponse>()
+            .await
+            .ok()
+            .and_then(|body| body.cache_purge_requested_at);
+        if let Ok(mut report) = cache_report.lock() {
+            report.purge_requested_at = purge_requested_at;
+        }
         return Ok(());
     }
     if runner_response_is_terminal(status) {
@@ -3079,7 +3123,7 @@ async fn establish_runner_heartbeat(
     daemon_url: &str,
     config: &RunnerConfig,
     capabilities: &serde_json::Value,
-    cache_bytes: &CacheBytes,
+    cache_report: &SharedCacheReport,
 ) -> anyhow::Result<()> {
     let delays = [
         Duration::ZERO,
@@ -3091,7 +3135,7 @@ async fn establish_runner_heartbeat(
         if !delay.is_zero() {
             tokio::time::sleep(delay).await;
         }
-        match send_runner_heartbeat(client, daemon_url, config, capabilities, cache_bytes).await {
+        match send_runner_heartbeat(client, daemon_url, config, capabilities, cache_report).await {
             Ok(()) => return Ok(()),
             Err(error) if terminal_runner_error(&error) => return Err(error),
             Err(error) => last_error = Some(error),
@@ -3158,11 +3202,28 @@ pub async fn run_runner_forever(
     println!("Connecting to: {}", daemon_url);
 
     let capabilities = detect_capabilities().await;
-    let cache_bytes = spawn_cache_size_monitor();
+
+    let cache_report = SharedCacheReport::default();
+    let caches = match RunnerCaches::for_runner(
+        &config.runner_id,
+        &runner_workspace_prefix(&config.runner_id),
+    ) {
+        Ok(caches) => {
+            println!("Dependency caches: {}", caches.root().display());
+            if let Ok(mut report) = cache_report.lock() {
+                report.stats = caches.last_stats();
+            }
+            Some(Arc::new(caches))
+        }
+        Err(error) => {
+            eprintln!("Warning: dependency caches are disabled: {error:#}");
+            None
+        }
+    };
 
     // Do not enter the claim loop or advertise service readiness until the
     // backend has authenticated this exact runner/config/release.
-    establish_runner_heartbeat(&client, &daemon_url, &config, &capabilities, &cache_bytes).await?;
+    establish_runner_heartbeat(&client, &daemon_url, &config, &capabilities, &cache_report).await?;
     if let (Some(path), Some(template)) =
         (service_ack_path.as_deref(), service_ack_template.as_ref())
     {
@@ -3173,7 +3234,7 @@ pub async fn run_runner_forever(
     let hb_url = daemon_url.clone();
     let hb_config = config.clone();
     let hb_capabilities = capabilities.clone();
-    let hb_cache_bytes = cache_bytes.clone();
+    let hb_cache_report = cache_report.clone();
     let hb_ack_path = service_ack_path;
     let hb_ack_template = service_ack_template;
     let (fatal_tx, mut fatal_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -3185,7 +3246,7 @@ pub async fn run_runner_forever(
                 &hb_url,
                 &hb_config,
                 &hb_capabilities,
-                &hb_cache_bytes,
+                &hb_cache_report,
             )
             .await
             {
@@ -3222,6 +3283,10 @@ pub async fn run_runner_forever(
         }
     });
 
+    if let Some(caches) = &caches {
+        run_cache_maintenance(caches.clone(), cache_report.clone(), None).await;
+    }
+
     loop {
         tokio::select! {
             fatal = fatal_rx.recv() => {
@@ -3243,7 +3308,18 @@ pub async fn run_runner_forever(
             tokio::time::sleep(Duration::from_secs(10)).await;
             continue;
         }
-        match claim_and_execute(&client, &daemon_url, &config).await {
+        if let Some(caches) = &caches {
+            purge_caches_if_requested(caches, &cache_report).await;
+        }
+        match claim_and_execute(
+            &client,
+            &daemon_url,
+            &config,
+            caches.as_ref(),
+            &cache_report,
+        )
+        .await
+        {
             Ok(_executed) => {}
             Err(error) if terminal_runner_error(&error) => return Err(error),
             Err(e) => {
@@ -3254,10 +3330,68 @@ pub async fn run_runner_forever(
     }
 }
 
+/// Records the finished build's lockfile keys, then measures the caches and
+/// evicts above the cap. It finishes before the next claim, because eviction
+/// must never delete from a cache a build is using.
+async fn run_cache_maintenance(
+    caches: Arc<RunnerCaches>,
+    cache_report: SharedCacheReport,
+    finished_build: Option<(CacheObservation, bool)>,
+) {
+    let maintenance = tokio::task::spawn_blocking(move || {
+        if let Some((observation, succeeded)) = finished_build {
+            caches.record(&observation, succeeded, now_unix());
+        }
+        let stats = caches.maintain(now_unix());
+        if stats.evicted_bytes > 0 {
+            println!(
+                "Evicted {} of least recently used dependency caches",
+                caches::format_bytes(stats.evicted_bytes)
+            );
+        }
+        if let Ok(mut report) = cache_report.lock() {
+            report.stats = Some(stats);
+        }
+    });
+    if let Err(error) = maintenance.await {
+        eprintln!("Warning: dependency cache maintenance stopped: {error}");
+    }
+}
+
+async fn purge_caches_if_requested(caches: &Arc<RunnerCaches>, cache_report: &SharedCacheReport) {
+    let Some(requested_at) = cache_report
+        .lock()
+        .ok()
+        .and_then(|report| report.purge_requested_at)
+    else {
+        return;
+    };
+    if caches
+        .purged_at()
+        .is_some_and(|purged_at| purged_at >= requested_at)
+    {
+        return;
+    }
+    println!("Purging dependency caches at {}", caches.root().display());
+    let purge_caches = caches.clone();
+    match tokio::task::spawn_blocking(move || purge_caches.purge(requested_at, now_unix())).await {
+        Ok(Ok(stats)) => {
+            if let Ok(mut report) = cache_report.lock() {
+                report.stats = Some(stats);
+            }
+            println!("Dependency caches purged");
+        }
+        Ok(Err(error)) => eprintln!("Warning: dependency cache purge failed: {error:#}"),
+        Err(error) => eprintln!("Warning: dependency cache purge stopped: {error}"),
+    }
+}
+
 async fn claim_and_execute(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
+    caches: Option<&Arc<RunnerCaches>>,
+    cache_report: &SharedCacheReport,
 ) -> anyhow::Result<bool> {
     let resp = client
         .post(format!(
@@ -3307,7 +3441,17 @@ async fn claim_and_execute(
     )
     .await?;
 
-    let (steps, result) = execute_build(&job, client, daemon_url, config).await;
+    let mut cache_observation = None;
+    let (steps, result) = execute_build(
+        &job,
+        client,
+        daemon_url,
+        config,
+        caches.map(Arc::as_ref),
+        &mut cache_observation,
+    )
+    .await;
+    let finished_build = cache_observation.map(|observation| (observation, result.is_ok()));
 
     match result {
         Ok(()) => {
@@ -3349,6 +3493,11 @@ async fn claim_and_execute(
                 eprintln!("Build {} failed: {}", job.build_id, e);
             }
         }
+    }
+
+    // After the status report, so measuring the caches never delays it.
+    if let Some(caches) = caches {
+        run_cache_maintenance(caches.clone(), cache_report.clone(), finished_build).await;
     }
 
     Ok(true)
@@ -4266,9 +4415,20 @@ async fn execute_build(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
+    caches: Option<&RunnerCaches>,
+    cache_observation: &mut Option<CacheObservation>,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
     let mut log_seq = BuildLogCursor::default();
-    let (steps, result) = execute_build_steps(job, client, daemon_url, config, &mut log_seq).await;
+    let (steps, result) = execute_build_steps(
+        job,
+        client,
+        daemon_url,
+        config,
+        caches,
+        cache_observation,
+        &mut log_seq,
+    )
+    .await;
     // Error text reaches the build record and the runner log, so mask it too.
     let result = result.map_err(|error| {
         if error.downcast_ref::<BuildTerminated>().is_some() {
@@ -4285,6 +4445,8 @@ async fn execute_build_steps(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
+    caches: Option<&RunnerCaches>,
+    cache_observation: &mut Option<CacheObservation>,
     log_seq: &mut BuildLogCursor,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
     // Pin signer executables before any repository-controlled checkout or build stage runs.
@@ -4293,7 +4455,11 @@ async fn execute_build_steps(
         Ok(root) => root,
         Err(error) => return (vec![], Err(error)),
     };
-    let workspace = match create_private_workspace_in(&runner_workspace_root, &config.runner_id) {
+    let workspace = match create_project_workspace_in(
+        &runner_workspace_root,
+        &config.runner_id,
+        &job.project_id,
+    ) {
         Ok(workspace) => workspace,
         Err(error) => return (vec![], Err(error.into())),
     };
@@ -4523,6 +4689,23 @@ async fn execute_build_steps(
         }
     }
 
+    if let Some(caches) = caches {
+        let observation = caches.observe(&workspace);
+        for line in &observation.lines {
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                line,
+            )
+            .await;
+        }
+        *cache_observation = Some(observation);
+    }
+
     let execution_plan = match resolve_execution_plan(&workspace, snapshot)
         .and_then(|plan| apply_secret_references(plan, &secrets))
     {
@@ -4683,6 +4866,10 @@ async fn execute_build_steps(
         ("BUILD_NUMBER".to_string(), job.build_number.to_string()),
         ("OORE_VERSION_CODE".to_string(), version_code.to_string()),
     ];
+    // Before pipeline env, so a pipeline can still point a tool elsewhere.
+    if let Some(caches) = caches {
+        step_env.extend(caches.step_env());
+    }
     println!(
         "Store version code {version_code} (build {} + offset {})",
         job.build_number, execution_plan.build_number_offset

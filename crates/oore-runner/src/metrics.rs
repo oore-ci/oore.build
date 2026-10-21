@@ -1,7 +1,6 @@
 //! Host utilisation reported with each runner heartbeat.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use oore_contract::RunnerMetrics;
 
@@ -18,42 +17,6 @@ pub fn sample_runner_metrics(workspace_root: &Path, cache_bytes: Option<u64>) ->
         cache_bytes,
         collected_at: None,
     }
-}
-
-/// Directories holding toolchains and dependency caches that grow across builds.
-pub fn cache_roots(install_root: Option<&Path>) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(install_root) = install_root {
-        roots.push(install_root.join("toolchains"));
-    }
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        roots.extend([
-            home.join(".pub-cache"),
-            home.join(".gradle/caches"),
-            home.join("Library/Developer/Xcode/DerivedData"),
-            home.join("Library/Caches/CocoaPods"),
-        ]);
-    }
-    roots
-}
-
-/// Total size of regular files under `roots`, without following symlinks.
-pub fn directory_bytes(roots: &[PathBuf]) -> u64 {
-    let mut total = 0u64;
-    let mut pending: Vec<PathBuf> = roots.to_vec();
-    while let Some(path) = pending.pop() {
-        let Ok(metadata) = fs::symlink_metadata(&path) else {
-            continue;
-        };
-        if metadata.is_dir() {
-            if let Ok(entries) = fs::read_dir(&path) {
-                pending.extend(entries.flatten().map(|entry| entry.path()));
-            }
-        } else if metadata.is_file() {
-            total = total.saturating_add(metadata.len());
-        }
-    }
-    total
 }
 
 fn cpu_percent() -> Option<f64> {
@@ -108,7 +71,7 @@ fn memory() -> Option<(u64, u64)> {
 
 #[cfg(not(target_os = "macos"))]
 fn memory() -> Option<(u64, u64)> {
-    let meminfo = fs::read_to_string("/proc/meminfo").ok()?;
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
     let field = |name: &str| {
         meminfo
             .lines()
@@ -172,16 +135,5 @@ Pages occupied by compressor:              3.\n";
         assert!(metrics.disk_total_bytes > 0);
         assert!(metrics.disk_free_bytes <= metrics.disk_total_bytes);
         assert_eq!(metrics.cache_bytes, Some(7));
-    }
-
-    #[test]
-    fn directory_bytes_sums_nested_files() {
-        let root = std::env::temp_dir().join(format!("oore-cache-size-{}", std::process::id()));
-        fs::create_dir_all(root.join("nested")).unwrap();
-        fs::write(root.join("a"), [0u8; 10]).unwrap();
-        fs::write(root.join("nested/b"), [0u8; 5]).unwrap();
-        let bytes = directory_bytes(&[root.clone(), root.join("missing")]);
-        fs::remove_dir_all(&root).unwrap();
-        assert_eq!(bytes, 15);
     }
 }

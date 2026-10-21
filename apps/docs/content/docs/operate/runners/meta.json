@@ -1,4 +1,4 @@
 {
   "title": "Runners",
-  "pages": ["direct", "labels"]
+  "pages": ["direct", "labels", "caches"]
 }

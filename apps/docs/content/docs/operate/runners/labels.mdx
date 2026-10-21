@@ -61,9 +61,9 @@ Builds that wait because no online runner has their labels are counted on
 ## Utilisation and disk space
 
 Every heartbeat carries CPU load, memory use, free disk space on the volume
-that holds build workspaces, and the size of toolchain and dependency caches
-(measured every ten minutes). **Settings → Runners** shows these with the queue
-depth.
+that holds build workspaces, and the size of the runner's
+[dependency caches](/operate/runners/caches). **Settings → Runners** shows these
+with the queue depth.
 
 When free disk space drops below 20 GiB, Oore opens a warning operator incident
 for the runner, and raises it to critical below 10 GiB. Owners and Admins are
