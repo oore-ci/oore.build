@@ -142,16 +142,21 @@ Each image carries exactly one Flutter SDK.
 2. It waits for a free VM slot. Apple allows two macOS VMs per host, so a Mac
    runs at most two VM builds at a time across all of its Runners; a third
    build waits and its log says so.
-3. It clones the image, boots it headless and mounts the workspace at
-   `~/oore-workspace` inside the guest. The `vm-start` step records how long
-   this took, usually 10 to 30 seconds.
-   The Runner's [dependency caches](/operate/runners/caches) are mounted too:
-   pub, Gradle and CocoaPods under `~/oore-cache`, with `PUB_CACHE`,
-   `GRADLE_USER_HOME`, `CP_CACHE_DIR` and `CP_HOME_DIR` pointing there, and
-   DerivedData at Xcode's default location, so a clean VM still builds warm.
+3. It clones the image, boots it headless, shares the workspace into the
+   guest and copies it to `~/oore-workspace` on the guest's disk, where the
+   steps run. The `vm-start` step records how long this took, usually 10 to
+   30 seconds.
+   The Runner's [dependency caches](/operate/runners/caches) are shared too:
+   pub and CocoaPods under `~/oore-cache`, with `PUB_CACHE`, `CP_CACHE_DIR`
+   and `CP_HOME_DIR` pointing there. Gradle runs from `~/.gradle` on the
+   guest's disk; its downloaded dependencies and wrapper distributions are
+   copied in from the shared cache and back out when the build ends. Xcode's
+   DerivedData is not shared, so iOS builds start cold in a VM.
 4. Every pipeline step runs in the guest through `tart exec`, with the same
    environment and secrets as a host build. Secrets travel over the guest
-   agent's channel and are never written to the shared workspace.
+   agent's channel and are never written to the shared workspace. After each
+   step the guest workspace is copied back to the host, which collects test
+   reports and artifacts from there.
 5. Android signing runs in the guest with the image's Android SDK and JDK.
    The keystore is written only to a private directory on the VM's disk.
    iOS signing and artifact upload run on the host against the shared

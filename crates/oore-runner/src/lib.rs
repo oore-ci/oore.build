@@ -1380,6 +1380,7 @@ async fn sign_android_artifacts_in_vm(
         output.status,
         android_signer_failure_detail(&String::from_utf8_lossy(&output.stdout), &output.stderr)
     );
+    vm.sync_workspace_out().await?;
     Ok(artifacts)
 }
 
@@ -4891,6 +4892,10 @@ async fn execute_build_steps(
                     caches
                         .mounts()
                         .into_iter()
+                        // DerivedData stays on the guest disk: Xcode's build
+                        // database is SQLite, which needs file locking the
+                        // virtiofs share does not provide.
+                        .filter(|mount| mount.env.is_some())
                         .map(|mount| tart::HostShare {
                             name: mount.name,
                             env: mount.env,
@@ -5115,6 +5120,13 @@ async fn execute_build_steps(
                 }
                 Some(status) => {
                     let exit_code = status.code().unwrap_or(-1);
+                    // The host collects test reports, archives and artifacts
+                    // from its workspace, so bring the guest's changes over
+                    // before anything reads it.
+                    let sync_error = match &vm {
+                        Some(vm) => vm.vm.sync_workspace_out().await.err(),
+                        None => None,
+                    };
                     report_step_tests(
                         client,
                         daemon_url,
@@ -5176,6 +5188,9 @@ Install the required tooling on the runner, set isolation: vm, or override build
                             anyhow::anyhow!("Step failed with exit code {}", exit_code)
                         };
                         return (steps, Err(err));
+                    }
+                    if let Some(error) = sync_error {
+                        return (steps, Err(error));
                     }
                     if stage_name == "build"
                         && android_artifact_extension(command).is_some()
@@ -5862,7 +5877,7 @@ async fn start_build_vm(
         log_seq,
         "stdout",
         &format!(
-            "VM {} is ready; the workspace is mounted at {}",
+            "VM {} is ready; the workspace was copied to {}",
             vm.name(),
             vm.guest_workspace()
         ),

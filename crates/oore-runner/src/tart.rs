@@ -23,8 +23,13 @@ const TART_BIN_ENV: &str = "OORE_TART_BIN";
 pub(crate) const IMAGE_TEMPLATE_ENV: &str = "OORE_TART_IMAGE";
 pub(crate) const DEFAULT_IMAGE_TEMPLATE: &str = "oore-flutter-{flutter}";
 const WORKSPACE_TAG: &str = "oore-workspace";
-/// Fixed guest path, so Xcode's DerivedData and Gradle see the same project
-/// path on every build.
+/// Where the host workspace share is mounted, relative to the guest home.
+const GUEST_SHARE_DIR: &str = "oore-workspace-share";
+/// Where the steps run: a copy of the workspace on the guest disk, at a fixed
+/// path so Xcode's DerivedData and Gradle see the same project path on every
+/// build. Building on the virtiofs share directly is slow, and tools that write
+/// a file and read it straight back (Gradle's binary stores, Xcode's build
+/// database) do not get consistent results from it.
 const GUEST_WORKSPACE_DIR: &str = "oore-workspace";
 /// Apple's Virtualization framework runs at most two macOS guests per host.
 pub(crate) const MAX_MACOS_VMS: usize = 2;
@@ -393,6 +398,34 @@ fn mount_script(mounts: &[(String, String)]) -> String {
         .join(" && ")
 }
 
+/// Copies the tree at `from` into `to`, creating `to` if needed. Files that
+/// only exist in `to` are kept. rsync's partial-transfer statuses (23 when an
+/// attribute could not be set, 24 when a file vanished mid-copy) are accepted:
+/// the share cannot take every attribute, and a build tool's daemon may still
+/// be writing. A missing artifact is caught by whoever reads the copy.
+fn copy_tree_script(from: &str, to: &str, excludes: &[&str]) -> String {
+    let excludes = excludes
+        .iter()
+        .map(|pattern| format!(" --exclude {}", shell_quote(pattern)))
+        .collect::<String>();
+    let from = shell_quote(from);
+    let to = shell_quote(to);
+    format!(
+        "mkdir -p {to} && {{ /usr/bin/rsync -a{excludes} {from}/ {to}/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }}"
+    )
+}
+
+/// Copies the host workspace share into the guest build directory.
+fn workspace_in_script(share: &str, workspace: &str) -> String {
+    copy_tree_script(share, workspace, &[])
+}
+
+/// Copies everything the steps produced back to the share, where the host
+/// collects artifacts and test reports. The build does not change `.git`.
+fn workspace_out_script(workspace: &str, share: &str) -> String {
+    copy_tree_script(workspace, share, &[".git"])
+}
+
 /// Gradle reads its temp and binary store files back in ways virtiofs does not
 /// keep consistent ("Problems reading data from Binary store"), so a VM build
 /// runs Gradle from a home on the guest disk. Downloaded dependencies and
@@ -406,11 +439,9 @@ fn gradle_sync_script(from: &str, to: &str) -> String {
     GRADLE_SYNCED_DIRS
         .iter()
         .map(|dir| {
-            let source = shell_quote(&format!("{from}/{dir}"));
-            let target = shell_quote(&format!("{to}/{dir}"));
-            format!(
-                "if [ -d {source} ]; then mkdir -p {target} && /usr/bin/rsync -a --exclude '*.lock' --exclude '*.lck' {source}/ {target}/; fi"
-            )
+            let source = format!("{from}/{dir}");
+            let copy = copy_tree_script(&source, &format!("{to}/{dir}"), &["*.lock", "*.lck"]);
+            format!("if [ -d {} ]; then {copy}; fi", shell_quote(&source))
         })
         .collect::<Vec<_>>()
         .join(" && ")
@@ -490,6 +521,8 @@ pub(crate) struct TartVm {
     run: Option<std::process::Child>,
     run_stderr: Arc<Mutex<String>>,
     guest_workspace: String,
+    /// The workspace share's mount point; empty without a workspace.
+    guest_share: String,
     guest_env: Vec<(String, String)>,
     /// The Gradle share and the guest-local Gradle home, synced back on drop.
     gradle_sync: Option<(String, String)>,
@@ -551,6 +584,7 @@ impl TartVm {
             run: None,
             run_stderr: Arc::new(Mutex::new(String::new())),
             guest_workspace: String::new(),
+            guest_share: String::new(),
             guest_env: Vec::new(),
             gradle_sync: None,
             kept: false,
@@ -595,7 +629,8 @@ impl TartVm {
             return Ok(vm);
         }
         let guest_workspace = format!("{home}/{GUEST_WORKSPACE_DIR}");
-        let mut mounts = vec![(WORKSPACE_TAG.to_string(), guest_workspace.clone())];
+        let guest_share = format!("{home}/{GUEST_SHARE_DIR}");
+        let mut mounts = vec![(WORKSPACE_TAG.to_string(), guest_share.clone())];
         let mut gradle_dirs = None;
         for share in shares {
             let guest_dir = format!("{home}/{}", share_guest_dir(share));
@@ -614,6 +649,9 @@ impl TartVm {
         vm.exec_capture(&mount_script(&mounts))
             .await
             .context("failed to mount the build workspace and caches inside the VM")?;
+        vm.exec_capture(&workspace_in_script(&guest_share, &guest_workspace))
+            .await
+            .context("failed to copy the workspace into the VM")?;
         if let Some((shared, local)) = gradle_dirs {
             vm.exec_capture(&gradle_sync_script(&shared, &local))
                 .await
@@ -621,7 +659,21 @@ impl TartVm {
             vm.gradle_sync = Some((shared, local));
         }
         vm.guest_workspace = guest_workspace;
+        vm.guest_share = guest_share;
         Ok(vm)
+    }
+
+    /// Copies what the steps wrote in the guest workspace back to the host
+    /// workspace. Runs after every step, so the host sees artifacts, archives
+    /// and test reports as each step finishes.
+    pub(crate) async fn sync_workspace_out(&self) -> anyhow::Result<()> {
+        self.exec_capture(&workspace_out_script(
+            &self.guest_workspace,
+            &self.guest_share,
+        ))
+        .await
+        .context("failed to copy the workspace out of the VM")?;
+        Ok(())
     }
 
     pub(crate) fn name(&self) -> &str {
@@ -921,8 +973,23 @@ mod tests {
         let script = gradle_sync_script("/s", "/l");
         assert_eq!(
             script,
-            "if [ -d '/s/caches/modules-2' ]; then mkdir -p '/l/caches/modules-2' && /usr/bin/rsync -a --exclude '*.lock' --exclude '*.lck' '/s/caches/modules-2'/ '/l/caches/modules-2'/; fi && \
-             if [ -d '/s/wrapper/dists' ]; then mkdir -p '/l/wrapper/dists' && /usr/bin/rsync -a --exclude '*.lock' --exclude '*.lck' '/s/wrapper/dists'/ '/l/wrapper/dists'/; fi"
+            "if [ -d '/s/caches/modules-2' ]; then mkdir -p '/l/caches/modules-2' && { /usr/bin/rsync -a --exclude '*.lock' --exclude '*.lck' '/s/caches/modules-2'/ '/l/caches/modules-2'/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }; fi && \
+             if [ -d '/s/wrapper/dists' ]; then mkdir -p '/l/wrapper/dists' && { /usr/bin/rsync -a --exclude '*.lock' --exclude '*.lck' '/s/wrapper/dists'/ '/l/wrapper/dists'/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }; fi"
+        );
+    }
+
+    #[test]
+    fn workspace_is_copied_in_whole_and_out_without_git() {
+        assert_eq!(
+            workspace_in_script(
+                "/Users/admin/oore-workspace-share",
+                "/Users/admin/oore-workspace"
+            ),
+            "mkdir -p '/Users/admin/oore-workspace' && { /usr/bin/rsync -a '/Users/admin/oore-workspace-share'/ '/Users/admin/oore-workspace'/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }"
+        );
+        assert_eq!(
+            workspace_out_script("/w", "/s"),
+            "mkdir -p '/s' && { /usr/bin/rsync -a --exclude '.git' '/w'/ '/s'/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }"
         );
     }
 
