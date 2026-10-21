@@ -393,6 +393,29 @@ fn mount_script(mounts: &[(String, String)]) -> String {
         .join(" && ")
 }
 
+/// Gradle reads its temp and binary store files back in ways virtiofs does not
+/// keep consistent ("Problems reading data from Binary store"), so a VM build
+/// runs Gradle from a home on the guest disk. Downloaded dependencies and
+/// wrapper distributions are copied in from the share and back out after.
+const GRADLE_SHARE: &str = "gradle";
+const GUEST_GRADLE_HOME: &str = ".gradle";
+const GRADLE_SYNCED_DIRS: [&str; 2] = ["caches/modules-2", "wrapper/dists"];
+
+/// Copies the reusable parts of the Gradle home at `from` into `to`.
+fn gradle_sync_script(from: &str, to: &str) -> String {
+    GRADLE_SYNCED_DIRS
+        .iter()
+        .map(|dir| {
+            let source = shell_quote(&format!("{from}/{dir}"));
+            let target = shell_quote(&format!("{to}/{dir}"));
+            format!(
+                "if [ -d {source} ]; then mkdir -p {target} && /usr/bin/rsync -a --exclude '*.lock' --exclude '*.lck' {source}/ {target}/; fi"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" && ")
+}
+
 /// Deletes VMs this runner left behind when it crashed or was killed mid-build.
 pub(crate) fn delete_stale_vms(tart: &Path, runner_id: &str) -> anyhow::Result<usize> {
     let prefix = runner_vm_prefix(runner_id);
@@ -468,6 +491,8 @@ pub(crate) struct TartVm {
     run_stderr: Arc<Mutex<String>>,
     guest_workspace: String,
     guest_env: Vec<(String, String)>,
+    /// The Gradle share and the guest-local Gradle home, synced back on drop.
+    gradle_sync: Option<(String, String)>,
     /// Set once the VM was kept as an image; nothing is deleted then.
     kept: bool,
 }
@@ -527,6 +552,7 @@ impl TartVm {
             run_stderr: Arc::new(Mutex::new(String::new())),
             guest_workspace: String::new(),
             guest_env: Vec::new(),
+            gradle_sync: None,
             kept: false,
         };
         let mut child = Command::new(&vm.tart)
@@ -570,16 +596,30 @@ impl TartVm {
         }
         let guest_workspace = format!("{home}/{GUEST_WORKSPACE_DIR}");
         let mut mounts = vec![(WORKSPACE_TAG.to_string(), guest_workspace.clone())];
+        let mut gradle_dirs = None;
         for share in shares {
             let guest_dir = format!("{home}/{}", share_guest_dir(share));
             if let Some(env) = share.env {
-                vm.guest_env.push((env.to_string(), guest_dir.clone()));
+                let value = if share.name == GRADLE_SHARE {
+                    let local = format!("{home}/{GUEST_GRADLE_HOME}");
+                    gradle_dirs = Some((guest_dir.clone(), local.clone()));
+                    local
+                } else {
+                    guest_dir.clone()
+                };
+                vm.guest_env.push((env.to_string(), value));
             }
             mounts.push((share_tag(share.name), guest_dir));
         }
         vm.exec_capture(&mount_script(&mounts))
             .await
             .context("failed to mount the build workspace and caches inside the VM")?;
+        if let Some((shared, local)) = gradle_dirs {
+            vm.exec_capture(&gradle_sync_script(&shared, &local))
+                .await
+                .context("failed to copy the Gradle cache into the VM")?;
+            vm.gradle_sync = Some((shared, local));
+        }
         vm.guest_workspace = guest_workspace;
         Ok(vm)
     }
@@ -713,6 +753,17 @@ impl Drop for TartVm {
     fn drop(&mut self) {
         if self.kept {
             return;
+        }
+        if let Some((shared, local)) = self.gradle_sync.take() {
+            let script = gradle_sync_script(&local, &shared);
+            if let Err(error) =
+                run_tart(&self.tart, &["exec", &self.name, "/bin/sh", "-c", &script])
+            {
+                eprintln!(
+                    "Warning: failed to save the Gradle cache from VM {}: {error:#}",
+                    self.name
+                );
+            }
         }
         self.shut_down("10");
         if let Err(error) = run_tart(&self.tart, &["delete", &self.name]) {
@@ -862,6 +913,16 @@ mod tests {
         assert_eq!(
             script,
             "mkdir -p '/Users/admin/oore-workspace' && /sbin/mount_virtiofs oore-workspace '/Users/admin/oore-workspace' && mkdir -p '/Users/admin/oore-cache/pub' && /sbin/mount_virtiofs oore-cache-pub '/Users/admin/oore-cache/pub'"
+        );
+    }
+
+    #[test]
+    fn gradle_cache_syncs_only_dependencies_and_wrappers() {
+        let script = gradle_sync_script("/s", "/l");
+        assert_eq!(
+            script,
+            "if [ -d '/s/caches/modules-2' ]; then mkdir -p '/l/caches/modules-2' && /usr/bin/rsync -a --exclude '*.lock' --exclude '*.lck' '/s/caches/modules-2'/ '/l/caches/modules-2'/; fi && \
+             if [ -d '/s/wrapper/dists' ]; then mkdir -p '/l/wrapper/dists' && /usr/bin/rsync -a --exclude '*.lock' --exclude '*.lck' '/s/wrapper/dists'/ '/l/wrapper/dists'/; fi"
         );
     }
 
