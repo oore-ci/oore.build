@@ -1216,7 +1216,7 @@ fn run_android_signer_command(
     args: &[String],
     inputs: &AndroidSigningInputs,
     action: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<String> {
     let mut command = Command::new(program);
     command
         .args(args)
@@ -1231,9 +1231,46 @@ fn run_android_signer_command(
     let output = command.output().map_err(|error| {
         anyhow::anyhow!("failed to {action} with {}: {error}", program.display())
     })?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        anyhow::bail!("failed to {action}: {stderr}");
+        anyhow::bail!(
+            "failed to {action}: {}",
+            android_signer_failure_detail(&stdout, &output.stderr)
+        );
+    }
+    Ok(stdout)
+}
+
+/// jarsigner and apksigner print most diagnostics to stdout, so failures need
+/// both streams to be actionable.
+fn android_signer_failure_detail(stdout: &str, stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr);
+    let detail = [stderr.trim(), stdout.trim()]
+        .into_iter()
+        .filter(|stream| !stream.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if detail.is_empty() {
+        "signer exited without output".to_string()
+    } else {
+        detail
+    }
+}
+
+/// Checks `jarsigner -verify` output. `-strict` is deliberately not used:
+/// Android upload keys are self-signed and AABs are not timestamped, which
+/// `-strict` reports as errors. Plain `-verify` still exits non-zero on digest
+/// or signature mismatches, but exits zero for an unsigned jar, so the output
+/// must confirm every entry was verified.
+fn check_android_bundle_verification(stdout: &str) -> anyhow::Result<()> {
+    let verified = stdout
+        .lines()
+        .any(|line| line.trim().starts_with("jar verified"));
+    if !verified || stdout.contains("unsigned entries") {
+        anyhow::bail!(
+            "failed to verify Android App Bundle signature: {}",
+            android_signer_failure_detail(stdout, &[])
+        );
     }
     Ok(())
 }
@@ -1367,17 +1404,14 @@ fn sign_android_artifacts(
                 inputs,
                 "sign Android App Bundle",
             )?;
-            run_android_signer_command(
+            let verification = run_android_signer_command(
                 toolchain,
                 &toolchain.jarsigner,
-                &[
-                    "-verify".to_string(),
-                    "-strict".to_string(),
-                    signed_artifact.display().to_string(),
-                ],
+                &["-verify".to_string(), signed_artifact.display().to_string()],
                 inputs,
                 "verify Android App Bundle signature",
             )?;
+            check_android_bundle_verification(&verification)?;
         }
 
         fs::copy(&signed_artifact, artifact).map_err(|error| {
@@ -6840,5 +6874,113 @@ mod secret_tests {
             "  ***"
         );
         assert_eq!(masker.mask("nothing to hide"), "nothing to hide");
+    }
+
+    #[test]
+    fn bundle_verification_requires_every_entry_to_be_signed() {
+        let self_signed = "jar verified.\n\nWarning: \nThis jar contains entries whose signer certificate is self-signed.";
+        assert!(check_android_bundle_verification(self_signed).is_ok());
+        let unsigned = check_android_bundle_verification("no manifest.\n\njar is unsigned.")
+            .unwrap_err()
+            .to_string();
+        assert!(unsigned.contains("jar is unsigned"), "{unsigned}");
+        let partial = "jar verified.\n\nWarning: \nThis jar contains unsigned entries which have not been integrity-checked.";
+        assert!(check_android_bundle_verification(partial).is_err());
+        assert_eq!(
+            android_signer_failure_detail("", b"  "),
+            "signer exited without output"
+        );
+        assert_eq!(android_signer_failure_detail("out", b"err\n"), "err\nout");
+    }
+
+    #[test]
+    fn app_bundles_sign_with_self_signed_upload_keys() {
+        let toolchain = AndroidSigningToolchain::discover();
+        let Some(keytool) = toolchain
+            .java_home
+            .as_ref()
+            .map(|home| home.join("bin/keytool"))
+            .or_else(|| fixed_system_executable("keytool"))
+            .filter(|path| path.is_file())
+        else {
+            eprintln!("skipping: keytool is not installed");
+            return;
+        };
+        if !toolchain.jarsigner.is_file() || !toolchain.zip.is_file() {
+            eprintln!("skipping: jarsigner or zip is not installed");
+            return;
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "oore-aab-signing-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let bundle_dir = root.join("workspace/build/app/outputs/bundle/release");
+        fs::create_dir_all(&bundle_dir).unwrap();
+        let keystore = root.join("upload.jks");
+        let status = Command::new(&keytool)
+            .args(["-genkeypair", "-keystore"])
+            .arg(&keystore)
+            .args([
+                "-storepass",
+                "store-secret",
+                "-keypass",
+                "store-secret",
+                "-alias",
+                "upload",
+                "-keyalg",
+                "RSA",
+                "-keysize",
+                "2048",
+                "-validity",
+                "10000",
+                "-dname",
+                "CN=Upload",
+            ])
+            .env_remove("JAVA_TOOL_OPTIONS")
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "{status:?}");
+
+        fs::write(root.join("base.txt"), "module").unwrap();
+        let bundle = bundle_dir.join("app-release.aab");
+        let zipped = Command::new(&toolchain.zip)
+            .current_dir(&root)
+            .arg("-q")
+            .arg(&bundle)
+            .arg("base.txt")
+            .output()
+            .unwrap();
+        assert!(zipped.status.success(), "{zipped:?}");
+
+        let inputs = AndroidSigningInputs {
+            keystore_bytes: fs::read(&keystore).unwrap(),
+            keystore_password: "store-secret".into(),
+            key_alias: "upload".into(),
+            key_password: "store-secret".into(),
+        };
+        let signed = sign_android_artifacts(
+            &root.join("workspace"),
+            &root,
+            "flutter build appbundle --release",
+            &inputs,
+            &toolchain,
+        )
+        .unwrap();
+        assert_eq!(signed, vec![bundle.clone()]);
+
+        let output = Command::new(&toolchain.jarsigner)
+            .arg("-verify")
+            .arg(&bundle)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        assert!(stdout.contains("self-signed"), "{stdout}");
+        fs::remove_dir_all(&root).ok();
     }
 }
