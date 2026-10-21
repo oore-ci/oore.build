@@ -77,12 +77,20 @@ fn altool_upload_args(ipa: &Path, credentials: &RunnerAppStoreUploadCredentials)
     ]
 }
 
-/// Pulls Apple's error messages out of `altool --output-format json` output,
-/// falling back to the raw text when the output is not JSON.
-fn summarize_altool_failure(stdout: &str, stderr: &str) -> String {
-    let parsed = serde_json::from_str::<Value>(stdout.trim()).ok();
-    let messages: Vec<String> = parsed
-        .as_ref()
+/// The last JSON document in altool's output. altool can print log lines
+/// before its `--output-format json` result, so parse from the end.
+fn altool_result(stdout: &str) -> Option<Value> {
+    let lines: Vec<&str> = stdout.lines().collect();
+    (0..lines.len())
+        .rev()
+        .find_map(|start| serde_json::from_str::<Value>(&lines[start..].join("\n")).ok())
+        .filter(Value::is_object)
+}
+
+/// Apple's product errors from altool's result. altool sometimes reports them
+/// with exit status 0, so an upload is only a success without any.
+fn altool_product_errors(result: Option<&Value>) -> Vec<String> {
+    result
         .and_then(|value| value.get("product-errors"))
         .and_then(Value::as_array)
         .map(|errors| {
@@ -102,7 +110,49 @@ fn summarize_altool_failure(stdout: &str, stderr: &str) -> String {
                 })
                 .collect()
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// Some Xcode versions make altool print every environment variable as
+/// `ENV: {"NAME"=>"value", ...}` on failure; keep only the names.
+fn hide_environment_values(output: &str) -> String {
+    let Some(start) = output.find("ENV: {") else {
+        return output.to_string();
+    };
+    let body_start = start + "ENV: {".len();
+    let Some(length) = output[body_start..].find('}') else {
+        return output[..start].to_string();
+    };
+    let names: Vec<&str> = output[body_start..body_start + length]
+        .split("=>")
+        .filter_map(|part| part.rsplit(['{', ',']).next())
+        .map(|name| name.trim().trim_matches('"'))
+        .filter(|name| !name.is_empty() && !name.contains(' '))
+        .collect();
+    let hidden: Vec<String> = names
+        .iter()
+        .map(|name| format!("\"{name}\"=>\"...\""))
+        .collect();
+    format!(
+        "{}ENV: {{{}}}{}",
+        &output[..start],
+        hidden.join(", "),
+        &output[body_start + length + 1..]
+    )
+}
+
+/// Failures Codemagic's cli-tools retries: Apple's authentication service
+/// hiccups (-19209), invalid server responses and timeouts.
+fn is_transient_altool_failure(output: &str) -> bool {
+    (output.contains("Unable to authenticate") && output.contains("-19209"))
+        || output.contains("server returned an invalid response")
+        || output.contains("The request timed out")
+}
+
+/// Pulls Apple's error messages out of `altool --output-format json` output,
+/// falling back to the raw text when the output is not JSON.
+fn summarize_altool_failure(stdout: &str, stderr: &str) -> String {
+    let messages = altool_product_errors(altool_result(stdout).as_ref());
     if !messages.is_empty() {
         return messages.join("; ");
     }
@@ -114,7 +164,10 @@ fn summarize_altool_failure(stdout: &str, stderr: &str) -> String {
     if fallback.is_empty() {
         "altool exited without output".to_string()
     } else {
-        fallback.chars().take(2000).collect()
+        hide_environment_values(fallback)
+            .chars()
+            .take(2000)
+            .collect()
     }
 }
 
@@ -137,31 +190,36 @@ pub(crate) async fn upload_ipa(
         "App Store Connect API private key is empty"
     );
     let _key = write_private_key(key_dir, credentials)?;
-    let output = tokio::process::Command::new("xcrun")
-        .args(altool_upload_args(ipa, credentials))
-        .env(API_PRIVATE_KEYS_DIR_ENV, key_dir)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .await
-        .map_err(|error| anyhow::anyhow!("failed to run xcrun altool: {error}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !output.status.success() {
+    let mut attempt = 1;
+    loop {
+        let output = tokio::process::Command::new("xcrun")
+            .args(altool_upload_args(ipa, credentials))
+            .env(API_PRIVATE_KEYS_DIR_ENV, key_dir)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to run xcrun altool: {error}"))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let result = altool_result(&stdout);
+        if output.status.success() && altool_product_errors(result.as_ref()).is_empty() {
+            return Ok(result
+                .as_ref()
+                .and_then(|value| value.get("success-message"))
+                .and_then(Value::as_str)
+                .unwrap_or("Uploaded to App Store Connect")
+                .to_string());
+        }
+        if attempt == 1 && is_transient_altool_failure(&format!("{stdout}\n{stderr}")) {
+            attempt += 1;
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            continue;
+        }
         anyhow::bail!(
             "App Store Connect upload failed: {}",
             summarize_altool_failure(&stdout, &stderr)
         );
     }
-    let message = serde_json::from_str::<Value>(stdout.trim())
-        .ok()
-        .and_then(|value| {
-            value
-                .get("success-message")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "Uploaded to App Store Connect".to_string());
-    Ok(message)
 }
 
 /// The publish result for an uploaded IPA, from the app identity the runner
@@ -277,5 +335,39 @@ mod tests {
             summarize_altool_failure("", ""),
             "altool exited without output"
         );
+    }
+
+    #[test]
+    fn product_errors_after_log_lines_count_as_failure() {
+        let stdout = "2026-10-21 Running altool...\n{\n  \"product-errors\": [{\"message\": \"Redundant Binary Upload.\", \"userInfo\": {\"NSLocalizedFailureReason\": \"You've already uploaded a build with build number '21'.\"}}]\n}\n";
+        let result = altool_result(stdout);
+        assert_eq!(
+            altool_product_errors(result.as_ref()),
+            vec![
+                "Redundant Binary Upload. You've already uploaded a build with build number '21'."
+                    .to_string()
+            ]
+        );
+        let ok = altool_result("note: uploading\n{\"success-message\": \"No errors uploading\"}");
+        assert!(altool_product_errors(ok.as_ref()).is_empty());
+        assert_eq!(ok.unwrap()["success-message"], "No errors uploading");
+    }
+
+    #[test]
+    fn environment_values_are_hidden_from_failures() {
+        let output = r#"ipatool failed ENV: {"OORE_TOKEN"=>"secret1", "HOME"=>"/Users/x"} done"#;
+        let hidden = hide_environment_values(output);
+        assert!(!hidden.contains("secret1"), "{hidden}");
+        assert!(hidden.contains(r#""OORE_TOKEN"=>"...""#), "{hidden}");
+        assert!(hidden.ends_with(" done"), "{hidden}");
+    }
+
+    #[test]
+    fn transient_failures_are_recognised() {
+        assert!(is_transient_altool_failure(
+            "Unable to authenticate. (-19209)"
+        ));
+        assert!(is_transient_altool_failure("The request timed out."));
+        assert!(!is_transient_altool_failure("Redundant Binary Upload"));
     }
 }

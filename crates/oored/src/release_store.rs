@@ -12,7 +12,7 @@ use sqlx::SqlitePool;
 use zeroize::Zeroizing;
 
 use crate::pipeline_publish::load_google_play;
-use crate::releases::{BoxFuture, ReleaseStoreClient, StoreChange};
+use crate::releases::{BoxFuture, ReleaseStoreClient, StoreChange, StoreObservation};
 use crate::secrets::resolve_secret_value;
 
 pub struct PlayReleaseStoreClient {
@@ -101,19 +101,19 @@ impl PlayReleaseStoreClient {
         let track = oore_google_play::play_track_name(&release.track);
         let result = async {
             let current = edits.get_track(&track).await?;
-            // Keep the name, notes and priority the uploader set.
-            let mut track_release = current
+            // Keep the name, notes and priority the uploader set. A release
+            // that is gone was discarded or replaced in Play Console; adding
+            // it back would undo that.
+            let Some(mut track_release) = current
                 .releases
                 .into_iter()
                 .find(|existing| existing.version_codes.contains(&target.version_code))
-                .unwrap_or(TrackRelease {
-                    name: None,
-                    version_codes: vec![target.version_code],
-                    status,
-                    user_fraction: None,
-                    release_notes: Vec::new(),
-                    in_app_update_priority: None,
-                });
+            else {
+                bail!(
+                    "version code {} is no longer on the {track} track in Play Console; it was discarded or replaced there",
+                    target.version_code
+                );
+            };
             track_release.status = status;
             track_release.user_fraction = fraction;
             edits.update_track(&track, &track_release).await
@@ -126,6 +126,19 @@ impl PlayReleaseStoreClient {
                 Err(error)
             }
         }
+    }
+
+    async fn observe_play(&self, release: &Release) -> anyhow::Result<StoreObservation> {
+        let target = self.target(release).await?;
+        let token =
+            oore_google_play::access_token(&self.http, &target.service_account_json).await?;
+        // A read-only edit, deleted afterwards and never committed.
+        let edits = PlayEdits::insert(&self.http, &token, &target.package_name).await?;
+        let track = edits
+            .get_track(&oore_google_play::play_track_name(&release.track))
+            .await;
+        let _ = edits.delete().await;
+        Ok(observation(&track?.releases, target.version_code))
     }
 
     async fn play_crash_rate(&self, release: &Release) -> anyhow::Result<Option<f64>> {
@@ -146,7 +159,37 @@ impl PlayReleaseStoreClient {
     }
 }
 
+/// Where the release holding `version_code` stands among a track's releases.
+fn observation(releases: &[TrackRelease], version_code: i64) -> StoreObservation {
+    match releases
+        .iter()
+        .find(|release| release.version_codes.contains(&version_code))
+    {
+        None => StoreObservation::Missing,
+        Some(release) => match release.status {
+            ReleaseStatus::Completed => StoreObservation::Completed,
+            ReleaseStatus::Halted => StoreObservation::Halted,
+            ReleaseStatus::InProgress => StoreObservation::Rolling {
+                fraction: release.user_fraction.unwrap_or(0.0),
+            },
+            ReleaseStatus::Draft => StoreObservation::Other,
+        },
+    }
+}
+
 impl ReleaseStoreClient for PlayReleaseStoreClient {
+    fn observe<'a>(
+        &'a self,
+        release: &'a Release,
+    ) -> BoxFuture<'a, anyhow::Result<Option<StoreObservation>>> {
+        Box::pin(async move {
+            match release.store {
+                ReleaseStore::GooglePlay => self.observe_play(release).await.map(Some),
+                ReleaseStore::AppStore => Ok(None),
+            }
+        })
+    }
+
     fn apply<'a>(
         &'a self,
         release: &'a Release,
@@ -171,5 +214,40 @@ impl ReleaseStoreClient for PlayReleaseStoreClient {
             }
             self.play_crash_rate(release).await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn release(status: ReleaseStatus, codes: &[i64], fraction: Option<f64>) -> TrackRelease {
+        TrackRelease {
+            name: None,
+            version_codes: codes.to_vec(),
+            status,
+            user_fraction: fraction,
+            release_notes: Vec::new(),
+            in_app_update_priority: None,
+        }
+    }
+
+    #[test]
+    fn observation_finds_the_release_by_version_code() {
+        let track = vec![
+            release(ReleaseStatus::Completed, &[8], None),
+            release(ReleaseStatus::InProgress, &[22], Some(0.1)),
+        ];
+        assert_eq!(
+            observation(&track, 22),
+            StoreObservation::Rolling { fraction: 0.1 }
+        );
+        assert_eq!(observation(&track, 8), StoreObservation::Completed);
+        // Discarded in Play Console: only the old release is left.
+        assert_eq!(observation(&track[..1], 22), StoreObservation::Missing);
+        assert_eq!(
+            observation(&[release(ReleaseStatus::Halted, &[22], Some(0.1))], 22),
+            StoreObservation::Halted
+        );
     }
 }

@@ -64,6 +64,46 @@ pub struct AscBetaGroup {
     pub has_access_to_all_builds: bool,
 }
 
+/// A build's TestFlight states, from its `buildBetaDetail`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AscBetaDetail {
+    /// Such as `PROCESSING`, `MISSING_EXPORT_COMPLIANCE`, `READY_FOR_BETA_TESTING`
+    /// or `IN_BETA_TESTING`.
+    pub internal: Option<String>,
+    /// Such as `READY_FOR_BETA_SUBMISSION`, `WAITING_FOR_BETA_REVIEW`,
+    /// `IN_BETA_TESTING` or `BETA_REJECTED`.
+    pub external: Option<String>,
+}
+
+/// App Store versions Apple still lets the developer edit, so one of them can
+/// take a new version string instead of a second version being created.
+const EDITABLE_VERSION_STATES: &str =
+    "PREPARE_FOR_SUBMISSION,DEVELOPER_REJECTED,REJECTED,METADATA_REJECTED,INVALID_BINARY";
+
+/// Version states that mean the version is already with App Review.
+fn version_is_submitted(state: &str) -> bool {
+    matches!(state, "WAITING_FOR_REVIEW" | "IN_REVIEW")
+}
+
+/// Item IDs of a review submission's App Store versions, from a
+/// `reviewSubmissions/{id}/items` response. Items for other things (in-app
+/// events, custom product pages) come back as `None`.
+fn submission_item_versions(items: &Value) -> Vec<Option<String>> {
+    items["data"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    item.pointer("/relationships/appStoreVersion/data/id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Clone)]
 pub struct AscPhasedRelease {
     pub id: String,
@@ -154,6 +194,12 @@ impl<'a> AppStoreConnect<'a> {
         Ok(body
             .and_then(|raw| serde_json::from_str::<OneEnvelope>(&raw).ok())
             .map(|envelope| envelope.data))
+    }
+
+    async fn delete(&self, scope: &str, path: &str) -> AscResult<()> {
+        self.send(scope, self.client.delete(apple_api::endpoint(path)))
+            .await
+            .map(|_| ())
     }
 
     async fn patch(&self, scope: &str, path: &str, body: Value) -> AscResult<()> {
@@ -298,19 +344,24 @@ impl<'a> AppStoreConnect<'a> {
         .map(|_| ())
     }
 
-    /// External TestFlight state, such as `WAITING_FOR_BETA_REVIEW`,
-    /// `IN_BETA_TESTING` or `BETA_REJECTED`.
-    pub async fn external_beta_state(&self, build_id: &str) -> AscResult<Option<String>> {
+    pub async fn beta_detail(&self, build_id: &str) -> AscResult<AscBetaDetail> {
         let detail: OptionalEnvelope = self
             .get(
                 "TestFlight state lookup",
                 &format!("/v1/builds/{build_id}/buildBetaDetail"),
-                &[("fields[buildBetaDetails]", "externalBuildState")],
+                &[(
+                    "fields[buildBetaDetails]",
+                    "internalBuildState,externalBuildState",
+                )],
             )
             .await?;
         Ok(detail
             .data
-            .and_then(|detail| attr_str(&detail, "externalBuildState")))
+            .map(|detail| AscBetaDetail {
+                internal: attr_str(&detail, "internalBuildState"),
+                external: attr_str(&detail, "externalBuildState"),
+            })
+            .unwrap_or_default())
     }
 
     pub async fn set_beta_whats_new(
@@ -365,8 +416,9 @@ impl<'a> AppStoreConnect<'a> {
         .map(|_| ())
     }
 
-    /// Returns the App Store version for `version`, creating it when the app
-    /// has none. Apple refuses creation while another version is editable.
+    /// Returns the App Store version for `version`. Like fastlane's
+    /// `ensure_version!`, an editable version with another version string is
+    /// renamed rather than a second one created, which Apple would refuse.
     pub async fn find_or_create_version(&self, app_id: &str, version: &str) -> AscResult<String> {
         let versions: ListEnvelope = self
             .get(
@@ -381,6 +433,33 @@ impl<'a> AppStoreConnect<'a> {
             )
             .await?;
         if let Some(existing) = versions.data.into_iter().next() {
+            return Ok(existing.id);
+        }
+        let editable: ListEnvelope = self
+            .get(
+                "Editable App Store version lookup",
+                &format!("/v1/apps/{app_id}/appStoreVersions"),
+                &[
+                    ("filter[appVersionState]", EDITABLE_VERSION_STATES),
+                    ("filter[platform]", "IOS"),
+                    ("fields[appStoreVersions]", "versionString"),
+                    ("limit", "1"),
+                ],
+            )
+            .await?;
+        if let Some(existing) = editable.data.into_iter().next() {
+            self.patch(
+                "App Store version rename",
+                &format!("/v1/appStoreVersions/{}", existing.id),
+                json!({
+                    "data": {
+                        "type": "appStoreVersions",
+                        "id": existing.id,
+                        "attributes": { "versionString": version }
+                    }
+                }),
+            )
+            .await?;
             return Ok(existing.id);
         }
         let created = self
@@ -507,6 +586,21 @@ impl<'a> AppStoreConnect<'a> {
         .map(|_| ())
     }
 
+    /// Removes a phased release that has not started, so the version releases
+    /// to everyone at once.
+    pub async fn disable_phased_release(&self, version_id: &str) -> AscResult<()> {
+        match self.phased_release(version_id).await? {
+            Some(phased) if phased.state == "INACTIVE" => {
+                self.delete(
+                    "Phased release removal",
+                    &format!("/v1/appStoreVersionPhasedReleases/{}", phased.id),
+                )
+                .await
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Sets the phased release to `ACTIVE`, `PAUSED` or `COMPLETE`.
     pub async fn set_phased_release_state(&self, phased_id: &str, state: &str) -> AscResult<()> {
         self.patch(
@@ -523,7 +617,14 @@ impl<'a> AppStoreConnect<'a> {
         .await
     }
 
+    /// Submits the version for App Review through a review submission. Safe
+    /// to call again after a partial failure: a version already submitted or
+    /// already in the open submission is not added twice. Like fastlane's
+    /// deliver, it stops when the open submission holds items it did not add.
     pub async fn submit_for_review(&self, app_id: &str, version_id: &str) -> AscResult<()> {
+        if version_is_submitted(&self.version_state(version_id).await?) {
+            return Ok(());
+        }
         let open: ListEnvelope = self
             .get(
                 "Review submission lookup",
@@ -558,24 +659,47 @@ impl<'a> AppStoreConnect<'a> {
                     AscError("Review submission creation returned no submission".to_string())
                 })?,
         };
-        self.post(
-            "Adding version to review submission",
-            "/v1/reviewSubmissionItems",
-            json!({
-                "data": {
-                    "type": "reviewSubmissionItems",
-                    "relationships": {
-                        "reviewSubmission": {
-                            "data": { "type": "reviewSubmissions", "id": submission_id }
-                        },
-                        "appStoreVersion": {
-                            "data": { "type": "appStoreVersions", "id": version_id }
+        let items: Value = self
+            .get(
+                "Review submission items lookup",
+                &format!("/v1/reviewSubmissions/{submission_id}/items"),
+                &[
+                    ("fields[reviewSubmissionItems]", "appStoreVersion"),
+                    ("include", "appStoreVersion"),
+                    ("fields[appStoreVersions]", "versionString"),
+                    ("limit", "50"),
+                ],
+            )
+            .await?;
+        let item_versions = submission_item_versions(&items);
+        if item_versions
+            .iter()
+            .any(|item| item.as_deref() != Some(version_id))
+        {
+            return Err(AscError(
+                "App Store Connect already has a draft review submission with other items; submit or remove it in App Store Connect, then Oore retries".to_string(),
+            ));
+        }
+        if item_versions.is_empty() {
+            self.post(
+                "Adding version to review submission",
+                "/v1/reviewSubmissionItems",
+                json!({
+                    "data": {
+                        "type": "reviewSubmissionItems",
+                        "relationships": {
+                            "reviewSubmission": {
+                                "data": { "type": "reviewSubmissions", "id": submission_id }
+                            },
+                            "appStoreVersion": {
+                                "data": { "type": "appStoreVersions", "id": version_id }
+                            }
                         }
                     }
-                }
-            }),
-        )
-        .await?;
+                }),
+            )
+            .await?;
+        }
         self.patch(
             "Review submission",
             &format!("/v1/reviewSubmissions/{submission_id}"),
@@ -633,6 +757,25 @@ mod tests {
             BuildProcessing::Processing
         );
         assert_eq!(parse_processing(None), BuildProcessing::Processing);
+    }
+
+    #[test]
+    fn submission_items_name_their_versions() {
+        let items = json!({
+            "data": [
+                {"type": "reviewSubmissionItems", "id": "i1",
+                 "relationships": {"appStoreVersion": {"data": {"type": "appStoreVersions", "id": "v1"}}}},
+                {"type": "reviewSubmissionItems", "id": "i2",
+                 "relationships": {"appEvent": {"data": {"type": "appEvents", "id": "e1"}}}}
+            ]
+        });
+        assert_eq!(
+            submission_item_versions(&items),
+            vec![Some("v1".to_string()), None]
+        );
+        assert!(submission_item_versions(&json!({"data": []})).is_empty());
+        assert!(version_is_submitted("WAITING_FOR_REVIEW"));
+        assert!(!version_is_submitted("PREPARE_FOR_SUBMISSION"));
     }
 
     #[test]
