@@ -4409,14 +4409,6 @@ async fn execute_build_steps(
     let _signing_cleanup = WorkspaceCleanup {
         path: signing_workspace.clone(),
     };
-    let test_reports_dir =
-        match create_private_workspace_in(&runner_workspace_root, &config.runner_id) {
-            Ok(dir) => dir,
-            Err(error) => return (vec![], Err(error.into())),
-        };
-    let _test_reports_cleanup = WorkspaceCleanup {
-        path: test_reports_dir.clone(),
-    };
     let authority = Arc::new(BuildAuthorityState::default());
 
     let snapshot = &job.config_snapshot;
@@ -4763,10 +4755,6 @@ async fn execute_build_steps(
         ),
         ("BUILD_NUMBER".to_string(), job.build_number.to_string()),
         ("OORE_VERSION_CODE".to_string(), version_code.to_string()),
-        (
-            test_reports::TEST_REPORTS_DIR_ENV.to_string(),
-            test_reports_dir.display().to_string(),
-        ),
     ];
     // Before pipeline env, so a pipeline can still point a tool elsewhere.
     if let Some(caches) = caches {
@@ -4960,6 +4948,28 @@ async fn execute_build_steps(
         }
     };
 
+    // Inside the workspace so a VM build sees it through the workspace share.
+    let test_reports_dir = workspace.join(test_reports::TEST_REPORTS_SUBDIR);
+    if let Err(error) = fs::create_dir_all(&test_reports_dir) {
+        return (
+            steps,
+            Err(anyhow::anyhow!(
+                "Failed to create the test reports directory: {error}"
+            )),
+        );
+    }
+    let guest_workspace = vm.as_ref().map(|vm| PathBuf::from(vm.guest_workspace()));
+    let step_test_reports_dir = guest_workspace
+        .as_deref()
+        .unwrap_or(&workspace)
+        .join(test_reports::TEST_REPORTS_SUBDIR);
+    step_env.push((
+        test_reports::TEST_REPORTS_DIR_ENV.to_string(),
+        step_test_reports_dir.display().to_string(),
+    ));
+    let mut report_path_prefixes = vec![workspace.clone()];
+    report_path_prefixes.extend(guest_workspace);
+
     let mut ios_signing_command_applied = false;
     let ios_signing_expected = ios_signing_bundle.is_some();
     let mut ios_artifact_metadata: Option<serde_json::Value> = None;
@@ -4996,7 +5006,7 @@ async fn execute_build_steps(
             ios_signing_command_applied |= command_applied;
             let normalized_command = test_reports::with_test_file_reporter(
                 &normalized_command,
-                &test_reports_dir.join(format!("{step_name}.json")),
+                &step_test_reports_dir.join(format!("{step_name}.json")),
             );
             let command_preview = render_command_preview(&normalized_command, &step_env);
 
@@ -5100,7 +5110,7 @@ async fn execute_build_steps(
                         &job.build_id,
                         log_seq,
                         &test_reports_dir,
-                        &workspace,
+                        &report_path_prefixes,
                         &step_name,
                     )
                     .await;
@@ -6010,10 +6020,10 @@ async fn report_step_tests(
     build_id: &str,
     log_seq: &mut BuildLogCursor,
     reports_dir: &Path,
-    workspace: &Path,
+    workspaces: &[PathBuf],
     step_name: &str,
 ) {
-    let Some(mut report) = test_reports::collect_test_reports(reports_dir, workspace, step_name)
+    let Some(mut report) = test_reports::collect_test_reports(reports_dir, workspaces, step_name)
     else {
         return;
     };

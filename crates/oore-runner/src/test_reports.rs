@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use oore_contract::{RunnerTestFailure, RunnerTestReport};
 
 pub(crate) const TEST_REPORTS_DIR_ENV: &str = "OORE_TEST_REPORTS_DIR";
+/// Reports directory, relative to the build workspace.
+pub(crate) const TEST_REPORTS_SUBDIR: &str = ".oore/test-reports";
 
 /// Failures sent per report; totals still count every failure.
 const MAX_FAILURES_PER_REPORT: usize = 200;
@@ -48,10 +50,11 @@ fn shell_quote(value: &str) -> String {
 }
 
 /// Parse and remove every report in `dir`. Returns `None` when the step
-/// wrote no reports.
+/// wrote no reports. Paths under any of `workspaces` (the host workspace and,
+/// for a VM build, its guest path) are made relative.
 pub(crate) fn collect_test_reports(
     dir: &Path,
-    workspace: &Path,
+    workspaces: &[PathBuf],
     step: &str,
 ) -> Option<RunnerTestReport> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
@@ -61,7 +64,10 @@ pub(crate) fn collect_test_reports(
         .collect();
     files.sort();
 
-    let prefixes = workspace_prefixes(workspace);
+    let prefixes: Vec<String> = workspaces
+        .iter()
+        .flat_map(|workspace| workspace_prefixes(workspace))
+        .collect();
     let mut report = RunnerTestReport {
         step: step.to_string(),
         ..Default::default()
@@ -538,13 +544,14 @@ mod tests {
         .unwrap();
         std::fs::write(dir.join("notes.txt"), "ignored").unwrap();
 
-        let report = collect_test_reports(&dir, &workspace, "build-2").unwrap();
+        let workspaces = [workspace];
+        let report = collect_test_reports(&dir, &workspaces, "build-2").unwrap();
         assert_eq!(report.step, "build-2");
         assert_eq!((report.total, report.passed, report.failed), (5, 2, 2));
         assert_eq!(report.failures[0].suite, "test/login_test.dart");
         assert_eq!(report.failures[1].name, "loading test/broken_test.dart");
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
-        assert!(collect_test_reports(&dir, &workspace, "build-3").is_none());
+        assert!(collect_test_reports(&dir, &workspaces, "build-3").is_none());
         std::fs::remove_dir_all(&root).unwrap();
     }
 
