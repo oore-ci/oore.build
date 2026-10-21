@@ -32,6 +32,21 @@ export function dataTableSortingState(
   return [{ id: sort, desc: direction === 'desc' }]
 }
 
+// The direction a column header shows and toggles from. Controlled sorting is
+// read straight from options: v9 only publishes it to the table atoms in a
+// layout effect, so `column.getIsSorted()` lags one render behind and a header
+// rendered from it keeps re-sending the first click's direction.
+export function dataTableColumnSortDirection(
+  controlled: SortingState | undefined,
+  columnId: string,
+  fallback: () => SortDirection | false,
+): SortDirection | false {
+  if (!controlled) return fallback()
+  const entry = controlled.find((sort) => sort.id === columnId)
+  if (!entry) return false
+  return entry.desc ? 'desc' : 'asc'
+}
+
 export function resolveDataTableSorting<TSort extends string>(
   updater: Updater<SortingState>,
   current: SortingState,
