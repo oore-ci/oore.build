@@ -37,9 +37,7 @@ export function GitLabAuthStep({
     <section className="space-y-4">
       <Separator />
       <div>
-        <p className="text-sm font-medium text-muted-foreground">
-          2. Authenticate
-        </p>
+        <p className="text-sm font-medium">2. Authenticate</p>
         <p className="mt-1 text-sm text-muted-foreground">
           Choose the credential model that fits this GitLab source.
         </p>

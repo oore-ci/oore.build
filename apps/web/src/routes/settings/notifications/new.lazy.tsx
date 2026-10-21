@@ -6,8 +6,11 @@ import { useCreateNotificationChannel } from '@/hooks/use-notification-channels'
 import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { FormActions } from '@/components/form-actions'
+import {
+  SettingsSection,
+  SettingsSurface,
+} from '@/components/settings/settings-section'
 import { Form } from '@/components/ui/form'
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import {
@@ -42,39 +45,31 @@ function NewNotificationChannelPage() {
   }
 
   return (
-    <PageLayout width="wide">
+    <PageLayout>
       <PageMeta title="New notification channel" noindex />
-      <PageHeader
-        title="New notification channel"
-        description="Configure a notification channel to receive build and runner status updates."
-      />
+      <PageHeader title="New notification channel" />
 
-      <Card size="sm" aria-labelledby="channel-config-title">
-        <CardHeader>
-          <CardTitle id="channel-config-title">Channel configuration</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+      <Form {...form}>
+        <form
+          onSubmit={form.handleSubmit(onSubmit)}
+          className="flex flex-col gap-8"
+        >
+          <SettingsSection
+            title="Channel"
+            description="Where build and runner updates go, and which events send them."
+          >
+            <SettingsSurface className="flex flex-col gap-4">
               <NotificationChannelFormFields form={form} />
-              <div className="flex gap-2 pt-2">
-                <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? 'Creating...' : 'Create channel'}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() =>
-                    void navigate({ to: '/settings/notifications' })
-                  }
-                >
-                  Cancel
-                </Button>
-              </div>
-            </form>
-          </Form>
-        </CardContent>
-      </Card>
+            </SettingsSurface>
+          </SettingsSection>
+          <FormActions
+            isPending={createMutation.isPending}
+            onCancel={() => void navigate({ to: '/settings/notifications' })}
+            pendingLabel="Creating..."
+            submitLabel="Create channel"
+          />
+        </form>
+      </Form>
     </PageLayout>
   )
 }
