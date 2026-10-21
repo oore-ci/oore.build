@@ -94,33 +94,53 @@ const failedBuildLogs: Array<BuildLogChunk> = [
   { sequence: 2, content: '  stripe_sdk 3.0.0', stream: 'stdout' },
   { sequence: 3, content: 'Got dependencies!', stream: 'stdout' },
   { sequence: 4, content: '', stream: 'stdout' },
-  { sequence: 5, content: '$ flutter analyze', stream: 'stdout' },
-  { sequence: 6, content: 'Analyzing native_payments...', stream: 'stdout' },
-  { sequence: 7, content: '', stream: 'stdout' },
+  { sequence: 5, content: '$ flutter test', stream: 'stdout' },
+  {
+    sequence: 6,
+    content:
+      '00:04 +38: test/stripe_v3/handler_test.dart: StripeV3Handler confirms a payment intent',
+    stream: 'stdout',
+  },
+  {
+    sequence: 7,
+    content:
+      '00:05 +38 -1: test/stripe_v3/handler_test.dart: StripeV3Handler rejects an expired card [E]',
+    stream: 'stderr',
+  },
   {
     sequence: 8,
-    content:
-      "  error - The argument type 'String' can't be assigned to the parameter type 'PaymentIntent' - lib/stripe_v3/handler.dart:42:15 - argument_type_not_assignable",
+    content: '  Expected: PaymentStatus:<PaymentStatus.declined>',
     stream: 'stderr',
   },
   {
     sequence: 9,
-    content:
-      "  error - Undefined name 'StripeV3Client' - lib/stripe_v3/client.dart:18:5 - undefined_identifier",
+    content: '    Actual: PaymentStatus:<PaymentStatus.pending>',
     stream: 'stderr',
   },
   {
     sequence: 10,
     content:
-      "  error - Missing required argument 'apiKey' - lib/stripe_v3/config.dart:7:22 - missing_required_argument",
+      '00:09 +41 -2: test/checkout/checkout_flow_test.dart: Checkout retries after a network timeout [E]',
     stream: 'stderr',
   },
-  { sequence: 11, content: '', stream: 'stdout' },
-  { sequence: 12, content: '3 issues found. (3 errors)', stream: 'stderr' },
-  { sequence: 13, content: '', stream: 'stdout' },
+  {
+    sequence: 11,
+    content: '  TimeoutException after 0:00:05.000000: Future not completed',
+    stream: 'stderr',
+  },
+  {
+    sequence: 12,
+    content: '00:11 +44 ~1 -2: Some tests failed.',
+    stream: 'stderr',
+  },
+  {
+    sequence: 13,
+    content: '[oore-tests] 47 tests: 44 passed, 2 failed, 1 skipped',
+    stream: 'stdout',
+  },
   {
     sequence: 14,
-    content: 'Build failed: flutter analyze exited with code 1',
+    content: 'Build failed: flutter test exited with code 1',
     stream: 'stderr',
   },
 ]
@@ -184,8 +204,8 @@ const failedBuildLogsWithSteps = withStepMarkers([
     logs: failedBuildLogs.slice(0, 5),
   },
   {
-    name: 'flutter analyze',
-    command: 'flutter analyze',
+    name: 'flutter test',
+    command: 'flutter test',
     status: 'failed',
     logs: failedBuildLogs.slice(5),
   },

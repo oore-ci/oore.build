@@ -94,6 +94,25 @@ export const demoBuilds: Array<Build> = [
     updated_at: ago(60),
   },
 
+  // ── Build waiting for approval ────────────────────────────────
+  {
+    id: BUILD_IDS.awaitingApproval1,
+    project_id: PROJECT_IDS.flutterShop,
+    pipeline_id: PIPELINE_IDS.shopIos,
+    build_number: 144,
+    status: 'queued',
+    trigger_type: 'webhook',
+    trigger_actor: 'octocat',
+    trigger_event: 'tag_push',
+    trigger_ref: 'v2.4.0',
+    commit_sha: 'c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3',
+    approval: { state: 'pending', requested_at: ago(240) },
+    config_snapshot: {},
+    queued_at: ago(240),
+    created_at: ago(240),
+    updated_at: ago(240),
+  },
+
   // ── Succeeded builds ──────────────────────────────────────────
   {
     id: BUILD_IDS.succeeded1,
@@ -251,7 +270,7 @@ export const demoBuilds: Array<Build> = [
         duration_ms: 60000,
       },
       {
-        name: 'flutter analyze',
+        name: 'flutter test',
         status: 'failed',
         exit_code: 1,
         started_at: ago(43140),
@@ -527,6 +546,16 @@ for (const [projectIndex, app] of demoBuildHistoryApps.entries()) {
 
 // ── Build events for detail views ───────────────────────────────
 export const demoBuildEvents = {
+  [BUILD_IDS.awaitingApproval1]: [
+    {
+      id: 'evt-approval-001',
+      build_id: BUILD_IDS.awaitingApproval1,
+      to_status: 'queued',
+      actor: 'octocat',
+      reason: 'webhook: tag_push; waiting for approval',
+      created_at: ago(240),
+    },
+  ],
   [BUILD_IDS.running1]: [
     {
       id: 'evt-001',
@@ -586,7 +615,7 @@ export const demoBuildEvents = {
       build_id: BUILD_IDS.failed1,
       from_status: 'running',
       to_status: 'failed',
-      reason: 'flutter analyze exited with code 1',
+      reason: 'flutter test exited with code 1',
       created_at: ago(43080),
     },
   ],

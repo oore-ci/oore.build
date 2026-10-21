@@ -19,8 +19,10 @@ use crate::util::now_unix;
 /// Default lease timeout for assigned builds (5 minutes).
 const LEASE_TIMEOUT_SECS: i64 = 300;
 
-/// Default build timeout (60 minutes).
-const BUILD_TIMEOUT_SECS: i64 = 3600;
+/// Build timeout for builds whose snapshot predates per-pipeline timeouts.
+const DEFAULT_BUILD_TIMEOUT_SECS: i64 = oore_contract::DEFAULT_BUILD_TIMEOUT_MINUTES as i64 * 60;
+/// How often running builds are checked against their timeout.
+const BUILD_TIMEOUT_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Runner heartbeat staleness threshold (2 minutes).
 const HEARTBEAT_STALE_SECS: i64 = 120;
@@ -183,63 +185,72 @@ async fn lease_timeout_monitor(pool: SqlitePool) {
     }
 }
 
-/// Monitor running builds that have exceeded the maximum build timeout.
+/// Monitor running builds that have exceeded their pipeline's timeout.
 ///
-/// Runs every 60 seconds. Finds builds with status 'running' whose started_at
-/// is older than BUILD_TIMEOUT_SECS and transitions them to 'timed_out'.
+/// Runs every 15 seconds. Each build carries its timeout in
+/// `config_snapshot.timeout_secs`, captured when it was created.
 async fn build_timeout_monitor(pool: SqlitePool, scheduler: Arc<Scheduler>) {
     loop {
-        tokio::time::sleep(Duration::from_secs(60)).await;
+        tokio::time::sleep(BUILD_TIMEOUT_CHECK_INTERVAL).await;
+        if let Err(e) = time_out_overdue_builds(&pool, &scheduler, now_unix()).await {
+            error!(error = %e, "build_timeout_monitor: failed to query running builds");
+        }
+    }
+}
 
-        let now = now_unix();
-        let cutoff = now - BUILD_TIMEOUT_SECS;
+/// Mark running builds past their timeout as `timed_out`. Returns the IDs
+/// of the builds it timed out.
+pub(crate) async fn time_out_overdue_builds(
+    pool: &SqlitePool,
+    scheduler: &Scheduler,
+    now: i64,
+) -> Result<Vec<String>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, COALESCE(json_extract(config_snapshot, '$.timeout_secs'), ?1) AS timeout_secs \
+         FROM builds WHERE status = 'running' \
+           AND started_at + COALESCE(json_extract(config_snapshot, '$.timeout_secs'), ?1) <= ?2 \
+         ORDER BY started_at LIMIT ?3",
+    )
+    .bind(DEFAULT_BUILD_TIMEOUT_SECS)
+    .bind(now)
+    .bind(MONITOR_BATCH_SIZE)
+    .fetch_all(pool)
+    .await?;
 
-        let rows = match sqlx::query(
-            "SELECT id FROM builds WHERE status = 'running' AND started_at < ?1 \
-                 ORDER BY started_at LIMIT ?2",
+    let mut timed_out = Vec::new();
+    for row in rows {
+        let build_id: String = row.get("id");
+        let timeout_minutes = row.get::<i64, _>("timeout_secs") / 60;
+        let reason = format!("build timeout of {timeout_minutes} minutes exceeded");
+
+        match crate::builds::transition_build(
+            pool,
+            &build_id,
+            BuildStatus::TimedOut,
+            None,
+            Some(&reason),
         )
-        .bind(cutoff)
-        .bind(MONITOR_BATCH_SIZE)
-        .fetch_all(&pool)
         .await
         {
-            Ok(rows) => rows,
-            Err(e) => {
-                error!(error = %e, "build_timeout_monitor: failed to query running builds");
-                continue;
+            Ok(_build) => {
+                info!(build_id = %build_id, timeout_minutes, "build_timeout_monitor: timed out build");
+
+                scheduler.publish_event(BuildStateEvent {
+                    build_id: build_id.clone(),
+                    from_status: Some("running".to_string()),
+                    to_status: "timed_out".to_string(),
+                    actor: None,
+                    reason: Some(reason),
+                    timestamp: now,
+                });
+                timed_out.push(build_id);
             }
-        };
-
-        for row in rows {
-            let build_id: String = row.get("id");
-
-            match crate::builds::transition_build(
-                &pool,
-                &build_id,
-                BuildStatus::TimedOut,
-                None,
-                Some("build timeout exceeded"),
-            )
-            .await
-            {
-                Ok(_build) => {
-                    info!(build_id = %build_id, "build_timeout_monitor: timed out build");
-
-                    scheduler.publish_event(BuildStateEvent {
-                        build_id: build_id.clone(),
-                        from_status: Some("running".to_string()),
-                        to_status: "timed_out".to_string(),
-                        actor: None,
-                        reason: Some("build timeout exceeded".to_string()),
-                        timestamp: now,
-                    });
-                }
-                Err(e) => {
-                    warn!(build_id = %build_id, error = ?e, "build_timeout_monitor: failed to transition build to timed_out");
-                }
+            Err(e) => {
+                warn!(build_id = %build_id, error = ?e, "build_timeout_monitor: failed to transition build to timed_out");
             }
         }
     }
+    Ok(timed_out)
 }
 
 /// Monitor runner heartbeats and mark stale runners as offline.

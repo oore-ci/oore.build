@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import type { Build } from '@oore/client/models'
 import { useProjectArtifacts } from '@/hooks/use-builds'
@@ -16,6 +16,7 @@ export default function ProjectOverview({
   loading,
   error,
   onRetry,
+  setup,
 }: {
   projectId: string
   projectName: string
@@ -23,6 +24,8 @@ export default function ProjectOverview({
   loading: boolean
   error: Error | null
   onRetry: () => void
+  /** The setup checklist, rendered first while the project has no app yet. */
+  setup?: ReactNode
 }) {
   const artifacts = useProjectArtifacts(projectId)
   const { refetch } = artifacts
@@ -32,7 +35,8 @@ export default function ProjectOverview({
   }, [latest?.id, latest?.status, refetch])
   return (
     <div className="space-y-6 pt-3">
-      {artifacts.error ? (
+      {setup}
+      {setup && !loading && builds.length === 0 ? null : artifacts.error ? (
         <Alert>
           <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
             Could not load apps.
@@ -90,7 +94,9 @@ export default function ProjectOverview({
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No builds yet. Create a pipeline, then run a build.
+            {setup
+              ? 'Builds show up here after the first run.'
+              : 'No builds yet. Add a pipeline, then run a build.'}
           </p>
         )}
       </section>

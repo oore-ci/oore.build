@@ -14,11 +14,9 @@ import {
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
 import { Badge } from '@/components/ui/badge'
+import { StatusBadge } from '@/components/status-badge'
 import { relativeTime } from '@/lib/format-utils'
-import {
-  BUILD_STATUS_FILTER_OPTIONS,
-  getStatusVariant,
-} from '@/lib/status-variants'
+import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import type { ProjectBuildSort } from './-project-build-sort'
 
 const PROJECT_BUILD_SORTS = [
@@ -53,17 +51,15 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Status" />
     ),
-    cell: ({ row }) => (
-      <Badge variant={getStatusVariant(row.original.status)}>
-        {BUILD_STATUS_FILTER_OPTIONS[row.original.status]}
-      </Badge>
-    ),
+    cell: ({ row }) => <StatusBadge kind="build" value={row.original.status} />,
   },
   {
     accessorKey: 'trigger_type',
     header: 'Trigger',
     cell: ({ row }) => (
-      <Badge variant="outline">{row.original.trigger_type}</Badge>
+      <Badge variant="outline">
+        {TRIGGER_TYPE_LABELS[row.original.trigger_type]}
+      </Badge>
     ),
     enableSorting: false,
   },

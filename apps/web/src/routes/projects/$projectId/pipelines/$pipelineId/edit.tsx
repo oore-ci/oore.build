@@ -5,6 +5,8 @@ import { toast } from '@/lib/toast'
 
 import type { RegisteredIosDevice } from '@oore/client/models'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import { canChangeApprovalPolicy } from '@/hooks/use-permissions'
+import { useAuthStore } from '@/stores/auth-store'
 import { searchString } from '@/lib/search-input'
 import type { SearchInput } from '@/lib/search-input'
 import {
@@ -26,6 +28,7 @@ import {
 import { useProject } from '@/hooks/use-projects'
 import {
   buildNumberOffsetField,
+  runsOnField,
   hasCustomFallback,
   pipelineRequestFromForm,
   selectedPlatforms,
@@ -43,12 +46,12 @@ import {
 } from '@/components/data-table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import { Skeleton } from '@/components/ui/skeleton'
 import PipelineForm from '@/components/pipeline-form'
+import { PipelineFormSection } from '@/components/pipeline-form-section'
 
 const iosDeviceColumns: Array<DataTableColumnDef<RegisteredIosDevice>> = [
   { accessorKey: 'name', header: 'Name', enableSorting: false },
@@ -87,7 +90,7 @@ export const Route = createFileRoute(
 )({
   staticData: {
     breadcrumb: {
-      title: 'Edit Pipeline',
+      title: 'Edit',
     },
   },
   validateSearch: parseEditPipelineSearch,
@@ -112,6 +115,11 @@ function EditPipelinePage() {
   const { data: projectData } = useProject(projectId)
   const manualOnlyTriggers =
     projectData?.project.repository_provider === 'local_git'
+  const instanceRole = useAuthStore((state) => state.user?.role)
+  const canChangeApproval = canChangeApprovalPolicy(
+    instanceRole,
+    projectData?.project.current_user_role,
+  )
   const { data, isLoading, error } = usePipeline(pipelineId)
   const signingQuery = usePipelineAndroidSigning(pipelineId)
   const iosSigningQuery = usePipelineIosSigning(pipelineId)
@@ -184,6 +192,7 @@ function EditPipelinePage() {
     ios_signing_api_issuer_id: iosSigningQuery.data?.api_issuer_id ?? '',
     flutter_version: pipeline.execution_config.flutter_version ?? '',
     build_number_offset: buildNumberOffsetField(pipeline.execution_config),
+    runs_on: runsOnField(pipeline.execution_config),
     enable_customization: custom,
     pre_build_commands: toMultiline(
       pipeline.execution_config.commands.pre_build,
@@ -213,7 +222,22 @@ function EditPipelinePage() {
       ),
     ),
     artifact_patterns: toMultiline(pipeline.execution_config.artifact_patterns),
+    isolation: pipeline.execution_config.isolation ?? 'host',
+    timeout_minutes: String(pipeline.timeout_minutes),
     trigger_events: manualOnlyTriggers ? [] : pipeline.trigger_config.events,
+    tags: manualOnlyTriggers
+      ? ''
+      : (pipeline.trigger_config.tags ?? []).join(', '),
+    paths: manualOnlyTriggers
+      ? ''
+      : toMultiline(pipeline.trigger_config.paths ?? []),
+    paths_ignore: manualOnlyTriggers
+      ? ''
+      : toMultiline(pipeline.trigger_config.paths_ignore ?? []),
+    schedules: (pipeline.trigger_config.schedules ?? []).map((schedule) => ({
+      cron: schedule.cron,
+      branch: schedule.branch ?? '',
+    })),
     cancel_previous: pipeline.concurrency.cancel_previous,
     branches: manualOnlyTriggers
       ? ''
@@ -221,6 +245,8 @@ function EditPipelinePage() {
     max_concurrent: pipeline.concurrency.max_concurrent
       ? String(pipeline.concurrency.max_concurrent)
       : undefined,
+    approval_required: pipeline.approval.required,
+    approval_events: pipeline.approval.events ?? [],
   }
 
   async function handleSubmit(
@@ -233,7 +259,10 @@ function EditPipelinePage() {
       setValidationErrors(['Pick at least one platform to build'])
       return
     }
-    const payload = pipelineRequestFromForm(values, manualOnlyTriggers)
+    const payload = pipelineRequestFromForm(values, {
+      canChangeApproval,
+      manualOnlyTriggers,
+    })
 
     const [androidSigning, iosSigning] = await Promise.all([
       buildAndroidSigningPayload(
@@ -326,107 +355,101 @@ function EditPipelinePage() {
   }
 
   return (
-    <PageLayout width="wide">
+    <PageLayout>
       <PageMeta title={label} noindex />
       <PageHeader
-        title={`Edit: ${pipeline.name}`}
+        title={`Edit ${pipeline.name}`}
         description={
           retrySigning
             ? `Fix and retry ${retrySigning} signing without creating the pipeline again.`
-            : 'Update pipeline configuration.'
+            : undefined
         }
       />
-      <div className="w-full max-w-4xl">
-        <PipelineForm
-          initialValues={formInitialValues}
-          manualOnlyTriggers={manualOnlyTriggers}
-          onSubmit={handleSubmit}
-          onCancel={() =>
-            void navigate({
-              to: '/projects/$projectId/pipelines/$pipelineId',
-              params: { projectId, pipelineId },
-            })
-          }
-          submitLabel={retrySigning ? `Retry ${retrySigning} signing` : 'Save'}
-          isPending={
-            updateMutation.isPending ||
-            updateSigningMutation.isPending ||
-            updateIosSigningMutation.isPending
-          }
-          validationErrors={validationErrors}
-          retrySigning={retrySigning}
-          signingError={signingError}
-          signingData={signingQuery.data}
-          iosSigningData={iosSigningQuery.data}
-        >
-          {iosSigningQuery.data?.enabled &&
-            (iosSigningQuery.data.mode === 'api' ||
-              iosSigningQuery.data.mode === 'hybrid') && (
-              <Card className="mt-6">
-                <CardContent className="space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-medium">
-                        Registered iOS Devices
-                      </h3>
-                      <p className="text-xs text-muted-foreground">
-                        Register UDIDs and sync provisioning profiles for
-                        API/hybrid modes.
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={syncIosSigningMutation.isPending}
-                      onClick={() => void handleSyncIosSigning()}
-                    >
-                      {syncIosSigningMutation.isPending
-                        ? 'Syncing...'
-                        : 'Sync Profiles'}
-                    </Button>
-                  </div>
+      <PipelineForm
+        initialValues={formInitialValues}
+        manualOnlyTriggers={manualOnlyTriggers}
+        canChangeApproval={canChangeApproval}
+        onSubmit={handleSubmit}
+        onCancel={() =>
+          void navigate({
+            to: '/projects/$projectId/pipelines/$pipelineId',
+            params: { projectId, pipelineId },
+          })
+        }
+        submitLabel={
+          retrySigning ? `Retry ${retrySigning} signing` : 'Save changes'
+        }
+        isPending={
+          updateMutation.isPending ||
+          updateSigningMutation.isPending ||
+          updateIosSigningMutation.isPending
+        }
+        validationErrors={validationErrors}
+        retrySigning={retrySigning}
+        signingError={signingError}
+        signingData={signingQuery.data}
+        iosSigningData={iosSigningQuery.data}
+      >
+        {iosSigningQuery.data?.enabled &&
+          (iosSigningQuery.data.mode === 'api' ||
+            iosSigningQuery.data.mode === 'hybrid') && (
+            <PipelineFormSection
+              title="Registered iOS devices"
+              description="Register UDIDs and sync provisioning profiles for API and hybrid signing."
+              actions={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={syncIosSigningMutation.isPending}
+                  onClick={() => void handleSyncIosSigning()}
+                >
+                  {syncIosSigningMutation.isPending
+                    ? 'Syncing...'
+                    : 'Sync profiles'}
+                </Button>
+              }
+            >
+              <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+                <Input
+                  aria-label="Device name"
+                  placeholder="Device name"
+                  value={deviceName}
+                  onChange={(event) => setDeviceName(event.target.value)}
+                />
+                <Input
+                  aria-label="Device UDID"
+                  placeholder="UDID"
+                  className="font-mono"
+                  value={deviceUdid}
+                  onChange={(event) => setDeviceUdid(event.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={registerIosDeviceMutation.isPending}
+                  onClick={() => void handleRegisterDevice()}
+                >
+                  {registerIosDeviceMutation.isPending
+                    ? 'Registering...'
+                    : 'Register device'}
+                </Button>
+              </div>
 
-                  <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-                    <Input
-                      aria-label="Device name"
-                      placeholder="Device name"
-                      value={deviceName}
-                      onChange={(event) => setDeviceName(event.target.value)}
-                    />
-                    <Input
-                      aria-label="Device UDID"
-                      placeholder="UDID"
-                      className="font-mono"
-                      value={deviceUdid}
-                      onChange={(event) => setDeviceUdid(event.target.value)}
-                    />
-                    <Button
-                      type="button"
-                      disabled={registerIosDeviceMutation.isPending}
-                      onClick={() => void handleRegisterDevice()}
-                    >
-                      {registerIosDeviceMutation.isPending
-                        ? 'Registering...'
-                        : 'Register Device'}
-                    </Button>
-                  </div>
-
-                  {iosDevicesQuery.isLoading ? (
-                    <p className="text-xs text-muted-foreground">
-                      Loading devices...
-                    </p>
-                  ) : iosDevicesQuery.data?.devices.length ? (
-                    <IosDeviceTable devices={iosDevicesQuery.data.devices} />
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      No iOS devices registered for this pipeline.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-        </PipelineForm>
-      </div>
+              {iosDevicesQuery.isLoading ? (
+                <p className="text-sm text-muted-foreground">
+                  Loading devices...
+                </p>
+              ) : iosDevicesQuery.data?.devices.length ? (
+                <IosDeviceTable devices={iosDevicesQuery.data.devices} />
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No iOS devices registered for this pipeline.
+                </p>
+              )}
+            </PipelineFormSection>
+          )}
+      </PipelineForm>
     </PageLayout>
   )
 }

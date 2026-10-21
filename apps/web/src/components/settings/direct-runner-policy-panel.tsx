@@ -18,13 +18,24 @@ import {
 } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
+import {
+  SettingsSection,
+  SettingsSurface,
+} from '@/components/settings/settings-section'
 
 export function DirectRunnerPolicyPanel() {
   const canRead = useHasPermission('instance_settings:read')
 
   if (!canRead) return null
 
-  return <DirectRunnerPolicyControl />
+  return (
+    <SettingsSection
+      title="Direct macOS runner"
+      description="The runner built into this Mac. Pausing it lets assigned and running builds finish and stops new claims."
+    >
+      <DirectRunnerPolicyControl />
+    </SettingsSection>
+  )
 }
 
 function DirectRunnerPolicyControl() {
@@ -85,27 +96,31 @@ function DirectRunnerPolicyControl() {
   }
 
   return (
-    <Item variant="outline">
-      <ItemContent>
-        <ItemTitle>Allow approved repositories</ItemTitle>
-        <ItemDescription>
-          Pause new claims while assigned and running jobs finish.
-        </ItemDescription>
-        {!canWrite ? (
+    <SettingsSurface inset={false}>
+      <Item>
+        <ItemContent>
+          <ItemTitle>Accept builds from approved repositories</ItemTitle>
           <ItemDescription>
-            You have read-only access to this instance policy.
+            {enabled
+              ? 'New builds from approved repositories run on this Mac.'
+              : 'Paused. Builds in progress finish; new builds wait for another runner.'}
           </ItemDescription>
-        ) : null}
-      </ItemContent>
-      <ItemActions className="ml-auto">
-        <Switch
-          id="direct-runner-policy"
-          aria-label="Allow approved repositories"
-          checked={enabled}
-          disabled={!canWrite || mutation.isPending}
-          onCheckedChange={updatePolicy}
-        />
-      </ItemActions>
-    </Item>
+          {!canWrite ? (
+            <ItemDescription>
+              Only an owner or admin can change this.
+            </ItemDescription>
+          ) : null}
+        </ItemContent>
+        <ItemActions className="ml-auto">
+          <Switch
+            id="direct-runner-policy"
+            aria-label="Accept builds from approved repositories"
+            checked={enabled}
+            disabled={!canWrite || mutation.isPending}
+            onCheckedChange={updatePolicy}
+          />
+        </ItemActions>
+      </Item>
+    </SettingsSurface>
   )
 }

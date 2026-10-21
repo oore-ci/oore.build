@@ -17,8 +17,10 @@ import type {
   ListBuildsResponse,
 } from '@oore/client/models'
 import {
+  approveBuild,
   cancelBuild,
   createBuild,
+  rejectBuild,
   rerunBuild,
   createArtifactInstallLink,
   generateDownloadLink as getArtifactDownloadLink,
@@ -30,6 +32,7 @@ import {
   getBuildOptions,
   getBuildLogsQueryKey,
   getBuildQueryKey,
+  getBuildTestResultsOptions,
   listArtifactsOptions,
   listBuildsOptions,
   listBuildsQueryKey,
@@ -38,6 +41,8 @@ import {
   previewBuildChangelogOptions,
 } from '@oore/client/react-query'
 import { useApiContext } from '@/hooks/use-api-context'
+import { LIVE_FALLBACK_POLL_MS } from '@/lib/live-events'
+import { useLiveEventsStore } from '@/stores/live-events-store'
 import {
   scopeOoreQueryKey,
   scopeOoreQueryOptions,
@@ -71,7 +76,12 @@ export function useBuilds<TData = ListBuildsResponse>(
   },
 ) {
   const { baseUrl, client, instanceId, token } = useApiContext()
-  const pollInterval = options?.refetchInterval ?? BUILD_POLL_INTERVAL_MS
+  const liveEvents = useLiveEventsStore((s) => s.connected)
+  const requestedInterval = options?.refetchInterval ?? BUILD_POLL_INTERVAL_MS
+  const pollInterval =
+    liveEvents && requestedInterval !== false
+      ? LIVE_FALLBACK_POLL_MS
+      : requestedInterval
   const query = scopeOoreQueryOptions(
     instanceId,
     listBuildsOptions({ client, query: params }),
@@ -243,6 +253,35 @@ export function useCancelBuild() {
   })
 }
 
+export function useBuildApprovalDecision(decision: 'approve' | 'reject') {
+  const queryClient = useQueryClient()
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useMutation({
+    mutationFn: ({ buildId, reason }: { buildId: string; reason?: string }) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      const decide = decision === 'approve' ? approveBuild : rejectBuild
+      return decide({
+        client,
+        path: { build_id: buildId },
+        body: { reason: reason?.trim() || undefined },
+      })
+    },
+    onSuccess: (_data, { buildId }) => {
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(instanceId, listBuildsQueryKey({ client })),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(
+          instanceId,
+          getBuildQueryKey({ client, path: { build_id: buildId } }),
+        ),
+      })
+    },
+  })
+}
+
 export function useRerunBuild() {
   const queryClient = useQueryClient()
   const { baseUrl, client, instanceId, token } = useApiContext()
@@ -310,6 +349,24 @@ export function useArtifacts(
   const query = scopeOoreQueryOptions(
     instanceId,
     listArtifactsOptions({ client, path: { build_id: buildId } }),
+  )
+
+  return useQuery({
+    ...query,
+    enabled: !!baseUrl && !!token && !!buildId,
+    staleTime: 5_000,
+    refetchInterval: options?.refetchInterval,
+  })
+}
+
+export function useBuildTests(
+  buildId: string,
+  options?: { refetchInterval?: number | false },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    getBuildTestResultsOptions({ client, path: { build_id: buildId } }),
   )
 
   return useQuery({

@@ -138,6 +138,31 @@ holds for the app. The publish step fails before anything is uploaded when the
 App Bundle's version code is not higher than the highest one on the target
 track, or was already uploaded, and the message names both numbers.
 
+## Test results
+
+A command that is a plain `flutter test` or `dart test` invocation, such as
+`flutter test --coverage`, reports its results to Oore without any extra
+configuration. The runner adds `--file-reporter=json:<file>` to it, so the log
+keeps the usual output while the build detail page gets a Tests tab with the
+failing tests, their messages, and their outcome in recent builds of the same
+pipeline. A test that failed, passed, and then failed again within the last 20
+builds that reported tests is marked flaky. `--file-reporter` needs Flutter
+3.10 or later.
+
+Compound commands (`&&`, pipes, redirects) and commands that already pass
+`--file-reporter` are left unchanged. For those, or for other test tools, write
+a JUnit XML file or a `dart test` JSON report into `$OORE_TEST_REPORTS_DIR`:
+
+```yaml
+commands:
+  pre_build:
+    - cd packages/core && flutter test --file-reporter=json:$OORE_TEST_REPORTS_DIR/core.json
+    - ./gradlew test && cp app/build/test-results/test/*.xml "$OORE_TEST_REPORTS_DIR"
+```
+
+The runner reads and clears that directory after every command, including a
+command that failed.
+
 ## Artifacts
 
 When `artifacts` is omitted, Oore derives default patterns from `platforms`.

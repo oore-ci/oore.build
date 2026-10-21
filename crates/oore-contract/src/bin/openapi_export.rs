@@ -163,6 +163,8 @@ use utoipa::{
         operations::list_builds,
         operations::get_build,
         operations::cancel_build,
+        operations::approve_build,
+        operations::reject_build,
         operations::rerun_build,
         // ── Releases ──
         operations::list_releases,
@@ -199,11 +201,13 @@ use utoipa::{
         operations::get_job_secrets,
         operations::get_job_publish_plan,
         operations::report_job_publish_result,
+        operations::report_job_test_results,
         // ── Build Logs ──
         operations::append_build_logs,
         operations::get_build_logs,
         operations::stream_events,
         operations::stream_build_logs,
+        operations::get_build_test_results,
         operations::create_stream_token,
         // ── Artifacts ──
         operations::create_artifact,
@@ -357,6 +361,8 @@ use utoipa::{
         oore_contract::PipelineEnvVar,
         oore_contract::PipelineExecutionConfig,
         oore_contract::TriggerConfig,
+        oore_contract::ScheduleTrigger,
+        oore_contract::ApprovalPolicy,
         oore_contract::ConcurrencyPolicy,
         oore_contract::Pipeline,
         oore_contract::CreatePipelineRequest,
@@ -420,6 +426,10 @@ use utoipa::{
         oore_contract::BuildDetailResponse,
         oore_contract::ListBuildsResponse,
         oore_contract::CancelBuildResponse,
+        oore_contract::BuildApprovalState,
+        oore_contract::BuildApproval,
+        oore_contract::BuildApprovalRequest,
+        oore_contract::BuildApprovalResponse,
         oore_contract::RerunBuildResponse,
         oore_contract::StepResult,
         // Releases
@@ -524,6 +534,13 @@ use utoipa::{
         oore_contract::ReleaseChangedEvent,
         oore_contract::EventStreamReady,
         oore_contract::EventStreamResync,
+        // Test results
+        oore_contract::RunnerTestReport,
+        oore_contract::RunnerTestFailure,
+        oore_contract::BuildTestSummary,
+        oore_contract::TestRunOutcome,
+        oore_contract::BuildTestFailure,
+        oore_contract::BuildTestResultsResponse,
         // Notification Channels
         oore_contract::NotificationChannelType,
         oore_contract::SmtpTlsMode,
@@ -2245,6 +2262,40 @@ mod operations {
     )]
     pub(super) fn cancel_build() {}
 
+    /// Approve build
+    ///
+    /// Releases a build that is waiting for approval to the runner queue.
+    /// Requires the project maintainer role.
+    #[utoipa::path(post, path = "/v1/builds/{build_id}/approve", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        request_body(content = BuildApprovalRequest, description = "Optional note for the audit log"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Build approved and queued", body = BuildApprovalResponse),
+            (status = 403, description = "Not a project maintainer", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Build is not waiting for approval", body = ApiError),
+        )
+    )]
+    pub(super) fn approve_build() {}
+
+    /// Reject build
+    ///
+    /// Cancels a build that is waiting for approval. Requires the project
+    /// maintainer role.
+    #[utoipa::path(post, path = "/v1/builds/{build_id}/reject", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        request_body(content = BuildApprovalRequest, description = "Optional reason, shown on the build"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Build rejected and canceled", body = BuildApprovalResponse),
+            (status = 403, description = "Not a project maintainer", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Build is not waiting for approval", body = ApiError),
+        )
+    )]
+    pub(super) fn reject_build() {}
+
     /// List releases
     ///
     /// Releases in projects the caller can read, newest first.
@@ -2779,6 +2830,43 @@ mod operations {
         )
     )]
     pub(super) fn stream_events() {}
+
+    /// Report test results
+    ///
+    /// Runner reports the tests parsed from one build step. Reports from
+    /// several steps of a build add up. Only accepted while the build runs.
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/test-results", tag = "Builds",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+        ),
+        request_body = RunnerTestReport,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Recorded", body = OkResponse),
+            (status = 403, description = "Runner does not match the assignment", body = ApiError),
+            (status = 404, description = "Build not found", body = ApiError),
+            (status = 409, description = "Build is not running", body = ApiError),
+        )
+    )]
+    pub(super) fn report_job_test_results() {}
+
+    /// Get build test results
+    ///
+    /// Returns the test summary and failed tests of a build. Each failure
+    /// carries its outcome in recent test-reporting builds of the same
+    /// pipeline and whether it looks flaky.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/tests", tag = "Builds",
+        params(
+            ("build_id" = String, Path, description = "Build ID"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Test results", body = BuildTestResultsResponse),
+            (status = 404, description = "Build not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_test_results() {}
 
     /// Stream build logs (SSE)
     ///

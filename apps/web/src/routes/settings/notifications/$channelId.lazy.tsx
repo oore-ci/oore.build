@@ -27,9 +27,16 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
+import { DangerZone } from '@/components/danger-zone'
+import { FormActions } from '@/components/form-actions'
+import { RelativeTime } from '@/components/relative-time'
+import { StatusBadge } from '@/components/status-badge'
+import { formatEnumLabel } from '@/lib/format-utils'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  SettingsSection,
+  SettingsSurface,
+} from '@/components/settings/settings-section'
 import {
   Empty,
   EmptyDescription,
@@ -121,12 +128,7 @@ function NotificationChannelDetailPage() {
     return (
       <PageLayout width="wide">
         <Skeleton className="h-8 w-48" />
-        <Card size="sm">
-          <CardContent className="space-y-3">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </CardContent>
-        </Card>
+        <Skeleton className="h-64 w-full" />
       </PageLayout>
     )
   }
@@ -177,70 +179,42 @@ function NotificationChannelDetailPage() {
         title={channel.name}
         description={`${channelTypeLabel(channel.channel_type)} notification channel`}
         actions={
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={handleTest}
-              disabled={testMutation.isPending}
-            >
-              <HugeiconsIcon icon={TestTube01Icon} />
-              {testMutation.isPending ? 'Sending...' : 'Test'}
-            </Button>
-            <AlertDialog>
-              <AlertDialogTrigger
-                render={
-                  <Button variant="destructive">
-                    <HugeiconsIcon icon={Delete02Icon} />
-                    Delete
-                  </Button>
-                }
-              />
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    Delete notification channel?
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This permanently removes the channel and its delivery
-                    history.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={handleDelete}
-                    disabled={deleteMutation.isPending}
-                  >
-                    {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
+          <Button
+            variant="outline"
+            onClick={handleTest}
+            disabled={testMutation.isPending}
+          >
+            <HugeiconsIcon icon={TestTube01Icon} />
+            {testMutation.isPending ? 'Sending...' : 'Test'}
+          </Button>
         }
       />
 
-      <Card size="sm" aria-labelledby="channel-settings-title">
-        <CardHeader>
-          <CardTitle id="channel-settings-title">Settings</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+      <Form {...form}>
+        <form
+          onSubmit={form.handleSubmit(onSubmit)}
+          className="flex flex-col gap-4"
+        >
+          <SettingsSection
+            title="Channel"
+            description="Where updates go, and which events send them."
+          >
+            <SettingsSurface className="flex flex-col gap-4">
               <NotificationChannelFormFields channel={channel} form={form} />
-              <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? 'Saving...' : 'Save changes'}
-              </Button>
-            </form>
-          </Form>
-        </CardContent>
-      </Card>
+            </SettingsSurface>
+          </SettingsSection>
+          <FormActions
+            isPending={updateMutation.isPending}
+            submitLabel="Save changes"
+          />
+        </form>
+      </Form>
 
-      <Card size="sm" aria-labelledby="delivery-history-title">
-        <CardHeader>
-          <CardTitle id="delivery-history-title">Delivery history</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <SettingsSection
+        title="Delivery history"
+        description="The most recent attempts to reach this channel."
+      >
+        <SettingsSurface>
           {deliveriesLoading ? (
             <div className="space-y-2" aria-label="Loading delivery history">
               <Skeleton className="h-12 w-full" />
@@ -278,19 +252,9 @@ function NotificationChannelDetailPage() {
                 <Item key={delivery.id} variant="outline" size="sm">
                   <ItemContent>
                     <ItemTitle>
-                      <Badge
-                        variant={
-                          delivery.status === 'delivered'
-                            ? 'secondary'
-                            : delivery.status === 'failed'
-                              ? 'destructive'
-                              : 'outline'
-                        }
-                      >
-                        {delivery.status}
-                      </Badge>
+                      <StatusBadge kind="delivery" value={delivery.status} />
                       <span className="text-muted-foreground">
-                        {delivery.event_type}
+                        {formatEnumLabel(delivery.event_type)}
                       </span>
                     </ItemTitle>
                     {delivery.last_error ? (
@@ -300,20 +264,50 @@ function NotificationChannelDetailPage() {
                     ) : null}
                   </ItemContent>
                   <ItemActions className="text-xs text-muted-foreground">
-                    <time
-                      dateTime={new Date(
-                        delivery.created_at * 1000,
-                      ).toISOString()}
-                    >
-                      {new Date(delivery.created_at * 1000).toLocaleString()}
-                    </time>
+                    <RelativeTime at={delivery.created_at} />
                   </ItemActions>
                 </Item>
               ))}
             </ItemGroup>
           )}
-        </CardContent>
-      </Card>
+        </SettingsSurface>
+      </SettingsSection>
+
+      <DangerZone
+        title="Delete this channel"
+        description={`Permanently removes "${channel.name}" and its delivery history. Pipelines that notified it stop sending.`}
+        action={
+          <AlertDialog>
+            <AlertDialogTrigger
+              render={
+                <Button variant="destructive">
+                  <HugeiconsIcon icon={Delete02Icon} />
+                  Delete channel
+                </Button>
+              }
+            />
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Delete notification channel?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  This permanently removes the channel and its delivery history.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={handleDelete}
+                  disabled={deleteMutation.isPending}
+                >
+                  {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        }
+      />
     </PageLayout>
   )
 }

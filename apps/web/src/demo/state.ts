@@ -6,6 +6,7 @@ import type {
   Build,
   BuildEvent,
   BuildLogChunk,
+  BuildTestResultsResponse,
   ExternalAccessNetworkSettings,
   InstancePreferences,
   Integration,
@@ -30,6 +31,7 @@ import type { Project, ProjectRole } from '@oore/client/models'
 import { demoArtifacts } from './data/artifacts'
 import { demoAuditLogs } from './data/audit-logs'
 import { demoBuildLogs } from './data/build-logs'
+import { demoBuildTests } from './data/build-tests'
 import { demoBuildEvents, demoBuilds } from './data/builds'
 import {
   demoInstallations,
@@ -106,6 +108,7 @@ interface DemoState {
   builds: Array<Build>
   buildEvents: Partial<Record<string, Array<BuildEvent>>>
   buildLogs: Partial<Record<string, Array<BuildLogChunk>>>
+  buildTests: Partial<Record<string, BuildTestResultsResponse>>
   artifacts: Partial<Record<string, Array<Artifact>>>
   releases: Array<DemoRelease>
   releaseHistory: Partial<Record<string, Array<ReleaseHistoryEntry>>>
@@ -298,6 +301,8 @@ function makeDeveloperPipeline(): Pipeline {
     },
     trigger_config: { events: ['push'], branches: ['main'] },
     concurrency: { cancel_previous: true, max_concurrent: 1 },
+    timeout_minutes: 60,
+    approval: { required: false, events: [] },
     enabled: true,
     created_at: ago(86400 * 10),
     updated_at: ago(3600 * 4),
@@ -333,6 +338,8 @@ function makePaginatedPipelines(): Array<Pipeline> {
         },
         trigger_config: { events: ['push'], branches: ['main'] },
         concurrency: { cancel_previous: true, max_concurrent: 1 },
+        timeout_minutes: 60,
+        approval: { required: false, events: [] },
         enabled: true,
         created_at: ago(86400 * (30 - sequence)),
         updated_at: ago(3600 * (30 - sequence)),
@@ -530,6 +537,18 @@ export function createDemoState(
       name: 'mac-studio-busy',
       status: 'busy',
       capabilities: { os: 'macOS', arch: 'arm64', xcode: '15.4' },
+      labels: ['arm64', 'macos', 'macos-14', 'xcode-15'],
+      custom_labels: [],
+      metrics: {
+        cpu_percent: 97,
+        memory_used_bytes: 27 * 1024 ** 3,
+        memory_total_bytes: 32 * 1024 ** 3,
+        disk_free_bytes: 14 * 1024 ** 3,
+        disk_total_bytes: 494 * 1024 ** 3,
+        cache_bytes: 61 * 1024 ** 3,
+        collected_at: ago(8),
+      },
+      disk_pressure: 'warning',
       last_heartbeat_at: ago(8),
       registered_by: USER_IDS.admin,
       created_at: ago(86400 * 30),
@@ -540,6 +559,17 @@ export function createDemoState(
       name: 'mac-mini-draining',
       status: 'draining',
       capabilities: { os: 'macOS', arch: 'arm64', xcode: '15.4' },
+      labels: ['arm64', 'macos', 'macos-14', 'xcode-15'],
+      custom_labels: [],
+      metrics: {
+        cpu_percent: 12,
+        memory_used_bytes: 6 * 1024 ** 3,
+        memory_total_bytes: 16 * 1024 ** 3,
+        disk_free_bytes: 188 * 1024 ** 3,
+        disk_total_bytes: 494 * 1024 ** 3,
+        cache_bytes: 44 * 1024 ** 3,
+        collected_at: ago(20),
+      },
       last_heartbeat_at: ago(20),
       registered_by: USER_IDS.owner,
       created_at: ago(86400 * 25),
@@ -623,6 +653,7 @@ export function createDemoState(
               build: [],
               post_build: [],
             },
+            isolation: 'host',
             platform_build_args: { android: [], ios: [], macos: [] },
             platform_commands: {},
             env_keys: [],
@@ -644,6 +675,7 @@ export function createDemoState(
     releases: clone(demoReleases),
     releaseHistory: clone(demoReleaseHistory),
     buildLogs: clone(demoBuildLogs),
+    buildTests: clone(demoBuildTests),
     artifacts,
     runners,
     integrations: clone(demoIntegrations),
@@ -724,6 +756,7 @@ export function createDemoState(
     state.builds = []
     state.buildEvents = {}
     state.buildLogs = {}
+    state.buildTests = {}
     state.artifacts = {}
     state.releases = []
     state.releaseHistory = {}

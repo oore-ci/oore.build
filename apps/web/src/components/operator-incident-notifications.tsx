@@ -61,7 +61,9 @@ export function OperatorIncidentNotifications() {
                     {incident.resource_name}
                   </span>
                   <span className="text-xs text-muted-foreground">
-                    Credential {incident.reason.replace('_', ' ')}
+                    {incident.resource_kind === 'runner'
+                      ? 'Low disk space'
+                      : `Credential ${incident.reason.replace('_', ' ')}`}
                   </span>
                 </span>
               </DropdownMenuItem>

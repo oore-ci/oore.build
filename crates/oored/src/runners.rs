@@ -514,7 +514,7 @@ async fn record_disk_pressure(
 /// The initial queue lookup chooses the oldest eligible build. Rechecking the
 /// pause and source identity in the queued -> scheduled update closes races
 /// with an operator change while a claim request is in flight.
-async fn schedule_eligible_direct_runner_build(
+pub(crate) async fn schedule_eligible_direct_runner_build(
     pool: &sqlx::SqlitePool,
     build_id: &str,
     runner_id: &str,
@@ -532,6 +532,7 @@ async fn schedule_eligible_direct_runner_build(
     let result = sqlx::query(
         "UPDATE builds SET status = 'scheduled', updated_at = ?1 \
          WHERE id = ?2 AND status = 'queued' \
+           AND (approval_state IS NULL OR approval_state != 'pending') \
            AND EXISTS ( \
              SELECT 1 FROM runners runner WHERE runner.id = ?3 \
                AND NOT EXISTS ( \
@@ -714,6 +715,7 @@ async fn next_eligible_build(
          JOIN runners runner ON runner.id = ?1 \
          LEFT JOIN instance_preferences pref ON pref.id = 1 \
          WHERE b.status = 'queued' \
+           AND (b.approval_state IS NULL OR b.approval_state != 'pending') \
            AND NOT EXISTS ( \
              SELECT 1 FROM json_each(b.config_snapshot, '$.runs_on') required \
              WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
@@ -1226,7 +1228,8 @@ pub async fn list_runners(
                       WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
                     ) \
                 )), 0) AS unmatched_queued_total \
-         FROM builds b WHERE b.status = 'queued'",
+         FROM builds b WHERE b.status = 'queued' \
+           AND (b.approval_state IS NULL OR b.approval_state != 'pending')",
     )
     .fetch_one(pool)
     .await

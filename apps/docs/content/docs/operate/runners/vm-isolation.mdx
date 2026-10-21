@@ -12,7 +12,9 @@ Tart and the images.
 
 ## What you need
 
-- Tart 2.41.1 or newer on the Runner Mac: `brew install cirruslabs/cli/tart`.
+- Tart 2.41.1 or newer on the Runner Mac. Homebrew's `openai/tools/tart` can
+  lag behind, so check `tart --version` after installing it. If it is older,
+  install the release directly (see [Install Tart from the release](#install-tart-from-the-release)).
 - The Runner account logged in to macOS. Apple's Virtualization framework
   needs that login session, the same one iOS signing uses, so turn on
   automatic login for the Runner account on a dedicated build Mac.
@@ -20,6 +22,24 @@ Tart and the images.
   first use (see below).
 
 `oore doctor` reports the installed Tart version.
+
+### Install Tart from the release
+
+The Runner looks for `/opt/homebrew/bin/tart` first, then `/usr/local/bin/tart`,
+then the service `PATH`. To install a release that Homebrew does not have yet,
+remove the Homebrew copy and link the release's app bundle:
+
+```bash
+brew uninstall openai/tools/tart
+cd /tmp && curl -fLO https://github.com/openai/tart/releases/download/2.41.1/tart.tar.gz
+tar -xzf tart.tar.gz
+sudo rm -rf /Applications/tart.app && sudo mv tart.app /Applications/
+sudo mkdir -p /usr/local/bin
+sudo ln -sf /Applications/tart.app/Contents/MacOS/tart /usr/local/bin/tart
+/usr/local/bin/tart --version
+```
+
+The Runner checks for Tart at the start of every VM build, so it needs no restart.
 
 ## Turn it on
 
@@ -45,21 +65,30 @@ default template is `oore-flutter-{flutter}`, so a repository that pins
 When the Runner does not have the image yet, it builds it before the first
 build that needs it and keeps it for every later one:
 
-1. It clones the base image, `ghcr.io/cirruslabs/macos-tahoe-xcode:26.5` unless
-   `OORE_TART_BASE_IMAGE` on the Runner names another. That image already has
-   Xcode, CocoaPods, a JDK, the Android SDK, Flutter at `~/flutter` and the
-   Tart Guest Agent.
-2. It checks Flutter out at the requested tag (or channel), precaches the iOS
-   and Android artifacts and accepts the Android licenses.
+1. It downloads and clones a base image, picked by the pipeline's platforms
+   unless `OORE_TART_BASE_IMAGE` on the Runner names one for every build:
+   - Builds for iOS or macOS use `ghcr.io/cirruslabs/macos-tahoe-xcode:26.5`,
+     about 69 GB. It already has Xcode, CocoaPods, a JDK, the Android SDK,
+     Flutter at `~/flutter` and the Tart Guest Agent.
+   - Android-only builds use `ghcr.io/cirruslabs/macos-tahoe-base`, about
+     26 GB, with no Xcode. The Runner installs a JDK and the Android SDK into
+     it, and names the image with an `-android` suffix, such as
+     `oore-flutter-3.47.7-android`.
+2. It checks Flutter out at the requested tag (or channel), precaches the
+   artifacts for the platforms the image serves and accepts the Android
+   licenses.
 3. It saves the result as the local image and deletes nothing else.
 
-The output streams into the build log under `vm-start`. The very first image
-also downloads the base, which is tens of gigabytes, so expect that build to
-take 20 minutes or more. Two builds that need the same missing image build it
-once: the second waits for the first.
+A Runner downloads only the bases its pipelines need, so a Runner that never
+builds for iOS never downloads Xcode. The output, including the download's
+progress, streams into the build log under `vm-start`. The first image from
+a base can take an hour or more depending on the connection. Two builds that
+need the same missing image build it once: the second waits for the first.
 
 To build an image ahead of time, start any `isolation: vm` build that uses the
-version. To rebuild one, delete it with `tart delete oore-flutter-3.47.7`.
+version. To rebuild one, delete it with `tart delete oore-flutter-3.47.7`. To
+free a base you no longer need, find it with `tart list --source oci` and
+delete it with `tart delete`.
 
 ### Customise an app's image
 
@@ -132,7 +161,11 @@ Each image carries exactly one Flutter SDK.
 
 ## Limits
 
-- Images take 30 to 80 GB each, so budget the Runner Mac's disk for them.
+- The Xcode base is about 69 GB to download and unpacks to a 140 GB VM
+  disk; the Android-only base is about 26 GB and 50 GB. APFS stores disks
+  sparsely, so actual use is lower, but budget well over 100 GB on a Runner
+  Mac that builds iOS, and more for each further Flutter version or
+  customised image.
 - Android emulators have no hardware acceleration inside a macOS guest, so
   keep instrumented tests on a host pipeline.
 - App Store Connect upload uses `xcrun altool`, so a Runner Mac that

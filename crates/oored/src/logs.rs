@@ -273,7 +273,7 @@ async fn load_build_project_id(
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))
 }
 
-async fn require_build_log_read(
+pub(crate) async fn require_build_log_read(
     pool: &sqlx::SqlitePool,
     session: &SessionInfo,
     build_id: &str,

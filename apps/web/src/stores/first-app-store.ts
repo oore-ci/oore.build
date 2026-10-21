@@ -5,8 +5,8 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance } from '@/stores/instance-store'
 
 interface FirstAppProgress {
+  /** The project the setup checklist follows until its first app installs. */
   projectId?: string
-  hidden?: boolean
   projectDraft?: CreateProjectRequest
 }
 

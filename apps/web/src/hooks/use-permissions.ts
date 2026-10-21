@@ -68,6 +68,7 @@ const RBAC_MATRIX = {
 
 const PROJECT_RBAC_MATRIX = {
   maintainer: new Set<PermissionTemplate>([
+    'builds:approve',
     'projects:write',
     'projects:delete',
     'pipelines:write',
@@ -92,6 +93,21 @@ export function hasProjectPermission(
 ): boolean {
   if (permission.split(':').at(1) === 'read') return role !== undefined
   return !!role && PROJECT_RBAC_MATRIX[role].has(permission)
+}
+
+/**
+ * Mirrors the server's ApproveBuild check: project maintainers, instance
+ * admins and the owner decide which builds wait for approval.
+ */
+export function canChangeApprovalPolicy(
+  instanceRole: UserRole | undefined,
+  projectRole: ProjectRole | undefined,
+): boolean {
+  return (
+    instanceRole === 'owner' ||
+    instanceRole === 'admin' ||
+    projectRole === 'maintainer'
+  )
 }
 
 export function useHasPermission(permission: PermissionTemplate) {

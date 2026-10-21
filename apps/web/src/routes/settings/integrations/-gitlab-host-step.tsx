@@ -36,9 +36,7 @@ export function GitLabHostStep({
   return (
     <section className="space-y-4">
       <div>
-        <p className="text-sm font-medium text-muted-foreground">
-          1. Choose GitLab host
-        </p>
+        <p className="text-sm font-medium">1. Choose GitLab host</p>
         <p className="mt-1 text-sm text-muted-foreground">
           GitLab.com and self-managed GitLab use the same connection flow.
         </p>

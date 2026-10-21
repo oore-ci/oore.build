@@ -1212,6 +1212,66 @@ pub(crate) async fn resolve_branch_commit(
         })
 }
 
+/// Files changed between `base` and `head` (three-dot, so from their merge
+/// base). `None` when GitHub truncates the list at 300 files.
+pub(crate) async fn changed_files(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    installation_id: &str,
+    full_name: &str,
+    base: &str,
+    head: &str,
+) -> anyhow::Result<Option<Vec<String>>> {
+    #[derive(Deserialize)]
+    struct CompareResponse {
+        #[serde(default)]
+        files: Vec<CompareFile>,
+    }
+    #[derive(Deserialize)]
+    struct CompareFile {
+        filename: String,
+        previous_filename: Option<String>,
+    }
+    const GITHUB_COMPARE_FILE_LIMIT: usize = 300;
+
+    let client = build_http_client().map_err(anyhow::Error::msg)?;
+    let token = load_installation_access_token(
+        client,
+        pool,
+        encryption_key,
+        integration_id,
+        installation_id,
+    )
+    .await
+    .map_err(|(_, body)| anyhow::anyhow!(body.0.error))?;
+    let response = client
+        .get(format!(
+            "https://api.github.com/repos/{full_name}/compare/{}...{}",
+            urlencoding::encode(base),
+            urlencoding::encode(head)
+        ))
+        .query(&[("per_page", "1")])
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "oore-ci")
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<CompareResponse>()
+        .await?;
+    if response.files.len() >= GITHUB_COMPARE_FILE_LIMIT {
+        return Ok(None);
+    }
+    Ok(Some(
+        response
+            .files
+            .into_iter()
+            .flat_map(|file| std::iter::once(file.filename).chain(file.previous_filename))
+            .collect(),
+    ))
+}
+
 pub(crate) async fn compare_commits(
     pool: &sqlx::SqlitePool,
     encryption_key: &[u8],

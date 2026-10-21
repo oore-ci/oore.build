@@ -5,12 +5,13 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
-    ApiError, BuildPlatform, ConcurrencyPolicy, CreatePipelineRequest, CreatePipelineResponse,
-    ListPipelinesResponse, OkResponse, Pipeline, PipelineDetailResponse, PipelineExecutionConfig,
-    TriggerConfig, UpdatePipelineRequest, ValidatePipelineRequest, ValidatePipelineResponse,
-    is_valid_pipeline_env_key, normalize_runner_labels, parse_repository_pipeline_yaml,
-    secret_expression_errors, validate_artifact_pattern, validate_build_number_offset,
-    validate_repository_config_path,
+    ApiError, ApprovalPolicy, BuildPlatform, ConcurrencyPolicy, CreatePipelineRequest,
+    CreatePipelineResponse, DEFAULT_BUILD_TIMEOUT_MINUTES, ListPipelinesResponse,
+    MAX_BUILD_TIMEOUT_MINUTES, OkResponse, Pipeline, PipelineDetailResponse,
+    PipelineExecutionConfig, TriggerConfig, UpdatePipelineRequest, ValidatePipelineRequest,
+    ValidatePipelineResponse, is_valid_pipeline_env_key, normalize_runner_labels,
+    parse_repository_pipeline_yaml, secret_expression_errors, validate_artifact_pattern,
+    validate_build_number_offset, validate_repository_config_path,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -41,6 +42,8 @@ const MAX_ENV_VARS: usize = 128;
 const MAX_ENV_KEY_LENGTH: usize = 128;
 const MAX_ENV_VALUE_LENGTH: usize = 4096;
 const MAX_FLUTTER_VERSION_LENGTH: usize = 64;
+const MAX_TRIGGER_PATTERNS: usize = 64;
+const MAX_TRIGGER_PATTERN_LENGTH: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProjectTriggerMode {
@@ -252,7 +255,69 @@ fn validate_trigger_config(tc: &TriggerConfig) -> Vec<String> {
         }
     }
 
+    for (field, patterns) in [
+        ("tags", &tc.tags),
+        ("paths", &tc.paths),
+        ("paths_ignore", &tc.paths_ignore),
+    ] {
+        if patterns.len() > MAX_TRIGGER_PATTERNS {
+            errors.push(format!(
+                "trigger_config.{field} has too many entries (max {MAX_TRIGGER_PATTERNS})"
+            ));
+        }
+        for (i, pattern) in patterns.iter().enumerate() {
+            let trimmed = pattern.trim();
+            if trimmed.is_empty() {
+                errors.push(format!("trigger_config.{field}[{i}] must not be empty"));
+            } else if trimmed.len() > MAX_TRIGGER_PATTERN_LENGTH {
+                errors.push(format!(
+                    "trigger_config.{field}[{i}] is too long (max {MAX_TRIGGER_PATTERN_LENGTH} chars)"
+                ));
+            } else if field != "tags" && (trimmed.starts_with('/') || trimmed.contains('\\')) {
+                errors.push(format!(
+                    "trigger_config.{field}[{i}] must be a repository-relative path using '/' separators"
+                ));
+            }
+        }
+    }
+
+    let event_listed = |event: &str| tc.events.is_empty() || tc.events.iter().any(|e| e == event);
+    if !tc.tags.is_empty() && !event_listed("tag_push") {
+        errors.push("trigger_config.tags needs the tag_push event".to_string());
+    }
+    if (!tc.paths.is_empty() || !tc.paths_ignore.is_empty())
+        && !event_listed("push")
+        && !event_listed("pull_request")
+    {
+        errors.push("trigger_config.paths apply only to push and pull_request events".to_string());
+    }
+
+    errors.extend(crate::pipeline_schedules::validate_schedules(&tc.schedules));
     errors
+}
+
+fn validate_timeout_minutes(minutes: u32) -> Vec<String> {
+    if (1..=MAX_BUILD_TIMEOUT_MINUTES).contains(&minutes) {
+        Vec::new()
+    } else {
+        vec![format!(
+            "timeout_minutes must be between 1 and {MAX_BUILD_TIMEOUT_MINUTES}"
+        )]
+    }
+}
+
+fn validate_approval_policy(policy: &ApprovalPolicy) -> Vec<String> {
+    policy
+        .events
+        .iter()
+        .filter(|event| !ApprovalPolicy::EVENTS.contains(&event.as_str()))
+        .map(|event| {
+            format!(
+                "Invalid approval event '{event}'. Valid: {}",
+                ApprovalPolicy::EVENTS.join(", ")
+            )
+        })
+        .collect()
 }
 
 fn validate_manual_only_trigger_config(tc: &TriggerConfig) -> Vec<String> {
@@ -263,6 +328,12 @@ fn validate_manual_only_trigger_config(tc: &TriggerConfig) -> Vec<String> {
     }
     if !tc.branches.is_empty() {
         errors.push("trigger_config.branches must be empty for local repositories".to_string());
+    }
+    if !tc.tags.is_empty() || !tc.paths.is_empty() || !tc.paths_ignore.is_empty() {
+        errors.push(
+            "trigger_config.tags, paths and paths_ignore must be empty for local repositories"
+                .to_string(),
+        );
     }
 
     errors
@@ -330,6 +401,16 @@ fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
 
     let enabled_int: i32 = row.get("enabled");
     let config_path_explicit: i32 = row.try_get("config_path_explicit").unwrap_or(0);
+    let timeout_minutes = row
+        .try_get::<i64, _>("timeout_minutes")
+        .ok()
+        .and_then(|minutes| u32::try_from(minutes).ok())
+        .unwrap_or(DEFAULT_BUILD_TIMEOUT_MINUTES);
+    let approval: ApprovalPolicy = row
+        .try_get::<String, _>("approval_policy")
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
 
     Pipeline {
         id: row.get("id"),
@@ -340,6 +421,8 @@ fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
         execution_config,
         trigger_config,
         concurrency,
+        timeout_minutes,
+        approval,
         enabled: enabled_int != 0,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
@@ -501,6 +584,21 @@ pub async fn create_pipeline(
     execution_config.runs_on =
         normalize_runner_labels(&execution_config.runs_on).expect("runs_on validated above");
 
+    let timeout_minutes = req.timeout_minutes.unwrap_or(DEFAULT_BUILD_TIMEOUT_MINUTES);
+    let approval = req.approval.unwrap_or_default();
+    let gate_errors = [
+        validate_timeout_minutes(timeout_minutes),
+        validate_approval_policy(&approval),
+    ]
+    .concat();
+    if !gate_errors.is_empty() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            gate_errors.join("; "),
+        ));
+    }
+
     let now = now_unix();
     let pipeline_id = Uuid::new_v4().to_string();
 
@@ -509,8 +607,8 @@ pub async fn create_pipeline(
     let execution_config_json = serde_json::to_string(&execution_config).unwrap_or_default();
 
     sqlx::query(
-        "INSERT INTO pipelines (id, project_id, name, config_path, config_path_explicit, execution_config, trigger_config, concurrency, enabled, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9, ?9)",
+        "INSERT INTO pipelines (id, project_id, name, config_path, config_path_explicit, execution_config, trigger_config, concurrency, timeout_minutes, approval_policy, enabled, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?10, ?11, 1, ?9, ?9)",
     )
     .bind(&pipeline_id)
     .bind(&project_id)
@@ -521,6 +619,8 @@ pub async fn create_pipeline(
     .bind(&trigger_config_json)
     .bind(&concurrency_json)
     .bind(now)
+    .bind(timeout_minutes)
+    .bind(serde_json::to_string(&approval).unwrap_or_default())
     .execute(&pool)
     .await
     .map_err(|e| {
@@ -555,6 +655,8 @@ pub async fn create_pipeline(
         execution_config,
         trigger_config,
         concurrency,
+        timeout_minutes,
+        approval,
         enabled: true,
         created_at: now,
         updated_at: now,
@@ -760,6 +862,8 @@ pub async fn update_pipeline(
         && req.execution_config.is_none()
         && req.trigger_config.is_none()
         && req.concurrency.is_none()
+        && req.timeout_minutes.is_none()
+        && req.approval.is_none()
         && req.enabled.is_none()
     {
         return Ok(Json(CreatePipelineResponse {
@@ -860,6 +964,43 @@ pub async fn update_pipeline(
         pipeline.execution_config = execution_config;
     }
 
+    if let Some(timeout_minutes) = req.timeout_minutes {
+        let errors = validate_timeout_minutes(timeout_minutes);
+        if !errors.is_empty() {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                errors.join("; "),
+            ));
+        }
+        pipeline.timeout_minutes = timeout_minutes;
+    }
+
+    if let Some(approval) = req.approval
+        && approval != pipeline.approval
+    {
+        let errors = validate_approval_policy(&approval);
+        if !errors.is_empty() {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                errors.join("; "),
+            ));
+        }
+        // Developers manage pipelines, but only maintainers decide who must
+        // approve their builds.
+        require_pipeline_project_permission(
+            pool,
+            &auth.0.user_id,
+            &auth.0.role,
+            &auth.0.auth_source,
+            &pipeline_id,
+            ProjectPermission::ApproveBuild,
+        )
+        .await?;
+        pipeline.approval = approval;
+    }
+
     if let Some(enabled) = req.enabled {
         pipeline.enabled = enabled;
     }
@@ -867,7 +1008,8 @@ pub async fn update_pipeline(
     let now = now_unix();
     sqlx::query(
         "UPDATE pipelines \
-         SET name = ?1, config_path = ?2, config_path_explicit = ?3, execution_config = ?4, trigger_config = ?5, concurrency = ?6, enabled = ?7, updated_at = ?8 \
+         SET name = ?1, config_path = ?2, config_path_explicit = ?3, execution_config = ?4, trigger_config = ?5, concurrency = ?6, enabled = ?7, updated_at = ?8, \
+             timeout_minutes = ?10, approval_policy = ?11 \
          WHERE id = ?9",
     )
     .bind(&pipeline.name)
@@ -879,6 +1021,8 @@ pub async fn update_pipeline(
     .bind(if pipeline.enabled { 1 } else { 0 })
     .bind(now)
     .bind(&pipeline_id)
+    .bind(pipeline.timeout_minutes)
+    .bind(serde_json::to_string(&pipeline.approval).unwrap_or_default())
     .execute(pool)
     .await
     .map_err(|e| {
@@ -995,6 +1139,19 @@ pub async fn delete_pipeline(
         )
     })?;
 
+    sqlx::query("DELETE FROM pipeline_schedule_runs WHERE pipeline_id = ?1")
+        .bind(&pipeline_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to delete pipeline schedules");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to delete pipeline",
+            )
+        })?;
+
     sqlx::query("DELETE FROM pipelines WHERE id = ?1")
         .bind(&pipeline_id)
         .execute(&mut *tx)
@@ -1053,6 +1210,14 @@ pub async fn validate_pipeline(
 
     if let Some(ref cp) = req.concurrency {
         errors.extend(validate_concurrency(cp));
+    }
+
+    if let Some(timeout_minutes) = req.timeout_minutes {
+        errors.extend(validate_timeout_minutes(timeout_minutes));
+    }
+
+    if let Some(ref approval) = req.approval {
+        errors.extend(validate_approval_policy(approval));
     }
 
     if let Some(ref path) = req.config_path {

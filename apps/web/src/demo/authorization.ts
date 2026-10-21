@@ -21,6 +21,7 @@ const INSTANCE_PERMISSIONS = {
 
 const PROJECT_PERMISSIONS = {
   maintainer: new Set([
+    'builds:approve',
     'projects:write',
     'projects:delete',
     'members:write',

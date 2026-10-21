@@ -31,7 +31,10 @@ import {
 } from '@/lib/format-utils'
 import { qaBuildVersion, qaProjectVersionBase } from '@/lib/qa-releases'
 import { PageMeta } from '@/lib/seo'
-import { getStatusVariant } from '@/lib/status-variants'
+import {
+  BUILD_STATUS_FILTER_OPTIONS,
+  getStatusVariant,
+} from '@/lib/status-variants'
 import type { Project } from '@oore/client/models'
 import type { Artifact, Build } from '@oore/client/models'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -225,7 +228,9 @@ function QaReleaseDetail({
         </h1>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <Badge variant={getStatusVariant(build.status)}>
-            {build.status === 'succeeded' ? 'Ready to test' : build.status}
+            {build.status === 'succeeded'
+              ? 'Ready to test'
+              : BUILD_STATUS_FILTER_OPTIONS[build.status]}
           </Badge>
           {artifact ? (
             <Badge variant="outline">{isIos ? 'iOS' : 'Android'}</Badge>

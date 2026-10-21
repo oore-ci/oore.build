@@ -1,0 +1,48 @@
+---
+title: 'Approve a build'
+status: implemented
+description: 'Release a build that waits at the approval step, or reject it.'
+---
+
+When a pipeline's approval policy covers a build, Oore queues it but no runner
+claims it until a project maintainer decides. See
+[Triggers, timeouts and approvals](/build/pipelines/triggers) to set the
+policy.
+
+## What you need
+
+- Project maintainer, instance admin, or instance owner access.
+- A build that shows **Awaiting approval**.
+
+Notification channels that subscribe to `build_approval_needed` announce each
+build that starts waiting.
+
+## 1. Open the build
+
+Open the build from the notification, **Builds**, or the project's build list.
+
+## 2. Decide
+
+Select **Approve** to release the build to the runner queue, or **Reject** to
+cancel it. You can add a note; it appears on the build timeline and in the
+audit log.
+
+The same decisions are available through
+[Approve build](/openapi/operations/approve_build) and
+[Reject build](/openapi/operations/reject_build).
+
+## Verify the result
+
+An approved build stays `queued` until a runner claims it, then runs as usual.
+A rejected build is `canceled`. The build timeline records who decided, and
+the audit log records `build_approved` or `build_rejected`.
+
+## Troubleshooting
+
+**Approve and Reject are missing**
+
+Only maintainers can decide. Developers can still cancel the build.
+
+**Oore says the build is not waiting for approval**
+
+Someone else already decided, or the build was canceled.

@@ -45,10 +45,22 @@ const executionConfigSchema = z.object({
   env: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
   artifact_patterns: stringListSchema,
   build_number_offset: z.number().int().optional(),
+  runs_on: stringListSchema.optional(),
+  isolation: z.enum(['host', 'vm']).optional(),
 })
 const triggerConfigSchema = z.object({
   events: stringListSchema,
   branches: stringListSchema,
+  tags: stringListSchema.optional(),
+  paths: stringListSchema.optional(),
+  paths_ignore: stringListSchema.optional(),
+  schedules: z
+    .array(z.object({ cron: z.string(), branch: z.string().nullish() }))
+    .optional(),
+})
+const approvalPolicySchema = z.object({
+  required: z.boolean(),
+  events: stringListSchema.optional(),
 })
 const concurrencySchema = z.object({
   cancel_previous: z.boolean(),
@@ -62,6 +74,8 @@ const createPipelineSchema = z.toZod<CreatePipelineRequest>()(
     execution_config: executionConfigSchema.nullish(),
     trigger_config: triggerConfigSchema.nullish(),
     concurrency: concurrencySchema.nullish(),
+    timeout_minutes: z.number().int().nullish(),
+    approval: approvalPolicySchema.nullish(),
   }),
 )
 const updatePipelineSchema = z.toZod<UpdatePipelineRequest>()(
@@ -72,6 +86,8 @@ const updatePipelineSchema = z.toZod<UpdatePipelineRequest>()(
     execution_config: executionConfigSchema.nullish(),
     trigger_config: triggerConfigSchema.nullish(),
     concurrency: concurrencySchema.nullish(),
+    timeout_minutes: z.number().int().nullish(),
+    approval: approvalPolicySchema.nullish(),
     enabled: z.boolean().nullish(),
   }),
 )
@@ -442,6 +458,8 @@ export const pipelineHandlers = [
         cancel_previous: false,
         max_concurrent: null,
       },
+      timeout_minutes: body.timeout_minutes ?? 60,
+      approval: body.approval ?? { required: false, events: [] },
       enabled: true,
       created_at: ago(0),
       updated_at: ago(0),

@@ -37,6 +37,7 @@ mod caches;
 mod metrics;
 mod publish;
 mod tart;
+mod test_reports;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
 const OORE_ANDROID_KEYSTORE_PATH_ENV: &str = "OORE_ANDROID_KEYSTORE_PATH";
@@ -3559,6 +3560,9 @@ struct ResolvedExecutionPlan {
     secret_env_keys: std::collections::HashSet<String>,
     build_number_offset: i64,
     isolation: BuildIsolation,
+    /// Whether the build targets iOS or macOS. Only those need the Xcode VM
+    /// image; Android-only builds use a base about a third its size.
+    needs_xcode: bool,
     /// From `.fvmrc`, then the pipeline config, then `stable`. Picks the VM
     /// image; host builds check that the runner's Flutter matches it.
     flutter_version: String,
@@ -4104,6 +4108,7 @@ fn resolve_execution_plan(
             secret_env_keys: Default::default(),
             build_number_offset: file_config.build_number_offset,
             isolation: file_config.isolation,
+            needs_xcode: needs_xcode(&file_config.platforms),
             flutter_version: resolved_flutter_version,
             source: format!("file:{}", full_path.display()),
         });
@@ -4122,6 +4127,7 @@ fn resolve_execution_plan(
         secret_env_keys: Default::default(),
         build_number_offset: fallback.build_number_offset,
         isolation: fallback.isolation,
+        needs_xcode: needs_xcode(&fallback.platforms),
         flutter_version: resolved_flutter_version,
         source: "ui_fallback".to_string(),
     })
@@ -4325,6 +4331,12 @@ fn add_checkout_proxy_config(
             format!("Authorization: Bearer {runner_token}"),
         ),
     ]);
+}
+
+fn needs_xcode(platforms: &[BuildPlatform]) -> bool {
+    platforms
+        .iter()
+        .any(|platform| matches!(platform, BuildPlatform::Ios | BuildPlatform::Macos))
 }
 
 fn snapshot_requests_ios(snapshot: &serde_json::Value) -> bool {
@@ -4897,6 +4909,7 @@ async fn execute_build_steps(
                 &workspace,
                 &shares,
                 &execution_plan.flutter_version,
+                execution_plan.needs_xcode,
             )
             .await;
             let finished = now_unix();
@@ -4947,6 +4960,28 @@ async fn execute_build_steps(
         }
     };
 
+    // Inside the workspace so a VM build sees it through the workspace share.
+    let test_reports_dir = workspace.join(test_reports::TEST_REPORTS_SUBDIR);
+    if let Err(error) = fs::create_dir_all(&test_reports_dir) {
+        return (
+            steps,
+            Err(anyhow::anyhow!(
+                "Failed to create the test reports directory: {error}"
+            )),
+        );
+    }
+    let guest_workspace = vm.as_ref().map(|vm| PathBuf::from(vm.vm.guest_workspace()));
+    let step_test_reports_dir = guest_workspace
+        .as_deref()
+        .unwrap_or(&workspace)
+        .join(test_reports::TEST_REPORTS_SUBDIR);
+    step_env.push((
+        test_reports::TEST_REPORTS_DIR_ENV.to_string(),
+        step_test_reports_dir.display().to_string(),
+    ));
+    let mut report_path_prefixes = vec![workspace.clone()];
+    report_path_prefixes.extend(guest_workspace);
+
     let mut ios_signing_command_applied = false;
     let ios_signing_expected = ios_signing_bundle.is_some();
     let mut ios_artifact_metadata: Option<serde_json::Value> = None;
@@ -4981,6 +5016,10 @@ async fn execute_build_steps(
                 Err(e) => return (steps, Err(e)),
             };
             ios_signing_command_applied |= command_applied;
+            let normalized_command = test_reports::with_test_file_reporter(
+                &normalized_command,
+                &step_test_reports_dir.join(format!("{step_name}.json")),
+            );
             let command_preview = render_command_preview(&normalized_command, &step_env);
 
             let _ = append_runner_log_line(
@@ -5076,6 +5115,17 @@ async fn execute_build_steps(
                 }
                 Some(status) => {
                     let exit_code = status.code().unwrap_or(-1);
+                    report_step_tests(
+                        client,
+                        daemon_url,
+                        config,
+                        &job.build_id,
+                        log_seq,
+                        &test_reports_dir,
+                        &report_path_prefixes,
+                        &step_name,
+                    )
+                    .await;
                     steps.push(StepResult {
                         name: step_name,
                         status: if exit_code == 0 {
@@ -5703,6 +5753,7 @@ async fn start_build_vm(
     workspace: &Path,
     shares: &[tart::HostShare],
     flutter_version: &str,
+    needs_xcode: bool,
 ) -> anyhow::Result<BuildVm> {
     let tart_bin = tart::find_tart().with_context(|| {
         format!(
@@ -5723,8 +5774,9 @@ async fn start_build_vm(
     let image_config = read_vm_image_config(workspace)?;
     let plan = tart::plan_image(
         &tart::image_template(),
-        &tart::base_image(),
+        &tart::base_image(needs_xcode),
         flutter_version,
+        !needs_xcode,
         &job.project_id,
         image_config
             .as_ref()
@@ -5776,7 +5828,12 @@ async fn start_build_vm(
     };
 
     let name = tart::vm_name(&config.runner_id, &job.build_id);
-    if !tart::is_registry_reference(&plan.name) {
+    if tart::is_registry_reference(&plan.name) {
+        pull_registry_image(
+            job, client, daemon_url, config, log_seq, authority, &tart_bin, &plan.name,
+        )
+        .await?;
+    } else {
         ensure_vm_image(
             job, client, daemon_url, config, log_seq, authority, &tart_bin, &slot_dir, &plan, &name,
         )
@@ -5812,6 +5869,56 @@ async fn start_build_vm(
     )
     .await;
     Ok(BuildVm { vm, _slot: slot })
+}
+
+/// Downloads a registry image into Tart's cache unless it is already there,
+/// streaming Tart's progress into the build log. Without this, the clone that
+/// follows would download tens of gigabytes with no output and no way to cancel.
+#[allow(clippy::too_many_arguments)]
+async fn pull_registry_image(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    authority: &Arc<BuildAuthorityState>,
+    tart_bin: &Path,
+    reference: &str,
+) -> anyhow::Result<()> {
+    if tart::registry_image_cached(tart_bin, reference)? {
+        return Ok(());
+    }
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!("Downloading {reference}; Tart reports its progress below"),
+    )
+    .await;
+    let child = tart::spawn_pull(tart_bin, reference)?;
+    let status = run_and_stream(
+        child,
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
+    )
+    .await;
+    match status {
+        None => Err(BuildTerminated {
+            status: "canceled".to_string(),
+        }
+        .into()),
+        Some(status) if !status.success() => {
+            anyhow::bail!("Downloading {reference} failed with {status}; see the log above")
+        }
+        Some(_) => Ok(()),
+    }
 }
 
 /// Builds `plan.name` from its base image unless this host already has it.
@@ -5869,11 +5976,17 @@ async fn ensure_vm_image(
         log_seq,
         "stdout",
         &format!(
-            "This runner has no VM image {}; building it from {}. The first build of a new image downloads the base and Flutter and can take 20 minutes or more",
+            "This runner has no VM image {}; building it from {}. The first build of a new image downloads the base and Flutter and can take an hour or more",
             plan.name, plan.base
         ),
     )
     .await;
+    if tart::is_registry_reference(&plan.base) {
+        pull_registry_image(
+            job, client, daemon_url, config, log_seq, authority, tart_bin, &plan.base,
+        )
+        .await?;
+    }
     let builder = tart::TartVm::start(
         tart_bin.to_path_buf(),
         &plan.base,
@@ -5970,6 +6083,71 @@ async fn report_publish_result(
         anyhow::bail!("publish result report failed: {}", resp.status());
     }
     Ok(())
+}
+
+/// Parse the reports a step wrote and send them to the daemon. Test reporting
+/// never fails the build; problems are logged instead.
+#[allow(clippy::too_many_arguments)]
+async fn report_step_tests(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    log_seq: &mut BuildLogCursor,
+    reports_dir: &Path,
+    workspaces: &[PathBuf],
+    step_name: &str,
+) {
+    let Some(mut report) = test_reports::collect_test_reports(reports_dir, workspaces, step_name)
+    else {
+        return;
+    };
+    for failure in &mut report.failures {
+        failure.message = failure.message.as_deref().map(|m| log_seq.masker.mask(m));
+        failure.stack_trace = failure
+            .stack_trace
+            .as_deref()
+            .map(|s| log_seq.masker.mask(s));
+    }
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        build_id,
+        log_seq,
+        "stdout",
+        &test_reports::summary_line(&report),
+    )
+    .await;
+    let result = client
+        .post(format!(
+            "{}/v1/runners/{}/jobs/{}/test-results",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .json(&report)
+        .send()
+        .await
+        .map_err(anyhow::Error::from)
+        .and_then(|resp| {
+            if resp.status().is_success() {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("{}", resp.status()))
+            }
+        });
+    if let Err(error) = result {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            build_id,
+            log_seq,
+            "stderr",
+            &format!("[oore-tests] Could not upload test results: {error}"),
+        )
+        .await;
+    }
 }
 
 fn step_start_marker(name: &str, command: &str) -> String {
@@ -6882,6 +7060,7 @@ mod secret_tests {
             secret_env_keys: Default::default(),
             build_number_offset: 0,
             isolation: BuildIsolation::Host,
+            needs_xcode: false,
             flutter_version: "stable".to_string(),
             source: "test".to_string(),
         }

@@ -78,15 +78,29 @@ pub(crate) fn version_is_supported(version: &str) -> bool {
 }
 
 /// Image every built Flutter image starts from: Xcode, CocoaPods, a JDK, the
-/// Android SDK and the Tart Guest Agent are already in it.
+/// Android SDK and the Tart Guest Agent are already in it. About 69 GB to
+/// download.
 pub(crate) const BASE_IMAGE_ENV: &str = "OORE_TART_BASE_IMAGE";
 pub(crate) const DEFAULT_BASE_IMAGE: &str = "ghcr.io/cirruslabs/macos-tahoe-xcode:26.5";
+/// Base for builds that need no Xcode: macOS with Homebrew and the Tart Guest
+/// Agent, about 26 GB. The provision script adds a JDK and the Android SDK.
+/// Pinned by digest because the repository publishes only `latest`.
+pub(crate) const ANDROID_BASE_IMAGE: &str = "ghcr.io/cirruslabs/macos-tahoe-base@sha256:4aaa751fa7538902d73c767f27a066fc87e83f183069da4e4b5022863abd4c77";
 
-pub(crate) fn base_image() -> String {
+/// The base for a build. `OORE_TART_BASE_IMAGE` wins; otherwise only builds
+/// for iOS or macOS pay for the Xcode image.
+pub(crate) fn base_image(needs_xcode: bool) -> String {
     std::env::var(BASE_IMAGE_ENV)
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_BASE_IMAGE.to_string())
+        .unwrap_or_else(|| {
+            if needs_xcode {
+                DEFAULT_BASE_IMAGE
+            } else {
+                ANDROID_BASE_IMAGE
+            }
+            .to_string()
+        })
 }
 
 /// OCI references contain a registry path; Tart pulls those itself.
@@ -100,6 +114,9 @@ pub(crate) struct ImagePlan {
     pub name: String,
     pub base: String,
     pub flutter_version: String,
+    /// Android only: no iOS precache, and the image is named apart from the
+    /// Xcode one for the same Flutter version.
+    pub android_only: bool,
     pub config: Option<oore_contract::VmImageConfig>,
 }
 
@@ -110,21 +127,27 @@ pub(crate) fn plan_image(
     template: &str,
     base: &str,
     flutter_version: &str,
+    android_only: bool,
     project_id: &str,
     image_config: Option<(&str, oore_contract::VmImageConfig)>,
 ) -> anyhow::Result<ImagePlan> {
-    let name = resolve_image(template, flutter_version)?;
+    let mut name = resolve_image(template, flutter_version)?;
     let Some((raw, config)) = image_config else {
+        if android_only && !is_registry_reference(&name) {
+            name.push_str("-android");
+        }
         return Ok(ImagePlan {
             name,
             base: base.to_string(),
             flutter_version: flutter_version.to_string(),
+            android_only,
             config: None,
         });
     };
     let base = config.base.clone().unwrap_or_else(|| base.to_string());
+    let platforms = if android_only { "android" } else { "all" };
     let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
-    for part in [project_id, base.as_str(), flutter_version, raw] {
+    for part in [project_id, base.as_str(), flutter_version, platforms, raw] {
         sha2::Digest::update(&mut hasher, part.as_bytes());
         sha2::Digest::update(&mut hasher, [0]);
     }
@@ -133,11 +156,30 @@ pub(crate) fn plan_image(
         name: format!("oore-flutter-{flutter_version}-{}", &digest[..12]),
         base,
         flutter_version: flutter_version.to_string(),
+        android_only,
         config: Some(config),
     })
 }
 
 const FLUTTER_CHANNELS: [&str; 4] = ["stable", "beta", "main", "master"];
+
+/// Installs a JDK and the Android SDK into a base without them, and records
+/// both in the login profile every build step reads.
+const ANDROID_TOOLCHAIN_SCRIPT: &str = r#"if ! /usr/libexec/java_home >/dev/null 2>&1 && [ -z "$JAVA_HOME" ]; then
+  brew install openjdk@17
+  echo "export JAVA_HOME=\"$(brew --prefix openjdk@17)/libexec/openjdk.jdk/Contents/Home\"" >> "$HOME/.zprofile"
+  echo 'export PATH="$JAVA_HOME/bin:$PATH"' >> "$HOME/.zprofile"
+fi
+if [ -z "$ANDROID_HOME" ] && [ -z "$ANDROID_SDK_ROOT" ]; then
+  brew install --cask android-commandlinetools
+  echo "export ANDROID_HOME=\"$(brew --prefix)/share/android-commandlinetools\"" >> "$HOME/.zprofile"
+  echo 'export PATH="$ANDROID_HOME/platform-tools:$PATH"' >> "$HOME/.zprofile"
+fi
+source "$HOME/.zprofile"
+sdkmanager="$(command -v sdkmanager || echo "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager")"
+yes | "$sdkmanager" --licenses > /dev/null || true
+"$sdkmanager" 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
+"#;
 
 /// Script that turns a base image into one for `plan.flutter_version`.
 pub(crate) fn provision_script(plan: &ImagePlan) -> String {
@@ -147,9 +189,19 @@ pub(crate) fn provision_script(plan: &ImagePlan) -> String {
     } else {
         format!("git fetch --no-tags origin tag {version}\ngit checkout --detach {version}")
     };
-    let mut script = format!(
-        r#"set -e
-if [ ! -d "$HOME/flutter/.git" ]; then
+    let precache = if plan.android_only {
+        "--android"
+    } else {
+        "--ios --android"
+    };
+    let mut script = String::from("set -e\n");
+    if plan.android_only {
+        // The Xcode image ships a JDK and the Android SDK; the slim base does
+        // not. Skip what the base already has, so an overridden base works too.
+        script.push_str(ANDROID_TOOLCHAIN_SCRIPT);
+    }
+    script.push_str(&format!(
+        r#"if [ ! -d "$HOME/flutter/.git" ]; then
   git clone https://github.com/flutter/flutter.git "$HOME/flutter"
 fi
 cd "$HOME/flutter"
@@ -157,10 +209,10 @@ cd "$HOME/flutter"
 grep -q 'flutter/bin' "$HOME/.zprofile" 2>/dev/null || echo 'export PATH="$HOME/flutter/bin:$PATH"' >> "$HOME/.zprofile"
 export PATH="$HOME/flutter/bin:$PATH"
 flutter config --no-analytics
-flutter precache --ios --android
+flutter precache {precache}
 yes | flutter doctor --android-licenses > /dev/null || true
 "#
-    );
+    ));
     if let Some(config) = &plan.config {
         if !config.brew.is_empty() {
             let packages = config
@@ -189,6 +241,27 @@ yes | flutter doctor --android-licenses > /dev/null || true
 pub(crate) fn local_image_exists(tart: &Path, name: &str) -> anyhow::Result<bool> {
     let listing = run_tart(tart, &["list", "--source", "local", "--quiet"])?;
     Ok(listing.lines().any(|line| line.trim() == name))
+}
+
+/// Whether Tart's OCI cache already holds the registry image `reference`.
+pub(crate) fn registry_image_cached(tart: &Path, reference: &str) -> anyhow::Result<bool> {
+    let listing = run_tart(tart, &["list", "--source", "oci", "--quiet"])?;
+    Ok(listing.lines().any(|line| line.trim() == reference))
+}
+
+/// Starts `tart pull` for a registry image. `CI` makes Tart print its
+/// percentage on a new line about once a second instead of redrawing one
+/// line, so the progress streams into a build log.
+pub(crate) fn spawn_pull(tart: &Path, reference: &str) -> anyhow::Result<tokio::process::Child> {
+    tokio::process::Command::new(tart)
+        .args(["pull", reference])
+        .env("CI", "true")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("failed to start tart pull")
 }
 
 /// Serialises image builds across this host's runners, so two builds that need
@@ -305,6 +378,19 @@ fn run_tart(tart: &Path, args: &[&str]) -> anyhow::Result<String> {
         args.first().copied().unwrap_or_default(),
         String::from_utf8_lossy(&output.stderr).trim()
     )
+}
+
+/// Mounts each virtiofs `(tag, guest path)` share. `tart exec` runs without a
+/// login shell, so its PATH has no `/sbin` and the mount tool needs its full path.
+fn mount_script(mounts: &[(String, String)]) -> String {
+    mounts
+        .iter()
+        .map(|(tag, path)| {
+            let path = shell_quote(path);
+            format!("mkdir -p {path} && /sbin/mount_virtiofs {tag} {path}")
+        })
+        .collect::<Vec<_>>()
+        .join(" && ")
 }
 
 /// Deletes VMs this runner left behind when it crashed or was killed mid-build.
@@ -491,15 +577,7 @@ impl TartVm {
             }
             mounts.push((share_tag(share.name), guest_dir));
         }
-        let script = mounts
-            .iter()
-            .map(|(tag, path)| {
-                let path = shell_quote(path);
-                format!("mkdir -p {path} && mount_virtiofs {tag} {path}")
-            })
-            .collect::<Vec<_>>()
-            .join(" && ");
-        vm.exec_capture(&script)
+        vm.exec_capture(&mount_script(&mounts))
             .await
             .context("failed to mount the build workspace and caches inside the VM")?;
         vm.guest_workspace = guest_workspace;
@@ -722,7 +800,15 @@ mod tests {
 
     #[test]
     fn repository_image_config_gets_a_project_scoped_image() {
-        let shared = plan_image(DEFAULT_IMAGE_TEMPLATE, "base:1", "3.47.7", "p1", None).unwrap();
+        let shared = plan_image(
+            DEFAULT_IMAGE_TEMPLATE,
+            "base:1",
+            "3.47.7",
+            false,
+            "p1",
+            None,
+        )
+        .unwrap();
         assert_eq!(shared.name, "oore-flutter-3.47.7");
         assert_eq!(shared.base, "base:1");
 
@@ -732,6 +818,7 @@ mod tests {
             DEFAULT_IMAGE_TEMPLATE,
             "base:1",
             "3.47.7",
+            false,
             "p1",
             Some((raw, config.clone())),
         )
@@ -742,16 +829,70 @@ mod tests {
             DEFAULT_IMAGE_TEMPLATE,
             "base:1",
             "3.47.7",
+            false,
             "p2",
-            Some((raw, config)),
+            Some((raw, config.clone())),
         )
         .unwrap();
         assert_ne!(own.name, other_project.name);
+        let android = plan_image(
+            DEFAULT_IMAGE_TEMPLATE,
+            "base:1",
+            "3.47.7",
+            true,
+            "p1",
+            Some((raw, config)),
+        )
+        .unwrap();
+        assert_ne!(own.name, android.name);
+    }
+
+    #[test]
+    fn mounts_use_the_full_mount_virtiofs_path() {
+        let script = mount_script(&[
+            (
+                "oore-workspace".to_string(),
+                "/Users/admin/oore-workspace".to_string(),
+            ),
+            (
+                "oore-cache-pub".to_string(),
+                "/Users/admin/oore-cache/pub".to_string(),
+            ),
+        ]);
+        assert_eq!(
+            script,
+            "mkdir -p '/Users/admin/oore-workspace' && /sbin/mount_virtiofs oore-workspace '/Users/admin/oore-workspace' && mkdir -p '/Users/admin/oore-cache/pub' && /sbin/mount_virtiofs oore-cache-pub '/Users/admin/oore-cache/pub'"
+        );
+    }
+
+    #[test]
+    fn android_only_builds_skip_the_xcode_image() {
+        let plan = plan_image(DEFAULT_IMAGE_TEMPLATE, "slim", "3.47.7", true, "p", None).unwrap();
+        assert_eq!(plan.name, "oore-flutter-3.47.7-android");
+        let script = provision_script(&plan);
+        assert!(script.contains("brew install --cask android-commandlinetools"));
+        assert!(script.contains("flutter precache --android\n"));
+        assert!(!script.contains("--ios"));
+
+        let prebuilt = plan_image(
+            "ghcr.io/acme/flutter:{flutter}",
+            "slim",
+            "3.47.7",
+            true,
+            "p",
+            None,
+        )
+        .unwrap();
+        assert_eq!(prebuilt.name, "ghcr.io/acme/flutter:3.47.7");
+
+        let xcode = plan_image(DEFAULT_IMAGE_TEMPLATE, "base", "3.47.7", false, "p", None).unwrap();
+        assert!(!provision_script(&xcode).contains("android-commandlinetools"));
     }
 
     #[test]
     fn provision_script_checks_out_tags_and_channels() {
-        let mut plan = plan_image(DEFAULT_IMAGE_TEMPLATE, "base", "3.47.7", "p", None).unwrap();
+        let mut plan =
+            plan_image(DEFAULT_IMAGE_TEMPLATE, "base", "3.47.7", false, "p", None).unwrap();
         let script = provision_script(&plan);
         assert!(
             script.contains(

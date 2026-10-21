@@ -12,6 +12,7 @@ import { AppOutputs } from './app-outputs'
 import { buildStateDescription } from '@/lib/build-state-description'
 import { BuildSummary } from './build-summary'
 import { EventTimeline } from './event-timeline'
+import { TestsPanel } from './tests-panel'
 import type { BuildLogChunk } from '@oore/client/models'
 import { useBuildNotification } from '@/hooks/use-build-notification'
 import { useIsBelowBreakpoint } from '@/hooks/use-mobile'
@@ -19,7 +20,9 @@ import {
   isTerminalStatus,
   useArtifacts,
   useBuild,
+  useBuildApprovalDecision,
   useBuildLogs,
+  useBuildTests,
   useCancelBuild,
   useRerunBuild,
 } from '@/hooks/use-builds'
@@ -34,7 +37,8 @@ import { useProject } from '@/hooks/use-projects'
 import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
 import { isOoreApiError } from '@oore/client/client'
 import { PageMeta } from '@/lib/seo'
-import { getStatusVariant } from '@/lib/status-variants'
+import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
+import { StatusBadge } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
@@ -45,9 +49,13 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTime } from '@/hooks/use-time'
+import { LIVE_FALLBACK_POLL_MS } from '@/lib/live-events'
+import { useLiveEventsStore } from '@/stores/live-events-store'
 
 const loadCancelBuildDialog = () => import('./cancel-build-dialog')
 const CancelBuildDialog = lazy(loadCancelBuildDialog)
+const loadRejectBuildDialog = () => import('./reject-build-dialog')
+const RejectBuildDialog = lazy(loadRejectBuildDialog)
 
 export function BuildDetailPage({
   buildId,
@@ -73,11 +81,14 @@ export function BuildDetailPage({
     'instance_settings:write',
   ])
   const rerunMutation = useRerunBuild()
+  const liveEvents = useLiveEventsStore((s) => s.connected)
   const buildQuery = useBuild(buildId, {
     refetchInterval: (query) =>
       query.state.data && isTerminalStatus(query.state.data.build.status)
         ? false
-        : 3000,
+        : liveEvents
+          ? LIVE_FALLBACK_POLL_MS
+          : 3000,
   })
   const { data, isLoading, error, refetch: refetchBuild } = buildQuery
   const projectQuery = useProject(data?.build.project_id ?? '')
@@ -86,6 +97,7 @@ export function BuildDetailPage({
     canTriggerBuildGlobally && hasProjectPermission(projectRole, 'builds:write')
   const canCancelBuild =
     canCancelBuildGlobally && hasProjectPermission(projectRole, 'builds:cancel')
+  const canApproveBuild = hasProjectPermission(projectRole, 'builds:approve')
   const canManageShareLinks =
     canManageShareLinksGlobally &&
     hasProjectPermission(projectRole, 'artifacts:write')
@@ -98,9 +110,22 @@ export function BuildDetailPage({
   const { refetch: refetchArtifacts } = artifactsQuery
   const cancelMutation = useCancelBuild()
   const [cancelOpen, setCancelOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<string | number>(
-    initialTab ?? 'logs',
+  const approveMutation = useBuildApprovalDecision('approve')
+  const rejectMutation = useBuildApprovalDecision('reject')
+  const [rejectOpen, setRejectOpen] = useState(false)
+  const [chosenTab, setActiveTab] = useState<string | number | null>(
+    initialTab ?? null,
   )
+  const testsQuery = useBuildTests(buildId, {
+    refetchInterval: isTerminal ? false : 5000,
+  })
+  const testSummary = testsQuery.data?.summary
+  const hasTestsTab =
+    !!testSummary || testsQuery.isError || initialTab === 'tests'
+  // A failed build with failing tests opens on Tests until the user picks a tab.
+  const activeTab =
+    chosenTab ??
+    (buildStatus === 'failed' && testSummary?.failed ? 'tests' : 'logs')
   const releasesQuery = useReleases(
     { build_id: buildId },
     { enabled: buildStatus === 'succeeded' },
@@ -132,6 +157,29 @@ export function BuildDetailPage({
   const mergedLogs: Array<BuildLogChunk> = useMemo(() => {
     return mergeBuildLogSnapshots(streamLogs, fullLogsData?.logs ?? [])
   }, [streamLogs, fullLogsData?.logs])
+
+  function handleApprove() {
+    approveMutation.mutate(
+      { buildId },
+      {
+        onSuccess: () => toast.success('Build approved'),
+        onError: (err) => toast.error(`Failed to approve: ${err.message}`),
+      },
+    )
+  }
+
+  function handleReject(reason: string) {
+    rejectMutation.mutate(
+      { buildId, reason },
+      {
+        onSuccess: () => {
+          toast.success('Build rejected')
+          setRejectOpen(false)
+        },
+        onError: (err) => toast.error(`Failed to reject: ${err.message}`),
+      },
+    )
+  }
 
   function handleCancel() {
     cancelMutation.mutate(buildId, {
@@ -196,7 +244,10 @@ export function BuildDetailPage({
   if (!data) return null
 
   const { build, events } = data
-  const canCancel = !isTerminal && canCancelBuild
+  const awaitingApproval = build.approval?.state === 'pending'
+  const canDecideApproval = awaitingApproval && canApproveBuild
+  // A maintainer rejects rather than cancels a build waiting for approval.
+  const canCancel = !isTerminal && canCancelBuild && !canDecideApproval
   const duration = build.started_at
     ? (build.finished_at ?? Math.floor(time / 1000)) - build.started_at
     : null
@@ -220,10 +271,13 @@ export function BuildDetailPage({
         }
         meta={
           <>
-            <Badge variant={getStatusVariant(build.status)}>
-              {build.status}
+            <StatusBadge kind="build" value={build.status} />
+            <Badge variant="outline">
+              {TRIGGER_TYPE_LABELS[build.trigger_type]}
             </Badge>
-            <Badge variant="outline">{build.trigger_type}</Badge>
+            {build.approval ? (
+              <StatusBadge kind="approval" value={build.approval.state} />
+            ) : null}
             <span aria-hidden className="h-3 w-px bg-border" />
             <BuildSummary build={build} duration={duration} />
           </>
@@ -256,6 +310,29 @@ export function BuildDetailPage({
                 {rerunMutation.isPending ? 'Re-running...' : 'Re-run'}
               </Button>
             ) : null}
+            {canDecideApproval ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setRejectOpen(true)}
+                  disabled={
+                    approveMutation.isPending || rejectMutation.isPending
+                  }
+                >
+                  Reject
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleApprove}
+                  disabled={
+                    approveMutation.isPending || rejectMutation.isPending
+                  }
+                >
+                  {approveMutation.isPending ? 'Approving...' : 'Approve'}
+                </Button>
+              </>
+            ) : null}
             {canCancel ? (
               <Button
                 variant="destructive"
@@ -263,7 +340,7 @@ export function BuildDetailPage({
                 onClick={() => setCancelOpen(true)}
                 disabled={cancelMutation.isPending}
               >
-                {cancelMutation.isPending ? 'Canceling...' : 'Cancel Build'}
+                {cancelMutation.isPending ? 'Canceling...' : 'Cancel build'}
               </Button>
             ) : null}
           </div>
@@ -324,7 +401,11 @@ export function BuildDetailPage({
           <AlertDescription className="flex flex-col gap-2">
             <p role="status">{stateDescription}</p>
             {isTerminal && build.status !== 'succeeded' ? (
-              <p>Check Logs and Timeline before retrying.</p>
+              <p>
+                {testSummary?.failed
+                  ? `${testSummary.failed} tests failed. Check Tests and Logs before retrying.`
+                  : 'Check Logs and Timeline before retrying.'}
+              </p>
             ) : null}
           </AlertDescription>
         </Alert>
@@ -366,6 +447,16 @@ export function BuildDetailPage({
           <TabsTrigger value="timeline">
             Timeline{events.length > 0 ? ` (${events.length})` : ''}
           </TabsTrigger>
+          {hasTestsTab ? (
+            <TabsTrigger value="tests">
+              Tests
+              {testSummary?.failed
+                ? ` (${testSummary.failed} failed)`
+                : testSummary
+                  ? ` (${testSummary.total})`
+                  : ''}
+            </TabsTrigger>
+          ) : null}
           {usesTabbedArtifacts ? (
             <TabsTrigger value="artifacts">
               Artifacts
@@ -406,6 +497,17 @@ export function BuildDetailPage({
             <TabsContent value="timeline">
               <EventTimeline events={events} />
             </TabsContent>
+            {hasTestsTab ? (
+              <TabsContent value="tests">
+                <TestsPanel
+                  buildId={build.id}
+                  data={testsQuery.data}
+                  error={testsQuery.error}
+                  isLoading={testsQuery.isLoading}
+                  onRetry={() => void testsQuery.refetch()}
+                />
+              </TabsContent>
+            ) : null}
             {hasReleaseTab ? (
               <TabsContent value="release">
                 <ReleasePanel
@@ -441,6 +543,23 @@ export function BuildDetailPage({
         </div>
       </Tabs>
 
+      {rejectOpen ? (
+        <Suspense
+          fallback={
+            <span className="sr-only" role="status">
+              Loading reject confirmation
+            </span>
+          }
+        >
+          <RejectBuildDialog
+            buildNumber={build.build_number}
+            isPending={rejectMutation.isPending}
+            onReject={handleReject}
+            onOpenChange={setRejectOpen}
+            open
+          />
+        </Suspense>
+      ) : null}
       {cancelOpen ? (
         <Suspense
           fallback={

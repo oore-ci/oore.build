@@ -3,6 +3,8 @@ import type { ReactNode } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
 import { Badge } from '@/components/ui/badge'
+import { RelativeTime } from '@/components/relative-time'
+import { formatEnumLabel } from '@/lib/format-utils'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Collapsible,
@@ -78,16 +80,16 @@ export function PipelineConfigurationCard({
             </span>
           </KV>
           <KV label="Created">
-            {new Date(pipeline.created_at * 1000).toLocaleString()}
+            <RelativeTime at={pipeline.created_at} />
           </KV>
           <KV label="Updated">
-            {new Date(pipeline.updated_at * 1000).toLocaleString()}
+            <RelativeTime at={pipeline.updated_at} />
           </KV>
         </Section>
 
         <Section title="Triggers">
           {manualOnlyTriggers ? (
-            <KV label="Mode">manual only</KV>
+            <KV label="Mode">Manual only</KV>
           ) : (
             <>
               <KV label="Events">
@@ -99,12 +101,12 @@ export function PipelineConfigurationCard({
                         variant="outline"
                         className="text-[11px]"
                       >
-                        {event}
+                        {formatEnumLabel(event)}
                       </Badge>
                     ))}
                   </div>
                 ) : (
-                  'all events'
+                  'All events'
                 )}
               </KV>
               <KV label="Branch patterns">

@@ -1,5 +1,27 @@
 import type { BadgeVariant } from '@/components/ui/badge'
-import type { BuildStatus, RunnerPolicyBlockReason } from '@oore/client/models'
+import type {
+  BuildApprovalState,
+  BuildStatus,
+  IntegrationStatus,
+  NotificationDeliveryStatus,
+  RunnerPolicyBlockReason,
+  RunnerStatus,
+  TriggerType,
+  UserStatus,
+} from '@oore/client/models'
+import { formatEnumLabel } from '@/lib/format-utils'
+
+export type ApiTokenStatus = 'active' | 'expired' | 'revoked'
+
+/** Derived state of an API token; the API only stores the inputs. */
+export function apiTokenStatus(token: {
+  expires_at?: number | null
+  is_revoked: boolean
+}): ApiTokenStatus {
+  if (token.is_revoked) return 'revoked'
+  if (token.expires_at && token.expires_at * 1000 < Date.now()) return 'expired'
+  return 'active'
+}
 
 export const BUILD_STATUS_FILTER_OPTIONS = {
   all: 'All statuses',
@@ -13,6 +35,13 @@ export const BUILD_STATUS_FILTER_OPTIONS = {
   canceled: 'Canceled',
   expired: 'Expired',
 } as const satisfies Record<'all' | BuildStatus, string>
+
+export const TRIGGER_TYPE_LABELS = {
+  manual: 'Manual',
+  api: 'API',
+  webhook: 'Webhook',
+  schedule: 'Schedule',
+} as const satisfies Record<TriggerType, string>
 
 const BUILD_STATUS_VARIANT = new Map<string, BadgeVariant>([
   ['succeeded', 'success'],
@@ -46,5 +75,154 @@ export function getPipelineStatusVariant(enabled: boolean): BadgeVariant {
 }
 
 export function getRunnerStatusVariant(status: string): BadgeVariant {
-  return status === 'online' ? 'secondary' : 'outline'
+  if (status === 'online' || status === 'busy') return 'secondary'
+  return status === 'draining' ? 'warning' : 'outline'
+}
+
+/** Which product enum a `StatusBadge` is rendering. */
+export type StatusKind =
+  | 'approval'
+  | 'build'
+  | 'delivery'
+  | 'enabled'
+  | 'integration'
+  | 'runner'
+  | 'token'
+  | 'user'
+
+export interface StatusPresentation {
+  label: string
+  variant: BadgeVariant
+}
+
+const APPROVAL_STATE_LABEL = {
+  pending: 'Awaiting approval',
+  approved: 'Approved',
+  rejected: 'Rejected',
+} satisfies Record<BuildApprovalState, string>
+
+const APPROVAL_STATE_VARIANT = {
+  pending: 'outline',
+  approved: 'success',
+  rejected: 'destructive',
+} satisfies Record<BuildApprovalState, BadgeVariant>
+
+const INTEGRATION_STATUS_LABEL = {
+  active: 'Active',
+  inactive: 'Inactive',
+  error: 'Error',
+} satisfies Record<IntegrationStatus, string>
+
+const RUNNER_STATUS_LABEL = {
+  online: 'Online',
+  offline: 'Offline',
+  busy: 'Busy',
+  draining: 'Draining',
+} satisfies Record<RunnerStatus, string>
+
+const TOKEN_STATUS_LABEL = {
+  active: 'Active',
+  expired: 'Expired',
+  revoked: 'Revoked',
+} satisfies Record<ApiTokenStatus, string>
+
+const TOKEN_STATUS_VARIANT = {
+  active: 'secondary',
+  expired: 'outline',
+  revoked: 'destructive',
+} satisfies Record<ApiTokenStatus, BadgeVariant>
+
+const USER_STATUS_LABEL = {
+  active: 'Active',
+  disabled: 'Disabled',
+  invited: 'Invited',
+} satisfies Record<UserStatus, string>
+
+const USER_STATUS_VARIANT = {
+  active: 'secondary',
+  disabled: 'destructive',
+  invited: 'outline',
+} satisfies Record<UserStatus, BadgeVariant>
+
+const DELIVERY_STATUS_LABEL = {
+  pending: 'Pending',
+  delivered: 'Delivered',
+  failed: 'Failed',
+} satisfies Record<NotificationDeliveryStatus, string>
+
+const DELIVERY_STATUS_VARIANT = {
+  pending: 'outline',
+  delivered: 'secondary',
+  failed: 'destructive',
+} satisfies Record<NotificationDeliveryStatus, BadgeVariant>
+
+function lookupLabel(
+  labels: Readonly<Record<string, string>>,
+  value: string,
+): string {
+  return labels[value] ?? formatEnumLabel(value)
+}
+
+function lookupVariant(
+  variants: Readonly<Record<string, BadgeVariant>>,
+  value: string,
+): BadgeVariant {
+  return variants[value] ?? 'outline'
+}
+
+/** Status value for an on/off entity such as a pipeline or channel. */
+export function enabledStatus(enabled: boolean): 'enabled' | 'disabled' {
+  return enabled ? 'enabled' : 'disabled'
+}
+
+/**
+ * Label and badge variant for a raw status value. Labels are sentence case
+ * and never the raw enum; unknown values fall back to `formatEnumLabel`.
+ */
+export function getStatusPresentation(
+  kind: StatusKind,
+  value: string,
+): StatusPresentation {
+  switch (kind) {
+    case 'approval':
+      return {
+        label: lookupLabel(APPROVAL_STATE_LABEL, value),
+        variant: lookupVariant(APPROVAL_STATE_VARIANT, value),
+      }
+    case 'build':
+      return {
+        label: lookupLabel(BUILD_STATUS_FILTER_OPTIONS, value),
+        variant: getStatusVariant(value),
+      }
+    case 'delivery':
+      return {
+        label: lookupLabel(DELIVERY_STATUS_LABEL, value),
+        variant: lookupVariant(DELIVERY_STATUS_VARIANT, value),
+      }
+    case 'enabled':
+      return {
+        label: value === 'enabled' ? 'Enabled' : 'Disabled',
+        variant: getPipelineStatusVariant(value === 'enabled'),
+      }
+    case 'integration':
+      return {
+        label: lookupLabel(INTEGRATION_STATUS_LABEL, value),
+        variant: getIntegrationStatusVariant(value),
+      }
+    case 'runner':
+      return {
+        label: lookupLabel(RUNNER_STATUS_LABEL, value),
+        variant: getRunnerStatusVariant(value),
+      }
+    case 'token':
+      return {
+        label: lookupLabel(TOKEN_STATUS_LABEL, value),
+        variant: lookupVariant(TOKEN_STATUS_VARIANT, value),
+      }
+    case 'user':
+      return {
+        label: lookupLabel(USER_STATUS_LABEL, value),
+        variant: lookupVariant(USER_STATUS_VARIANT, value),
+      }
+  }
 }

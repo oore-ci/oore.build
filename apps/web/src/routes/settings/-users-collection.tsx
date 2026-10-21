@@ -16,6 +16,7 @@ export function UsersCollection({
   pageSize,
   query,
   table,
+  toolbar,
   total,
 }: {
   emptyState: ReactNode
@@ -29,6 +30,7 @@ export function UsersCollection({
   pageSize: number
   query: string
   table: DataTableInstance<User>
+  toolbar?: ReactNode
   total: number
 }) {
   return (
@@ -46,6 +48,7 @@ export function UsersCollection({
       ) : (
         <DataTable
           table={table}
+          filters={toolbar}
           search={{
             value: query,
             onChange: onSearch,
