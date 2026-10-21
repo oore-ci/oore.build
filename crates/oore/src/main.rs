@@ -7124,7 +7124,16 @@ async fn restore_bounded_update_backup(
         status.success(),
         "the backup restore process failed with {status}"
     );
-    let outcome = commit_prepared_backup_restore(stage.path(), database, key, false, true)?;
+    // The commit opens SQLite through its own Tokio runtime, which panics when
+    // started on a runtime worker thread. Run it on a blocking thread instead.
+    let stage_path = stage.path().to_path_buf();
+    let database = database.to_path_buf();
+    let key = key.to_path_buf();
+    let outcome = tokio::task::spawn_blocking(move || {
+        commit_prepared_backup_restore(&stage_path, &database, &key, false, true)
+    })
+    .await
+    .context("the backup restore commit stopped unexpectedly")??;
     print_managed_runner_recovery(&outcome);
     Ok(())
 }
@@ -10771,6 +10780,10 @@ struct DeferredUpdateServiceControl<'a> {
     install_root: &'a Path,
     transaction_dir: &'a Path,
     client: &'a reqwest::Client,
+    /// The candidate daemon moved out of `bin/` by `stop_managed_service`. It
+    /// lives as long as the control so that a rollback which fails before it
+    /// restores the previous release, or unwinds, still leaves a daemon to run.
+    quiesced_candidate: Option<update_supervisor::QuiescedCandidateDaemon>,
 }
 
 impl UpdateServiceControl for DeferredUpdateServiceControl<'_> {
@@ -10781,6 +10794,15 @@ impl UpdateServiceControl for DeferredUpdateServiceControl<'_> {
         );
         // The boot-time daemon is KeepAlive. Publishing bin/oored is the only
         // restart action needed, and avoids an interactive sudo dependency.
+        // After a failed rollback the only executable left may be the
+        // quiesced candidate, which is still better than no daemon at all.
+        if let Some(candidate) = self.quiesced_candidate.as_ref()
+            && candidate.restore()?
+        {
+            eprintln!(
+                "Restarting the daemon on the candidate release because the rollback did not restore the previous one."
+            );
+        }
         Ok(())
     }
 
@@ -10852,7 +10874,9 @@ impl UpdateServiceControl for DeferredUpdateServiceControl<'_> {
             label == DAEMON_SERVICE_LABEL,
             "deferred backend update cannot stop unrelated service {label}"
         );
-        update_supervisor::quiesce_candidate_daemon(self.install_root, self.transaction_dir)?;
+        let candidate =
+            update_supervisor::quiesce_candidate_daemon(self.install_root, self.transaction_dir)?;
+        self.quiesced_candidate = Some(candidate);
         Ok(())
     }
 
@@ -11005,8 +11029,8 @@ async fn resume_daemon_for_planned_barrier<C: UpdateServiceControl>(
         services.daemon_is_managed && !services.defer_daemon_restart,
         "the runner claim barrier cannot resume without the managed daemon"
     );
-    let expected_version = compiled_daemon_package_version(&install_root.join("bin/oored"))?;
     control.restart_managed_service(DAEMON_SERVICE_LABEL)?;
+    let expected_version = compiled_daemon_package_version(&install_root.join("bin/oored"))?;
     control
         .wait_for_daemon_release(
             &services.daemon_ready_url,
@@ -11071,7 +11095,8 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
     }
     .await;
     if let Err(error) = update_result {
-        eprintln!("Update failed; restoring the previous release...");
+        eprintln!("Update failed: {error:#}");
+        eprintln!("Restoring the previous release...");
         let rollback: anyhow::Result<()> = async {
             if let Some(snapshot) = runner_migration {
                 snapshot.stop_and_restore_files()?;
@@ -11742,6 +11767,7 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
         install_root: &install_root,
         transaction_dir: update_stage.path(),
         client: &client,
+        quiesced_candidate: None,
     };
     let result = install_release_with_rollback(
         &staged_release,

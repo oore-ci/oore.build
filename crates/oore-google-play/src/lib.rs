@@ -113,7 +113,20 @@ fn google_error_message(body: &str) -> String {
         .or_else(|| parsed.get("error_description"))
         .and_then(|value| value.as_str())
         .map(str::to_string)
+        .or_else(|| html_title(body))
         .unwrap_or_else(|| body.chars().take(500).collect())
+}
+
+fn wants_changes_not_sent_for_review(message: &str) -> bool {
+    message.contains("changesNotSentForReview to true")
+}
+
+/// Google's front end answers some errors with an HTML page; its title
+/// ("Error 411 (Length Required)!!1") says all the page does.
+fn html_title(body: &str) -> Option<String> {
+    let start = body.find("<title>")? + "<title>".len();
+    let end = start + body[start..].find("</title>")?;
+    Some(body[start..end].trim().to_string())
 }
 
 fn play_access_hint(status: reqwest::StatusCode) -> &'static str {
@@ -325,13 +338,32 @@ impl<'a> PlayEdits<'a> {
         Ok(())
     }
 
+    /// Commit the edit. Apps whose changes Play reviews in batches (managed
+    /// publishing, or some transferred apps) refuse a plain commit and ask for
+    /// `changesNotSentForReview=true`; that commit is retried once, as
+    /// fastlane does.
     pub async fn commit(self) -> anyhow::Result<()> {
-        let _: serde_json::Value = play_json(
-            self.http.post(self.api(":commit")).bearer_auth(&self.token),
-            "commit the edit",
-        )
-        .await?;
-        Ok(())
+        match play_json::<serde_json::Value>(self.commit_request(false), "commit the edit").await {
+            Ok(_) => Ok(()),
+            Err(error) if wants_changes_not_sent_for_review(&error.to_string()) => {
+                let _: serde_json::Value =
+                    play_json(self.commit_request(true), "commit the edit").await?;
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    // Google's front end answers a bodyless POST with 411 Length Required,
+    // so send an empty JSON object as insert does.
+    fn commit_request(&self, changes_not_sent_for_review: bool) -> reqwest::RequestBuilder {
+        let mut request = self.http.post(self.api(":commit"));
+        if changes_not_sent_for_review {
+            request = request.query(&[("changesNotSentForReview", "true")]);
+        }
+        request
+            .bearer_auth(&self.token)
+            .json(&serde_json::json!({}))
     }
 
     /// Discard the edit. Best effort: an uncommitted edit also expires on its own.
@@ -473,6 +505,39 @@ async fn tokio_read(path: &Path) -> anyhow::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commit_sends_a_body_so_google_gets_a_content_length() {
+        let http = reqwest::Client::new();
+        let edits = PlayEdits {
+            http: &http,
+            token: "token".to_string(),
+            package_name: "com.example".to_string(),
+            edit_id: "e1".to_string(),
+        };
+        let request = edits.commit_request(false).build().unwrap();
+        assert_eq!(
+            request.url().as_str(),
+            format!("{API_BASE}/com.example/edits/e1:commit")
+        );
+        let body = request.body().and_then(|body| body.as_bytes()).unwrap();
+        assert_eq!(body, b"{}");
+
+        let retry = edits.commit_request(true).build().unwrap();
+        assert_eq!(retry.url().query(), Some("changesNotSentForReview=true"));
+        assert!(wants_changes_not_sent_for_review(
+            "Google Play could not commit the edit (400 Bad Request): Changes cannot be sent for review automatically. Please set the query parameter changesNotSentForReview to true."
+        ));
+        assert!(!wants_changes_not_sent_for_review(
+            "The query parameter changesNotSentForReview must not be set"
+        ));
+    }
+
+    #[test]
+    fn html_error_pages_shrink_to_their_title() {
+        let page = "<!DOCTYPE html>\n<html lang=en>\n  <meta charset=utf-8>\n  <title>Error 411 (Length Required)!!1</title>\n  <style>*{margin:0}</style>";
+        assert_eq!(google_error_message(page), "Error 411 (Length Required)!!1");
+    }
 
     #[test]
     fn track_release_matches_play_wire_format() {
