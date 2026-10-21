@@ -5,6 +5,8 @@ import { toast } from '@/lib/toast'
 
 import type { RegisteredIosDevice } from '@oore/client/models'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import { canChangeApprovalPolicy } from '@/hooks/use-permissions'
+import { useAuthStore } from '@/stores/auth-store'
 import { searchString } from '@/lib/search-input'
 import type { SearchInput } from '@/lib/search-input'
 import {
@@ -113,6 +115,11 @@ function EditPipelinePage() {
   const { data: projectData } = useProject(projectId)
   const manualOnlyTriggers =
     projectData?.project.repository_provider === 'local_git'
+  const instanceRole = useAuthStore((state) => state.user?.role)
+  const canChangeApproval = canChangeApprovalPolicy(
+    instanceRole,
+    projectData?.project.current_user_role,
+  )
   const { data, isLoading, error } = usePipeline(pipelineId)
   const signingQuery = usePipelineAndroidSigning(pipelineId)
   const iosSigningQuery = usePipelineIosSigning(pipelineId)
@@ -215,7 +222,22 @@ function EditPipelinePage() {
       ),
     ),
     artifact_patterns: toMultiline(pipeline.execution_config.artifact_patterns),
+    isolation: pipeline.execution_config.isolation ?? 'host',
+    timeout_minutes: String(pipeline.timeout_minutes),
     trigger_events: manualOnlyTriggers ? [] : pipeline.trigger_config.events,
+    tags: manualOnlyTriggers
+      ? ''
+      : (pipeline.trigger_config.tags ?? []).join(', '),
+    paths: manualOnlyTriggers
+      ? ''
+      : toMultiline(pipeline.trigger_config.paths ?? []),
+    paths_ignore: manualOnlyTriggers
+      ? ''
+      : toMultiline(pipeline.trigger_config.paths_ignore ?? []),
+    schedules: (pipeline.trigger_config.schedules ?? []).map((schedule) => ({
+      cron: schedule.cron,
+      branch: schedule.branch ?? '',
+    })),
     cancel_previous: pipeline.concurrency.cancel_previous,
     branches: manualOnlyTriggers
       ? ''
@@ -223,6 +245,8 @@ function EditPipelinePage() {
     max_concurrent: pipeline.concurrency.max_concurrent
       ? String(pipeline.concurrency.max_concurrent)
       : undefined,
+    approval_required: pipeline.approval.required,
+    approval_events: pipeline.approval.events ?? [],
   }
 
   async function handleSubmit(
@@ -235,7 +259,10 @@ function EditPipelinePage() {
       setValidationErrors(['Pick at least one platform to build'])
       return
     }
-    const payload = pipelineRequestFromForm(values, manualOnlyTriggers)
+    const payload = pipelineRequestFromForm(values, {
+      canChangeApproval,
+      manualOnlyTriggers,
+    })
 
     const [androidSigning, iosSigning] = await Promise.all([
       buildAndroidSigningPayload(
@@ -341,6 +368,7 @@ function EditPipelinePage() {
       <PipelineForm
         initialValues={formInitialValues}
         manualOnlyTriggers={manualOnlyTriggers}
+        canChangeApproval={canChangeApproval}
         onSubmit={handleSubmit}
         onCancel={() =>
           void navigate({

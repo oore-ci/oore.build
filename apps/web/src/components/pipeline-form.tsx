@@ -22,11 +22,9 @@ import {
   parseMultiline,
   previewPlatformCommands,
 } from '@/lib/pipeline-form-utils'
-import {
-  PipelineBasicsSection,
-  PipelineTriggersSection,
-} from '@/components/pipeline-form-basic-sections'
+import { PipelineBasicsSection } from '@/components/pipeline-form-basic-sections'
 import { PipelineBuildSection } from '@/components/pipeline-form-build-sections'
+import { PipelineTriggersSection } from '@/components/pipeline-form-triggers-section'
 import { PipelineSigningSection } from '@/components/pipeline-form-signing-section'
 import {
   AlertDialog,
@@ -57,6 +55,8 @@ interface PipelineFormProps {
   children?: React.ReactNode
   /** Local-mode repositories only support manual/API build triggers for now. */
   manualOnlyTriggers?: boolean
+  /** Whether the viewer may change who must approve builds (maintainers and instance admins). */
+  canChangeApproval?: boolean
   readOnly?: boolean
   readOnlyReason?: string
   retrySigning?: 'android' | 'ios'
@@ -87,6 +87,7 @@ export default function PipelineForm({
   repositoryWorkflow,
   children,
   manualOnlyTriggers = false,
+  canChangeApproval = false,
   readOnly = false,
   readOnlyReason,
   retrySigning,
@@ -186,7 +187,10 @@ export default function PipelineForm({
           releaseKeystoreFile={releaseKeystoreFile}
           values={values}
         />
-        <PipelineTriggersSection manualOnlyTriggers={manualOnlyTriggers} />
+        <PipelineTriggersSection
+          canChangeApproval={canChangeApproval}
+          manualOnlyTriggers={manualOnlyTriggers}
+        />
 
         {validationErrors.length > 0 ? (
           <div>

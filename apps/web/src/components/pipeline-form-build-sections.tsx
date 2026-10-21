@@ -4,6 +4,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import { useRunners } from '@/hooks/use-runners'
 import {
   PipelineFormSection,
   PipelineFormSubsection,
@@ -26,7 +27,20 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+
+const ISOLATION_OPTIONS = {
+  host: 'On the runner, with its installed toolchains',
+  vm: "In a fresh macOS VM for the pipeline's Flutter version",
+} satisfies Record<PipelineFormValues['isolation'], string>
 
 const PLATFORM_ARGUMENT_FIELDS = [
   [
@@ -275,7 +289,94 @@ export function PipelineBuildSection({
           )}
         />
       </PipelineFormSubsection>
+
+      <SettingsSurfaceSeparator />
+
+      <RunnerSubsection />
     </PipelineFormSection>
+  )
+}
+
+/** Where the build runs: which runner takes it and whether it gets a VM. */
+function RunnerSubsection() {
+  const form = useFormContext<PipelineFormValues>()
+  const { data: knownLabels } = useRunners(
+    { limit: 100 },
+    {
+      select: (data) =>
+        [...new Set(data.runners.flatMap((runner) => runner.labels ?? []))]
+          .sort()
+          .join(', '),
+    },
+  )
+  return (
+    <PipelineFormSubsection
+      title="Runner"
+      description="Which runner may take a build and how isolated it is."
+    >
+      <FormField
+        control={form.control}
+        name="isolation"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Isolation</FormLabel>
+            <Select
+              value={field.value}
+              onValueChange={field.onChange}
+              items={ISOLATION_OPTIONS}
+            >
+              <FormControl>
+                <SelectTrigger className="w-full" aria-label="Isolation">
+                  <SelectValue />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent>
+                <SelectGroup>
+                  {Object.entries(ISOLATION_OPTIONS).map(([key, label]) => (
+                    <SelectItem key={key} value={key}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <FormDescription>
+              A VM starts clean every build and needs a runner with Tart and the
+              image for that Flutter version.
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      <FormField
+        control={form.control}
+        name="runs_on"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Runner labels (optional)</FormLabel>
+            <FormControl>
+              <Input
+                placeholder="macos, xcode-16"
+                className="font-mono"
+                {...field}
+              />
+            </FormControl>
+            <FormDescription>
+              Comma-separated. A build waits for a runner that has every label.
+              Empty means <span className="font-mono">macos</span>.
+              {knownLabels ? (
+                <>
+                  {' '}
+                  Connected runners report:{' '}
+                  <span className="font-mono">{knownLabels}</span>.
+                </>
+              ) : null}
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    </PipelineFormSubsection>
   )
 }
 

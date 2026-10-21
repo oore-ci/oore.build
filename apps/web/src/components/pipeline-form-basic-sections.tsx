@@ -1,10 +1,6 @@
 import { useFormContext } from 'react-hook-form'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { AlertCircleIcon } from '@hugeicons/core-free-icons'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
-import { TRIGGER_EVENTS } from '@/lib/pipeline-schema'
-import { formatEnumLabel } from '@/lib/format-utils'
 import {
   PipelineFormSection,
   PipelineFormSubsection,
@@ -223,29 +219,6 @@ export function PipelineBasicsSection({
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="runs_on"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Runner labels (optional)</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="macos"
-                      className="font-mono"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Builds run only on runners that have every label listed,
-                    such as <span className="font-mono">macos, xcode-16</span>.
-                    Leave empty to use any macOS runner.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
             {previewDefaults.length > 0 ? (
               <Alert>
                 <AlertTitle>Default build commands</AlertTitle>
@@ -263,122 +236,6 @@ export function PipelineBasicsSection({
           </PipelineFormSubsection>
         </>
       )}
-    </PipelineFormSection>
-  )
-}
-
-export function PipelineTriggersSection({
-  manualOnlyTriggers,
-}: {
-  manualOnlyTriggers: boolean
-}) {
-  const form = useFormContext<PipelineFormValues>()
-  const selectedEvents = form.watch('trigger_events')
-  const cancelPrevious = form.watch('cancel_previous')
-
-  function toggleEvent(event: (typeof TRIGGER_EVENTS)[number]) {
-    form.setValue(
-      'trigger_events',
-      selectedEvents.includes(event)
-        ? selectedEvents.filter((entry) => entry !== event)
-        : [...selectedEvents, event],
-      { shouldDirty: true },
-    )
-  }
-
-  return (
-    <PipelineFormSection
-      title="Triggers"
-      description="When this pipeline runs on its own. You can always run it by hand."
-    >
-      {manualOnlyTriggers ? (
-        <Alert>
-          <HugeiconsIcon icon={AlertCircleIcon} size={16} />
-          <AlertDescription>
-            This repository uses local Git, so builds can only be started from
-            the UI or API. Webhook triggers need a connected GitHub or GitLab
-            source.
-          </AlertDescription>
-        </Alert>
-      ) : (
-        <>
-          <PipelineFormSubsection
-            title="Events"
-            description="Repository events that start a build."
-          >
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              {TRIGGER_EVENTS.map((event) => (
-                <label key={event} className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={selectedEvents.includes(event)}
-                    onCheckedChange={() => toggleEvent(event)}
-                  />
-                  {formatEnumLabel(event)}
-                </label>
-              ))}
-            </div>
-            <FormField
-              control={form.control}
-              name="branches"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Branch patterns (optional)</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="main, develop, release/*"
-                      className="font-mono"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Comma-separated. Leave empty to build every branch.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </PipelineFormSubsection>
-
-          <SettingsSurfaceSeparator />
-        </>
-      )}
-
-      <PipelineFormSubsection
-        title="Concurrency"
-        description="How overlapping builds of this pipeline are handled."
-      >
-        <label className="flex items-center gap-2 text-sm">
-          <Checkbox
-            checked={cancelPrevious}
-            onCheckedChange={(checked) =>
-              form.setValue('cancel_previous', !!checked, {
-                shouldDirty: true,
-              })
-            }
-          />
-          Cancel previous builds on the same branch
-        </label>
-
-        <FormField
-          control={form.control}
-          name="max_concurrent"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Max concurrent builds (optional)</FormLabel>
-              <FormControl>
-                <Input
-                  type="number"
-                  min={1}
-                  max={100}
-                  className="sm:max-w-40"
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      </PipelineFormSubsection>
     </PipelineFormSection>
   )
 }

@@ -13,6 +13,9 @@ import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 
 import type { RepositoryWorkflowPreview } from '@oore/client/models'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import { DEFAULT_TIMEOUT_MINUTES } from '@/lib/pipeline-schema'
+import { canChangeApprovalPolicy } from '@/hooks/use-permissions'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
@@ -98,7 +101,6 @@ const emptyDefaults: PipelineFormValues = {
   ios_signing_api_issuer_id: '',
   flutter_version: '',
   build_number_offset: '',
-  runs_on: '',
   enable_customization: false,
   pre_build_commands: '',
   build_commands: '',
@@ -111,10 +113,19 @@ const emptyDefaults: PipelineFormValues = {
   macos_command_override: '',
   env_vars: '',
   artifact_patterns: 'build/app/outputs/flutter-apk/*.apk',
+  isolation: 'host',
+  runs_on: '',
+  timeout_minutes: String(DEFAULT_TIMEOUT_MINUTES),
   trigger_events: [],
+  tags: '',
+  paths: '',
+  paths_ignore: '',
+  schedules: [],
   cancel_previous: true,
   branches: '',
   max_concurrent: undefined,
+  approval_required: false,
+  approval_events: [],
 }
 
 const PIPELINE_TEMPLATES = [
@@ -226,6 +237,7 @@ function workflowDefaults(
     ios_command_override: execution?.platform_commands.ios ?? '',
     macos_command_override: execution?.platform_commands.macos ?? '',
     artifact_patterns: execution?.artifact_patterns.join('\n') ?? '',
+    isolation: execution?.isolation ?? 'host',
   }
 }
 
@@ -297,6 +309,11 @@ function NewPipelinePage() {
   })
   const manualOnlyTriggers =
     projectData?.project.repository_provider === 'local_git'
+  const instanceRole = useAuthStore((state) => state.user?.role)
+  const canChangeApproval = canChangeApprovalPolicy(
+    instanceRole,
+    projectData?.project.current_user_role,
+  )
   const createMutation = useCreatePipeline()
   const validateMutation = useValidatePipeline()
   const updateSigningMutation = useUpdatePipelineAndroidSigning()
@@ -337,7 +354,10 @@ function NewPipelinePage() {
       setValidationErrors(['Pick at least one platform to build'])
       return
     }
-    const payload = pipelineRequestFromForm(data, manualOnlyTriggers)
+    const payload = pipelineRequestFromForm(data, {
+      canChangeApproval,
+      manualOnlyTriggers,
+    })
 
     try {
       const result = await validateMutation.mutateAsync(payload)
@@ -591,6 +611,7 @@ function NewPipelinePage() {
                 : [...activeTemplate.events],
             }}
             manualOnlyTriggers={manualOnlyTriggers}
+            canChangeApproval={canChangeApproval}
             onSubmit={handleSubmit}
             onCancel={() =>
               void navigate({

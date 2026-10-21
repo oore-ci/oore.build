@@ -95,6 +95,21 @@ export function hasProjectPermission(
   return !!role && PROJECT_RBAC_MATRIX[role].has(permission)
 }
 
+/**
+ * Mirrors the server's ApproveBuild check: project maintainers, instance
+ * admins and the owner decide which builds wait for approval.
+ */
+export function canChangeApprovalPolicy(
+  instanceRole: UserRole | undefined,
+  projectRole: ProjectRole | undefined,
+): boolean {
+  return (
+    instanceRole === 'owner' ||
+    instanceRole === 'admin' ||
+    projectRole === 'maintainer'
+  )
+}
+
 export function useHasPermission(permission: PermissionTemplate) {
   const role = useAuthStore((s) => s.user?.role)
 
