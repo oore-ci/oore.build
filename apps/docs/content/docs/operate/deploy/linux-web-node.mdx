@@ -111,25 +111,18 @@ sudo systemctl restart oore-web
 
 ## Change the release channel
 
-`oore-web update` stays on the channel the Web node was installed from. To move a Web node to another channel, for example to follow a control plane that moved from stable to alpha, replace its files from the target release by hand.
-
-Download and verify the archive for the target release as in step 1. Keep a copy of the install root, then replace `bin/oore-web` and `web-dist` and record the new release:
+`oore-web update` stays on the channel the Web node was installed from. To move the Web node to another channel, for example to follow a control plane that moved from stable to alpha, name the channel and confirm the switch:
 
 ```bash
-sudo cp -a /opt/oore-web /opt/oore-web.bak
-mkdir release && tar -xzf oore-web_<version>_linux_x86_64.tar.gz -C release
-sudo install -o oore-web -g oore-web -m 0755 release/bin/oore-web /opt/oore-web/bin/oore-web
-sudo rm -rf /opt/oore-web/web-dist
-sudo cp -a release/web-dist /opt/oore-web/web-dist
-sudo chown -R oore-web:oore-web /opt/oore-web/web-dist
-printf '%s\n' '<version>' | sudo -u oore-web tee /opt/oore-web/WEB_VERSION >/dev/null
-printf '%s\n' '<channel>' | sudo -u oore-web tee /opt/oore-web/WEB_CHANNEL >/dev/null
+sudo -u oore-web OORE_INSTALL_ROOT=/opt/oore-web /opt/oore-web/bin/oore-web update --channel alpha --switch-channel
 sudo systemctl restart oore-web
 ```
 
-The archive does not contain `WEB_VERSION` or `WEB_CHANNEL`. A Web node that already has these files keeps reporting the old release and channel until you rewrite them. Replace `web-dist` as a whole so that no files from the old release remain.
+`oore-web` records the new release and channel, so later updates follow it. **Update Oore** in the web UI also moves the frontend to the backend's channel.
 
-Run `oore-web status` from step 3 and confirm that the frontend reports the new version and channel. Remove the copy once the Web node works.
+A switch never downgrades. If the target channel's latest release is older than the installed version, the update stops without changes.
+
+Run `oore-web status` from step 3 and confirm that the frontend reports the new version and channel.
 
 ## Troubleshooting
 

@@ -150,14 +150,16 @@ function printUpdateHelp() {
   console.log(`oore-web update - update the frontend launcher and web assets
 
 Usage:
-  oore-web update [--channel stable|beta|alpha] [--repo owner/name] [--check] [--force]
+  oore-web update [--channel stable|beta|alpha [--switch-channel]] [--repo owner/name] [--check] [--force]
 
 Options:
-  --channel   Release channel. Defaults to the installed frontend channel, then current version.
-  --repo      GitHub repo. Defaults to the installed frontend repository, then ${DEFAULT_GITHUB_REPO}.
-  --check     Only print whether an update is available.
-  --force     Reinstall the latest release even if already current.
-  --help      Show this help text
+  --channel         Release channel. Defaults to the installed frontend channel, then current version.
+  --switch-channel  Move this frontend to the --channel release channel. The target release must
+                    be the same as or newer than the installed version.
+  --repo            GitHub repo. Defaults to the installed frontend repository, then ${DEFAULT_GITHUB_REPO}.
+  --check           Only print whether an update is available.
+  --force           Reinstall the latest release even if already current.
+  --help            Show this help text
 `)
 }
 
@@ -457,10 +459,11 @@ export function candidateValidationArgs(config, distDir) {
   return args
 }
 
-function parseUpdateArgs(argv) {
+export function parseUpdateArgs(argv) {
   const config = {
     channel: process.env.OORE_CHANNEL || '',
     repo: process.env.OORE_GITHUB_REPO || '',
+    switchChannel: false,
     check: false,
     force: false,
   }
@@ -488,6 +491,11 @@ function parseUpdateArgs(argv) {
       continue
     }
 
+    if (arg === '--switch-channel') {
+      config.switchChannel = true
+      continue
+    }
+
     if (arg === '--check') {
       config.check = true
       continue
@@ -501,6 +509,9 @@ function parseUpdateArgs(argv) {
     throw new Error(`unknown update argument: ${arg}`)
   }
 
+  if (config.switchChannel && !config.channel) {
+    throw new Error('--switch-channel requires --channel')
+  }
   return config
 }
 
@@ -578,7 +589,7 @@ function parseChannel(raw) {
   throw new Error(`invalid channel '${raw}', expected: stable|beta|alpha`)
 }
 
-function parseVersion(raw) {
+export function parseVersion(raw) {
   const match = raw
     .trim()
     .match(/^v?(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta)\.(\d+))?$/)
@@ -617,6 +628,7 @@ export function validateManagedUpdateTransition(
   targetVersion,
   targetChannel,
   targetRepo,
+  switchChannel = false,
 ) {
   if (installed.version === 'unknown') return
   const current = parseVersion(installed.version)
@@ -633,7 +645,7 @@ export function validateManagedUpdateTransition(
       `frontend updates must stay on the recorded ${installed.github_repo} repository`,
     )
   }
-  if (targetChannel === installedChannel) return
+  if (targetChannel === installedChannel || switchChannel) return
   const prereleaseToStable =
     ['alpha', 'beta'].includes(installedChannel) &&
     targetChannel === 'stable' &&
@@ -643,7 +655,7 @@ export function validateManagedUpdateTransition(
     current.patch === targetVersion.patch
   if (!prereleaseToStable) {
     throw new Error(
-      `frontend updates must stay on the recorded ${installedChannel} channel, except for a same-version-line alpha or beta promotion to stable`,
+      `frontend updates stay on the recorded ${installedChannel} channel; pass --switch-channel to move this frontend to the ${targetChannel} channel`,
     )
   }
 }
@@ -2397,7 +2409,13 @@ async function runUpdateWithAcquiredLock(config, activeConfig = null) {
 
   const { release, latest, archiveName, expectedHash } =
     await fetchVerifiedWebRelease(channel, repo)
-  validateManagedUpdateTransition(installed, latest, channel, repo)
+  validateManagedUpdateTransition(
+    installed,
+    latest,
+    channel,
+    repo,
+    config.switchChannel,
+  )
 
   log(`Channel:         ${channel}`)
   log(`GitHub repo:     ${repo}`)
@@ -3175,6 +3193,20 @@ async function main() {
         if (request.method !== 'POST') {
           return new Response('Method not allowed', { status: 405 })
         }
+        // The web UI passes the backend's channel so that both halves of a
+        // coordinated update end on the same release stream.
+        const requestedChannel = url.searchParams.get('channel')
+        let channel = ''
+        if (requestedChannel) {
+          try {
+            channel = parseChannel(requestedChannel)
+          } catch (error) {
+            return Response.json(
+              { error: errorMessage(error) },
+              { status: 400 },
+            )
+          }
+        }
         const service = managedWebService()
         if (!service.managed) {
           return Response.json({ error: service.reason }, { status: 409 })
@@ -3195,7 +3227,16 @@ async function main() {
           target_version: null,
         })
         saveWebUpdateState(installRoot, updateState)
-        void runUpdate({ check: false, force: false, log }, config).then(
+        void runUpdate(
+          {
+            channel,
+            switchChannel: !!channel,
+            check: false,
+            force: false,
+            log,
+          },
+          config,
+        ).then(
           (result) => {
             if (!result.updated) {
               Object.assign(updateState, { phase: 'idle', log_path: null })
