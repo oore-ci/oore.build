@@ -321,7 +321,7 @@ pub async fn runner_heartbeat(
 /// The initial queue lookup chooses the oldest eligible build. Rechecking the
 /// pause and source identity in the queued -> scheduled update closes races
 /// with an operator change while a claim request is in flight.
-async fn schedule_eligible_direct_runner_build(
+pub(crate) async fn schedule_eligible_direct_runner_build(
     pool: &sqlx::SqlitePool,
     build_id: &str,
     runner_id: &str,
@@ -339,6 +339,7 @@ async fn schedule_eligible_direct_runner_build(
     let result = sqlx::query(
         "UPDATE builds SET status = 'scheduled', updated_at = ?1 \
          WHERE id = ?2 AND status = 'queued' \
+           AND (approval_state IS NULL OR approval_state != 'pending') \
            AND EXISTS (SELECT 1 FROM runners runner WHERE runner.id = ?3) \
            AND EXISTS ( \
              SELECT 1 FROM projects p \
@@ -535,6 +536,7 @@ pub async fn claim_job(
          JOIN integration_installations inst ON inst.id = r.installation_id \
          LEFT JOIN instance_preferences pref ON pref.id = 1 \
          WHERE b.status = 'queued' \
+           AND (b.approval_state IS NULL OR b.approval_state != 'pending') \
            AND json_extract(b.config_snapshot, '$.repository_id') = p.repository_id \
            AND COALESCE(pref.direct_macos_runner_paused, 0) = 0 \
            AND NOT EXISTS ( \

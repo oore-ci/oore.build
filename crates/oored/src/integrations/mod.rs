@@ -90,7 +90,7 @@ use oore_contract::{
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::AppState;
 use crate::extractors::AuthUser;
@@ -303,6 +303,71 @@ pub(crate) async fn compare_commits(
             "The linked source provider cannot compare revisions",
         )),
     }
+}
+
+/// Files changed from `base` to `head` in a linked repository, for trigger
+/// path filters. Errors are logged and reported as an unknown change set,
+/// which lets the build through rather than silently dropping it.
+pub(crate) async fn changed_files(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    repository_id: &str,
+    base: &str,
+    head: &str,
+) -> Option<Vec<String>> {
+    let row = sqlx::query(
+        "SELECT i.id AS integration_id, i.provider, i.host_url, i.auth_mode, \
+                inst.external_id AS installation_external_id, r.external_id AS repository_external_id, \
+                r.full_name \
+         FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id \
+         WHERE r.id = ?1 AND i.status = 'active'",
+    )
+    .bind(repository_id)
+    .fetch_optional(pool)
+    .await
+    .inspect_err(|error| warn!(%error, repository_id, "failed to load repository for path filters"))
+    .ok()
+    .flatten()?;
+
+    let integration_id: String = row.get("integration_id");
+    let result = match row.get::<String, _>("provider").as_str() {
+        "github" => {
+            github::changed_files(
+                pool,
+                encryption_key,
+                &integration_id,
+                &row.get::<String, _>("installation_external_id"),
+                &row.get::<String, _>("full_name"),
+                base,
+                head,
+            )
+            .await
+        }
+        "gitlab" => {
+            gitlab::changed_files(
+                pool,
+                encryption_key,
+                &integration_id,
+                (
+                    &row.get::<String, _>("host_url"),
+                    &row.get::<String, _>("auth_mode"),
+                    &row.get::<String, _>("repository_external_id"),
+                ),
+                base,
+                head,
+            )
+            .await
+        }
+        _ => Ok(None),
+    };
+    result
+        .inspect_err(|error| {
+            warn!(%error, repository_id, "failed to list changed files; path filters will not skip this build")
+        })
+        .ok()
+        .flatten()
 }
 
 // ── Row conversion helpers ──────────────────────────────────────

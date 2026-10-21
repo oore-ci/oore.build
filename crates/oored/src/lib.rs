@@ -24,6 +24,7 @@ pub mod oidc;
 pub mod operator;
 pub mod pipeline_ios_signing;
 pub mod pipeline_publish;
+pub mod pipeline_schedules;
 pub mod pipeline_signing;
 pub mod pipelines;
 pub mod project_members;
@@ -2395,7 +2396,8 @@ pub async fn build_router_with_recovery(
         db.clone(),
         Zeroizing::new(encryption_key.clone()),
     )?;
-    let webhook_wake = integrations::webhooks::start_webhook_processor(db.clone());
+    let webhook_wake =
+        integrations::webhooks::start_webhook_processor(db.clone(), encryption_key.clone());
     let release_store_pool = db.clone();
     let release_store_key = encryption_key.clone();
     let shared_state = Arc::new(AppState {
@@ -2439,6 +2441,7 @@ pub async fn build_router_with_recovery(
         integrations::gitlab::start_credential_health_monitor(shared_state.clone());
         app_store_publish::start_release_monitor(shared_state.clone());
         background::start_release_rollout_monitor(shared_state.clone());
+        pipeline_schedules::start_schedule_monitor(shared_state.clone());
     }
 
     let allowed_origins_for_cors = allowed_origins_state.clone();
@@ -2798,6 +2801,8 @@ pub async fn build_router_with_recovery(
         .route("/v1/builds", get(builds::list_builds))
         .route("/v1/builds/{build_id}", get(builds::get_build))
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
+        .route("/v1/builds/{build_id}/approve", post(builds::approve_build))
+        .route("/v1/builds/{build_id}/reject", post(builds::reject_build))
         .route("/v1/builds/{build_id}/rerun", post(builds::rerun_build))
         // Audit log endpoints
         .route("/v1/audit-logs", get(audit_logs::list_audit_logs))

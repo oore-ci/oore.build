@@ -88,6 +88,7 @@ const VALID_EVENTS: &[&str] = &[
     "canceled",
     "timed_out",
     "expired",
+    "build_approval_needed",
     "runner_offline",
     "release_uploaded",
     "rollout_step_raised",
