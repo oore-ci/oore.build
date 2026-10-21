@@ -46,19 +46,35 @@ Guided installation supports macOS only in v0.1.42. A Linux Web node uses the pu
 
 ## Change the update stream
 
-Check without installing:
+Check the target channel without installing:
 
 ```bash
-oore update --check --channel beta
+oore update --check --channel alpha
 ```
 
-For a Ready Complete or Control plane installation, `oore update` installs the signed release in place. Oore drains active work, creates a backup, restarts managed services, and verifies the result.
+For a Ready Complete or Control plane installation, switch the release stream in place:
 
-Use `oore-web update` on a separate Web node.
+```bash
+oore update --channel alpha --switch-channel
+```
 
-Use the preserve-data procedure below when you change the release stream. The bootstrap does not replace a profile across streams.
+Oore installs the signed release from the new channel the same way as any other update. It drains active work, creates a backup, restarts managed services, and verifies the result. It then records the new channel, so later `oore update` runs follow it.
 
-Remove the current components before you replace the bootstrap CLI:
+On a separate Web node, switch to the same channel as the control plane:
+
+```bash
+oore-web update --channel alpha --switch-channel
+```
+
+From the web UI, **Update Oore** moves the frontend to the backend's channel, so both halves end on the same release.
+
+`--switch-channel` is required because a mistyped `--channel` must not move an installation onto a pre-release stream. A same-version promotion from an alpha or beta release to its stable release, for example from `v0.1.48-alpha.3` to `v0.1.48`, does not need it.
+
+A switch never downgrades. When the newest release on the target channel is older than the installed version, for example moving from `v0.1.48-alpha.3` back to stable `v0.1.47`, the update stops. Wait for a newer release on the target channel, or use the preserve-data procedure below.
+
+### Move to an older release
+
+Create and verify a backup first. Then remove the current components before you replace the bootstrap CLI:
 
 ```bash
 oore uninstall
@@ -69,7 +85,7 @@ Do not use `--purge`. Normal uninstall preserves Oore data.
 Then run the bootstrap with the selected channel. Install the same recorded profile:
 
 ```bash
-curl -fsSL https://oore.build/install | OORE_CHANNEL=beta bash
+curl -fsSL https://oore.build/install | OORE_CHANNEL=stable bash
 ~/.oore/bin/oore install --profile complete
 ```
 
@@ -247,6 +263,8 @@ Run `oore version`. Make sure that the version form matches the selected channel
 ## Troubleshooting
 
 If no update appears, the selected channel has no newer published version.
+
+If `oore update --switch-channel` reports that the target channel's latest release is older than the installed version, the switch would downgrade. Wait for a newer release on that channel, or follow [Move to an older release](#move-to-an-older-release).
 
 If a pre-release is unsuitable, create and verify a backup. Then follow [Upgrade Oore](/operate/maintain/upgrade) with an intentional channel choice.
 

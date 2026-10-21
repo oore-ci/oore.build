@@ -7,8 +7,8 @@ use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
     ApiError, BuildDetailResponse, BuildStatus, ClaimJobRequest, ClaimJobResponse, ClaimedJob,
     JobStatusResponse, ListRunnersResponse, RUNNER_PROTOCOL_VERSION, RegisterRunnerRequest,
-    RegisterRunnerResponse, Runner, RunnerHeartbeatRequest, RunnerStatus, UpdateJobStatusRequest,
-    UpdateRunnerRequest, UpdateRunnerResponse,
+    RegisterRunnerResponse, Runner, RunnerHeartbeatRequest, RunnerHeartbeatResponse, RunnerStatus,
+    UpdateJobStatusRequest, UpdateRunnerRequest, UpdateRunnerResponse,
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -164,6 +164,7 @@ fn row_to_runner(row: &sqlx::sqlite::SqliteRow) -> Runner {
         capabilities,
         last_heartbeat_at: row.get("last_heartbeat_at"),
         registered_by: row.get("registered_by"),
+        cache_purge_requested_at: row.get("cache_purge_requested_at"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
@@ -239,6 +240,7 @@ pub async fn register_runner(
         capabilities: req.capabilities,
         last_heartbeat_at: None,
         registered_by: Some(auth.0.user_id),
+        cache_purge_requested_at: None,
         created_at: now,
         updated_at: now,
     };
@@ -252,7 +254,7 @@ pub async fn runner_heartbeat(
     Path(runner_id): Path<String>,
     runner_auth: RunnerAuth,
     Json(req): Json<RunnerHeartbeatRequest>,
-) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+) -> ApiResult<RunnerHeartbeatResponse> {
     // Prevent cross-runner access
     if runner_auth.runner_id != runner_id {
         return Err(api_err(
@@ -313,7 +315,91 @@ pub async fn runner_heartbeat(
         ));
     }
 
-    Ok(StatusCode::NO_CONTENT)
+    // A runner reports the purge request it last completed; clear it unless a
+    // newer request arrived since.
+    let purged_at = req
+        .capabilities
+        .pointer("/caches/purged_at")
+        .and_then(serde_json::Value::as_i64);
+    let cache_purge_requested_at = settle_cache_purge_request(pool, &runner_id, purged_at)
+        .await
+        .map_err(|e| {
+            error!(error = %e, runner_id = %runner_id, "failed to read runner cache purge request");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to update runner",
+            )
+        })?;
+
+    Ok(Json(RunnerHeartbeatResponse {
+        cache_purge_requested_at,
+    }))
+}
+
+/// Clears a purge request the runner has completed and returns the one still
+/// pending, if any.
+async fn settle_cache_purge_request(
+    pool: &sqlx::SqlitePool,
+    runner_id: &str,
+    purged_at: Option<i64>,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar(
+        "UPDATE runners SET cache_purge_requested_at = CASE \
+           WHEN cache_purge_requested_at <= ?1 THEN NULL \
+           ELSE cache_purge_requested_at END \
+         WHERE id = ?2 RETURNING cache_purge_requested_at",
+    )
+    .bind(purged_at)
+    .bind(runner_id)
+    .fetch_one(pool)
+    .await
+}
+
+/// `POST /v1/runners/{runner_id}/caches/purge` — ask a runner to delete its
+/// dependency caches before its next build (admin/owner only).
+pub async fn purge_runner_caches(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(runner_id): Path<String>,
+) -> ApiResult<UpdateRunnerResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "runners", "write").await?;
+
+    let pool = &state.db;
+    let now = now_unix();
+    let row = sqlx::query(
+        "UPDATE runners SET cache_purge_requested_at = ?1, updated_at = ?1 \
+         WHERE id = ?2 RETURNING *",
+    )
+    .bind(now)
+    .bind(&runner_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, runner_id = %runner_id, "failed to request runner cache purge");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to request cache purge",
+        )
+    })?
+    .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Runner not found"))?;
+
+    let details = serde_json::json!({ "requested_by": auth.0.email }).to_string();
+    let _ = write_audit_log(
+        pool,
+        Some(&auth.0.user_id),
+        "runner_cache_purge_requested",
+        "runner",
+        Some(&runner_id),
+        Some(&details),
+    )
+    .await;
+    info!(runner_id = %runner_id, requested_by = %auth.0.email, "runner cache purge requested");
+
+    Ok(Json(UpdateRunnerResponse {
+        runner: row_to_runner(&row),
+    }))
 }
 
 /// Atomically linearize a direct-runner claim against the operational pause.
@@ -1232,4 +1318,49 @@ pub async fn delete_runner(
         "runner deleted"
     );
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::settle_cache_purge_request;
+
+    #[tokio::test]
+    async fn purge_request_clears_only_once_the_runner_caught_up() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO runners (id, name, token_hash, status, capabilities, created_at, updated_at, cache_purge_requested_at) \
+             VALUES ('r1', 'Mac Studio', 'hash', 'online', '{}', 0, 0, 100)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            settle_cache_purge_request(&pool, "r1", None).await.unwrap(),
+            Some(100)
+        );
+        assert_eq!(
+            settle_cache_purge_request(&pool, "r1", Some(99))
+                .await
+                .unwrap(),
+            Some(100)
+        );
+        assert_eq!(
+            settle_cache_purge_request(&pool, "r1", Some(100))
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            settle_cache_purge_request(&pool, "r1", Some(100))
+                .await
+                .unwrap(),
+            None
+        );
+    }
 }

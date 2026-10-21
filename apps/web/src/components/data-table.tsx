@@ -34,7 +34,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { features, type DataTableFeatures } from './data-table-features'
+import {
+  dataTableColumnSortDirection,
+  features,
+  type DataTableFeatures,
+} from './data-table-features'
 
 export type { DataTableFeatures } from './data-table-features'
 
@@ -83,7 +87,11 @@ export function DataTableColumnHeader<
 }) {
   if (!column.getCanSort()) return title
 
-  const direction = column.getIsSorted()
+  const direction = dataTableColumnSortDirection(
+    column.table.options.state?.sorting,
+    column.id,
+    () => column.getIsSorted(),
+  )
 
   return (
     <Button

@@ -15,7 +15,20 @@ Oore drains active runner work, creates a backup, restarts managed services, and
 
 Use `oore-web update` on a separate Web node.
 
-`oore install` does not replace live profile components across release streams. Use the preserve-data procedure when you change the stream or profile.
+## Switch the release channel
+
+To move a Ready Complete or Control plane installation to another channel in place, name the channel and confirm the switch:
+
+```bash
+oore update --check --channel alpha
+oore update --channel alpha --switch-channel
+```
+
+On a separate Web node, run `oore-web update --channel alpha --switch-channel` so that both halves follow the same channel. Later updates, including those from the web UI, stay on the new channel.
+
+A switch never downgrades. If the target channel's latest release is older than the installed version, the update stops without changes. See [Choose a release channel](/operate/releases#change-the-update-stream).
+
+`oore install` does not replace live profile components across release streams. Use the preserve-data procedure below to move to an older release or to change the profile.
 
 This guided update procedure supports macOS only. To update a Web node that runs on Linux, see [Run a Web node on Linux](/operate/deploy/linux-web-node#update-the-web-node).
 
