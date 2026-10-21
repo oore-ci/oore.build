@@ -219,18 +219,10 @@ function RunnersSettingsPage() {
       <PageMeta title="Runners" noindex />
       <PageHeader
         title="Runners"
-        description="Monitor connected runners and manage their execution policy."
+        description="Machines that run builds for this instance."
       />
 
       <DirectRunnerPolicyPanel />
-
-      {!canWrite ? (
-        <Alert>
-          <AlertDescription>
-            You have read-only access to runner health and metadata.
-          </AlertDescription>
-        </Alert>
-      ) : null}
 
       {runnersQuery.error ? (
         <Alert variant="destructive">
@@ -254,7 +246,7 @@ function RunnersSettingsPage() {
       !search.q ? (
         <Empty className="border bg-card">
           <EmptyHeader>
-            <EmptyTitle>No runners registered</EmptyTitle>
+            <EmptyTitle>No runners connected</EmptyTitle>
             <EmptyDescription>
               Runners appear here after they connect to this instance.
             </EmptyDescription>

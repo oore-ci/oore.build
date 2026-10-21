@@ -13,6 +13,7 @@ import {
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
 import { Badge } from '@/components/ui/badge'
+import { formatEnumLabel } from '@/lib/format-utils'
 import { relativeTime } from '@/lib/format-utils'
 import type { AuditLogEntry } from '@oore/client/models'
 
@@ -30,12 +31,7 @@ const AUDIT_SORTS = [
 ] satisfies ReadonlyArray<AuditSort>
 
 function auditActionLabel(action: string) {
-  const words = action.replace(/[._-]+/g, ' ')
-  return words.charAt(0).toLocaleUpperCase() + words.slice(1)
-}
-
-function auditResourceLabel(resourceType: string) {
-  return resourceType.replaceAll('_', ' ')
+  return formatEnumLabel(action.replace(/[.-]+/g, '_'))
 }
 
 function AuditTime({ entry }: { entry: AuditLogEntry }) {
@@ -86,7 +82,7 @@ const auditColumns: Array<DataTableColumnDef<AuditLogEntry>> = [
     ),
     cell: ({ row }) => (
       <Badge variant="secondary">
-        {auditResourceLabel(row.original.resource_type)}
+        {formatEnumLabel(row.original.resource_type)}
       </Badge>
     ),
   },

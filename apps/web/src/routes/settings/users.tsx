@@ -277,21 +277,20 @@ function UsersSettingsPage() {
         }
       />
 
-      {!usersQuery.error ? (
-        <UsersToolbar
-          table={table}
-          onBulkDisable={(userIds) =>
-            setConfirmAction({
-              type: 'bulk_disable',
-              userId: '',
-              userEmail: '',
-              userIds,
-            })
-          }
-        />
-      ) : null}
-
       <UsersCollection
+        toolbar={
+          <UsersToolbar
+            table={table}
+            onBulkDisable={(userIds) =>
+              setConfirmAction({
+                type: 'bulk_disable',
+                userId: '',
+                userEmail: '',
+                userIds,
+              })
+            }
+          />
+        }
         emptyState={
           <UsersEmptyState
             onClearSearch={() =>

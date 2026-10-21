@@ -13,6 +13,9 @@ import {
 import type { ApiTokenSort } from './api-tokens'
 import type { SortDirection } from '@/components/data-table-features'
 import { Badge } from '@/components/ui/badge'
+import { RelativeTime } from '@/components/relative-time'
+import { StatusBadge } from '@/components/status-badge'
+import { apiTokenStatus } from '@/lib/status-variants'
 import { ApiTokenActions } from './-api-token-actions'
 
 const API_TOKEN_TABLE_SORTS = [
@@ -34,37 +37,9 @@ const roles: RoleLabels = {
   qa_viewer: 'QA Viewer',
 }
 
-function status(token: ApiTokenSummary) {
-  if (token.is_revoked) return 'revoked'
-  if (token.expires_at && token.expires_at * 1000 < Date.now()) return 'expired'
-  return 'active'
-}
-
-function relative(epoch?: number | null) {
-  if (!epoch) return 'Never'
-  const seconds = Math.max(0, Math.floor(Date.now() / 1000) - epoch)
-  if (seconds < 60) return `${seconds}s ago`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
-  return `${Math.floor(seconds / 86400)}d ago`
-}
-
-function TokenStatusBadge({ token }: { token: ApiTokenSummary }) {
-  const tokenStatus = status(token)
-
-  return (
-    <Badge
-      variant={
-        tokenStatus === 'active'
-          ? 'secondary'
-          : tokenStatus === 'revoked'
-            ? 'destructive'
-            : 'outline'
-      }
-    >
-      {tokenStatus}
-    </Badge>
-  )
+function LastUsed({ at }: { at?: number | null }) {
+  if (!at) return <span className="text-muted-foreground">Never</span>
+  return <RelativeTime at={at} />
 }
 
 function getApiTokenColumns({
@@ -80,13 +55,14 @@ function getApiTokenColumns({
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title="Name" />
       ),
-      cell: ({ row }) => row.original.name,
-    },
-    {
-      accessorKey: 'prefix',
-      header: 'Prefix',
-      cell: ({ row }) => `${row.original.prefix}...`,
-      enableSorting: false,
+      cell: ({ row }) => (
+        <>
+          <p className="font-medium">{row.original.name}</p>
+          <p className="font-mono text-xs text-muted-foreground">
+            {row.original.prefix}…
+          </p>
+        </>
+      ),
     },
     {
       accessorKey: 'role',
@@ -109,28 +85,30 @@ function getApiTokenColumns({
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title="Created" />
       ),
-      cell: ({ row }) => relative(row.original.created_at),
+      cell: ({ row }) => <RelativeTime at={row.original.created_at} />,
     },
     {
       accessorKey: 'last_used_at',
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title="Last used" />
       ),
-      cell: ({ row }) => relative(row.original.last_used_at),
+      cell: ({ row }) => <LastUsed at={row.original.last_used_at} />,
     },
     {
       id: 'status',
-      accessorFn: status,
+      accessorFn: apiTokenStatus,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title="Status" />
       ),
-      cell: ({ row }) => <TokenStatusBadge token={row.original} />,
+      cell: ({ row }) => (
+        <StatusBadge kind="token" value={apiTokenStatus(row.original)} />
+      ),
     },
     {
       id: 'actions',
-      header: 'Actions',
+      header: () => <span className="sr-only">Actions</span>,
       cell: ({ row }) =>
-        status(row.original) === 'active' && canDelete ? (
+        apiTokenStatus(row.original) === 'active' && canDelete ? (
           <ApiTokenActions onRevoke={() => onRevoke(row.original)} />
         ) : null,
       enableHiding: false,

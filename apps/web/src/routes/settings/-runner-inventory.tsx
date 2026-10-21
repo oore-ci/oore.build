@@ -20,9 +20,9 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { RelativeTime } from '@/components/relative-time'
 import RunnerStatusDot from '@/components/runner-status-dot'
 import { StatusBadge } from '@/components/status-badge'
 import {
@@ -39,19 +39,13 @@ const RUNNER_SORTS = [
   'last_heartbeat_at',
 ] satisfies ReadonlyArray<RunnerSort>
 
-function relative(epoch?: number | null) {
-  if (!epoch) return 'Never'
-  const seconds = Math.max(0, Math.floor(Date.now() / 1000) - epoch)
-  if (seconds < 60) return `${seconds}s ago`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
-  return `${Math.floor(seconds / 3600)}h ago`
+function runnerVersion(runner: Runner) {
+  return z.string().safeParse(runner.capabilities.version).data
 }
 
-function capabilities(value: Runner['capabilities']) {
-  return (
-    Object.entries(value)
-      .flatMap(([name, enabled]) => (enabled === true ? [name] : []))
-      .join(', ') || 'None reported'
+function capabilityNames(value: Runner['capabilities']) {
+  return Object.entries(value).flatMap(([name, enabled]) =>
+    enabled === true ? [name] : [],
   )
 }
 
@@ -72,14 +66,23 @@ function RunnerCacheCell({ runner }: { runner: Runner }) {
   )
 }
 
+/**
+ * Version and capabilities are reported by newer runners only; the columns
+ * exist once any runner on the page reports them, so a fresh instance does
+ * not show a table of "Unknown" and "None reported".
+ */
 function getRunnerColumns({
   canWrite,
   onPurgeCaches,
   onRename,
+  showCapabilities,
+  showVersion,
 }: {
   canWrite: boolean
   onPurgeCaches: (runner: Runner) => void
   onRename: (runner: Runner) => void
+  showCapabilities: boolean
+  showVersion: boolean
 }): Array<DataTableColumnDef<Runner>> {
   const columns: Array<DataTableColumnDef<Runner>> = [
     {
@@ -113,24 +116,43 @@ function getRunnerColumns({
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title="Last heartbeat" />
       ),
-      cell: ({ row }) => relative(row.original.last_heartbeat_at),
-    },
-    {
-      id: 'version',
-      accessorFn: (runner) =>
-        z.string().safeParse(runner.capabilities.version).data,
-      header: 'Version',
       cell: ({ row }) =>
-        z.string().safeParse(row.original.capabilities.version).data ??
-        'Unknown',
-      enableSorting: false,
+        row.original.last_heartbeat_at ? (
+          <RelativeTime at={row.original.last_heartbeat_at} />
+        ) : (
+          <span className="text-muted-foreground">Never</span>
+        ),
     },
-    {
+  ]
+
+  if (showVersion) {
+    columns.push({
+      id: 'version',
+      accessorFn: runnerVersion,
+      header: 'Version',
+      cell: ({ row }) => (
+        <span className="font-mono text-xs">
+          {runnerVersion(row.original) ?? 'Unknown'}
+        </span>
+      ),
+      enableSorting: false,
+    })
+  }
+
+  if (showCapabilities) {
+    columns.push({
       id: 'capabilities',
-      accessorFn: (runner) => capabilities(runner.capabilities),
+      accessorFn: (runner) => capabilityNames(runner.capabilities).join(', '),
       header: 'Capabilities',
+      cell: ({ row }) =>
+        capabilityNames(row.original.capabilities).join(', ') || (
+          <span className="text-muted-foreground">None reported</span>
+        ),
       enableSorting: false,
-    },
+    })
+  }
+
+  columns.push(
     {
       id: 'cache',
       accessorFn: (runner) => runnerCacheStats(runner)?.total_bytes,
@@ -141,15 +163,18 @@ function getRunnerColumns({
     {
       accessorKey: 'registered_by',
       header: 'Registered by',
-      cell: ({ row }) => row.original.registered_by ?? 'embedded',
+      cell: ({ row }) =>
+        row.original.registered_by ?? (
+          <span className="text-muted-foreground">This Mac</span>
+        ),
       enableSorting: false,
     },
-  ]
+  )
 
   if (canWrite) {
     columns.push({
       id: 'actions',
-      header: 'Action',
+      header: () => <span className="sr-only">Actions</span>,
       cell: ({ row }) => (
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -158,9 +183,8 @@ function getRunnerColumns({
             <span className="sr-only">Open menu</span>
             <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuContent align="end" className="w-40">
             <DropdownMenuGroup>
-              <DropdownMenuLabel>Actions</DropdownMenuLabel>
               {row.original.registered_by ? (
                 <DropdownMenuItem onClick={() => onRename(row.original)}>
                   Rename
@@ -217,9 +241,20 @@ export function RunnerInventory({
   sort: RunnerSort
   total: number
 }) {
+  const showVersion = runners.some((runner) => !!runnerVersion(runner))
+  const showCapabilities = runners.some(
+    (runner) => capabilityNames(runner.capabilities).length > 0,
+  )
   const columns = useMemo(
-    () => getRunnerColumns({ canWrite, onPurgeCaches, onRename }),
-    [canWrite, onPurgeCaches, onRename],
+    () =>
+      getRunnerColumns({
+        canWrite,
+        onPurgeCaches,
+        onRename,
+        showCapabilities,
+        showVersion,
+      }),
+    [canWrite, onPurgeCaches, onRename, showCapabilities, showVersion],
   )
   const sorting = useMemo(
     () => dataTableSortingState(sort, direction),

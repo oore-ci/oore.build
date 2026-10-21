@@ -1,5 +1,9 @@
 import { expect, test } from 'bun:test'
-import { enabledStatus, getStatusPresentation } from '@/lib/status-variants'
+import {
+  apiTokenStatus,
+  enabledStatus,
+  getStatusPresentation,
+} from '@/lib/status-variants'
 import { formatEnumLabel } from '@/lib/format-utils'
 
 test('formatEnumLabel turns machine enums into sentence case', () => {
@@ -44,4 +48,20 @@ test('unknown values fall back to a formatted label and neutral variant', () => 
     label: 'Some new state',
     variant: 'outline',
   })
+})
+
+test('API token status is derived from revocation and expiry', () => {
+  const now = Math.floor(Date.now() / 1000)
+  expect(apiTokenStatus({ is_revoked: true, expires_at: now + 60 })).toBe(
+    'revoked',
+  )
+  expect(apiTokenStatus({ is_revoked: false, expires_at: now - 60 })).toBe(
+    'expired',
+  )
+  expect(apiTokenStatus({ is_revoked: false, expires_at: null })).toBe('active')
+  expect(getStatusPresentation('token', 'revoked')).toEqual({
+    label: 'Revoked',
+    variant: 'destructive',
+  })
+  expect(getStatusPresentation('token', 'expired').label).toBe('Expired')
 })

@@ -33,7 +33,10 @@ import { RelativeTime } from '@/components/relative-time'
 import { StatusBadge } from '@/components/status-badge'
 import { formatEnumLabel } from '@/lib/format-utils'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  SettingsSection,
+  SettingsSurface,
+} from '@/components/settings/settings-section'
 import {
   Empty,
   EmptyDescription,
@@ -125,12 +128,7 @@ function NotificationChannelDetailPage() {
     return (
       <PageLayout width="wide">
         <Skeleton className="h-8 w-48" />
-        <Card size="sm">
-          <CardContent className="space-y-3">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </CardContent>
-        </Card>
+        <Skeleton className="h-64 w-full" />
       </PageLayout>
     )
   }
@@ -192,28 +190,31 @@ function NotificationChannelDetailPage() {
         }
       />
 
-      <Card size="sm" aria-labelledby="channel-settings-title">
-        <CardHeader>
-          <CardTitle id="channel-settings-title">Settings</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+      <Form {...form}>
+        <form
+          onSubmit={form.handleSubmit(onSubmit)}
+          className="flex flex-col gap-4"
+        >
+          <SettingsSection
+            title="Channel"
+            description="Where updates go, and which events send them."
+          >
+            <SettingsSurface className="flex flex-col gap-4">
               <NotificationChannelFormFields channel={channel} form={form} />
-              <FormActions
-                isPending={updateMutation.isPending}
-                submitLabel="Save changes"
-              />
-            </form>
-          </Form>
-        </CardContent>
-      </Card>
+            </SettingsSurface>
+          </SettingsSection>
+          <FormActions
+            isPending={updateMutation.isPending}
+            submitLabel="Save changes"
+          />
+        </form>
+      </Form>
 
-      <Card size="sm" aria-labelledby="delivery-history-title">
-        <CardHeader>
-          <CardTitle id="delivery-history-title">Delivery history</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <SettingsSection
+        title="Delivery history"
+        description="The most recent attempts to reach this channel."
+      >
+        <SettingsSurface>
           {deliveriesLoading ? (
             <div className="space-y-2" aria-label="Loading delivery history">
               <Skeleton className="h-12 w-full" />
@@ -269,8 +270,8 @@ function NotificationChannelDetailPage() {
               ))}
             </ItemGroup>
           )}
-        </CardContent>
-      </Card>
+        </SettingsSurface>
+      </SettingsSection>
 
       <DangerZone
         title="Delete this channel"
