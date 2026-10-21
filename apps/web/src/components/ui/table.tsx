@@ -2,11 +2,43 @@ import * as React from 'react'
 
 import { cn } from '@/lib/utils'
 
+/**
+ * Marks the container with `data-overflow` while the table is wider than it,
+ * so the right edge can fade and signal that the rest scrolls sideways.
+ */
+function useOverflowHint() {
+  const ref = React.useRef<HTMLDivElement>(null)
+
+  React.useEffect(() => {
+    const container = ref.current
+    if (!container) return
+    const update = () => {
+      const hidden = container.scrollWidth - container.clientWidth
+      const atEnd = container.scrollLeft >= hidden - 1
+      container.dataset.overflow = hidden > 1 && !atEnd ? 'end' : ''
+    }
+    const observer = new ResizeObserver(update)
+    observer.observe(container)
+    const table = container.firstElementChild
+    if (table) observer.observe(table)
+    container.addEventListener('scroll', update, { passive: true })
+    update()
+    return () => {
+      observer.disconnect()
+      container.removeEventListener('scroll', update)
+    }
+  }, [])
+
+  return ref
+}
+
 function Table({ className, ...props }: React.ComponentProps<'table'>) {
+  const containerRef = useOverflowHint()
   return (
     <div
+      ref={containerRef}
       data-slot="table-container"
-      className="relative w-full overflow-x-auto"
+      className="relative w-full overflow-x-auto data-[overflow=end]:mask-[linear-gradient(to_right,black_calc(100%-2.5rem),transparent)]"
     >
       <table
         data-slot="table"

@@ -271,6 +271,7 @@ function TriggerBuildFooter({
 }) {
   return (
     <DrawerFooter>
+      <DrawerClose render={<Button variant="outline">Cancel</Button>} />
       <Button type="button" disabled={pending || blocked} onClick={onSubmit}>
         {pending ? (
           <>
@@ -283,7 +284,6 @@ function TriggerBuildFooter({
           'Run build'
         )}
       </Button>
-      <DrawerClose render={<Button variant="outline">Cancel</Button>} />
     </DrawerFooter>
   )
 }
@@ -413,14 +413,18 @@ export default function TriggerBuildDrawer({
     open,
   ])
 
+  // Only preselect when there is nothing to choose between; otherwise the
+  // first project alphabetically would be queued by accident.
   useEffect(() => {
+    const onlyProject =
+      runnableProjects.length === 1 ? runnableProjects[0] : undefined
     if (
       open &&
       !fixedProjectId &&
       !form.getValues('project_id') &&
-      runnableProjects[0]
+      onlyProject
     ) {
-      form.setValue('project_id', runnableProjects[0].id)
+      form.setValue('project_id', onlyProject.id)
     }
   }, [fixedProjectId, form, open, runnableProjects])
 
