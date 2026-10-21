@@ -69,12 +69,6 @@ const RUNNER_SERVICE_ACK_SCHEMA_VERSION: u32 = 1;
 const MANAGED_RUNNER_SERVICE_LABEL: &str = "build.oore.oore-runner";
 // ponytail: fixed three-check grace; move it into the runner protocol if deployments need tuning.
 const MAX_CONSECUTIVE_AUTHORITY_FAILURES: u8 = 3;
-const MANAGED_FVM_VERSION: &str = "4.1.2";
-const MANAGED_FVM_ARM64_SHA256: &str =
-    "0b2a146986c51f06331f135f0bdf2a202eb57f55d7edd420c9078e8520e4c033";
-const MANAGED_FVM_X64_SHA256: &str =
-    "7bbfcb6883ea67ce532163704f5625eba7ecf340084be707cde71a28fefff1d8";
-const MANAGED_FVM_MAX_ARCHIVE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RunnerConfig {
@@ -257,194 +251,7 @@ fn repository_shell_command(script: &str, workspace: &Path) -> tokio::process::C
         .arg(script)
         .current_dir(workspace)
         .env_remove(RUNNER_SERVICE_ACK_PATH_ENV);
-    if let Some(install_root) = bundled_fvm_install_root() {
-        configure_bundled_fvm_environment(&mut command, &install_root);
-    }
     command
-}
-
-fn bundled_fvm_install_root() -> Option<PathBuf> {
-    let executable = std::env::current_exe().ok()?;
-    oore_install_root_for_executable(&executable)
-        .filter(|install_root| managed_fvm_is_available(install_root))
-}
-
-fn oore_install_root_for_executable(executable: &Path) -> Option<PathBuf> {
-    let bin = executable.parent()?;
-    if bin.file_name()? != "bin" {
-        return None;
-    }
-    let install_root = bin.parent()?;
-    install_root
-        .join("VERSION")
-        .is_file()
-        .then(|| install_root.to_path_buf())
-}
-
-fn managed_fvm_is_available(install_root: &Path) -> bool {
-    install_root.join("bin/fvm").is_file() && install_root.join("libexec/fvm/fvm").is_file()
-}
-
-fn managed_fvm_download(arch: &str) -> anyhow::Result<(String, &'static str)> {
-    let (asset_arch, expected_sha256) = match arch {
-        "aarch64" => ("arm64", MANAGED_FVM_ARM64_SHA256),
-        "x86_64" => ("x64", MANAGED_FVM_X64_SHA256),
-        other => anyhow::bail!("Oore-managed FVM is not available for architecture {other}"),
-    };
-    Ok((
-        format!(
-            "https://github.com/conceptadev/fvm/releases/download/{MANAGED_FVM_VERSION}/fvm-{MANAGED_FVM_VERSION}-macos-{asset_arch}.tar.gz"
-        ),
-        expected_sha256,
-    ))
-}
-
-async fn install_managed_fvm_archive(
-    install_root: &Path,
-    archive_bytes: &[u8],
-    expected_sha256: &str,
-) -> anyhow::Result<()> {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-
-    anyhow::ensure!(
-        archive_bytes.len() <= MANAGED_FVM_MAX_ARCHIVE_BYTES,
-        "managed FVM archive exceeds the {} byte limit",
-        MANAGED_FVM_MAX_ARCHIVE_BYTES
-    );
-    let actual_sha256 = hex::encode(Sha256::digest(archive_bytes));
-    anyhow::ensure!(
-        actual_sha256 == expected_sha256,
-        "managed FVM archive checksum mismatch"
-    );
-
-    let mut random = [0u8; 8];
-    rand::thread_rng().fill_bytes(&mut random);
-    let staging = install_root.join(format!(
-        ".fvm-bootstrap-{}-{}",
-        std::process::id(),
-        hex::encode(random)
-    ));
-    let mut staging_builder = fs::DirBuilder::new();
-    staging_builder.mode(0o700);
-    staging_builder
-        .create(&staging)
-        .with_context(|| format!("failed to create {}", staging.display()))?;
-
-    let result: anyhow::Result<()> = async {
-        let archive = staging.join("fvm.tar.gz");
-        write_private_file(&archive, archive_bytes)
-            .with_context(|| format!("failed to write {}", archive.display()))?;
-        let output = tokio::process::Command::new("/usr/bin/tar")
-            .args(["-xzf"])
-            .arg(&archive)
-            .args(["-C"])
-            .arg(&staging)
-            .output()
-            .await
-            .context("failed to extract managed FVM archive")?;
-        anyhow::ensure!(
-            output.status.success(),
-            "failed to extract managed FVM archive: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-
-        let extracted = staging.join("fvm");
-        let payload = extracted.join("fvm");
-        let payload_metadata = fs::symlink_metadata(&payload)
-            .with_context(|| format!("managed FVM archive is missing {}", payload.display()))?;
-        anyhow::ensure!(
-            payload_metadata.file_type().is_file(),
-            "managed FVM payload is not a regular file"
-        );
-        fs::set_permissions(&payload, fs::Permissions::from_mode(0o755))?;
-
-        let libexec = install_root.join("libexec");
-        fs::create_dir_all(&libexec)?;
-        let destination = libexec.join("fvm");
-        match fs::remove_dir_all(&destination) {
-            Ok(()) => {}
-            Err(error) if error.kind() == ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-        fs::rename(&extracted, &destination).with_context(|| {
-            format!(
-                "failed to install managed FVM payload at {}",
-                destination.display()
-            )
-        })?;
-        fs::File::open(&libexec)?.sync_all()?;
-
-        let bin = install_root.join("bin");
-        fs::create_dir_all(&bin)?;
-        let launcher = bin.join(format!(
-            ".fvm.{}-{}.tmp",
-            std::process::id(),
-            hex::encode(random)
-        ));
-        write_private_file(
-            &launcher,
-            b"#!/bin/sh\nset -eu\nroot=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")/..\" && pwd)\"\nexec \"$root/libexec/fvm/fvm\" \"$@\"\n",
-        )?;
-        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755))?;
-        fs::rename(&launcher, bin.join("fvm"))?;
-        fs::File::open(&bin)?.sync_all()?;
-        Ok(())
-    }
-    .await;
-
-    if let Err(cleanup_error) = fs::remove_dir_all(&staging)
-        && cleanup_error.kind() != ErrorKind::NotFound
-        && result.is_ok()
-    {
-        return Err(cleanup_error).context("failed to clean up managed FVM bootstrap");
-    }
-    result
-}
-
-async fn ensure_managed_fvm(client: &reqwest::Client) -> anyhow::Result<bool> {
-    let executable = std::env::current_exe().context("failed to locate the Oore runner")?;
-    let Some(install_root) = oore_install_root_for_executable(&executable) else {
-        return Ok(false);
-    };
-    if managed_fvm_is_available(&install_root) {
-        return Ok(false);
-    }
-
-    let (url, expected_sha256) = managed_fvm_download(std::env::consts::ARCH)?;
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .context("failed to download Oore-managed FVM")?
-        .error_for_status()
-        .context("Oore-managed FVM download failed")?;
-    if let Some(length) = response.content_length() {
-        anyhow::ensure!(
-            length <= MANAGED_FVM_MAX_ARCHIVE_BYTES as u64,
-            "managed FVM archive exceeds the {} byte limit",
-            MANAGED_FVM_MAX_ARCHIVE_BYTES
-        );
-    }
-    let bytes = response
-        .bytes()
-        .await
-        .context("failed to read Oore-managed FVM download")?;
-    install_managed_fvm_archive(&install_root, &bytes, expected_sha256).await?;
-    Ok(true)
-}
-
-fn configure_bundled_fvm_environment(command: &mut tokio::process::Command, install_root: &Path) {
-    let mut paths = vec![install_root.join("bin")];
-    if let Some(current) = std::env::var_os("PATH") {
-        paths.extend(std::env::split_paths(&current));
-    }
-    if let Ok(path) = std::env::join_paths(paths) {
-        command.env("PATH", path);
-    }
-    command.env(
-        "FVM_CACHE_PATH",
-        install_root.join("toolchains").join("flutter"),
-    );
 }
 
 fn write_private_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
@@ -948,10 +755,7 @@ fn android_signing_prepared_marker(source: &str, variant: AndroidSigningBuildTyp
 
 fn is_android_flutter_build_command(command: &str) -> bool {
     let trimmed = command.trim_start();
-    trimmed.starts_with("flutter build apk")
-        || trimmed.starts_with("fvm flutter build apk")
-        || trimmed.starts_with("flutter build appbundle")
-        || trimmed.starts_with("fvm flutter build appbundle")
+    trimmed.starts_with("flutter build apk") || trimmed.starts_with("flutter build appbundle")
 }
 
 fn android_signing_variant_for_command(command: &str) -> Option<AndroidSigningBuildType> {
@@ -2516,9 +2320,6 @@ fn is_ios_flutter_build_command(command: &str) -> bool {
     let has_flutter_target = |target: &str| -> bool {
         args.windows(3)
             .any(|window| window == ["flutter", "build", target])
-            || args
-                .windows(4)
-                .any(|window| window == ["fvm", "flutter", "build", target])
     };
     has_flutter_target("ios") || has_flutter_target("ipa")
 }
@@ -2526,9 +2327,6 @@ fn is_ios_flutter_build_command(command: &str) -> bool {
 fn contains_flutter_build_target(args: &[String], target: &str) -> bool {
     args.windows(3)
         .any(|window| window == ["flutter", "build", target])
-        || args
-            .windows(4)
-            .any(|window| window == ["fvm", "flutter", "build", target])
 }
 
 fn rewrite_flutter_ios_target_to_ipa(args: &mut [String]) -> bool {
@@ -2540,15 +2338,6 @@ fn rewrite_flutter_ios_target_to_ipa(args: &mut [String]) -> bool {
             && args[i + 2] == "ios"
         {
             args[i + 2] = "ipa".to_string();
-            rewritten = true;
-        }
-        if i + 3 < args.len()
-            && args[i] == "fvm"
-            && args[i + 1] == "flutter"
-            && args[i + 2] == "build"
-            && args[i + 3] == "ios"
-        {
-            args[i + 3] = "ipa".to_string();
             rewritten = true;
         }
     }
@@ -3568,7 +3357,8 @@ struct FvmRcConfig {
     flutter: String,
 }
 
-const DEFAULT_MANAGED_FLUTTER_VERSION: &str = "stable";
+/// Flutter version a build asks for when neither `.fvmrc` nor the pipeline pins one.
+const DEFAULT_FLUTTER_VERSION: &str = "stable";
 
 #[derive(Debug, Clone)]
 struct ResolvedExecutionPlan {
@@ -3581,7 +3371,8 @@ struct ResolvedExecutionPlan {
     secret_env_keys: std::collections::HashSet<String>,
     build_number_offset: i64,
     isolation: BuildIsolation,
-    /// From `.fvmrc`, then the pipeline config, then the managed default.
+    /// From `.fvmrc`, then the pipeline config, then `stable`. Picks the VM
+    /// image; host builds use whatever Flutter the runner has.
     flutter_version: String,
     source: String,
 }
@@ -3814,73 +3605,6 @@ fn pubspec_version_name(raw: &str) -> Option<String> {
     let value = value.split(" #").next()?.trim().trim_matches(['"', '\'']);
     let name = value.split('+').next()?.trim();
     (!name.is_empty()).then(|| name.to_string())
-}
-
-fn maybe_wrap_with_fvm(command: &str) -> String {
-    let trimmed = command.trim();
-    if trimmed == "flutter" {
-        return "fvm flutter".to_string();
-    }
-    if trimmed == "dart" {
-        return "fvm dart".to_string();
-    }
-    if let Some(rest) = trimmed.strip_prefix("flutter ") {
-        return format!("fvm flutter {rest}");
-    }
-    if let Some(rest) = trimmed.strip_prefix("dart ") {
-        return format!("fvm dart {rest}");
-    }
-    trimmed.to_string()
-}
-
-fn apply_fvm_wrappers(stage_commands: PipelineCommandStages) -> PipelineCommandStages {
-    PipelineCommandStages {
-        pre_build: stage_commands
-            .pre_build
-            .into_iter()
-            .map(|cmd| maybe_wrap_with_fvm(&cmd))
-            .collect(),
-        build: stage_commands
-            .build
-            .into_iter()
-            .map(|cmd| maybe_wrap_with_fvm(&cmd))
-            .collect(),
-        post_build: stage_commands
-            .post_build
-            .into_iter()
-            .map(|cmd| maybe_wrap_with_fvm(&cmd))
-            .collect(),
-    }
-}
-
-fn command_uses_flutter_toolchain(command: &str) -> bool {
-    let trimmed = command.trim();
-    maybe_wrap_with_fvm(trimmed) != trimmed
-        || trimmed == "fvm flutter"
-        || trimmed == "fvm dart"
-        || trimmed.starts_with("fvm flutter ")
-        || trimmed.starts_with("fvm dart ")
-}
-
-fn apply_managed_flutter_toolchain(
-    stage_commands: PipelineCommandStages,
-    version: &str,
-) -> PipelineCommandStages {
-    let requires_flutter = stage_commands
-        .pre_build
-        .iter()
-        .chain(&stage_commands.build)
-        .chain(&stage_commands.post_build)
-        .any(|command| command_uses_flutter_toolchain(command));
-    if !requires_flutter {
-        return stage_commands;
-    }
-
-    let mut stage_commands = apply_fvm_wrappers(stage_commands);
-    stage_commands
-        .pre_build
-        .insert(0, format!("fvm use {version} --force --skip-pub-get"));
-    stage_commands
 }
 
 fn validate_artifact_patterns(patterns: &[String]) -> anyhow::Result<Vec<String>> {
@@ -4180,16 +3904,9 @@ fn resolve_execution_plan(
         let file_config = apply_run_platform_selection(file_config, snapshot)?;
         let resolved_flutter_version = fvmrc_version
             .or_else(|| file_config.flutter_version.clone())
-            .unwrap_or_else(|| DEFAULT_MANAGED_FLUTTER_VERSION.to_string());
+            .unwrap_or_else(|| DEFAULT_FLUTTER_VERSION.to_string());
         let include_defaults = file_config.commands.build.is_empty();
         let stage_commands = materialize_stage_commands(&file_config, include_defaults);
-        // A VM image carries exactly one Flutter SDK, so only host builds need FVM.
-        let stage_commands = match file_config.isolation {
-            BuildIsolation::Host => {
-                apply_managed_flutter_toolchain(stage_commands, &resolved_flutter_version)
-            }
-            BuildIsolation::Vm => stage_commands,
-        };
 
         return Ok(ResolvedExecutionPlan {
             stage_commands,
@@ -4207,14 +3924,8 @@ fn resolve_execution_plan(
     let fallback = apply_run_platform_selection(load_ui_execution_config(snapshot)?, snapshot)?;
     let resolved_flutter_version = fvmrc_version
         .or_else(|| fallback.flutter_version.clone())
-        .unwrap_or_else(|| DEFAULT_MANAGED_FLUTTER_VERSION.to_string());
+        .unwrap_or_else(|| DEFAULT_FLUTTER_VERSION.to_string());
     let stage_commands = materialize_stage_commands(&fallback, true);
-    let stage_commands = match fallback.isolation {
-        BuildIsolation::Host => {
-            apply_managed_flutter_toolchain(stage_commands, &resolved_flutter_version)
-        }
-        BuildIsolation::Vm => stage_commands,
-    };
     Ok(ResolvedExecutionPlan {
         stage_commands,
         artifact_patterns: fallback.artifact_patterns,
@@ -4755,17 +4466,7 @@ async fn execute_build_steps(
             }
         };
     let version_name = read_pubspec_version_name(&workspace);
-    let requires_managed_fvm = execution_plan
-        .stage_commands
-        .pre_build
-        .iter()
-        .chain(&execution_plan.stage_commands.build)
-        .chain(&execution_plan.stage_commands.post_build)
-        .any(|command| command_uses_flutter_toolchain(command));
-    if execution_plan.isolation == BuildIsolation::Host
-        && requires_managed_fvm
-        && bundled_fvm_install_root().is_none()
-    {
+    if execution_plan.isolation == BuildIsolation::Host {
         let _ = append_runner_log_line(
             client,
             daemon_url,
@@ -4773,32 +4474,12 @@ async fn execute_build_steps(
             &job.build_id,
             log_seq,
             "stdout",
-            "Preparing Oore-managed Flutter tooling for this runner...",
+            &format!(
+                "Host build: uses the runner's own Flutter, not the requested {}; set isolation: vm to build with that exact version",
+                execution_plan.flutter_version
+            ),
         )
         .await;
-        match ensure_managed_fvm(client).await {
-            Ok(true) => {
-                let _ = append_runner_log_line(
-                    client,
-                    daemon_url,
-                    config,
-                    &job.build_id,
-                    log_seq,
-                    "stdout",
-                    "Oore-managed Flutter tooling is ready.",
-                )
-                .await;
-            }
-            Ok(false) => {}
-            Err(error) => {
-                return (
-                    steps,
-                    Err(error.context(
-                        "Failed to prepare Oore-managed Flutter tooling; retry the build",
-                    )),
-                );
-            }
-        }
     }
 
     let mut signing_source: Option<&str> = None;
@@ -5234,7 +4915,7 @@ The VM image for Flutter {} does not provide this command. Command: {}",
                         } else if exit_code == 127 {
                             anyhow::anyhow!(
                                 "Step failed with exit code 127 (command not found). \
-Install required tooling (for example Flutter/FVM) or override build commands. Command: {}",
+Install the required tooling on the runner, set isolation: vm, or override build commands. Command: {}",
                                 command_preview
                             )
                         } else {
@@ -6068,9 +5749,6 @@ fn render_command_preview(command: &str, env: &[(String, String)]) -> String {
 fn is_flutter_build_command(command: &str) -> bool {
     let args: Vec<&str> = command.split_whitespace().collect();
     args.windows(2).any(|window| window == ["flutter", "build"])
-        || args
-            .windows(3)
-            .any(|window| window == ["fvm", "flutter", "build"])
 }
 
 fn with_dart_define_file(command: &str, define_file: &str) -> String {
@@ -6627,7 +6305,7 @@ mod tests {
     }
 
     #[test]
-    fn vm_isolation_runs_flutter_without_fvm() {
+    fn flutter_commands_run_unwrapped_and_fvmrc_picks_the_version() {
         let workspace =
             std::env::temp_dir().join(format!("oore-vm-plan-test-{}", std::process::id()));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -6654,13 +6332,8 @@ mod tests {
         .unwrap();
         let plan = resolve_execution_plan(&workspace, &json!({})).unwrap();
         assert_eq!(plan.isolation, BuildIsolation::Host);
-        assert_eq!(
-            plan.stage_commands.pre_build,
-            vec![
-                "fvm use 3.47.7 --force --skip-pub-get",
-                "fvm flutter pub get"
-            ]
-        );
+        assert_eq!(plan.flutter_version, "3.47.7");
+        assert_eq!(plan.stage_commands.pre_build, vec!["flutter pub get"]);
 
         let _ = std::fs::remove_dir_all(&workspace);
     }

@@ -103,12 +103,6 @@ validate_full_stage() {
     exit 1
   }
   require_file "$stage/web-dist/index.html"
-  for obsolete in "$stage/bin/fvm" "$stage/libexec/fvm"; do
-    [[ ! -e "$obsolete" && ! -L "$obsolete" ]] || {
-      echo "Release stage contains obsolete bundled FVM: $obsolete" >&2
-      exit 1
-    }
-  done
   validate_stage_tree "$stage" full
 }
 

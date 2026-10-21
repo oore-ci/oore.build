@@ -34,7 +34,8 @@ absent, not a recovery path for an invalid file.
 
 A checked-in `.fvmrc` overrides the Flutter version saved in repository YAML or
 the UI. This lets a repository keep its Flutter toolchain choice beside the
-application.
+application. Oore only reads the version from it; FVM itself is not used. In a
+VM build the version selects the image.
 
 ## Effects
 

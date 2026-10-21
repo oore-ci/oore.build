@@ -6,7 +6,7 @@ description: 'Verify the small host requirements for the Oore CLI and your selec
 
 The Oore bootstrap needs a supported Mac, internet access, and standard macOS command-line tools.
 
-You do not need a project, Flutter, FVM, Xcode, or Android Studio to install Oore.
+You do not need a project, Flutter, Xcode, or Android Studio to install Oore.
 
 ## Bootstrap requirements
 
@@ -42,11 +42,9 @@ SSH sessions are supported. Oore automatically uses terminal setup over SSH.
 
 ## Flutter and platform tools
 
-When the first Flutter build starts, Oore prepares its managed Flutter tooling.
+A build asks for the Flutter version in `.fvmrc` when it exists, then `flutter_version` from `.oore.yaml`, then `stable`.
 
-If `.fvmrc` exists, the runner uses it. Otherwise, it uses `flutter_version` from `.oore.yaml`.
-
-If neither file selects a version, Oore uses its managed stable Flutter version.
+A pipeline with `isolation: vm` builds in a Tart VM made from the image for that version, so the Runner Mac needs no Flutter at all. See [Run builds in VMs](/operate/runners/vm-isolation). A host build uses the Flutter installed on the Runner Mac.
 
 Install platform tools only on runners that need them:
 

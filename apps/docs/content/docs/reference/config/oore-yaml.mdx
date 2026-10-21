@@ -49,7 +49,7 @@ The schema rejects unknown fields.
 | --------------------- | -------- | -------- | ------------------------------- |
 | `version`             | integer  | Yes      | Must be `1`                     |
 | `platforms`           | string[] | Yes      | No default; must not be empty   |
-| `flutter_version`     | string   | No       | Oore-managed stable Flutter     |
+| `flutter_version`     | string   | No       | `stable`                        |
 | `commands`            | object   | No       | Empty stages                    |
 | `platform_build_args` | object   | No       | Empty arrays                    |
 | `platform_commands`   | object   | No       | No overrides                    |
@@ -163,7 +163,8 @@ but cannot be read or validated, the build fails instead of falling back.
 
 The runner reads the file from the pinned checkout used for the build. A
 `.fvmrc` value takes precedence over `flutter_version` from whichever
-configuration source is active. A repository file replaces the UI execution
+configuration source is active. The version picks the VM image for
+`isolation: vm`; a host build uses the Runner's installed Flutter. A repository file replaces the UI execution
 configuration for that run.
 
 Validate the file before committing:
