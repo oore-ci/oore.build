@@ -4,6 +4,7 @@ import { AlertCircleIcon } from '@hugeicons/core-free-icons'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import { TRIGGER_EVENTS } from '@/lib/pipeline-schema'
+import { formatEnumLabel } from '@/lib/format-utils'
 import { PipelineFormSectionHeader } from '@/components/pipeline-form-section-header'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
@@ -310,7 +311,7 @@ export function PipelineTriggersSection({
                           checked={selectedEvents.includes(event)}
                           onCheckedChange={() => toggleEvent(event)}
                         />
-                        {event}
+                        {formatEnumLabel(event)}
                       </label>
                     ))}
                   </div>

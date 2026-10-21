@@ -2,8 +2,6 @@ import { lazy, Suspense, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  ArrowDown01Icon,
-  ArrowRight01Icon,
   Delete02Icon,
   InformationCircleIcon,
   PlayIcon,
@@ -45,11 +43,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
+import { DangerZone } from '@/components/danger-zone'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import RepositoryAvatar from '@/components/repository-avatar'
@@ -258,7 +252,6 @@ function ProjectDetailPage() {
   })
 
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const [dangerOpen, setDangerOpen] = useState(false)
   const [buildDrawerPipelineId, setBuildDrawerPipelineId] = useState<
     string | null
   >()
@@ -378,8 +371,6 @@ function ProjectDetailPage() {
   function openTriggerBuild(pipelineId?: string) {
     setBuildDrawerPipelineId(pipelineId ?? null)
   }
-
-  const DangerIcon = dangerOpen ? ArrowDown01Icon : ArrowRight01Icon
 
   return (
     <PageLayout width="wide" fill={activeTab === 'builds'}>
@@ -676,35 +667,19 @@ function ProjectDetailPage() {
             ) : null}
 
             {canDeleteProjects ? (
-              <Collapsible open={dangerOpen} onOpenChange={setDangerOpen}>
-                <Card size="sm" className="ring-destructive/40">
-                  <CardContent>
-                    <CollapsibleTrigger className="flex w-full items-center justify-between text-sm font-medium text-destructive">
-                      Danger zone
-                      <HugeiconsIcon
-                        icon={DangerIcon}
-                        className="size-4 text-muted-foreground"
-                        aria-hidden
-                      />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <div className="space-y-3 pt-4">
-                        <p className="text-sm text-muted-foreground">
-                          Permanently delete "{project.name}" and all associated
-                          pipelines and builds. This cannot be undone.
-                        </p>
-                        <Button
-                          variant="destructive"
-                          onClick={() => setDeleteOpen(true)}
-                        >
-                          <HugeiconsIcon icon={Delete02Icon} />
-                          Delete project
-                        </Button>
-                      </div>
-                    </CollapsibleContent>
-                  </CardContent>
-                </Card>
-              </Collapsible>
+              <DangerZone
+                title="Delete this project"
+                description={`Permanently deletes "${project.name}" and all associated pipelines and builds. This cannot be undone.`}
+                action={
+                  <Button
+                    variant="destructive"
+                    onClick={() => setDeleteOpen(true)}
+                  >
+                    <HugeiconsIcon icon={Delete02Icon} />
+                    Delete project
+                  </Button>
+                }
+              />
             ) : null}
           </div>
         </TabsContent>

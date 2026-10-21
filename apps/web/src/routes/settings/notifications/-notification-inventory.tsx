@@ -2,7 +2,9 @@ import { useMemo } from 'react'
 import { Link } from '@tanstack/react-router'
 
 import type { NotificationChannel } from '@oore/client/models'
-import { relativeTime } from '@/lib/format-utils'
+import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
+import { enabledStatus } from '@/lib/status-variants'
+import { StatusBadge } from '@/components/status-badge'
 import {
   DataTable,
   DataTableColumnHeader,
@@ -87,9 +89,10 @@ function getNotificationColumns({
         <DataTableColumnHeader column={column} title="Status" />
       ),
       cell: ({ row }) => (
-        <Badge variant={row.original.enabled ? 'secondary' : 'outline'}>
-          {row.original.enabled ? 'Enabled' : 'Disabled'}
-        </Badge>
+        <StatusBadge
+          kind="enabled"
+          value={enabledStatus(row.original.enabled)}
+        />
       ),
     },
     {
@@ -97,7 +100,7 @@ function getNotificationColumns({
       header: 'Events',
       cell: ({ row }) =>
         row.original.events.length > 0
-          ? row.original.events.join(', ')
+          ? row.original.events.map(formatEnumLabel).join(', ')
           : 'All events',
       enableSorting: false,
     },

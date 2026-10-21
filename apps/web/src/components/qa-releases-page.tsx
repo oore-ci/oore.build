@@ -24,6 +24,7 @@ import {
 } from '@/lib/artifact-install'
 import {
   formatDuration,
+  formatEnumLabel,
   formatFileSize,
   relativeTime,
 } from '@/lib/format-utils'
@@ -34,7 +35,7 @@ import {
 } from '@/lib/qa-releases'
 import { releaseAudienceLabel } from '@/lib/releases'
 import { PageMeta } from '@/lib/seo'
-import { getStatusVariant } from '@/lib/status-variants'
+import { StatusBadge } from '@/components/status-badge'
 import PageLayout from '@/components/page-layout'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -104,10 +105,6 @@ function artifactPlatforms(artifacts: Array<Artifact>) {
 function buildDuration(build: Build) {
   if (build.started_at == null || build.finished_at == null) return null
   return formatDuration(build.finished_at - build.started_at)
-}
-
-function statusLabel(status: string) {
-  return status.replaceAll('_', ' ')
 }
 
 /** Newest store release per build, so QA sees where a version stands. */
@@ -345,9 +342,7 @@ function NewerBuildActivity({
             <ItemContent>
               <ItemTitle>
                 {qaBuildVersion(build, [], versionBase)}
-                <Badge variant={getStatusVariant(build.status)}>
-                  {statusLabel(build.status)}
-                </Badge>
+                <StatusBadge kind="build" value={build.status} />
               </ItemTitle>
               <ItemDescription>
                 {build.changelog
@@ -408,7 +403,7 @@ function BuildChecks({ build }: { build: Build }) {
               <ItemActions className="text-xs text-muted-foreground">
                 {step.duration_ms != null
                   ? formatDuration(step.duration_ms / 1000)
-                  : statusLabel(step.status)}
+                  : formatEnumLabel(step.status)}
               </ItemActions>
             </Item>
           ))}
