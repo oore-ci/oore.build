@@ -98,6 +98,10 @@ If any earlier step fails, nothing is uploaded. If a Play call fails, the
 `publish-play` step fails with the Play API's error text, and the edit is
 discarded so nothing is left half-staged in Play Console.
 
+After fixing the cause, such as a missing Play Console permission,
+[retry the upload](/build/run/retry-step) to upload the stored bundle without
+building again.
+
 ## Verify the result
 
 - The build shows a succeeded `publish-play` step, and its log names the track

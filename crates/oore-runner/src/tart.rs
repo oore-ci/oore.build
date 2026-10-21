@@ -428,23 +428,102 @@ fn workspace_out_script(workspace: &str, share: &str) -> String {
 
 /// Gradle reads its temp and binary store files back in ways virtiofs does not
 /// keep consistent ("Problems reading data from Binary store"), so a VM build
-/// runs Gradle from a home on the guest disk. Downloaded dependencies and
-/// wrapper distributions are copied in from the share and back out after.
+/// runs Gradle from a home on the guest disk. The parts of the home that only
+/// ever gain complete entries are copied in from the share and back out after:
+/// downloaded dependencies, transformed artifacts, the build cache and wrapper
+/// distributions.
 const GRADLE_SHARE: &str = "gradle";
 const GUEST_GRADLE_HOME: &str = ".gradle";
-const GRADLE_SYNCED_DIRS: [&str; 2] = ["caches/modules-2", "wrapper/dists"];
+const GRADLE_SYNCED_DIRS: [&str; 5] = [
+    "caches/modules-2",
+    "caches/transforms-*",
+    "caches/jars-*",
+    "caches/build-cache-1",
+    "wrapper/dists",
+];
 
-/// Copies the reusable parts of the Gradle home at `from` into `to`.
+/// Copies the reusable parts of the Gradle home at `from` into `to`. The
+/// directory names are globs, as Gradle versions its cache directories.
 fn gradle_sync_script(from: &str, to: &str) -> String {
-    GRADLE_SYNCED_DIRS
-        .iter()
-        .map(|dir| {
-            let source = format!("{from}/{dir}");
-            let copy = copy_tree_script(&source, &format!("{to}/{dir}"), &["*.lock", "*.lck"]);
-            format!("if [ -d {} ]; then {copy}; fi", shell_quote(&source))
-        })
-        .collect::<Vec<_>>()
-        .join(" && ")
+    let to = shell_quote(to);
+    format!(
+        "cd {} 2>/dev/null || exit 0; for dir in {}; do [ -d \"$dir\" ] || continue; \
+mkdir -p {to}/\"$dir\" && {{ /usr/bin/rsync -a --exclude '*.lock' --exclude '*.lck' \"$dir\"/ {to}/\"$dir\"/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }} || exit 1; done",
+        shell_quote(from),
+        GRADLE_SYNCED_DIRS.join(" "),
+    )
+}
+
+/// Gives the guest Gradle home the host's `gradle.properties`, as a host
+/// build gets, and turns Gradle's build cache on unless that file decides.
+/// Every build starts from a fresh checkout, so task outputs are only reused
+/// through the build cache.
+fn gradle_properties_script(shared: &str, local: &str) -> String {
+    let source = shell_quote(&format!("{shared}/gradle.properties"));
+    let target = shell_quote(&format!("{local}/gradle.properties"));
+    format!(
+        "mkdir -p {local} && if [ -f {source} ]; then cp {source} {target}; fi && {{ grep -qs '^[[:space:]]*org\\.gradle\\.caching[[:space:]]*[=:]' {target} || echo 'org.gradle.caching=true' >> {target}; }}",
+        local = shell_quote(local),
+    )
+}
+
+/// Xcode's DerivedData, kept per project on the host. Its build database is
+/// SQLite, which needs locking the share does not give, so Xcode works in its
+/// default folder on the guest disk and the folder is copied in and back out.
+/// Swift packages Xcode resolved (`SourcePackages`) come back with it, so a
+/// build does not clone them again.
+const DERIVED_DATA_SHARE: &str = "derived-data";
+const GUEST_DERIVED_DATA: &str = "Library/Developer/Xcode/DerivedData";
+
+/// Copies a DerivedData folder, dropping files the source no longer has so
+/// the saved copy does not grow with every build.
+fn derived_data_sync_script(from: &str, to: &str) -> String {
+    let from = shell_quote(from);
+    let to = shell_quote(to);
+    format!(
+        "if [ -d {from} ]; then mkdir -p {to} && {{ /usr/bin/rsync -a --delete {from}/ {to}/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }}; fi"
+    )
+}
+
+/// Android SDK packages a build installs (Gradle fetches the platforms, build
+/// tools, NDK and CMake a project asks for) would land on the guest disk and
+/// be downloaded again by the next build. Packages the image does not have are
+/// saved to the share by `sdkmanager` path, such as `platforms/android-34`,
+/// and copied into later VMs. Each package is copied under a hidden name and
+/// renamed when complete, so an interrupted copy is never taken for a package.
+const ANDROID_SDK_SHARE: &str = "android-sdk";
+const ANDROID_SDK_PARENTS: &str = "platforms build-tools ndk cmake";
+/// Lists the image's own packages, so only packages a build added are saved.
+const ANDROID_SDK_BASELINE: &str = ".oore-android-sdk-image";
+
+/// Copies `$src` to `$parent/$name` under `dest_root` atomically.
+fn android_package_copy(dest_root: &str) -> String {
+    format!(
+        "tmp={dest_root}/\"$parent/.$name.partial\"; rm -rf \"$tmp\" && mkdir -p {dest_root}/\"$parent\" && {{ /usr/bin/rsync -a \"$src\"/ \"$tmp\"/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }} && mv \"$tmp\" {dest_root}/\"$parent/$name\""
+    )
+}
+
+/// Records the image's packages, then copies in every saved package the image
+/// lacks. Prints the `sdkmanager` name of each restored package.
+fn android_sdk_in_script(share: &str, sdk: &str, baseline: &str) -> String {
+    let share = shell_quote(share);
+    let sdk = shell_quote(sdk);
+    format!(
+        "cd {sdk} || exit 0; : > {baseline}; for parent in {ANDROID_SDK_PARENTS}; do for p in \"$parent\"/*; do [ -d \"$p\" ] && echo \"$p\" >> {baseline}; done; for src in {share}/\"$parent\"/*; do [ -d \"$src\" ] || continue; name=\"${{src##*/}}\"; [ -e \"$parent/$name\" ] && continue; {} && echo \"$parent;$name\"; done; done; exit 0",
+        android_package_copy(&sdk),
+        baseline = shell_quote(baseline),
+    )
+}
+
+/// Saves every package the image did not have and the share does not hold yet.
+fn android_sdk_out_script(sdk: &str, share: &str, baseline: &str) -> String {
+    let share = shell_quote(share);
+    let sdk = shell_quote(sdk);
+    format!(
+        "cd {sdk} && [ -f {baseline} ] || exit 0; for parent in {ANDROID_SDK_PARENTS}; do for src in \"$parent\"/*; do [ -d \"$src\" ] || continue; name=\"${{src##*/}}\"; grep -qxF \"$src\" {baseline} && continue; [ -e {share}/\"$src\" ] && continue; {} || exit 1; done; done",
+        android_package_copy(&share),
+        baseline = shell_quote(baseline),
+    )
 }
 
 /// Deletes VMs this runner left behind when it crashed or was killed mid-build.
@@ -497,8 +576,8 @@ pub(crate) fn guest_step_script(
 /// A host directory shared into the guest, such as a dependency cache.
 pub(crate) struct HostShare {
     pub name: &'static str,
-    /// Variable to point at the guest path; without one the share is mounted
-    /// at the tool's default location (Xcode's DerivedData).
+    /// Variable to point at the guest path. Shares without one are copied to
+    /// where the tool looks (DerivedData, Android SDK packages).
     pub env: Option<&'static str>,
     pub host_dir: PathBuf,
 }
@@ -509,10 +588,7 @@ fn share_tag(name: &str) -> String {
 
 /// Guest path for a share, relative to the guest home.
 fn share_guest_dir(share: &HostShare) -> String {
-    match share.env {
-        Some(_) => format!("oore-cache/{}", name_component(share.name)),
-        None => "Library/Developer/Xcode/DerivedData".to_string(),
-    }
+    format!("oore-cache/{}", name_component(share.name))
 }
 
 pub(crate) struct TartVm {
@@ -526,6 +602,12 @@ pub(crate) struct TartVm {
     guest_env: Vec<(String, String)>,
     /// The Gradle share and the guest-local Gradle home, synced back on drop.
     gradle_sync: Option<(String, String)>,
+    /// The DerivedData share and Xcode's folder, synced back on drop.
+    derived_data_sync: Option<(String, String)>,
+    /// The Android SDK share, the guest SDK and its baseline, synced back on drop.
+    android_sdk_sync: Option<(String, String, String)>,
+    /// Build log lines on what the guest got back from earlier builds.
+    cache_notes: Vec<String>,
     /// Set once the VM was kept as an image; nothing is deleted then.
     kept: bool,
 }
@@ -587,6 +669,9 @@ impl TartVm {
             guest_share: String::new(),
             guest_env: Vec::new(),
             gradle_sync: None,
+            derived_data_sync: None,
+            android_sdk_sync: None,
+            cache_notes: Vec::new(),
             kept: false,
         };
         let mut child = Command::new(&vm.tart)
@@ -632,8 +717,15 @@ impl TartVm {
         let guest_share = format!("{home}/{GUEST_SHARE_DIR}");
         let mut mounts = vec![(WORKSPACE_TAG.to_string(), guest_share.clone())];
         let mut gradle_dirs = None;
+        let mut derived_data_share = None;
+        let mut android_sdk_share = None;
         for share in shares {
             let guest_dir = format!("{home}/{}", share_guest_dir(share));
+            match share.name {
+                DERIVED_DATA_SHARE => derived_data_share = Some(guest_dir.clone()),
+                ANDROID_SDK_SHARE => android_sdk_share = Some(guest_dir.clone()),
+                _ => {}
+            }
             if let Some(env) = share.env {
                 let value = if share.name == GRADLE_SHARE {
                     let local = format!("{home}/{GUEST_GRADLE_HOME}");
@@ -656,7 +748,55 @@ impl TartVm {
             vm.exec_capture(&gradle_sync_script(&shared, &local))
                 .await
                 .context("failed to copy the Gradle cache into the VM")?;
+            vm.exec_capture(&gradle_properties_script(&shared, &local))
+                .await
+                .context("failed to write gradle.properties inside the VM")?;
             vm.gradle_sync = Some((shared, local));
+        }
+        if let Some(shared) = derived_data_share {
+            let local = format!("{home}/{GUEST_DERIVED_DATA}");
+            let restored = vm
+                .exec_capture(&format!(
+                    "{} && ls -A {}",
+                    derived_data_sync_script(&shared, &local),
+                    shell_quote(&shared)
+                ))
+                .await
+                .context("failed to copy DerivedData into the VM")?;
+            vm.cache_notes.push(if restored.trim().is_empty() {
+                "  derived data: none saved for this project yet; Xcode's is kept when the VM stops"
+                    .to_string()
+            } else {
+                "  derived data: restored this project's DerivedData and Swift packages".to_string()
+            });
+            vm.derived_data_sync = Some((shared, local));
+        }
+        if let Some(shared) = android_sdk_share {
+            // The image sets the SDK location in the login profile.
+            let sdk = vm
+                .exec_capture(
+                    "/bin/zsh -l -c 'printf \"\\n%s\" \"${ANDROID_HOME:-$ANDROID_SDK_ROOT}\"'",
+                )
+                .await
+                .unwrap_or_default();
+            let sdk = sdk.lines().last().unwrap_or_default().trim().to_string();
+            if sdk.starts_with('/') {
+                let baseline = format!("{home}/{ANDROID_SDK_BASELINE}");
+                let restored = vm
+                    .exec_capture(&android_sdk_in_script(&shared, &sdk, &baseline))
+                    .await
+                    .context("failed to copy Android SDK packages into the VM")?;
+                let restored = restored
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .collect::<Vec<_>>();
+                if !restored.is_empty() {
+                    vm.cache_notes
+                        .push(format!("  android sdk: restored {}", restored.join(", ")));
+                }
+                vm.android_sdk_sync = Some((shared, sdk, baseline));
+            }
         }
         vm.guest_workspace = guest_workspace;
         vm.guest_share = guest_share;
@@ -682,6 +822,10 @@ impl TartVm {
 
     pub(crate) fn guest_workspace(&self) -> &str {
         &self.guest_workspace
+    }
+
+    pub(crate) fn cache_notes(&self) -> &[String] {
+        &self.cache_notes
     }
 
     /// Guest paths for the shared caches, keyed by the variable that names them.
@@ -806,13 +950,25 @@ impl Drop for TartVm {
         if self.kept {
             return;
         }
+        let mut saves = Vec::new();
         if let Some((shared, local)) = self.gradle_sync.take() {
-            let script = gradle_sync_script(&local, &shared);
+            saves.push(("the Gradle cache", gradle_sync_script(&local, &shared)));
+        }
+        if let Some((shared, local)) = self.derived_data_sync.take() {
+            saves.push(("DerivedData", derived_data_sync_script(&local, &shared)));
+        }
+        if let Some((shared, sdk, baseline)) = self.android_sdk_sync.take() {
+            saves.push((
+                "Android SDK packages",
+                android_sdk_out_script(&sdk, &shared, &baseline),
+            ));
+        }
+        for (what, script) in saves {
             if let Err(error) =
                 run_tart(&self.tart, &["exec", &self.name, "/bin/sh", "-c", &script])
             {
                 eprintln!(
-                    "Warning: failed to save the Gradle cache from VM {}: {error:#}",
+                    "Warning: failed to save {what} from VM {}: {error:#}",
                     self.name
                 );
             }
@@ -880,22 +1036,19 @@ mod tests {
     }
 
     #[test]
-    fn caches_mount_under_home_and_derived_data_at_xcode_default() {
+    fn caches_mount_under_oore_cache() {
         let pub_cache = HostShare {
             name: "pub",
             env: Some("PUB_CACHE"),
             host_dir: PathBuf::from("/caches/pub"),
         };
         let derived = HostShare {
-            name: "derived-data",
+            name: DERIVED_DATA_SHARE,
             env: None,
-            host_dir: PathBuf::from("/caches/derived-data"),
+            host_dir: PathBuf::from("/caches/derived-data/p1"),
         };
         assert_eq!(share_guest_dir(&pub_cache), "oore-cache/pub");
-        assert_eq!(
-            share_guest_dir(&derived),
-            "Library/Developer/Xcode/DerivedData"
-        );
+        assert_eq!(share_guest_dir(&derived), "oore-cache/derived-data");
         assert_eq!(share_tag("cocoapods-specs"), "oore-cache-cocoapods-specs");
         // Virtualization.framework caps a virtiofs tag at 36 bytes.
         assert!(share_tag("cocoapods-specs").len() <= 36);
@@ -969,13 +1122,205 @@ mod tests {
     }
 
     #[test]
-    fn gradle_cache_syncs_only_dependencies_and_wrappers() {
+    fn gradle_cache_syncs_complete_entries_only() {
         let script = gradle_sync_script("/s", "/l");
-        assert_eq!(
-            script,
-            "if [ -d '/s/caches/modules-2' ]; then mkdir -p '/l/caches/modules-2' && { /usr/bin/rsync -a --exclude '*.lock' --exclude '*.lck' '/s/caches/modules-2'/ '/l/caches/modules-2'/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }; fi && \
-             if [ -d '/s/wrapper/dists' ]; then mkdir -p '/l/wrapper/dists' && { /usr/bin/rsync -a --exclude '*.lock' --exclude '*.lck' '/s/wrapper/dists'/ '/l/wrapper/dists'/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }; fi"
+        assert!(script.starts_with("cd '/s' 2>/dev/null || exit 0; for dir in caches/modules-2 caches/transforms-* caches/jars-* caches/build-cache-1 wrapper/dists; do"));
+        assert!(script.contains("--exclude '*.lock' --exclude '*.lck'"));
+        assert!(!script.contains("caches/8."));
+
+        let properties = gradle_properties_script("/s", "/l");
+        assert!(properties.contains("cp '/s/gradle.properties' '/l/gradle.properties'"));
+        assert!(properties.contains("echo 'org.gradle.caching=true' >> '/l/gradle.properties'"));
+    }
+
+    fn run_sh(script: &str) -> std::process::Output {
+        Command::new("/bin/sh")
+            .args(["-c", script])
+            .output()
+            .unwrap()
+    }
+
+    /// Runs the copy scripts against temp directories where rsync sits at the
+    /// macOS path the scripts call.
+    #[test]
+    fn cache_scripts_round_trip() {
+        if !Path::new("/usr/bin/rsync").is_file() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("oore-tart-cache-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let path = |rel: &str| root.join(rel).to_str().unwrap().to_string();
+        let write = |rel: &str, body: &str| {
+            let file = root.join(rel);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, body).unwrap();
+        };
+
+        // Gradle: complete entries go both ways, locks and per-version stores do not.
+        write("gradle-share/caches/modules-2/files-2.1/a.jar", "a");
+        write("gradle-share/caches/modules-2/modules-2.lock", "");
+        write(
+            "gradle-share/gradle.properties",
+            "systemProp.https.proxyHost=proxy\n",
         );
+        assert!(
+            run_sh(&gradle_sync_script(
+                &path("gradle-share"),
+                &path("gradle-local")
+            ))
+            .status
+            .success()
+        );
+        assert!(
+            root.join("gradle-local/caches/modules-2/files-2.1/a.jar")
+                .is_file()
+        );
+        assert!(
+            !root
+                .join("gradle-local/caches/modules-2/modules-2.lock")
+                .exists()
+        );
+        assert!(
+            run_sh(&gradle_properties_script(
+                &path("gradle-share"),
+                &path("gradle-local")
+            ))
+            .status
+            .success()
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("gradle-local/gradle.properties")).unwrap(),
+            "systemProp.https.proxyHost=proxy\norg.gradle.caching=true\n"
+        );
+        write("gradle-local/caches/transforms-4/abc/result.jar", "t");
+        write("gradle-local/caches/build-cache-1/0123", "c");
+        write("gradle-local/caches/8.14/fileHashes/fileHashes.bin", "h");
+        assert!(
+            run_sh(&gradle_sync_script(
+                &path("gradle-local"),
+                &path("gradle-share")
+            ))
+            .status
+            .success()
+        );
+        assert!(
+            root.join("gradle-share/caches/transforms-4/abc/result.jar")
+                .is_file()
+        );
+        assert!(
+            root.join("gradle-share/caches/build-cache-1/0123")
+                .is_file()
+        );
+        assert!(!root.join("gradle-share/caches/8.14").exists());
+
+        // A project that turns the build cache off keeps it off.
+        write(
+            "gradle-share/gradle.properties",
+            "org.gradle.caching=false\n",
+        );
+        assert!(
+            run_sh(&gradle_properties_script(
+                &path("gradle-share"),
+                &path("gradle-local")
+            ))
+            .status
+            .success()
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("gradle-local/gradle.properties")).unwrap(),
+            "org.gradle.caching=false\n"
+        );
+
+        // Android SDK: only packages the image lacked are saved, and restored later.
+        write("sdk/platforms/android-36/package.xml", "image");
+        let baseline = path("baseline");
+        let first = run_sh(&android_sdk_in_script(
+            &path("sdk-share"),
+            &path("sdk"),
+            &baseline,
+        ));
+        assert!(first.status.success());
+        assert!(String::from_utf8_lossy(&first.stdout).trim().is_empty());
+        write("sdk/platforms/android-34/package.xml", "34");
+        write("sdk/cmake/3.22.1/bin/cmake", "cmake");
+        assert!(
+            run_sh(&android_sdk_out_script(
+                &path("sdk"),
+                &path("sdk-share"),
+                &baseline
+            ))
+            .status
+            .success()
+        );
+        assert!(
+            root.join("sdk-share/platforms/android-34/package.xml")
+                .is_file()
+        );
+        assert!(root.join("sdk-share/cmake/3.22.1/bin/cmake").is_file());
+        assert!(!root.join("sdk-share/platforms/android-36").exists());
+
+        fs::remove_dir_all(root.join("sdk")).unwrap();
+        write("sdk/platforms/android-36/package.xml", "image");
+        write("sdk-share/ndk/.27.0.partial/half", "x");
+        let second = run_sh(&android_sdk_in_script(
+            &path("sdk-share"),
+            &path("sdk"),
+            &baseline,
+        ));
+        assert!(second.status.success());
+        let mut restored = String::from_utf8_lossy(&second.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        restored.sort();
+        assert_eq!(restored, ["cmake;3.22.1", "platforms;android-34"]);
+        assert!(root.join("sdk/platforms/android-34/package.xml").is_file());
+        assert!(!root.join("sdk/ndk").exists());
+        assert!(
+            fs::read_dir(root.join("sdk/platforms"))
+                .unwrap()
+                .flatten()
+                .all(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        );
+
+        // DerivedData mirrors, so files Xcode dropped leave the saved copy too.
+        write("dd-local/Runner-abc/Build/old.o", "o");
+        write(
+            "dd-local/Runner-abc/SourcePackages/checkouts/firebase/x",
+            "f",
+        );
+        assert!(
+            run_sh(&derived_data_sync_script(
+                &path("dd-local"),
+                &path("dd-share")
+            ))
+            .status
+            .success()
+        );
+        fs::remove_file(root.join("dd-local/Runner-abc/Build/old.o")).unwrap();
+        assert!(
+            run_sh(&derived_data_sync_script(
+                &path("dd-local"),
+                &path("dd-share")
+            ))
+            .status
+            .success()
+        );
+        assert!(
+            root.join("dd-share/Runner-abc/SourcePackages/checkouts/firebase/x")
+                .is_file()
+        );
+        assert!(!root.join("dd-share/Runner-abc/Build/old.o").exists());
+        assert!(
+            run_sh(&derived_data_sync_script(
+                &path("missing"),
+                &path("dd-share")
+            ))
+            .status
+            .success()
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

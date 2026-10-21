@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useFormContext } from 'react-hook-form'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
@@ -52,8 +53,19 @@ const SIGNING_MODE_SUMMARIES = {
   hybrid: 'Uploaded certificate with profiles synced from App Store Connect.',
 } satisfies Record<keyof typeof SIGNING_MODES, string>
 
+/**
+ * Whether the pipeline uploads App Store builds anywhere (the Publishing
+ * tab), with a link there. Omitted while unknown, as on a new pipeline.
+ */
+export interface IosAppStorePublishing {
+  configured: boolean
+  link: ReactNode
+}
+
 export function PipelineIosSigningSection({
+  actions,
   apiKeyFile,
+  appStorePublishing,
   bundleIds,
   onApiKeyFileChange,
   onP12FileChange,
@@ -62,7 +74,10 @@ export function PipelineIosSigningSection({
   profileFiles,
   signingData,
 }: {
+  /** Rendered beside the heading, such as the profile sync button. */
+  actions?: ReactNode
   apiKeyFile: File | null
+  appStorePublishing?: IosAppStorePublishing
   bundleIds: Array<string>
   onApiKeyFileChange: (file: File | null) => void
   onP12FileChange: (file: File | null) => void
@@ -83,11 +98,14 @@ export function PipelineIosSigningSection({
           ? `${SIGNING_MODE_SUMMARIES[mode]} Required to install on physical devices.`
           : 'Optional. Required to install on physical iOS devices.'
       }
+      actions={enabled ? actions : undefined}
     >
       <IosSigningToggle signingData={signingData} />
       {enabled ? (
         <>
           <IosSigningIdentityFields
+            appStorePublishing={appStorePublishing}
+            mode={mode}
             storedExportMethod={signingData?.export_method}
           />
           {mode === 'manual' || mode === 'hybrid' ? (
@@ -160,9 +178,25 @@ function IosSigningToggle({
   )
 }
 
+/**
+ * Ad hoc and App Store profiles are not interchangeable, so the daemon
+ * discards the stored ones when the distribution changes. Say what replaces
+ * them: the save syncs new ones from App Store Connect in API and hybrid
+ * mode, while manual mode needs uploads.
+ */
+function exportMethodChangeHint(mode: PipelineFormValues['ios_signing_mode']) {
+  return mode === 'manual'
+    ? ' Saving discards the stored provisioning profiles, so upload profiles of the new type below.'
+    : ' Saving discards the stored provisioning profiles and syncs new ones from App Store Connect.'
+}
+
 function IosSigningIdentityFields({
+  appStorePublishing,
+  mode,
   storedExportMethod,
 }: {
+  appStorePublishing?: IosAppStorePublishing
+  mode: PipelineFormValues['ios_signing_mode']
   storedExportMethod?: IosExportMethod
 }) {
   const form = useFormContext<PipelineFormValues>()
@@ -195,9 +229,25 @@ function IosSigningIdentityFields({
             <FormDescription>
               {EXPORT_METHOD_EFFECTS[field.value]}
               {storedExportMethod && storedExportMethod !== field.value
-                ? ' Saving discards the stored provisioning profiles, so add or sync profiles of the new type.'
+                ? exportMethodChangeHint(mode)
                 : ''}
             </FormDescription>
+            {field.value === 'app_store' && appStorePublishing ? (
+              <p className="text-sm text-muted-foreground">
+                {appStorePublishing.configured ? (
+                  <>
+                    Signed builds upload as set up on the Publishing tab.{' '}
+                    {appStorePublishing.link}
+                  </>
+                ) : (
+                  <>
+                    No TestFlight or App Store upload is set up for this
+                    pipeline, so each build produces an IPA for you to upload
+                    yourself. {appStorePublishing.link}
+                  </>
+                )}
+              </p>
+            ) : null}
             <FormMessage />
           </FormItem>
         )}

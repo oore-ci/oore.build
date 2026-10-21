@@ -10,6 +10,7 @@ import { toast } from '@/lib/toast'
 import { ArtifactsPanel } from './artifacts-panel'
 import { AppOutputs } from './app-outputs'
 import { buildStateDescription } from '@/lib/build-state-description'
+import { retryStepLabel } from '@/lib/build-steps'
 import { BuildSummary } from './build-summary'
 import { EventTimeline } from './event-timeline'
 import { TestsPanel } from './tests-panel'
@@ -25,6 +26,7 @@ import {
   useBuildTests,
   useCancelBuild,
   useRerunBuild,
+  useRetryBuildStep,
 } from '@/hooks/use-builds'
 import { useLogStream } from '@/hooks/use-log-stream'
 import { useReleases } from '@/hooks/use-releases'
@@ -81,6 +83,7 @@ export function BuildDetailPage({
     'instance_settings:write',
   ])
   const rerunMutation = useRerunBuild()
+  const retryStepMutation = useRetryBuildStep()
   const liveEvents = useLiveEventsStore((s) => s.connected)
   const buildQuery = useBuild(buildId, {
     refetchInterval: (query) =>
@@ -244,6 +247,10 @@ export function BuildDetailPage({
   if (!data) return null
 
   const { build, events } = data
+  const retryableSteps = canTriggerBuild ? (data.retryable_steps ?? []) : []
+  const firstRetryLabel = retryableSteps[0]
+    ? retryStepLabel(retryableSteps[0])
+    : null
   const awaitingApproval = build.approval?.state === 'pending'
   const canDecideApproval = awaitingApproval && canApproveBuild
   // A maintainer rejects rather than cancels a build waiting for approval.
@@ -283,7 +290,40 @@ export function BuildDetailPage({
           </>
         }
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {retryableSteps.map((step) => (
+              <Button
+                key={step}
+                size="sm"
+                variant={build.status === 'failed' ? 'default' : 'outline'}
+                onClick={() => {
+                  retryStepMutation.mutate(
+                    { buildId: build.id, step },
+                    {
+                      onSuccess: (result) => {
+                        toast.success(
+                          `Retrying the ${retryStepLabel(step)} as build #${result.build.build_number}`,
+                        )
+                        void navigate({
+                          to: '/builds/$buildId',
+                          params: { buildId: result.build.id },
+                        })
+                      },
+                      onError: (err) => {
+                        toast.error(`Failed to retry: ${err.message}`)
+                      },
+                    },
+                  )
+                }}
+                disabled={retryStepMutation.isPending}
+              >
+                <HugeiconsIcon icon={Refresh01Icon} size={14} />
+                {retryStepMutation.isPending &&
+                retryStepMutation.variables.step === step
+                  ? 'Retrying...'
+                  : `Retry ${retryStepLabel(step)}`}
+              </Button>
+            ))}
             {isTerminal && canTriggerBuild ? (
               <Button
                 variant="outline"
@@ -402,9 +442,11 @@ export function BuildDetailPage({
             <p role="status">{stateDescription}</p>
             {isTerminal && build.status !== 'succeeded' ? (
               <p>
-                {testSummary?.failed
-                  ? `${testSummary.failed} tests failed. Check Tests and Logs before retrying.`
-                  : 'Check Logs and Timeline before retrying.'}
+                {firstRetryLabel
+                  ? `The build's artifacts are stored, so once the cause is fixed you can retry the ${firstRetryLabel} without rebuilding.`
+                  : testSummary?.failed
+                    ? `${testSummary.failed} tests failed. Check Tests and Logs before retrying.`
+                    : 'Check Logs and Timeline before retrying.'}
               </p>
             ) : null}
           </AlertDescription>

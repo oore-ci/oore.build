@@ -7,6 +7,7 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import type { Build } from '@oore/client/models'
+import { retryStepLabel } from '@/lib/build-steps'
 import { formatDuration, relativeTime } from '@/lib/format-utils'
 
 export function BuildSummary({
@@ -74,7 +75,9 @@ export function BuildSummary({
               params={{ buildId: build.source_build_id }}
               className="underline underline-offset-4 hover:text-foreground"
             >
-              Re-run of a previous build
+              {build.retry_steps
+                ? `Retries the ${build.retry_steps.map(retryStepLabel).join(' and ')} of a previous build`
+                : 'Re-run of a previous build'}
             </Link>
           </dd>
         </div>

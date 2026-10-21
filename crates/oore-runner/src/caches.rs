@@ -48,8 +48,8 @@ const LOCKFILE_SKIP_DIRS: [&str; 10] = [
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CacheMount {
     pub name: &'static str,
-    /// The variable that points the tool at the directory. Xcode has none for
-    /// DerivedData; a VM mounts that one at the guest's default location.
+    /// The variable that points the tool at the directory. DerivedData and
+    /// Android SDK packages have none; a VM copies those where the tool looks.
     pub env: Option<&'static str>,
     pub host_dir: PathBuf,
 }
@@ -63,7 +63,7 @@ struct CacheDirSpec {
     stops_gradle: bool,
 }
 
-const CACHE_DIRS: [CacheDirSpec; 5] = [
+const CACHE_DIRS: [CacheDirSpec; 6] = [
     CacheDirSpec {
         name: "pub",
         env: Some("PUB_CACHE"),
@@ -98,6 +98,19 @@ const CACHE_DIRS: [CacheDirSpec; 5] = [
         name: "derived-data",
         env: None,
         units: &[(".", 1)],
+        stops_gradle: false,
+    },
+    // Android SDK packages VM builds installed; a host build installs into
+    // the host's SDK, which persists on its own.
+    CacheDirSpec {
+        name: "android-sdk",
+        env: None,
+        units: &[
+            ("platforms", 1),
+            ("build-tools", 1),
+            ("ndk", 1),
+            ("cmake", 1),
+        ],
         stops_gradle: false,
     },
 ];

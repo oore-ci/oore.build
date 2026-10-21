@@ -62,6 +62,23 @@ function withBuildContext(build: (typeof demoState.builds)[number]) {
   }
 }
 
+const RETRYABLE_STEPS = ['publish-play', 'publish-app-store']
+
+/** Uploads the demo can retry: the artifacts were stored and the upload did not succeed. */
+function demoRetryableSteps(build: (typeof demoState.builds)[number]) {
+  const steps = build.step_results ?? []
+  const terminal = ['succeeded', 'failed', 'canceled', 'timed_out'].includes(
+    build.status,
+  )
+  const stored = steps.some(
+    (step) => step.name === 'artifacts' && step.status === 'succeeded',
+  )
+  if (!terminal || !stored) return []
+  return RETRYABLE_STEPS.filter((name) =>
+    steps.some((step) => step.name === name && step.status !== 'succeeded'),
+  )
+}
+
 export const buildHandlers = [
   demoApi.previewBuildChangelog(async ({ request, params }) => {
     await delay(200)
@@ -191,6 +208,7 @@ export const buildHandlers = [
     }
     return HttpResponse.json({
       build: withBuildContext(build),
+      retryable_steps: demoRetryableSteps(build),
       events: demoState.buildEvents[build.id] ?? [
         {
           id: `evt-auto-${build.id}`,
@@ -400,6 +418,74 @@ export const buildHandlers = [
     ]
     return HttpResponse.json(
       { build: withBuildContext(rerun) },
+      { status: 201 },
+    )
+  }),
+
+  demoApi.retryBuildStep(async ({ params, request }) => {
+    await delay(300)
+    const build = demoState.builds.find(
+      (candidate) => candidate.id === params.build_id,
+    )
+    if (!build) {
+      return HttpResponse.json(
+        { error: 'Build not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    const forbidden = requireDemoProjectPermission(
+      request,
+      build.project_id,
+      'builds:write',
+    )
+    if (forbidden) return forbidden
+    const { step } = z.object({ step: z.string() }).parse(await request.json())
+    const retryable = demoRetryableSteps(build)
+    const position = retryable.indexOf(step)
+    if (position < 0) {
+      return HttpResponse.json(
+        {
+          error: `${step} cannot be retried for this build`,
+          code: 'step_not_retryable',
+        },
+        { status: 409 },
+      )
+    }
+    const retry: (typeof demoState.builds)[number] = {
+      ...build,
+      id: `build-demo-retry-${crypto.randomUUID().slice(0, 8)}`,
+      build_number:
+        Math.max(
+          ...demoState.builds
+            .filter((candidate) => candidate.project_id === build.project_id)
+            .map((candidate) => candidate.build_number),
+        ) + 1,
+      status: 'queued',
+      trigger_type: 'manual',
+      trigger_event: 'retry',
+      source_build_id: build.id,
+      retry_steps: retryable.slice(position),
+      step_results: undefined,
+      runner_id: undefined,
+      started_at: undefined,
+      finished_at: undefined,
+      exit_code: undefined,
+      queued_at: ago(0),
+      created_at: ago(0),
+      updated_at: ago(0),
+    }
+    demoState.builds.unshift(retry)
+    demoState.buildEvents[retry.id] = [
+      {
+        id: `evt-${retry.id}-queued`,
+        build_id: retry.id,
+        to_status: 'queued',
+        reason: `retry of ${retry.retry_steps?.join(', ')} from build #${build.build_number}`,
+        created_at: retry.created_at,
+      },
+    ]
+    return HttpResponse.json(
+      { build: withBuildContext(retry) },
       { status: 201 },
     )
   }),

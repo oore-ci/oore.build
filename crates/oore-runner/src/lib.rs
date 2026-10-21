@@ -18,11 +18,12 @@ use caches::{CacheObservation, CacheStats, RunnerCaches};
 use oore_contract::{
     AndroidSigningBuildType, BuildIsolation, BuildPlatform, BuildStatus, ClaimJobRequest,
     ClaimJobResponse, ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse,
-    IosExportMethod, JobStatusResponse, PipelineCommandStages, PipelineEnvVar,
-    PipelineExecutionConfig, PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION,
-    RunnerAndroidSigningProfile, RunnerAndroidSigningResponse, RunnerHeartbeatResponse,
-    RunnerIosSigningBundle, RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan,
-    RunnerPublishResult, StepResult, artifact_pattern_matches, is_valid_pipeline_env_key,
+    IosExportMethod, JobStatusResponse, PUBLISH_APP_STORE_STEP, PUBLISH_PLAY_STEP,
+    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
+    PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
+    RunnerAndroidSigningResponse, RunnerHeartbeatResponse, RunnerIosSigningBundle,
+    RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult,
+    RunnerRetryArtifactsResponse, StepResult, artifact_pattern_matches, is_valid_pipeline_env_key,
     missing_runner_labels, normalize_runner_labels, parse_repository_pipeline_yaml,
     replace_secret_references, store_version_code, validate_artifact_pattern,
     validate_build_number_offset, validate_repository_config_path,
@@ -4384,6 +4385,446 @@ async fn execute_build(
     (steps, result)
 }
 
+/// Where a reused artifact goes in the workspace: where a build leaves it, so
+/// the uploads find it the same way. `None` for an artifact no upload reads.
+fn retry_artifact_path(name: &str, artifact_type: &str) -> Option<String> {
+    if name.is_empty()
+        || name.starts_with('.')
+        || name.contains(['/', '\\'])
+        || name.chars().any(char::is_control)
+    {
+        return None;
+    }
+    if name.to_ascii_lowercase().ends_with(".aab") {
+        Some(format!("build/app/outputs/bundle/release/{name}"))
+    } else if name == "mapping.txt" {
+        Some("build/app/outputs/mapping/release/mapping.txt".to_string())
+    } else if artifact_type == "ipa" {
+        Some(format!("build/ios/ipa/{name}"))
+    } else {
+        None
+    }
+}
+
+/// Downloads a stored artifact to `dest` and checks it against the checksum
+/// recorded when it was uploaded.
+async fn download_retry_artifact(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    download_url: &str,
+    dest: &Path,
+    checksum: Option<&str>,
+) -> anyhow::Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    // Local storage hands out daemon-relative URLs.
+    let url = if download_url.starts_with('/') {
+        format!("{}{download_url}", daemon_url.trim_end_matches('/'))
+    } else {
+        download_url.to_string()
+    };
+    let mut resp = client.get(&url).send().await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("download failed (HTTP {})", resp.status());
+    }
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let mut file = tokio::fs::File::create(dest).await?;
+    let mut hasher = Sha256::new();
+    while let Some(chunk) = resp.chunk().await? {
+        hasher.update(&chunk);
+        file.write_all(&chunk).await?;
+    }
+    file.flush().await?;
+    let actual = hex::encode(hasher.finalize());
+    if let Some(expected) = checksum
+        && !expected.eq_ignore_ascii_case(&actual)
+    {
+        anyhow::bail!("checksum mismatch: expected {expected}, got {actual}");
+    }
+    Ok(())
+}
+
+async fn fetch_job_retry_artifacts(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    signing_token: &str,
+) -> anyhow::Result<RunnerRetryArtifactsResponse> {
+    let resp = client
+        .get(format!(
+            "{}/v1/runners/{}/jobs/{}/retry-artifacts",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .header("x-oore-signing-token", signing_token)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("artifact lookup failed: {}", resp.status());
+    }
+    Ok(resp.json().await?)
+}
+
+/// The retry job's private directories.
+struct RetryWorkspace<'a> {
+    workspace: &'a Path,
+    signing_workspace: &'a Path,
+    authority: &'a Arc<BuildAuthorityState>,
+}
+
+/// Runs only the retried store uploads, with the source build's stored
+/// artifacts instead of a build. The artifacts are stored again as this
+/// build's own, so its uploads and releases point at what it published.
+#[allow(clippy::too_many_arguments)]
+async fn execute_step_retry(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    dirs: RetryWorkspace<'_>,
+    retry_steps: &[String],
+    steps: &mut Vec<StepResult>,
+) -> anyhow::Result<()> {
+    let RetryWorkspace {
+        workspace,
+        signing_workspace,
+        authority,
+    } = dirs;
+    let secrets = fetch_job_secrets(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &job.signing_token,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("Failed to load secrets for this build: {error}"))?;
+    log_seq.masker = SecretMasker::new(secrets.values().map(String::as_str));
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!(
+            "[oore-retry] Retrying {} with the source build's stored artifacts. Build steps do not run again.",
+            retry_steps.join(", ")
+        ),
+    )
+    .await;
+
+    let publish_plan = fetch_job_publish_plan(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &job.signing_token,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("Failed to load publish settings for this build: {error}"))?;
+    for step in retry_steps {
+        let enabled = match step.as_str() {
+            PUBLISH_PLAY_STEP => publish_plan.google_play.is_some(),
+            PUBLISH_APP_STORE_STEP => publish_plan.app_store.is_some(),
+            _ => false,
+        };
+        if !enabled {
+            anyhow::bail!(
+                "{step} cannot run: publishing to that store is no longer turned on for this pipeline"
+            );
+        }
+    }
+
+    // Release notes kept in the repository are read from the build's commit.
+    let needs_source = retry_steps.iter().any(|step| step == PUBLISH_PLAY_STEP)
+        && publish_plan.google_play.as_ref().is_some_and(|play| {
+            play.release_notes == oore_contract::GooglePlayReleaseNotesSource::RepoFiles
+        });
+    if needs_source {
+        run_checkout(
+            job, client, daemon_url, config, log_seq, workspace, authority, steps,
+        )
+        .await?;
+    }
+
+    let step_name = "artifacts";
+    let started = now_unix();
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &step_start_marker(step_name, "Reuse the source build's stored artifacts"),
+    )
+    .await;
+    let mut ipa: Option<(PathBuf, serde_json::Value)> = None;
+    let restore: anyhow::Result<()> = async {
+        let listing = fetch_job_retry_artifacts(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &job.signing_token,
+        )
+        .await?;
+        let mut restored = Vec::new();
+        for artifact in listing.artifacts {
+            let Some(relative) = retry_artifact_path(&artifact.name, &artifact.artifact_type)
+            else {
+                continue;
+            };
+            let dest = workspace.join(&relative);
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &format!("[oore-retry] Downloading {}", artifact.name),
+            )
+            .await;
+            download_retry_artifact(
+                client,
+                daemon_url,
+                &artifact.download_url,
+                &dest,
+                artifact.checksum.as_deref(),
+            )
+            .await
+            .with_context(|| format!("failed to download {}", artifact.name))?;
+            if artifact.artifact_type == "ipa" {
+                ipa = Some((dest, artifact.metadata));
+            }
+            restored.push(relative);
+        }
+        if restored.is_empty() {
+            anyhow::bail!("the source build has no stored artifacts these uploads can use");
+        }
+        scan_and_upload_artifacts(
+            workspace,
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &restored,
+            ipa.as_ref().map(|(_, metadata)| metadata),
+        )
+        .await
+    }
+    .await;
+    let finished = now_unix();
+    let succeeded = restore.is_ok();
+    steps.push(StepResult {
+        name: step_name.to_string(),
+        status: if succeeded { "succeeded" } else { "failed" }.to_string(),
+        exit_code: Some(if succeeded { 0 } else { 1 }),
+        started_at: started,
+        finished_at: finished,
+        duration_ms: (finished - started) * 1000,
+    });
+    if let Err(error) = &restore {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stderr",
+            &format!("[oore-retry] {error:#}"),
+        )
+        .await;
+    }
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &step_end_marker(
+            step_name,
+            if succeeded { "succeeded" } else { "failed" },
+            Some(if succeeded { 0 } else { 1 }),
+        ),
+    )
+    .await;
+    restore?;
+
+    run_publish_steps(
+        job,
+        client,
+        daemon_url,
+        config,
+        log_seq,
+        PublishInputs {
+            workspace,
+            signing_workspace,
+            secrets: &secrets,
+            signed_ipa_path: ipa.as_ref().map(|(path, _)| path.as_path()),
+            ios_artifact_metadata: ipa.as_ref().map(|(_, metadata)| metadata),
+            only: Some(retry_steps),
+        },
+        steps,
+    )
+    .await
+}
+
+/// Clones the build's commit into `workspace` as the `checkout` step.
+#[allow(clippy::too_many_arguments)]
+async fn run_checkout(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    workspace: &Path,
+    authority: &Arc<BuildAuthorityState>,
+    steps: &mut Vec<StepResult>,
+) -> anyhow::Result<()> {
+    let snapshot = &job.config_snapshot;
+    let repo_url = snapshot
+        .get("repo_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if repo_url.is_empty() {
+        anyhow::bail!("Build config snapshot has no repo_url — cannot checkout source");
+    }
+
+    let proxy_path = snapshot.get("checkout_proxy_path").and_then(|v| v.as_str());
+    let effective_repo_url = proxy_path
+        .map(|path| format!("{}{}", daemon_url.trim_end_matches('/'), path))
+        .unwrap_or_else(|| repo_url.to_string());
+
+    let start = now_unix();
+    let mut checkout = match build_checkout_invocation(
+        &effective_repo_url,
+        job.commit_sha.as_deref(),
+        job.branch.as_deref(),
+    ) {
+        Ok(checkout) => checkout,
+        Err(e) => return Err(e),
+    };
+    if proxy_path.is_some() {
+        add_checkout_proxy_config(&mut checkout, &effective_repo_url, &config.runner_token);
+    }
+
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &step_start_marker("checkout", &checkout.preview_command),
+    )
+    .await;
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!("$ {}", checkout.preview_command),
+    )
+    .await;
+
+    let mut checkout_child = repository_shell_command(&checkout.shell_script, workspace);
+    checkout_child
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+
+    for (key, value) in &checkout.env {
+        checkout_child.env(key, value);
+    }
+    scrub_managed_runner_env(&mut checkout_child);
+
+    let child = match checkout_child.spawn() {
+        Ok(c) => c,
+        Err(e) => return Err(e.into()),
+    };
+
+    let clone_status = run_and_stream(
+        child,
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
+    )
+    .await;
+
+    let finished = now_unix();
+    match clone_status {
+        None => {
+            steps.push(StepResult {
+                name: "checkout".to_string(),
+                status: "failed".to_string(),
+                exit_code: None,
+                started_at: start,
+                finished_at: finished,
+                duration_ms: (finished - start) * 1000,
+            });
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &step_end_marker("checkout", "canceled", None),
+            )
+            .await;
+            return Err(BuildTerminated {
+                status: "canceled".to_string(),
+            }
+            .into());
+        }
+        Some(status) => {
+            let exit_code = status.code();
+            let success = exit_code == Some(0);
+            steps.push(StepResult {
+                name: "checkout".to_string(),
+                status: if success { "succeeded" } else { "failed" }.to_string(),
+                exit_code,
+                started_at: start,
+                finished_at: finished,
+                duration_ms: (finished - start) * 1000,
+            });
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &step_end_marker(
+                    "checkout",
+                    if success { "succeeded" } else { "failed" },
+                    exit_code,
+                ),
+            )
+            .await;
+            if !success {
+                anyhow::bail!("Git checkout failed");
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn execute_build_steps(
     job: &ClaimedJob,
     client: &reqwest::Client,
@@ -4432,6 +4873,25 @@ async fn execute_build_steps(
     if let Err(e) = check_build_active(client, daemon_url, config, &job.build_id, &authority).await
     {
         return (steps, Err(e));
+    }
+
+    if let Some(retry_steps) = job.retry_steps.as_deref() {
+        let result = execute_step_retry(
+            job,
+            client,
+            daemon_url,
+            config,
+            log_seq,
+            RetryWorkspace {
+                workspace: &workspace,
+                signing_workspace: &signing_workspace,
+                authority: &authority,
+            },
+            retry_steps,
+            &mut steps,
+        )
+        .await;
+        return (steps, result);
     }
 
     if ios_signing_checked_before_checkout {
@@ -4493,144 +4953,12 @@ async fn execute_build_steps(
     };
     log_seq.masker = SecretMasker::new(secrets.values().map(String::as_str));
 
-    let repo_url = snapshot
-        .get("repo_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    if repo_url.is_empty() {
-        return (
-            steps,
-            Err(anyhow::anyhow!(
-                "Build config snapshot has no repo_url — cannot checkout source"
-            )),
-        );
-    }
-
-    let proxy_path = snapshot.get("checkout_proxy_path").and_then(|v| v.as_str());
-    let effective_repo_url = proxy_path
-        .map(|path| format!("{}{}", daemon_url.trim_end_matches('/'), path))
-        .unwrap_or_else(|| repo_url.to_string());
-
-    let start = now_unix();
-    let mut checkout = match build_checkout_invocation(
-        &effective_repo_url,
-        job.commit_sha.as_deref(),
-        job.branch.as_deref(),
-    ) {
-        Ok(checkout) => checkout,
-        Err(e) => return (steps, Err(e)),
-    };
-    if proxy_path.is_some() {
-        add_checkout_proxy_config(&mut checkout, &effective_repo_url, &config.runner_token);
-    }
-
-    let _ = append_runner_log_line(
-        client,
-        daemon_url,
-        config,
-        &job.build_id,
-        log_seq,
-        "stdout",
-        &step_start_marker("checkout", &checkout.preview_command),
+    if let Err(error) = run_checkout(
+        job, client, daemon_url, config, log_seq, &workspace, &authority, &mut steps,
     )
-    .await;
-    let _ = append_runner_log_line(
-        client,
-        daemon_url,
-        config,
-        &job.build_id,
-        log_seq,
-        "stdout",
-        &format!("$ {}", checkout.preview_command),
-    )
-    .await;
-
-    let mut checkout_child = repository_shell_command(&checkout.shell_script, &workspace);
-    checkout_child
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-
-    for (key, value) in &checkout.env {
-        checkout_child.env(key, value);
-    }
-    scrub_managed_runner_env(&mut checkout_child);
-
-    let child = match checkout_child.spawn() {
-        Ok(c) => c,
-        Err(e) => return (steps, Err(e.into())),
-    };
-
-    let clone_status = run_and_stream(
-        child,
-        client,
-        daemon_url,
-        config,
-        &job.build_id,
-        log_seq,
-        poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
-    )
-    .await;
-
-    let finished = now_unix();
-    match clone_status {
-        None => {
-            steps.push(StepResult {
-                name: "checkout".to_string(),
-                status: "failed".to_string(),
-                exit_code: None,
-                started_at: start,
-                finished_at: finished,
-                duration_ms: (finished - start) * 1000,
-            });
-            let _ = append_runner_log_line(
-                client,
-                daemon_url,
-                config,
-                &job.build_id,
-                log_seq,
-                "stdout",
-                &step_end_marker("checkout", "canceled", None),
-            )
-            .await;
-            return (
-                steps,
-                Err(BuildTerminated {
-                    status: "canceled".to_string(),
-                }
-                .into()),
-            );
-        }
-        Some(status) => {
-            let exit_code = status.code();
-            let success = exit_code == Some(0);
-            steps.push(StepResult {
-                name: "checkout".to_string(),
-                status: if success { "succeeded" } else { "failed" }.to_string(),
-                exit_code,
-                started_at: start,
-                finished_at: finished,
-                duration_ms: (finished - start) * 1000,
-            });
-            let _ = append_runner_log_line(
-                client,
-                daemon_url,
-                config,
-                &job.build_id,
-                log_seq,
-                "stdout",
-                &step_end_marker(
-                    "checkout",
-                    if success { "succeeded" } else { "failed" },
-                    exit_code,
-                ),
-            )
-            .await;
-            if !success {
-                return (steps, Err(anyhow::anyhow!("Git checkout failed")));
-            }
-        }
+    .await
+    {
+        return (steps, Err(error));
     }
 
     if let Some(caches) = caches {
@@ -4892,14 +5220,19 @@ async fn execute_build_steps(
                     caches
                         .mounts()
                         .into_iter()
-                        // DerivedData stays on the guest disk: Xcode's build
-                        // database is SQLite, which needs file locking the
-                        // virtiofs share does not provide.
-                        .filter(|mount| mount.env.is_some())
                         .map(|mount| tart::HostShare {
                             name: mount.name,
                             env: mount.env,
-                            host_dir: mount.host_dir,
+                            // Every VM build runs from the same guest path, so
+                            // Xcode names DerivedData the same for every
+                            // project; keep one saved copy per project.
+                            host_dir: if mount.name == "derived-data" {
+                                mount.host_dir.join(hex::encode(
+                                    &Sha256::digest(job.project_id.as_bytes())[..16],
+                                ))
+                            } else {
+                                mount.host_dir
+                            },
                         })
                         .collect::<Vec<_>>()
                 })
@@ -5486,6 +5819,57 @@ Install the required tooling on the runner, set isolation: vm, or override build
 
     // Publishing runs only after every build, signing and artifact step
     // succeeded; any earlier failure has already returned.
+    let result = run_publish_steps(
+        job,
+        client,
+        daemon_url,
+        config,
+        log_seq,
+        PublishInputs {
+            workspace: &workspace,
+            signing_workspace: &signing_workspace,
+            secrets: &secrets,
+            signed_ipa_path: signed_ipa_path.as_deref(),
+            ios_artifact_metadata: ios_artifact_metadata.as_ref(),
+            only: None,
+        },
+        &mut steps,
+    )
+    .await;
+    (steps, result)
+}
+
+/// What the store uploads read: the build's outputs and the job's secrets.
+struct PublishInputs<'a> {
+    workspace: &'a Path,
+    signing_workspace: &'a Path,
+    secrets: &'a std::collections::BTreeMap<String, String>,
+    signed_ipa_path: Option<&'a Path>,
+    ios_artifact_metadata: Option<&'a serde_json::Value>,
+    /// Runs only these upload steps, for a step retry. `None` runs every
+    /// upload the pipeline turns on.
+    only: Option<&'a [String]>,
+}
+
+/// Runs the store uploads the pipeline turns on, stopping at the first failure.
+async fn run_publish_steps(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    inputs: PublishInputs<'_>,
+    steps: &mut Vec<StepResult>,
+) -> anyhow::Result<()> {
+    let PublishInputs {
+        workspace,
+        signing_workspace,
+        secrets,
+        signed_ipa_path,
+        ios_artifact_metadata,
+        only,
+    } = inputs;
+    let runs = |step: &str| only.is_none_or(|only| only.iter().any(|name| name == step));
     let publish_plan = match fetch_job_publish_plan(
         client,
         daemon_url,
@@ -5497,16 +5881,15 @@ Install the required tooling on the runner, set isolation: vm, or override build
     {
         Ok(plan) => plan,
         Err(error) => {
-            return (
-                steps,
-                Err(anyhow::anyhow!(
-                    "Failed to load publish settings for this build: {error}"
-                )),
-            );
+            anyhow::bail!("Failed to load publish settings for this build: {error}");
         }
     };
-    if let Some(play) = &publish_plan.google_play {
-        let step_name = "publish-play";
+    if let Some(play) = publish_plan
+        .google_play
+        .as_ref()
+        .filter(|_| runs(PUBLISH_PLAY_STEP))
+    {
+        let step_name = PUBLISH_PLAY_STEP;
         let started = now_unix();
         let _ = append_runner_log_line(
             client,
@@ -5521,8 +5904,8 @@ Install the required tooling on the runner, set isolation: vm, or override build
         let mut lines = Vec::new();
         let result = publish::publish_to_google_play(
             client,
-            &workspace,
-            &secrets,
+            workspace,
+            secrets,
             publish_plan.changelog.as_deref(),
             play,
             &mut lines,
@@ -5611,13 +5994,17 @@ Install the required tooling on the runner, set isolation: vm, or override build
                     &step_end_marker(step_name, "failed", Some(1)),
                 )
                 .await;
-                return (steps, Err(error.context("publish-play failed")));
+                return Err(error.context("publish-play failed"));
             }
         }
     }
 
-    if let Some(app_store) = &publish_plan.app_store {
-        let step_name = "publish-app-store";
+    if let Some(app_store) = publish_plan
+        .app_store
+        .as_ref()
+        .filter(|_| runs(PUBLISH_APP_STORE_STEP))
+    {
+        let step_name = PUBLISH_APP_STORE_STEP;
         let started = now_unix();
         let _ = append_runner_log_line(
             client,
@@ -5629,7 +6016,7 @@ Install the required tooling on the runner, set isolation: vm, or override build
             &step_start_marker(step_name, "Upload the IPA to App Store Connect"),
         )
         .await;
-        let result = match (signed_ipa_path.as_deref(), ios_artifact_metadata.as_ref()) {
+        let result = match (signed_ipa_path, ios_artifact_metadata) {
             (Some(ipa), Some(metadata)) => {
                 let key_dir = signing_workspace.join(".oore").join("asc-keys");
                 match app_store_upload::upload_ipa(ipa, &app_store.credentials, &key_dir).await {
@@ -5723,12 +6110,12 @@ Install the required tooling on the runner, set isolation: vm, or override build
                     &step_end_marker(step_name, "failed", Some(1)),
                 )
                 .await;
-                return (steps, Err(error.context("publish-app-store failed")));
+                return Err(error.context("publish-app-store failed"));
             }
         }
     }
 
-    (steps, Ok(()))
+    Ok(())
 }
 
 /// The build's VM and the host slot it occupies. The VM is declared first so
@@ -5883,6 +6270,18 @@ async fn start_build_vm(
         ),
     )
     .await;
+    for line in vm.cache_notes() {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stdout",
+            line,
+        )
+        .await;
+    }
     Ok(BuildVm { vm, _slot: slot })
 }
 
@@ -6846,6 +7245,31 @@ async fn run_and_stream(
     }
 
     status
+}
+
+#[cfg(test)]
+mod step_retry_tests {
+    use super::retry_artifact_path;
+
+    #[test]
+    fn reused_artifacts_go_where_a_build_leaves_them() {
+        assert_eq!(
+            retry_artifact_path("app-release.aab", "generic").as_deref(),
+            Some("build/app/outputs/bundle/release/app-release.aab")
+        );
+        assert_eq!(
+            retry_artifact_path("mapping.txt", "generic").as_deref(),
+            Some("build/app/outputs/mapping/release/mapping.txt")
+        );
+        assert_eq!(
+            retry_artifact_path("Runner.ipa", "ipa").as_deref(),
+            Some("build/ios/ipa/Runner.ipa")
+        );
+        assert_eq!(retry_artifact_path("app-release.apk", "apk"), None);
+        for unsafe_name in ["../app.aab", "a/b.aab", ".hidden.aab", ""] {
+            assert_eq!(retry_artifact_path(unsafe_name, "generic"), None);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -21,6 +21,8 @@ The directories live under `~/Library/Caches/build.oore/runner-caches/<runner>/`
 
 Xcode keeps DerivedData in its default location. Each project builds from the same workspace path on a runner, so Xcode reuses one DerivedData folder per project.
 
+Builds that run in a VM also use `derived-data`, one folder per project, and `android-sdk`, which holds Android SDK packages the VM image lacks. See [VM isolation](/operate/runners/vm-isolation).
+
 Builds use the runner's Gradle home, so before each build the runner copies `~/.gradle/gradle.properties` into it. Proxy settings such as `systemProp.https.proxyHost` and JVM settings there keep applying. Edit the file in `~/.gradle`, not the copy.
 
 ## Hits and misses

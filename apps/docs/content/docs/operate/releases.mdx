@@ -145,12 +145,15 @@ The signing boundary uses the `release-signing` GitHub environment. Configure th
 1. Protect `master`, `stable`, `beta`, and `alpha` with required review, validation checks, and restricted direct pushes.
 2. Protect `v*` tags against updates and deletion. Limit tag creation to release operators and automation.
 3. Create `release-signing` under **Settings > Environments**.
-4. Add at least one required reviewer.
-5. Enable protection against self-review.
-6. Disable administrator bypass.
-7. Select deployment branches and tags.
-8. Add only the `master` branch pattern.
-9. Do not add a tag pattern.
+4. Disable administrator bypass.
+5. Select deployment branches and tags.
+6. Add only the `master` branch pattern.
+7. Do not add a tag pattern.
+
+Do not add required reviewers. The release is approved when its release pull
+request is reviewed and merged; a reviewer on the environment would stop every
+release a second and third time, once per signing job and once for publication.
+The branch pattern is what keeps the key away from other workflows.
 
 These rules match the workflow's `GITHUB_REF`. The release workflow always runs from `master` and builds the requested tag separately.
 
@@ -178,7 +181,7 @@ gh secret set OORE_RELEASE_SIGNING_KEY \
 
 Enable [Immutable Releases](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/prevent-release-changes) for the repository.
 
-Create the protected `release-publication` environment. Allow only the protected `master` branch and require a reviewer.
+Create the protected `release-publication` environment. Allow only the protected `master` branch, with no required reviewers, as for `release-signing`.
 
 Create a fine-grained token for only `oore-ci/oore.build`.
 
@@ -240,7 +243,7 @@ Run the non-publishing preflight before the first release and after each key cha
 gh workflow run sign-release-metadata.yml --ref master
 ```
 
-Approve the `release-signing` environment job in GitHub Actions. The preflight derives the public key and compares it with the trusted pin.
+The preflight derives the public key and compares it with the trusted pin.
 
 The manual preflight does not create a release, sign metadata, or deploy files.
 

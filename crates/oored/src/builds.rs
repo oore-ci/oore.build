@@ -29,7 +29,7 @@ const REDACTED_ENV_VALUE: &str = "[REDACTED]";
 
 // ── Row conversion helpers ──────────────────────────────────────
 
-fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
+pub(crate) fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
     let config_snapshot_str: String = row.get("config_snapshot");
     let config_snapshot: serde_json::Value =
         serde_json::from_str(&config_snapshot_str).unwrap_or(serde_json::json!({}));
@@ -92,6 +92,7 @@ fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         branch: row.get("branch"),
         changelog: row.get("changelog"),
         source_build_id: row.get("source_build_id"),
+        retry_steps: crate::step_retry::retry_steps_from_snapshot(&config_snapshot),
         approval,
         config_snapshot,
         runner_id: row.get("runner_id"),
@@ -1192,6 +1193,7 @@ pub async fn create_build(
         branch,
         changelog,
         source_build_id: None,
+        retry_steps: None,
         approval: pending_approval(approval_required, now),
         config_snapshot,
         runner_id: None,
@@ -1405,8 +1407,18 @@ pub async fn get_build(
     let build = row_to_redacted_build(&build_row);
 
     let events = fetch_build_events(pool, &build_id).await?;
+    let retryable_steps = crate::step_retry::retryable_steps(pool, &build)
+        .await
+        .unwrap_or_else(|e| {
+            warn!(build_id = %build_id, error = %e, "failed to check retryable steps");
+            Vec::new()
+        });
 
-    Ok(Json(BuildDetailResponse { build, events }))
+    Ok(Json(BuildDetailResponse {
+        build,
+        events,
+        retryable_steps,
+    }))
 }
 
 /// `POST /v1/builds/{build_id}/cancel` — cancel a build.
@@ -1709,6 +1721,18 @@ pub async fn rerun_build(
     auth: AuthUser,
     Path(build_id): Path<String>,
 ) -> Result<(StatusCode, Json<RerunBuildResponse>), (StatusCode, Json<ApiError>)> {
+    let build = queue_rerun(&state, &auth, build_id, None).await?;
+    Ok((StatusCode::CREATED, Json(RerunBuildResponse { build })))
+}
+
+/// Queue a new build from a finished one. With `retry_steps`, the new build
+/// only runs those steps against the source build's stored artifacts.
+pub(crate) async fn queue_rerun(
+    state: &AppState,
+    auth: &AuthUser,
+    build_id: String,
+    retry_steps: Option<Vec<String>>,
+) -> Result<Build, (StatusCode, Json<ApiError>)> {
     let pool = &state.db;
 
     // Fetch source build
@@ -1893,7 +1917,17 @@ pub async fn rerun_build(
             "timeout_secs".to_string(),
             serde_json::json!(i64::from(timeout_minutes) * 60),
         );
+        // A full re-run of a retry builds everything again.
+        snapshot.remove("retry_steps");
+        if let Some(steps) = &retry_steps {
+            snapshot.insert("retry_steps".to_string(), serde_json::json!(steps));
+        }
     }
+    let event_type = if retry_steps.is_some() {
+        "retry"
+    } else {
+        "rerun"
+    };
 
     let config_snapshot_str = config_snapshot.to_string();
     let branch: Option<String> = source_row.get("branch");
@@ -1912,7 +1946,7 @@ pub async fn rerun_build(
             project_id: &project_id,
             pipeline_id: &pipeline_id,
             actor: Some(&auth.0.email),
-            event_type: Some("rerun"),
+            event_type: Some(event_type),
             trigger_ref: trigger_ref.as_deref(),
             commit_sha: commit_sha.as_deref(),
             branch: branch.as_deref(),
@@ -1939,7 +1973,14 @@ pub async fn rerun_build(
 
     // Insert initial build event
     let reason = initial_event_reason(
-        &format!("re-run of build #{}", source_build_number),
+        &match &retry_steps {
+            Some(steps) => format!(
+                "retry of {} from build #{}",
+                steps.join(", "),
+                source_build_number
+            ),
+            None => format!("re-run of build #{}", source_build_number),
+        },
         approval_required,
     );
     sqlx::query(
@@ -1965,13 +2006,18 @@ pub async fn rerun_build(
         "build_number": build_number,
         "trigger_type": "manual",
         "source_build_id": build_id,
+        "retry_steps": retry_steps,
         "created_by": auth.0.email,
     })
     .to_string();
     let _ = write_audit_log(
         pool,
         Some(&auth.0.user_id),
-        "build_rerun",
+        if retry_steps.is_some() {
+            "build_step_retry"
+        } else {
+            "build_rerun"
+        },
         "build",
         Some(&new_build_id),
         Some(&details),
@@ -2006,13 +2052,14 @@ pub async fn rerun_build(
         status: "queued".to_string(),
         runner_policy_block_reason,
         trigger_type: "manual".to_string(),
-        trigger_actor: Some(auth.0.email),
-        trigger_event: Some("rerun".to_string()),
+        trigger_actor: Some(auth.0.email.clone()),
+        trigger_event: Some(event_type.to_string()),
         trigger_ref,
         commit_sha,
         branch,
         changelog,
         source_build_id: Some(build_id),
+        retry_steps,
         approval: pending_approval(approval_required, now),
         config_snapshot,
         runner_id: None,
@@ -2026,7 +2073,7 @@ pub async fn rerun_build(
         updated_at: now,
     };
 
-    Ok((StatusCode::CREATED, Json(RerunBuildResponse { build })))
+    Ok(build)
 }
 
 /// What changed in a webhook revision, for path filters.
@@ -2315,6 +2362,7 @@ pub async fn trigger_build_from_webhook(
                 branch: branch.map(String::from),
                 changelog: None,
                 source_build_id: None,
+                retry_steps: None,
                 approval: pending_approval(approval_required, now),
                 config_snapshot,
                 runner_id: None,

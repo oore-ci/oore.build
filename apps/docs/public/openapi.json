@@ -2160,6 +2160,94 @@
         ]
       }
     },
+    "/v1/builds/{build_id}/retry-step": {
+      "post": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Retry a build step",
+        "description": "Queues a new build that runs one store upload of a finished build again,\nplus any later upload that has not succeeded, with the artifacts the\nbuild already stored. Only steps listed in the build's\n`retryable_steps` can be retried; other steps need a full re-run.",
+        "operationId": "retry_build_step",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build whose step to retry",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryBuildStepRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Retry build queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerunBuildResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The step can never be retried on its own",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The build is still running, or this step cannot be retried for it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/builds/{build_id}/stream-token": {
       "post": {
         "tags": [
@@ -8361,6 +8449,92 @@
         ]
       }
     },
+    "/v1/runners/{runner_id}/jobs/{job_id}/retry-artifacts": {
+      "get": {
+        "tags": [
+          "Runners"
+        ],
+        "summary": "Get artifacts for a step retry",
+        "description": "Returns the source build's stored artifacts that a retry job uploads,\nwith short-lived download URLs, while the job is active.",
+        "operationId": "get_job_retry_artifacts",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-oore-signing-token",
+            "in": "header",
+            "description": "Job-scoped signing grant",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Artifacts to reuse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerRetryArtifactsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Runner authentication or signing grant is missing or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Runner does not match the active assignment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job is not active or is not a step retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/runners/{runner_id}/jobs/{job_id}/secrets": {
       "get": {
         "tags": [
@@ -12142,6 +12316,16 @@
             "type": "integer",
             "format": "int64"
           },
+          "retry_steps": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Steps this build retries against `source_build_id`'s stored artifacts.\nAbsent for a full build."
+          },
           "runner_id": {
             "type": [
               "string",
@@ -12399,6 +12583,13 @@
             "items": {
               "$ref": "#/components/schemas/BuildEvent"
             }
+          },
+          "retryable_steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Steps of this finished build that `POST /v1/builds/{build_id}/retry-step`\ncan run again without rebuilding."
           }
         }
       },
@@ -12717,6 +12908,16 @@
           },
           "project_id": {
             "type": "string"
+          },
+          "retry_steps": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Set when the job only retries these steps with the source build's\nstored artifacts, instead of building."
           },
           "signing_token": {
             "type": "string",
@@ -16664,6 +16865,18 @@
           }
         }
       },
+      "RetryBuildStepRequest": {
+        "type": "object",
+        "required": [
+          "step"
+        ],
+        "properties": {
+          "step": {
+            "type": "string",
+            "description": "One of the build's `retryable_steps`, such as `publish-play`."
+          }
+        }
+      },
       "RevokeApiTokenResponse": {
         "type": "object",
         "required": [
@@ -17213,6 +17426,55 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "RunnerRetryArtifact": {
+        "type": "object",
+        "description": "A stored artifact of the build a retry job reuses.",
+        "required": [
+          "id",
+          "name",
+          "artifact_type",
+          "metadata",
+          "download_url"
+        ],
+        "properties": {
+          "artifact_type": {
+            "type": "string"
+          },
+          "checksum": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "download_url": {
+            "type": "string",
+            "description": "Short-lived download URL, relative to the daemon for local storage."
+          },
+          "id": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "RunnerRetryArtifactsResponse": {
+        "type": "object",
+        "required": [
+          "artifacts"
+        ],
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunnerRetryArtifact"
+            }
           }
         }
       },

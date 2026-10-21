@@ -1562,6 +1562,10 @@ pub struct Build {
     pub changelog: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_build_id: Option<String>,
+    /// Steps this build retries against `source_build_id`'s stored artifacts.
+    /// Absent for a full build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_steps: Option<Vec<String>>,
     /// Present when the pipeline's approval policy gated this build.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval: Option<BuildApproval>,
@@ -1654,6 +1658,10 @@ pub struct BuildChangelogPreviewResponse {
 pub struct BuildDetailResponse {
     pub build: Build,
     pub events: Vec<BuildEvent>,
+    /// Steps of this finished build that `POST /v1/builds/{build_id}/retry-step`
+    /// can run again without rebuilding.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retryable_steps: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -1675,6 +1683,21 @@ pub struct BuildApprovalResponse {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct RerunBuildResponse {
     pub build: Build,
+}
+
+/// Step that uploads the App Bundle to Google Play.
+pub const PUBLISH_PLAY_STEP: &str = "publish-play";
+/// Step that uploads the IPA to App Store Connect.
+pub const PUBLISH_APP_STORE_STEP: &str = "publish-app-store";
+/// Steps that can run again on their own, in the order a build runs them.
+/// They only read artifacts the build already stored; every other step
+/// depends on workspace state that is gone once the build ends.
+pub const RETRYABLE_BUILD_STEPS: [&str; 2] = [PUBLISH_PLAY_STEP, PUBLISH_APP_STORE_STEP];
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RetryBuildStepRequest {
+    /// One of the build's `retryable_steps`, such as `publish-play`.
+    pub step: String,
 }
 
 // ── Runner domain types ─────────────────────────────────────────
@@ -1949,7 +1972,7 @@ pub struct RunnerHeartbeatResponse {
     pub cache_purge_requested_at: Option<i64>,
 }
 
-pub const RUNNER_PROTOCOL_VERSION: u32 = 5;
+pub const RUNNER_PROTOCOL_VERSION: u32 = 6;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ClaimJobRequest {
@@ -1992,6 +2015,10 @@ pub struct ClaimedJob {
     /// Ephemeral capability required for runner-owned signing material fetches.
     /// It is scoped to this job and revoked when the job leaves active execution.
     pub signing_token: String,
+    /// Set when the job only retries these steps with the source build's
+    /// stored artifacts, instead of building.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_steps: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3729,6 +3756,25 @@ pub struct RunnerPublishPlan {
 pub enum PublishStore {
     GooglePlay,
     AppStore,
+}
+
+/// A stored artifact of the build a retry job reuses.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerRetryArtifact {
+    pub id: String,
+    pub name: String,
+    pub artifact_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+    #[schema(value_type = Object)]
+    pub metadata: serde_json::Value,
+    /// Short-lived download URL, relative to the daemon for local storage.
+    pub download_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerRetryArtifactsResponse {
+    pub artifacts: Vec<RunnerRetryArtifact>,
 }
 
 /// Outcome of a store upload, reported by the runner.

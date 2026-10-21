@@ -1,10 +1,14 @@
+import type { ReactNode } from 'react'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import type {
   PipelineAndroidSigningResponse,
   PipelineIosSigningResponse,
 } from '@oore/client/models'
 import { PipelineAndroidSigningSection } from '@/components/pipeline-form-android-signing-section'
-import { PipelineIosSigningSection } from '@/components/pipeline-form-ios-signing-section'
+import {
+  PipelineIosSigningSection,
+  type IosAppStorePublishing,
+} from '@/components/pipeline-form-ios-signing-section'
 import { PipelineFormSection } from '@/components/pipeline-form-section'
 import { SettingsSurfaceSeparator } from '@/components/settings/settings-section'
 
@@ -16,7 +20,9 @@ export function PipelineSigningSection({
   androidSigningData,
   bundleIds,
   debugKeystoreFile,
+  iosActions,
   iosApiKeyFile,
+  iosAppStorePublishing,
   iosP12File,
   iosProfileFiles,
   iosSigningData,
@@ -31,7 +37,9 @@ export function PipelineSigningSection({
   androidSigningData?: PipelineAndroidSigningResponse
   bundleIds: Array<string>
   debugKeystoreFile: File | null
+  iosActions?: ReactNode
   iosApiKeyFile: File | null
+  iosAppStorePublishing?: IosAppStorePublishing
   iosP12File: File | null
   iosProfileFiles: Record<string, File | null>
   iosSigningData?: PipelineIosSigningResponse
@@ -63,7 +71,9 @@ export function PipelineSigningSection({
       ) : null}
       {values.platform_ios ? (
         <PipelineIosSigningSection
+          actions={iosActions}
           apiKeyFile={iosApiKeyFile}
+          appStorePublishing={iosAppStorePublishing}
           bundleIds={bundleIds}
           onApiKeyFileChange={onApiKeyFileChange}
           onP12FileChange={onP12FileChange}

@@ -148,10 +148,22 @@ Each image carries exactly one Flutter SDK.
    30 seconds.
    The Runner's [dependency caches](/operate/runners/caches) are shared too:
    pub and CocoaPods under `~/oore-cache`, with `PUB_CACHE`, `CP_CACHE_DIR`
-   and `CP_HOME_DIR` pointing there. Gradle runs from `~/.gradle` on the
-   guest's disk; its downloaded dependencies and wrapper distributions are
-   copied in from the shared cache and back out when the build ends. Xcode's
-   DerivedData is not shared, so iOS builds start cold in a VM.
+   and `CP_HOME_DIR` pointing there. Tools that need a local disk get a copy
+   that goes back to the shared cache when the build ends:
+   - Gradle runs from `~/.gradle` on the guest's disk. Its downloaded
+     dependencies, transformed artifacts, build cache and wrapper
+     distributions are copied in and back out. Its `gradle.properties` is the
+     Runner's, with `org.gradle.caching=true` added unless that file sets
+     `org.gradle.caching` itself.
+   - Xcode's DerivedData is kept per project and copied to its default folder,
+     so resolved Swift packages and build products carry over.
+   - Android SDK packages a build installs that the image does not have, such
+     as `platforms;android-34` or `cmake;3.22.1`, are saved and copied into
+     later VMs. To put them in the image instead, list them under
+     `android_packages` in `oore.image.yaml`.
+
+   The `vm-start` step lists what it restored.
+
 4. Every pipeline step runs in the guest through `tart exec`, with the same
    environment and secrets as a host build. Secrets travel over the guest
    agent's channel and are never written to the shared workspace. After each

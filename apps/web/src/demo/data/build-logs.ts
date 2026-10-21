@@ -211,7 +211,62 @@ const failedBuildLogsWithSteps = withStepMarkers([
   },
 ])
 
+const failedPublishLogs = withStepMarkers([
+  {
+    name: 'checkout',
+    command: 'git checkout b7c8d9e',
+    status: 'succeeded',
+    logs: [
+      { sequence: 0, content: 'HEAD is now at b7c8d9e', stream: 'stdout' },
+    ],
+  },
+  {
+    name: 'flutter build appbundle --release',
+    command: 'flutter build appbundle --release',
+    status: 'succeeded',
+    logs: [
+      {
+        sequence: 0,
+        content: "Running Gradle task 'bundleRelease'...",
+        stream: 'stdout',
+      },
+      {
+        sequence: 1,
+        content:
+          '✓ Built build/app/outputs/bundle/release/app-release.aab (38.2 MB)',
+        stream: 'stdout',
+      },
+    ],
+  },
+  {
+    name: 'artifacts',
+    command: 'Upload artifacts',
+    status: 'succeeded',
+    logs: [
+      {
+        sequence: 0,
+        content: 'Found 1 artifact(s) to upload',
+        stream: 'stdout',
+      },
+    ],
+  },
+  {
+    name: 'publish-play',
+    command: 'Upload the App Bundle to Google Play',
+    status: 'failed',
+    logs: [
+      {
+        sequence: 0,
+        content:
+          '[oore-publish] Google Play rejected the request (403): The caller does not have permission',
+        stream: 'stderr',
+      },
+    ],
+  },
+])
+
 export const demoBuildLogs = {
+  [BUILD_IDS.failedPublish1]: failedPublishLogs,
   [BUILD_IDS.running1]: flutterBuildLogs.slice(0, 20), // in-progress
   [BUILD_IDS.running2]: flutterBuildLogs.slice(0, 8),
   [BUILD_IDS.succeeded1]: succeededBuildLogsWithSteps,

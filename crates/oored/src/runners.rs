@@ -846,6 +846,7 @@ pub async fn claim_job(
         );
     }
 
+    let retry_steps = crate::step_retry::retry_steps_from_snapshot(&config_snapshot);
     let actor_str = format!("runner:{runner_id}");
 
     // Atomically transition queued -> scheduled while rechecking the policy
@@ -920,6 +921,7 @@ pub async fn claim_job(
             branch,
             lease_expires_at,
             signing_token,
+            retry_steps,
         }),
     }))
 }
@@ -1051,7 +1053,11 @@ pub async fn update_job_status(
         "runner updated job status"
     );
 
-    Ok(Json(BuildDetailResponse { build, events }))
+    Ok(Json(BuildDetailResponse {
+        build,
+        events,
+        retryable_steps: Vec::new(),
+    }))
 }
 
 /// `GET /v1/runners/{runner_id}/jobs/{job_id}` — check build status (for runner cancellation polling).

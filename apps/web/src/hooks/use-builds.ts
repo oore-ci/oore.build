@@ -22,6 +22,7 @@ import {
   createBuild,
   rejectBuild,
   rerunBuild,
+  retryBuildStep,
   createArtifactInstallLink,
   generateDownloadLink as getArtifactDownloadLink,
   listBuildArtifacts,
@@ -301,6 +302,28 @@ export function useRerunBuild() {
           instanceId,
           getBuildQueryKey({ client, path: { build_id: buildId } }),
         ),
+      })
+    },
+  })
+}
+
+export function useRetryBuildStep() {
+  const queryClient = useQueryClient()
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useMutation({
+    mutationFn: ({ buildId, step }: { buildId: string; step: string }) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return retryBuildStep({
+        body: { step },
+        client,
+        path: { build_id: buildId },
+      })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(instanceId, listBuildsQueryKey({ client })),
       })
     },
   })

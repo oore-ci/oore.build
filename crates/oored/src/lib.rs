@@ -42,6 +42,7 @@ pub mod runtime_updates;
 pub mod scheduler;
 pub mod secrets;
 pub mod session;
+pub mod step_retry;
 pub mod storage;
 pub mod store;
 pub mod test_results;
@@ -2816,6 +2817,10 @@ pub async fn build_router_with_recovery(
         .route("/v1/builds/{build_id}/reject", post(builds::reject_build))
         .route("/v1/builds/{build_id}/rerun", post(builds::rerun_build))
         .route(
+            "/v1/builds/{build_id}/retry-step",
+            post(step_retry::retry_build_step),
+        )
+        .route(
             "/v1/builds/{build_id}/tests",
             get(test_results::get_build_test_results),
         )
@@ -2885,6 +2890,10 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/publish",
             get(pipeline_publish::get_job_publish_plan),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/retry-artifacts",
+            get(step_retry::get_job_retry_artifacts),
         )
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/publish-results",

@@ -166,6 +166,7 @@ use utoipa::{
         operations::approve_build,
         operations::reject_build,
         operations::rerun_build,
+        operations::retry_build_step,
         // ── Releases ──
         operations::list_releases,
         operations::create_release,
@@ -200,6 +201,7 @@ use utoipa::{
         operations::get_job_ios_signing,
         operations::get_job_secrets,
         operations::get_job_publish_plan,
+        operations::get_job_retry_artifacts,
         operations::report_job_publish_result,
         operations::report_job_test_results,
         // ── Build Logs ──
@@ -377,6 +379,8 @@ use utoipa::{
         oore_contract::GooglePlayPublishConfig,
         oore_contract::PipelineGooglePlayPublishResponse,
         oore_contract::RunnerPublishPlan,
+        oore_contract::RunnerRetryArtifact,
+        oore_contract::RunnerRetryArtifactsResponse,
         oore_contract::PublishStore,
         oore_contract::RunnerPublishResult,
         // Secrets
@@ -431,6 +435,7 @@ use utoipa::{
         oore_contract::BuildApprovalRequest,
         oore_contract::BuildApprovalResponse,
         oore_contract::RerunBuildResponse,
+        oore_contract::RetryBuildStepRequest,
         oore_contract::StepResult,
         // Releases
         oore_contract::ReleaseStore,
@@ -2482,6 +2487,26 @@ mod operations {
     )]
     pub(super) fn rerun_build() {}
 
+    /// Retry a build step
+    ///
+    /// Queues a new build that runs one store upload of a finished build again,
+    /// plus any later upload that has not succeeded, with the artifacts the
+    /// build already stored. Only steps listed in the build's
+    /// `retryable_steps` can be retried; other steps need a full re-run.
+    #[utoipa::path(post, path = "/v1/builds/{build_id}/retry-step", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build whose step to retry")),
+        request_body = RetryBuildStepRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Retry build queued", body = RerunBuildResponse),
+            (status = 400, description = "The step can never be retried on its own", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Build not found", body = ApiError),
+            (status = 409, description = "The build is still running, or this step cannot be retried for it", body = ApiError),
+        )
+    )]
+    pub(super) fn retry_build_step() {}
+
     // ── Runners ──
 
     /// Register runner
@@ -2727,6 +2752,26 @@ mod operations {
         )
     )]
     pub(super) fn get_job_publish_plan() {}
+
+    /// Get artifacts for a step retry
+    ///
+    /// Returns the source build's stored artifacts that a retry job uploads,
+    /// with short-lived download URLs, while the job is active.
+    #[utoipa::path(get, path = "/v1/runners/{runner_id}/jobs/{job_id}/retry-artifacts", tag = "Runners",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("x-oore-signing-token" = String, Header, description = "Job-scoped signing grant"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Artifacts to reuse", body = RunnerRetryArtifactsResponse),
+            (status = 401, description = "Runner authentication or signing grant is missing or invalid", body = ApiError),
+            (status = 403, description = "Runner does not match the active assignment", body = ApiError),
+            (status = 409, description = "Job is not active or is not a step retry", body = ApiError),
+        )
+    )]
+    pub(super) fn get_job_retry_artifacts() {}
 
     /// Report a store upload
     ///

@@ -1,0 +1,57 @@
+---
+title: 'Retry a store upload'
+status: implemented
+description: 'Upload a finished build to Google Play or App Store Connect again without rebuilding it.'
+---
+
+When a build compiles, signs and stores its artifacts but the store upload
+fails, retry only the upload. Oore queues a new build that downloads the
+original build's stored App Bundle or IPA and runs the upload again. Nothing is
+compiled or signed again.
+
+## What you need
+
+- Project developer, maintainer, instance admin, or instance owner access.
+- A finished build whose `artifacts` step succeeded, so its App Bundle or IPA
+  is stored and has not expired.
+- Publishing for that store turned on for the pipeline.
+
+## 1. Open the build
+
+Open the build whose upload failed. When an upload can be retried, the build
+page shows **Retry Google Play upload** or **Retry App Store upload** next to
+**Re-run**.
+
+## 2. Retry the upload
+
+Select the retry action. Oore opens the new build, which runs:
+
+1. `artifacts`: downloads the original build's App Bundle (and `mapping.txt`
+   when it was stored) or IPA, checks each against its stored checksum, and
+   stores them again as this build's artifacts.
+2. The upload you retried, then any later upload of the original build that
+   did not succeed. Retrying `publish-play` after it stopped the build also
+   runs `publish-app-store` when that store is turned on.
+
+The upload reads the pipeline's current publish settings and secrets, so fix a
+store permission or a setting first, then retry.
+
+## Verify the result
+
+The new build shows `succeeded` and links back to the original build. Its
+**Release** tab shows the store release it created.
+
+## Limits
+
+- Only store uploads can run on their own. Every other step depends on the
+  build's workspace, which is deleted when the build ends, so use **Re-run** to
+  build again.
+- An upload that already succeeded is not offered again; stores reject a
+  version code or build number they already have.
+- Google Play release notes read from repository files are read from the
+  build's commit, so the retry checks out the source first.
+- When the original build stored several App Bundles, Oore needs exactly one
+  whose name contains `release` to know which one to upload.
+
+The HTTP contract is available in
+[Retry a build step](/openapi/operations/retry_build_step).

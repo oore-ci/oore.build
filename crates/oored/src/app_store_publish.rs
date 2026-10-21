@@ -417,6 +417,26 @@ pub(crate) async fn runner_plan(
     }))
 }
 
+/// Whether builds of this pipeline upload to App Store Connect: publishing is
+/// on and the pipeline signs App Store exports.
+pub(crate) async fn publishing_enabled(
+    pool: &SqlitePool,
+    pipeline_id: &str,
+) -> anyhow::Result<bool> {
+    let enabled = load_config(pool, pipeline_id)
+        .await?
+        .is_some_and(|(config, _)| config.enabled);
+    if !enabled {
+        return Ok(false);
+    }
+    Ok(load_signing_key_row(pool, pipeline_id)
+        .await?
+        .is_some_and(|signing| {
+            signing.enabled != 0
+                && IosExportMethod::from_stored(&signing.export_method) == IosExportMethod::AppStore
+        }))
+}
+
 // ── Upload outcome ──────────────────────────────────────────────
 
 /// App identity of the build's IPA, read from the metadata the runner
@@ -452,7 +472,20 @@ fn uploaded_ipa_from_metadata(artifact_id: String, metadata: &Value) -> Option<U
     })
 }
 
-async fn load_uploaded_ipa(pool: &SqlitePool, build_id: &str) -> anyhow::Result<UploadedIpa> {
+/// The build's signed App Store IPA artifact, if it has one.
+pub(crate) async fn uploaded_ipa_artifact_id(
+    pool: &SqlitePool,
+    build_id: &str,
+) -> anyhow::Result<Option<String>> {
+    Ok(find_uploaded_ipa(pool, build_id)
+        .await?
+        .map(|ipa| ipa.artifact_id))
+}
+
+async fn find_uploaded_ipa(
+    pool: &SqlitePool,
+    build_id: &str,
+) -> anyhow::Result<Option<UploadedIpa>> {
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT id, metadata FROM artifacts
          WHERE build_id = ?1 AND artifact_type = 'ipa' AND state = 'available'
@@ -461,11 +494,15 @@ async fn load_uploaded_ipa(pool: &SqlitePool, build_id: &str) -> anyhow::Result<
     .bind(build_id)
     .fetch_all(pool)
     .await?;
-    rows.into_iter()
-        .find_map(|(id, metadata)| {
-            let metadata: Value = serde_json::from_str(&metadata).ok()?;
-            uploaded_ipa_from_metadata(id, &metadata)
-        })
+    Ok(rows.into_iter().find_map(|(id, metadata)| {
+        let metadata: Value = serde_json::from_str(&metadata).ok()?;
+        uploaded_ipa_from_metadata(id, &metadata)
+    }))
+}
+
+async fn load_uploaded_ipa(pool: &SqlitePool, build_id: &str) -> anyhow::Result<UploadedIpa> {
+    find_uploaded_ipa(pool, build_id)
+        .await?
         .ok_or_else(|| anyhow::anyhow!("build has no App Store IPA artifact"))
 }
 

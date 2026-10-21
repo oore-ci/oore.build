@@ -155,6 +155,24 @@ export async function buildAndroidSigningPayload(
   }
 }
 
+/**
+ * Whether saving `payload` makes the daemon discard the stored provisioning
+ * profiles (the distribution changed) while App Store Connect can generate
+ * replacements (API or hybrid mode). The caller then runs a profile sync, so
+ * the next build does not fail on a pipeline with no profiles.
+ */
+export function iosProfilesNeedResync(
+  payload: UpdatePipelineIosSigningRequest,
+  previous?: PipelineIosSigningResponse,
+): boolean {
+  if (!previous || !payload.enabled) return false
+  if (payload.mode !== 'api' && payload.mode !== 'hybrid') return false
+  return (
+    payload.export_method !== undefined &&
+    payload.export_method !== previous.export_method
+  )
+}
+
 export async function buildIosSigningPayload(
   values: PipelineFormValues,
   files: IosSigningFiles,

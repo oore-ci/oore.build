@@ -69,6 +69,12 @@ Apple sets the percentages, so raising a step is not available.
 
 ## Troubleshooting
 
+**The `publish-app-store` step fails**
+
+Fix the cause, such as an expired API key, then
+[retry the upload](/build/run/retry-step). The stored IPA is uploaded again
+without rebuilding or re-signing.
+
 **The release fails with "has no app with bundle ID"**
 
 Create the app in App Store Connect with the same bundle ID, then rebuild.

@@ -6,6 +6,20 @@ interface DemoArtifactData {
 }
 
 export const demoArtifacts: DemoArtifactData = {
+  [BUILD_IDS.failedPublish1]: [
+    {
+      id: 'art-aab-141',
+      build_id: BUILD_IDS.failedPublish1,
+      name: 'app-release.aab',
+      artifact_type: 'generic',
+      file_path: 'build/app/outputs/bundle/release/app-release.aab',
+      file_size: 40054374,
+      checksum: 'sha256:9a8b7c6d5e4f...',
+      metadata: {},
+      state: 'available',
+      created_at: ago(3000),
+    },
+  ],
   [BUILD_IDS.succeeded1]: [
     {
       id: 'art-005',
