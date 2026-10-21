@@ -38,11 +38,11 @@ import {
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import PipelineForm from '@/components/pipeline-form'
+import { PipelineFormSection } from '@/components/pipeline-form-section'
 import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Item,
   ItemContent,
@@ -126,7 +126,6 @@ const PIPELINE_TEMPLATES = [
       platform_android: true,
       platform_ios: false,
       platform_macos: false,
-      enable_customization: true,
       android_command_override: 'flutter build apk --debug',
       artifact_patterns: 'build/app/outputs/flutter-apk/*.apk',
     } satisfies PipelineFormValues,
@@ -411,66 +410,89 @@ function NewPipelinePage() {
     }
   }
 
+  const startDescription =
+    validWorkflows.length > 0 && !manualSetup
+      ? 'Build settings come from the workflow in your repository.'
+      : 'Pick a template. Every setting can be changed below or later.'
+
   return (
-    <PageLayout width="wide">
+    <PageLayout>
       <PageMeta title="New pipeline" />
       <PageHeader
-        title="Set up a build"
-        description="Use a repository workflow or choose a template."
+        title="New pipeline"
+        description="A pipeline is one build configuration for this project."
       />
-      <div className="mb-6 w-full max-w-4xl">
-        {workflowsQuery.isLoading ? (
-          <Card size="sm">
-            <CardContent className="flex items-center gap-3 py-6 text-sm text-muted-foreground">
+      <div className="flex flex-col gap-8">
+        <PipelineFormSection
+          title="Start from"
+          description={startDescription}
+          actions={
+            !workflowsQuery.isLoading &&
+            validWorkflows.length > 0 &&
+            !workflowsQuery.error ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setManualSetup((value) => !value)}
+              >
+                {manualSetup ? 'Use repository workflow' : 'Set up manually'}
+              </Button>
+            ) : undefined
+          }
+        >
+          {workflowsQuery.isLoading ? (
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <Spinner className="size-4" />
               Looking for Oore workflows on{' '}
               {projectData?.project.default_branch ?? 'the default branch'}...
-            </CardContent>
-          </Card>
-        ) : workflowsQuery.error ? (
-          <Alert variant="destructive">
-            <HugeiconsIcon icon={AlertCircleIcon} size={16} />
-            <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
-              <span>
-                Could not load repository workflows.{' '}
-                {workflowsQuery.error.message}
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => void workflowsQuery.refetch()}
-              >
-                <HugeiconsIcon icon={RefreshIcon} />
-                Retry
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => setManualSetup(true)}
-              >
-                Set up manually
-              </Button>
-            </AlertDescription>
-          </Alert>
-        ) : validWorkflows.length > 0 && !manualSetup ? (
-          <Card size="sm">
-            <CardHeader className="gap-2">
-              <div className="flex items-center justify-between gap-3">
-                <CardTitle className="flex items-center gap-2">
-                  <HugeiconsIcon icon={File02Icon} size={18} />
-                  Repository workflow found
-                </CardTitle>
-                <Badge variant="secondary">
-                  {workflowsQuery.data?.reference}
-                </Badge>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                Use the build settings saved in your repository.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
+            </div>
+          ) : workflowsQuery.error ? (
+            <Alert variant="destructive">
+              <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+              <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+                <span>
+                  Could not load repository workflows.{' '}
+                  {workflowsQuery.error.message}
+                </span>
+                <span className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void workflowsQuery.refetch()}
+                  >
+                    <HugeiconsIcon icon={RefreshIcon} />
+                    Retry
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setManualSetup(true)}
+                  >
+                    Set up manually
+                  </Button>
+                </span>
+              </AlertDescription>
+            </Alert>
+          ) : validWorkflows.length > 0 && !manualSetup ? (
+            <>
+              <Item variant="muted" size="sm">
+                <ItemContent>
+                  <ItemTitle className="flex items-center gap-2">
+                    <HugeiconsIcon icon={File02Icon} size={16} />
+                    Repository workflow found
+                  </ItemTitle>
+                  <ItemDescription>
+                    Oore reads the workflow from the commit being built. This
+                    preview is from{' '}
+                    <Badge variant="secondary">
+                      {workflowsQuery.data?.reference}
+                    </Badge>
+                  </ItemDescription>
+                </ItemContent>
+              </Item>
               {validWorkflows.length > 1 ? (
                 <div className="grid gap-2 sm:grid-cols-2">
                   {validWorkflows.map((workflow) => (
@@ -492,94 +514,71 @@ function NewPipelinePage() {
                   ))}
                 </div>
               ) : null}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setManualSetup(true)}
-              >
-                Set up manually
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-3">
-            {invalidWorkflows.length > 0 ? (
-              <Alert variant="destructive">
-                <HugeiconsIcon icon={AlertCircleIcon} size={16} />
-                <AlertDescription>
-                  Fix these workflow errors:
-                  <ul className="mt-2 list-disc pl-5">
-                    {invalidWorkflows.map((workflow) => (
-                      <li key={workflow.path}>
-                        <code>{workflow.path}</code>:{' '}
-                        {workflow.errors.join('; ')}
-                      </li>
-                    ))}
-                  </ul>
-                </AlertDescription>
-              </Alert>
-            ) : !manualSetup ? (
-              <Alert>
-                <HugeiconsIcon icon={File02Icon} size={16} />
-                <AlertDescription>
-                  No Oore workflow was found on{' '}
-                  <code>{workflowsQuery.data?.reference}</code>. Choose a
-                  starter below; you can move the configuration into{' '}
-                  <code>.oore.yaml</code> later.
-                </AlertDescription>
-              </Alert>
-            ) : null}
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-medium">Choose a starting point</p>
-              {manualSetup && validWorkflows.length > 0 ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setManualSetup(false)}
-                >
-                  Use repository workflow
-                </Button>
+            </>
+          ) : (
+            <>
+              {invalidWorkflows.length > 0 ? (
+                <Alert variant="destructive">
+                  <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+                  <AlertDescription>
+                    Fix these workflow errors:
+                    <ul className="mt-2 list-disc pl-5">
+                      {invalidWorkflows.map((workflow) => (
+                        <li key={workflow.path}>
+                          <code>{workflow.path}</code>:{' '}
+                          {workflow.errors.join('; ')}
+                        </li>
+                      ))}
+                    </ul>
+                  </AlertDescription>
+                </Alert>
+              ) : !manualSetup && workflowsQuery.data ? (
+                <Alert>
+                  <HugeiconsIcon icon={File02Icon} size={16} />
+                  <AlertDescription>
+                    No Oore workflow was found on{' '}
+                    <code>{workflowsQuery.data.reference}</code>. You can move
+                    this configuration into <code>.oore.yaml</code> later.
+                  </AlertDescription>
+                </Alert>
               ) : null}
-            </div>
-            <RadioGroup
-              value={selectedTemplate}
-              onValueChange={setSelectedTemplate}
-              className="sm:grid-cols-2 lg:grid-cols-3"
-            >
-              {PIPELINE_TEMPLATES.map((tmpl) => (
-                <Item
-                  key={tmpl.key}
-                  variant="outline"
-                  render={
-                    <label
-                      htmlFor={`pipeline-template-${tmpl.key}`}
-                      className="cursor-pointer"
+              <RadioGroup
+                aria-label="Pipeline template"
+                value={selectedTemplate}
+                onValueChange={setSelectedTemplate}
+                className="sm:grid-cols-2 lg:grid-cols-3"
+              >
+                {PIPELINE_TEMPLATES.map((tmpl) => (
+                  <Item
+                    key={tmpl.key}
+                    variant="outline"
+                    render={
+                      <label
+                        htmlFor={`pipeline-template-${tmpl.key}`}
+                        className="cursor-pointer"
+                      />
+                    }
+                    className="items-start has-data-checked:border-primary has-data-checked:bg-accent"
+                  >
+                    <RadioGroupItem
+                      id={`pipeline-template-${tmpl.key}`}
+                      value={tmpl.key}
+                      className="mt-0.5"
                     />
-                  }
-                  className="items-start has-data-checked:border-primary has-data-checked:bg-accent"
-                >
-                  <RadioGroupItem
-                    id={`pipeline-template-${tmpl.key}`}
-                    value={tmpl.key}
-                    className="mt-0.5"
-                  />
-                  <ItemContent>
-                    <ItemTitle>{tmpl.label}</ItemTitle>
-                    <ItemDescription className="line-clamp-none">
-                      {tmpl.description}
-                    </ItemDescription>
-                  </ItemContent>
-                </Item>
-              ))}
-            </RadioGroup>
-          </div>
-        )}
-      </div>
-      {(!workflowsQuery.isLoading || manualSetup) &&
-      (!workflowsQuery.error || manualSetup) ? (
-        <div className="w-full max-w-4xl">
+                    <ItemContent>
+                      <ItemTitle>{tmpl.label}</ItemTitle>
+                      <ItemDescription className="line-clamp-none">
+                        {tmpl.description}
+                      </ItemDescription>
+                    </ItemContent>
+                  </Item>
+                ))}
+              </RadioGroup>
+            </>
+          )}
+        </PipelineFormSection>
+        {(!workflowsQuery.isLoading || manualSetup) &&
+        (!workflowsQuery.error || manualSetup) ? (
           <PipelineForm
             key={activeTemplate.key}
             initialValues={{
@@ -589,7 +588,6 @@ function NewPipelinePage() {
                 : [...activeTemplate.events],
             }}
             manualOnlyTriggers={manualOnlyTriggers}
-            compactSetup={activeTemplate.key === 'debug-apk'}
             onSubmit={handleSubmit}
             onCancel={() =>
               void navigate({
@@ -615,8 +613,8 @@ function NewPipelinePage() {
               ) : undefined
             }
           />
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </PageLayout>
   )
 }

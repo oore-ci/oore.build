@@ -6,15 +6,9 @@ import type {
   IosProvisioningProfileSummary,
   PipelineIosSigningResponse,
 } from '@oore/client/models'
-import { PipelineFormSectionHeader } from '@/components/pipeline-form-section-header'
+import { PipelineFormSubsection } from '@/components/pipeline-form-section'
 import SetupHint from '@/components/setup-hint'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
 import {
   FormControl,
   FormDescription,
@@ -52,10 +46,15 @@ const SIGNING_MODES = {
   hybrid: 'Hybrid (manual cert + API automation)',
 } satisfies Record<string, string>
 
+const SIGNING_MODE_SUMMARIES = {
+  manual: 'Signed with an uploaded certificate and profiles.',
+  api: 'Signing assets synced from App Store Connect.',
+  hybrid: 'Uploaded certificate with profiles synced from App Store Connect.',
+} satisfies Record<keyof typeof SIGNING_MODES, string>
+
 export function PipelineIosSigningSection({
   apiKeyFile,
   bundleIds,
-  defaultOpen,
   onApiKeyFileChange,
   onP12FileChange,
   onProfileFileChange,
@@ -65,7 +64,6 @@ export function PipelineIosSigningSection({
 }: {
   apiKeyFile: File | null
   bundleIds: Array<string>
-  defaultOpen: boolean
   onApiKeyFileChange: (file: File | null) => void
   onP12FileChange: (file: File | null) => void
   onProfileFileChange: (bundleId: string, file: File | null) => void
@@ -78,69 +76,60 @@ export function PipelineIosSigningSection({
   const mode = form.watch('ios_signing_mode')
 
   return (
-    <Collapsible defaultOpen={defaultOpen}>
-      <Card>
-        <CollapsibleTrigger className="w-full cursor-pointer">
-          <CardHeader>
-            <PipelineFormSectionHeader
-              title="iOS Signing"
-              summary={enabled ? `${mode} mode` : 'Not configured'}
+    <PipelineFormSubsection
+      title="iOS"
+      description={
+        enabled
+          ? `${SIGNING_MODE_SUMMARIES[mode]} Required to install on physical devices.`
+          : 'Optional. Required to install on physical iOS devices.'
+      }
+    >
+      <IosSigningToggle signingData={signingData} />
+      {enabled ? (
+        <>
+          <IosSigningIdentityFields
+            storedExportMethod={signingData?.export_method}
+          />
+          {mode === 'manual' || mode === 'hybrid' ? (
+            <IosCertificateFields
+              file={p12File}
+              onFileChange={onP12FileChange}
+              signingData={signingData}
             />
-          </CardHeader>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <CardContent className="space-y-4">
-            <SetupHint
-              title="iOS project setup"
-              items={[
-                'Manual mode uses your uploaded .p12 certificate and .mobileprovision files.',
-                'API mode uses App Store Connect credentials to sync signing assets; hybrid mode combines API sync with a manually uploaded certificate.',
-                'During a build, Oore installs profiles, creates a temporary keychain, and pins CODE_SIGN_IDENTITY when a signing identity is available.',
-                'Keep bundle identifiers aligned with the Xcode targets you expect to sign.',
-              ]}
+          ) : null}
+          {mode === 'api' || mode === 'hybrid' ? (
+            <IosApiKeyFields
+              file={apiKeyFile}
+              onFileChange={onApiKeyFileChange}
+              signingData={signingData}
             />
-            <IosSigningToggle enabled={enabled} signingData={signingData} />
-            {enabled ? (
-              <>
-                <IosSigningIdentityFields
-                  storedExportMethod={signingData?.export_method}
-                />
-                {mode === 'manual' || mode === 'hybrid' ? (
-                  <IosCertificateFields
-                    file={p12File}
-                    onFileChange={onP12FileChange}
-                    signingData={signingData}
-                  />
-                ) : null}
-                {mode === 'api' || mode === 'hybrid' ? (
-                  <IosApiKeyFields
-                    file={apiKeyFile}
-                    onFileChange={onApiKeyFileChange}
-                    signingData={signingData}
-                  />
-                ) : null}
-                {mode === 'manual' || mode === 'hybrid' ? (
-                  <IosProvisioningProfiles
-                    bundleIds={bundleIds}
-                    onFileChange={onProfileFileChange}
-                    profileFiles={profileFiles}
-                    profiles={signingData?.provisioning_profiles ?? []}
-                  />
-                ) : null}
-              </>
-            ) : null}
-          </CardContent>
-        </CollapsibleContent>
-      </Card>
-    </Collapsible>
+          ) : null}
+          {mode === 'manual' || mode === 'hybrid' ? (
+            <IosProvisioningProfiles
+              bundleIds={bundleIds}
+              onFileChange={onProfileFileChange}
+              profileFiles={profileFiles}
+              profiles={signingData?.provisioning_profiles ?? []}
+            />
+          ) : null}
+          <SetupHint
+            title="iOS project setup"
+            items={[
+              'Manual mode uses your uploaded .p12 certificate and .mobileprovision files.',
+              'API mode uses App Store Connect credentials to sync signing assets; hybrid mode combines API sync with a manually uploaded certificate.',
+              'During a build, Oore installs profiles, creates a temporary keychain, and pins CODE_SIGN_IDENTITY when a signing identity is available.',
+              'Keep bundle identifiers aligned with the Xcode targets you expect to sign.',
+            ]}
+          />
+        </>
+      ) : null}
+    </PipelineFormSubsection>
   )
 }
 
 function IosSigningToggle({
-  enabled,
   signingData,
 }: {
-  enabled: boolean
   signingData?: PipelineIosSigningResponse
 }) {
   const form = useFormContext<PipelineFormValues>()
@@ -162,12 +151,6 @@ function IosSigningToggle({
               Stored: mode {signingData.mode}, p12{' '}
               {signingData.has_p12 ? 'present' : 'missing'}, API key{' '}
               {signingData.has_api_key ? 'present' : 'missing'}
-            </p>
-          ) : null}
-          {!enabled ? (
-            <p className="text-xs text-muted-foreground">
-              Required for installing on physical iOS devices. You'll need a
-              distribution certificate (.p12) and provisioning profiles.
             </p>
           ) : null}
           <FormMessage />
@@ -297,50 +280,48 @@ function IosCertificateFields({
 }) {
   const form = useFormContext<PipelineFormValues>()
   return (
-    <Card size="sm">
-      <CardContent className="grid gap-3">
-        <div className="space-y-2">
-          <Label htmlFor="ios-signing-certificate">
-            Distribution certificate (.p12)
-          </Label>
-          <Input
-            id="ios-signing-certificate"
-            type="file"
-            accept=".p12"
-            onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
-          />
-          <p className="text-xs text-muted-foreground">
-            {file
-              ? `Selected: ${file.name}`
-              : signingData?.has_p12
-                ? `Stored p12: ${signingData.p12_filename ?? 'present'}`
-                : 'Select a .p12 certificate file'}
-          </p>
-        </div>
-        <FormField
-          control={form.control}
-          name="ios_signing_p12_password"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>P12 password</FormLabel>
-              <FormControl>
-                <Input
-                  type="password"
-                  placeholder={
-                    signingData?.has_p12_password
-                      ? 'Leave empty to keep stored password'
-                      : ''
-                  }
-                  className="font-mono"
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
+    <div className="grid gap-3 rounded-[min(var(--radius-2xl),16px)] bg-muted/40 p-4">
+      <div className="space-y-2">
+        <Label htmlFor="ios-signing-certificate">
+          Distribution certificate (.p12)
+        </Label>
+        <Input
+          id="ios-signing-certificate"
+          type="file"
+          accept=".p12"
+          onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
         />
-      </CardContent>
-    </Card>
+        <p className="text-xs text-muted-foreground">
+          {file
+            ? `Selected: ${file.name}`
+            : signingData?.has_p12
+              ? `Stored p12: ${signingData.p12_filename ?? 'present'}`
+              : 'Select a .p12 certificate file'}
+        </p>
+      </div>
+      <FormField
+        control={form.control}
+        name="ios_signing_p12_password"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>P12 password</FormLabel>
+            <FormControl>
+              <Input
+                type="password"
+                placeholder={
+                  signingData?.has_p12_password
+                    ? 'Leave empty to keep stored password'
+                    : ''
+                }
+                className="font-mono"
+                {...field}
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    </div>
   )
 }
 
@@ -355,62 +336,54 @@ function IosApiKeyFields({
 }) {
   const form = useFormContext<PipelineFormValues>()
   return (
-    <Card size="sm">
-      <CardContent className="grid gap-3">
-        <FormField
-          control={form.control}
-          name="ios_signing_api_key_id"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>API key ID</FormLabel>
-              <FormControl>
-                <Input
-                  placeholder="ABC123XYZ"
-                  className="font-mono"
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
+    <div className="grid gap-3 rounded-[min(var(--radius-2xl),16px)] bg-muted/40 p-4">
+      <FormField
+        control={form.control}
+        name="ios_signing_api_key_id"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>API key ID</FormLabel>
+            <FormControl>
+              <Input placeholder="ABC123XYZ" className="font-mono" {...field} />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      <FormField
+        control={form.control}
+        name="ios_signing_api_issuer_id"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>API issuer ID (UUID)</FormLabel>
+            <FormControl>
+              <Input
+                placeholder="00000000-0000-0000-0000-000000000000"
+                className="font-mono"
+                {...field}
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      <div className="space-y-2">
+        <Label htmlFor="ios-signing-api-key">App Store Connect key (.p8)</Label>
+        <Input
+          id="ios-signing-api-key"
+          type="file"
+          accept=".p8,text/plain"
+          onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
         />
-        <FormField
-          control={form.control}
-          name="ios_signing_api_issuer_id"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>API issuer ID (UUID)</FormLabel>
-              <FormControl>
-                <Input
-                  placeholder="00000000-0000-0000-0000-000000000000"
-                  className="font-mono"
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <div className="space-y-2">
-          <Label htmlFor="ios-signing-api-key">
-            App Store Connect key (.p8)
-          </Label>
-          <Input
-            id="ios-signing-api-key"
-            type="file"
-            accept=".p8,text/plain"
-            onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
-          />
-          <p className="text-xs text-muted-foreground">
-            {file
-              ? `Selected: ${file.name}`
-              : signingData?.has_api_key
-                ? `Stored key: ${signingData.api_key_id ?? 'present'}`
-                : 'Upload App Store Connect private key file (.p8)'}
-          </p>
-        </div>
-      </CardContent>
-    </Card>
+        <p className="text-xs text-muted-foreground">
+          {file
+            ? `Selected: ${file.name}`
+            : signingData?.has_api_key
+              ? `Stored key: ${signingData.api_key_id ?? 'present'}`
+              : 'Upload App Store Connect private key file (.p8)'}
+        </p>
+      </div>
+    </div>
   )
 }
 
@@ -429,11 +402,9 @@ function IosProvisioningProfiles({
     profiles.map((profile) => [profile.bundle_id, profile]),
   )
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle>Provisioning profiles by bundle ID</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <div className="grid gap-3 rounded-[min(var(--radius-2xl),16px)] bg-muted/40 p-4">
+      <p className="text-sm font-medium">Provisioning profiles by bundle ID</p>
+      <div>
         {bundleIds.length === 0 ? (
           <p className="text-xs text-muted-foreground">
             Add at least one bundle ID to attach provisioning profiles.
@@ -471,7 +442,7 @@ function IosProvisioningProfiles({
             })}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
