@@ -2829,6 +2829,10 @@ pub async fn build_router_with_recovery(
                 .delete(runners::delete_runner),
         )
         .route(
+            "/v1/runners/{runner_id}/caches/purge",
+            post(runners::purge_runner_caches),
+        )
+        .route(
             "/v1/runners/{runner_id}/heartbeat",
             post(runners::runner_heartbeat),
         )

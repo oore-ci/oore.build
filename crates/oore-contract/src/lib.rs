@@ -1569,6 +1569,9 @@ pub struct Runner {
     pub last_heartbeat_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registered_by: Option<String>,
+    /// Set while a dependency cache purge waits for the runner to pick it up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_purge_requested_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -1595,6 +1598,15 @@ pub struct RunnerHeartbeatRequest {
     #[serde(default)]
     #[schema(value_type = Object)]
     pub capabilities: serde_json::Value,
+}
+
+/// Heartbeat answer. Runners purge their dependency caches when
+/// `cache_purge_requested_at` is newer than their last purge, then report
+/// `capabilities.caches.purged_at` to clear the request.
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct RunnerHeartbeatResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_purge_requested_at: Option<i64>,
 }
 
 pub const RUNNER_PROTOCOL_VERSION: u32 = 5;

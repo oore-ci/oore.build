@@ -1,5 +1,5 @@
 import { demoApi } from './api'
-import { HttpResponse, delay } from 'msw'
+import { HttpResponse, delay, http } from 'msw'
 import * as z from 'zod'
 import { ago } from '../seed'
 import { requireDemoInstancePermission } from '../authorization'
@@ -71,4 +71,25 @@ export const runnerHandlers = [
     Object.assign(runner, body, { updated_at: ago(0) })
     return HttpResponse.json({ runner })
   }),
+
+  http.post(
+    '*/v1/runners/:runner_id/caches/purge',
+    async ({ params, request }) => {
+      await delay(200)
+      const forbidden = requireDemoInstancePermission(request, 'runners:write')
+      if (forbidden) return forbidden
+      const runner = demoState.runners.find((r) => r.id === params.runner_id)
+      if (!runner) {
+        return HttpResponse.json(
+          { error: 'Runner not found', code: 'not_found' },
+          { status: 404 },
+        )
+      }
+      Object.assign(runner, {
+        cache_purge_requested_at: ago(0),
+        updated_at: ago(0),
+      })
+      return HttpResponse.json({ runner })
+    },
+  ),
 ]
