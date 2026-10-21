@@ -16,15 +16,16 @@ use anyhow::Context;
 use base64::Engine as _;
 use caches::{CacheObservation, CacheStats, RunnerCaches};
 use oore_contract::{
-    AndroidSigningBuildType, BuildPlatform, BuildStatus, ClaimJobRequest, ClaimJobResponse,
-    ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse, IosExportMethod,
-    JobStatusResponse, PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig,
-    PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
-    RunnerAndroidSigningResponse, RunnerHeartbeatResponse, RunnerIosSigningBundle,
-    RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult,
-    StepResult, artifact_pattern_matches, is_valid_pipeline_env_key,
-    parse_repository_pipeline_yaml, replace_secret_references, store_version_code,
-    validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
+    AndroidSigningBuildType, BuildIsolation, BuildPlatform, BuildStatus, ClaimJobRequest,
+    ClaimJobResponse, ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse,
+    IosExportMethod, JobStatusResponse, PipelineCommandStages, PipelineEnvVar,
+    PipelineExecutionConfig, PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION,
+    RunnerAndroidSigningProfile, RunnerAndroidSigningResponse, RunnerHeartbeatResponse,
+    RunnerIosSigningBundle, RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan,
+    RunnerPublishResult, StepResult, artifact_pattern_matches, is_valid_pipeline_env_key,
+    missing_runner_labels, normalize_runner_labels, parse_repository_pipeline_yaml,
+    replace_secret_references, store_version_code, validate_artifact_pattern,
+    validate_build_number_offset, validate_repository_config_path,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -33,7 +34,9 @@ use zeroize::Zeroize;
 
 mod app_store_upload;
 mod caches;
+mod metrics;
 mod publish;
+mod tart;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
 const OORE_ANDROID_KEYSTORE_PATH_ENV: &str = "OORE_ANDROID_KEYSTORE_PATH";
@@ -66,12 +69,6 @@ const RUNNER_SERVICE_ACK_SCHEMA_VERSION: u32 = 1;
 const MANAGED_RUNNER_SERVICE_LABEL: &str = "build.oore.oore-runner";
 // ponytail: fixed three-check grace; move it into the runner protocol if deployments need tuning.
 const MAX_CONSECUTIVE_AUTHORITY_FAILURES: u8 = 3;
-const MANAGED_FVM_VERSION: &str = "4.1.2";
-const MANAGED_FVM_ARM64_SHA256: &str =
-    "0b2a146986c51f06331f135f0bdf2a202eb57f55d7edd420c9078e8520e4c033";
-const MANAGED_FVM_X64_SHA256: &str =
-    "7bbfcb6883ea67ce532163704f5625eba7ecf340084be707cde71a28fefff1d8";
-const MANAGED_FVM_MAX_ARCHIVE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RunnerConfig {
@@ -254,194 +251,7 @@ fn repository_shell_command(script: &str, workspace: &Path) -> tokio::process::C
         .arg(script)
         .current_dir(workspace)
         .env_remove(RUNNER_SERVICE_ACK_PATH_ENV);
-    if let Some(install_root) = bundled_fvm_install_root() {
-        configure_bundled_fvm_environment(&mut command, &install_root);
-    }
     command
-}
-
-fn bundled_fvm_install_root() -> Option<PathBuf> {
-    let executable = std::env::current_exe().ok()?;
-    oore_install_root_for_executable(&executable)
-        .filter(|install_root| managed_fvm_is_available(install_root))
-}
-
-fn oore_install_root_for_executable(executable: &Path) -> Option<PathBuf> {
-    let bin = executable.parent()?;
-    if bin.file_name()? != "bin" {
-        return None;
-    }
-    let install_root = bin.parent()?;
-    install_root
-        .join("VERSION")
-        .is_file()
-        .then(|| install_root.to_path_buf())
-}
-
-fn managed_fvm_is_available(install_root: &Path) -> bool {
-    install_root.join("bin/fvm").is_file() && install_root.join("libexec/fvm/fvm").is_file()
-}
-
-fn managed_fvm_download(arch: &str) -> anyhow::Result<(String, &'static str)> {
-    let (asset_arch, expected_sha256) = match arch {
-        "aarch64" => ("arm64", MANAGED_FVM_ARM64_SHA256),
-        "x86_64" => ("x64", MANAGED_FVM_X64_SHA256),
-        other => anyhow::bail!("Oore-managed FVM is not available for architecture {other}"),
-    };
-    Ok((
-        format!(
-            "https://github.com/conceptadev/fvm/releases/download/{MANAGED_FVM_VERSION}/fvm-{MANAGED_FVM_VERSION}-macos-{asset_arch}.tar.gz"
-        ),
-        expected_sha256,
-    ))
-}
-
-async fn install_managed_fvm_archive(
-    install_root: &Path,
-    archive_bytes: &[u8],
-    expected_sha256: &str,
-) -> anyhow::Result<()> {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-
-    anyhow::ensure!(
-        archive_bytes.len() <= MANAGED_FVM_MAX_ARCHIVE_BYTES,
-        "managed FVM archive exceeds the {} byte limit",
-        MANAGED_FVM_MAX_ARCHIVE_BYTES
-    );
-    let actual_sha256 = hex::encode(Sha256::digest(archive_bytes));
-    anyhow::ensure!(
-        actual_sha256 == expected_sha256,
-        "managed FVM archive checksum mismatch"
-    );
-
-    let mut random = [0u8; 8];
-    rand::thread_rng().fill_bytes(&mut random);
-    let staging = install_root.join(format!(
-        ".fvm-bootstrap-{}-{}",
-        std::process::id(),
-        hex::encode(random)
-    ));
-    let mut staging_builder = fs::DirBuilder::new();
-    staging_builder.mode(0o700);
-    staging_builder
-        .create(&staging)
-        .with_context(|| format!("failed to create {}", staging.display()))?;
-
-    let result: anyhow::Result<()> = async {
-        let archive = staging.join("fvm.tar.gz");
-        write_private_file(&archive, archive_bytes)
-            .with_context(|| format!("failed to write {}", archive.display()))?;
-        let output = tokio::process::Command::new("/usr/bin/tar")
-            .args(["-xzf"])
-            .arg(&archive)
-            .args(["-C"])
-            .arg(&staging)
-            .output()
-            .await
-            .context("failed to extract managed FVM archive")?;
-        anyhow::ensure!(
-            output.status.success(),
-            "failed to extract managed FVM archive: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-
-        let extracted = staging.join("fvm");
-        let payload = extracted.join("fvm");
-        let payload_metadata = fs::symlink_metadata(&payload)
-            .with_context(|| format!("managed FVM archive is missing {}", payload.display()))?;
-        anyhow::ensure!(
-            payload_metadata.file_type().is_file(),
-            "managed FVM payload is not a regular file"
-        );
-        fs::set_permissions(&payload, fs::Permissions::from_mode(0o755))?;
-
-        let libexec = install_root.join("libexec");
-        fs::create_dir_all(&libexec)?;
-        let destination = libexec.join("fvm");
-        match fs::remove_dir_all(&destination) {
-            Ok(()) => {}
-            Err(error) if error.kind() == ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-        fs::rename(&extracted, &destination).with_context(|| {
-            format!(
-                "failed to install managed FVM payload at {}",
-                destination.display()
-            )
-        })?;
-        fs::File::open(&libexec)?.sync_all()?;
-
-        let bin = install_root.join("bin");
-        fs::create_dir_all(&bin)?;
-        let launcher = bin.join(format!(
-            ".fvm.{}-{}.tmp",
-            std::process::id(),
-            hex::encode(random)
-        ));
-        write_private_file(
-            &launcher,
-            b"#!/bin/sh\nset -eu\nroot=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")/..\" && pwd)\"\nexec \"$root/libexec/fvm/fvm\" \"$@\"\n",
-        )?;
-        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755))?;
-        fs::rename(&launcher, bin.join("fvm"))?;
-        fs::File::open(&bin)?.sync_all()?;
-        Ok(())
-    }
-    .await;
-
-    if let Err(cleanup_error) = fs::remove_dir_all(&staging)
-        && cleanup_error.kind() != ErrorKind::NotFound
-        && result.is_ok()
-    {
-        return Err(cleanup_error).context("failed to clean up managed FVM bootstrap");
-    }
-    result
-}
-
-async fn ensure_managed_fvm(client: &reqwest::Client) -> anyhow::Result<bool> {
-    let executable = std::env::current_exe().context("failed to locate the Oore runner")?;
-    let Some(install_root) = oore_install_root_for_executable(&executable) else {
-        return Ok(false);
-    };
-    if managed_fvm_is_available(&install_root) {
-        return Ok(false);
-    }
-
-    let (url, expected_sha256) = managed_fvm_download(std::env::consts::ARCH)?;
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .context("failed to download Oore-managed FVM")?
-        .error_for_status()
-        .context("Oore-managed FVM download failed")?;
-    if let Some(length) = response.content_length() {
-        anyhow::ensure!(
-            length <= MANAGED_FVM_MAX_ARCHIVE_BYTES as u64,
-            "managed FVM archive exceeds the {} byte limit",
-            MANAGED_FVM_MAX_ARCHIVE_BYTES
-        );
-    }
-    let bytes = response
-        .bytes()
-        .await
-        .context("failed to read Oore-managed FVM download")?;
-    install_managed_fvm_archive(&install_root, &bytes, expected_sha256).await?;
-    Ok(true)
-}
-
-fn configure_bundled_fvm_environment(command: &mut tokio::process::Command, install_root: &Path) {
-    let mut paths = vec![install_root.join("bin")];
-    if let Some(current) = std::env::var_os("PATH") {
-        paths.extend(std::env::split_paths(&current));
-    }
-    if let Ok(path) = std::env::join_paths(paths) {
-        command.env("PATH", path);
-    }
-    command.env(
-        "FVM_CACHE_PATH",
-        install_root.join("toolchains").join("flutter"),
-    );
 }
 
 fn write_private_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
@@ -499,11 +309,16 @@ pub async fn detect_capabilities() -> serde_json::Value {
         .map(|path| runner_version_for_executable(&path))
         .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
 
+    let tart_version = tart::find_tart()
+        .and_then(|tart| tart::tart_version(&tart))
+        .unwrap_or_default();
+
     serde_json::json!({
-        "os": "macos",
+        "os": std::env::consts::OS,
         "os_version": os_version,
         "arch": arch,
         "xcode_version": xcode_version,
+        "tart_version": tart_version,
         "version": version,
         "protocol_version": RUNNER_PROTOCOL_VERSION,
     })
@@ -940,10 +755,7 @@ fn android_signing_prepared_marker(source: &str, variant: AndroidSigningBuildTyp
 
 fn is_android_flutter_build_command(command: &str) -> bool {
     let trimmed = command.trim_start();
-    trimmed.starts_with("flutter build apk")
-        || trimmed.starts_with("fvm flutter build apk")
-        || trimmed.starts_with("flutter build appbundle")
-        || trimmed.starts_with("fvm flutter build appbundle")
+    trimmed.starts_with("flutter build apk") || trimmed.starts_with("flutter build appbundle")
 }
 
 fn android_signing_variant_for_command(command: &str) -> Option<AndroidSigningBuildType> {
@@ -1208,7 +1020,7 @@ fn run_android_signer_command(
     args: &[String],
     inputs: &AndroidSigningInputs,
     action: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<String> {
     let mut command = Command::new(program);
     command
         .args(args)
@@ -1223,9 +1035,46 @@ fn run_android_signer_command(
     let output = command.output().map_err(|error| {
         anyhow::anyhow!("failed to {action} with {}: {error}", program.display())
     })?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        anyhow::bail!("failed to {action}: {stderr}");
+        anyhow::bail!(
+            "failed to {action}: {}",
+            android_signer_failure_detail(&stdout, &output.stderr)
+        );
+    }
+    Ok(stdout)
+}
+
+/// jarsigner and apksigner print most diagnostics to stdout, so failures need
+/// both streams to be actionable.
+fn android_signer_failure_detail(stdout: &str, stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr);
+    let detail = [stderr.trim(), stdout.trim()]
+        .into_iter()
+        .filter(|stream| !stream.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if detail.is_empty() {
+        "signer exited without output".to_string()
+    } else {
+        detail
+    }
+}
+
+/// Checks `jarsigner -verify` output. `-strict` is deliberately not used:
+/// Android upload keys are self-signed and AABs are not timestamped, which
+/// `-strict` reports as errors. Plain `-verify` still exits non-zero on digest
+/// or signature mismatches, but exits zero for an unsigned jar, so the output
+/// must confirm every entry was verified.
+fn check_android_bundle_verification(stdout: &str) -> anyhow::Result<()> {
+    let verified = stdout
+        .lines()
+        .any(|line| line.trim().starts_with("jar verified"));
+    if !verified || stdout.contains("unsigned entries") {
+        anyhow::bail!(
+            "failed to verify Android App Bundle signature: {}",
+            android_signer_failure_detail(stdout, &[])
+        );
     }
     Ok(())
 }
@@ -1359,17 +1208,14 @@ fn sign_android_artifacts(
                 inputs,
                 "sign Android App Bundle",
             )?;
-            run_android_signer_command(
+            let verification = run_android_signer_command(
                 toolchain,
                 &toolchain.jarsigner,
-                &[
-                    "-verify".to_string(),
-                    "-strict".to_string(),
-                    signed_artifact.display().to_string(),
-                ],
+                &["-verify".to_string(), signed_artifact.display().to_string()],
                 inputs,
                 "verify Android App Bundle signature",
             )?;
+            check_android_bundle_verification(&verification)?;
         }
 
         fs::copy(&signed_artifact, artifact).map_err(|error| {
@@ -1465,6 +1311,10 @@ fn run_security_command(args: &[&str]) -> anyhow::Result<String> {
 }
 
 fn require_ios_signing_user_session() -> anyhow::Result<()> {
+    require_gui_login_session("iOS signing")
+}
+
+fn require_gui_login_session(purpose: &str) -> anyhow::Result<()> {
     // SAFETY: `geteuid` accepts no arguments and has no failure state.
     let uid = unsafe { libc::geteuid() };
     let output = Command::new("/bin/launchctl")
@@ -1473,10 +1323,10 @@ fn require_ios_signing_user_session() -> anyhow::Result<()> {
         .context("failed to inspect the runner account login session")?;
     anyhow::ensure!(
         output.status.success(),
-        "iOS signing requires an active macOS login session. Log into the runner account and retry the build"
+        "{purpose} requires an active macOS login session. Log into the runner account and retry the build"
     );
     if is_managed_system_runner() {
-        active_gui_session_process_id(uid)?;
+        active_gui_session_process_id(uid, purpose)?;
     }
     Ok(())
 }
@@ -1485,7 +1335,7 @@ fn is_managed_system_runner() -> bool {
     std::env::var_os("XPC_SERVICE_NAME").is_some_and(|name| name == MANAGED_RUNNER_SERVICE_LABEL)
 }
 
-fn active_gui_session_process_id(uid: u32) -> anyhow::Result<u32> {
+fn active_gui_session_process_id(uid: u32, purpose: &str) -> anyhow::Result<u32> {
     let output = Command::new("/usr/bin/pgrep")
         .args(["-u", &uid.to_string(), "-x", "Dock"])
         .output()
@@ -1496,7 +1346,7 @@ fn active_gui_session_process_id(uid: u32) -> anyhow::Result<u32> {
         .filter(|pid| *pid > 0);
     pid.ok_or_else(|| {
         anyhow::anyhow!(
-            "iOS signing requires an active macOS login session. Log into the runner account and retry the build"
+            "{purpose} requires an active macOS login session. Log into the runner account and retry the build"
         )
     })
 }
@@ -2504,9 +2354,6 @@ fn is_ios_flutter_build_command(command: &str) -> bool {
     let has_flutter_target = |target: &str| -> bool {
         args.windows(3)
             .any(|window| window == ["flutter", "build", target])
-            || args
-                .windows(4)
-                .any(|window| window == ["fvm", "flutter", "build", target])
     };
     has_flutter_target("ios") || has_flutter_target("ipa")
 }
@@ -2514,9 +2361,6 @@ fn is_ios_flutter_build_command(command: &str) -> bool {
 fn contains_flutter_build_target(args: &[String], target: &str) -> bool {
     args.windows(3)
         .any(|window| window == ["flutter", "build", target])
-        || args
-            .windows(4)
-            .any(|window| window == ["fvm", "flutter", "build", target])
 }
 
 fn rewrite_flutter_ios_target_to_ipa(args: &mut [String]) -> bool {
@@ -2528,15 +2372,6 @@ fn rewrite_flutter_ios_target_to_ipa(args: &mut [String]) -> bool {
             && args[i + 2] == "ios"
         {
             args[i + 2] = "ipa".to_string();
-            rewritten = true;
-        }
-        if i + 3 < args.len()
-            && args[i] == "fvm"
-            && args[i + 1] == "flutter"
-            && args[i + 2] == "build"
-            && args[i + 3] == "ios"
-        {
-            args[i + 3] = "ipa".to_string();
             rewritten = true;
         }
     }
@@ -3074,13 +2909,22 @@ async fn send_runner_heartbeat(
     cache_report: &SharedCacheReport,
 ) -> anyhow::Result<()> {
     let capabilities = heartbeat_capabilities(capabilities, cache_report);
+    let cache_bytes = cache_report
+        .lock()
+        .ok()
+        .and_then(|report| report.stats.as_ref().map(|stats| stats.total_bytes));
+    let metrics = metrics::sample_runner_metrics(&std::env::temp_dir(), cache_bytes);
     let response = client
         .post(format!(
             "{}/v1/runners/{}/heartbeat",
             daemon_url, config.runner_id
         ))
         .bearer_auth(&config.runner_token)
-        .json(&serde_json::json!({ "status": "online", "capabilities": capabilities }))
+        .json(&serde_json::json!({
+            "status": "online",
+            "capabilities": capabilities,
+            "metrics": metrics,
+        }))
         .timeout(Duration::from_secs(3))
         .send()
         .await
@@ -3186,6 +3030,13 @@ pub async fn run_runner_forever(
 
     reconcile_stale_runner_mutations()
         .context("failed to reconcile stale runner state before startup")?;
+    if let Some(tart_bin) = tart::find_tart() {
+        match tart::delete_stale_vms(&tart_bin, &config.runner_id) {
+            Ok(removed) if removed > 0 => println!("Deleted {removed} leftover build VM(s)"),
+            Ok(_) => {}
+            Err(error) => eprintln!("Warning: could not delete leftover build VMs: {error:#}"),
+        }
+    }
 
     println!("Starting runner '{}' ({})", config.name, config.runner_id);
     println!("Connecting to: {}", daemon_url);
@@ -3540,7 +3391,8 @@ struct FvmRcConfig {
     flutter: String,
 }
 
-const DEFAULT_MANAGED_FLUTTER_VERSION: &str = "stable";
+/// Flutter version a build asks for when neither `.fvmrc` nor the pipeline pins one.
+const DEFAULT_FLUTTER_VERSION: &str = "stable";
 
 #[derive(Debug, Clone)]
 struct ResolvedExecutionPlan {
@@ -3552,6 +3404,10 @@ struct ResolvedExecutionPlan {
     /// Env keys whose values came from a secret.
     secret_env_keys: std::collections::HashSet<String>,
     build_number_offset: i64,
+    isolation: BuildIsolation,
+    /// From `.fvmrc`, then the pipeline config, then `stable`. Picks the VM
+    /// image; host builds use whatever Flutter the runner has.
+    flutter_version: String,
     source: String,
 }
 
@@ -3785,73 +3641,6 @@ fn pubspec_version_name(raw: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
-fn maybe_wrap_with_fvm(command: &str) -> String {
-    let trimmed = command.trim();
-    if trimmed == "flutter" {
-        return "fvm flutter".to_string();
-    }
-    if trimmed == "dart" {
-        return "fvm dart".to_string();
-    }
-    if let Some(rest) = trimmed.strip_prefix("flutter ") {
-        return format!("fvm flutter {rest}");
-    }
-    if let Some(rest) = trimmed.strip_prefix("dart ") {
-        return format!("fvm dart {rest}");
-    }
-    trimmed.to_string()
-}
-
-fn apply_fvm_wrappers(stage_commands: PipelineCommandStages) -> PipelineCommandStages {
-    PipelineCommandStages {
-        pre_build: stage_commands
-            .pre_build
-            .into_iter()
-            .map(|cmd| maybe_wrap_with_fvm(&cmd))
-            .collect(),
-        build: stage_commands
-            .build
-            .into_iter()
-            .map(|cmd| maybe_wrap_with_fvm(&cmd))
-            .collect(),
-        post_build: stage_commands
-            .post_build
-            .into_iter()
-            .map(|cmd| maybe_wrap_with_fvm(&cmd))
-            .collect(),
-    }
-}
-
-fn command_uses_flutter_toolchain(command: &str) -> bool {
-    let trimmed = command.trim();
-    maybe_wrap_with_fvm(trimmed) != trimmed
-        || trimmed == "fvm flutter"
-        || trimmed == "fvm dart"
-        || trimmed.starts_with("fvm flutter ")
-        || trimmed.starts_with("fvm dart ")
-}
-
-fn apply_managed_flutter_toolchain(
-    stage_commands: PipelineCommandStages,
-    version: &str,
-) -> PipelineCommandStages {
-    let requires_flutter = stage_commands
-        .pre_build
-        .iter()
-        .chain(&stage_commands.build)
-        .chain(&stage_commands.post_build)
-        .any(|command| command_uses_flutter_toolchain(command));
-    if !requires_flutter {
-        return stage_commands;
-    }
-
-    let mut stage_commands = apply_fvm_wrappers(stage_commands);
-    stage_commands
-        .pre_build
-        .insert(0, format!("fvm use {version} --force --skip-pub-get"));
-    stage_commands
-}
-
 fn validate_artifact_patterns(patterns: &[String]) -> anyhow::Result<Vec<String>> {
     let mut cleaned = Vec::with_capacity(patterns.len());
     for (idx, pattern) in patterns.iter().enumerate() {
@@ -3942,6 +3731,8 @@ fn normalize_execution_config(
         normalize_flutter_version(config.flutter_version.as_deref(), "flutter_version")?;
     validate_build_number_offset(config.build_number_offset)
         .map_err(|error| anyhow::anyhow!("build_number_offset {error}"))?;
+    let runs_on = normalize_runner_labels(&config.runs_on)
+        .map_err(|error| anyhow::anyhow!("runs_on {error}"))?;
 
     Ok(PipelineExecutionConfig {
         platforms: config.platforms,
@@ -3952,6 +3743,8 @@ fn normalize_execution_config(
         env,
         artifact_patterns,
         build_number_offset: config.build_number_offset,
+        runs_on,
+        isolation: config.isolation,
     })
 }
 
@@ -4062,6 +3855,32 @@ fn apply_run_platform_selection(
     Ok(config)
 }
 
+/// The scheduler matched this runner against the pipeline's `runs_on`. A
+/// repository file can ask for more, so stop before any build command runs on
+/// a runner that lacks those labels.
+fn require_runner_labels(
+    runs_on: &[String],
+    snapshot: &serde_json::Value,
+    config_path: &str,
+) -> anyhow::Result<()> {
+    let Some(runner_labels) = snapshot.get("runner_labels").and_then(|v| v.as_array()) else {
+        return Ok(());
+    };
+    let runner_labels: Vec<String> = runner_labels
+        .iter()
+        .filter_map(|label| label.as_str().map(str::to_string))
+        .collect();
+    let missing = missing_runner_labels(runs_on, &runner_labels);
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "{config_path} sets runs_on [{}], but this runner lacks [{}]. Set the same runs_on on the pipeline so the scheduler picks a matching runner",
+            runs_on.join(", "),
+            missing.join(", ")
+        );
+    }
+    Ok(())
+}
+
 fn resolve_execution_plan(
     workspace: &Path,
     snapshot: &serde_json::Value,
@@ -4115,15 +3934,13 @@ fn resolve_execution_plan(
         let file_config = parse_repository_pipeline_yaml(&content).map_err(|e| {
             anyhow::anyhow!("Invalid pipeline config in {}: {}", full_path.display(), e)
         })?;
+        require_runner_labels(&file_config.runs_on, snapshot, rel_path)?;
         let file_config = apply_run_platform_selection(file_config, snapshot)?;
         let resolved_flutter_version = fvmrc_version
             .or_else(|| file_config.flutter_version.clone())
-            .unwrap_or_else(|| DEFAULT_MANAGED_FLUTTER_VERSION.to_string());
+            .unwrap_or_else(|| DEFAULT_FLUTTER_VERSION.to_string());
         let include_defaults = file_config.commands.build.is_empty();
-        let stage_commands = apply_managed_flutter_toolchain(
-            materialize_stage_commands(&file_config, include_defaults),
-            &resolved_flutter_version,
-        );
+        let stage_commands = materialize_stage_commands(&file_config, include_defaults);
 
         return Ok(ResolvedExecutionPlan {
             stage_commands,
@@ -4132,6 +3949,8 @@ fn resolve_execution_plan(
             secret_env: Vec::new(),
             secret_env_keys: Default::default(),
             build_number_offset: file_config.build_number_offset,
+            isolation: file_config.isolation,
+            flutter_version: resolved_flutter_version,
             source: format!("file:{}", full_path.display()),
         });
     }
@@ -4139,11 +3958,8 @@ fn resolve_execution_plan(
     let fallback = apply_run_platform_selection(load_ui_execution_config(snapshot)?, snapshot)?;
     let resolved_flutter_version = fvmrc_version
         .or_else(|| fallback.flutter_version.clone())
-        .unwrap_or_else(|| DEFAULT_MANAGED_FLUTTER_VERSION.to_string());
-    let stage_commands = apply_managed_flutter_toolchain(
-        materialize_stage_commands(&fallback, true),
-        &resolved_flutter_version,
-    );
+        .unwrap_or_else(|| DEFAULT_FLUTTER_VERSION.to_string());
+    let stage_commands = materialize_stage_commands(&fallback, true);
     Ok(ResolvedExecutionPlan {
         stage_commands,
         artifact_patterns: fallback.artifact_patterns,
@@ -4151,6 +3967,8 @@ fn resolve_execution_plan(
         secret_env: Vec::new(),
         secret_env_keys: Default::default(),
         build_number_offset: fallback.build_number_offset,
+        isolation: fallback.isolation,
+        flutter_version: resolved_flutter_version,
         source: "ui_fallback".to_string(),
     })
 }
@@ -4682,14 +4500,7 @@ async fn execute_build_steps(
             }
         };
     let version_name = read_pubspec_version_name(&workspace);
-    let requires_managed_fvm = execution_plan
-        .stage_commands
-        .pre_build
-        .iter()
-        .chain(&execution_plan.stage_commands.build)
-        .chain(&execution_plan.stage_commands.post_build)
-        .any(|command| command_uses_flutter_toolchain(command));
-    if requires_managed_fvm && bundled_fvm_install_root().is_none() {
+    if execution_plan.isolation == BuildIsolation::Host {
         let _ = append_runner_log_line(
             client,
             daemon_url,
@@ -4697,32 +4508,12 @@ async fn execute_build_steps(
             &job.build_id,
             log_seq,
             "stdout",
-            "Preparing Oore-managed Flutter tooling for this runner...",
+            &format!(
+                "Host build: uses the runner's own Flutter, not the requested {}; set isolation: vm to build with that exact version",
+                execution_plan.flutter_version
+            ),
         )
         .await;
-        match ensure_managed_fvm(client).await {
-            Ok(true) => {
-                let _ = append_runner_log_line(
-                    client,
-                    daemon_url,
-                    config,
-                    &job.build_id,
-                    log_seq,
-                    "stdout",
-                    "Oore-managed Flutter tooling is ready.",
-                )
-                .await;
-            }
-            Ok(false) => {}
-            Err(error) => {
-                return (
-                    steps,
-                    Err(error.context(
-                        "Failed to prepare Oore-managed Flutter tooling; retry the build",
-                    )),
-                );
-            }
-        }
     }
 
     let mut signing_source: Option<&str> = None;
@@ -4900,6 +4691,93 @@ async fn execute_build_steps(
         Some(".env".to_string())
     };
 
+    let vm = match execution_plan.isolation {
+        BuildIsolation::Host => None,
+        BuildIsolation::Vm => {
+            let started = now_unix();
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &step_start_marker("vm-start", "Start a clean Tart VM for this build"),
+            )
+            .await;
+            let shares = caches
+                .map(|caches| {
+                    caches
+                        .mounts()
+                        .into_iter()
+                        .map(|mount| tart::HostShare {
+                            name: mount.name,
+                            env: mount.env,
+                            host_dir: mount.host_dir,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let result = start_build_vm(
+                job,
+                client,
+                daemon_url,
+                config,
+                log_seq,
+                &authority,
+                &workspace,
+                &shares,
+                &execution_plan.flutter_version,
+            )
+            .await;
+            let finished = now_unix();
+            let succeeded = result.is_ok();
+            steps.push(StepResult {
+                name: "vm-start".to_string(),
+                status: if succeeded { "succeeded" } else { "failed" }.to_string(),
+                exit_code: Some(if succeeded { 0 } else { 1 }),
+                started_at: started,
+                finished_at: finished,
+                duration_ms: (finished - started) * 1000,
+            });
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &step_end_marker(
+                    "vm-start",
+                    if succeeded { "succeeded" } else { "failed" },
+                    Some(if succeeded { 0 } else { 1 }),
+                ),
+            )
+            .await;
+            match result {
+                Ok(vm) => {
+                    // Point the cache variables at the guest mounts, leaving
+                    // any value a pipeline set for itself alone.
+                    if let Some(caches) = caches {
+                        let host_env = caches.step_env();
+                        for (key, value) in step_env.iter_mut() {
+                            let is_host_cache =
+                                host_env.iter().any(|(k, v)| k == key && v == value);
+                            if let Some((_, guest)) =
+                                vm.vm.guest_env().iter().find(|(k, _)| k == key)
+                                && is_host_cache
+                            {
+                                *value = guest.clone();
+                            }
+                        }
+                    }
+                    Some(vm)
+                }
+                Err(error) => return (steps, Err(error)),
+            }
+        }
+    };
+
     let mut ios_signing_command_applied = false;
     let ios_signing_expected = ios_signing_bundle.is_some();
     let mut ios_artifact_metadata: Option<serde_json::Value> = None;
@@ -4967,18 +4845,24 @@ async fn execute_build_steps(
             )
             .await;
 
-            let mut step_cmd = repository_shell_command(&normalized_command, &workspace);
-            step_cmd
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true);
-            for (key, value) in &step_env {
-                step_cmd.env(key, value);
-            }
-            scrub_managed_runner_env(&mut step_cmd);
-            let child = match step_cmd.spawn() {
+            let spawned = match &vm {
+                Some(vm) => vm.vm.spawn_step(&normalized_command, &step_env).await,
+                None => {
+                    let mut step_cmd = repository_shell_command(&normalized_command, &workspace);
+                    step_cmd
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .kill_on_drop(true);
+                    for (key, value) in &step_env {
+                        step_cmd.env(key, value);
+                    }
+                    scrub_managed_runner_env(&mut step_cmd);
+                    step_cmd.spawn().map_err(anyhow::Error::from)
+                }
+            };
+            let child = match spawned {
                 Ok(c) => c,
-                Err(e) => return (steps, Err(e.into())),
+                Err(e) => return (steps, Err(e)),
             };
 
             let step_status = run_and_stream(
@@ -5056,10 +4940,17 @@ async fn execute_build_steps(
                     )
                     .await;
                     if exit_code != 0 {
-                        let err = if exit_code == 127 {
+                        let err = if exit_code == 127 && vm.is_some() {
                             anyhow::anyhow!(
                                 "Step failed with exit code 127 (command not found). \
-Install required tooling (for example Flutter/FVM) or override build commands. Command: {}",
+The VM image for Flutter {} does not provide this command. Command: {}",
+                                execution_plan.flutter_version,
+                                command_preview
+                            )
+                        } else if exit_code == 127 {
+                            anyhow::anyhow!(
+                                "Step failed with exit code 127 (command not found). \
+Install the required tooling on the runner, set isolation: vm, or override build commands. Command: {}",
                                 command_preview
                             )
                         } else {
@@ -5311,6 +5202,9 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
             }
         }
     }
+
+    // Every step has run; free the VM slot before the upload.
+    drop(vm);
 
     if ios_signing_expected && !ios_signing_command_applied {
         return (
@@ -5597,6 +5491,266 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
     (steps, Ok(()))
 }
 
+/// The build's VM and the host slot it occupies. The VM is declared first so
+/// it is deleted before the slot is released.
+struct BuildVm {
+    vm: tart::TartVm,
+    _slot: tart::VmSlot,
+}
+
+/// Reads the repository's optional `oore.image.yaml`.
+fn read_vm_image_config(
+    workspace: &Path,
+) -> anyhow::Result<Option<(String, oore_contract::VmImageConfig)>> {
+    let path = workspace.join(oore_contract::VM_IMAGE_CONFIG_PATH);
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
+    let config = oore_contract::parse_vm_image_yaml(&raw)
+        .map_err(|error| anyhow::anyhow!("Invalid {}: {error}", path.display()))?;
+    Ok(Some((raw, config)))
+}
+
+/// Waits for one of the host's macOS VM slots, builds the image if this host
+/// does not have it yet, then boots the build's VM.
+#[allow(clippy::too_many_arguments)]
+async fn start_build_vm(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    authority: &Arc<BuildAuthorityState>,
+    workspace: &Path,
+    shares: &[tart::HostShare],
+    flutter_version: &str,
+) -> anyhow::Result<BuildVm> {
+    let tart_bin = tart::find_tart().with_context(|| {
+        format!(
+            "This pipeline runs in a VM (isolation: vm), but Tart is not installed on this runner; install Tart {} or newer",
+            tart::PINNED_TART_VERSION
+        )
+    })?;
+    let tart_version = tart::tart_version(&tart_bin).unwrap_or_default();
+    anyhow::ensure!(
+        tart::version_is_supported(&tart_version),
+        "Tart {} or newer is required for VM builds; this runner has '{}'",
+        tart::PINNED_TART_VERSION,
+        tart_version
+    );
+    // Virtualization.framework needs the runner account's GUI session, the
+    // same one iOS signing uses; a bare launchd daemon context cannot boot VMs.
+    require_gui_login_session("Running builds in a VM")?;
+    let image_config = read_vm_image_config(workspace)?;
+    let plan = tart::plan_image(
+        &tart::image_template(),
+        &tart::base_image(),
+        flutter_version,
+        &job.project_id,
+        image_config
+            .as_ref()
+            .map(|(raw, config)| (raw.as_str(), config.clone())),
+    )?;
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!(
+            "Flutter {flutter_version} uses VM image {} (Tart {tart_version}){}",
+            plan.name,
+            if plan.config.is_some() {
+                format!(", customised by {}", oore_contract::VM_IMAGE_CONFIG_PATH)
+            } else {
+                String::new()
+            }
+        ),
+    )
+    .await;
+
+    let slot_dir = tart::slot_dir()?;
+    let mut waiting_logged = false;
+    let slot = loop {
+        if let Some(slot) = tart::try_acquire_slot(&slot_dir, tart::MAX_MACOS_VMS)? {
+            break slot;
+        }
+        if !waiting_logged {
+            waiting_logged = true;
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &format!(
+                    "Waiting for a macOS VM slot; this host runs at most {} at a time",
+                    tart::MAX_MACOS_VMS
+                ),
+            )
+            .await;
+        }
+        check_build_active(client, daemon_url, config, &job.build_id, authority).await?;
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    };
+
+    let name = tart::vm_name(&config.runner_id, &job.build_id);
+    if !tart::is_registry_reference(&plan.name) {
+        ensure_vm_image(
+            job, client, daemon_url, config, log_seq, authority, &tart_bin, &slot_dir, &plan, &name,
+        )
+        .await?;
+    }
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!(
+            "Cloning {} into {name} (VM slot {})",
+            plan.name,
+            slot.index + 1
+        ),
+    )
+    .await;
+    let vm = tart::TartVm::start(tart_bin, &plan.name, name, Some(workspace), shares).await?;
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!(
+            "VM {} is ready; the workspace is mounted at {}",
+            vm.name(),
+            vm.guest_workspace()
+        ),
+    )
+    .await;
+    Ok(BuildVm { vm, _slot: slot })
+}
+
+/// Builds `plan.name` from its base image unless this host already has it.
+/// Runs inside the build's own VM slot.
+#[allow(clippy::too_many_arguments)]
+async fn ensure_vm_image(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    authority: &Arc<BuildAuthorityState>,
+    tart_bin: &Path,
+    lock_dir: &Path,
+    plan: &tart::ImagePlan,
+    vm_name: &str,
+) -> anyhow::Result<()> {
+    let mut waiting_logged = false;
+    let _image_lock = loop {
+        if tart::local_image_exists(tart_bin, &plan.name)? {
+            return Ok(());
+        }
+        if let Some(lock) = tart::try_lock_image(lock_dir, &plan.name)? {
+            break lock;
+        }
+        if !waiting_logged {
+            waiting_logged = true;
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &format!(
+                    "Another build is creating VM image {}; waiting for it",
+                    plan.name
+                ),
+            )
+            .await;
+        }
+        check_build_active(client, daemon_url, config, &job.build_id, authority).await?;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    };
+    // The build holding the lock before us may have just finished it.
+    if tart::local_image_exists(tart_bin, &plan.name)? {
+        return Ok(());
+    }
+
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!(
+            "This runner has no VM image {}; building it from {}. The first build of a new image downloads the base and Flutter and can take 20 minutes or more",
+            plan.name, plan.base
+        ),
+    )
+    .await;
+    let builder = tart::TartVm::start(
+        tart_bin.to_path_buf(),
+        &plan.base,
+        format!("{vm_name}-image"),
+        None,
+        &[],
+    )
+    .await
+    .with_context(|| format!("failed to start base image {}", plan.base))?;
+    let child = builder.spawn_script(&tart::provision_script(plan)).await?;
+    let status = run_and_stream(
+        child,
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
+    )
+    .await;
+    match status {
+        None => {
+            return Err(BuildTerminated {
+                status: "canceled".to_string(),
+            }
+            .into());
+        }
+        Some(status) if !status.success() => {
+            anyhow::bail!(
+                "Building VM image {} failed with {status}; see the log above",
+                plan.name
+            );
+        }
+        Some(_) => {}
+    }
+    let image = plan.name.clone();
+    tokio::task::spawn_blocking(move || builder.keep_as(&image))
+        .await
+        .context("saving the VM image failed")??;
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!("VM image {} is ready and cached on this runner", plan.name),
+    )
+    .await;
+    Ok(())
+}
+
 async fn fetch_job_publish_plan(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -5794,9 +5948,6 @@ fn render_command_preview(command: &str, env: &[(String, String)]) -> String {
 fn is_flutter_build_command(command: &str) -> bool {
     let args: Vec<&str> = command.split_whitespace().collect();
     args.windows(2).any(|window| window == ["flutter", "build"])
-        || args
-            .windows(3)
-            .any(|window| window == ["fvm", "flutter", "build"])
 }
 
 fn with_dart_define_file(command: &str, define_file: &str) -> String {
@@ -6331,9 +6482,60 @@ async fn run_and_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::{choose_ios_export_method, load_ui_execution_config, pubspec_version_name};
-    use oore_contract::IosExportMethod;
+    use super::{
+        choose_ios_export_method, load_ui_execution_config, pubspec_version_name,
+        require_runner_labels, resolve_execution_plan,
+    };
+    use oore_contract::{BuildIsolation, IosExportMethod};
     use serde_json::json;
+
+    #[test]
+    fn repository_runs_on_must_match_the_claiming_runner() {
+        let snapshot = serde_json::json!({ "runner_labels": ["arm64", "macos", "xcode-16"] });
+        assert!(require_runner_labels(&["macos".into()], &snapshot, ".oore.yaml").is_ok());
+        let error = require_runner_labels(&["linux".into()], &snapshot, ".oore.yaml")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("lacks [linux]"), "{error}");
+        // Older backends do not send runner labels.
+        assert!(
+            require_runner_labels(&["linux".into()], &serde_json::json!({}), ".oore.yaml").is_ok()
+        );
+    }
+
+    #[test]
+    fn flutter_commands_run_unwrapped_and_fvmrc_picks_the_version() {
+        let workspace =
+            std::env::temp_dir().join(format!("oore-vm-plan-test-{}", std::process::id()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join(".fvmrc"), r#"{"flutter": "3.47.7"}"#).unwrap();
+        std::fs::write(
+            workspace.join(".oore.yaml"),
+            "version: 1\nplatforms: [android]\nisolation: vm\n",
+        )
+        .unwrap();
+
+        let plan = resolve_execution_plan(&workspace, &json!({})).unwrap();
+        assert_eq!(plan.isolation, BuildIsolation::Vm);
+        assert_eq!(plan.flutter_version, "3.47.7");
+        assert_eq!(plan.stage_commands.pre_build, vec!["flutter pub get"]);
+        assert_eq!(
+            plan.stage_commands.build,
+            vec!["flutter build apk --release"]
+        );
+
+        std::fs::write(
+            workspace.join(".oore.yaml"),
+            "version: 1\nplatforms: [android]\n",
+        )
+        .unwrap();
+        let plan = resolve_execution_plan(&workspace, &json!({})).unwrap();
+        assert_eq!(plan.isolation, BuildIsolation::Host);
+        assert_eq!(plan.flutter_version, "3.47.7");
+        assert_eq!(plan.stage_commands.pre_build, vec!["flutter pub get"]);
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
 
     #[test]
     fn export_method_follows_pipeline_and_xcode_naming() {
@@ -6445,6 +6647,8 @@ mod secret_tests {
             secret_env: vec![],
             secret_env_keys: Default::default(),
             build_number_offset: 0,
+            isolation: BuildIsolation::Host,
+            flutter_version: "stable".to_string(),
             source: "test".to_string(),
         }
     }
@@ -6508,5 +6712,113 @@ mod secret_tests {
             "  ***"
         );
         assert_eq!(masker.mask("nothing to hide"), "nothing to hide");
+    }
+
+    #[test]
+    fn bundle_verification_requires_every_entry_to_be_signed() {
+        let self_signed = "jar verified.\n\nWarning: \nThis jar contains entries whose signer certificate is self-signed.";
+        assert!(check_android_bundle_verification(self_signed).is_ok());
+        let unsigned = check_android_bundle_verification("no manifest.\n\njar is unsigned.")
+            .unwrap_err()
+            .to_string();
+        assert!(unsigned.contains("jar is unsigned"), "{unsigned}");
+        let partial = "jar verified.\n\nWarning: \nThis jar contains unsigned entries which have not been integrity-checked.";
+        assert!(check_android_bundle_verification(partial).is_err());
+        assert_eq!(
+            android_signer_failure_detail("", b"  "),
+            "signer exited without output"
+        );
+        assert_eq!(android_signer_failure_detail("out", b"err\n"), "err\nout");
+    }
+
+    #[test]
+    fn app_bundles_sign_with_self_signed_upload_keys() {
+        let toolchain = AndroidSigningToolchain::discover();
+        let Some(keytool) = toolchain
+            .java_home
+            .as_ref()
+            .map(|home| home.join("bin/keytool"))
+            .or_else(|| fixed_system_executable("keytool"))
+            .filter(|path| path.is_file())
+        else {
+            eprintln!("skipping: keytool is not installed");
+            return;
+        };
+        if !toolchain.jarsigner.is_file() || !toolchain.zip.is_file() {
+            eprintln!("skipping: jarsigner or zip is not installed");
+            return;
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "oore-aab-signing-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let bundle_dir = root.join("workspace/build/app/outputs/bundle/release");
+        fs::create_dir_all(&bundle_dir).unwrap();
+        let keystore = root.join("upload.jks");
+        let status = Command::new(&keytool)
+            .args(["-genkeypair", "-keystore"])
+            .arg(&keystore)
+            .args([
+                "-storepass",
+                "store-secret",
+                "-keypass",
+                "store-secret",
+                "-alias",
+                "upload",
+                "-keyalg",
+                "RSA",
+                "-keysize",
+                "2048",
+                "-validity",
+                "10000",
+                "-dname",
+                "CN=Upload",
+            ])
+            .env_remove("JAVA_TOOL_OPTIONS")
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "{status:?}");
+
+        fs::write(root.join("base.txt"), "module").unwrap();
+        let bundle = bundle_dir.join("app-release.aab");
+        let zipped = Command::new(&toolchain.zip)
+            .current_dir(&root)
+            .arg("-q")
+            .arg(&bundle)
+            .arg("base.txt")
+            .output()
+            .unwrap();
+        assert!(zipped.status.success(), "{zipped:?}");
+
+        let inputs = AndroidSigningInputs {
+            keystore_bytes: fs::read(&keystore).unwrap(),
+            keystore_password: "store-secret".into(),
+            key_alias: "upload".into(),
+            key_password: "store-secret".into(),
+        };
+        let signed = sign_android_artifacts(
+            &root.join("workspace"),
+            &root,
+            "flutter build appbundle --release",
+            &inputs,
+            &toolchain,
+        )
+        .unwrap();
+        assert_eq!(signed, vec![bundle.clone()]);
+
+        let output = Command::new(&toolchain.jarsigner)
+            .arg("-verify")
+            .arg(&bundle)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        assert!(stdout.contains("self-signed"), "{stdout}");
+        fs::remove_dir_all(&root).ok();
     }
 }

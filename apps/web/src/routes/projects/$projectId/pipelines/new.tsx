@@ -258,10 +258,7 @@ function RepositoryWorkflowSummary({
         </div>
         <div>
           <p className="text-xs text-muted-foreground">Flutter</p>
-          <p>
-            {execution.flutter_version ??
-              'Detected from .fvmrc or Oore-managed stable'}
-          </p>
+          <p>{execution.flutter_version ?? 'From .fvmrc, or stable'}</p>
         </div>
         <div>
           <p className="text-xs text-muted-foreground">Commands</p>

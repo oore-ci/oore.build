@@ -2198,6 +2198,74 @@
         ]
       }
     },
+    "/v1/events": {
+      "get": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "Stream live events (SSE)",
+        "description": "Server-sent event stream of build, runner and release changes, so\nclients can refresh without polling. Every connection starts with a\n`ready` event (`EventStreamReady`). Then: `build` (`BuildChangedEvent`),\n`release` (`ReleaseChangedEvent`), `runner` (`RunnerChangedEvent`, only\nfor users who can read runners), `resync` (`EventStreamResync`, events\nwere dropped and clients should refetch) and `done` (the stream ends,\ndata is the reason). Build and release events are limited to projects\nthe caller can read. Events are not replayed, so a client that\nreconnects should refetch once on `ready`. Comment keepalives are sent\nevery 15 seconds.",
+        "operationId": "stream_events",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "description": "Only send build and release events for this project",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE event stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No read access to the project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many open event streams",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/frontend/pair": {
       "post": {
         "tags": [
@@ -12073,6 +12141,36 @@
           "rejected"
         ]
       },
+      "BuildChangedEvent": {
+        "type": "object",
+        "description": "`build` event on `GET /v1/events`: a build was created or changed.",
+        "required": [
+          "build_id",
+          "project_id",
+          "build_number",
+          "status",
+          "updated_at"
+        ],
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BuildStatus"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "BuildChangelogPreviewResponse": {
         "type": "object",
         "required": [
@@ -12210,6 +12308,14 @@
             "type": "string"
           }
         }
+      },
+      "BuildIsolation": {
+        "type": "string",
+        "description": "Where a build's steps run.",
+        "enum": [
+          "host",
+          "vm"
+        ]
       },
       "BuildLogChunk": {
         "type": "object",
@@ -13040,6 +13146,37 @@
                 "$ref": "#/components/schemas/ProjectRetentionOverride"
               }
             ]
+          }
+        }
+      },
+      "EventStreamReady": {
+        "type": "object",
+        "description": "`ready` event, the first event on every `GET /v1/events` connection.\nClients refetch once on `ready` after a reconnect, since events sent while\ndisconnected are not replayed.",
+        "required": [
+          "runners"
+        ],
+        "properties": {
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runners": {
+            "type": "boolean",
+            "description": "Whether this stream carries `runner` events."
+          }
+        }
+      },
+      "EventStreamResync": {
+        "type": "object",
+        "description": "`resync` event: events were dropped, so clients should refetch.",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
           }
         }
       },
@@ -14256,6 +14393,11 @@
             "type": "integer",
             "format": "int64"
           },
+          "queued_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Builds waiting for a runner."
+          },
           "runners": {
             "type": "array",
             "items": {
@@ -14265,6 +14407,11 @@
           "total": {
             "type": "integer",
             "format": "int64"
+          },
+          "unmatched_queued_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Queued builds whose `runs_on` labels no online runner has."
           }
         }
       },
@@ -14948,6 +15095,9 @@
               "null"
             ]
           },
+          "isolation": {
+            "$ref": "#/components/schemas/BuildIsolation"
+          },
           "platform_build_args": {
             "$ref": "#/components/schemas/PlatformBuildArgs"
           },
@@ -14959,6 +15109,13 @@
             "items": {
               "$ref": "#/components/schemas/BuildPlatform"
             }
+          },
+          "runs_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Runner labels a build needs, all of them. Empty means `macos`."
           }
         }
       },
@@ -15505,6 +15662,13 @@
           "capabilities": {
             "type": "object"
           },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Operator labels for the new runner, added to the detected labels."
+          },
           "name": {
             "type": "string"
           }
@@ -15809,6 +15973,41 @@
           "before_production"
         ]
       },
+      "ReleaseChangedEvent": {
+        "type": "object",
+        "description": "`release` event on `GET /v1/events`: a release was created or its state\nor rollout changed.",
+        "required": [
+          "release_id",
+          "project_id",
+          "build_id",
+          "state",
+          "rollout_fraction",
+          "updated_at"
+        ],
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "release_id": {
+            "type": "string"
+          },
+          "rollout_fraction": {
+            "type": "number",
+            "format": "double",
+            "description": "Fraction of users, 0..1."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReleaseState"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ReleaseDetailResponse": {
         "type": "object",
         "required": [
@@ -15989,7 +16188,8 @@
           "platform_build_args",
           "platform_commands",
           "env_keys",
-          "artifact_patterns"
+          "artifact_patterns",
+          "isolation"
         ],
         "properties": {
           "artifact_patterns": {
@@ -16017,6 +16217,9 @@
               "null"
             ]
           },
+          "isolation": {
+            "$ref": "#/components/schemas/BuildIsolation"
+          },
           "platform_build_args": {
             "$ref": "#/components/schemas/PlatformBuildArgs"
           },
@@ -16027,6 +16230,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/BuildPlatform"
+            }
+          },
+          "runs_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
             }
           }
         }
@@ -16266,8 +16475,32 @@
             "type": "integer",
             "format": "int64"
           },
+          "custom_labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Labels an operator assigned to this runner."
+          },
+          "disk_pressure": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunnerDiskPressure"
+              }
+            ]
+          },
           "id": {
             "type": "string"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every label the scheduler matches `runs_on` against: the labels detected\nfrom capabilities plus `custom_labels`."
           },
           "last_heartbeat_at": {
             "type": [
@@ -16275,6 +16508,17 @@
               "null"
             ],
             "format": "int64"
+          },
+          "metrics": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunnerMetrics",
+                "description": "Utilisation from the latest heartbeat that carried metrics."
+              }
+            ]
           },
           "name": {
             "type": "string"
@@ -16390,6 +16634,38 @@
           }
         }
       },
+      "RunnerChangedEvent": {
+        "type": "object",
+        "description": "`runner` event on `GET /v1/events`: a runner was registered, removed,\nrenamed or changed status. Sent only to users who can read runners.",
+        "required": [
+          "runner_id",
+          "name",
+          "status",
+          "removed"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "removed": {
+            "type": "boolean",
+            "description": "True when the runner no longer exists; `status` is its last known one."
+          },
+          "runner_id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunnerStatus"
+          }
+        }
+      },
+      "RunnerDiskPressure": {
+        "type": "string",
+        "enum": [
+          "warning",
+          "critical"
+        ]
+      },
       "RunnerHeartbeatRequest": {
         "type": "object",
         "required": [
@@ -16398,6 +16674,16 @@
         "properties": {
           "capabilities": {
             "type": "object"
+          },
+          "metrics": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunnerMetrics"
+              }
+            ]
           },
           "status": {
             "type": "string"
@@ -16535,6 +16821,62 @@
             "items": {
               "$ref": "#/components/schemas/RunnerJobSecret"
             }
+          }
+        }
+      },
+      "RunnerMetrics": {
+        "type": "object",
+        "description": "Host utilisation a runner reports with each heartbeat.",
+        "required": [
+          "cpu_percent",
+          "memory_used_bytes",
+          "memory_total_bytes",
+          "disk_free_bytes",
+          "disk_total_bytes"
+        ],
+        "properties": {
+          "cache_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Size of the runner's dependency caches, when measured.",
+            "minimum": 0
+          },
+          "collected_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the backend received these metrics. Set by the backend."
+          },
+          "cpu_percent": {
+            "type": "number",
+            "format": "double",
+            "description": "One-minute load average as a share of logical CPUs, capped at 100."
+          },
+          "disk_free_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Free space on the volume that holds build workspaces.",
+            "minimum": 0
+          },
+          "disk_total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "memory_total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "memory_used_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -18047,6 +18389,16 @@
       "UpdateRunnerRequest": {
         "type": "object",
         "properties": {
+          "custom_labels": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replaces the runner's operator labels. Detected labels are kept."
+          },
           "name": {
             "type": [
               "string",
@@ -18435,6 +18787,10 @@
     {
       "name": "Build Logs",
       "description": "Build log ingestion and retrieval — append, paginated fetch, SSE streaming."
+    },
+    {
+      "name": "Events",
+      "description": "Live build, runner and release changes over SSE."
     },
     {
       "name": "Artifacts",

@@ -1721,6 +1721,18 @@ pub struct Runner {
     pub status: String,
     #[schema(value_type = Object)]
     pub capabilities: serde_json::Value,
+    /// Every label the scheduler matches `runs_on` against: the labels detected
+    /// from capabilities plus `custom_labels`.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Labels an operator assigned to this runner.
+    #[serde(default)]
+    pub custom_labels: Vec<String>,
+    /// Utilisation from the latest heartbeat that carried metrics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<RunnerMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_pressure: Option<RunnerDiskPressure>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_heartbeat_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1732,6 +1744,173 @@ pub struct Runner {
     pub updated_at: i64,
 }
 
+/// Host utilisation a runner reports with each heartbeat.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct RunnerMetrics {
+    /// One-minute load average as a share of logical CPUs, capped at 100.
+    pub cpu_percent: f64,
+    pub memory_used_bytes: u64,
+    pub memory_total_bytes: u64,
+    /// Free space on the volume that holds build workspaces.
+    pub disk_free_bytes: u64,
+    pub disk_total_bytes: u64,
+    /// Size of the runner's dependency caches, when measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_bytes: Option<u64>,
+    /// When the backend received these metrics. Set by the backend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collected_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerDiskPressure {
+    Warning,
+    Critical,
+}
+
+/// Disk free below this raises a warning incident for the runner.
+pub const RUNNER_DISK_WARNING_BYTES: u64 = 20 * 1024 * 1024 * 1024;
+/// Disk free below this raises the incident to critical.
+pub const RUNNER_DISK_CRITICAL_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+
+pub fn runner_disk_pressure(disk_free_bytes: u64) -> Option<RunnerDiskPressure> {
+    if disk_free_bytes < RUNNER_DISK_CRITICAL_BYTES {
+        Some(RunnerDiskPressure::Critical)
+    } else if disk_free_bytes < RUNNER_DISK_WARNING_BYTES {
+        Some(RunnerDiskPressure::Warning)
+    } else {
+        None
+    }
+}
+
+pub const MAX_RUNNER_LABELS: usize = 32;
+const MAX_RUNNER_LABEL_LENGTH: usize = 64;
+
+/// Labels a pipeline schedules on when it sets no `runs_on`. Builds assume a
+/// macOS host unless a pipeline asks for something else.
+pub const DEFAULT_RUNS_ON: &[&str] = &["macos"];
+
+/// Lowercase a label and check it uses only `a-z`, `0-9`, `.`, `_` and `-`.
+pub fn normalize_runner_label(label: &str) -> Result<String, String> {
+    let label = label.trim().to_ascii_lowercase();
+    if label.is_empty() || label.len() > MAX_RUNNER_LABEL_LENGTH {
+        return Err(format!(
+            "label must be between 1 and {MAX_RUNNER_LABEL_LENGTH} characters"
+        ));
+    }
+    if !label
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err(format!(
+            "label '{label}' may only contain letters, digits, '.', '_' and '-'"
+        ));
+    }
+    Ok(label)
+}
+
+/// Normalize, de-duplicate and sort a label list.
+pub fn normalize_runner_labels(labels: &[String]) -> Result<Vec<String>, String> {
+    if labels.len() > MAX_RUNNER_LABELS {
+        return Err(format!("at most {MAX_RUNNER_LABELS} labels are allowed"));
+    }
+    let mut normalized = labels
+        .iter()
+        .map(|label| normalize_runner_label(label))
+        .collect::<Result<Vec<_>, _>>()?;
+    normalized.sort();
+    normalized.dedup();
+    Ok(normalized)
+}
+
+/// Labels implied by what a runner reports about its host, such as `macos`,
+/// `macos-15`, `xcode-16` and `arm64`.
+pub fn detected_runner_labels(capabilities: &serde_json::Value) -> Vec<String> {
+    let text = |key: &str| {
+        capabilities
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    let major = |version: &str| {
+        version
+            .split(|c: char| !c.is_ascii_digit())
+            .find(|part| !part.is_empty())
+            .map(str::to_string)
+    };
+    let mut labels = Vec::new();
+    if let Some(os) = text("os").and_then(|os| normalize_runner_label(os).ok()) {
+        if let Some(version) = text("os_version").and_then(major) {
+            labels.push(format!("{os}-{version}"));
+        }
+        labels.push(os);
+    }
+    if let Some(version) = text("xcode_version").and_then(major) {
+        labels.push(format!("xcode-{version}"));
+    }
+    match text("arch") {
+        Some("aarch64" | "arm64") => labels.push("arm64".to_string()),
+        Some("x86_64" | "amd64") => labels.push("x86_64".to_string()),
+        _ => {}
+    }
+    labels.sort();
+    labels.dedup();
+    labels
+}
+
+/// The labels a runner advertises to the scheduler.
+pub fn effective_runner_labels(
+    capabilities: &serde_json::Value,
+    custom_labels: &[String],
+) -> Vec<String> {
+    let mut labels = detected_runner_labels(capabilities);
+    labels.extend(custom_labels.iter().cloned());
+    labels.sort();
+    labels.dedup();
+    labels
+}
+
+/// The labels a build needs, falling back to [`DEFAULT_RUNS_ON`].
+pub fn scheduling_labels(runs_on: &[String]) -> Vec<String> {
+    if runs_on.is_empty() {
+        DEFAULT_RUNS_ON
+            .iter()
+            .map(|label| label.to_string())
+            .collect()
+    } else {
+        runs_on.to_vec()
+    }
+}
+
+/// Labels in `required` that `available` lacks.
+pub fn missing_runner_labels(required: &[String], available: &[String]) -> Vec<String> {
+    required
+        .iter()
+        .filter(|label| !available.contains(label))
+        .cloned()
+        .collect()
+}
+
+/// Accept `runs_on: linux` as well as `runs_on: [macos, xcode-16]`.
+fn deserialize_runs_on<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match Option::<OneOrMany>::deserialize(deserializer)? {
+        None => Vec::new(),
+        Some(OneOrMany::One(label)) => vec![label],
+        Some(OneOrMany::Many(labels)) => labels,
+    })
+}
+
 // ── Runner API types ────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -1740,6 +1919,9 @@ pub struct RegisterRunnerRequest {
     #[serde(default)]
     #[schema(value_type = Object)]
     pub capabilities: serde_json::Value,
+    /// Operator labels for the new runner, added to the detected labels.
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -1754,6 +1936,8 @@ pub struct RunnerHeartbeatRequest {
     #[serde(default)]
     #[schema(value_type = Object)]
     pub capabilities: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<RunnerMetrics>,
 }
 
 /// Heartbeat answer. Runners purge their dependency caches when
@@ -1776,6 +1960,9 @@ pub struct ClaimJobRequest {
 pub struct UpdateRunnerRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Replaces the runner's operator labels. Detected labels are kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -1834,6 +2021,12 @@ pub struct ListRunnersResponse {
     pub runners: Vec<Runner>,
     pub total: i64,
     pub online_total: i64,
+    /// Builds waiting for a runner.
+    #[serde(default)]
+    pub queued_total: i64,
+    /// Queued builds whose `runs_on` labels no online runner has.
+    #[serde(default)]
+    pub unmatched_queued_total: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -2504,6 +2697,17 @@ pub struct PipelineCommandStages {
     pub post_build: Vec<String>,
 }
 
+/// Where a build's steps run.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildIsolation {
+    /// Directly on the runner host, with the host's toolchains.
+    #[default]
+    Host,
+    /// In a fresh Tart VM cloned from the image for the build's Flutter version.
+    Vm,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PlatformBuildArgs {
@@ -2559,6 +2763,11 @@ pub struct PipelineExecutionConfig {
     /// first store upload can start above the store's existing version code.
     #[serde(default)]
     pub build_number_offset: i64,
+    /// Runner labels a build needs, all of them. Empty means `macos`.
+    #[serde(default, deserialize_with = "deserialize_runs_on")]
+    pub runs_on: Vec<String>,
+    #[serde(default)]
+    pub isolation: BuildIsolation,
 }
 
 /// Secret-free representation of a repository-owned pipeline config.
@@ -2584,6 +2793,9 @@ pub struct RepositoryWorkflowExecutionPreview {
     pub artifact_patterns: Vec<String>,
     #[serde(default)]
     pub build_number_offset: i64,
+    #[serde(default)]
+    pub runs_on: Vec<String>,
+    pub isolation: BuildIsolation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -2650,6 +2862,10 @@ struct RepositoryPipelineConfig {
     artifacts: Option<RepositoryArtifacts>,
     #[serde(default)]
     build_number_offset: i64,
+    #[serde(default, deserialize_with = "deserialize_runs_on")]
+    runs_on: Vec<String>,
+    #[serde(default)]
+    isolation: BuildIsolation,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2682,8 +2898,77 @@ pub fn parse_repository_pipeline_yaml(raw: &str) -> Result<PipelineExecutionConf
         env: parsed.env,
         artifact_patterns,
         build_number_offset: parsed.build_number_offset,
+        runs_on: parsed.runs_on,
+        isolation: parsed.isolation,
     };
     let errors = validate_repository_execution_config(&config);
+    if errors.is_empty() {
+        let runs_on = normalize_runner_labels(&config.runs_on)?;
+        Ok(PipelineExecutionConfig { runs_on, ..config })
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
+/// Repository-owned VM image customisation, read from `oore.image.yaml`.
+/// The Flutter version still comes from `.fvmrc` or the pipeline.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmImageConfig {
+    pub version: u32,
+    /// Tart image to start from, overriding the runner's base image.
+    #[serde(default)]
+    pub base: Option<String>,
+    /// Extra `sdkmanager` packages, such as `platforms;android-36`.
+    #[serde(default)]
+    pub android_packages: Vec<String>,
+    /// Extra Homebrew formulae.
+    #[serde(default)]
+    pub brew: Vec<String>,
+    /// Shell commands run last, after Flutter is installed.
+    #[serde(default)]
+    pub setup: Vec<String>,
+}
+
+pub const VM_IMAGE_CONFIG_PATH: &str = "oore.image.yaml";
+
+fn is_plain_package_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ';' | '@' | '/' | '+')
+        })
+}
+
+pub fn parse_vm_image_yaml(raw: &str) -> Result<VmImageConfig, String> {
+    let config: VmImageConfig =
+        serde_yaml::from_str(raw).map_err(|error| format!("YAML parse error: {error}"))?;
+    let mut errors = Vec::new();
+    if config.version != 1 {
+        errors.push(format!(
+            "unsupported image config version {}, expected 1",
+            config.version
+        ));
+    }
+    if let Some(base) = &config.base
+        && (base.trim().is_empty() || base.chars().any(char::is_whitespace))
+    {
+        errors.push("base must be a Tart image name or OCI reference".to_string());
+    }
+    for (field, values) in [
+        ("android_packages", &config.android_packages),
+        ("brew", &config.brew),
+    ] {
+        for (index, value) in values.iter().enumerate() {
+            if !is_plain_package_name(value) {
+                errors.push(format!("{field}[{index}] is not a package name: '{value}'"));
+            }
+        }
+    }
+    for (index, command) in config.setup.iter().enumerate() {
+        if command.trim().is_empty() {
+            errors.push(format!("setup[{index}] must not be empty"));
+        }
+    }
     if errors.is_empty() {
         Ok(config)
     } else {
@@ -2850,6 +3135,9 @@ fn validate_repository_execution_config(config: &PipelineExecutionConfig) -> Vec
     if let Err(error) = validate_build_number_offset(config.build_number_offset) {
         errors.push(format!("build_number_offset {error}"));
     }
+    if let Err(error) = normalize_runner_labels(&config.runs_on) {
+        errors.push(format!("runs_on {error}"));
+    }
     let mut env_keys = std::collections::HashSet::new();
     for (index, entry) in config.env.iter().enumerate() {
         let key = entry.key.trim();
@@ -2876,6 +3164,8 @@ impl Default for PipelineExecutionConfig {
             env: Vec::new(),
             artifact_patterns: default_artifact_patterns(),
             build_number_offset: 0,
+            runs_on: Vec::new(),
+            isolation: BuildIsolation::Host,
         }
     }
 }
@@ -3833,6 +4123,61 @@ pub struct BuildLogChunk {
     pub stream: String,
 }
 
+// ── Live events (SSE) ───────────────────────────────────────────
+
+/// `build` event on `GET /v1/events`: a build was created or changed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildChangedEvent {
+    pub build_id: String,
+    pub project_id: String,
+    pub build_number: i64,
+    #[schema(value_type = BuildStatus)]
+    pub status: String,
+    pub updated_at: i64,
+}
+
+/// `runner` event on `GET /v1/events`: a runner was registered, removed,
+/// renamed or changed status. Sent only to users who can read runners.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct RunnerChangedEvent {
+    pub runner_id: String,
+    pub name: String,
+    #[schema(value_type = RunnerStatus)]
+    pub status: String,
+    /// True when the runner no longer exists; `status` is its last known one.
+    pub removed: bool,
+}
+
+/// `release` event on `GET /v1/events`: a release was created or its state
+/// or rollout changed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct ReleaseChangedEvent {
+    pub release_id: String,
+    pub project_id: String,
+    pub build_id: String,
+    pub state: ReleaseState,
+    /// Fraction of users, 0..1.
+    pub rollout_fraction: f64,
+    pub updated_at: i64,
+}
+
+/// `ready` event, the first event on every `GET /v1/events` connection.
+/// Clients refetch once on `ready` after a reconnect, since events sent while
+/// disconnected are not replayed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventStreamReady {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// Whether this stream carries `runner` events.
+    pub runners: bool,
+}
+
+/// `resync` event: events were dropped, so clients should refetch.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventStreamResync {
+    pub reason: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct AppendBuildLogsRequest {
     pub chunks: Vec<BuildLogChunk>,
@@ -4749,6 +5094,68 @@ mod tests {
         let all: ApprovalPolicy = serde_json::from_str(r#"{"required":true}"#).unwrap();
         assert!(all.applies_to("manual"));
         assert!(!ApprovalPolicy::default().applies_to("tag_push"));
+    }
+
+    #[test]
+    fn vm_image_config_accepts_packages_and_rejects_injection() {
+        let config = super::parse_vm_image_yaml(
+            "version: 1\nbase: ghcr.io/acme/xcode:26.5\nandroid_packages: ['platforms;android-36']\nbrew: [graphicsmagick]\nsetup: ['gem install bundler']\n",
+        )
+        .unwrap();
+        assert_eq!(config.base.as_deref(), Some("ghcr.io/acme/xcode:26.5"));
+        assert_eq!(config.android_packages, vec!["platforms;android-36"]);
+        assert!(super::parse_vm_image_yaml("version: 1\nbrew: ['jq; rm -rf /']\n").is_err());
+        assert!(super::parse_vm_image_yaml("version: 2\n").is_err());
+        assert!(super::parse_vm_image_yaml("version: 1\nflutter: 3.47.7\n").is_err());
+    }
+
+    #[test]
+    fn runner_labels_come_from_capabilities_and_operators() {
+        let capabilities = serde_json::json!({
+            "os": "macos",
+            "os_version": "15.3.1",
+            "arch": "aarch64",
+            "xcode_version": "Xcode 16.2",
+        });
+        assert_eq!(
+            super::detected_runner_labels(&capabilities),
+            ["arm64", "macos", "macos-15", "xcode-16"]
+        );
+        assert_eq!(
+            super::effective_runner_labels(&capabilities, &["gpu".into(), "macos".into()]),
+            ["arm64", "gpu", "macos", "macos-15", "xcode-16"]
+        );
+        assert_eq!(
+            super::detected_runner_labels(&serde_json::json!({"os": "linux", "arch": "x86_64"})),
+            ["linux", "x86_64"]
+        );
+        assert_eq!(
+            super::normalize_runner_labels(&[" Linux ".into(), "linux".into()]).unwrap(),
+            ["linux"]
+        );
+        assert!(super::normalize_runner_labels(&["has space".into()]).is_err());
+    }
+
+    #[test]
+    fn runs_on_accepts_one_label_or_a_list() {
+        let parse = |runs_on: &str| {
+            super::parse_repository_pipeline_yaml(&format!(
+                "version: 1\nplatforms: [android]\n{runs_on}"
+            ))
+            .map(|config| config.runs_on)
+        };
+        assert_eq!(parse("runs_on: Linux").unwrap(), ["linux"]);
+        assert_eq!(
+            parse("runs_on: [xcode-16, macos]").unwrap(),
+            ["macos", "xcode-16"]
+        );
+        assert!(parse("").unwrap().is_empty());
+        assert!(
+            parse("runs_on: [\"bad label\"]")
+                .unwrap_err()
+                .contains("runs_on")
+        );
+        assert_eq!(super::scheduling_labels(&[]), ["macos"]);
     }
 
     #[test]

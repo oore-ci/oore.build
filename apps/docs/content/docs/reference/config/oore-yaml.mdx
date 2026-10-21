@@ -16,6 +16,8 @@ platforms:
 
 flutter_version: '3.24.5'
 
+isolation: vm
+
 commands:
   pre_build:
     - flutter pub get
@@ -47,15 +49,34 @@ The schema rejects unknown fields.
 | --------------------- | -------- | -------- | ------------------------------- |
 | `version`             | integer  | Yes      | Must be `1`                     |
 | `platforms`           | string[] | Yes      | No default; must not be empty   |
-| `flutter_version`     | string   | No       | Oore-managed stable Flutter     |
+| `flutter_version`     | string   | No       | `stable`                        |
 | `commands`            | object   | No       | Empty stages                    |
 | `platform_build_args` | object   | No       | Empty arrays                    |
 | `platform_commands`   | object   | No       | No overrides                    |
 | `env`                 | object[] | No       | `[]`                            |
 | `artifacts`           | object   | No       | Platform-specific default globs |
 | `build_number_offset` | integer  | No       | `0`                             |
+| `runs_on`             | string[] | No       | `[macos]`                       |
+| `isolation`           | string   | No       | `host`                          |
 
 `platforms` accepts `android`, `ios`, and `macos`.
+
+## Isolation
+
+`isolation` chooses where the build steps run:
+
+- `host` runs them directly on the Runner Mac with its installed toolchains.
+- `vm` runs them in a fresh Tart VM cloned from the image for the build's
+  Flutter version, and deletes the VM when the build ends. See
+  [Run builds in VMs](/operate/runners/vm-isolation).
+
+## Runner labels
+
+`runs_on` takes one label or a list, such as `runs_on: linux` or
+`runs_on: [macos, xcode-16]`. The build fails before its commands run when the
+runner that claimed it lacks any of these labels. The scheduler routes builds by
+the pipeline's own `runs_on`, so set the same value there. See
+[Route builds with runner labels](/operate/runners/labels).
 
 ## Commands
 
@@ -142,7 +163,8 @@ but cannot be read or validated, the build fails instead of falling back.
 
 The runner reads the file from the pinned checkout used for the build. A
 `.fvmrc` value takes precedence over `flutter_version` from whichever
-configuration source is active. A repository file replaces the UI execution
+configuration source is active. The version picks the VM image for
+`isolation: vm`; a host build uses the Runner's installed Flutter. A repository file replaces the UI execution
 configuration for that run.
 
 Validate the file before committing:

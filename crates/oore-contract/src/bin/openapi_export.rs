@@ -204,6 +204,7 @@ use utoipa::{
         // ── Build Logs ──
         operations::append_build_logs,
         operations::get_build_logs,
+        operations::stream_events,
         operations::stream_build_logs,
         operations::create_stream_token,
         // ── Artifacts ──
@@ -351,6 +352,7 @@ use utoipa::{
         oore_contract::ListProjectMemberCandidatesResponse,
         // Pipelines
         oore_contract::BuildPlatform,
+        oore_contract::BuildIsolation,
         oore_contract::PipelineCommandStages,
         oore_contract::PlatformBuildArgs,
         oore_contract::PlatformBuildCommands,
@@ -446,6 +448,8 @@ use utoipa::{
         // Runners
         oore_contract::RunnerStatus,
         oore_contract::Runner,
+        oore_contract::RunnerMetrics,
+        oore_contract::RunnerDiskPressure,
         oore_contract::RegisterRunnerRequest,
         oore_contract::RegisterRunnerResponse,
         oore_contract::RunnerHeartbeatRequest,
@@ -522,6 +526,12 @@ use utoipa::{
         oore_contract::AppendBuildLogsRequest,
         oore_contract::AppendBuildLogsResponse,
         oore_contract::BuildLogsResponse,
+        // Live events
+        oore_contract::BuildChangedEvent,
+        oore_contract::RunnerChangedEvent,
+        oore_contract::ReleaseChangedEvent,
+        oore_contract::EventStreamReady,
+        oore_contract::EventStreamResync,
         // Notification Channels
         oore_contract::NotificationChannelType,
         oore_contract::SmtpTlsMode,
@@ -566,6 +576,7 @@ use utoipa::{
         (name = "Releases", description = "Store releases — staged rollout records with pause, halt, resume, complete and approval."),
         (name = "Runners", description = "Build runner management — register, heartbeat, job claim/status."),
         (name = "Build Logs", description = "Build log ingestion and retrieval — append, paginated fetch, SSE streaming."),
+        (name = "Events", description = "Live build, runner and release changes over SSE."),
         (name = "Artifacts", description = "Build artifact management — upload, list, download via signed URLs."),
         (name = "Notification Channels", description = "Outbound notification channel configuration — webhook, Mattermost."),
         (name = "Audit Logs", description = "Read-only audit trail of all user and system actions."),
@@ -2784,6 +2795,32 @@ mod operations {
         )
     )]
     pub(super) fn get_build_logs() {}
+
+    /// Stream live events (SSE)
+    ///
+    /// Server-sent event stream of build, runner and release changes, so
+    /// clients can refresh without polling. Every connection starts with a
+    /// `ready` event (`EventStreamReady`). Then: `build` (`BuildChangedEvent`),
+    /// `release` (`ReleaseChangedEvent`), `runner` (`RunnerChangedEvent`, only
+    /// for users who can read runners), `resync` (`EventStreamResync`, events
+    /// were dropped and clients should refetch) and `done` (the stream ends,
+    /// data is the reason). Build and release events are limited to projects
+    /// the caller can read. Events are not replayed, so a client that
+    /// reconnects should refetch once on `ready`. Comment keepalives are sent
+    /// every 15 seconds.
+    #[utoipa::path(get, path = "/v1/events", tag = "Events",
+        params(
+            ("project_id" = Option<String>, Query, description = "Only send build and release events for this project"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "SSE event stream", body = String, content_type = "text/event-stream"),
+            (status = 401, description = "Missing or invalid token", body = ApiError),
+            (status = 403, description = "No read access to the project", body = ApiError),
+            (status = 429, description = "Too many open event streams", body = ApiError),
+        )
+    )]
+    pub(super) fn stream_events() {}
 
     /// Stream build logs (SSE)
     ///

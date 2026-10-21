@@ -9,7 +9,7 @@ use oore_contract::{
     BuildEvent, BuildPlatform, BuildStatus, CancelBuildResponse, ConcurrencyPolicy,
     CreateBuildRequest, CreateBuildResponse, DEFAULT_BUILD_TIMEOUT_MINUTES, ListBuildsResponse,
     PipelineExecutionConfig, RerunBuildResponse, RunnerPolicyBlockReason, ScheduleTrigger,
-    TriggerConfig,
+    TriggerConfig, scheduling_labels,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -344,6 +344,7 @@ fn create_config_snapshot(
         "config_path_explicit": config_path_explicit,
         "ui_execution_config": ui_execution_config_json,
         "artifact_patterns": ui_execution_config.artifact_patterns,
+        "runs_on": scheduling_labels(&ui_execution_config.runs_on),
         "trigger_type": trigger_type,
         "timeout_secs": i64::from(timeout_minutes) * 60,
         "commit_sha": commit_sha,
@@ -2497,8 +2498,8 @@ mod tests {
              VALUES ('r1', 'inst1', '7', 'acme/app', 0, 0)",
             "INSERT INTO projects (id, name, repository_id, created_by, created_at, updated_at) \
              VALUES ('p1', 'App', 'r1', 'u1', 0, 0)",
-            "INSERT INTO runners (id, name, token_hash, status, created_at, updated_at) \
-             VALUES ('run1', 'mac', 'hash', 'online', 0, 0)",
+            "INSERT INTO runners (id, name, token_hash, status, labels, created_at, updated_at) \
+             VALUES ('run1', 'mac', 'hash', 'online', '[\"macos\"]', 0, 0)",
         ] {
             sqlx::query(statement).execute(&pool).await.unwrap();
         }

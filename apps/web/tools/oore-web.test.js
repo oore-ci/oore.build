@@ -6,6 +6,7 @@ import { gunzipSync } from 'node:zlib'
 import { test } from 'bun:test'
 import {
   evaluateSystemdWebUnit,
+  isEventStreamRequest,
   ownerCheckFailureReason,
   parseSavedWebUpdateState,
   parseSystemctlShow,
@@ -167,6 +168,14 @@ test('the owner check explains identity headers stripped behind a trusted proxy'
     ownerCheckFailureReason(request(identity), 500, config),
     /HTTP 500/,
   )
+})
+
+test('SSE requests are recognised so they skip the idle timeout', () => {
+  assert.equal(isEventStreamRequest('/v1/events'), true)
+  assert.equal(isEventStreamRequest('/v1/builds/b1/logs/stream'), true)
+  assert.equal(isEventStreamRequest('/v1/projects', 'text/event-stream'), true)
+  assert.equal(isEventStreamRequest('/v1/builds/b1/logs'), false)
+  assert.equal(isEventStreamRequest('/v1/builds', 'application/json'), false)
 })
 
 const REPO = 'oore-ci/oore.build'

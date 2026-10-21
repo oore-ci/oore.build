@@ -762,7 +762,7 @@ fn preflight_component_targets(
         paths.insert("LICENSE");
     }
     if runner {
-        paths.extend(["bin/fvm", "libexec/fvm", "RUNNER_RELEASE"]);
+        paths.insert("RUNNER_RELEASE");
     }
 
     let mut targets = Vec::new();
@@ -1064,15 +1064,13 @@ fn detect_legacy_v0141_layout(root: &Path) -> anyhow::Result<Option<LegacyInstal
     )?;
     if has_control_plane {
         verify_legacy_daemon_payload(root)?;
-        verify_legacy_runner_state(root)?;
+        verify_legacy_runner_state()?;
     } else {
         ensure_legacy_paths_absent(
             root,
             &[
                 "bin/oore",
                 "bin/oored",
-                "bin/fvm",
-                "libexec/fvm",
                 "managed-runner.json",
                 "VERSION",
                 "CHANNEL",
@@ -1172,7 +1170,7 @@ fn verify_legacy_daemon_payload(root: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn verify_legacy_runner_state(root: &Path) -> anyhow::Result<()> {
+fn verify_legacy_runner_state() -> anyhow::Result<()> {
     let path = dirs::home_dir()
         .context("could not determine the v0.1.41 runner account home")?
         .join(".oore/managed-runner.json");
@@ -1182,28 +1180,6 @@ fn verify_legacy_runner_state(root: &Path) -> anyhow::Result<()> {
         "v0.1.41 managed runner configuration is readable by another account: {}",
         path.display()
     );
-    let fvm = root.join("bin/fvm");
-    let libexec = root.join("libexec/fvm");
-    let fvm_exists = path_exists(&fvm)?;
-    let libexec_exists = path_exists(&libexec)?;
-    anyhow::ensure!(
-        fvm_exists == libexec_exists,
-        "the preserved v0.1.41 FVM toolchain payload is incomplete"
-    );
-    if fvm_exists {
-        let metadata = owned_regular_file_metadata(&fvm, "preserved FVM executable")?;
-        anyhow::ensure!(
-            metadata.permissions().mode() & 0o111 != 0,
-            "preserved FVM executable is not executable: {}",
-            fvm.display()
-        );
-        let metadata = owned_directory_metadata(&libexec, "preserved FVM library")?;
-        anyhow::ensure!(
-            metadata.permissions().mode() & 0o022 == 0,
-            "preserved FVM library is writable by another account: {}",
-            libexec.display()
-        );
-    }
     Ok(())
 }
 
