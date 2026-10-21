@@ -380,6 +380,19 @@ fn run_tart(tart: &Path, args: &[&str]) -> anyhow::Result<String> {
     )
 }
 
+/// Mounts each virtiofs `(tag, guest path)` share. `tart exec` runs without a
+/// login shell, so its PATH has no `/sbin` and the mount tool needs its full path.
+fn mount_script(mounts: &[(String, String)]) -> String {
+    mounts
+        .iter()
+        .map(|(tag, path)| {
+            let path = shell_quote(path);
+            format!("mkdir -p {path} && /sbin/mount_virtiofs {tag} {path}")
+        })
+        .collect::<Vec<_>>()
+        .join(" && ")
+}
+
 /// Deletes VMs this runner left behind when it crashed or was killed mid-build.
 pub(crate) fn delete_stale_vms(tart: &Path, runner_id: &str) -> anyhow::Result<usize> {
     let prefix = runner_vm_prefix(runner_id);
@@ -564,15 +577,7 @@ impl TartVm {
             }
             mounts.push((share_tag(share.name), guest_dir));
         }
-        let script = mounts
-            .iter()
-            .map(|(tag, path)| {
-                let path = shell_quote(path);
-                format!("mkdir -p {path} && mount_virtiofs {tag} {path}")
-            })
-            .collect::<Vec<_>>()
-            .join(" && ");
-        vm.exec_capture(&script)
+        vm.exec_capture(&mount_script(&mounts))
             .await
             .context("failed to mount the build workspace and caches inside the VM")?;
         vm.guest_workspace = guest_workspace;
@@ -840,6 +845,24 @@ mod tests {
         )
         .unwrap();
         assert_ne!(own.name, android.name);
+    }
+
+    #[test]
+    fn mounts_use_the_full_mount_virtiofs_path() {
+        let script = mount_script(&[
+            (
+                "oore-workspace".to_string(),
+                "/Users/admin/oore-workspace".to_string(),
+            ),
+            (
+                "oore-cache-pub".to_string(),
+                "/Users/admin/oore-cache/pub".to_string(),
+            ),
+        ]);
+        assert_eq!(
+            script,
+            "mkdir -p '/Users/admin/oore-workspace' && /sbin/mount_virtiofs oore-workspace '/Users/admin/oore-workspace' && mkdir -p '/Users/admin/oore-cache/pub' && /sbin/mount_virtiofs oore-cache-pub '/Users/admin/oore-cache/pub'"
+        );
     }
 
     #[test]
