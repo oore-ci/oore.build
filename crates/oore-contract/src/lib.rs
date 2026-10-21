@@ -1311,21 +1311,17 @@ pub struct TriggerConfig {
     /// Tag globs for tag push events. When only `branches` is set, tag
     /// events do not trigger.
     #[serde(default)]
-    #[schema(required = true)]
     pub tags: Vec<String>,
     /// Push and pull request events trigger only when a changed file matches
     /// one of these globs (`**` spans directories).
     #[serde(default)]
-    #[schema(required = true)]
     pub paths: Vec<String>,
     /// Push and pull request events are skipped when every changed file
     /// matches one of these globs.
     #[serde(default)]
-    #[schema(required = true)]
     pub paths_ignore: Vec<String>,
     /// Cron schedules, evaluated in UTC.
     #[serde(default)]
-    #[schema(required = true)]
     pub schedules: Vec<ScheduleTrigger>,
 }
 
@@ -1352,7 +1348,6 @@ pub struct ApprovalPolicy {
     /// Trigger events that need approval: `push`, `pull_request`,
     /// `tag_push`, `manual` or `schedule`. Empty means every build.
     #[serde(default)]
-    #[schema(required = true)]
     pub events: Vec<String>,
 }
 

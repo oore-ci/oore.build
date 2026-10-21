@@ -11343,8 +11343,7 @@
         "type": "object",
         "description": "Which builds of a pipeline wait for a maintainer before a runner may\nclaim them.",
         "required": [
-          "required",
-          "events"
+          "required"
         ],
         "properties": {
           "events": {
@@ -17316,11 +17315,7 @@
         "type": "object",
         "required": [
           "events",
-          "branches",
-          "tags",
-          "paths",
-          "paths_ignore",
-          "schedules"
+          "branches"
         ],
         "properties": {
           "branches": {
