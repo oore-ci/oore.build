@@ -21,7 +21,7 @@ The directories live under `~/Library/Caches/build.oore/runner-caches/<runner>/`
 
 Xcode keeps DerivedData in its default location. Each project builds from the same workspace path on a runner, so Xcode reuses one DerivedData folder per project.
 
-Settings in `~/.gradle/gradle.properties` do not apply to builds, because builds use the runner's Gradle home. Put build settings in the project's `android/gradle.properties`.
+Builds use the runner's Gradle home, so before each build the runner copies `~/.gradle/gradle.properties` into it. Proxy settings such as `systemProp.https.proxyHost` and JVM settings there keep applying. Edit the file in `~/.gradle`, not the copy.
 
 ## Hits and misses
 
