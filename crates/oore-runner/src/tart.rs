@@ -582,6 +582,16 @@ impl TartVm {
         self.spawn_script(&script).await
     }
 
+    /// Runs `script` in a guest login shell and collects its output instead
+    /// of streaming it, for steps whose output must not reach the build log.
+    pub(crate) async fn run_script(&self, script: &str) -> anyhow::Result<std::process::Output> {
+        let child = self.spawn_script(script).await?;
+        child
+            .wait_with_output()
+            .await
+            .context("failed to wait for tart exec")
+    }
+
     /// Feeds `script` to a guest login shell, which picks up the image's PATH
     /// (Flutter, Homebrew, Ruby).
     pub(crate) async fn spawn_script(&self, script: &str) -> anyhow::Result<tokio::process::Child> {
