@@ -13918,6 +13918,11 @@
             "type": "integer",
             "format": "int64"
           },
+          "queued_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Builds waiting for a runner."
+          },
           "runners": {
             "type": "array",
             "items": {
@@ -13927,6 +13932,11 @@
           "total": {
             "type": "integer",
             "format": "int64"
+          },
+          "unmatched_queued_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Queued builds whose `runs_on` labels no online runner has."
           }
         }
       },
@@ -14610,6 +14620,13 @@
             "items": {
               "$ref": "#/components/schemas/BuildPlatform"
             }
+          },
+          "runs_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Runner labels a build needs, all of them. Empty means `macos`."
           }
         }
       },
@@ -15156,6 +15173,13 @@
           "capabilities": {
             "type": "object"
           },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Operator labels for the new runner, added to the detected labels."
+          },
           "name": {
             "type": "string"
           }
@@ -15679,6 +15703,12 @@
             "items": {
               "$ref": "#/components/schemas/BuildPlatform"
             }
+          },
+          "runs_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -15909,8 +15939,32 @@
             "type": "integer",
             "format": "int64"
           },
+          "custom_labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Labels an operator assigned to this runner."
+          },
+          "disk_pressure": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunnerDiskPressure"
+              }
+            ]
+          },
           "id": {
             "type": "string"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every label the scheduler matches `runs_on` against: the labels detected\nfrom capabilities plus `custom_labels`."
           },
           "last_heartbeat_at": {
             "type": [
@@ -15918,6 +15972,17 @@
               "null"
             ],
             "format": "int64"
+          },
+          "metrics": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunnerMetrics",
+                "description": "Utilisation from the latest heartbeat that carried metrics."
+              }
+            ]
           },
           "name": {
             "type": "string"
@@ -16033,6 +16098,13 @@
           }
         }
       },
+      "RunnerDiskPressure": {
+        "type": "string",
+        "enum": [
+          "warning",
+          "critical"
+        ]
+      },
       "RunnerHeartbeatRequest": {
         "type": "object",
         "required": [
@@ -16041,6 +16113,16 @@
         "properties": {
           "capabilities": {
             "type": "object"
+          },
+          "metrics": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunnerMetrics"
+              }
+            ]
           },
           "status": {
             "type": "string"
@@ -16165,6 +16247,62 @@
             "items": {
               "$ref": "#/components/schemas/RunnerJobSecret"
             }
+          }
+        }
+      },
+      "RunnerMetrics": {
+        "type": "object",
+        "description": "Host utilisation a runner reports with each heartbeat.",
+        "required": [
+          "cpu_percent",
+          "memory_used_bytes",
+          "memory_total_bytes",
+          "disk_free_bytes",
+          "disk_total_bytes"
+        ],
+        "properties": {
+          "cache_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Combined size of toolchain and dependency caches, when measured.",
+            "minimum": 0
+          },
+          "collected_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the backend received these metrics. Set by the backend."
+          },
+          "cpu_percent": {
+            "type": "number",
+            "format": "double",
+            "description": "One-minute load average as a share of logical CPUs, capped at 100."
+          },
+          "disk_free_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Free space on the volume that holds build workspaces.",
+            "minimum": 0
+          },
+          "disk_total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "memory_total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "memory_used_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -17609,6 +17747,16 @@
       "UpdateRunnerRequest": {
         "type": "object",
         "properties": {
+          "custom_labels": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replaces the runner's operator labels. Detected labels are kept."
+          },
           "name": {
             "type": [
               "string",

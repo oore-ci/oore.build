@@ -54,8 +54,17 @@ The schema rejects unknown fields.
 | `env`                 | object[] | No       | `[]`                            |
 | `artifacts`           | object   | No       | Platform-specific default globs |
 | `build_number_offset` | integer  | No       | `0`                             |
+| `runs_on`             | string[] | No       | `[macos]`                       |
 
 `platforms` accepts `android`, `ios`, and `macos`.
+
+## Runner labels
+
+`runs_on` takes one label or a list, such as `runs_on: linux` or
+`runs_on: [macos, xcode-16]`. The build fails before its commands run when the
+runner that claimed it lacks any of these labels. The scheduler routes builds by
+the pipeline's own `runs_on`, so set the same value there. See
+[Route builds with runner labels](/operate/runners/labels).
 
 ## Commands
 

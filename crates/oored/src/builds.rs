@@ -7,7 +7,7 @@ use oore_contract::{
     ApiError, Build, BuildChangelogPreviewResponse, BuildContext, BuildDetailResponse, BuildEvent,
     BuildPlatform, BuildStatus, CancelBuildResponse, ConcurrencyPolicy, CreateBuildRequest,
     CreateBuildResponse, ListBuildsResponse, PipelineExecutionConfig, RerunBuildResponse,
-    RunnerPolicyBlockReason, TriggerConfig,
+    RunnerPolicyBlockReason, TriggerConfig, scheduling_labels,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -322,6 +322,7 @@ fn create_config_snapshot(
         "config_path_explicit": config_path_explicit,
         "ui_execution_config": ui_execution_config_json,
         "artifact_patterns": ui_execution_config.artifact_patterns,
+        "runs_on": scheduling_labels(&ui_execution_config.runs_on),
         "trigger_type": trigger_type,
         "commit_sha": commit_sha,
         "branch": branch,

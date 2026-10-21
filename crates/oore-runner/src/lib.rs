@@ -21,9 +21,10 @@ use oore_contract::{
     PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
     RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse,
     RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult, StepResult,
-    artifact_pattern_matches, is_valid_pipeline_env_key, parse_repository_pipeline_yaml,
-    replace_secret_references, store_version_code, validate_artifact_pattern,
-    validate_build_number_offset, validate_repository_config_path,
+    artifact_pattern_matches, is_valid_pipeline_env_key, missing_runner_labels,
+    normalize_runner_labels, parse_repository_pipeline_yaml, replace_secret_references,
+    store_version_code, validate_artifact_pattern, validate_build_number_offset,
+    validate_repository_config_path,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -31,6 +32,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use zeroize::Zeroize;
 
 mod app_store_upload;
+mod metrics;
 mod publish;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
@@ -468,7 +470,7 @@ pub async fn detect_capabilities() -> serde_json::Value {
         .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
 
     serde_json::json!({
-        "os": "macos",
+        "os": std::env::consts::OS,
         "os_version": os_version,
         "arch": arch,
         "xcode_version": xcode_version,
@@ -3008,19 +3010,53 @@ fn terminal_runner_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<RunnerControlPlaneRejected>().is_some()
 }
 
+/// Size of toolchain and dependency caches, refreshed in the background
+/// because walking them takes too long for every heartbeat.
+type CacheBytes = Arc<std::sync::Mutex<Option<u64>>>;
+
+const CACHE_SIZE_INTERVAL: Duration = Duration::from_secs(10 * 60);
+
+fn spawn_cache_size_monitor() -> CacheBytes {
+    let cache_bytes = CacheBytes::default();
+    let shared = cache_bytes.clone();
+    let install_root = std::env::current_exe()
+        .ok()
+        .and_then(|executable| oore_install_root_for_executable(&executable));
+    tokio::spawn(async move {
+        loop {
+            let roots = metrics::cache_roots(install_root.as_deref());
+            if let Ok(bytes) =
+                tokio::task::spawn_blocking(move || metrics::directory_bytes(&roots)).await
+                && let Ok(mut current) = shared.lock()
+            {
+                *current = Some(bytes);
+            }
+            tokio::time::sleep(CACHE_SIZE_INTERVAL).await;
+        }
+    });
+    cache_bytes
+}
+
 async fn send_runner_heartbeat(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
     capabilities: &serde_json::Value,
+    cache_bytes: &CacheBytes,
 ) -> anyhow::Result<()> {
+    let cache_bytes = cache_bytes.lock().ok().and_then(|bytes| *bytes);
+    let metrics = metrics::sample_runner_metrics(&std::env::temp_dir(), cache_bytes);
     let response = client
         .post(format!(
             "{}/v1/runners/{}/heartbeat",
             daemon_url, config.runner_id
         ))
         .bearer_auth(&config.runner_token)
-        .json(&serde_json::json!({ "status": "online", "capabilities": capabilities }))
+        .json(&serde_json::json!({
+            "status": "online",
+            "capabilities": capabilities,
+            "metrics": metrics,
+        }))
         .timeout(Duration::from_secs(3))
         .send()
         .await
@@ -3043,6 +3079,7 @@ async fn establish_runner_heartbeat(
     daemon_url: &str,
     config: &RunnerConfig,
     capabilities: &serde_json::Value,
+    cache_bytes: &CacheBytes,
 ) -> anyhow::Result<()> {
     let delays = [
         Duration::ZERO,
@@ -3054,7 +3091,7 @@ async fn establish_runner_heartbeat(
         if !delay.is_zero() {
             tokio::time::sleep(delay).await;
         }
-        match send_runner_heartbeat(client, daemon_url, config, capabilities).await {
+        match send_runner_heartbeat(client, daemon_url, config, capabilities, cache_bytes).await {
             Ok(()) => return Ok(()),
             Err(error) if terminal_runner_error(&error) => return Err(error),
             Err(error) => last_error = Some(error),
@@ -3121,10 +3158,11 @@ pub async fn run_runner_forever(
     println!("Connecting to: {}", daemon_url);
 
     let capabilities = detect_capabilities().await;
+    let cache_bytes = spawn_cache_size_monitor();
 
     // Do not enter the claim loop or advertise service readiness until the
     // backend has authenticated this exact runner/config/release.
-    establish_runner_heartbeat(&client, &daemon_url, &config, &capabilities).await?;
+    establish_runner_heartbeat(&client, &daemon_url, &config, &capabilities, &cache_bytes).await?;
     if let (Some(path), Some(template)) =
         (service_ack_path.as_deref(), service_ack_template.as_ref())
     {
@@ -3135,13 +3173,22 @@ pub async fn run_runner_forever(
     let hb_url = daemon_url.clone();
     let hb_config = config.clone();
     let hb_capabilities = capabilities.clone();
+    let hb_cache_bytes = cache_bytes.clone();
     let hb_ack_path = service_ack_path;
     let hb_ack_template = service_ack_template;
     let (fatal_tx, mut fatal_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
-            match send_runner_heartbeat(&hb_client, &hb_url, &hb_config, &hb_capabilities).await {
+            match send_runner_heartbeat(
+                &hb_client,
+                &hb_url,
+                &hb_config,
+                &hb_capabilities,
+                &hb_cache_bytes,
+            )
+            .await
+            {
                 Ok(()) => {
                     if let (Some(path), Some(template)) =
                         (hb_ack_path.as_deref(), hb_ack_template.as_ref())
@@ -3757,6 +3804,8 @@ fn normalize_execution_config(
         normalize_flutter_version(config.flutter_version.as_deref(), "flutter_version")?;
     validate_build_number_offset(config.build_number_offset)
         .map_err(|error| anyhow::anyhow!("build_number_offset {error}"))?;
+    let runs_on = normalize_runner_labels(&config.runs_on)
+        .map_err(|error| anyhow::anyhow!("runs_on {error}"))?;
 
     Ok(PipelineExecutionConfig {
         platforms: config.platforms,
@@ -3767,6 +3816,7 @@ fn normalize_execution_config(
         env,
         artifact_patterns,
         build_number_offset: config.build_number_offset,
+        runs_on,
     })
 }
 
@@ -3877,6 +3927,32 @@ fn apply_run_platform_selection(
     Ok(config)
 }
 
+/// The scheduler matched this runner against the pipeline's `runs_on`. A
+/// repository file can ask for more, so stop before any build command runs on
+/// a runner that lacks those labels.
+fn require_runner_labels(
+    runs_on: &[String],
+    snapshot: &serde_json::Value,
+    config_path: &str,
+) -> anyhow::Result<()> {
+    let Some(runner_labels) = snapshot.get("runner_labels").and_then(|v| v.as_array()) else {
+        return Ok(());
+    };
+    let runner_labels: Vec<String> = runner_labels
+        .iter()
+        .filter_map(|label| label.as_str().map(str::to_string))
+        .collect();
+    let missing = missing_runner_labels(runs_on, &runner_labels);
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "{config_path} sets runs_on [{}], but this runner lacks [{}]. Set the same runs_on on the pipeline so the scheduler picks a matching runner",
+            runs_on.join(", "),
+            missing.join(", ")
+        );
+    }
+    Ok(())
+}
+
 fn resolve_execution_plan(
     workspace: &Path,
     snapshot: &serde_json::Value,
@@ -3930,6 +4006,7 @@ fn resolve_execution_plan(
         let file_config = parse_repository_pipeline_yaml(&content).map_err(|e| {
             anyhow::anyhow!("Invalid pipeline config in {}: {}", full_path.display(), e)
         })?;
+        require_runner_labels(&file_config.runs_on, snapshot, rel_path)?;
         let file_config = apply_run_platform_selection(file_config, snapshot)?;
         let resolved_flutter_version = fvmrc_version
             .or_else(|| file_config.flutter_version.clone())
@@ -6108,9 +6185,26 @@ async fn run_and_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::{choose_ios_export_method, load_ui_execution_config, pubspec_version_name};
+    use super::{
+        choose_ios_export_method, load_ui_execution_config, pubspec_version_name,
+        require_runner_labels,
+    };
     use oore_contract::IosExportMethod;
     use serde_json::json;
+
+    #[test]
+    fn repository_runs_on_must_match_the_claiming_runner() {
+        let snapshot = serde_json::json!({ "runner_labels": ["arm64", "macos", "xcode-16"] });
+        assert!(require_runner_labels(&["macos".into()], &snapshot, ".oore.yaml").is_ok());
+        let error = require_runner_labels(&["linux".into()], &snapshot, ".oore.yaml")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("lacks [linux]"), "{error}");
+        // Older backends do not send runner labels.
+        assert!(
+            require_runner_labels(&["linux".into()], &serde_json::json!({}), ".oore.yaml").is_ok()
+        );
+    }
 
     #[test]
     fn export_method_follows_pipeline_and_xcode_naming() {
