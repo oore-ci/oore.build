@@ -20,7 +20,6 @@ import {
   resolveDataTableSorting,
 } from '@/components/data-table-features'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -43,7 +42,8 @@ import { Spinner } from '@/components/ui/spinner'
 import { TabsContent } from '@/components/ui/tabs'
 import { useUpdatePipeline } from '@/hooks/use-pipelines'
 import { relativeTime } from '@/lib/format-utils'
-import { getPipelineStatusVariant } from '@/lib/status-variants'
+import { enabledStatus } from '@/lib/status-variants'
+import { StatusBadge } from '@/components/status-badge'
 import { toast } from '@/lib/toast'
 
 const PIPELINE_SORTS = ['created_at', 'name'] as const
@@ -197,9 +197,10 @@ export function ProjectPipelinesTab({
         accessorKey: 'enabled',
         header: 'Status',
         cell: ({ row }) => (
-          <Badge variant={getPipelineStatusVariant(row.original.enabled)}>
-            {row.original.enabled ? 'Enabled' : 'Disabled'}
-          </Badge>
+          <StatusBadge
+            kind="enabled"
+            value={enabledStatus(row.original.enabled)}
+          />
         ),
         enableSorting: false,
       },

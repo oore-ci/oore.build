@@ -13,8 +13,8 @@ import {
   resolveDataTableSorting,
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
-import { relativeTime } from '@/lib/format-utils'
-import { getIntegrationStatusVariant } from '@/lib/status-variants'
+import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
+import { StatusBadge } from '@/components/status-badge'
 import { Badge } from '@/components/ui/badge'
 
 export type IntegrationSort = 'name' | 'provider' | 'status' | 'updated_at'
@@ -40,7 +40,7 @@ function authModeLabel(mode: string): string {
     ['pat', 'Personal access token'],
     ['personal_token', 'Personal access token'],
   ])
-  return labels.get(mode) ?? mode.replace(/_/g, ' ')
+  return labels.get(mode) ?? formatEnumLabel(mode)
 }
 
 function sourceIdentity(integration: Integration) {
@@ -84,9 +84,7 @@ const sourceColumns: Array<DataTableColumnDef<Integration>> = [
       <DataTableColumnHeader column={column} title="Status" />
     ),
     cell: ({ row }) => (
-      <Badge variant={getIntegrationStatusVariant(row.original.status)}>
-        {row.original.status}
-      </Badge>
+      <StatusBadge kind="integration" value={row.original.status} />
     ),
   },
   {

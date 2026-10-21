@@ -34,7 +34,8 @@ import { useProject } from '@/hooks/use-projects'
 import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
 import { isOoreApiError } from '@oore/client/client'
 import { PageMeta } from '@/lib/seo'
-import { getStatusVariant } from '@/lib/status-variants'
+import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
+import { StatusBadge } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
@@ -220,10 +221,10 @@ export function BuildDetailPage({
         }
         meta={
           <>
-            <Badge variant={getStatusVariant(build.status)}>
-              {build.status}
+            <StatusBadge kind="build" value={build.status} />
+            <Badge variant="outline">
+              {TRIGGER_TYPE_LABELS[build.trigger_type]}
             </Badge>
-            <Badge variant="outline">{build.trigger_type}</Badge>
             <span aria-hidden className="h-3 w-px bg-border" />
             <BuildSummary build={build} duration={duration} />
           </>
@@ -263,7 +264,7 @@ export function BuildDetailPage({
                 onClick={() => setCancelOpen(true)}
                 disabled={cancelMutation.isPending}
               >
-                {cancelMutation.isPending ? 'Canceling...' : 'Cancel Build'}
+                {cancelMutation.isPending ? 'Canceling...' : 'Cancel build'}
               </Button>
             ) : null}
           </div>

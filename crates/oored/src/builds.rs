@@ -4,10 +4,12 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
-    ApiError, Build, BuildChangelogPreviewResponse, BuildContext, BuildDetailResponse, BuildEvent,
-    BuildPlatform, BuildStatus, CancelBuildResponse, ConcurrencyPolicy, CreateBuildRequest,
-    CreateBuildResponse, ListBuildsResponse, PipelineExecutionConfig, RerunBuildResponse,
-    RunnerPolicyBlockReason, TriggerConfig, scheduling_labels,
+    ApiError, ApprovalPolicy, Build, BuildApproval, BuildApprovalRequest, BuildApprovalResponse,
+    BuildApprovalState, BuildChangelogPreviewResponse, BuildContext, BuildDetailResponse,
+    BuildEvent, BuildPlatform, BuildStatus, CancelBuildResponse, ConcurrencyPolicy,
+    CreateBuildRequest, CreateBuildResponse, DEFAULT_BUILD_TIMEOUT_MINUTES, ListBuildsResponse,
+    PipelineExecutionConfig, RerunBuildResponse, RunnerPolicyBlockReason, ScheduleTrigger,
+    TriggerConfig, scheduling_labels,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -54,6 +56,23 @@ fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         || context.runner_name.is_some())
     .then_some(context);
 
+    let approval = row
+        .try_get::<Option<String>, _>("approval_state")
+        .ok()
+        .flatten()
+        .and_then(|state| state.parse::<BuildApprovalState>().ok())
+        .map(|state| BuildApproval {
+            state,
+            requested_at: row
+                .try_get::<Option<i64>, _>("approval_requested_at")
+                .ok()
+                .flatten()
+                .unwrap_or_default(),
+            decided_by: row.try_get("approval_decided_by").ok().flatten(),
+            decided_at: row.try_get("approval_decided_at").ok().flatten(),
+            reason: row.try_get("approval_reason").ok().flatten(),
+        });
+
     Build {
         id: row.get("id"),
         project_id: row.get("project_id"),
@@ -73,6 +92,7 @@ fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         branch: row.get("branch"),
         changelog: row.get("changelog"),
         source_build_id: row.get("source_build_id"),
+        approval,
         config_snapshot,
         runner_id: row.get("runner_id"),
         context,
@@ -303,10 +323,12 @@ pub async fn transition_build(
 }
 
 /// Create a config snapshot capturing pipeline config at build creation time.
+#[allow(clippy::too_many_arguments)]
 fn create_config_snapshot(
     pipeline_config_path: &str,
     config_path_explicit: bool,
     ui_execution_config: &PipelineExecutionConfig,
+    timeout_minutes: u32,
     trigger_type: &str,
     commit_sha: Option<&str>,
     branch: Option<&str>,
@@ -324,6 +346,7 @@ fn create_config_snapshot(
         "artifact_patterns": ui_execution_config.artifact_patterns,
         "runs_on": scheduling_labels(&ui_execution_config.runs_on),
         "trigger_type": trigger_type,
+        "timeout_secs": i64::from(timeout_minutes) * 60,
         "commit_sha": commit_sha,
         "branch": branch,
         "repo_url": repo_url,
@@ -370,6 +393,104 @@ fn validate_selected_platforms(
 
 fn parse_execution_config(raw: &str) -> PipelineExecutionConfig {
     serde_json::from_str(raw).unwrap_or_else(|_| PipelineExecutionConfig::default())
+}
+
+/// Timeout and approval policy from a `pipelines` row.
+fn pipeline_gates(row: &sqlx::sqlite::SqliteRow) -> (u32, ApprovalPolicy) {
+    let timeout_minutes = row
+        .try_get::<i64, _>("timeout_minutes")
+        .ok()
+        .and_then(|minutes| u32::try_from(minutes).ok())
+        .filter(|minutes| *minutes > 0)
+        .unwrap_or(DEFAULT_BUILD_TIMEOUT_MINUTES);
+    let approval = row
+        .try_get::<String, _>("approval_policy")
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
+    (timeout_minutes, approval)
+}
+
+fn pending_approval(approval_required: bool, now: i64) -> Option<BuildApproval> {
+    approval_required.then_some(BuildApproval {
+        state: BuildApprovalState::Pending,
+        requested_at: now,
+        decided_by: None,
+        decided_at: None,
+        reason: None,
+    })
+}
+
+fn initial_event_reason(reason: &str, approval_required: bool) -> String {
+    if approval_required {
+        format!("{reason}; waiting for approval")
+    } else {
+        reason.to_string()
+    }
+}
+
+/// Audit and notify that a new build is waiting for approval.
+async fn announce_pending_approval(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    build_id: &str,
+    actor_user_id: Option<&str>,
+) {
+    let details = serde_json::json!({ "build_id": build_id }).to_string();
+    let _ = write_audit_log(
+        pool,
+        actor_user_id,
+        "build_approval_requested",
+        "build",
+        Some(build_id),
+        Some(&details),
+    )
+    .await;
+    let pool = pool.clone();
+    let encryption_key = encryption_key.to_vec();
+    let build_id = build_id.to_string();
+    tokio::spawn(async move {
+        if let Err(error) = crate::notification_dispatch::dispatch_build_approval_needed(
+            &pool,
+            &encryption_key,
+            &build_id,
+        )
+        .await
+        {
+            error!(%error, %build_id, "approval notification dispatch error");
+        }
+    });
+}
+
+/// Clone URL of a linked repository, or `None` when it cannot be resolved.
+async fn resolve_repository_clone_url(
+    pool: &sqlx::SqlitePool,
+    repository_id: &str,
+) -> Result<Option<String>, (StatusCode, Json<ApiError>)> {
+    let repo_url: Option<String> = sqlx::query_scalar(
+        "SELECT CASE \
+            WHEN i.provider = 'local_git' THEN r.html_url \
+            ELSE i.host_url || '/' || r.full_name || '.git' \
+         END \
+         FROM integration_repositories r \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN integrations i ON i.id = inst.integration_id \
+         WHERE r.id = ?1",
+    )
+    .bind(repository_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, repository_id = %repository_id, "failed to resolve repository URL");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to resolve project source",
+        )
+    })?;
+    Ok(repo_url
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty()))
 }
 
 fn normalize_optional(value: Option<String>) -> Option<String> {
@@ -476,6 +597,8 @@ struct BuildInsertBinds<'a> {
     trigger_type: &'a str,
     source_build_id: Option<&'a str>,
     cancel_previous: bool,
+    /// Hold the build for a maintainer's approval before runners see it.
+    approval_required: bool,
 }
 
 async fn execute_build_insert(
@@ -487,10 +610,12 @@ async fn execute_build_insert(
     let result = sqlx::query(
         "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, \
          trigger_type, trigger_actor, trigger_event, trigger_ref, commit_sha, branch, \
-         changelog, config_snapshot, webhook_id, source_build_id, queued_at, created_at, updated_at) \
+         changelog, config_snapshot, webhook_id, source_build_id, queued_at, created_at, updated_at, \
+         approval_state, approval_requested_at) \
          SELECT ?1, ?2, ?3, \
                 (SELECT COALESCE(MAX(build_number), 0) + 1 FROM builds WHERE project_id = ?2), \
-                'queued', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?14 \
+                'queued', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?14, \
+                CASE WHEN ?15 THEN 'pending' END, CASE WHEN ?15 THEN ?14 END \
          WHERE EXISTS ( \
            SELECT 1 FROM projects p \
            JOIN integration_repositories r ON r.id = p.repository_id \
@@ -512,6 +637,7 @@ async fn execute_build_insert(
     .bind(b.webhook_id)
     .bind(b.source_build_id)
     .bind(b.now)
+    .bind(b.approval_required)
     .execute(&mut *tx)
     .await?;
     if result.rows_affected() != 1 {
@@ -875,7 +1001,9 @@ pub async fn create_build(
 
     // Verify pipeline exists and belongs to this project
     let pipeline_row = sqlx::query(
-        "SELECT id, config_path, config_path_explicit, execution_config, concurrency FROM pipelines WHERE id = ?1 AND project_id = ?2",
+        "SELECT id, config_path, config_path_explicit, execution_config, concurrency, \
+                timeout_minutes, approval_policy \
+         FROM pipelines WHERE id = ?1 AND project_id = ?2",
     )
     .bind(&req.pipeline_id)
     .bind(&project_id)
@@ -883,9 +1011,19 @@ pub async fn create_build(
     .await
     .map_err(|e| {
         error!(error = %e, "failed to fetch pipeline");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch pipeline")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch pipeline",
+        )
     })?
-    .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Pipeline not found in this project"))?;
+    .ok_or_else(|| {
+        api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Pipeline not found in this project",
+        )
+    })?;
 
     let config_path: String = pipeline_row.get("config_path");
     let config_path_explicit: i32 = pipeline_row.try_get("config_path_explicit").unwrap_or(0);
@@ -898,6 +1036,8 @@ pub async fn create_build(
     let concurrency_json: String = pipeline_row.get("concurrency");
     let concurrency: ConcurrencyPolicy =
         serde_json::from_str(&concurrency_json).unwrap_or_default();
+    let (timeout_minutes, approval_policy) = pipeline_gates(&pipeline_row);
+    let approval_required = approval_policy.applies_to("manual");
 
     if commit_sha.is_none() {
         commit_sha = Some(
@@ -916,40 +1056,13 @@ pub async fn create_build(
     let now = now_unix();
     let build_id = Uuid::new_v4().to_string();
 
-    // Resolve repo clone URL from project's linked repository
-    let repo_url: Option<String> = sqlx::query_scalar(
-        "SELECT CASE \
-            WHEN i.provider = 'local_git' THEN r.html_url \
-            ELSE i.host_url || '/' || r.full_name || '.git' \
-         END \
-         FROM integration_repositories r \
-         JOIN integration_installations inst ON inst.id = r.installation_id \
-         JOIN integrations i ON i.id = inst.integration_id \
-         WHERE r.id = ?1",
-    )
-    .bind(
+    let repo_url = resolve_repository_clone_url(
+        &pool,
         repository_id
             .as_deref()
             .expect("repository linkage checked"),
     )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, project_id = %project_id, "failed to resolve project repository URL");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to resolve project source",
-        )
-    })?
-    .and_then(|raw: String| {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    });
+    .await?;
     if repo_url.is_none() {
         return Err(api_err(
             StatusCode::CONFLICT,
@@ -962,6 +1075,7 @@ pub async fn create_build(
         &config_path,
         config_path_explicit != 0,
         &execution_config,
+        timeout_minutes,
         "manual",
         commit_sha.as_deref(),
         branch.as_deref(),
@@ -995,6 +1109,7 @@ pub async fn create_build(
             trigger_type: "manual",
             source_build_id: None,
             cancel_previous: concurrency.cancel_previous,
+            approval_required,
         },
     )
     .await?;
@@ -1011,11 +1126,12 @@ pub async fn create_build(
     // Insert initial build event
     sqlx::query(
         "INSERT INTO build_events (id, build_id, from_status, to_status, actor, reason, created_at) \
-         VALUES (?1, ?2, NULL, 'queued', ?3, 'build created', ?4)",
+         VALUES (?1, ?2, NULL, 'queued', ?3, ?4, ?5)",
     )
     .bind(Uuid::new_v4().to_string())
     .bind(&build_id)
     .bind(&auth.0.email)
+    .bind(initial_event_reason("build created", approval_required))
     .bind(now)
     .execute(&pool)
     .await
@@ -1042,6 +1158,16 @@ pub async fn create_build(
     )
     .await;
 
+    if approval_required {
+        announce_pending_approval(
+            &pool,
+            &state.encryption_key,
+            &build_id,
+            Some(&auth.0.user_id),
+        )
+        .await;
+    }
+
     info!(
         build_id = %build_id,
         build_number = build_number,
@@ -1066,6 +1192,7 @@ pub async fn create_build(
         branch,
         changelog,
         source_build_id: None,
+        approval: pending_approval(approval_required, now),
         config_snapshot,
         runner_id: None,
         context: None,
@@ -1355,6 +1482,227 @@ pub async fn cancel_build(
     Ok(Json(CancelBuildResponse { build }))
 }
 
+const MAX_APPROVAL_REASON_LENGTH: usize = 1_000;
+
+/// `POST /v1/builds/{build_id}/approve` — let runners claim a gated build.
+pub async fn approve_build(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(build_id): Path<String>,
+    body: Option<Json<BuildApprovalRequest>>,
+) -> ApiResult<BuildApprovalResponse> {
+    decide_build_approval(&state, &auth, &build_id, body, BuildApprovalState::Approved).await
+}
+
+/// `POST /v1/builds/{build_id}/reject` — cancel a gated build.
+pub async fn reject_build(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(build_id): Path<String>,
+    body: Option<Json<BuildApprovalRequest>>,
+) -> ApiResult<BuildApprovalResponse> {
+    decide_build_approval(&state, &auth, &build_id, body, BuildApprovalState::Rejected).await
+}
+
+/// Record a maintainer's decision on a build waiting for approval. Approval
+/// leaves the build queued for runners; rejection cancels it. Returns the new
+/// build status and the timeline reason.
+pub(crate) async fn record_build_approval(
+    pool: &sqlx::SqlitePool,
+    build_id: &str,
+    actor: &str,
+    decision: BuildApprovalState,
+    reason: Option<&str>,
+    now: i64,
+) -> Result<(&'static str, String), (StatusCode, Json<ApiError>)> {
+    let (to_status, event_reason) = match decision {
+        BuildApprovalState::Approved => ("queued", "approved"),
+        BuildApprovalState::Rejected => ("canceled", "rejected"),
+        BuildApprovalState::Pending => {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "Pending is not an approval decision",
+            ));
+        }
+    };
+    let event_reason = match reason {
+        Some(reason) => format!("{event_reason} by {actor}: {reason}"),
+        None => format!("{event_reason} by {actor}"),
+    };
+
+    let mut tx = pool.begin().await.map_err(|e| {
+        error!(error = %e, "failed to start approval transaction");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to record approval",
+        )
+    })?;
+    let updated = sqlx::query(
+        "UPDATE builds SET status = ?1, approval_state = ?2, approval_decided_by = ?3, \
+                approval_decided_at = ?4, approval_reason = ?5, updated_at = ?4, \
+                finished_at = CASE WHEN ?1 = 'canceled' THEN ?4 ELSE finished_at END \
+         WHERE id = ?6 AND status = 'queued' AND approval_state = 'pending'",
+    )
+    .bind(to_status)
+    .bind(decision.to_string())
+    .bind(actor)
+    .bind(now)
+    .bind(reason)
+    .bind(build_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, build_id, "failed to record build approval");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to record approval",
+        )
+    })?;
+    if updated.rows_affected() == 0 {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "not_awaiting_approval",
+            "This build is not waiting for approval",
+        ));
+    }
+    sqlx::query(
+        "INSERT INTO build_events (id, build_id, from_status, to_status, actor, reason, created_at) \
+         VALUES (?1, ?2, 'queued', ?3, ?4, ?5, ?6)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(build_id)
+    .bind(to_status)
+    .bind(actor)
+    .bind(&event_reason)
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, build_id, "failed to record approval event");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to record approval",
+        )
+    })?;
+    tx.commit().await.map_err(|e| {
+        error!(error = %e, build_id, "failed to commit build approval");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to record approval",
+        )
+    })?;
+    Ok((to_status, event_reason))
+}
+
+async fn decide_build_approval(
+    state: &AppState,
+    auth: &AuthUser,
+    build_id: &str,
+    body: Option<Json<BuildApprovalRequest>>,
+    decision: BuildApprovalState,
+) -> ApiResult<BuildApprovalResponse> {
+    let pool = &state.db;
+    let reason = normalize_optional(body.and_then(|Json(body)| body.reason));
+    if reason
+        .as_ref()
+        .is_some_and(|reason| reason.len() > MAX_APPROVAL_REASON_LENGTH)
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            format!("Reason must be {MAX_APPROVAL_REASON_LENGTH} characters or fewer"),
+        ));
+    }
+
+    let project_id: String = sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
+        .bind(build_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to fetch build project for approval");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch build",
+            )
+        })?
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
+    let effective = resolve_effective_project_role(
+        pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::ApproveBuild)?;
+
+    let now = now_unix();
+    let (to_status, event_reason) = record_build_approval(
+        pool,
+        build_id,
+        &auth.0.email,
+        decision,
+        reason.as_deref(),
+        now,
+    )
+    .await?;
+    let audit_action = match decision {
+        BuildApprovalState::Rejected => "build_rejected",
+        _ => "build_approved",
+    };
+
+    let details = serde_json::json!({
+        "project_id": project_id,
+        "decided_by": auth.0.email,
+        "reason": reason,
+    })
+    .to_string();
+    let _ = write_audit_log(
+        pool,
+        Some(&auth.0.user_id),
+        audit_action,
+        "build",
+        Some(build_id),
+        Some(&details),
+    )
+    .await;
+
+    state
+        .scheduler
+        .publish_event(crate::scheduler::BuildStateEvent {
+            build_id: build_id.to_string(),
+            from_status: Some("queued".to_string()),
+            to_status: to_status.to_string(),
+            actor: Some(auth.0.email.clone()),
+            reason: Some(event_reason),
+            timestamp: now,
+        });
+
+    info!(build_id, decided_by = %auth.0.email, decision = %decision, "build approval decided");
+
+    let row = sqlx::query("SELECT * FROM builds WHERE id = ?1")
+        .bind(build_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to reload build after approval");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to reload build",
+            )
+        })?;
+    Ok(Json(BuildApprovalResponse {
+        build: row_to_build(&row),
+    }))
+}
+
 /// `POST /v1/builds/{build_id}/rerun` — re-run a build with the same parameters.
 pub async fn rerun_build(
     State(state): State<Arc<AppState>>,
@@ -1366,7 +1714,7 @@ pub async fn rerun_build(
     // Fetch source build
     let source_row = sqlx::query(
         "SELECT id, project_id, pipeline_id, build_number, status, \
-         trigger_ref, commit_sha, branch, changelog, config_snapshot \
+         trigger_ref, commit_sha, branch, changelog, config_snapshot, approval_state \
          FROM builds WHERE id = ?1",
     )
     .bind(&build_id)
@@ -1512,6 +1860,41 @@ pub async fn rerun_build(
             );
         }
     }
+    // A rerun follows the pipeline's current timeout and approval policy. A
+    // build that was gated stays gated, whatever event started it.
+    let pipeline_row =
+        sqlx::query("SELECT timeout_minutes, approval_policy FROM pipelines WHERE id = ?1")
+            .bind(&pipeline_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to fetch pipeline for rerun");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to fetch pipeline",
+                )
+            })?
+            .ok_or_else(|| {
+                api_err(
+                    StatusCode::NOT_FOUND,
+                    "not_found",
+                    "Pipeline no longer exists",
+                )
+            })?;
+    let (timeout_minutes, approval_policy) = pipeline_gates(&pipeline_row);
+    let approval_required = approval_policy.applies_to("manual")
+        || (approval_policy.required
+            && source_row
+                .get::<Option<String>, _>("approval_state")
+                .is_some());
+    if let Some(snapshot) = config_snapshot.as_object_mut() {
+        snapshot.insert(
+            "timeout_secs".to_string(),
+            serde_json::json!(i64::from(timeout_minutes) * 60),
+        );
+    }
+
     let config_snapshot_str = config_snapshot.to_string();
     let branch: Option<String> = source_row.get("branch");
     let commit_sha: Option<String> = source_row.get("commit_sha");
@@ -1540,6 +1923,7 @@ pub async fn rerun_build(
             trigger_type: "manual",
             source_build_id: Some(&build_id),
             cancel_previous: false,
+            approval_required,
         },
     )
     .await?;
@@ -1554,7 +1938,10 @@ pub async fn rerun_build(
     let build_number = fetch_build_number(pool, &new_build_id).await?;
 
     // Insert initial build event
-    let reason = format!("re-run of build #{}", source_build_number);
+    let reason = initial_event_reason(
+        &format!("re-run of build #{}", source_build_number),
+        approval_required,
+    );
     sqlx::query(
         "INSERT INTO build_events (id, build_id, from_status, to_status, actor, reason, created_at) \
          VALUES (?1, ?2, NULL, 'queued', ?3, ?4, ?5)",
@@ -1591,6 +1978,16 @@ pub async fn rerun_build(
     )
     .await;
 
+    if approval_required {
+        announce_pending_approval(
+            pool,
+            &state.encryption_key,
+            &new_build_id,
+            Some(&auth.0.user_id),
+        )
+        .await;
+    }
+
     info!(
         build_id = %new_build_id,
         build_number = build_number,
@@ -1616,6 +2013,7 @@ pub async fn rerun_build(
         branch,
         changelog,
         source_build_id: Some(build_id),
+        approval: pending_approval(approval_required, now),
         config_snapshot,
         runner_id: None,
         context: None,
@@ -1631,21 +2029,59 @@ pub async fn rerun_build(
     Ok((StatusCode::CREATED, Json(RerunBuildResponse { build })))
 }
 
+/// What changed in a webhook revision, for path filters.
+pub enum ChangeSet<'a> {
+    /// The provider did not say; path filters let the build through.
+    Unknown,
+    /// Files listed in the push payload.
+    Files(&'a [String]),
+    /// Ask the provider for the files changed from `base` to `head`.
+    Compare { base: &'a str, head: &'a str },
+}
+
+/// A normalized webhook revision that may start builds.
+pub struct WebhookBuildTrigger<'a> {
+    pub webhook_id: &'a str,
+    pub integration_id: &'a str,
+    pub repo_full_name: &'a str,
+    /// Provider event name, e.g. `push` or `Merge Request Hook`.
+    pub event_type: &'a str,
+    pub branch: Option<&'a str>,
+    /// Set for tag pushes, which match `trigger_config.tags`.
+    pub tag: Option<&'a str>,
+    pub commit_sha: Option<&'a str>,
+    pub actor: Option<&'a str>,
+    pub changes: ChangeSet<'a>,
+}
+
 /// Trigger builds from a webhook event.
 ///
 /// Called from webhooks.rs after webhook normalization.
 /// Resolves matching projects/pipelines and creates build records.
-#[allow(clippy::too_many_arguments)]
 pub async fn trigger_build_from_webhook(
     pool: &sqlx::SqlitePool,
-    webhook_id: &str,
-    integration_id: &str,
-    repo_full_name: &str,
-    branch: Option<&str>,
-    commit_sha: Option<&str>,
-    event_type: &str,
-    actor: Option<&str>,
+    encryption_key: &[u8],
+    trigger: &WebhookBuildTrigger<'_>,
 ) -> Result<Vec<Build>, (StatusCode, Json<ApiError>)> {
+    let WebhookBuildTrigger {
+        webhook_id,
+        integration_id,
+        repo_full_name,
+        branch,
+        tag,
+        commit_sha,
+        actor,
+        ..
+    } = *trigger;
+    // Tag pushes arrive as `push` on GitHub; store and filter them as tag_push.
+    let event_type = if tag.is_some() {
+        "tag_push"
+    } else {
+        trigger.event_type
+    };
+    let canonical_event = TriggerConfig::normalize_event(event_type);
+    let trigger_ref = tag.or(branch);
+
     // Find projects linked to this repository
     let project_rows = sqlx::query(
         "SELECT p.id, p.repository_id, \
@@ -1679,6 +2115,8 @@ pub async fn trigger_build_from_webhook(
 
     let mut created_builds = Vec::new();
     let now = now_unix();
+    // Fetched at most once, and only when a pipeline filters on paths.
+    let mut compared_files: Option<Option<Vec<String>>> = None;
 
     for project_row in &project_rows {
         let project_id: String = project_row.get("id");
@@ -1702,8 +2140,9 @@ pub async fn trigger_build_from_webhook(
         // ponytail: one pipeline query per linked project; batch when repositories commonly map to many projects.
         // Find enabled pipelines for this project
         let pipeline_rows = sqlx::query(
-            "SELECT id, config_path, config_path_explicit, execution_config, trigger_config, concurrency FROM pipelines \
-             WHERE project_id = ?1 AND enabled = 1",
+            "SELECT id, config_path, config_path_explicit, execution_config, trigger_config, concurrency, \
+                    timeout_minutes, approval_policy \
+             FROM pipelines WHERE project_id = ?1 AND enabled = 1",
         )
         .bind(&project_id)
         .fetch_all(pool)
@@ -1726,6 +2165,7 @@ pub async fn trigger_build_from_webhook(
             let concurrency_json: String = pipeline_row.get("concurrency");
             let concurrency: ConcurrencyPolicy =
                 serde_json::from_str(&concurrency_json).unwrap_or_default();
+            let (timeout_minutes, approval_policy) = pipeline_gates(pipeline_row);
 
             // Parse and apply trigger config filter
             let trigger_config: TriggerConfig =
@@ -1734,11 +2174,12 @@ pub async fn trigger_build_from_webhook(
                     TriggerConfig::default()
                 });
 
-            if !trigger_config.should_trigger(event_type, branch) {
+            if !trigger_config.should_trigger(event_type, branch, tag) {
                 info!(
                     pipeline_id = %pipeline_id,
                     event_type = %event_type,
                     branch = ?branch,
+                    tag = ?tag,
                     "webhook event filtered by trigger_config, skipping pipeline"
                 );
                 continue;
@@ -1751,13 +2192,44 @@ pub async fn trigger_build_from_webhook(
                 );
                 continue;
             }
+            if tag.is_none() && trigger_config.has_path_filters() {
+                let changed_files = match &trigger.changes {
+                    ChangeSet::Unknown => None,
+                    ChangeSet::Files(files) => Some(*files),
+                    ChangeSet::Compare { base, head } => {
+                        if compared_files.is_none() {
+                            compared_files = Some(
+                                crate::integrations::changed_files(
+                                    pool,
+                                    encryption_key,
+                                    &repository_id,
+                                    base,
+                                    head,
+                                )
+                                .await,
+                            );
+                        }
+                        compared_files.as_ref().and_then(Option::as_deref)
+                    }
+                };
+                if !trigger_config.paths_match(changed_files) {
+                    info!(
+                        pipeline_id = %pipeline_id,
+                        event_type = %event_type,
+                        "no changed file matches the pipeline path filters, skipping pipeline"
+                    );
+                    continue;
+                }
+            }
 
             let build_id = Uuid::new_v4().to_string();
+            let approval_required = approval_policy.applies_to(&canonical_event);
 
             let config_snapshot = create_config_snapshot(
                 &config_path,
                 config_path_explicit != 0,
                 &execution_config,
+                timeout_minutes,
                 "webhook",
                 commit_sha,
                 branch,
@@ -1773,7 +2245,7 @@ pub async fn trigger_build_from_webhook(
                     pipeline_id: &pipeline_id,
                     actor,
                     event_type: Some(event_type),
-                    trigger_ref: branch,
+                    trigger_ref,
                     commit_sha,
                     branch,
                     changelog: None,
@@ -1783,6 +2255,7 @@ pub async fn trigger_build_from_webhook(
                     trigger_type: "webhook",
                     source_build_id: None,
                     cancel_previous: concurrency.cancel_previous,
+                    approval_required,
                 },
             )
             .await?;
@@ -1805,7 +2278,7 @@ pub async fn trigger_build_from_webhook(
             .bind(Uuid::new_v4().to_string())
             .bind(&build_id)
             .bind(actor)
-            .bind(format!("webhook: {event_type}"))
+            .bind(initial_event_reason(&format!("webhook: {event_type}"), approval_required))
             .bind(now)
             .execute(pool)
             .await
@@ -1814,11 +2287,16 @@ pub async fn trigger_build_from_webhook(
                 api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to record build event")
             })?;
 
+            if approval_required {
+                announce_pending_approval(pool, encryption_key, &build_id, None).await;
+            }
+
             info!(
                 build_id = %build_id,
                 build_number = build_number,
                 project_id = %project_id,
                 pipeline_id = %pipeline_id,
+                approval_required,
                 "webhook-triggered build created"
             );
 
@@ -1832,11 +2310,12 @@ pub async fn trigger_build_from_webhook(
                 trigger_type: "webhook".to_string(),
                 trigger_actor: actor.map(String::from),
                 trigger_event: Some(event_type.to_string()),
-                trigger_ref: branch.map(String::from),
+                trigger_ref: trigger_ref.map(String::from),
                 commit_sha: commit_sha.map(String::from),
                 branch: branch.map(String::from),
                 changelog: None,
                 source_build_id: None,
+                approval: pending_approval(approval_required, now),
                 config_snapshot,
                 runner_id: None,
                 context: None,
@@ -1852,4 +2331,390 @@ pub async fn trigger_build_from_webhook(
     }
 
     Ok(created_builds)
+}
+
+/// Start a build for a due cron schedule. Returns the new build's ID.
+pub async fn create_scheduled_build(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    pipeline_id: &str,
+    schedule: &ScheduleTrigger,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let row = sqlx::query(
+        "SELECT pl.project_id, pl.config_path, pl.config_path_explicit, pl.execution_config, \
+                pl.concurrency, pl.timeout_minutes, pl.approval_policy, \
+                p.repository_id, p.default_branch \
+         FROM pipelines pl JOIN projects p ON p.id = pl.project_id \
+         WHERE pl.id = ?1 AND pl.enabled = 1",
+    )
+    .bind(pipeline_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to fetch scheduled pipeline");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch pipeline",
+        )
+    })?
+    .ok_or_else(|| {
+        api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Pipeline not found or disabled",
+        )
+    })?;
+
+    let project_id: String = row.get("project_id");
+    let repository_id: String = row
+        .get::<Option<String>, _>("repository_id")
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::CONFLICT,
+                "source_not_configured",
+                "Project is not linked to a source repository",
+            )
+        })?;
+    let branch = normalize_optional(schedule.branch.clone())
+        .or_else(|| normalize_optional(row.get::<Option<String>, _>("default_branch")))
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::CONFLICT,
+                "invalid_input",
+                "The schedule has no branch and the project has no default branch",
+            )
+        })?;
+    let repo_url = resolve_repository_clone_url(pool, &repository_id)
+        .await?
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::CONFLICT,
+                "source_unresolvable",
+                "Project source repository could not be resolved",
+            )
+        })?;
+    let commit_sha =
+        crate::integrations::resolve_branch_commit(pool, encryption_key, &repository_id, &branch)
+            .await?;
+
+    let execution_config = parse_execution_config(
+        &row.try_get::<String, _>("execution_config")
+            .unwrap_or_else(|_| "{}".to_string()),
+    );
+    let concurrency: ConcurrencyPolicy =
+        serde_json::from_str(&row.get::<String, _>("concurrency")).unwrap_or_default();
+    let (timeout_minutes, approval_policy) = pipeline_gates(&row);
+    let approval_required = approval_policy.applies_to("schedule");
+    let config_snapshot = create_config_snapshot(
+        &row.get::<String, _>("config_path"),
+        row.try_get::<i32, _>("config_path_explicit").unwrap_or(0) != 0,
+        &execution_config,
+        timeout_minutes,
+        "schedule",
+        Some(&commit_sha),
+        Some(&branch),
+        (&repository_id, &repo_url),
+    );
+
+    let now = now_unix();
+    let build_id = Uuid::new_v4().to_string();
+    let actor = format!("schedule: {}", schedule.cron.trim());
+    let inserted = insert_build_with_retry(
+        pool,
+        &BuildInsertBinds {
+            build_id: &build_id,
+            project_id: &project_id,
+            pipeline_id,
+            actor: Some(&actor),
+            event_type: Some("schedule"),
+            trigger_ref: Some(&branch),
+            commit_sha: Some(&commit_sha),
+            branch: Some(&branch),
+            changelog: None,
+            config_snapshot: &config_snapshot.to_string(),
+            webhook_id: None,
+            now,
+            trigger_type: "schedule",
+            source_build_id: None,
+            cancel_previous: concurrency.cancel_previous,
+            approval_required,
+        },
+    )
+    .await?;
+    if !inserted {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "source_changed",
+            "The project source changed while the scheduled build was being created",
+        ));
+    }
+
+    sqlx::query(
+        "INSERT INTO build_events (id, build_id, from_status, to_status, actor, reason, created_at) \
+         VALUES (?1, ?2, NULL, 'queued', ?3, ?4, ?5)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&build_id)
+    .bind(&actor)
+    .bind(initial_event_reason("scheduled", approval_required))
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to insert scheduled build event");
+        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to record build event")
+    })?;
+
+    if approval_required {
+        announce_pending_approval(pool, encryption_key, &build_id, None).await;
+    }
+    Ok(build_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn pool(
+        trigger_config: &str,
+        approval_policy: &str,
+        timeout_minutes: i64,
+    ) -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        for statement in [
+            "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+             VALUES ('u1', 'lead@example.com', 'sub', 'owner', 0, 0)",
+            "INSERT INTO integrations (id, provider, auth_mode, created_by, created_at, updated_at) \
+             VALUES ('i1', 'github', 'github_app', 'u1', 0, 0)",
+            "INSERT INTO integration_installations (id, integration_id, external_id, account_name, created_at, updated_at) \
+             VALUES ('inst1', 'i1', '42', 'acme', 0, 0)",
+            "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, created_at, updated_at) \
+             VALUES ('r1', 'inst1', '7', 'acme/app', 0, 0)",
+            "INSERT INTO projects (id, name, repository_id, created_by, created_at, updated_at) \
+             VALUES ('p1', 'App', 'r1', 'u1', 0, 0)",
+            "INSERT INTO runners (id, name, token_hash, status, labels, created_at, updated_at) \
+             VALUES ('run1', 'mac', 'hash', 'online', '[\"macos\"]', 0, 0)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO pipelines (id, project_id, name, trigger_config, approval_policy, timeout_minutes, created_at, updated_at) \
+             VALUES ('pl1', 'p1', 'release', ?1, ?2, ?3, 0, 0)",
+        )
+        .bind(trigger_config)
+        .bind(approval_policy)
+        .bind(timeout_minutes)
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    async fn deliver(
+        pool: &sqlx::SqlitePool,
+        delivery: &str,
+        branch: Option<&str>,
+        tag: Option<&str>,
+        changes: ChangeSet<'_>,
+    ) -> Vec<Build> {
+        let webhook_id = format!("wh-{delivery}");
+        sqlx::query(
+            "INSERT INTO integration_webhooks (id, integration_id, provider_delivery_id, event_type, payload, received_at) \
+             VALUES (?1, 'i1', ?2, 'push', '{}', 0)",
+        )
+        .bind(&webhook_id)
+        .bind(delivery)
+        .execute(pool)
+        .await
+        .unwrap();
+        trigger_build_from_webhook(
+            pool,
+            &[0; 32],
+            &WebhookBuildTrigger {
+                webhook_id: &webhook_id,
+                integration_id: "i1",
+                repo_full_name: "acme/app",
+                event_type: "push",
+                branch,
+                tag,
+                commit_sha: Some("abc123"),
+                actor: Some("octocat"),
+                changes,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn tag_build_waits_for_approval_before_a_runner_can_claim_it() {
+        let pool = pool(
+            r#"{"events":["push","tag_push"],"branches":["main"],"tags":["v*"]}"#,
+            r#"{"required":true,"events":["tag_push"]}"#,
+            60,
+        )
+        .await;
+
+        // A branch push is not gated.
+        let branch_builds = deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await;
+        assert_eq!(branch_builds.len(), 1);
+        assert!(branch_builds[0].approval.is_none());
+
+        // An unmatched tag does not build; a matching one waits.
+        assert!(
+            deliver(&pool, "d2", None, Some("nightly"), ChangeSet::Unknown)
+                .await
+                .is_empty()
+        );
+        let builds = deliver(&pool, "d3", None, Some("v1.4.0"), ChangeSet::Unknown).await;
+        assert_eq!(builds.len(), 1);
+        let build = &builds[0];
+        assert_eq!(build.trigger_event.as_deref(), Some("tag_push"));
+        assert_eq!(build.trigger_ref.as_deref(), Some("v1.4.0"));
+        assert_eq!(
+            build.approval.as_ref().map(|approval| approval.state),
+            Some(BuildApprovalState::Pending)
+        );
+
+        assert!(
+            !crate::runners::schedule_eligible_direct_runner_build(
+                &pool,
+                &build.id,
+                "run1",
+                "runner:run1"
+            )
+            .await
+            .unwrap(),
+            "a runner must not claim a build waiting for approval"
+        );
+
+        let (status, reason) = record_build_approval(
+            &pool,
+            &build.id,
+            "lead@example.com",
+            BuildApprovalState::Approved,
+            Some("ship it"),
+            100,
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, "queued");
+        assert_eq!(reason, "approved by lead@example.com: ship it");
+        assert!(
+            crate::runners::schedule_eligible_direct_runner_build(
+                &pool,
+                &build.id,
+                "run1",
+                "runner:run1"
+            )
+            .await
+            .unwrap()
+        );
+
+        // A decision is final.
+        let (status, _) = record_build_approval(
+            &pool,
+            &build.id,
+            "lead@example.com",
+            BuildApprovalState::Rejected,
+            None,
+            101,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn rejecting_cancels_the_build() {
+        let pool = pool("{}", r#"{"required":true,"events":[]}"#, 60).await;
+        let builds = deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await;
+        let (status, _) = record_build_approval(
+            &pool,
+            &builds[0].id,
+            "lead@example.com",
+            BuildApprovalState::Rejected,
+            Some("wrong branch"),
+            100,
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, "canceled");
+        let row = sqlx::query("SELECT * FROM builds WHERE id = ?1")
+            .bind(&builds[0].id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let build = row_to_build(&row);
+        assert_eq!(build.status, "canceled");
+        assert_eq!(build.finished_at, Some(100));
+        let approval = build.approval.unwrap();
+        assert_eq!(approval.state, BuildApprovalState::Rejected);
+        assert_eq!(approval.reason.as_deref(), Some("wrong branch"));
+    }
+
+    #[tokio::test]
+    async fn path_filters_skip_pushes_that_change_nothing_relevant() {
+        let pool = pool(
+            r#"{"paths":["lib/**","pubspec.yaml"],"paths_ignore":["**/*.md"]}"#,
+            "{}",
+            60,
+        )
+        .await;
+        let docs = ["README.md".to_string(), "lib/README.md".to_string()];
+        assert!(
+            deliver(&pool, "d1", Some("main"), None, ChangeSet::Files(&docs))
+                .await
+                .is_empty()
+        );
+        let code = ["lib/main.dart".to_string()];
+        assert_eq!(
+            deliver(&pool, "d2", Some("main"), None, ChangeSet::Files(&code))
+                .await
+                .len(),
+            1
+        );
+        // Unknown change sets never suppress a build.
+        assert_eq!(
+            deliver(&pool, "d3", Some("main"), None, ChangeSet::Unknown)
+                .await
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_20_minute_pipeline_times_out_at_20_minutes() {
+        let pool = pool("{}", "{}", 20).await;
+        let builds = deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await;
+        let build_id = &builds[0].id;
+        assert_eq!(builds[0].config_snapshot["timeout_secs"], 1200);
+        sqlx::query("UPDATE builds SET status = 'running', started_at = 1000 WHERE id = ?1")
+            .bind(build_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let scheduler = crate::scheduler::Scheduler::new(16);
+
+        let early = crate::background::time_out_overdue_builds(&pool, &scheduler, 1000 + 1199)
+            .await
+            .unwrap();
+        assert!(early.is_empty());
+        let late = crate::background::time_out_overdue_builds(&pool, &scheduler, 1000 + 1200)
+            .await
+            .unwrap();
+        assert_eq!(late, vec![build_id.clone()]);
+        let status: String = sqlx::query_scalar("SELECT status FROM builds WHERE id = ?1")
+            .bind(build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "timed_out");
+    }
 }

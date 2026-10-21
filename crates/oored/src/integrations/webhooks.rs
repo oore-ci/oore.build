@@ -207,13 +207,22 @@ pub struct NormalizedWebhookEvent {
     pub action: Option<String>,
     pub change_number: Option<String>,
     pub branch: Option<String>,
+    /// Tag name for tag pushes.
+    pub tag: Option<String>,
     pub commit_sha: Option<String>,
     pub previous_commit_sha: Option<String>,
+    /// Files changed by a push, when the payload lists all of its commits.
+    pub changed_files: Option<Vec<String>>,
+    /// Revision a pull request's changes are compared against.
+    pub compare_base: Option<String>,
     pub actor: Option<String>,
     pub payload: serde_json::Value,
 }
 
-pub fn start_webhook_processor(pool: sqlx::SqlitePool) -> mpsc::Sender<()> {
+pub fn start_webhook_processor(
+    pool: sqlx::SqlitePool,
+    encryption_key: Vec<u8>,
+) -> mpsc::Sender<()> {
     let (sender, mut receiver) = mpsc::channel::<()>(WEBHOOK_WAKE_CAPACITY);
 
     let worker_pool = pool.clone();
@@ -229,7 +238,9 @@ pub fn start_webhook_processor(pool: sqlx::SqlitePool) -> mpsc::Sender<()> {
                     }
                 };
 
-                if let Err(error) = process_claimed_webhook(&worker_pool, &webhook_id).await {
+                if let Err(error) =
+                    process_claimed_webhook(&worker_pool, &encryption_key, &webhook_id).await
+                {
                     error!(%error, %webhook_id, "webhook processing failed");
                     if let Err(store_error) =
                         record_webhook_processing_error(&worker_pool, &webhook_id, &error).await
@@ -468,6 +479,32 @@ fn verify_github_signature(signature_header: &str, body: &[u8], secret: &[u8]) -
             == 0
 }
 
+/// Files added, modified or removed across a push's commits. `None` when the
+/// payload does not list every commit (`total_commits` above the list) or
+/// lists none, as for a new branch pushed without new commits.
+fn push_changed_files(
+    payload: &serde_json::Value,
+    total_commits: Option<u64>,
+) -> Option<Vec<String>> {
+    let commits = payload.get("commits")?.as_array()?;
+    // GitHub lists at most 2048 commits and gives no total.
+    if commits.is_empty()
+        || commits.len() >= 2048
+        || total_commits.is_some_and(|total| total > commits.len() as u64)
+    {
+        return None;
+    }
+    let mut files = std::collections::BTreeSet::new();
+    for commit in commits {
+        for key in ["added", "modified", "removed"] {
+            for file in commit.get(key)?.as_array()? {
+                files.insert(file.as_str()?.to_string());
+            }
+        }
+    }
+    Some(files.into_iter().collect())
+}
+
 fn normalize_github_event(
     event_type: &str,
     delivery_id: &str,
@@ -481,9 +518,12 @@ fn normalize_github_event(
         .map(String::from);
     let repository_external_id = json_id(payload.pointer("/repository/id"));
 
+    let git_ref = payload.get("ref").and_then(|v| v.as_str()).unwrap_or("");
+    let tag = (event_type == "push")
+        .then(|| git_ref.strip_prefix("refs/tags/").map(String::from))
+        .flatten();
     let (branch, commit_sha) = match event_type {
         "push" => {
-            let git_ref = payload.get("ref").and_then(|v| v.as_str()).unwrap_or("");
             let branch = git_ref.strip_prefix("refs/heads/").map(String::from);
             let sha = payload
                 .get("after")
@@ -534,8 +574,15 @@ fn normalize_github_event(
         action,
         change_number,
         branch,
+        tag,
         commit_sha,
         previous_commit_sha: None,
+        changed_files: (event_type == "push")
+            .then(|| push_changed_files(payload, None))
+            .flatten(),
+        compare_base: (event_type == "pull_request")
+            .then(|| json_non_empty_string(payload.pointer("/pull_request/base/sha")))
+            .flatten(),
         actor,
         payload: payload.clone(),
     }
@@ -782,9 +829,12 @@ fn normalize_gitlab_event(
     payload: &serde_json::Value,
 ) -> NormalizedWebhookEvent {
     let repository_external_id = json_id(payload.pointer("/project/id"));
+    let git_ref = payload.get("ref").and_then(|v| v.as_str()).unwrap_or("");
+    let tag = (event_type == "Tag Push Hook")
+        .then(|| git_ref.strip_prefix("refs/tags/").map(String::from))
+        .flatten();
     let (branch, commit_sha) = match event_type {
-        "Push Hook" => {
-            let git_ref = payload.get("ref").and_then(|v| v.as_str()).unwrap_or("");
+        "Push Hook" | "Tag Push Hook" => {
             let branch = git_ref.strip_prefix("refs/heads/").map(String::from);
             let sha = payload
                 .get("checkout_sha")
@@ -841,8 +891,23 @@ fn normalize_gitlab_event(
         action,
         change_number,
         branch,
+        tag,
         commit_sha,
         previous_commit_sha,
+        changed_files: (event_type == "Push Hook")
+            .then(|| {
+                push_changed_files(
+                    payload,
+                    payload
+                        .get("total_commits_count")
+                        .and_then(serde_json::Value::as_u64),
+                )
+            })
+            .flatten(),
+        // Comparing from the target branch name diffs against the merge base.
+        compare_base: (event_type == "Merge Request Hook")
+            .then(|| json_non_empty_string(payload.pointer("/object_attributes/target_branch")))
+            .flatten(),
         actor,
         payload: payload.clone(),
     }
@@ -882,7 +947,17 @@ async fn webhook_trigger_decision(
     event: &NormalizedWebhookEvent,
 ) -> anyhow::Result<WebhookTriggerDecision> {
     match event.event_type.as_str() {
-        "push" | "Push Hook" => {
+        "push" | "Push Hook" | "Tag Push Hook" => {
+            if event
+                .payload
+                .get("deleted")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+            {
+                return Ok(WebhookTriggerDecision::Ignore(
+                    "ref deletion does not introduce a revision",
+                ));
+            }
             // Preserve existing push behavior when an immutable provider ID is absent,
             // while rejecting any provider ID that explicitly mismatches this integration.
             if let Some(repository_external_id) = event.repository_external_id.as_deref()
@@ -1067,7 +1142,11 @@ async fn fail_exhausted_webhook_leases(pool: &sqlx::SqlitePool) -> Result<u64, s
 }
 
 /// Load and process one claimed webhook event.
-async fn process_claimed_webhook(pool: &sqlx::SqlitePool, webhook_id: &str) -> anyhow::Result<()> {
+async fn process_claimed_webhook(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    webhook_id: &str,
+) -> anyhow::Result<()> {
     let Some(row) = sqlx::query(
         "SELECT w.integration_id, w.provider_delivery_id, w.event_type, w.payload, i.provider \
          FROM integration_webhooks w \
@@ -1113,7 +1192,7 @@ async fn process_claimed_webhook(pool: &sqlx::SqlitePool, webhook_id: &str) -> a
         _ => return Err(anyhow::anyhow!("unsupported webhook provider: {provider}")),
     };
 
-    process_webhook_event(pool, webhook_id, &event).await
+    process_webhook_event(pool, encryption_key, webhook_id, &event).await
 }
 
 async fn record_webhook_processing_error(
@@ -1152,10 +1231,11 @@ async fn record_webhook_processing_error(
 
 async fn process_webhook_event(
     pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
     webhook_id: &str,
     event: &NormalizedWebhookEvent,
 ) -> anyhow::Result<()> {
-    use crate::builds::trigger_build_from_webhook;
+    use crate::builds::{ChangeSet, WebhookBuildTrigger, trigger_build_from_webhook};
 
     let decision = webhook_trigger_decision(pool, event).await?;
 
@@ -1185,15 +1265,29 @@ async fn process_webhook_event(
     if decision == WebhookTriggerDecision::Trigger
         && let Some(repo) = event.repository_full_name.as_deref()
     {
+        let changes = match (
+            &event.changed_files,
+            event.compare_base.as_deref(),
+            event.commit_sha.as_deref(),
+        ) {
+            (Some(files), _, _) => ChangeSet::Files(files),
+            (None, Some(base), Some(head)) => ChangeSet::Compare { base, head },
+            _ => ChangeSet::Unknown,
+        };
         match trigger_build_from_webhook(
             pool,
-            webhook_id,
-            &event.integration_id,
-            repo,
-            event.branch.as_deref(),
-            event.commit_sha.as_deref(),
-            &event.event_type,
-            event.actor.as_deref(),
+            encryption_key,
+            &WebhookBuildTrigger {
+                webhook_id,
+                integration_id: &event.integration_id,
+                repo_full_name: repo,
+                event_type: &event.event_type,
+                branch: event.branch.as_deref(),
+                tag: event.tag.as_deref(),
+                commit_sha: event.commit_sha.as_deref(),
+                actor: event.actor.as_deref(),
+                changes,
+            },
         )
         .await
         {
@@ -1244,4 +1338,78 @@ async fn process_webhook_event(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn github_tag_push_carries_the_tag_and_no_branch() {
+        let payload = serde_json::json!({
+            "ref": "refs/tags/v1.4.0",
+            "after": "abc123",
+            "repository": { "full_name": "acme/app", "id": 7 },
+            "commits": [],
+        });
+        let event = normalize_github_event("push", "d1", "i1", &payload);
+        assert_eq!(event.tag.as_deref(), Some("v1.4.0"));
+        assert_eq!(event.branch, None);
+        assert_eq!(event.commit_sha.as_deref(), Some("abc123"));
+        assert_eq!(event.changed_files, None);
+    }
+
+    #[test]
+    fn push_changed_files_needs_the_full_commit_list() {
+        let payload = serde_json::json!({
+            "commits": [
+                { "added": ["lib/a.dart"], "modified": ["pubspec.yaml"], "removed": [] },
+                { "added": [], "modified": ["lib/a.dart"], "removed": ["old.txt"] },
+            ],
+        });
+        assert_eq!(
+            push_changed_files(&payload, None),
+            Some(vec![
+                "lib/a.dart".to_string(),
+                "old.txt".to_string(),
+                "pubspec.yaml".to_string(),
+            ])
+        );
+        // GitLab lists 20 commits and reports the total.
+        assert_eq!(push_changed_files(&payload, Some(21)), None);
+        assert_eq!(
+            push_changed_files(&serde_json::json!({ "commits": [] }), None),
+            None
+        );
+    }
+
+    #[test]
+    fn gitlab_tag_push_and_merge_request_base() {
+        let tag = normalize_gitlab_event(
+            "Tag Push Hook",
+            "d1",
+            "i1",
+            "acme/app",
+            &serde_json::json!({ "ref": "refs/tags/v2", "checkout_sha": "def456", "project": { "id": 7 } }),
+        );
+        assert_eq!(tag.tag.as_deref(), Some("v2"));
+        assert_eq!(tag.commit_sha.as_deref(), Some("def456"));
+
+        let merge_request = normalize_gitlab_event(
+            "Merge Request Hook",
+            "d2",
+            "i1",
+            "acme/app",
+            &serde_json::json!({
+                "project": { "id": 7 },
+                "object_attributes": {
+                    "source_branch": "feature",
+                    "target_branch": "main",
+                    "last_commit": { "id": "fff" },
+                },
+            }),
+        );
+        assert_eq!(merge_request.compare_base.as_deref(), Some("main"));
+        assert_eq!(merge_request.tag, None);
+    }
 }

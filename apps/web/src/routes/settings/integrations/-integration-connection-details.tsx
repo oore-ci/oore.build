@@ -10,6 +10,8 @@ import {
   type DataTableColumnDef,
 } from '@/components/data-table'
 import { Button } from '@/components/ui/button'
+import { RelativeTime } from '@/components/relative-time'
+import { formatEnumLabel } from '@/lib/format-utils'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 
@@ -38,12 +40,7 @@ function humanizeAuthMode(mode: string): string {
     ['pat', 'Personal access token'],
     ['personal_token', 'Personal access token'],
   ])
-  return (
-    labels.get(mode) ??
-    mode
-      .replace(/_/g, ' ')
-      .replace(/\b\w/g, (character) => character.toUpperCase())
-  )
+  return labels.get(mode) ?? formatEnumLabel(mode)
 }
 
 function providerLabel(provider: Integration['provider']): string {
@@ -116,9 +113,11 @@ export function IntegrationConnectionDetails({
       })
       rows.push({
         label: 'Last delivery for this source',
-        value: lastWebhookAt
-          ? new Date(lastWebhookAt * 1000).toLocaleString()
-          : 'No delivery received',
+        value: lastWebhookAt ? (
+          <RelativeTime at={lastWebhookAt} />
+        ) : (
+          'No delivery received'
+        ),
       })
     }
 
@@ -131,7 +130,7 @@ export function IntegrationConnectionDetails({
 
     rows.push({
       label: 'Created',
-      value: new Date(integration.created_at * 1000).toLocaleString(),
+      value: <RelativeTime at={integration.created_at} />,
     })
     return rows
   }, [

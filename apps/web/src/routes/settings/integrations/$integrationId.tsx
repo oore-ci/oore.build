@@ -33,7 +33,7 @@ import {
   useIntegrationRepos,
   useSyncInstallations,
 } from '@/hooks/use-integrations'
-import { getIntegrationStatusVariant } from '@/lib/status-variants'
+import { StatusBadge } from '@/components/status-badge'
 import { useExternalAccessNetworkSettings } from '@/hooks/use-artifact-storage'
 import { useInfiniteProjects } from '@/hooks/use-projects'
 import { gitLabPublicEndpoints } from '@/lib/gitlab-url'
@@ -342,9 +342,7 @@ function IntegrationDetailPage() {
         description={`${providerLabel} source at ${integration.host_url}`}
         meta={
           <>
-            <Badge variant={getIntegrationStatusVariant(integration.status)}>
-              {integration.status}
-            </Badge>
+            <StatusBadge kind="integration" value={integration.status} />
             <Badge variant="outline">{providerLabel}</Badge>
             {!repositoriesQuery.isLoading && !repositoriesQuery.error ? (
               <>

@@ -163,6 +163,8 @@ use utoipa::{
         operations::list_builds,
         operations::get_build,
         operations::cancel_build,
+        operations::approve_build,
+        operations::reject_build,
         operations::rerun_build,
         // ── Releases ──
         operations::list_releases,
@@ -357,6 +359,8 @@ use utoipa::{
         oore_contract::PipelineEnvVar,
         oore_contract::PipelineExecutionConfig,
         oore_contract::TriggerConfig,
+        oore_contract::ScheduleTrigger,
+        oore_contract::ApprovalPolicy,
         oore_contract::ConcurrencyPolicy,
         oore_contract::Pipeline,
         oore_contract::CreatePipelineRequest,
@@ -420,6 +424,10 @@ use utoipa::{
         oore_contract::BuildDetailResponse,
         oore_contract::ListBuildsResponse,
         oore_contract::CancelBuildResponse,
+        oore_contract::BuildApprovalState,
+        oore_contract::BuildApproval,
+        oore_contract::BuildApprovalRequest,
+        oore_contract::BuildApprovalResponse,
         oore_contract::RerunBuildResponse,
         oore_contract::StepResult,
         // Releases
@@ -2244,6 +2252,40 @@ mod operations {
         )
     )]
     pub(super) fn cancel_build() {}
+
+    /// Approve build
+    ///
+    /// Releases a build that is waiting for approval to the runner queue.
+    /// Requires the project maintainer role.
+    #[utoipa::path(post, path = "/v1/builds/{build_id}/approve", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        request_body(content = BuildApprovalRequest, description = "Optional note for the audit log"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Build approved and queued", body = BuildApprovalResponse),
+            (status = 403, description = "Not a project maintainer", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Build is not waiting for approval", body = ApiError),
+        )
+    )]
+    pub(super) fn approve_build() {}
+
+    /// Reject build
+    ///
+    /// Cancels a build that is waiting for approval. Requires the project
+    /// maintainer role.
+    #[utoipa::path(post, path = "/v1/builds/{build_id}/reject", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        request_body(content = BuildApprovalRequest, description = "Optional reason, shown on the build"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Build rejected and canceled", body = BuildApprovalResponse),
+            (status = 403, description = "Not a project maintainer", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Build is not waiting for approval", body = ApiError),
+        )
+    )]
+    pub(super) fn reject_build() {}
 
     /// List releases
     ///

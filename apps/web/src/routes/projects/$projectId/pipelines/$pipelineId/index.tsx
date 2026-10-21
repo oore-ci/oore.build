@@ -27,11 +27,11 @@ import {
   useUpdatePipeline,
 } from '@/hooks/use-pipelines'
 import { useProject } from '@/hooks/use-projects'
-import {
-  getPipelineStatusVariant,
-  getStatusVariant,
-} from '@/lib/status-variants'
-import { relativeTime } from '@/lib/format-utils'
+import { enabledStatus } from '@/lib/status-variants'
+import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
+import { DangerZone } from '@/components/danger-zone'
+import { RelativeTime } from '@/components/relative-time'
+import { StatusBadge } from '@/components/status-badge'
 import { PageMeta } from '@/lib/seo'
 import {
   DataTable,
@@ -82,11 +82,7 @@ const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
     accessorKey: 'status',
     header: 'Status',
-    cell: ({ row }) => (
-      <Badge variant={getStatusVariant(row.original.status)}>
-        {row.original.status}
-      </Badge>
-    ),
+    cell: ({ row }) => <StatusBadge kind="build" value={row.original.status} />,
     enableSorting: false,
   },
   {
@@ -98,8 +94,7 @@ const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
     accessorKey: 'created_at',
     header: 'Created',
-    cell: ({ row }) =>
-      new Date(row.original.created_at * 1000).toLocaleString(),
+    cell: ({ row }) => <RelativeTime at={row.original.created_at} />,
     enableSorting: false,
   },
 ]
@@ -265,19 +260,22 @@ function PipelineDetailPage() {
         description="Pipeline overview and configuration."
         meta={
           <>
-            <Badge variant={getPipelineStatusVariant(pipeline.enabled)}>
-              {pipeline.enabled ? 'enabled' : 'disabled'}
-            </Badge>
+            <StatusBadge
+              kind="enabled"
+              value={enabledStatus(pipeline.enabled)}
+            />
             {pipeline.execution_config.platforms.map((p) => (
               <Badge key={p} variant="outline" className="text-[11px]">
-                {p}
+                {BUILD_PLATFORM_LABELS[p]}
               </Badge>
             ))}
-            <span>Updated {relativeTime(pipeline.updated_at)}</span>
+            <span>
+              Updated <RelativeTime at={pipeline.updated_at} />
+            </span>
           </>
         }
         actions={
-          canWrite || canDelete || canTriggerBuild ? (
+          canWrite || canTriggerBuild ? (
             <>
               {canTriggerBuild ? (
                 <Suspense
@@ -335,15 +333,6 @@ function PipelineDetailPage() {
                 >
                   <HugeiconsIcon icon={Edit02Icon} />
                   Edit
-                </Button>
-              ) : null}
-              {canDelete ? (
-                <Button
-                  variant="destructive"
-                  onClick={() => setDeleteOpen(true)}
-                >
-                  <HugeiconsIcon icon={Delete02Icon} />
-                  Delete
                 </Button>
               ) : null}
             </>
@@ -419,6 +408,21 @@ function PipelineDetailPage() {
               )}
             </CardContent>
           </Card>
+          {canDelete ? (
+            <DangerZone
+              title="Delete this pipeline"
+              description={`Permanently removes "${pipeline.name}" and its configuration from this project. This cannot be undone.`}
+              action={
+                <Button
+                  variant="destructive"
+                  onClick={() => setDeleteOpen(true)}
+                >
+                  <HugeiconsIcon icon={Delete02Icon} />
+                  Delete pipeline
+                </Button>
+              }
+            />
+          ) : null}
         </TabsContent>
 
         <TabsContent value="publishing" className="pt-2">

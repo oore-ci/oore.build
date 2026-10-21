@@ -23,14 +23,13 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Badge } from '@/components/ui/badge'
 import RunnerStatusDot from '@/components/runner-status-dot'
+import { StatusBadge } from '@/components/status-badge'
 import {
   runnerCachePurgeRequestedAt,
   runnerCacheStats,
 } from '@/hooks/use-runners'
 import { formatFileSize } from '@/lib/format-utils'
-import { getRunnerStatusVariant } from '@/lib/status-variants'
 
 export type RunnerSort = 'created_at' | 'name' | 'status' | 'last_heartbeat_at'
 
@@ -105,9 +104,7 @@ function getRunnerColumns({
       cell: ({ row }) => (
         <div className="flex items-center">
           <RunnerStatusDot status={row.original.status} />
-          <Badge variant={getRunnerStatusVariant(row.original.status)}>
-            {row.original.status}
-          </Badge>
+          <StatusBadge kind="runner" value={row.original.status} />
         </div>
       ),
     },

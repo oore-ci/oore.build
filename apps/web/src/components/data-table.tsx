@@ -34,6 +34,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { formatEnumLabel } from '@/lib/format-utils'
 import {
   dataTableColumnSortDirection,
   features,
@@ -165,47 +166,51 @@ export function DataTable<TData extends RowData>({
 }) {
   const visibleColumns = table.getVisibleLeafColumns()
   const rows = table.getRowModel().rows
+  // Embedded tables (recent builds, members, endpoints) pass no controls and
+  // get no toolbar; a lone Columns menu is not a toolbar.
+  const hasToolbar = Boolean(search || filters)
 
   return (
     <div className="w-full">
-      <div className="flex flex-wrap items-center gap-2 py-4">
-        {search ? (
-          <Input
-            value={search.value}
-            placeholder={search.placeholder}
-            onChange={(event) => search.onChange(event.target.value)}
-            className="max-w-sm"
-          />
-        ) : null}
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          {filters}
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant="secondary" />}>
-              Columns
-              <HugeiconsIcon icon={ArrowDown01Icon} aria-hidden />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-44">
-              <DropdownMenuGroup>
-                {table
-                  .getAllColumns()
-                  .filter((column) => column.getCanHide())
-                  .map((column) => (
-                    <DropdownMenuCheckboxItem
-                      key={column.id}
-                      className="capitalize"
-                      checked={column.getIsVisible()}
-                      onCheckedChange={(value) =>
-                        column.toggleVisibility(!!value)
-                      }
-                    >
-                      {column.id.replaceAll('_', ' ')}
-                    </DropdownMenuCheckboxItem>
-                  ))}
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+      {hasToolbar ? (
+        <div className="flex flex-wrap items-center gap-2 py-4">
+          {search ? (
+            <Input
+              value={search.value}
+              placeholder={search.placeholder}
+              onChange={(event) => search.onChange(event.target.value)}
+              className="max-w-sm"
+            />
+          ) : null}
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            {filters}
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="secondary" />}>
+                Columns
+                <HugeiconsIcon icon={ArrowDown01Icon} aria-hidden />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuGroup>
+                  {table
+                    .getAllColumns()
+                    .filter((column) => column.getCanHide())
+                    .map((column) => (
+                      <DropdownMenuCheckboxItem
+                        key={column.id}
+                        checked={column.getIsVisible()}
+                        onCheckedChange={(value) =>
+                          column.toggleVisibility(!!value)
+                        }
+                      >
+                        {formatEnumLabel(column.id)}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
-      </div>
+      ) : null}
       <div className="overflow-hidden rounded-md border">
         <Table>
           <TableHeader>

@@ -38,6 +38,8 @@ pub enum ProjectPermission {
     OperateRelease,
     /// Create, raise, resume, complete or approve a store release.
     ManageReleases,
+    /// Approve or reject a gated build, and change a pipeline's approval policy.
+    ApproveBuild,
 }
 
 // ── Resolution ──────────────────────────────────────────────────

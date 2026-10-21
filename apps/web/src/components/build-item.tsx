@@ -6,6 +6,7 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import RepositoryAvatar from '@/components/repository-avatar'
+import { StatusBadge } from '@/components/status-badge'
 import { Badge } from '@/components/ui/badge'
 import {
   Item,
@@ -17,10 +18,6 @@ import {
 } from '@/components/ui/item'
 import { BUILD_PLATFORM_LABELS, getBuildPlatforms } from '@/lib/build-platforms'
 import { formatDuration, relativeTime } from '@/lib/format-utils'
-import {
-  BUILD_STATUS_FILTER_OPTIONS,
-  getStatusVariant,
-} from '@/lib/status-variants'
 import type { Build } from '@oore/client/models'
 
 function buildTiming(build: Build): string {
@@ -133,12 +130,11 @@ export function BuildItem({ build }: { build: Build }) {
           <span className="hidden justify-self-end font-mono text-xs text-muted-foreground tabular-nums sm:inline">
             {buildTiming(build)}
           </span>
-          <Badge
-            variant={getStatusVariant(build.status)}
+          <StatusBadge
+            kind="build"
+            value={build.status}
             className="justify-self-end"
-          >
-            {BUILD_STATUS_FILTER_OPTIONS[build.status]}
-          </Badge>
+          />
           <HugeiconsIcon icon={ChevronRightIcon} className="justify-self-end" />
         </ItemActions>
       </Item>

@@ -1733,6 +1733,85 @@
         ]
       }
     },
+    "/v1/builds/{build_id}/approve": {
+      "post": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Approve build",
+        "description": "Releases a build that is waiting for approval to the runner queue.\nRequires the project maintainer role.",
+        "operationId": "approve_build",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional note for the audit log",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Build approved and queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildApprovalResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a project maintainer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Build is not waiting for approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/builds/{build_id}/artifacts": {
       "get": {
         "tags": [
@@ -1941,6 +2020,85 @@
             "bearer_auth": []
           },
           {}
+        ]
+      }
+    },
+    "/v1/builds/{build_id}/reject": {
+      "post": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Reject build",
+        "description": "Cancels a build that is waiting for approval. Requires the project\nmaintainer role.",
+        "operationId": "reject_build",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason, shown on the build",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Build rejected and canceled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildApprovalResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a project maintainer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Build is not waiting for approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
         ]
       }
     },
@@ -11314,6 +11472,26 @@
           }
         }
       },
+      "ApprovalPolicy": {
+        "type": "object",
+        "description": "Which builds of a pipeline wait for a maintainer before a runner may\nclaim them.",
+        "required": [
+          "required"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Trigger events that need approval: `push`, `pull_request`,\n`tag_push`, `manual` or `schedule`. Empty means every build."
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "Artifact": {
         "type": "object",
         "required": [
@@ -11752,6 +11930,17 @@
           "updated_at"
         ],
         "properties": {
+          "approval": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildApproval",
+                "description": "Present when the pipeline's approval policy gated this build."
+              }
+            ]
+          },
           "branch": {
             "type": [
               "string",
@@ -11885,6 +12074,72 @@
             "format": "int64"
           }
         }
+      },
+      "BuildApproval": {
+        "type": "object",
+        "required": [
+          "state",
+          "requested_at"
+        ],
+        "properties": {
+          "decided_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "decided_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requested_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "state": {
+            "$ref": "#/components/schemas/BuildApprovalState"
+          }
+        }
+      },
+      "BuildApprovalRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "BuildApprovalResponse": {
+        "type": "object",
+        "required": [
+          "build"
+        ],
+        "properties": {
+          "build": {
+            "$ref": "#/components/schemas/Build"
+          }
+        }
+      },
+      "BuildApprovalState": {
+        "type": "string",
+        "description": "Build approval state. Pending builds stay `queued` but no runner claims them.",
+        "enum": [
+          "pending",
+          "approved",
+          "rejected"
+        ]
       },
       "BuildChangedEvent": {
         "type": "object",
@@ -12560,6 +12815,16 @@
           "name"
         ],
         "properties": {
+          "approval": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApprovalPolicy"
+              }
+            ]
+          },
           "concurrency": {
             "oneOf": [
               {
@@ -12594,6 +12859,14 @@
           },
           "name": {
             "type": "string"
+          },
+          "timeout_minutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
           },
           "trigger_config": {
             "oneOf": [
@@ -14623,11 +14896,16 @@
           "execution_config",
           "trigger_config",
           "concurrency",
+          "timeout_minutes",
+          "approval",
           "enabled",
           "created_at",
           "updated_at"
         ],
         "properties": {
+          "approval": {
+            "$ref": "#/components/schemas/ApprovalPolicy"
+          },
           "concurrency": {
             "$ref": "#/components/schemas/ConcurrencyPolicy"
           },
@@ -14655,6 +14933,12 @@
           },
           "project_id": {
             "type": "string"
+          },
+          "timeout_minutes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Minutes a running build may take before it is marked `timed_out`.",
+            "minimum": 0
           },
           "trigger_config": {
             "$ref": "#/components/schemas/TriggerConfig"
@@ -16794,6 +17078,27 @@
           }
         }
       },
+      "ScheduleTrigger": {
+        "type": "object",
+        "description": "A cron schedule that starts a build on a branch.",
+        "required": [
+          "cron"
+        ],
+        "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Branch to build. Defaults to the project's default branch."
+          },
+          "cron": {
+            "type": "string",
+            "description": "Five-field cron expression (`minute hour day month weekday`) in UTC,\nor `@hourly`, `@daily`, `@weekly`, `@monthly`."
+          }
+        },
+        "additionalProperties": false
+      },
       "ScmProvider": {
         "type": "string",
         "enum": [
@@ -17445,13 +17750,42 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Branch globs for push and pull request events. When only `tags` is\nset, branch events do not trigger."
           },
           "events": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Push and pull request events trigger only when a changed file matches\none of these globs (`**` spans directories)."
+          },
+          "paths_ignore": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Push and pull request events are skipped when every changed file\nmatches one of these globs."
+          },
+          "schedules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleTrigger"
+            },
+            "description": "Cron schedules, evaluated in UTC."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tag globs for tag push events. When only `branches` is set, tag\nevents do not trigger."
           }
         }
       },
@@ -17807,6 +18141,16 @@
       "UpdatePipelineRequest": {
         "type": "object",
         "properties": {
+          "approval": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApprovalPolicy"
+              }
+            ]
+          },
           "concurrency": {
             "oneOf": [
               {
@@ -17850,6 +18194,14 @@
               "string",
               "null"
             ]
+          },
+          "timeout_minutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
           },
           "trigger_config": {
             "oneOf": [
@@ -18249,6 +18601,16 @@
       "ValidatePipelineRequest": {
         "type": "object",
         "properties": {
+          "approval": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApprovalPolicy"
+              }
+            ]
+          },
           "concurrency": {
             "oneOf": [
               {
@@ -18286,6 +18648,14 @@
               "string",
               "null"
             ]
+          },
+          "timeout_minutes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
           },
           "trigger_config": {
             "oneOf": [

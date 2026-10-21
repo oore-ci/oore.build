@@ -27,7 +27,11 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
+import { DangerZone } from '@/components/danger-zone'
+import { FormActions } from '@/components/form-actions'
+import { RelativeTime } from '@/components/relative-time'
+import { StatusBadge } from '@/components/status-badge'
+import { formatEnumLabel } from '@/lib/format-utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -177,46 +181,14 @@ function NotificationChannelDetailPage() {
         title={channel.name}
         description={`${channelTypeLabel(channel.channel_type)} notification channel`}
         actions={
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={handleTest}
-              disabled={testMutation.isPending}
-            >
-              <HugeiconsIcon icon={TestTube01Icon} />
-              {testMutation.isPending ? 'Sending...' : 'Test'}
-            </Button>
-            <AlertDialog>
-              <AlertDialogTrigger
-                render={
-                  <Button variant="destructive">
-                    <HugeiconsIcon icon={Delete02Icon} />
-                    Delete
-                  </Button>
-                }
-              />
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    Delete notification channel?
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This permanently removes the channel and its delivery
-                    history.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={handleDelete}
-                    disabled={deleteMutation.isPending}
-                  >
-                    {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
+          <Button
+            variant="outline"
+            onClick={handleTest}
+            disabled={testMutation.isPending}
+          >
+            <HugeiconsIcon icon={TestTube01Icon} />
+            {testMutation.isPending ? 'Sending...' : 'Test'}
+          </Button>
         }
       />
 
@@ -228,9 +200,10 @@ function NotificationChannelDetailPage() {
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <NotificationChannelFormFields channel={channel} form={form} />
-              <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? 'Saving...' : 'Save changes'}
-              </Button>
+              <FormActions
+                isPending={updateMutation.isPending}
+                submitLabel="Save changes"
+              />
             </form>
           </Form>
         </CardContent>
@@ -278,19 +251,9 @@ function NotificationChannelDetailPage() {
                 <Item key={delivery.id} variant="outline" size="sm">
                   <ItemContent>
                     <ItemTitle>
-                      <Badge
-                        variant={
-                          delivery.status === 'delivered'
-                            ? 'secondary'
-                            : delivery.status === 'failed'
-                              ? 'destructive'
-                              : 'outline'
-                        }
-                      >
-                        {delivery.status}
-                      </Badge>
+                      <StatusBadge kind="delivery" value={delivery.status} />
                       <span className="text-muted-foreground">
-                        {delivery.event_type}
+                        {formatEnumLabel(delivery.event_type)}
                       </span>
                     </ItemTitle>
                     {delivery.last_error ? (
@@ -300,13 +263,7 @@ function NotificationChannelDetailPage() {
                     ) : null}
                   </ItemContent>
                   <ItemActions className="text-xs text-muted-foreground">
-                    <time
-                      dateTime={new Date(
-                        delivery.created_at * 1000,
-                      ).toISOString()}
-                    >
-                      {new Date(delivery.created_at * 1000).toLocaleString()}
-                    </time>
+                    <RelativeTime at={delivery.created_at} />
                   </ItemActions>
                 </Item>
               ))}
@@ -314,6 +271,42 @@ function NotificationChannelDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      <DangerZone
+        title="Delete this channel"
+        description={`Permanently removes "${channel.name}" and its delivery history. Pipelines that notified it stop sending.`}
+        action={
+          <AlertDialog>
+            <AlertDialogTrigger
+              render={
+                <Button variant="destructive">
+                  <HugeiconsIcon icon={Delete02Icon} />
+                  Delete channel
+                </Button>
+              }
+            />
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Delete notification channel?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  This permanently removes the channel and its delivery history.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={handleDelete}
+                  disabled={deleteMutation.isPending}
+                >
+                  {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        }
+      />
     </PageLayout>
   )
 }

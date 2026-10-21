@@ -247,11 +247,41 @@ pub fn start_notification_dispatcher(
     });
 }
 
+/// Status used in build payloads for a build waiting for approval.
+const APPROVAL_NEEDED_STATUS: &str = "approval_needed";
+
+/// Notify channels that a build is waiting for a maintainer's approval.
+pub async fn dispatch_build_approval_needed(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    build_id: &str,
+) -> anyhow::Result<()> {
+    let event = BuildStateEvent {
+        build_id: build_id.to_string(),
+        from_status: None,
+        to_status: APPROVAL_NEEDED_STATUS.to_string(),
+        actor: None,
+        reason: None,
+        timestamp: now_unix(),
+    };
+    dispatch_build_notification(pool, encryption_key, &event, "build_approval_needed").await
+}
+
 /// Dispatch notifications for a single build state event.
 async fn dispatch_build_event(
     pool: &SqlitePool,
     encryption_key: &[u8],
     event: &BuildStateEvent,
+) -> anyhow::Result<()> {
+    dispatch_build_notification(pool, encryption_key, event, &event.to_status).await
+}
+
+/// Dispatch a build notification under the channel filter name `event_type`.
+async fn dispatch_build_notification(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    event: &BuildStateEvent,
+    event_type: &str,
 ) -> anyhow::Result<()> {
     let build_row = sqlx::query(
         "SELECT b.*, p.name as project_name, pl.name as pipeline_name \
@@ -271,7 +301,7 @@ async fn dispatch_build_event(
 
     let trigger_actor: Option<String> = build_row.try_get("trigger_actor").ok().flatten();
     let notification = Notification {
-        event_type: event.to_status.clone(),
+        event_type: event_type.to_string(),
         category: "build",
         project_id: build_row.try_get("project_id").ok(),
         build_id: Some(event.build_id.clone()),
@@ -571,8 +601,18 @@ fn build_notification_payload(
     })
 }
 
+/// Human wording for a build status in messages.
+fn build_status_label(status: &str) -> &str {
+    match status {
+        APPROVAL_NEEDED_STATUS => "needs approval",
+        "timed_out" => "timed out",
+        other => other,
+    }
+}
+
 fn build_status_emoji(status: &str) -> &'static str {
     match status {
+        APPROVAL_NEEDED_STATUS => ":raising_hand:",
         "succeeded" => ":white_check_mark:",
         "failed" => ":x:",
         "canceled" => ":no_entry_sign:",
@@ -594,6 +634,7 @@ fn build_mattermost_payload(payload: &serde_json::Value) -> serde_json::Value {
     let status = payload["build"]["status"].as_str().unwrap_or("unknown");
     let branch = payload["build"]["branch"].as_str().unwrap_or("—");
     let emoji = build_status_emoji(status);
+    let status = build_status_label(status);
 
     let text = format!(
         "{emoji} **{project_name}** / {pipeline_name} — Build #{build_number} **{status}**\nBranch: `{branch}`"
@@ -733,16 +774,16 @@ fn slack_message(
                 let short: String = sha.chars().take(7).collect();
                 context.push(format!("Commit `{}`", slack_escape(&short)));
             }
-            let button = if status == "succeeded" {
-                "View build"
-            } else {
-                "View logs"
+            let button = match status {
+                "succeeded" => "View build",
+                APPROVAL_NEEDED_STATUS => "Review build",
+                _ => "View logs",
             };
             (
                 format!(
                     "{} *{project}* / {pipeline}: build #{build_number} *{}*",
                     build_status_emoji(status),
-                    slack_escape(status)
+                    slack_escape(build_status_label(status))
                 ),
                 context,
                 Some(button),
@@ -1195,6 +1236,7 @@ fn build_email_html(payload: &serde_json::Value) -> (String, String) {
     let branch = html_escape(payload["build"]["branch"].as_str().unwrap_or("—"));
 
     let (color, emoji) = match status_raw {
+        APPROVAL_NEEDED_STATUS => ("#d97706", "\u{1F64B}"),
         "succeeded" => ("#16a34a", "\u{2705}"),
         "failed" => ("#dc2626", "\u{274C}"),
         "canceled" => ("#6b7280", "\u{1F6AB}"),
@@ -1203,6 +1245,7 @@ fn build_email_html(payload: &serde_json::Value) -> (String, String) {
         _ => ("#6b7280", "\u{1F514}"),
     };
 
+    let status_raw = build_status_label(status_raw);
     let status = html_escape(status_raw);
     let project_name_raw = payload["project_name"]
         .as_str()

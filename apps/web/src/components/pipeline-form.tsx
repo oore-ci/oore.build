@@ -11,9 +11,8 @@ import type {
   PipelineAndroidSigningResponse,
   PipelineIosSigningResponse,
 } from '@oore/client/models'
-import { Button } from '@/components/ui/button'
 import { Form } from '@/components/ui/form'
-import { Spinner } from '@/components/ui/spinner'
+import { FormActions } from '@/components/form-actions'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { pipelineFormSchema } from '@/lib/pipeline-schema'
 import {
@@ -241,29 +240,14 @@ export default function PipelineForm({
           (values.ios_signing_mode === 'api' ||
             values.ios_signing_mode === 'hybrid') &&
           children}
-        <div className="sticky bottom-0 z-30 rounded-md border bg-surface/95 shadow-xs backdrop-blur supports-backdrop-filter:bg-surface/80">
-          <div className="flex items-center justify-end gap-3 p-3">
-            <Button type="button" variant="outline" onClick={onCancel}>
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={isPending || readOnly}
-              title={readOnly ? readOnlyReason : undefined}
-            >
-              {isPending ? (
-                <>
-                  <Spinner className="size-4" />
-                  Saving...
-                </>
-              ) : readOnly ? (
-                'Demo is read-only'
-              ) : (
-                submitLabel
-              )}
-            </Button>
-          </div>
-        </div>
+        <FormActions
+          disabled={readOnly}
+          disabledReason={readOnlyReason}
+          isPending={isPending}
+          onCancel={onCancel}
+          sticky={isDirty}
+          submitLabel={readOnly ? 'Demo is read-only' : submitLabel}
+        />
       </form>
       <AlertDialog
         open={blocker.status === 'blocked'}

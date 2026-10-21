@@ -895,6 +895,68 @@ pub(crate) async fn resolve_branch_commit(
         })
 }
 
+/// Files changed from `base` (a branch or commit) to `head`, measured from
+/// their merge base. `None` when GitLab timed out building the diff.
+pub(crate) async fn changed_files(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    target: (&str, &str, &str),
+    base: &str,
+    head: &str,
+) -> anyhow::Result<Option<Vec<String>>> {
+    #[derive(Deserialize)]
+    struct CompareResponse {
+        #[serde(default)]
+        diffs: Vec<CompareDiff>,
+        #[serde(default)]
+        compare_timeout: bool,
+    }
+    #[derive(Deserialize)]
+    struct CompareDiff {
+        new_path: String,
+        old_path: String,
+    }
+
+    let (host_url, auth_mode, repository_external_id) = target;
+    let host_url =
+        normalize_gitlab_host_url(host_url).map_err(|(_, body)| anyhow::anyhow!(body.0.error))?;
+    let token = access_token(pool, encryption_key, integration_id)
+        .await
+        .map_err(|(_, body)| anyhow::anyhow!(body.0.error))?;
+    let client = build_http_client().map_err(anyhow::Error::msg)?;
+    let mut request = client
+        .get(format!(
+            "{}/api/v4/projects/{}/repository/compare",
+            host_url,
+            urlencoding::encode(repository_external_id)
+        ))
+        .query(&[("from", base), ("to", head), ("straight", "false")])
+        .header("User-Agent", "oore-ci");
+    request = if auth_mode == "oauth_app" {
+        request.header("Authorization", format!("Bearer {token}"))
+    } else {
+        request.header("PRIVATE-TOKEN", token)
+    };
+    let response = request
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<CompareResponse>()
+        .await?;
+    if response.compare_timeout {
+        return Ok(None);
+    }
+    let mut files = Vec::with_capacity(response.diffs.len());
+    for diff in response.diffs {
+        if diff.old_path != diff.new_path {
+            files.push(diff.old_path);
+        }
+        files.push(diff.new_path);
+    }
+    Ok(Some(files))
+}
+
 /// One GitLab commit status, posted to `POST /projects/:id/statuses/:sha`.
 pub(crate) struct CommitStatus<'a> {
     pub sha: &'a str,

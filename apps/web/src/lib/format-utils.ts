@@ -27,3 +27,18 @@ export function formatFileSize(bytes: number): string {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
+
+export function formatAbsoluteTime(epochSecs: number): string {
+  return new Date(epochSecs * 1000).toLocaleString()
+}
+
+/**
+ * Turns a machine enum such as `timed_out` or `pull_request` into a
+ * sentence-case label. Known enums get an explicit label map instead; this is
+ * the fallback for values the UI has no dedicated wording for.
+ */
+export function formatEnumLabel(value: string): string {
+  const words = value.trim().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ')
+  if (!words) return ''
+  return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase()
+}

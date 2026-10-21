@@ -1303,9 +1303,112 @@ pub struct TriggerConfig {
     #[serde(default)]
     #[schema(required = true)]
     pub events: Vec<String>,
+    /// Branch globs for push and pull request events. When only `tags` is
+    /// set, branch events do not trigger.
     #[serde(default)]
     #[schema(required = true)]
     pub branches: Vec<String>,
+    /// Tag globs for tag push events. When only `branches` is set, tag
+    /// events do not trigger.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Push and pull request events trigger only when a changed file matches
+    /// one of these globs (`**` spans directories).
+    #[serde(default)]
+    pub paths: Vec<String>,
+    /// Push and pull request events are skipped when every changed file
+    /// matches one of these globs.
+    #[serde(default)]
+    pub paths_ignore: Vec<String>,
+    /// Cron schedules, evaluated in UTC.
+    #[serde(default)]
+    pub schedules: Vec<ScheduleTrigger>,
+}
+
+/// A cron schedule that starts a build on a branch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleTrigger {
+    /// Five-field cron expression (`minute hour day month weekday`) in UTC,
+    /// or `@hourly`, `@daily`, `@weekly`, `@monthly`.
+    pub cron: String,
+    /// Branch to build. Defaults to the project's default branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+}
+
+/// Which builds of a pipeline wait for a maintainer before a runner may
+/// claim them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalPolicy {
+    #[serde(default)]
+    #[schema(required = true)]
+    pub required: bool,
+    /// Trigger events that need approval: `push`, `pull_request`,
+    /// `tag_push`, `manual` or `schedule`. Empty means every build.
+    #[serde(default)]
+    pub events: Vec<String>,
+}
+
+impl ApprovalPolicy {
+    pub const EVENTS: &'static [&'static str] =
+        &["push", "pull_request", "tag_push", "manual", "schedule"];
+
+    /// Whether a build started by `event` (a canonical trigger event, or
+    /// `manual` / `schedule`) must wait for approval.
+    pub fn applies_to(&self, event: &str) -> bool {
+        self.required && (self.events.is_empty() || self.events.iter().any(|e| e == event))
+    }
+}
+
+/// Build approval state. Pending builds stay `queued` but no runner claims them.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildApprovalState {
+    Pending,
+    Approved,
+    Rejected,
+}
+
+impl fmt::Display for BuildApprovalState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Pending => "pending",
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
+        })
+    }
+}
+
+impl FromStr for BuildApprovalState {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "approved" => Ok(Self::Approved),
+            "rejected" => Ok(Self::Rejected),
+            other => Err(format!("unknown build approval state: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BuildApproval {
+    pub state: BuildApprovalState,
+    pub requested_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decided_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decided_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct BuildApprovalRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 impl TriggerConfig {
@@ -1356,10 +1459,16 @@ impl TriggerConfig {
 
     /// Determine whether a webhook event should trigger this pipeline.
     ///
-    /// Empty `events` list means all events match. Empty `branches` list
-    /// means all branches match. `None` branch with a non-empty branch
-    /// filter results in rejection.
-    pub fn should_trigger(&self, event_type: &str, branch: Option<&str>) -> bool {
+    /// Empty `events` list means all events match. A tag event (`tag` is
+    /// set) is checked against `tags`, any other event against `branches`.
+    /// When neither list is set every ref matches; when only one is set,
+    /// events for the other kind of ref do not trigger.
+    pub fn should_trigger(
+        &self,
+        event_type: &str,
+        branch: Option<&str>,
+        tag: Option<&str>,
+    ) -> bool {
         // Check event filter
         if !self.events.is_empty() {
             let canonical = Self::normalize_event(event_type);
@@ -1372,19 +1481,58 @@ impl TriggerConfig {
             }
         }
 
-        // Check branch filter
-        if !self.branches.is_empty() {
-            match branch {
-                None => return false,
-                Some(b) => {
-                    if !self.branches.iter().any(|pat| Self::glob_match(pat, b)) {
-                        return false;
-                    }
-                }
-            }
+        if self.branches.is_empty() && self.tags.is_empty() {
+            return true;
         }
+        let (patterns, reference) = match tag {
+            Some(tag) => (&self.tags, Some(tag)),
+            None => (&self.branches, branch),
+        };
+        reference.is_some_and(|reference| {
+            patterns
+                .iter()
+                .any(|pattern| Self::glob_match(pattern, reference))
+        })
+    }
 
-        true
+    /// Whether the changed files pass `paths` and `paths_ignore`.
+    ///
+    /// `None` means the change set is unknown (for example a truncated
+    /// comparison), which never suppresses a build.
+    pub fn paths_match(&self, changed_files: Option<&[String]>) -> bool {
+        if self.paths.is_empty() && self.paths_ignore.is_empty() {
+            return true;
+        }
+        let Some(files) = changed_files else {
+            return true;
+        };
+        let matches_any = |patterns: &[String], file: &str| {
+            patterns
+                .iter()
+                .any(|pattern| changed_path_matches(pattern, file))
+        };
+        files.iter().any(|file| {
+            (self.paths.is_empty() || matches_any(&self.paths, file))
+                && !matches_any(&self.paths_ignore, file)
+        })
+    }
+
+    /// Whether path filters are configured, so callers can skip fetching
+    /// the change set.
+    pub fn has_path_filters(&self) -> bool {
+        !self.paths.is_empty() || !self.paths_ignore.is_empty()
+    }
+}
+
+/// Match a repository-relative path against a trigger path glob with the
+/// artifact pattern rules: `*` and `?` stay within one segment, `**` spans
+/// segments, and a pattern without `/` matches the file name anywhere. A
+/// pattern ending in `/` matches everything below that directory.
+pub fn changed_path_matches(pattern: &str, path: &str) -> bool {
+    let pattern = pattern.trim();
+    match pattern.strip_suffix('/') {
+        Some(directory) => artifact_pattern_matches(&format!("{directory}/**"), path),
+        None => artifact_pattern_matches(pattern, path),
     }
 }
 
@@ -1414,6 +1562,9 @@ pub struct Build {
     pub changelog: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_build_id: Option<String>,
+    /// Present when the pipeline's approval policy gated this build.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval: Option<BuildApproval>,
     #[schema(value_type = Object)]
     pub config_snapshot: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1513,6 +1664,11 @@ pub struct ListBuildsResponse {
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CancelBuildResponse {
+    pub build: Build,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct BuildApprovalResponse {
     pub build: Build,
 }
 
@@ -2653,6 +2809,15 @@ pub struct DiscoverRepositoryWorkflowsResponse {
     pub truncated: bool,
 }
 
+/// Build timeout when a pipeline does not set one.
+pub const DEFAULT_BUILD_TIMEOUT_MINUTES: u32 = 60;
+/// Longest build timeout a pipeline may set (24 hours).
+pub const MAX_BUILD_TIMEOUT_MINUTES: u32 = 1440;
+
+pub fn default_build_timeout_minutes() -> u32 {
+    DEFAULT_BUILD_TIMEOUT_MINUTES
+}
+
 fn default_platforms() -> Vec<BuildPlatform> {
     vec![BuildPlatform::Android]
 }
@@ -3019,6 +3184,13 @@ pub struct Pipeline {
     pub execution_config: PipelineExecutionConfig,
     pub trigger_config: TriggerConfig,
     pub concurrency: ConcurrencyPolicy,
+    /// Minutes a running build may take before it is marked `timed_out`.
+    #[serde(default = "default_build_timeout_minutes")]
+    #[schema(required = true)]
+    pub timeout_minutes: u32,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub approval: ApprovalPolicy,
     pub enabled: bool,
     pub created_at: i64,
     pub updated_at: i64,
@@ -3037,6 +3209,10 @@ pub struct CreatePipelineRequest {
     pub trigger_config: Option<TriggerConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<ConcurrencyPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_minutes: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ApprovalPolicy>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3053,6 +3229,10 @@ pub struct UpdatePipelineRequest {
     pub trigger_config: Option<TriggerConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<ConcurrencyPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_minutes: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ApprovalPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
 }
@@ -3086,6 +3266,10 @@ pub struct ValidatePipelineRequest {
     pub trigger_config: Option<TriggerConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<ConcurrencyPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_minutes: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ApprovalPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_yaml: Option<String>,
 }
@@ -4855,6 +5039,63 @@ pub struct RevokeApiTokenResponse {
 
 #[cfg(test)]
 mod tests {
+    use super::{ApprovalPolicy, TriggerConfig};
+
+    fn triggers(json: &str) -> TriggerConfig {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn branch_and_tag_filters_follow_the_ref_kind() {
+        let any = triggers("{}");
+        assert!(any.should_trigger("push", Some("main"), None));
+        assert!(any.should_trigger("tag_push", None, Some("v1")));
+
+        let branches_only = triggers(r#"{"branches":["main"]}"#);
+        assert!(branches_only.should_trigger("push", Some("main"), None));
+        assert!(!branches_only.should_trigger("tag_push", None, Some("v1")));
+
+        let tags_only = triggers(r#"{"tags":["v*"]}"#);
+        assert!(tags_only.should_trigger("tag_push", None, Some("v1.2.0")));
+        assert!(!tags_only.should_trigger("tag_push", None, Some("nightly")));
+        assert!(!tags_only.should_trigger("push", Some("main"), None));
+
+        let gitlab = triggers(r#"{"events":["tag_push"]}"#);
+        assert!(gitlab.should_trigger("Tag Push Hook", None, Some("v1")));
+        assert!(!gitlab.should_trigger("Push Hook", Some("main"), None));
+    }
+
+    #[test]
+    fn path_filters_need_a_relevant_change() {
+        let config = triggers(r#"{"paths":["lib/","android/**"],"paths_ignore":["*.md"]}"#);
+        let files = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert!(config.paths_match(Some(&files(&["lib/src/app.dart"]))));
+        assert!(config.paths_match(Some(&files(&["docs/a.txt", "android/app/build.gradle"]))));
+        assert!(!config.paths_match(Some(&files(&["docs/a.txt"]))));
+        assert!(!config.paths_match(Some(&files(&["lib/README.md"]))));
+        assert!(config.paths_match(None));
+
+        let ignore_only = triggers(r#"{"paths_ignore":["docs/**"]}"#);
+        assert!(!ignore_only.paths_match(Some(&files(&["docs/setup.md"]))));
+        assert!(ignore_only.paths_match(Some(&files(&["docs/setup.md", "lib/main.dart"]))));
+    }
+
+    #[test]
+    fn approval_policy_matches_listed_events() {
+        let tags: ApprovalPolicy =
+            serde_json::from_str(r#"{"required":true,"events":["tag_push"]}"#).unwrap();
+        assert!(tags.applies_to("tag_push"));
+        assert!(!tags.applies_to("push"));
+        let all: ApprovalPolicy = serde_json::from_str(r#"{"required":true}"#).unwrap();
+        assert!(all.applies_to("manual"));
+        assert!(!ApprovalPolicy::default().applies_to("tag_push"));
+    }
+
     #[test]
     fn vm_image_config_accepts_packages_and_rejects_injection() {
         let config = super::parse_vm_image_yaml(
