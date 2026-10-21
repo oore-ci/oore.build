@@ -1714,24 +1714,7 @@ fn validate_owned_document(
         .and_then(Value::as_object)
         .context("service definition has no environment")?;
     match service {
-        InstallService::Runner => {
-            anyhow::ensure!(
-                environment.len() == 3
-                    && environment.get("PATH").and_then(Value::as_str) == Some(SERVICE_PATH)
-                    && environment.get("HOME").and_then(Value::as_str)
-                        == Some(owner.home.to_string_lossy().as_ref())
-                    && environment
-                        .get(oore_runner::RUNNER_SERVICE_ACK_PATH_ENV)
-                        .and_then(Value::as_str)
-                        == Some(
-                            root.join("run")
-                                .join(oore_runner::RUNNER_SERVICE_ACK_FILE)
-                                .to_string_lossy()
-                                .as_ref(),
-                        ),
-                "runner service definition has an unexpected environment"
-            );
-        }
+        InstallService::Runner => validate_runner_environment(root, owner, environment)?,
         InstallService::Daemon | InstallService::Updater | InstallService::Web => {
             anyhow::ensure!(
                 environment.len() == 3
@@ -1745,6 +1728,37 @@ fn validate_owned_document(
         }
     }
     validate_definition_arguments(root, service, owner, document)
+}
+
+// Runner services installed before FVM was removed also set FVM_CACHE_PATH.
+// The runner ignores it now, so accept it until `oore setup` rewrites the
+// service, instead of treating an Oore-written service as foreign.
+fn validate_runner_environment(
+    root: &Path,
+    owner: &ServiceOwner,
+    environment: &serde_json::Map<String, Value>,
+) -> anyhow::Result<()> {
+    let legacy_fvm_cache = environment.get("FVM_CACHE_PATH").map(|value| {
+        value.as_str() == Some(root.join("toolchains/flutter").to_string_lossy().as_ref())
+    });
+    anyhow::ensure!(
+        legacy_fvm_cache != Some(false)
+            && environment.len() == 3 + usize::from(legacy_fvm_cache.is_some())
+            && environment.get("PATH").and_then(Value::as_str) == Some(SERVICE_PATH)
+            && environment.get("HOME").and_then(Value::as_str)
+                == Some(owner.home.to_string_lossy().as_ref())
+            && environment
+                .get(oore_runner::RUNNER_SERVICE_ACK_PATH_ENV)
+                .and_then(Value::as_str)
+                == Some(
+                    root.join("run")
+                        .join(oore_runner::RUNNER_SERVICE_ACK_FILE)
+                        .to_string_lossy()
+                        .as_ref(),
+                ),
+        "runner service definition has an unexpected environment"
+    );
+    Ok(())
 }
 
 fn validate_definition_arguments(
@@ -3173,6 +3187,42 @@ mod tests {
         assert!(render_recovery_sudoers("app builder").is_err());
         assert!(render_recovery_sudoers("ALL,root").is_err());
         assert!(render_recovery_sudoers("").is_err());
+    }
+
+    #[test]
+    fn runner_environment_accepts_the_pre_fvm_removal_service() {
+        let root = PathBuf::from("/Users/appbuilder/.oore");
+        let owner = ServiceOwner {
+            uid: 501,
+            name: "appbuilder".to_string(),
+            home: PathBuf::from("/Users/appbuilder"),
+        };
+        let mut environment = serde_json::Map::new();
+        environment.insert("PATH".to_string(), SERVICE_PATH.into());
+        environment.insert("HOME".to_string(), "/Users/appbuilder".into());
+        environment.insert(
+            oore_runner::RUNNER_SERVICE_ACK_PATH_ENV.to_string(),
+            format!(
+                "/Users/appbuilder/.oore/run/{}",
+                oore_runner::RUNNER_SERVICE_ACK_FILE
+            )
+            .into(),
+        );
+        assert!(validate_runner_environment(&root, &owner, &environment).is_ok());
+
+        let mut legacy = environment.clone();
+        legacy.insert(
+            "FVM_CACHE_PATH".to_string(),
+            "/Users/appbuilder/.oore/toolchains/flutter".into(),
+        );
+        assert!(validate_runner_environment(&root, &owner, &legacy).is_ok());
+
+        legacy.insert("FVM_CACHE_PATH".to_string(), "/tmp/flutter".into());
+        assert!(validate_runner_environment(&root, &owner, &legacy).is_err());
+
+        let mut extra = environment;
+        extra.insert("EXTRA".to_string(), "1".into());
+        assert!(validate_runner_environment(&root, &owner, &extra).is_err());
     }
 
     #[test]
