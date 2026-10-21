@@ -12,7 +12,9 @@ Tart and the images.
 
 ## What you need
 
-- Tart 2.41.1 or newer on the Runner Mac: `brew install cirruslabs/cli/tart`.
+- Tart 2.41.1 or newer on the Runner Mac. Homebrew's `openai/tools/tart` can
+  lag behind, so check `tart --version` after installing it. If it is older,
+  install the release directly (see [Install Tart from the release](#install-tart-from-the-release)).
 - The Runner account logged in to macOS. Apple's Virtualization framework
   needs that login session, the same one iOS signing uses, so turn on
   automatic login for the Runner account on a dedicated build Mac.
@@ -20,6 +22,24 @@ Tart and the images.
   first use (see below).
 
 `oore doctor` reports the installed Tart version.
+
+### Install Tart from the release
+
+The Runner looks for `/opt/homebrew/bin/tart` first, then `/usr/local/bin/tart`,
+then the service `PATH`. To install a release that Homebrew does not have yet,
+remove the Homebrew copy and link the release's app bundle:
+
+```bash
+brew uninstall openai/tools/tart
+cd /tmp && curl -fLO https://github.com/openai/tart/releases/download/2.41.1/tart.tar.gz
+tar -xzf tart.tar.gz
+sudo rm -rf /Applications/tart.app && sudo mv tart.app /Applications/
+sudo mkdir -p /usr/local/bin
+sudo ln -sf /Applications/tart.app/Contents/MacOS/tart /usr/local/bin/tart
+/usr/local/bin/tart --version
+```
+
+The Runner checks for Tart at the start of every VM build, so it needs no restart.
 
 ## Turn it on
 
