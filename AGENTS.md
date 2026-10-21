@@ -53,10 +53,13 @@
 
 ## Releases
 
+- The Release train workflow ships `master` to `alpha` nightly and bumps the workspace version after a stable release.
+- Run Release train with channel `stable` to promote the newest published alpha to `stable`.
 - Merge to `alpha` for `vX.Y.Z-alpha.N` releases.
 - Merge to `beta` for `vX.Y.Z-beta.N` releases.
 - Merge to `stable` for `vX.Y.Z` releases.
 - Validate `master` without automatic tags.
+- Bump the workspace version with `make bump-version VERSION=X.Y.Z`.
 
 ## Maintenance
 

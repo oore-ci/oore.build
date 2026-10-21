@@ -1,5 +1,5 @@
 .PHONY: \
-	build build-demo build-docs build-release-index build-site build-web \
+	build build-demo build-docs build-release-index build-site build-web bump-version \
 	check check-docs-types check-openapi check-rust \
 	clean-dev-state compile-web-release-launchers deployment-header-smoke dev-demo dev-docs dev-fresh-setup dev-site dev-web doctor \
 	deploy-demo deploy-demo-dist deploy-docs deploy-docs-dist \
@@ -281,6 +281,10 @@ validate-docs: format-check lint-docs lint-site test-site check-docs-types build
 validate-rust: format-rust-check lint-rust test-rust check-openapi
 
 validate: validate-ci validate-frontend validate-docs validate-rust
+
+bump-version:
+	@test -n "$(VERSION)" || { echo 'Usage: make bump-version VERSION=X.Y.Z' >&2; exit 1; }
+	bash tools/bump-workspace-version.sh "$(VERSION)"
 
 release-smoke:
 	bash tools/release-smoke.sh

@@ -52,32 +52,26 @@ jobs:
           client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-      - name: Select the release bot token
-        id: token
+      - name: Require the release bot token
         env:
-          APP_TOKEN: ${{ steps.app-token.outputs.token }}
-          PAT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+          BOT_TOKEN: ${{ steps.app-token.outputs.token || secrets.RELEASE_BOT_TOKEN }}
+        # The default GITHUB_TOKEN cannot do this job: its merges do not start
+        # autotag.yml, and it cannot merge changes to workflow files.
         run: |
-          set -euo pipefail
-          # The default GITHUB_TOKEN cannot do this job: its merges do not
-          # start autotag.yml, and it cannot merge workflow changes.
-          token="${APP_TOKEN:-$PAT_TOKEN}"
-          [[ -n "$token" ]] || {
-            echo 'Configure the release bot: set RELEASE_BOT_CLIENT_ID and RELEASE_BOT_PRIVATE_KEY, or RELEASE_BOT_TOKEN, on the release-train environment.' >&2
+          [[ -n "$BOT_TOKEN" ]] || {
+            echo 'Configure the release bot on the release-train environment: RELEASE_BOT_CLIENT_ID and RELEASE_BOT_PRIVATE_KEY for a GitHub App, or RELEASE_BOT_TOKEN.' >&2
             exit 1
           }
-          echo "::add-mask::$token"
-          printf 'token=%s\n' "$token" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-          token: ${{ steps.token.outputs.token }}
+          token: ${{ steps.app-token.outputs.token || secrets.RELEASE_BOT_TOKEN }}
 
       - name: Run the release train
         env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.RELEASE_BOT_TOKEN }}
           CHANNEL: ${{ inputs.channel || 'alpha' }}
           PROMOTE_TAG: ${{ inputs.tag }}
           RELEASE_TRAIN_DRY_RUN: ${{ inputs.dry-run || false }}
-        run: bash tools/release-train.sh "$CHANNEL" $PROMOTE_TAG
+        run: bash tools/release-train.sh "$CHANNEL" ${PROMOTE_TAG:+"$PROMOTE_TAG"}
