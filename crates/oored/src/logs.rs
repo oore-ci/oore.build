@@ -72,11 +72,11 @@ const MAX_ACTIVE_STREAMS_GLOBAL: usize = 128;
 
 /// Entry for a short-lived streaming token.
 #[derive(Clone)]
-struct StreamAuthorization {
-    user_id: String,
-    credential_hash: String,
-    auth_source: AuthSource,
-    expires_at: i64,
+pub(crate) struct StreamAuthorization {
+    pub(crate) user_id: String,
+    pub(crate) credential_hash: String,
+    pub(crate) auth_source: AuthSource,
+    pub(crate) expires_at: i64,
 }
 
 #[derive(Clone)]
@@ -290,7 +290,7 @@ async fn require_build_log_read(
     require_project_permission(&effective, ProjectPermission::Read)
 }
 
-async fn load_current_stream_session(
+pub(crate) async fn load_current_stream_session(
     pool: &sqlx::SqlitePool,
     authorization: &StreamAuthorization,
 ) -> Result<Option<SessionInfo>, sqlx::Error> {

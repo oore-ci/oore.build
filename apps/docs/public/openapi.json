@@ -2040,6 +2040,74 @@
         ]
       }
     },
+    "/v1/events": {
+      "get": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "Stream live events (SSE)",
+        "description": "Server-sent event stream of build, runner and release changes, so\nclients can refresh without polling. Every connection starts with a\n`ready` event (`EventStreamReady`). Then: `build` (`BuildChangedEvent`),\n`release` (`ReleaseChangedEvent`), `runner` (`RunnerChangedEvent`, only\nfor users who can read runners), `resync` (`EventStreamResync`, events\nwere dropped and clients should refetch) and `done` (the stream ends,\ndata is the reason). Build and release events are limited to projects\nthe caller can read. Events are not replayed, so a client that\nreconnects should refetch once on `ready`. Comment keepalives are sent\nevery 15 seconds.",
+        "operationId": "stream_events",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "description": "Only send build and release events for this project",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE event stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No read access to the project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many open event streams",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/frontend/pair": {
       "post": {
         "tags": [
@@ -11753,6 +11821,36 @@
           }
         }
       },
+      "BuildChangedEvent": {
+        "type": "object",
+        "description": "`build` event on `GET /v1/events`: a build was created or changed.",
+        "required": [
+          "build_id",
+          "project_id",
+          "build_number",
+          "status",
+          "updated_at"
+        ],
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BuildStatus"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "BuildChangelogPreviewResponse": {
         "type": "object",
         "required": [
@@ -12702,6 +12800,37 @@
                 "$ref": "#/components/schemas/ProjectRetentionOverride"
               }
             ]
+          }
+        }
+      },
+      "EventStreamReady": {
+        "type": "object",
+        "description": "`ready` event, the first event on every `GET /v1/events` connection.\nClients refetch once on `ready` after a reconnect, since events sent while\ndisconnected are not replayed.",
+        "required": [
+          "runners"
+        ],
+        "properties": {
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runners": {
+            "type": "boolean",
+            "description": "Whether this stream carries `runner` events."
+          }
+        }
+      },
+      "EventStreamResync": {
+        "type": "object",
+        "description": "`resync` event: events were dropped, so clients should refetch.",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
           }
         }
       },
@@ -15460,6 +15589,41 @@
           "before_production"
         ]
       },
+      "ReleaseChangedEvent": {
+        "type": "object",
+        "description": "`release` event on `GET /v1/events`: a release was created or its state\nor rollout changed.",
+        "required": [
+          "release_id",
+          "project_id",
+          "build_id",
+          "state",
+          "rollout_fraction",
+          "updated_at"
+        ],
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "release_id": {
+            "type": "string"
+          },
+          "rollout_fraction": {
+            "type": "number",
+            "format": "double",
+            "description": "Fraction of users, 0..1."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReleaseState"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ReleaseDetailResponse": {
         "type": "object",
         "required": [
@@ -16030,6 +16194,31 @@
           },
           "private_key_pem": {
             "type": "string"
+          }
+        }
+      },
+      "RunnerChangedEvent": {
+        "type": "object",
+        "description": "`runner` event on `GET /v1/events`: a runner was registered, removed,\nrenamed or changed status. Sent only to users who can read runners.",
+        "required": [
+          "runner_id",
+          "name",
+          "status",
+          "removed"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "removed": {
+            "type": "boolean",
+            "description": "True when the runner no longer exists; `status` is its last known one."
+          },
+          "runner_id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunnerStatus"
           }
         }
       },
@@ -17979,6 +18168,10 @@
     {
       "name": "Build Logs",
       "description": "Build log ingestion and retrieval — append, paginated fetch, SSE streaming."
+    },
+    {
+      "name": "Events",
+      "description": "Live build, runner and release changes over SSE."
     },
     {
       "name": "Artifacts",
