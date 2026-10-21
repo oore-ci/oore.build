@@ -26,6 +26,7 @@ import {
 import { useProject } from '@/hooks/use-projects'
 import {
   buildNumberOffsetField,
+  runsOnField,
   hasCustomFallback,
   pipelineRequestFromForm,
   selectedPlatforms,
@@ -184,6 +185,7 @@ function EditPipelinePage() {
     ios_signing_api_issuer_id: iosSigningQuery.data?.api_issuer_id ?? '',
     flutter_version: pipeline.execution_config.flutter_version ?? '',
     build_number_offset: buildNumberOffsetField(pipeline.execution_config),
+    runs_on: runsOnField(pipeline.execution_config),
     enable_customization: custom,
     pre_build_commands: toMultiline(
       pipeline.execution_config.commands.pre_build,

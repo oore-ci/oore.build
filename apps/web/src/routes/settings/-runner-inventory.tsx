@@ -22,6 +22,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Badge } from '@/components/ui/badge'
 import { RelativeTime } from '@/components/relative-time'
 import RunnerStatusDot from '@/components/runner-status-dot'
 import { StatusBadge } from '@/components/status-badge'
@@ -43,9 +44,51 @@ function runnerVersion(runner: Runner) {
   return z.string().safeParse(runner.capabilities.version).data
 }
 
-function capabilityNames(value: Runner['capabilities']) {
-  return Object.entries(value).flatMap(([name, enabled]) =>
-    enabled === true ? [name] : [],
+function RunnerLabels({ runner }: { runner: Runner }) {
+  const labels = runner.labels ?? []
+  if (labels.length === 0) {
+    return <span className="text-muted-foreground">None reported</span>
+  }
+  const custom = new Set(runner.custom_labels ?? [])
+  return (
+    <div className="flex max-w-56 min-w-40 flex-wrap gap-1">
+      {labels.map((label) => (
+        <Badge
+          key={label}
+          variant={custom.has(label) ? 'secondary' : 'outline'}
+          className="font-mono"
+        >
+          {label}
+        </Badge>
+      ))}
+    </div>
+  )
+}
+
+function percent(used: number, total: number) {
+  return total > 0 ? Math.round((used / total) * 100) : 0
+}
+
+function RunnerUtilisation({ runner }: { runner: Runner }) {
+  const metrics = runner.metrics
+  if (!metrics || runner.status === 'offline') {
+    return <span className="text-muted-foreground">No recent data</span>
+  }
+  return (
+    <div className="space-y-0.5 text-xs whitespace-nowrap">
+      <p>
+        CPU {Math.round(metrics.cpu_percent)}% · Memory{' '}
+        {percent(metrics.memory_used_bytes, metrics.memory_total_bytes)}%
+      </p>
+      <p
+        className={
+          runner.disk_pressure ? 'font-medium text-destructive' : undefined
+        }
+      >
+        {formatFileSize(metrics.disk_free_bytes)} free of{' '}
+        {formatFileSize(metrics.disk_total_bytes)}
+      </p>
+    </div>
   )
 }
 
@@ -67,21 +110,23 @@ function RunnerCacheCell({ runner }: { runner: Runner }) {
 }
 
 /**
- * Version and capabilities are reported by newer runners only; the columns
- * exist once any runner on the page reports them, so a fresh instance does
- * not show a table of "Unknown" and "None reported".
+ * Version, labels and utilisation are reported by newer runners only; the
+ * columns exist once any runner on the page reports them, so a fresh instance
+ * does not show a table of "Unknown" and "None reported".
  */
 function getRunnerColumns({
   canWrite,
   onPurgeCaches,
-  onRename,
-  showCapabilities,
+  onEdit,
+  showLabels,
+  showUtilisation,
   showVersion,
 }: {
   canWrite: boolean
   onPurgeCaches: (runner: Runner) => void
-  onRename: (runner: Runner) => void
-  showCapabilities: boolean
+  onEdit: (runner: Runner) => void
+  showLabels: boolean
+  showUtilisation: boolean
   showVersion: boolean
 }): Array<DataTableColumnDef<Runner>> {
   const columns: Array<DataTableColumnDef<Runner>> = [
@@ -139,15 +184,21 @@ function getRunnerColumns({
     })
   }
 
-  if (showCapabilities) {
+  if (showLabels) {
     columns.push({
-      id: 'capabilities',
-      accessorFn: (runner) => capabilityNames(runner.capabilities).join(', '),
-      header: 'Capabilities',
-      cell: ({ row }) =>
-        capabilityNames(row.original.capabilities).join(', ') || (
-          <span className="text-muted-foreground">None reported</span>
-        ),
+      id: 'labels',
+      accessorFn: (runner) => (runner.labels ?? []).join(' '),
+      header: 'Labels',
+      cell: ({ row }) => <RunnerLabels runner={row.original} />,
+      enableSorting: false,
+    })
+  }
+
+  if (showUtilisation) {
+    columns.push({
+      id: 'utilisation',
+      header: 'Utilisation',
+      cell: ({ row }) => <RunnerUtilisation runner={row.original} />,
       enableSorting: false,
     })
   }
@@ -185,11 +236,9 @@ function getRunnerColumns({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
             <DropdownMenuGroup>
-              {row.original.registered_by ? (
-                <DropdownMenuItem onClick={() => onRename(row.original)}>
-                  Rename
-                </DropdownMenuItem>
-              ) : null}
+              <DropdownMenuItem onClick={() => onEdit(row.original)}>
+                Edit
+              </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={
                   runnerCachePurgeRequestedAt(row.original) !== undefined
@@ -216,7 +265,7 @@ export function RunnerInventory({
   isLoading,
   onPageChange,
   onPurgeCaches,
-  onRename,
+  onEdit,
   onSearch,
   onSortChange,
   page,
@@ -231,7 +280,7 @@ export function RunnerInventory({
   isLoading: boolean
   onPageChange: (page: number) => void
   onPurgeCaches: (runner: Runner) => void
-  onRename: (runner: Runner) => void
+  onEdit: (runner: Runner) => void
   onSearch: (query: string) => void
   onSortChange: (sort: RunnerSort, direction: SortDirection) => void
   page: number
@@ -242,19 +291,19 @@ export function RunnerInventory({
   total: number
 }) {
   const showVersion = runners.some((runner) => !!runnerVersion(runner))
-  const showCapabilities = runners.some(
-    (runner) => capabilityNames(runner.capabilities).length > 0,
-  )
+  const showLabels = runners.some((runner) => (runner.labels ?? []).length > 0)
+  const showUtilisation = runners.some((runner) => !!runner.metrics)
   const columns = useMemo(
     () =>
       getRunnerColumns({
         canWrite,
         onPurgeCaches,
-        onRename,
-        showCapabilities,
+        onEdit,
+        showLabels,
+        showUtilisation,
         showVersion,
       }),
-    [canWrite, onPurgeCaches, onRename, showCapabilities, showVersion],
+    [canWrite, onPurgeCaches, onEdit, showLabels, showUtilisation, showVersion],
   )
   const sorting = useMemo(
     () => dataTableSortingState(sort, direction),
@@ -264,6 +313,8 @@ export function RunnerInventory({
     columns,
     data: runners,
     getRowId: (runner) => runner.id,
+    // Keep the table within the page now that labels and utilisation show.
+    initialState: { columnVisibility: { registered_by: false } },
     state: { sorting },
     onSortingChange: (updater) => {
       const next = resolveDataTableSorting(updater, sorting, RUNNER_SORTS)

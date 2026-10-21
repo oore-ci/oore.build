@@ -22,6 +22,12 @@ export function buildNumberOffsetField(
   return config?.build_number_offset ? String(config.build_number_offset) : ''
 }
 
+export function runsOnField(
+  config?: PipelineExecutionConfig | RepositoryWorkflowExecutionPreview | null,
+): string {
+  return config?.runs_on?.join(', ') ?? ''
+}
+
 export function parseMultiline(raw?: string): Array<string> {
   if (!raw) return []
   return raw
@@ -155,6 +161,14 @@ export function executionConfigFromForm(
         ? artifactPatterns
         : defaultArtifactPatterns(platforms),
     build_number_offset: Number(data.build_number_offset?.trim() || 0),
+    runs_on: [
+      ...new Set(
+        (data.runs_on ?? '')
+          .split(/[\s,]+/)
+          .map((label) => label.trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    ],
   }
 }
 

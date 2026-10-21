@@ -39,6 +39,17 @@ export const pipelineFormSchema = z
           (/^\d+$/.test(v.trim()) && Number(v.trim()) < 2_100_000_000),
         'Must be a whole number below 2,100,000,000',
       ),
+    runs_on: z
+      .string()
+      .optional()
+      .refine(
+        (v) =>
+          (v ?? '')
+            .split(/[\s,]+/)
+            .filter(Boolean)
+            .every((label) => /^[a-zA-Z0-9._-]{1,64}$/.test(label)),
+        'Use letters, digits, ".", "_" and "-", separated by commas',
+      ),
     enable_customization: z.boolean(),
     pre_build_commands: z.string().optional(),
     build_commands: z.string().optional(),
