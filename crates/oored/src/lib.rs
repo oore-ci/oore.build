@@ -11,6 +11,7 @@ pub mod background;
 pub mod builds;
 pub mod commit_checks;
 pub mod crypto;
+pub mod events;
 pub mod extractors;
 pub mod frontend_pairing;
 pub mod incidents;
@@ -112,6 +113,8 @@ pub struct AppState {
     pub storage: Arc<RwLock<storage::StorageBackend>>,
     /// In-memory store for short-lived SSE streaming tokens.
     pub stream_tokens: logs::StreamTokenStore,
+    /// Live build, runner and release events for `GET /v1/events`.
+    pub events: Arc<events::EventHub>,
     /// Origins allowed for redirect URIs and CORS.
     pub allowed_origins: Arc<RwLock<Vec<String>>>,
     /// Effective public base URL for externally reachable callbacks/download links.
@@ -2411,6 +2414,7 @@ pub async fn build_router_with_recovery(
         webhook_wake,
         storage: Arc::new(RwLock::new(storage_backend)),
         stream_tokens: logs::StreamTokenStore::new(),
+        events: Arc::new(events::EventHub::new()),
         allowed_origins: allowed_origins_state.clone(),
         public_url: public_url_state,
         runtime_update: runtime_updates::new_state(),
@@ -2432,6 +2436,7 @@ pub async fn build_router_with_recovery(
             sched.clone(),
             shared_state.storage.clone(),
         );
+        events::start_change_watcher(pool.clone(), sched.clone(), shared_state.events.clone());
         commit_checks::start_commit_check_reporter(
             pool.clone(),
             shared_state.encryption_key.to_vec(),
@@ -2881,6 +2886,7 @@ pub async fn build_router_with_recovery(
             "/v1/runners/{runner_id}/jobs/{job_id}/logs",
             post(logs::append_build_logs),
         )
+        .route("/v1/events", get(events::stream_events))
         .route("/v1/builds/{build_id}/logs", get(logs::get_build_logs))
         .route(
             "/v1/builds/{build_id}/logs/stream",

@@ -3873,6 +3873,61 @@ pub struct BuildLogChunk {
     pub stream: String,
 }
 
+// ── Live events (SSE) ───────────────────────────────────────────
+
+/// `build` event on `GET /v1/events`: a build was created or changed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildChangedEvent {
+    pub build_id: String,
+    pub project_id: String,
+    pub build_number: i64,
+    #[schema(value_type = BuildStatus)]
+    pub status: String,
+    pub updated_at: i64,
+}
+
+/// `runner` event on `GET /v1/events`: a runner was registered, removed,
+/// renamed or changed status. Sent only to users who can read runners.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct RunnerChangedEvent {
+    pub runner_id: String,
+    pub name: String,
+    #[schema(value_type = RunnerStatus)]
+    pub status: String,
+    /// True when the runner no longer exists; `status` is its last known one.
+    pub removed: bool,
+}
+
+/// `release` event on `GET /v1/events`: a release was created or its state
+/// or rollout changed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct ReleaseChangedEvent {
+    pub release_id: String,
+    pub project_id: String,
+    pub build_id: String,
+    pub state: ReleaseState,
+    /// Fraction of users, 0..1.
+    pub rollout_fraction: f64,
+    pub updated_at: i64,
+}
+
+/// `ready` event, the first event on every `GET /v1/events` connection.
+/// Clients refetch once on `ready` after a reconnect, since events sent while
+/// disconnected are not replayed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventStreamReady {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// Whether this stream carries `runner` events.
+    pub runners: bool,
+}
+
+/// `resync` event: events were dropped, so clients should refetch.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EventStreamResync {
+    pub reason: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct AppendBuildLogsRequest {
     pub chunks: Vec<BuildLogChunk>,

@@ -2867,6 +2867,16 @@ export function isApiPath(pathname) {
   )
 }
 
+// Bun.serve closes connections idle for 10 seconds, which would cut SSE
+// streams between keepalives. Streaming requests opt out per request.
+export function isEventStreamRequest(pathname, acceptHeader = '') {
+  return (
+    acceptHeader.includes('text/event-stream') ||
+    pathname === '/v1/events' ||
+    /^\/v1\/builds\/[^/]+\/logs\/stream$/.test(pathname)
+  )
+}
+
 function withProxyHeader(response) {
   const headers = new Headers(response.headers)
   headers.set('x-oore-web-proxy', '1')
@@ -3138,7 +3148,7 @@ async function main() {
   const server = Bun.serve({
     hostname: listen.hostname,
     port: listen.port,
-    fetch: async (request) => {
+    fetch: async (request, server) => {
       const url = new URL(request.url)
 
       if (url.pathname === '/__oore_web_healthz') {
@@ -3264,6 +3274,14 @@ async function main() {
       }
 
       if (isApiPath(url.pathname)) {
+        if (
+          isEventStreamRequest(
+            url.pathname,
+            request.headers.get('accept') || '',
+          )
+        ) {
+          server.timeout(request, 0)
+        }
         return proxyRequest(request, backendUrl, url, config)
       }
 

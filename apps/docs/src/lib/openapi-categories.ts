@@ -39,7 +39,7 @@ export const OPENAPI_CATEGORIES = [
   {
     slug: 'logs',
     title: 'Logs',
-    tags: ['Build Logs', 'Audit Logs'],
+    tags: ['Build Logs', 'Events', 'Audit Logs'],
   },
   {
     slug: 'settings',

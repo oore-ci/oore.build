@@ -349,8 +349,6 @@ fn legacy_component_artifact_exists(
         ),
         install_manifest::InstallComponent::Runner => (
             vec![
-                install_root.join("bin/fvm"),
-                install_root.join("libexec/fvm"),
                 install_root.join("runner.json"),
                 install_root.join("managed-runner.json"),
                 install_root.join(oore_runner::RUNNER_RELEASE_MARKER_FILE),
@@ -5522,27 +5520,13 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
         }
     }
 
-    let fvm_available = command_version("fvm", &["--version"]);
-    if let Some(version) = &fvm_available {
-        checks.push(doctor_check("fvm", "ok", Some(version.clone()), None));
-    } else {
-        checks.push(doctor_check(
-            "fvm",
-            "ok",
-            Some("managed by Oore; prepared automatically on the first Flutter build".to_string()),
-            None,
-        ));
-    }
-
     if let Some(version) = command_version("flutter", &["--version"]) {
         checks.push(doctor_check("flutter", "ok", Some(version), None));
     } else {
         checks.push(doctor_check(
             "flutter",
             "ok",
-            Some(
-                "managed by Oore through FVM; downloaded and cached on the first build".to_string(),
-            ),
+            Some("not installed; host builds need it, VM builds use the image's".to_string()),
             None,
         ));
     }
@@ -8339,8 +8323,6 @@ fn render_runner_launch_daemon(
         <string>{}</string>
         <key>PATH</key>
         <string>{}</string>
-        <key>FVM_CACHE_PATH</key>
-        <string>{}</string>
         <key>{}</key>
         <string>{}</string>
     </dict>
@@ -8361,7 +8343,6 @@ fn render_runner_launch_daemon(
 "#,
         launchd_xml_escape(&home.display().to_string()),
         launchd_xml_escape(path),
-        launchd_xml_escape(&working_dir.join("toolchains/flutter").display().to_string()),
         oore_runner::RUNNER_SERVICE_ACK_PATH_ENV,
         launchd_xml_escape(&acknowledgement.display().to_string()),
         launchd_xml_escape(&working_dir.display().to_string()),
@@ -9888,7 +9869,6 @@ fn copy_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Result
         "bin/oore",
         "bin/oored",
         "bin/oore-web",
-        "bin/fvm",
         "VERSION",
         "WEB_VERSION",
         "CHANNEL",
@@ -9911,10 +9891,6 @@ fn copy_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Result
     let web = install_root.join("web-dist");
     if web.is_dir() {
         copy_dir_recursive(&web, &snapshot.join("web-dist"))?;
-    }
-    let fvm = install_root.join("libexec/fvm");
-    if fvm.is_dir() {
-        copy_dir_recursive(&fvm, &snapshot.join("libexec/fvm"))?;
     }
     Ok(())
 }
@@ -10046,7 +10022,6 @@ fn restore_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Res
         "bin/oore",
         "bin/oored",
         "bin/oore-web",
-        "bin/fvm",
         "VERSION",
         "WEB_VERSION",
         "CHANNEL",
@@ -10074,13 +10049,6 @@ fn restore_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Res
     } else if destination.exists() {
         fs::remove_dir_all(destination)?;
     }
-    let source = snapshot.join("libexec/fvm");
-    let destination = install_root.join("libexec/fvm");
-    if source.is_dir() {
-        atomic_replace_directory(&source, &destination)?;
-    } else if destination.exists() {
-        fs::remove_dir_all(destination)?;
-    }
     Ok(())
 }
 
@@ -10095,13 +10063,11 @@ fn install_staged_release(
         ("bin/oore", true),
         ("bin/oored", true),
         ("bin/oore-web", true),
-        ("bin/fvm", true),
         ("VERSION", false),
     ] {
         let selected = match relative {
             "bin/oored" => payload.is_none_or(|payload| payload.control_plane),
             "bin/oore-web" => payload.is_none_or(|payload| payload.web),
-            "bin/fvm" => payload.is_none_or(|payload| payload.runner),
             _ => true,
         };
         if !selected {
@@ -10121,10 +10087,6 @@ fn install_staged_release(
         atomic_replace_directory(&web, &install_root.join("web-dist"))?;
         fs::write(install_root.join("WEB_CHANNEL"), channel.as_str())?;
         fs::write(install_root.join("WEB_GITHUB_REPO"), repo)?;
-    }
-    let fvm = stage.join("libexec/fvm");
-    if payload.is_none_or(|payload| payload.runner) && fvm.is_dir() {
-        atomic_replace_directory(&fvm, &install_root.join("libexec/fvm"))?;
     }
     let license = stage.join("LICENSE");
     if license.is_file() {
@@ -11477,7 +11439,6 @@ fn load_backend_update_manifest(
 #[derive(Clone, Copy)]
 struct UpdatePayloadSelection {
     control_plane: bool,
-    runner: bool,
     web: bool,
 }
 
@@ -11537,7 +11498,6 @@ fn prepare_profile_update_plan(
     )?;
     let payload = UpdatePayloadSelection {
         control_plane: true,
-        runner: manifest.profile == install_manifest::InstallProfile::Complete,
         web: include_web && manifest.profile == install_manifest::InstallProfile::Complete,
     };
     Ok(Some(ProfileUpdatePlan {
