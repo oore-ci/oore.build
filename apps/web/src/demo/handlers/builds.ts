@@ -5,6 +5,7 @@ import { ago } from '../seed'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { requireDemoProjectPermission } from '../authorization'
 import { demoState } from '../state'
+import { demoBuildInsights } from '../data/build-insights'
 import type { CreateBuildRequest } from '@oore/client/models'
 
 const approvalDecisionSchema = z.object({ reason: z.string().nullish() })
@@ -194,6 +195,28 @@ export const buildHandlers = [
       builds: builds.slice(offset, offset + limit).map(withBuildContext),
       total: builds.length,
     })
+  }),
+
+  demoApi.getBuildInsights(async ({ request }) => {
+    await delay(200)
+    const url = new URL(request.url)
+    const persona = getDemoPersonaFromRequest(request)
+    const projectId = url.searchParams.get('project_id')
+    const builds = demoState.builds.filter(
+      (build) =>
+        getDemoProjectRole(persona, build.project_id) &&
+        (!projectId || build.project_id === projectId),
+    )
+    return HttpResponse.json(
+      demoBuildInsights({
+        builds,
+        days: Number(url.searchParams.get('days') ?? 7),
+        now: ago(0),
+        offsetMinutes: Number(url.searchParams.get('utc_offset_minutes') ?? 0),
+        pipelines: demoState.pipelines,
+        projects: demoState.projects,
+      }),
+    )
   }),
 
   demoApi.getBuild(async ({ params, request }) => {

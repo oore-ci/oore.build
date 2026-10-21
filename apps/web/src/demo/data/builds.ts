@@ -591,9 +591,10 @@ for (const [projectIndex, app] of demoBuildHistoryApps.entries()) {
         status === 'succeeded' ? 0 : status === 'failed' ? 1 : undefined,
       queued_at: ago(age),
       started_at: ago(age - 60),
-      finished_at: ago(age - 420),
+      // Run times vary between about 5 and 11 minutes.
+      finished_at: ago(age - 360 - ((index * 97 + projectIndex * 61) % 340)),
       created_at: ago(age),
-      updated_at: ago(age - 420),
+      updated_at: ago(age - 360 - ((index * 97 + projectIndex * 61) % 340)),
     })
   }
 }

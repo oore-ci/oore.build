@@ -7,9 +7,7 @@ import {
   Add01Icon,
 } from '@hugeicons/core-free-icons'
 
-import DashboardBuildIncident from '@/components/dashboard-build-incident'
 import { BuildItem } from '@/components/build-item'
-import DashboardSystemStatus from '@/components/dashboard-system-status'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -153,42 +151,20 @@ const ACTIVITY_STATUS_PRIORITY = {
   succeeded: 8,
 } satisfies Record<Build['status'], number>
 
-export function DashboardBuildOverview({
+export function DashboardBuildActivity({
   activeBuilds,
   blockedBuilds,
-  completedBuilds,
   error,
   isLoading,
-  onlineRunners,
-  noOnlineRunners,
   onRetry,
   recentBuilds,
-  runnersError,
-  runnersLoading,
-  runningBuilds,
-  statusCountsError,
-  statusCountsLoading,
-  successfulBuilds,
-  totalRunners,
-  waitingBuilds,
 }: {
   activeBuilds: Array<Build>
   blockedBuilds: Array<Build>
-  completedBuilds: number
   error?: Error | null
   isLoading: boolean
-  onlineRunners: number
-  noOnlineRunners: boolean
   onRetry: () => void
   recentBuilds: Array<Build>
-  runnersError: boolean
-  runnersLoading: boolean
-  runningBuilds: number
-  statusCountsError: boolean
-  statusCountsLoading: boolean
-  successfulBuilds: number
-  totalRunners: number
-  waitingBuilds: number
 }) {
   const blockedBuildIds = new Set(blockedBuilds.map((build) => build.id))
   const activityBuilds = [
@@ -201,92 +177,61 @@ export function DashboardBuildOverview({
           right.updated_at - left.updated_at,
       ),
     ...recentBuilds,
-  ].slice(0, 8)
+  ].slice(0, 6)
   return (
-    <div className="flex flex-col gap-8">
-      {!isLoading ? (
-        <DashboardBuildIncident
-          builds={[
-            ...blockedBuilds,
-            ...recentBuilds.filter(
-              (build) =>
-                build.status === 'failed' || build.status === 'timed_out',
-            ),
-          ]}
-          noOnlineRunners={noOnlineRunners}
-        />
-      ) : null}
+    <section className="flex flex-col gap-3" aria-labelledby="build-activity">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2
+          id="build-activity"
+          className="text-sm font-medium text-muted-foreground"
+        >
+          Build activity
+        </h2>
+        <Button
+          variant="ghost"
+          size="sm"
+          render={<Link to="/builds" />}
+          nativeButton={false}
+        >
+          View all
+          <HugeiconsIcon icon={ChevronRightIcon} data-icon="inline-end" />
+        </Button>
+      </div>
 
-      <section className="flex flex-col gap-3" aria-labelledby="build-activity">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2
-            id="build-activity"
-            className="text-sm font-medium text-muted-foreground"
-          >
-            Build activity
-          </h2>
-          <Button
-            variant="ghost"
-            size="sm"
-            render={<Link to="/builds" />}
-            nativeButton={false}
-          >
-            View all
-            <HugeiconsIcon icon={ChevronRightIcon} data-icon="inline-end" />
-          </Button>
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex items-center justify-between gap-3">
+            <span>Build activity could not be loaded.</span>
+            <Button variant="outline" size="sm" onClick={onRetry}>
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : isLoading ? (
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
         </div>
-
-        {error ? (
-          <Alert variant="destructive">
-            <AlertDescription className="flex items-center justify-between gap-3">
-              <span>Build activity could not be loaded.</span>
-              <Button variant="outline" size="sm" onClick={onRetry}>
-                Retry
-              </Button>
-            </AlertDescription>
-          </Alert>
-        ) : isLoading ? (
-          <div className="flex flex-col gap-2">
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-          </div>
-        ) : activityBuilds.length === 0 ? (
-          <Empty className="border">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <HugeiconsIcon icon={CheckCircleIcon} />
-              </EmptyMedia>
-              <EmptyTitle>No build activity</EmptyTitle>
-              <EmptyDescription>
-                Run a build to see its status here.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        ) : (
-          <ItemGroup className="gap-2">
-            {activityBuilds.map((build) => (
-              <BuildItem key={build.id} build={build} />
-            ))}
-          </ItemGroup>
-        )}
-      </section>
-
-      <DashboardSystemStatus
-        buildsError={statusCountsError}
-        buildsLoading={statusCountsLoading}
-        completedBuilds={completedBuilds}
-        onlineRunners={onlineRunners}
-        recentBuildsError={!!error}
-        recentBuildsLoading={isLoading}
-        runnersError={runnersError}
-        runnersLoading={runnersLoading}
-        runningBuilds={runningBuilds}
-        successfulBuilds={successfulBuilds}
-        totalRunners={totalRunners}
-        waitingBuilds={waitingBuilds}
-      />
-    </div>
+      ) : activityBuilds.length === 0 ? (
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <HugeiconsIcon icon={CheckCircleIcon} />
+            </EmptyMedia>
+            <EmptyTitle>No build activity</EmptyTitle>
+            <EmptyDescription>
+              Run a build to see its status here.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <ItemGroup className="gap-2">
+          {activityBuilds.map((build) => (
+            <BuildItem key={build.id} build={build} />
+          ))}
+        </ItemGroup>
+      )}
+    </section>
   )
 }
