@@ -31,10 +31,17 @@ import {
   scopeOoreQueryKey,
   scopeOoreQueryOptions,
 } from '@/lib/api-client/client'
+import { LIVE_FALLBACK_POLL_MS } from '@/lib/live-events'
 import { isLiveRelease } from '@/lib/releases'
+import { useLiveEventsStore } from '@/stores/live-events-store'
 
 // Matches the build poll so rollout changes land on the same cadence.
 export const RELEASE_POLL_INTERVAL_MS = 3_000
+
+function useReleasePollInterval() {
+  const liveEvents = useLiveEventsStore((s) => s.connected)
+  return liveEvents ? LIVE_FALLBACK_POLL_MS : RELEASE_POLL_INTERVAL_MS
+}
 
 export function useReleases<TData = ListReleasesResponse>(
   params?: {
@@ -50,6 +57,7 @@ export function useReleases<TData = ListReleasesResponse>(
   },
 ) {
   const { baseUrl, client, instanceId, token } = useApiContext()
+  const pollInterval = useReleasePollInterval()
   const query = scopeOoreQueryOptions(
     instanceId,
     listReleasesOptions({ client, query: params }),
@@ -60,9 +68,7 @@ export function useReleases<TData = ListReleasesResponse>(
     enabled: !!baseUrl && !!token && (options?.enabled ?? true),
     staleTime: 2_000,
     refetchInterval: (query) =>
-      query.state.data?.releases.some(isLiveRelease)
-        ? RELEASE_POLL_INTERVAL_MS
-        : false,
+      query.state.data?.releases.some(isLiveRelease) ? pollInterval : false,
     placeholderData: keepPreviousData,
     select: options?.select,
   })
@@ -70,6 +76,7 @@ export function useReleases<TData = ListReleasesResponse>(
 
 export function useRelease(releaseId: string, options?: { enabled?: boolean }) {
   const { baseUrl, client, instanceId, token } = useApiContext()
+  const pollInterval = useReleasePollInterval()
   const query = scopeOoreQueryOptions(
     instanceId,
     getReleaseOptions({ client, path: { release_id: releaseId } }),
@@ -81,7 +88,7 @@ export function useRelease(releaseId: string, options?: { enabled?: boolean }) {
     staleTime: 2_000,
     refetchInterval: (query) =>
       query.state.data && isLiveRelease(query.state.data.release)
-        ? RELEASE_POLL_INTERVAL_MS
+        ? pollInterval
         : false,
   })
 }
@@ -91,6 +98,7 @@ export function useReleaseEvents(
   options?: { enabled?: boolean },
 ) {
   const { baseUrl, client, instanceId, token } = useApiContext()
+  const pollInterval = useReleasePollInterval()
   const query = scopeOoreQueryOptions(
     instanceId,
     listReleaseEventsOptions({ client, query: params }),
@@ -100,7 +108,7 @@ export function useReleaseEvents(
     ...query,
     enabled: !!baseUrl && !!token && (options?.enabled ?? true),
     staleTime: 5_000,
-    refetchInterval: RELEASE_POLL_INTERVAL_MS * 5,
+    refetchInterval: Math.max(pollInterval, RELEASE_POLL_INTERVAL_MS * 5),
   })
 }
 

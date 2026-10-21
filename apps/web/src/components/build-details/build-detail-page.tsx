@@ -47,6 +47,8 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTime } from '@/hooks/use-time'
+import { LIVE_FALLBACK_POLL_MS } from '@/lib/live-events'
+import { useLiveEventsStore } from '@/stores/live-events-store'
 
 const loadCancelBuildDialog = () => import('./cancel-build-dialog')
 const CancelBuildDialog = lazy(loadCancelBuildDialog)
@@ -77,11 +79,14 @@ export function BuildDetailPage({
     'instance_settings:write',
   ])
   const rerunMutation = useRerunBuild()
+  const liveEvents = useLiveEventsStore((s) => s.connected)
   const buildQuery = useBuild(buildId, {
     refetchInterval: (query) =>
       query.state.data && isTerminalStatus(query.state.data.build.status)
         ? false
-        : 3000,
+        : liveEvents
+          ? LIVE_FALLBACK_POLL_MS
+          : 3000,
   })
   const { data, isLoading, error, refetch: refetchBuild } = buildQuery
   const projectQuery = useProject(data?.build.project_id ?? '')

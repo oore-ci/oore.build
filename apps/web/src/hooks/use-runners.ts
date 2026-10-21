@@ -13,6 +13,8 @@ import type {
   UpdateRunnerRequest,
 } from '@oore/client/models'
 import { useApiContext } from '@/hooks/use-api-context'
+import { LIVE_FALLBACK_POLL_MS } from '@/lib/live-events'
+import { useLiveEventsStore } from '@/stores/live-events-store'
 import {
   scopeOoreQueryKey,
   scopeOoreQueryOptions,
@@ -28,6 +30,7 @@ export function useRunners<TData = ListRunnersResponse>(
   },
 ) {
   const { baseUrl, client, instanceId, token } = useApiContext()
+  const liveEvents = useLiveEventsStore((s) => s.connected)
   const query = scopeOoreQueryOptions(
     instanceId,
     listRunnersOptions({ client, query: params }),
@@ -36,7 +39,7 @@ export function useRunners<TData = ListRunnersResponse>(
   return useQuery<ListRunnersResponse, Error, TData>({
     ...query,
     enabled: !!baseUrl && !!token && (options?.enabled ?? true),
-    refetchInterval: 15_000,
+    refetchInterval: liveEvents ? LIVE_FALLBACK_POLL_MS : 15_000,
     select: options?.select,
   })
 }

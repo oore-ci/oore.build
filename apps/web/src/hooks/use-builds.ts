@@ -40,6 +40,8 @@ import {
   previewBuildChangelogOptions,
 } from '@oore/client/react-query'
 import { useApiContext } from '@/hooks/use-api-context'
+import { LIVE_FALLBACK_POLL_MS } from '@/lib/live-events'
+import { useLiveEventsStore } from '@/stores/live-events-store'
 import {
   scopeOoreQueryKey,
   scopeOoreQueryOptions,
@@ -73,7 +75,12 @@ export function useBuilds<TData = ListBuildsResponse>(
   },
 ) {
   const { baseUrl, client, instanceId, token } = useApiContext()
-  const pollInterval = options?.refetchInterval ?? BUILD_POLL_INTERVAL_MS
+  const liveEvents = useLiveEventsStore((s) => s.connected)
+  const requestedInterval = options?.refetchInterval ?? BUILD_POLL_INTERVAL_MS
+  const pollInterval =
+    liveEvents && requestedInterval !== false
+      ? LIVE_FALLBACK_POLL_MS
+      : requestedInterval
   const query = scopeOoreQueryOptions(
     instanceId,
     listBuildsOptions({ client, query: params }),

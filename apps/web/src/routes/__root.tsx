@@ -6,6 +6,7 @@ import ConnectivityBanner from '@/components/connectivity-banner'
 import QaAppHeader from '@/components/qa-app-header'
 import RouteTransitionBar from '@/components/route-transition-bar'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import { useLiveEvents } from '@/hooks/use-live-events'
 import { useSessionMonitor } from '@/hooks/use-session-monitor'
 import { syncSetupStoreContext } from '@/lib/instance-context'
 import { queryClient } from '@/lib/query-client'
@@ -51,6 +52,7 @@ function RootLayout() {
   const showQaChrome = showAppChrome && authUser.role === 'qa_viewer'
 
   useSessionMonitor()
+  useLiveEvents(showAppChrome)
 
   return (
     <QueryClientProvider client={queryClient}>
