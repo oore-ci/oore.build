@@ -4,6 +4,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::Context;
+use oore_google_play::play_json;
 use serde::Deserialize;
 
 const PLAY_API_BASE: &str = "https://androidpublisher.googleapis.com/androidpublisher/v3";
@@ -98,39 +99,31 @@ async fn fetch_play_version_codes_from(
     track: &str,
 ) -> anyhow::Result<PlayVersionCodes> {
     let app = format!("{api_base}/applications/{package_name}");
-    let edit: PlayEdit = client
-        .post(format!("{app}/edits"))
-        .bearer_auth(access_token)
-        .json(&serde_json::json!({}))
-        .send()
-        .await
-        .context("Failed to reach Google Play")?
-        .error_for_status()
-        .context("Google Play refused to open an edit")?
-        .json()
-        .await
-        .context("Google Play returned an unreadable edit")?;
+    let edit: PlayEdit = play_json(
+        client
+            .post(format!("{app}/edits"))
+            .bearer_auth(access_token)
+            .json(&serde_json::json!({})),
+        "open an edit",
+    )
+    .await?;
     let edit_url = format!("{app}/edits/{}", edit.id);
 
     let read = async {
-        let tracks: PlayTracks = client
-            .get(format!("{edit_url}/tracks"))
-            .bearer_auth(access_token)
-            .send()
-            .await?
-            .error_for_status()
-            .context("Google Play refused to list tracks")?
-            .json()
-            .await?;
-        let bundles: PlayBundles = client
-            .get(format!("{edit_url}/bundles"))
-            .bearer_auth(access_token)
-            .send()
-            .await?
-            .error_for_status()
-            .context("Google Play refused to list bundles")?
-            .json()
-            .await?;
+        let tracks: PlayTracks = play_json(
+            client
+                .get(format!("{edit_url}/tracks"))
+                .bearer_auth(access_token),
+            "list tracks",
+        )
+        .await?;
+        let bundles: PlayBundles = play_json(
+            client
+                .get(format!("{edit_url}/bundles"))
+                .bearer_auth(access_token),
+            "list bundles",
+        )
+        .await?;
         parse_play_version_codes(tracks, bundles, track)
     }
     .await;
@@ -282,5 +275,39 @@ mod tests {
         assert!(requests[1].starts_with("GET /applications/com.example/edits/e1/tracks "));
         assert!(requests[2].starts_with("GET /applications/com.example/edits/e1/bundles "));
         assert!(requests[3].starts_with("DELETE /applications/com.example/edits/e1 "));
+    }
+
+    #[tokio::test]
+    async fn fetch_failure_carries_googles_error_message() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+            let body = r#"{"error":{"code":403,"message":"The caller does not have permission","status":"PERMISSION_DENIED"}}"#;
+            let response = format!(
+                "HTTP/1.1 403 Forbidden\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let error =
+            fetch_play_version_codes_from(&base, &client, "token", "com.example", "internal")
+                .await
+                .unwrap_err()
+                .to_string();
+        server.await.unwrap();
+        assert!(
+            error.starts_with(
+                "Google Play could not open an edit (403 Forbidden): The caller does not have permission"
+            ),
+            "{error}"
+        );
+        assert!(error.contains("Users and permissions"), "{error}");
     }
 }

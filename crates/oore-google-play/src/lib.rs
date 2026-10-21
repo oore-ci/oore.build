@@ -116,6 +116,15 @@ fn google_error_message(body: &str) -> String {
         .unwrap_or_else(|| body.chars().take(500).collect())
 }
 
+fn play_access_hint(status: reqwest::StatusCode) -> &'static str {
+    match status.as_u16() {
+        401 | 403 => {
+            ". Check that the service account is invited in Play Console under Users and permissions with release access to this app, and that the Google Play Android Developer API is enabled in the key's Google Cloud project"
+        }
+        _ => "",
+    }
+}
+
 /// Map Oore's track names to Play's: `closed` is `alpha`, `open` is `beta`.
 /// Other names (internal, production, custom closed tracks) pass through.
 pub fn play_track_name(track: &str) -> String {
@@ -189,7 +198,9 @@ pub struct PlayEdits<'a> {
     edit_id: String,
 }
 
-async fn play_json<T: serde::de::DeserializeOwned>(
+/// Send `request` and parse its JSON reply. A failure names `action`, the
+/// HTTP status and Google's own error message, plus a hint on 401 and 403.
+pub async fn play_json<T: serde::de::DeserializeOwned>(
     request: reqwest::RequestBuilder,
     action: &str,
 ) -> anyhow::Result<T> {
@@ -201,8 +212,9 @@ async fn play_json<T: serde::de::DeserializeOwned>(
     let body = response.text().await?;
     if !status.is_success() {
         bail!(
-            "Google Play could not {action} ({status}): {}",
-            google_error_message(&body)
+            "Google Play could not {action} ({status}): {}{}",
+            google_error_message(&body),
+            play_access_hint(status)
         );
     }
     serde_json::from_str(if body.is_empty() { "null" } else { &body })
