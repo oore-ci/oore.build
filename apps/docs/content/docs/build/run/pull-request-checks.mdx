@@ -1,0 +1,50 @@
+---
+title: 'See builds on pull requests'
+status: implemented
+description: 'Oore reports each build to GitHub as a check run and to GitLab as a commit status, with links to the logs and installs.'
+---
+
+Every build of a GitHub or GitLab commit shows up on that commit, and so on
+its pull request or merge request. Oore reports one check per platform the
+build produces, for example `Release (Android)` and `Release (iOS)`.
+
+## What you see
+
+- **Queued** as soon as the build is created, so a push shows a pending check
+  within a few seconds.
+- **In progress** while a runner builds it.
+- **Success**, **failure**, **timed out** or **cancelled** when it ends.
+
+Each check links to the build in Oore. When a build succeeds with one
+installable APK or IPA for that platform, the check links straight to its
+install page instead. The GitHub check summary also lists every artifact
+with an install link.
+
+A re-run, or a second build of the same pipeline and commit, updates the
+same check instead of adding another one. The newest build owns the check, so
+an older build that finishes late does not overwrite it.
+
+## What you need
+
+- Your web UI's origin under **Allowed frontend origins** in **Settings >
+  General > External access**, so the links point at it. Without one, checks
+  still show their state but carry no links. People who open a link sign in
+  as usual; the links do not grant access on their own.
+- **GitHub:** the Oore GitHub App already asks for the `checks` permission.
+  Nothing else to configure.
+- **GitLab:** commit statuses need a credential with the `api` scope. A
+  personal access token with only `read_api` still builds, but GitLab refuses
+  the status and Oore skips it. An OAuth application source requests
+  read-only scopes, so it does not report statuses. See
+  [Connect GitLab](/build/sources/gitlab).
+
+## Troubleshooting
+
+**A build has no check on GitHub**
+
+Open the GitHub App's installation settings and accept any pending
+permission request, then re-run the build.
+
+**A GitLab merge request has no status**
+
+Replace the source's token with one that has the `api` scope.
