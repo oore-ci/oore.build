@@ -53,8 +53,30 @@ pub enum StoreChange {
     Complete,
 }
 
+/// Where the store says a release stands on its track.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StoreObservation {
+    /// The release is no longer on the track: discarded or replaced.
+    Missing,
+    Rolling {
+        fraction: f64,
+    },
+    Halted,
+    Completed,
+    /// A state Oore does not mirror, such as a draft.
+    Other,
+}
+
 /// Outbound store calls made from the daemon host.
 pub trait ReleaseStoreClient: Send + Sync {
+    /// The release as the store has it now. `None` when the store is not read.
+    fn observe<'a>(
+        &'a self,
+        _release: &'a Release,
+    ) -> BoxFuture<'a, anyhow::Result<Option<StoreObservation>>> {
+        Box::pin(async { Ok(None) })
+    }
+
     fn apply<'a>(
         &'a self,
         release: &'a Release,
@@ -746,19 +768,107 @@ pub async fn upload_approved(pool: &SqlitePool, release_id: &str) -> Result<bool
     Ok(!release.awaiting_approval)
 }
 
+// ── Store sync ──────────────────────────────────────────────────
+
+/// The changes that bring a release in line with what the store reports.
+/// Oore's pause does not touch Play, so a paused release that Play still
+/// rolls out is left alone.
+fn store_sync_changes(
+    state: ReleaseState,
+    fraction: f64,
+    observed: StoreObservation,
+) -> Vec<(ReleaseState, Option<f64>)> {
+    use ReleaseState::{Complete, Failed, Halted, Paused, Rolling};
+    match (state, observed) {
+        (Rolling | Paused | Halted, StoreObservation::Missing) => vec![(Failed, None)],
+        (Rolling | Paused, StoreObservation::Completed) => vec![(Complete, None)],
+        (Halted, StoreObservation::Completed) => vec![(Rolling, Some(1.0)), (Complete, None)],
+        (Rolling | Paused, StoreObservation::Halted) => vec![(Halted, None)],
+        (Rolling, StoreObservation::Rolling { fraction: store }) if store > fraction + 1e-9 => {
+            vec![(Rolling, Some(store))]
+        }
+        (Halted, StoreObservation::Rolling { fraction: store }) => {
+            vec![(Rolling, Some(store.max(fraction)))]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn store_sync_reason(release: &Release, observed: StoreObservation) -> String {
+    match observed {
+        StoreObservation::Missing => format!(
+            "No longer on the {} track in Play Console: discarded or replaced there",
+            release.track
+        ),
+        StoreObservation::Completed => "Completed in Play Console".to_string(),
+        StoreObservation::Halted => "Halted in Play Console".to_string(),
+        _ => "Rollout changed in Play Console".to_string(),
+    }
+}
+
+/// Reads the release from its store and records any difference, without
+/// sending anything back. Returns the release as it now stands.
+pub(crate) async fn sync_release_with_store(
+    deps: ReleaseDeps<'_>,
+    release: &Release,
+    now: i64,
+) -> anyhow::Result<Release> {
+    let observed = deps.store.observe(release).await;
+    sqlx::query("UPDATE releases SET store_checked_at = ?1 WHERE id = ?2")
+        .bind(now)
+        .bind(&release.id)
+        .execute(deps.pool)
+        .await?;
+    let Some(observed) = observed? else {
+        return Ok(release.clone());
+    };
+    let changes = store_sync_changes(release.state, release.rollout_fraction, observed);
+    if changes.is_empty() {
+        return Ok(release.clone());
+    }
+    // The store already holds this state; record it without calling back.
+    let record = ReleaseDeps {
+        store: &NoopReleaseStoreClient,
+        ..deps
+    };
+    let reason = store_sync_reason(release, observed);
+    for (to_state, to_fraction) in changes {
+        transition_release(
+            record,
+            &release.id,
+            ReleaseChange {
+                to_state,
+                to_fraction,
+                audit_action: "release_synced_from_store",
+            },
+            &ReleaseActor::System,
+            Some(&reason),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    }
+    load_release(deps.pool, &release.id)
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:?}"))
+}
+
 // ── Rollout schedule ────────────────────────────────────────────
 
-/// One pass of the rollout monitor: check health, halt on breach, take due steps.
+/// One pass of the rollout monitor: sync with the store, check health, halt
+/// on breach, take due steps.
 ///
-/// Only rolling Google Play releases are driven; App Store phased release
-/// follows Apple's curve. Halted and paused releases are never selected.
+/// Only Google Play releases are driven; App Store phased release follows
+/// Apple's curve. Paused and halted releases are only synced with Play, so a
+/// release discarded or changed in Play Console is noticed; only rolling
+/// releases take steps.
 pub(crate) async fn run_rollout_tick(
     deps: ReleaseDeps<'_>,
     now: i64,
     batch: i64,
 ) -> anyhow::Result<()> {
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{RELEASE_SELECT} WHERE r.state = 'rolling' AND r.store = 'google_play' \
+        "{RELEASE_SELECT} WHERE r.state IN ('rolling', 'paused', 'halted') \
+         AND r.store = 'google_play' \
          ORDER BY COALESCE(r.next_step_at, 0) LIMIT ?1"
     )))
     .bind(batch)
@@ -774,6 +884,31 @@ pub(crate) async fn run_rollout_tick(
             }
         };
         let checked_at: Option<i64> = row.get("crash_rate_checked_at");
+        let store_checked_at: Option<i64> = row.get("store_checked_at");
+        let step_due = release.state == ReleaseState::Rolling
+            && release.next_step_at.is_some_and(|at| at <= now);
+
+        // Always check before a step, so a discarded release is never re-added.
+        if step_due || store_checked_at.is_none_or(|at| now - at >= HEALTH_CHECK_INTERVAL_SECS) {
+            match sync_release_with_store(deps, &release, now).await {
+                Ok(synced) => {
+                    let changed = synced.state != release.state
+                        || synced.rollout_fraction != release.rollout_fraction;
+                    if changed {
+                        continue;
+                    }
+                }
+                Err(error) => {
+                    warn!(release_id = %release.id, error = %error, "rollout monitor: store sync failed");
+                    if step_due {
+                        continue;
+                    }
+                }
+            }
+        }
+        if release.state != ReleaseState::Rolling {
+            continue;
+        }
 
         if let Some(threshold) = release.policy.crash_rate_threshold
             && checked_at.is_none_or(|at| now - at >= HEALTH_CHECK_INTERVAL_SECS)
@@ -1175,6 +1310,29 @@ pub async fn release_action(
     }
 
     let deps = ReleaseDeps::from(&*state);
+    // Act on the release as the store has it, not as Oore last saw it.
+    let current = if current.store == ReleaseStore::GooglePlay && !current.state.is_terminal() {
+        match sync_release_with_store(deps, &current, now_unix()).await {
+            Ok(synced) => synced,
+            Err(error) => {
+                warn!(release_id = %release_id, error = %error, "release action: store sync failed");
+                current
+            }
+        }
+    } else {
+        current
+    };
+    if !allowed_actions(&role, &current).contains(&action) {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "invalid_release_state",
+            format!(
+                "Cannot {} this release: Play Console shows it as {} now",
+                action.as_str(),
+                current.state
+            ),
+        ));
+    }
     let actor = user_actor(&auth);
     let reason = request.reason.as_deref();
     let change = match action {
@@ -1309,9 +1467,18 @@ mod tests {
     struct FakeStore {
         changes: Mutex<Vec<StoreChange>>,
         crash_rate: Mutex<Option<f64>>,
+        observed: Mutex<Option<StoreObservation>>,
     }
 
     impl ReleaseStoreClient for FakeStore {
+        fn observe<'a>(
+            &'a self,
+            _: &'a Release,
+        ) -> BoxFuture<'a, anyhow::Result<Option<StoreObservation>>> {
+            let observed = *self.observed.lock().unwrap();
+            Box::pin(async move { Ok(observed) })
+        }
+
         fn apply<'a>(
             &'a self,
             _: &'a Release,
@@ -1451,6 +1618,76 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(audits, 4);
+    }
+
+    #[tokio::test]
+    async fn release_discarded_in_play_console_fails_without_being_re_added() {
+        let pool = pool().await;
+        let scheduler = Scheduler::new(16);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let release = create_release(
+            deps,
+            new_release("production", ReleasePolicy::default()),
+            &user(),
+            None,
+        )
+        .await
+        .unwrap();
+        let due = release.next_step_at.unwrap();
+
+        *store.observed.lock().unwrap() = Some(StoreObservation::Missing);
+        run_rollout_tick(deps, due, 100).await.unwrap();
+        let failed = load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(failed.state, ReleaseState::Failed);
+        assert_eq!(failed.next_step_at, None);
+        assert!(store.changes.lock().unwrap().is_empty());
+        let reason: Option<String> = sqlx::query_scalar(
+            "SELECT reason FROM release_history WHERE release_id = ?1 AND to_state = 'failed'",
+        )
+        .bind(&release.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(reason.unwrap().contains("discarded"));
+    }
+
+    #[test]
+    fn store_sync_follows_play_console() {
+        use ReleaseState::{Complete, Failed, Halted, Paused, Rolling};
+        assert_eq!(
+            store_sync_changes(Halted, 0.1, StoreObservation::Missing),
+            vec![(Failed, None)]
+        );
+        assert_eq!(
+            store_sync_changes(Rolling, 0.1, StoreObservation::Completed),
+            vec![(Complete, None)]
+        );
+        assert_eq!(
+            store_sync_changes(Halted, 0.1, StoreObservation::Completed),
+            vec![(Rolling, Some(1.0)), (Complete, None)]
+        );
+        assert_eq!(
+            store_sync_changes(Rolling, 0.1, StoreObservation::Halted),
+            vec![(Halted, None)]
+        );
+        assert_eq!(
+            store_sync_changes(Rolling, 0.1, StoreObservation::Rolling { fraction: 0.2 }),
+            vec![(Rolling, Some(0.2))]
+        );
+        // Oore's pause leaves Play rolling; nothing to sync.
+        assert!(
+            store_sync_changes(Paused, 0.1, StoreObservation::Rolling { fraction: 0.1 }).is_empty()
+        );
+        assert!(
+            store_sync_changes(Rolling, 0.2, StoreObservation::Rolling { fraction: 0.1 })
+                .is_empty()
+        );
+        assert!(store_sync_changes(Rolling, 0.1, StoreObservation::Other).is_empty());
     }
 
     #[tokio::test]

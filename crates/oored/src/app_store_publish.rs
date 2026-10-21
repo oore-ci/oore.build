@@ -1358,6 +1358,17 @@ impl StoreRouter {
 }
 
 impl ReleaseStoreClient for StoreRouter {
+    fn observe<'a>(
+        &'a self,
+        release: &'a Release,
+    ) -> BoxFuture<'a, anyhow::Result<Option<releases::StoreObservation>>> {
+        if release.store == ReleaseStore::AppStore {
+            Box::pin(async { Ok(None) })
+        } else {
+            self.other.observe(release)
+        }
+    }
+
     fn apply<'a>(
         &'a self,
         release: &'a Release,
