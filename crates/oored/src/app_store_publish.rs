@@ -1,10 +1,11 @@
 //! App Store and TestFlight publishing.
 //!
 //! The runner uploads the signed App Store IPA with `altool` and the
-//! pipeline's App Store Connect API key, then reports the outcome. From there
-//! this module owns the `app_store` release: a daemon task polls App Store
-//! Connect until the build has processed, hands it to TestFlight groups or an
-//! App Store version, follows review, and mirrors Apple's phased release.
+//! pipeline's App Store Connect API key (its own or a shared one), then
+//! reports the outcome. From there this module owns the `app_store` release:
+//! a daemon task polls App Store Connect until the build has processed, hands
+//! it to TestFlight groups or an App Store version, follows review, and
+//! mirrors Apple's phased release.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -175,13 +176,21 @@ struct SigningKeyRow {
     api_private_key_encrypted: Option<String>,
 }
 
+/// The pipeline's signing settings with the API key it uses: the shared key
+/// when one is selected, otherwise its own.
 async fn load_signing_key_row(
     pool: &SqlitePool,
     pipeline_id: &str,
 ) -> sqlx::Result<Option<SigningKeyRow>> {
     sqlx::query_as::<_, SigningKeyRow>(
-        "SELECT enabled, export_method, api_key_id, api_issuer_id, api_private_key_encrypted
-         FROM pipeline_ios_signing_settings WHERE pipeline_id = ?1",
+        "SELECT s.enabled, s.export_method,
+                CASE WHEN k.id IS NULL THEN s.api_key_id ELSE k.key_id END AS api_key_id,
+                CASE WHEN k.id IS NULL THEN s.api_issuer_id ELSE k.issuer_id END AS api_issuer_id,
+                CASE WHEN k.id IS NULL THEN s.api_private_key_encrypted
+                     ELSE k.private_key_encrypted END AS api_private_key_encrypted
+         FROM pipeline_ios_signing_settings s
+         LEFT JOIN app_store_connect_keys k ON k.id = s.shared_api_key_id
+         WHERE s.pipeline_id = ?1",
     )
     .bind(pipeline_id)
     .fetch_optional(pool)
@@ -1396,6 +1405,29 @@ impl ReleaseStoreClient for StoreRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_store_connect_keys::tests::{insert_shared_key, insert_signing, signing_pool};
+
+    #[tokio::test]
+    async fn a_shared_key_replaces_the_pipeline_key() {
+        let pool = signing_pool().await;
+        let encryption_key = vec![7u8; 32];
+        insert_shared_key(&pool, &encryption_key, "team").await;
+        insert_signing(&pool, &encryption_key, "pl1", Some("team")).await;
+        insert_signing(&pool, &encryption_key, "pl2", None).await;
+
+        let shared = load_signing_key_row(&pool, "pl1").await.unwrap().unwrap();
+        let shared = decrypt_credentials(&shared, &encryption_key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(shared.key_id, "SHARED1234");
+        assert_eq!(shared.issuer_id, "shared-issuer");
+        assert_eq!(shared.private_key_pem, "shared-pem");
+
+        let own = load_signing_key_row(&pool, "pl2").await.unwrap().unwrap();
+        let own = decrypt_credentials(&own, &encryption_key).unwrap().unwrap();
+        assert_eq!(own.key_id, "OWNKEY1234");
+        assert_eq!(own.private_key_pem, "own-pem");
+    }
 
     fn testflight(groups: &[&str]) -> AppStorePublishConfig {
         AppStorePublishConfig {

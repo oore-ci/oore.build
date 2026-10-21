@@ -1,5 +1,6 @@
 pub mod api_tokens;
 pub mod app_store_connect;
+pub mod app_store_connect_keys;
 pub mod app_store_publish;
 pub mod apple_api;
 pub mod artifact_install;
@@ -2772,6 +2773,17 @@ pub async fn build_router_with_recovery(
             "/v1/pipelines/{pipeline_id}/publish/google-play",
             get(pipeline_publish::get_pipeline_google_play_publish)
                 .put(pipeline_publish::update_pipeline_google_play_publish),
+        )
+        // Shared App Store Connect API keys (private keys are never returned)
+        .route(
+            "/v1/app-store-connect-keys",
+            get(app_store_connect_keys::list_app_store_connect_keys)
+                .post(app_store_connect_keys::create_app_store_connect_key),
+        )
+        .route(
+            "/v1/app-store-connect-keys/{id}",
+            axum::routing::put(app_store_connect_keys::update_app_store_connect_key)
+                .delete(app_store_connect_keys::delete_app_store_connect_key),
         )
         // Secret endpoints (write-only; values are never returned)
         .route(
