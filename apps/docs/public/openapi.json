@@ -1686,6 +1686,74 @@
         ]
       }
     },
+    "/v1/builds/insights": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Get build insights",
+        "description": "Success rate, run time, queue wait, a daily trend, per-project health\nand the most-failing pipelines for builds the caller can see.",
+        "operationId": "get_build_insights",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "Window length in days: 7 (default), 14, 30 or 90",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "description": "Limit to one project",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "utc_offset_minutes",
+            "in": "query",
+            "description": "Caller's UTC offset for daily buckets, -720 to 840 (default 0)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Build insights",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildInsightsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/builds/{build_id}": {
       "get": {
         "tags": [
@@ -12635,6 +12703,116 @@
           }
         }
       },
+      "BuildInsightsDay": {
+        "type": "object",
+        "description": "One day of finished builds, in the caller's UTC offset.",
+        "required": [
+          "day_start",
+          "succeeded",
+          "failed",
+          "other"
+        ],
+        "properties": {
+          "day_start": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix seconds at the start of the day."
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Failed and timed-out builds."
+          },
+          "other": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Canceled and expired builds."
+          },
+          "p50_duration_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Median run time of the day's succeeded builds."
+          },
+          "succeeded": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "BuildInsightsResponse": {
+        "type": "object",
+        "required": [
+          "window_days",
+          "since",
+          "totals",
+          "previous_totals",
+          "duration",
+          "previous_duration",
+          "queue_wait",
+          "daily",
+          "queue",
+          "projects",
+          "failing_pipelines"
+        ],
+        "properties": {
+          "daily": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildInsightsDay"
+            },
+            "description": "One entry per day of the window, oldest first."
+          },
+          "duration": {
+            "$ref": "#/components/schemas/DurationPercentiles",
+            "description": "Run time (start to finish) of succeeded builds in the window."
+          },
+          "failing_pipelines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FailingPipelineInsights"
+            },
+            "description": "Up to five pipelines with the most failures in the window."
+          },
+          "previous_duration": {
+            "$ref": "#/components/schemas/DurationPercentiles",
+            "description": "Run time of succeeded builds in the previous window."
+          },
+          "previous_totals": {
+            "$ref": "#/components/schemas/BuildOutcomeTotals",
+            "description": "The same window length immediately before `since`, for comparison."
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectBuildInsights"
+            },
+            "description": "Projects with finished builds in the window, most builds first."
+          },
+          "queue": {
+            "$ref": "#/components/schemas/BuildQueueSnapshot"
+          },
+          "queue_wait": {
+            "$ref": "#/components/schemas/DurationPercentiles",
+            "description": "Time from queued to started for builds that started in the window."
+          },
+          "since": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Start of the window, in unix seconds."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/BuildOutcomeTotals",
+            "description": "Builds that finished in the window."
+          },
+          "window_days": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "BuildIsolation": {
         "type": "string",
         "description": "Where a build's steps run.",
@@ -12689,6 +12867,52 @@
           }
         }
       },
+      "BuildOutcomeTotals": {
+        "type": "object",
+        "description": "Outcome counts for builds that finished in a window.",
+        "required": [
+          "finished",
+          "succeeded",
+          "failed",
+          "timed_out",
+          "canceled",
+          "expired"
+        ],
+        "properties": {
+          "canceled": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expired": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "finished": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "succeeded": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "success_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "`succeeded / (succeeded + failed + timed_out)`. Canceled and expired\nbuilds never ran to a verdict, so they are left out. Absent when no\nbuild reached a verdict."
+          },
+          "timed_out": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "BuildPlatform": {
         "type": "string",
         "enum": [
@@ -12696,6 +12920,40 @@
           "ios",
           "macos"
         ]
+      },
+      "BuildQueueSnapshot": {
+        "type": "object",
+        "description": "Builds waiting or running right now.",
+        "required": [
+          "waiting",
+          "awaiting_approval",
+          "running"
+        ],
+        "properties": {
+          "awaiting_approval": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Queued builds held for a maintainer's approval."
+          },
+          "oldest_waiting_since": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the longest-waiting build was queued, in unix seconds."
+          },
+          "running": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Assigned and running builds."
+          },
+          "waiting": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Queued and scheduled builds that a runner can pick up."
+          }
+        }
       },
       "BuildStatus": {
         "type": "string",
@@ -13575,6 +13833,34 @@
           }
         }
       },
+      "DurationPercentiles": {
+        "type": "object",
+        "description": "Median and 90th percentile of a duration, in seconds.",
+        "required": [
+          "samples"
+        ],
+        "properties": {
+          "p50_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "p90_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "samples": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Builds the percentiles cover."
+          }
+        }
+      },
       "EffectiveProjectRetentionResponse": {
         "type": "object",
         "required": [
@@ -13731,6 +14017,60 @@
           },
           "ready": {
             "type": "boolean"
+          }
+        }
+      },
+      "FailingPipelineInsights": {
+        "type": "object",
+        "description": "A pipeline with failed or timed-out builds in the window.",
+        "required": [
+          "pipeline_id",
+          "pipeline_name",
+          "project_id",
+          "project_name",
+          "failures",
+          "finished",
+          "current_streak",
+          "last_failed_build_id",
+          "last_failed_build_number",
+          "last_failed_at"
+        ],
+        "properties": {
+          "current_streak": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Failures in a row ending with the newest finished build; 0 once it passed again."
+          },
+          "failures": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "finished": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_failed_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_failed_build_id": {
+            "type": "string"
+          },
+          "last_failed_build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "pipeline_name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
           }
         }
       },
@@ -15824,6 +16164,39 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ProjectBuildInsights": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "project_name",
+          "totals",
+          "duration",
+          "last_status",
+          "last_finished_at"
+        ],
+        "properties": {
+          "duration": {
+            "$ref": "#/components/schemas/DurationPercentiles"
+          },
+          "last_finished_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_status": {
+            "$ref": "#/components/schemas/BuildStatus",
+            "description": "Status of the project's newest finished build in the window."
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/BuildOutcomeTotals"
           }
         }
       },

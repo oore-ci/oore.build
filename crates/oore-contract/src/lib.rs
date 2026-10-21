@@ -1670,6 +1670,114 @@ pub struct ListBuildsResponse {
     pub total: i64,
 }
 
+/// Outcome counts for builds that finished in a window.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildOutcomeTotals {
+    pub finished: i64,
+    pub succeeded: i64,
+    pub failed: i64,
+    pub timed_out: i64,
+    pub canceled: i64,
+    pub expired: i64,
+    /// `succeeded / (succeeded + failed + timed_out)`. Canceled and expired
+    /// builds never ran to a verdict, so they are left out. Absent when no
+    /// build reached a verdict.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub success_rate: Option<f64>,
+}
+
+/// Median and 90th percentile of a duration, in seconds.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct DurationPercentiles {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p50_seconds: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p90_seconds: Option<i64>,
+    /// Builds the percentiles cover.
+    pub samples: i64,
+}
+
+/// One day of finished builds, in the caller's UTC offset.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildInsightsDay {
+    /// Unix seconds at the start of the day.
+    pub day_start: i64,
+    pub succeeded: i64,
+    /// Failed and timed-out builds.
+    pub failed: i64,
+    /// Canceled and expired builds.
+    pub other: i64,
+    /// Median run time of the day's succeeded builds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p50_duration_seconds: Option<i64>,
+}
+
+/// Builds waiting or running right now.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildQueueSnapshot {
+    /// Queued and scheduled builds that a runner can pick up.
+    pub waiting: i64,
+    /// Queued builds held for a maintainer's approval.
+    pub awaiting_approval: i64,
+    /// Assigned and running builds.
+    pub running: i64,
+    /// When the longest-waiting build was queued, in unix seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oldest_waiting_since: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct ProjectBuildInsights {
+    pub project_id: String,
+    pub project_name: String,
+    pub totals: BuildOutcomeTotals,
+    pub duration: DurationPercentiles,
+    /// Status of the project's newest finished build in the window.
+    #[schema(value_type = BuildStatus)]
+    pub last_status: String,
+    pub last_finished_at: i64,
+}
+
+/// A pipeline with failed or timed-out builds in the window.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct FailingPipelineInsights {
+    pub pipeline_id: String,
+    pub pipeline_name: String,
+    pub project_id: String,
+    pub project_name: String,
+    pub failures: i64,
+    pub finished: i64,
+    /// Failures in a row ending with the newest finished build; 0 once it passed again.
+    pub current_streak: i64,
+    pub last_failed_build_id: String,
+    pub last_failed_build_number: i64,
+    pub last_failed_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildInsightsResponse {
+    pub window_days: i64,
+    /// Start of the window, in unix seconds.
+    pub since: i64,
+    /// Builds that finished in the window.
+    pub totals: BuildOutcomeTotals,
+    /// The same window length immediately before `since`, for comparison.
+    pub previous_totals: BuildOutcomeTotals,
+    /// Run time (start to finish) of succeeded builds in the window.
+    pub duration: DurationPercentiles,
+    /// Run time of succeeded builds in the previous window.
+    pub previous_duration: DurationPercentiles,
+    /// Time from queued to started for builds that started in the window.
+    pub queue_wait: DurationPercentiles,
+    /// One entry per day of the window, oldest first.
+    pub daily: Vec<BuildInsightsDay>,
+    pub queue: BuildQueueSnapshot,
+    /// Projects with finished builds in the window, most builds first.
+    pub projects: Vec<ProjectBuildInsights>,
+    /// Up to five pipelines with the most failures in the window.
+    pub failing_pipelines: Vec<FailingPipelineInsights>,
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CancelBuildResponse {
     pub build: Build,
