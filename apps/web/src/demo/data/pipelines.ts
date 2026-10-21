@@ -11,6 +11,7 @@ export const demoPipelines: Array<Pipeline> = [
     execution_config: {
       platforms: ['android'],
       flutter_version: '3.24.3',
+      runs_on: ['macos', 'release'],
       commands: {
         pre_build: ['flutter pub get', 'flutter analyze --no-fatal-infos'],
         build: ['flutter build apk --release'],

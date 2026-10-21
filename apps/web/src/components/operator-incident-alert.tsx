@@ -12,6 +12,8 @@ function incidentDescription(incident: OperatorIncident): string {
       return `Oore could not refresh the credential for ${incident.resource_name}. Builds cannot use this source.`
     case 'rejected':
       return `${incident.resource_name} rejected its stored credential. The provider did not prove that it expired.`
+    case 'low_disk':
+      return `${incident.resource_name} is running out of disk space. Builds on it may fail.`
     default:
       return incident.reason
   }
@@ -28,7 +30,11 @@ export function OperatorIncidentAlert({
     <Alert
       variant={incident.severity === 'critical' ? 'destructive' : 'default'}
     >
-      <AlertTitle>Source credential needs attention</AlertTitle>
+      <AlertTitle>
+        {incident.resource_kind === 'runner'
+          ? 'Runner needs attention'
+          : 'Source credential needs attention'}
+      </AlertTitle>
       <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <span>
           {incidentDescription(incident)} Occurred {incident.occurrence_count}{' '}

@@ -28,6 +28,7 @@ import {
 import { useProject } from '@/hooks/use-projects'
 import {
   buildNumberOffsetField,
+  runsOnField,
   pipelineRequestFromForm,
   selectedPlatforms,
 } from '@/lib/pipeline-form-utils'
@@ -97,6 +98,7 @@ const emptyDefaults: PipelineFormValues = {
   ios_signing_api_issuer_id: '',
   flutter_version: '',
   build_number_offset: '',
+  runs_on: '',
   enable_customization: false,
   pre_build_commands: '',
   build_commands: '',
@@ -212,6 +214,7 @@ function workflowDefaults(
     platform_macos: execution?.platforms.includes('macos') ?? false,
     flutter_version: execution?.flutter_version ?? '',
     build_number_offset: buildNumberOffsetField(execution),
+    runs_on: runsOnField(execution),
     enable_customization: true,
     pre_build_commands: execution?.commands.pre_build.join('\n') ?? '',
     build_commands: execution?.commands.build.join('\n') ?? '',

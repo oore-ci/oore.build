@@ -223,6 +223,29 @@ export function PipelineBasicsSection({
               )}
             />
 
+            <FormField
+              control={form.control}
+              name="runs_on"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Runner labels (optional)</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="macos"
+                      className="font-mono"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Builds run only on runners that have every label listed,
+                    such as <span className="font-mono">macos, xcode-16</span>.
+                    Leave empty to use any macOS runner.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             {previewDefaults.length > 0 ? (
               <Alert>
                 <AlertTitle>Default build commands</AlertTitle>
