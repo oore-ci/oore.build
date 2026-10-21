@@ -1,8 +1,16 @@
+import { useState } from 'react'
 import { useFormContext } from 'react-hook-form'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
-import { PipelineFormSectionHeader } from '@/components/pipeline-form-section-header'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import {
+  PipelineFormSection,
+  PipelineFormSubsection,
+} from '@/components/pipeline-form-section'
+import { SettingsSurfaceSeparator } from '@/components/settings/settings-section'
+import SetupHint from '@/components/setup-hint'
+import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Collapsible,
@@ -11,18 +19,14 @@ import {
 } from '@/components/ui/collapsible'
 import {
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
-
-interface SectionProps {
-  hidden: boolean
-}
 
 const PLATFORM_ARGUMENT_FIELDS = [
   [
@@ -56,75 +60,222 @@ const PLATFORM_COMMAND_OVERRIDES = [
   ],
 ] as const
 
-export function PipelineCommandsSection({
+/**
+ * Build: everything that runs on the runner, in one section. Commands,
+ * environment and artifacts are visible; per-platform arguments and command
+ * overrides sit behind one disclosure because most pipelines never touch
+ * them.
+ */
+export function PipelineBuildSection({
+  advancedOpen,
   commandCount,
-  hidden,
-}: SectionProps & { commandCount: number }) {
+  envVarCount,
+}: {
+  advancedOpen: boolean
+  commandCount: number
+  envVarCount: number
+}) {
   const form = useFormContext<PipelineFormValues>()
   const customizationEnabled = form.watch('enable_customization')
+  const [platformOpen, setPlatformOpen] = useState(advancedOpen)
+  const PlatformIcon = platformOpen ? ArrowDown01Icon : ArrowRight01Icon
 
   return (
-    <Collapsible className={hidden ? 'hidden' : undefined}>
-      <Card>
-        <CollapsibleTrigger className="w-full cursor-pointer">
-          <CardHeader>
-            <PipelineFormSectionHeader
-              title="Build Commands"
-              summary={
-                commandCount > 0
-                  ? `${commandCount} custom command${commandCount !== 1 ? 's' : ''}`
-                  : 'Using defaults'
-              }
-            />
-          </CardHeader>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <CardContent className="space-y-4">
-            <FormField
-              control={form.control}
-              name="enable_customization"
-              render={({ field }) => (
-                <FormItem>
-                  <label className="flex items-center gap-2 text-sm font-medium">
-                    <Checkbox
-                      checked={field.value}
-                      onCheckedChange={(checked) => field.onChange(!!checked)}
-                    />
-                    Enable custom build commands
-                  </label>
-                </FormItem>
-              )}
-            />
+    <PipelineFormSection
+      title="Build"
+      description="What runs on the runner. Defaults work for a standard Flutter app."
+    >
+      <PipelineFormSubsection
+        title="Commands"
+        description={
+          commandCount > 0
+            ? `${commandCount} custom command${commandCount !== 1 ? 's' : ''} around the default platform build.`
+            : 'Platform defaults, with optional commands before and after.'
+        }
+      >
+        <FormField
+          control={form.control}
+          name="enable_customization"
+          render={({ field }) => (
+            <FormItem>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={field.value}
+                  onCheckedChange={(checked) => field.onChange(!!checked)}
+                />
+                Add custom build commands
+              </label>
+            </FormItem>
+          )}
+        />
 
-            {customizationEnabled ? (
-              <>
-                <CommandField
-                  name="pre_build_commands"
-                  label="Pre-build commands"
-                  placeholder={'One command per line\nexample: dart --version'}
-                />
-                <CommandField
-                  name="build_commands"
-                  label="Extra build commands"
-                  placeholder={'One command per line\nexample: flutter test'}
-                  description="Runs after default platform commands."
-                />
-                <CommandField
-                  name="post_build_commands"
-                  label="Post-build commands"
-                  placeholder={'One command per line\nexample: ls -la build/'}
-                />
-              </>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Using sensible defaults. Enable to add custom pre/build/post
-                commands.
+        {customizationEnabled ? (
+          <>
+            <CommandField
+              name="pre_build_commands"
+              label="Pre-build commands"
+              placeholder={'One command per line\nexample: dart --version'}
+            />
+            <CommandField
+              name="build_commands"
+              label="Extra build commands"
+              placeholder={'One command per line\nexample: flutter test'}
+              description="Runs after the default platform commands."
+            />
+            <CommandField
+              name="post_build_commands"
+              label="Post-build commands"
+              placeholder={'One command per line\nexample: ls -la build/'}
+            />
+          </>
+        ) : null}
+
+        <Collapsible open={platformOpen} onOpenChange={setPlatformOpen}>
+          <CollapsibleTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="-ml-2"
+              />
+            }
+          >
+            <HugeiconsIcon icon={PlatformIcon} />
+            Per-platform arguments and overrides
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="flex flex-col gap-4 pt-3">
+              <p className="text-sm text-muted-foreground">
+                Each line is appended to the platform&apos;s default Flutter
+                build command.
               </p>
-            )}
-          </CardContent>
-        </CollapsibleContent>
-      </Card>
-    </Collapsible>
+              {PLATFORM_ARGUMENT_FIELDS.map(([name, label, placeholder]) => (
+                <FormField
+                  key={name}
+                  control={form.control}
+                  name={name}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{label}</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder={placeholder}
+                          className="font-mono"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ))}
+              <p className="text-sm text-muted-foreground">
+                A command override replaces the default platform command
+                entirely.
+              </p>
+              {PLATFORM_COMMAND_OVERRIDES.map(([name, label, placeholder]) => (
+                <FormField
+                  key={name}
+                  control={form.control}
+                  name={name}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{label}</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder={placeholder}
+                          className="font-mono"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ))}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      </PipelineFormSubsection>
+
+      <SettingsSurfaceSeparator />
+
+      <PipelineFormSubsection
+        title="Environment variables"
+        description={
+          envVarCount > 0
+            ? `${envVarCount} variable${envVarCount !== 1 ? 's' : ''}, available in every build step.`
+            : 'App-specific values, available in every build step.'
+        }
+      >
+        <FormField
+          control={form.control}
+          name="env_vars"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="sr-only">Environment variables</FormLabel>
+              <FormControl>
+                <Textarea
+                  placeholder={
+                    'API_BASE_URL=https://api.example.com\nAPP_FLAVOR=dev'
+                  }
+                  className="font-mono"
+                  rows={4}
+                  {...field}
+                />
+              </FormControl>
+              <FormDescription>One KEY=VALUE per line.</FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <SetupHint
+          title="Built-in CI variables"
+          items={[
+            <span key="built-in-variables">
+              Oore also injects <code>PROJECT_ID</code>,{' '}
+              <code>PIPELINE_ID</code>, <code>BUILD_ID</code>,{' '}
+              <code>PROJECT_BUILD_NUMBER</code>, <code>BUILD_NUMBER</code>,{' '}
+              <code>OORE_VERSION_CODE</code> (build number plus offset),{' '}
+              <code>OORE_VERSION_NAME</code> (from <code>pubspec.yaml</code>),{' '}
+              <code>CI=true</code>, and branch/commit values when present.
+            </span>,
+            'Use this section for app-specific values such as API_BASE_URL, APP_FLAVOR, SENTRY_DSN, or feature flags.',
+          ]}
+        />
+      </PipelineFormSubsection>
+
+      <SettingsSurfaceSeparator />
+
+      <PipelineFormSubsection
+        title="Artifacts"
+        description="Files to keep from the build output. These become the installable apps."
+      >
+        <FormField
+          control={form.control}
+          name="artifact_patterns"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="sr-only">Artifact patterns</FormLabel>
+              <FormControl>
+                <Textarea
+                  placeholder={'One pattern per line\n*.apk\n*.ipa'}
+                  className="font-mono"
+                  rows={3}
+                  {...field}
+                />
+              </FormControl>
+              <FormDescription>
+                One glob per line, relative to the repository root. Empty uses
+                the platform defaults.
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </PipelineFormSubsection>
+    </PipelineFormSection>
   )
 }
 
@@ -155,85 +306,11 @@ function CommandField({
             />
           </FormControl>
           {description ? (
-            <p className="text-xs text-muted-foreground">{description}</p>
+            <FormDescription>{description}</FormDescription>
           ) : null}
           <FormMessage />
         </FormItem>
       )}
     />
-  )
-}
-
-export function PipelinePlatformArgsSection({ hidden }: SectionProps) {
-  const form = useFormContext<PipelineFormValues>()
-
-  return (
-    <Collapsible className={hidden ? 'hidden' : undefined}>
-      <Card>
-        <CollapsibleTrigger className="w-full cursor-pointer">
-          <CardHeader>
-            <PipelineFormSectionHeader
-              title="Platform Build Args"
-              summary="Per-platform args + command overrides"
-            />
-          </CardHeader>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <CardContent className="space-y-4">
-            <p className="text-xs text-muted-foreground">
-              Each line is appended to the platform's default Flutter build
-              command.
-            </p>
-            {PLATFORM_ARGUMENT_FIELDS.map(([name, label, placeholder]) => (
-              <FormField
-                key={name}
-                control={form.control}
-                name={name}
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{label}</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        placeholder={placeholder}
-                        className="font-mono"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            ))}
-            <Separator />
-            <p className="text-sm font-medium">
-              Per-platform command override (optional)
-            </p>
-            <p className="text-xs text-muted-foreground">
-              If set, this command fully replaces the default platform command.
-            </p>
-            {PLATFORM_COMMAND_OVERRIDES.map(([name, label, placeholder]) => (
-              <FormField
-                key={name}
-                control={form.control}
-                name={name}
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{label}</FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder={placeholder}
-                        className="font-mono"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            ))}
-          </CardContent>
-        </CollapsibleContent>
-      </Card>
-    </Collapsible>
   )
 }

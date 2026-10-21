@@ -21,22 +21,13 @@ import {
   parseBundleIdsInput,
   parseMultiline,
   previewPlatformCommands,
-  selectedPlatforms,
 } from '@/lib/pipeline-form-utils'
 import {
-  PipelineIdentityAndConfigSection,
+  PipelineBasicsSection,
   PipelineTriggersSection,
 } from '@/components/pipeline-form-basic-sections'
-import {
-  PipelineCommandsSection,
-  PipelinePlatformArgsSection,
-} from '@/components/pipeline-form-build-sections'
-import {
-  PipelineArtifactsSection,
-  PipelineEnvironmentSection,
-} from '@/components/pipeline-form-output-sections'
-import { PipelineAndroidSigningSection } from '@/components/pipeline-form-android-signing-section'
-import { PipelineIosSigningSection } from '@/components/pipeline-form-ios-signing-section'
+import { PipelineBuildSection } from '@/components/pipeline-form-build-sections'
+import { PipelineSigningSection } from '@/components/pipeline-form-signing-section'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -49,7 +40,6 @@ import {
 } from '@/components/ui/alert-dialog'
 
 interface PipelineFormProps {
-  compactSetup?: boolean
   initialValues: PipelineFormValues
   onSubmit: (
     data: PipelineFormValues,
@@ -63,7 +53,7 @@ interface PipelineFormProps {
   validationErrors?: Array<string>
   /** Read-only repository workflow summary. When present, repository config owns execution fields. */
   repositoryWorkflow?: React.ReactNode
-  /** Content rendered after all form sections but before the sticky action bar */
+  /** Content rendered after all form sections but before the action bar */
   children?: React.ReactNode
   /** Local-mode repositories only support manual/API build triggers for now. */
   manualOnlyTriggers?: boolean
@@ -75,8 +65,19 @@ interface PipelineFormProps {
   iosSigningData?: PipelineIosSigningResponse
 }
 
+/** Open the per-platform disclosure when the saved pipeline already uses it. */
+function hasPlatformOverrides(values: PipelineFormValues) {
+  return [
+    values.android_build_args,
+    values.ios_build_args,
+    values.macos_build_args,
+    values.android_command_override,
+    values.ios_command_override,
+    values.macos_command_override,
+  ].some((value) => (value ?? '').trim().length > 0)
+}
+
 export default function PipelineForm({
-  compactSetup = false,
   initialValues,
   onSubmit,
   onCancel,
@@ -145,8 +146,6 @@ export default function PipelineForm({
   const previewDefaults = previewPlatformCommands(values)
 
   const envVarCount = parseEnvVars(values.env_vars).length
-  const artifactPatterns = parseMultiline(values.artifact_patterns)
-  const platforms = selectedPlatforms(values)
   const preBuildCount = parseMultiline(values.pre_build_commands).length
   const buildCmdCount = parseMultiline(values.build_commands).length
   const postBuildCount = parseMultiline(values.post_build_commands).length
@@ -157,58 +156,37 @@ export default function PipelineForm({
     <Form {...form}>
       <form
         onSubmit={form.handleSubmit(handleFormSubmit)}
-        className="space-y-4 pb-8"
+        className="flex flex-col gap-8"
       >
-        <PipelineIdentityAndConfigSection
-          defaultOpen={!compactSetup}
+        <PipelineBasicsSection
           configMode={configMode}
-          platforms={platforms}
           previewDefaults={previewDefaults}
           repositoryWorkflow={repositoryWorkflow}
         />
+        {repositoryWorkflow ? null : (
+          <PipelineBuildSection
+            advancedOpen={hasPlatformOverrides(initialValues)}
+            commandCount={totalCmdCount}
+            envVarCount={envVarCount}
+          />
+        )}
+        <PipelineSigningSection
+          androidSigningData={signingData}
+          bundleIds={iosBundleIds}
+          debugKeystoreFile={debugKeystoreFile}
+          iosApiKeyFile={iosApiKeyFile}
+          iosP12File={iosP12File}
+          iosProfileFiles={iosProfileFiles}
+          iosSigningData={iosSigningData}
+          onApiKeyFileChange={setIosApiKeyFile}
+          onDebugKeystoreFileChange={setDebugKeystoreFile}
+          onP12FileChange={setIosP12File}
+          onProfileFileChange={handleProfileFileChange}
+          onReleaseKeystoreFileChange={setReleaseKeystoreFile}
+          releaseKeystoreFile={releaseKeystoreFile}
+          values={values}
+        />
         <PipelineTriggersSection manualOnlyTriggers={manualOnlyTriggers} />
-        <PipelineCommandsSection
-          commandCount={totalCmdCount}
-          hidden={!!repositoryWorkflow}
-        />
-        <PipelinePlatformArgsSection hidden={!!repositoryWorkflow} />
-        <PipelineEnvironmentSection
-          envVarCount={envVarCount}
-          hidden={!!repositoryWorkflow}
-        />
-        <PipelineArtifactsSection
-          artifactPatterns={artifactPatterns}
-          hidden={!!repositoryWorkflow}
-        />
-        {values.platform_android ? (
-          <PipelineAndroidSigningSection
-            defaultOpen={
-              retrySigning === 'android' ||
-              initialValues.android_signing_release_enabled ||
-              initialValues.android_signing_debug_enabled
-            }
-            debugKeystoreFile={debugKeystoreFile}
-            onDebugKeystoreFileChange={setDebugKeystoreFile}
-            onReleaseKeystoreFileChange={setReleaseKeystoreFile}
-            releaseKeystoreFile={releaseKeystoreFile}
-            signingData={signingData}
-          />
-        ) : null}
-        {values.platform_ios ? (
-          <PipelineIosSigningSection
-            apiKeyFile={iosApiKeyFile}
-            bundleIds={iosBundleIds}
-            defaultOpen={
-              retrySigning === 'ios' || initialValues.ios_signing_enabled
-            }
-            onApiKeyFileChange={setIosApiKeyFile}
-            onP12FileChange={setIosP12File}
-            onProfileFileChange={handleProfileFileChange}
-            p12File={iosP12File}
-            profileFiles={iosProfileFiles}
-            signingData={iosSigningData}
-          />
-        ) : null}
 
         {validationErrors.length > 0 ? (
           <div>
@@ -229,8 +207,8 @@ export default function PipelineForm({
           <Alert variant="destructive">
             <HugeiconsIcon icon={AlertCircleIcon} size={16} />
             <AlertDescription>
-              Pipeline creation completed, but {retrySigning} signing failed:{' '}
-              {signingError}. Fix the signing fields below and retry only
+              The pipeline was created, but {retrySigning} signing failed:{' '}
+              {signingError}. Fix the signing fields above and retry only
               signing.
             </AlertDescription>
           </Alert>
@@ -240,6 +218,7 @@ export default function PipelineForm({
           (values.ios_signing_mode === 'api' ||
             values.ios_signing_mode === 'hybrid') &&
           children}
+
         <FormActions
           disabled={readOnly}
           disabledReason={readOnlyReason}

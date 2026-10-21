@@ -5,17 +5,16 @@ import { AlertCircleIcon } from '@hugeicons/core-free-icons'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import { TRIGGER_EVENTS } from '@/lib/pipeline-schema'
 import { formatEnumLabel } from '@/lib/format-utils'
-import { PipelineFormSectionHeader } from '@/components/pipeline-form-section-header'
+import {
+  PipelineFormSection,
+  PipelineFormSubsection,
+} from '@/components/pipeline-form-section'
+import { SettingsSurfaceSeparator } from '@/components/settings/settings-section'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
-import {
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -36,219 +35,212 @@ const CONFIG_SOURCES = {
   explicit: 'Choose a config file',
 } satisfies Record<string, string>
 
-export function PipelineIdentityAndConfigSection({
-  defaultOpen = true,
+const PLATFORM_FIELDS = [
+  ['platform_android', 'Android'],
+  ['platform_ios', 'iOS'],
+  ['platform_macos', 'macOS'],
+] as const
+
+/**
+ * Basics: what the pipeline is called, what it builds, and where its config
+ * comes from. When a repository workflow owns execution, the workflow summary
+ * replaces the config fields.
+ */
+export function PipelineBasicsSection({
   configMode,
-  platforms,
   previewDefaults,
   repositoryWorkflow,
 }: {
-  defaultOpen?: boolean
   configMode: PipelineFormValues['config_mode']
-  platforms: Array<string>
   previewDefaults: Array<string>
   repositoryWorkflow?: React.ReactNode
 }) {
   const form = useFormContext<PipelineFormValues>()
   return (
-    <>
-      <Card>
-        <CardContent>
-          <FormField
-            control={form.control}
-            name="name"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Pipeline name</FormLabel>
-                <FormControl>
-                  <Input placeholder="Release" autoFocus {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </CardContent>
-      </Card>
+    <PipelineFormSection
+      title="Basics"
+      description="Name the pipeline and choose what it builds."
+    >
+      <FormField
+        control={form.control}
+        name="name"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Pipeline name</FormLabel>
+            <FormControl>
+              <Input placeholder="Release" autoFocus {...field} />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
 
-      <Collapsible defaultOpen={defaultOpen}>
-        <Card>
-          <CollapsibleTrigger className="w-full cursor-pointer">
-            <CardHeader>
-              <PipelineFormSectionHeader
-                title="Configuration"
-                summary={
-                  repositoryWorkflow
-                    ? 'Owned by repository'
-                    : `${platforms.length} platform${platforms.length !== 1 ? 's' : ''}, ${configMode === 'explicit' ? 'explicit config' : 'auto-detect'}`
-                }
-              />
-            </CardHeader>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <CardContent className="space-y-4">
-              {repositoryWorkflow ? (
-                repositoryWorkflow
-              ) : (
-                <>
-                  <FormField
-                    control={form.control}
-                    name="config_mode"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Config source</FormLabel>
-                        <Select
-                          value={field.value}
-                          onValueChange={field.onChange}
-                          items={CONFIG_SOURCES}
-                        >
-                          <FormControl>
-                            <SelectTrigger
-                              className="w-full"
-                              aria-label="Config source"
-                            >
-                              <SelectValue placeholder="Choose source" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectGroup>
-                              {Object.entries(CONFIG_SOURCES).map(
-                                ([key, value]) => (
-                                  <SelectItem key={key} value={key}>
-                                    {value}
-                                  </SelectItem>
-                                ),
-                              )}
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+      <SettingsSurfaceSeparator />
 
-                  {configMode === 'explicit' ? (
-                    <FormField
-                      control={form.control}
-                      name="config_path"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Config path</FormLabel>
-                          <FormControl>
-                            <Input placeholder="ci/oore.yaml" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  ) : null}
+      {repositoryWorkflow ? (
+        <PipelineFormSubsection
+          title="Configuration"
+          description="Build settings come from the workflow checked into the repository."
+        >
+          {repositoryWorkflow}
+        </PipelineFormSubsection>
+      ) : (
+        <>
+          <PipelineFormSubsection
+            title="Platforms"
+            description="Which platforms this pipeline builds."
+          >
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {PLATFORM_FIELDS.map(([name, label]) => (
+                <FormField
+                  key={name}
+                  control={form.control}
+                  name={name}
+                  render={({ field }) => (
+                    <label className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={field.value}
+                        onCheckedChange={(checked) => field.onChange(!!checked)}
+                      />
+                      {label}
+                    </label>
+                  )}
+                />
+              ))}
+            </div>
+          </PipelineFormSubsection>
 
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium">Platforms</p>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                      {(
-                        [
-                          ['platform_android', 'Android'],
-                          ['platform_ios', 'iOS'],
-                          ['platform_macos', 'macOS'],
-                        ] as const
-                      ).map(([name, label]) => (
-                        <FormField
-                          key={name}
-                          control={form.control}
-                          name={name}
-                          render={({ field }) => (
-                            <label className="flex items-center gap-2 text-sm">
-                              <Checkbox
-                                checked={field.value}
-                                onCheckedChange={(checked) =>
-                                  field.onChange(!!checked)
-                                }
-                              />
-                              {label}
-                            </label>
-                          )}
-                        />
-                      ))}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Choose which platforms this pipeline builds.
-                    </p>
-                  </div>
+          <SettingsSurfaceSeparator />
 
-                  <FormField
-                    control={form.control}
-                    name="flutter_version"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Flutter version (optional)</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder="3.24.0 (or stable)"
-                            className="font-mono"
-                            {...field}
-                          />
-                        </FormControl>
-                        <p className="text-xs text-muted-foreground">
-                          Oore uses <span className="font-mono">.fvmrc</span>{' '}
-                          when present, then this value, then stable. VM builds
-                          use the image for that version; host builds use the
-                          runner's installed Flutter.
-                        </p>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="build_number_offset"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Build number offset (optional)</FormLabel>
-                        <FormControl>
-                          <Input
-                            inputMode="numeric"
-                            placeholder="0"
-                            className="font-mono"
-                            {...field}
-                          />
-                        </FormControl>
-                        <p className="text-xs text-muted-foreground">
-                          Added to the build number to form{' '}
-                          <span className="font-mono">OORE_VERSION_CODE</span>.
-                          Set it above the version code your app already has in
-                          the store, then pass{' '}
-                          <span className="font-mono">
-                            --build-number=$OORE_VERSION_CODE
-                          </span>{' '}
-                          to <span className="font-mono">flutter build</span>.
-                        </p>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {previewDefaults.length > 0 ? (
-                    <Alert>
-                      <AlertTitle>Default build commands</AlertTitle>
-                      <AlertDescription>
-                        <ul className="list-disc space-y-0.5 pl-4">
-                          {previewDefaults.map((command) => (
-                            <li key={command} className="font-mono">
-                              {command}
-                            </li>
-                          ))}
-                        </ul>
-                      </AlertDescription>
-                    </Alert>
-                  ) : null}
-                </>
+          <PipelineFormSubsection
+            title="Configuration"
+            description="Where the build configuration comes from and which Flutter to use."
+          >
+            <FormField
+              control={form.control}
+              name="config_mode"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Config source</FormLabel>
+                  <Select
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    items={CONFIG_SOURCES}
+                  >
+                    <FormControl>
+                      <SelectTrigger
+                        className="w-full"
+                        aria-label="Config source"
+                      >
+                        <SelectValue placeholder="Choose source" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectGroup>
+                        {Object.entries(CONFIG_SOURCES).map(([key, value]) => (
+                          <SelectItem key={key} value={key}>
+                            {value}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
               )}
-            </CardContent>
-          </CollapsibleContent>
-        </Card>
-      </Collapsible>
-    </>
+            />
+
+            {configMode === 'explicit' ? (
+              <FormField
+                control={form.control}
+                name="config_path"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Config path</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="ci/oore.yaml"
+                        className="font-mono"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            ) : null}
+
+            <FormField
+              control={form.control}
+              name="flutter_version"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Flutter version (optional)</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="3.24.0 (or stable)"
+                      className="font-mono"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Oore uses <span className="font-mono">.fvmrc</span> when
+                    present, then this value, then stable. VM builds use the
+                    image for that version; host builds use the runner's
+                    installed Flutter.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="build_number_offset"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Build number offset (optional)</FormLabel>
+                  <FormControl>
+                    <Input
+                      inputMode="numeric"
+                      placeholder="0"
+                      className="font-mono"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Added to the build number to form{' '}
+                    <span className="font-mono">OORE_VERSION_CODE</span>. Set it
+                    above the version code your app already has in the store,
+                    then pass{' '}
+                    <span className="font-mono">
+                      --build-number=$OORE_VERSION_CODE
+                    </span>{' '}
+                    to <span className="font-mono">flutter build</span>.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {previewDefaults.length > 0 ? (
+              <Alert>
+                <AlertTitle>Default build commands</AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc space-y-0.5 pl-4">
+                    {previewDefaults.map((command) => (
+                      <li key={command} className="font-mono">
+                        {command}
+                      </li>
+                    ))}
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            ) : null}
+          </PipelineFormSubsection>
+        </>
+      )}
+    </PipelineFormSection>
   )
 }
 
@@ -272,98 +264,98 @@ export function PipelineTriggersSection({
   }
 
   return (
-    <Collapsible defaultOpen>
-      <Card>
-        <CollapsibleTrigger className="w-full cursor-pointer">
-          <CardHeader>
-            <PipelineFormSectionHeader
-              title="Triggers"
-              summary={
-                manualOnlyTriggers
-                  ? `manual only, cancel previous: ${cancelPrevious ? 'on' : 'off'}`
-                  : `${selectedEvents.length} event${selectedEvents.length !== 1 ? 's' : ''}, cancel previous: ${cancelPrevious ? 'on' : 'off'}`
-              }
-            />
-          </CardHeader>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <CardContent className="space-y-4">
-            {manualOnlyTriggers ? (
-              <Alert>
-                <HugeiconsIcon icon={AlertCircleIcon} size={16} />
-                <AlertDescription>
-                  This repository uses local Git — builds can only be triggered
-                  manually from the UI or API. Webhook triggers require a
-                  connected GitHub or GitLab source.
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <>
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Trigger events</p>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    {TRIGGER_EVENTS.map((event) => (
-                      <label
-                        key={event}
-                        className="flex items-center gap-2 text-sm"
-                      >
-                        <Checkbox
-                          checked={selectedEvents.includes(event)}
-                          onCheckedChange={() => toggleEvent(event)}
-                        />
-                        {formatEnumLabel(event)}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                <FormField
-                  control={form.control}
-                  name="branches"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Branch patterns (optional)</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="main, develop, release/*"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </>
-            )}
-
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={cancelPrevious}
-                onCheckedChange={(checked) =>
-                  form.setValue('cancel_previous', !!checked, {
-                    shouldDirty: true,
-                  })
-                }
-              />
-              Cancel previous builds on same branch
-            </label>
-
+    <PipelineFormSection
+      title="Triggers"
+      description="When this pipeline runs on its own. You can always run it by hand."
+    >
+      {manualOnlyTriggers ? (
+        <Alert>
+          <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+          <AlertDescription>
+            This repository uses local Git, so builds can only be started from
+            the UI or API. Webhook triggers need a connected GitHub or GitLab
+            source.
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <>
+          <PipelineFormSubsection
+            title="Events"
+            description="Repository events that start a build."
+          >
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {TRIGGER_EVENTS.map((event) => (
+                <label key={event} className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={selectedEvents.includes(event)}
+                    onCheckedChange={() => toggleEvent(event)}
+                  />
+                  {formatEnumLabel(event)}
+                </label>
+              ))}
+            </div>
             <FormField
               control={form.control}
-              name="max_concurrent"
+              name="branches"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Max concurrent builds (optional)</FormLabel>
+                  <FormLabel>Branch patterns (optional)</FormLabel>
                   <FormControl>
-                    <Input type="number" min={1} max={100} {...field} />
+                    <Input
+                      placeholder="main, develop, release/*"
+                      className="font-mono"
+                      {...field}
+                    />
                   </FormControl>
+                  <FormDescription>
+                    Comma-separated. Leave empty to build every branch.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
-          </CardContent>
-        </CollapsibleContent>
-      </Card>
-    </Collapsible>
+          </PipelineFormSubsection>
+
+          <SettingsSurfaceSeparator />
+        </>
+      )}
+
+      <PipelineFormSubsection
+        title="Concurrency"
+        description="How overlapping builds of this pipeline are handled."
+      >
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox
+            checked={cancelPrevious}
+            onCheckedChange={(checked) =>
+              form.setValue('cancel_previous', !!checked, {
+                shouldDirty: true,
+              })
+            }
+          />
+          Cancel previous builds on the same branch
+        </label>
+
+        <FormField
+          control={form.control}
+          name="max_concurrent"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Max concurrent builds (optional)</FormLabel>
+              <FormControl>
+                <Input
+                  type="number"
+                  min={1}
+                  max={100}
+                  className="sm:max-w-40"
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </PipelineFormSubsection>
+    </PipelineFormSection>
   )
 }

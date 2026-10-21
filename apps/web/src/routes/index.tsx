@@ -43,7 +43,7 @@ import { OperatorIncidentAlert } from '@/components/operator-incident-alert'
 import { createWebOoreClient } from '@/lib/api-client/client'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 
-const FirstAppProgress = lazy(() => import('@/components/first-app-progress'))
+const SetupChecklist = lazy(() => import('@/components/setup-checklist'))
 const ReleaseBoard = lazy(() =>
   import('@/components/releases/release-board').then((module) => ({
     default: module.ReleaseBoard,
@@ -345,8 +345,9 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
   const markIncidentRead = useMarkOperatorIncidentRead()
 
   const scope = useFirstAppScope()
-  const progress = useFirstAppStore((state) => state.progress[scope])
-  const updateProgress = useFirstAppStore((state) => state.update)
+  const guidedProjectId = useFirstAppStore(
+    (state) => state.progress[scope]?.projectId,
+  )
   const projectsQuery = useProjects({
     limit: 1,
     sort: 'created_at',
@@ -460,26 +461,13 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
         ) : null}
 
         {hasProjects &&
-        (progress?.projectId || recentBuildsQuery.data?.builds.length === 0) ? (
-          <Suspense fallback={<Skeleton className="h-40 w-full" />}>
-            <FirstAppProgress
-              projectId={progress?.projectId ?? projects[0].id}
+        (guidedProjectId || recentBuildsQuery.data?.builds.length === 0) ? (
+          <Suspense fallback={<Skeleton className="h-16 w-full" />}>
+            <SetupChecklist
+              projectId={guidedProjectId ?? projects[0].id}
+              variant="summary"
             />
           </Suspense>
-        ) : hasProjects ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="self-start"
-            onClick={() =>
-              updateProgress(scope, {
-                projectId: projects[0].id,
-                hidden: false,
-              })
-            }
-          >
-            Set up an app
-          </Button>
         ) : null}
 
         {projectsQuery.error ? (

@@ -8,12 +8,15 @@ import { GitLabHostStep } from './-gitlab-host-step'
 import { gitLabSetupSchema } from './-gitlab-setup'
 import type { GitLabHostKind, GitLabSetupForm } from './-gitlab-setup'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Form } from '@/components/ui/form'
-import { Separator } from '@/components/ui/separator'
+import { FormActions } from '@/components/form-actions'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import {
+  SettingsSection,
+  SettingsSurface,
+  SettingsSurfaceSeparator,
+} from '@/components/settings/settings-section'
 import {
   useExternalAccessNetworkSettings,
   useInstancePreferences,
@@ -129,95 +132,78 @@ function GitLabSetupPage() {
   }
 
   return (
-    <PageLayout width="wide">
+    <PageLayout>
       <PageMeta title="Connect GitLab source" noindex />
       <PageHeader
-        title="Connect GitLab source"
-        description="Connect GitLab.com or a self-managed GitLab host for repository discovery and webhook-triggered builds."
+        title="Connect GitLab"
+        description="GitLab.com or a self-managed host, for repository discovery and webhook-triggered builds."
       />
-      <Card size="sm">
-        <CardHeader>
-          <CardTitle>GitLab connection</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!remoteEnabled ? (
-            <Alert>
-              <AlertDescription>
-                GitLab source connections require the backend to be in Remote
-                mode. Update access policy in Preferences to continue.
-              </AlertDescription>
-            </Alert>
-          ) : null}
-          <Form {...form}>
-            <form
-              onSubmit={form.handleSubmit(handleSubmit)}
-              className="space-y-6"
-            >
+      {!remoteEnabled && !preferencesLoading ? (
+        <Alert>
+          <AlertDescription>
+            GitLab sources need external access. Turn it on in General settings
+            first.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      <Form {...form}>
+        <form
+          onSubmit={form.handleSubmit(handleSubmit)}
+          className="flex flex-col gap-8"
+        >
+          <SettingsSection
+            title="Connection"
+            description="Oore verifies the host before it stores the source."
+          >
+            <SettingsSurface className="flex flex-col gap-5">
               <GitLabHostStep
                 form={form}
                 hostKind={hostKind}
                 onHostKindChange={selectHostKind}
                 onHostUrlBlur={normalizeHostUrl}
               />
+              <SettingsSurfaceSeparator />
               <GitLabAuthStep
                 form={form}
                 authMode={authMode}
                 hostUrl={normalizedHostUrl}
                 callbackUrl={callbackUrl}
               />
-              <section className="space-y-3">
-                <Separator />
+              <SettingsSurfaceSeparator />
+              <div className="flex flex-col gap-3">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">
-                    3. Verify source connection
-                  </p>
+                  <p className="text-sm font-medium">3. Verify and finish</p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Oore checks the selected GitLab host before it stores this
-                    source.
-                  </p>
-                </div>
-                <Alert>
-                  <AlertDescription>
                     {authMode === 'personal_token'
-                      ? 'Saving verifies this token against your GitLab account and discovers accessible projects. If it fails, create a new token with the listed read-only scopes.'
-                      : 'Saving checks that this GitLab host is reachable. Then authorize the saved OAuth application on GitLab; the source becomes active only after the callback returns.'}
-                  </AlertDescription>
-                </Alert>
-              </section>
-              <section className="space-y-4">
-                <Separator />
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">
-                    4. Finish repository setup
+                      ? 'Saving verifies the token against your GitLab account and discovers the projects it can reach. If that fails, create a new token with the listed read-only scopes.'
+                      : 'Saving checks that the host is reachable, then sends you to GitLab to authorize the OAuth application. The source becomes active when GitLab returns you here.'}
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Save and sync the source, then generate a separate webhook
-                    token for each GitLab project from the source details page.
+                    After the source syncs, generate a webhook token for each
+                    GitLab project from the source details page.
                   </p>
                 </div>
-              </section>
-              <Button
-                type="submit"
-                disabled={
-                  startMutation.isPending ||
-                  preferencesLoading ||
-                  !remoteEnabled
-                }
-              >
-                {preferencesLoading
-                  ? 'Checking access...'
-                  : !remoteEnabled
-                    ? 'External access required'
-                    : startMutation.isPending
-                      ? 'Connecting...'
-                      : authMode === 'personal_token'
-                        ? 'Verify and save GitLab source'
-                        : 'Save and authorize on GitLab'}
-              </Button>
-            </form>
-          </Form>
-        </CardContent>
-      </Card>
+              </div>
+            </SettingsSurface>
+          </SettingsSection>
+          <FormActions
+            disabled={!remoteEnabled || preferencesLoading}
+            disabledReason={
+              preferencesLoading
+                ? 'Checking access...'
+                : 'External access is required.'
+            }
+            isPending={startMutation.isPending}
+            onCancel={() => void navigate({ to: '/settings/integrations' })}
+            pendingLabel="Connecting..."
+            submitLabel={
+              authMode === 'personal_token'
+                ? 'Verify and save'
+                : 'Save and authorize on GitLab'
+            }
+          />
+        </form>
+      </Form>
     </PageLayout>
   )
 }

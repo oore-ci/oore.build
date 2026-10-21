@@ -10,6 +10,18 @@ import type {
 } from '@oore/client/models'
 import { formatEnumLabel } from '@/lib/format-utils'
 
+export type ApiTokenStatus = 'active' | 'expired' | 'revoked'
+
+/** Derived state of an API token; the API only stores the inputs. */
+export function apiTokenStatus(token: {
+  expires_at?: number | null
+  is_revoked: boolean
+}): ApiTokenStatus {
+  if (token.is_revoked) return 'revoked'
+  if (token.expires_at && token.expires_at * 1000 < Date.now()) return 'expired'
+  return 'active'
+}
+
 export const BUILD_STATUS_FILTER_OPTIONS = {
   all: 'All statuses',
   queued: 'Queued',
@@ -73,6 +85,7 @@ export type StatusKind =
   | 'enabled'
   | 'integration'
   | 'runner'
+  | 'token'
   | 'user'
 
 export interface StatusPresentation {
@@ -92,6 +105,18 @@ const RUNNER_STATUS_LABEL = {
   busy: 'Busy',
   draining: 'Draining',
 } satisfies Record<RunnerStatus, string>
+
+const TOKEN_STATUS_LABEL = {
+  active: 'Active',
+  expired: 'Expired',
+  revoked: 'Revoked',
+} satisfies Record<ApiTokenStatus, string>
+
+const TOKEN_STATUS_VARIANT = {
+  active: 'secondary',
+  expired: 'outline',
+  revoked: 'destructive',
+} satisfies Record<ApiTokenStatus, BadgeVariant>
 
 const USER_STATUS_LABEL = {
   active: 'Active',
@@ -169,6 +194,11 @@ export function getStatusPresentation(
       return {
         label: lookupLabel(RUNNER_STATUS_LABEL, value),
         variant: getRunnerStatusVariant(value),
+      }
+    case 'token':
+      return {
+        label: lookupLabel(TOKEN_STATUS_LABEL, value),
+        variant: lookupVariant(TOKEN_STATUS_VARIANT, value),
       }
     case 'user':
       return {
