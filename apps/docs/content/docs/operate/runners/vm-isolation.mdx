@@ -123,7 +123,10 @@ Each image carries exactly one Flutter SDK.
 4. Every pipeline step runs in the guest through `tart exec`, with the same
    environment and secrets as a host build. Secrets travel over the guest
    agent's channel and are never written to the shared workspace.
-5. Signing and artifact upload run on the host against the shared workspace.
+5. Android signing runs in the guest with the image's Android SDK and JDK.
+   The keystore is written only to a private directory on the VM's disk.
+   iOS signing and artifact upload run on the host against the shared
+   workspace, using tools that ship with macOS.
 6. The VM is stopped and deleted. A Runner that restarts deletes any VM it
    left behind.
 
@@ -132,4 +135,5 @@ Each image carries exactly one Flutter SDK.
 - Images take 30 to 80 GB each, so budget the Runner Mac's disk for them.
 - Android emulators have no hardware acceleration inside a macOS guest, so
   keep instrumented tests on a host pipeline.
-- Signing still needs its tools on the host for now.
+- App Store Connect upload uses `xcrun altool`, so a Runner Mac that
+  uploads to TestFlight still needs Xcode installed on the host.

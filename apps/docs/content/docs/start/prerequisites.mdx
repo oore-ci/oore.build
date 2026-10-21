@@ -44,7 +44,24 @@ SSH sessions are supported. Oore automatically uses terminal setup over SSH.
 
 A build asks for the Flutter version in `.fvmrc` when it exists, then `flutter_version` from `.oore.yaml`, then `stable`.
 
-A pipeline with `isolation: vm` builds in a Tart VM made from the image for that version, so the Runner Mac needs no Flutter at all. See [Run builds in VMs](/operate/runners/vm-isolation). A host build uses the Flutter installed on the Runner Mac.
+A pipeline with `isolation: vm` builds in a Tart VM made from the image for that version, so the Runner Mac needs no Flutter at all. See [Run builds in VMs](/operate/runners/vm-isolation).
+
+A host build uses the Flutter installed on the Runner Mac and cannot switch versions. Before the first step, the Runner runs `flutter --version` with the same `PATH` as the build. When the requested version is a release such as `3.47.7`, the build fails unless that is exactly the version installed. A channel such as `stable` is not checked.
+
+### Install a pinned Flutter for host builds
+
+The Runner service searches `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` and `/bin`, so put `flutter` and `dart` in one of them. Run these as the user the Runner service runs as, replacing `3.47.7` with the version in `.fvmrc`:
+
+```sh
+git clone --branch 3.47.7 --depth 1 https://github.com/flutter/flutter.git ~/flutter-3.47.7
+ln -sf ~/flutter-3.47.7/bin/flutter /opt/homebrew/bin/flutter
+ln -sf ~/flutter-3.47.7/bin/dart /opt/homebrew/bin/dart
+flutter --version
+flutter precache --android --ios
+flutter doctor --android-licenses
+```
+
+On an Intel Mac, use `/usr/local/bin` instead of `/opt/homebrew/bin`. `flutter --version` must print the version you cloned. If it prints another one, an older `flutter` comes earlier on the `PATH`; run `which -a flutter` to find it. The next build picks the new version up without restarting the Runner. A host has one Flutter at a time, so apps pinned to different versions need `isolation: vm`.
 
 Install platform tools only on runners that need them:
 

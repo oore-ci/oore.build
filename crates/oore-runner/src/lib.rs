@@ -1228,6 +1228,160 @@ fn sign_android_artifacts(
     Ok(artifacts)
 }
 
+/// Asks the host's `flutter`, found through the same PATH and env the
+/// pipeline steps get, which framework version it is. `Err` carries why it
+/// could not tell.
+async fn host_flutter_version(
+    workspace: &Path,
+    step_env: &[(String, String)],
+) -> Result<String, String> {
+    let mut command = repository_shell_command("flutter --version --machine", workspace);
+    command
+        .envs(step_env.iter().map(|(key, value)| (key, value)))
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(Duration::from_secs(300), command.output())
+        .await
+        .map_err(|_| "flutter --version timed out after 5 minutes".to_string())?
+        .map_err(|error| format!("failed to run flutter --version: {error}"))?;
+    if output.status.code() == Some(127) {
+        return Err("no flutter on the runner's PATH".to_string());
+    }
+    if !output.status.success() {
+        return Err(format!(
+            "flutter --version failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    parse_flutter_machine_version(&String::from_utf8_lossy(&output.stdout)).ok_or_else(|| {
+        "could not read frameworkVersion from flutter --version --machine".to_string()
+    })
+}
+
+/// `flutter --version --machine` prints JSON, possibly after first-run
+/// banners, so read the outermost object.
+fn parse_flutter_machine_version(stdout: &str) -> Option<String> {
+    let start = stdout.find('{')?;
+    let end = stdout.rfind('}')?;
+    let value: serde_json::Value = serde_json::from_str(stdout.get(start..=end)?).ok()?;
+    value.get("frameworkVersion")?.as_str().map(str::to_string)
+}
+
+/// Host builds cannot switch Flutter, so a pinned version (from `.fvmrc` or
+/// the pipeline) must be the one the host has installed. A channel such as
+/// `stable` is not checked, since a host checkout of a tag reports no
+/// channel. `Ok` and `Err` both carry the line for the build log.
+fn check_host_flutter(requested: &str, found: Result<String, String>) -> Result<String, String> {
+    // FVM writes `3.47.7@beta` for a release from a channel.
+    let pinned = requested.split('@').next().unwrap_or(requested).trim();
+    let pinned = pinned.strip_prefix('v').unwrap_or(pinned);
+    let is_version = pinned.starts_with(|c: char| c.is_ascii_digit());
+    match (is_version, found) {
+        (true, Ok(found)) if found == pinned => Ok(format!(
+            "Host build: using the runner's Flutter {found}, matching the requested {requested}"
+        )),
+        (true, Ok(found)) => Err(format!(
+            "Host build needs Flutter {pinned}, but the runner's flutter is {found}. Install {pinned} on the runner host (see Runner prerequisites in the docs) or set isolation: vm"
+        )),
+        (true, Err(reason)) => Err(format!(
+            "Host build needs Flutter {pinned}, but {reason}. Install {pinned} on the runner host (see Runner prerequisites in the docs) or set isolation: vm"
+        )),
+        (false, Ok(found)) => Ok(format!(
+            "Host build: using the runner's Flutter {found} for {requested}; pin a version in .fvmrc to enforce one"
+        )),
+        (false, Err(reason)) => Ok(format!(
+            "Host build: could not check the runner's Flutter ({reason})"
+        )),
+    }
+}
+
+/// The guest-side equivalent of [`sign_android_artifacts`]: the same
+/// apksigner and jarsigner steps, run with the VM image's Android SDK and JDK
+/// so the host needs neither. The script travels over the guest agent's
+/// channel and writes the keystore only to a private directory on the VM's
+/// own disk, never to the shared workspace.
+fn android_vm_signing_script(
+    guest_artifacts: &[String],
+    extension: &str,
+    inputs: &AndroidSigningInputs,
+) -> String {
+    use tart::shell_quote as q;
+    let keystore = base64::engine::general_purpose::STANDARD.encode(&inputs.keystore_bytes);
+    let mut script = format!(
+        r#"set -e
+umask 077
+dir="$(mktemp -d)"
+trap 'rm -rf "$dir"' EXIT
+printf %s {keystore} | base64 --decode > "$dir/keystore.jks"
+export {ANDROID_SIGNER_STORE_PASSWORD_ENV}={store}
+export {ANDROID_SIGNER_KEY_PASSWORD_ENV}={key}
+apksigner="$(ls -1 "${{ANDROID_HOME:-$HOME/android-sdk}}"/build-tools/*/apksigner 2>/dev/null | sort | tail -n 1)"
+"#,
+        keystore = q(&keystore),
+        store = q(&inputs.keystore_password),
+        key = q(&inputs.key_password),
+    );
+    let alias = q(&inputs.key_alias);
+    for (index, artifact) in guest_artifacts.iter().enumerate() {
+        let artifact = q(artifact);
+        let signed = format!("\"$dir/signed-{index}.{extension}\"");
+        if extension == "apk" {
+            script.push_str(&format!(
+                r#"[ -n "$apksigner" ] || {{ echo "apksigner is missing from the VM image's Android SDK" >&2; exit 1; }}
+"$apksigner" sign --ks "$dir/keystore.jks" --ks-key-alias {alias} --ks-pass env:{ANDROID_SIGNER_STORE_PASSWORD_ENV} --key-pass env:{ANDROID_SIGNER_KEY_PASSWORD_ENV} --out {signed} {artifact}
+"$apksigner" verify --verbose --print-certs {signed} >&2
+"#
+            ));
+        } else {
+            script.push_str(&format!(
+                r#"cp {artifact} {signed}
+zip -d {signed} 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' 'META-INF/MANIFEST.MF' > /dev/null || [ $? -eq 12 ]
+jarsigner -keystore "$dir/keystore.jks" -storepass:env {ANDROID_SIGNER_STORE_PASSWORD_ENV} -keypass:env {ANDROID_SIGNER_KEY_PASSWORD_ENV} {signed} {alias} >&2
+verified="$(jarsigner -verify {signed})" || {{ printf '%s\n' "$verified" >&2; exit 1; }}
+if ! printf '%s\n' "$verified" | grep -q '^ *jar verified' || printf '%s\n' "$verified" | grep -q 'unsigned entries'; then
+  printf 'failed to verify Android App Bundle signature: %s\n' "$verified" >&2
+  exit 1
+fi
+"#
+            ));
+        }
+        script.push_str(&format!("cp {signed} {artifact}\n"));
+    }
+    script
+}
+
+async fn sign_android_artifacts_in_vm(
+    vm: &tart::TartVm,
+    workspace: &Path,
+    command: &str,
+    inputs: &AndroidSigningInputs,
+) -> anyhow::Result<Vec<PathBuf>> {
+    let extension = android_artifact_extension(command)
+        .ok_or_else(|| anyhow::anyhow!("unsupported Android signing command"))?;
+    let artifacts = android_artifacts_for_signing(workspace, extension)?;
+    let guest_artifacts = artifacts
+        .iter()
+        .map(|artifact| {
+            let relative = artifact
+                .strip_prefix(workspace)
+                .context("Android artifact is outside the build workspace")?;
+            Ok(format!("{}/{}", vm.guest_workspace(), relative.display()))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut script = android_vm_signing_script(&guest_artifacts, extension, inputs);
+    let output = vm.run_script(&script).await;
+    script.zeroize();
+    let output = output?;
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to sign Android artifacts in the VM ({}): {}",
+        output.status,
+        android_signer_failure_detail(&String::from_utf8_lossy(&output.stdout), &output.stderr)
+    );
+    Ok(artifacts)
+}
+
 #[derive(Debug, Clone)]
 struct IosSigningMaterialization {
     keychain_path: PathBuf,
@@ -3406,7 +3560,7 @@ struct ResolvedExecutionPlan {
     build_number_offset: i64,
     isolation: BuildIsolation,
     /// From `.fvmrc`, then the pipeline config, then `stable`. Picks the VM
-    /// image; host builds use whatever Flutter the runner has.
+    /// image; host builds check that the runner's Flutter matches it.
     flutter_version: String,
     source: String,
 }
@@ -4500,21 +4654,6 @@ async fn execute_build_steps(
             }
         };
     let version_name = read_pubspec_version_name(&workspace);
-    if execution_plan.isolation == BuildIsolation::Host {
-        let _ = append_runner_log_line(
-            client,
-            daemon_url,
-            config,
-            &job.build_id,
-            log_seq,
-            "stdout",
-            &format!(
-                "Host build: uses the runner's own Flutter, not the requested {}; set isolation: vm to build with that exact version",
-                execution_plan.flutter_version
-            ),
-        )
-        .await;
-    }
 
     let mut signing_source: Option<&str> = None;
     let mut signing_variant: Option<AndroidSigningBuildType> = None;
@@ -4692,7 +4831,37 @@ async fn execute_build_steps(
     };
 
     let vm = match execution_plan.isolation {
-        BuildIsolation::Host => None,
+        BuildIsolation::Host => {
+            let started = now_unix();
+            let found = host_flutter_version(&workspace, &step_env).await;
+            let check = check_host_flutter(&execution_plan.flutter_version, found);
+            let message = match &check {
+                Ok(message) | Err(message) => message.clone(),
+            };
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                if check.is_ok() { "stdout" } else { "stderr" },
+                &message,
+            )
+            .await;
+            if check.is_err() {
+                let finished = now_unix();
+                steps.push(StepResult {
+                    name: "flutter-version".to_string(),
+                    status: "failed".to_string(),
+                    exit_code: Some(1),
+                    started_at: started,
+                    finished_at: finished,
+                    duration_ms: (finished - started) * 1000,
+                });
+                return (steps, Err(anyhow::anyhow!(message)));
+            }
+            None
+        }
         BuildIsolation::Vm => {
             let started = now_unix();
             let _ = append_runner_log_line(
@@ -4977,13 +5146,19 @@ Install the required tooling on the runner, set isolation: vm, or override build
                             ),
                         )
                         .await;
-                        let signing_result = sign_android_artifacts(
-                            &workspace,
-                            &signing_workspace,
-                            command,
-                            inputs,
-                            &android_signing_toolchain,
-                        );
+                        let signing_result = match &vm {
+                            Some(vm) => {
+                                sign_android_artifacts_in_vm(&vm.vm, &workspace, command, inputs)
+                                    .await
+                            }
+                            None => sign_android_artifacts(
+                                &workspace,
+                                &signing_workspace,
+                                command,
+                                inputs,
+                                &android_signing_toolchain,
+                            ),
+                        };
                         let signing_finished = now_unix();
                         let signing_succeeded = signing_result.is_ok();
                         steps.push(StepResult {
@@ -6488,6 +6663,65 @@ mod tests {
     };
     use oore_contract::{BuildIsolation, IosExportMethod};
     use serde_json::json;
+
+    #[test]
+    fn host_flutter_must_match_a_pinned_version() {
+        use super::{check_host_flutter, parse_flutter_machine_version};
+        let machine = "Welcome to Flutter!\n{\n  \"frameworkVersion\": \"3.47.7\",\n  \"channel\": \"stable\"\n}\n";
+        assert_eq!(
+            parse_flutter_machine_version(machine).as_deref(),
+            Some("3.47.7")
+        );
+        assert_eq!(parse_flutter_machine_version("no json"), None);
+
+        assert!(check_host_flutter("3.47.7", Ok("3.47.7".into())).is_ok());
+        assert!(check_host_flutter("v3.47.7", Ok("3.47.7".into())).is_ok());
+        assert!(check_host_flutter("3.47.7@stable", Ok("3.47.7".into())).is_ok());
+        let wrong = check_host_flutter("3.47.7", Ok("3.44.0".into())).unwrap_err();
+        assert!(wrong.contains("needs Flutter 3.47.7") && wrong.contains("3.44.0"));
+        let missing = check_host_flutter("3.47.7", Err("no flutter on the runner's PATH".into()))
+            .unwrap_err();
+        assert!(missing.contains("no flutter on the runner's PATH"));
+
+        assert!(check_host_flutter("stable", Ok("3.44.0".into())).is_ok());
+        assert!(
+            check_host_flutter("stable", Err("no flutter on the runner's PATH".into())).is_ok()
+        );
+    }
+
+    #[test]
+    fn vm_android_signing_keeps_secrets_quoted_and_off_the_workspace() {
+        let inputs = super::AndroidSigningInputs {
+            keystore_bytes: b"keystore".to_vec(),
+            keystore_password: "p'ss".to_string(),
+            key_alias: "upload".to_string(),
+            key_password: "k$y".to_string(),
+        };
+        let script = super::android_vm_signing_script(
+            &[
+                "/Users/admin/oore-workspace/build/app/outputs/flutter-apk/app-release.apk"
+                    .to_string(),
+            ],
+            "apk",
+            &inputs,
+        );
+        assert!(
+            script.contains("printf %s 'a2V5c3RvcmU=' | base64 --decode > \"$dir/keystore.jks\"")
+        );
+        assert!(script.contains("export OORE_SIGNER_STORE_PASSWORD='p'\\''ss'"));
+        assert!(script.contains("export OORE_SIGNER_KEY_PASSWORD='k$y'"));
+        assert!(script.contains("--out \"$dir/signed-0.apk\" '/Users/admin/oore-workspace/build/app/outputs/flutter-apk/app-release.apk'"));
+        assert!(script.contains("cp \"$dir/signed-0.apk\" '/Users/admin/oore-workspace/"));
+
+        let bundle = super::android_vm_signing_script(
+            &["/w/build/app/outputs/bundle/release/app-release.aab".to_string()],
+            "aab",
+            &inputs,
+        );
+        assert!(bundle.contains("jarsigner -keystore \"$dir/keystore.jks\""));
+        assert!(bundle.contains("verified=\"$(jarsigner -verify \"$dir/signed-0.aab\")\""));
+        assert!(!bundle.contains("-strict"));
+    }
 
     #[test]
     fn repository_runs_on_must_match_the_claiming_runner() {
