@@ -1,12 +1,15 @@
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
+import { Link } from '@tanstack/react-router'
 import { useFormContext } from 'react-hook-form'
 
-import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import { usesOwnApiKey, type PipelineFormValues } from '@/lib/pipeline-schema'
 import type {
   IosExportMethod,
   IosProvisioningProfileSummary,
   PipelineIosSigningResponse,
 } from '@oore/client/models'
+import { useAppStoreConnectKeys } from '@/hooks/use-app-store-connect-keys'
+import { useHasPermissions } from '@/hooks/use-permissions'
 import { PipelineFormSubsection } from '@/components/pipeline-form-section'
 import SetupHint from '@/components/setup-hint'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -168,7 +171,11 @@ function IosSigningToggle({
             <p className="text-xs text-muted-foreground">
               Stored: mode {signingData.mode}, p12{' '}
               {signingData.has_p12 ? 'present' : 'missing'}, API key{' '}
-              {signingData.has_api_key ? 'present' : 'missing'}
+              {signingData.shared_api_key
+                ? `shared (${signingData.shared_api_key.name})`
+                : signingData.has_api_key
+                  ? 'present'
+                  : 'missing'}
             </p>
           ) : null}
           <FormMessage />
@@ -375,6 +382,8 @@ function IosCertificateFields({
   )
 }
 
+const OWN_KEY = 'own'
+
 function IosApiKeyFields({
   file,
   onFileChange,
@@ -385,54 +394,144 @@ function IosApiKeyFields({
   signingData?: PipelineIosSigningResponse
 }) {
   const form = useFormContext<PipelineFormValues>()
+  const keysQuery = useAppStoreConnectKeys()
+  const [canManageKeys] = useHasPermissions(['instance_settings:write'])
+  const keys = keysQuery.data ?? []
+  const source = form.watch('ios_signing_api_key_source')
+
+  // Until someone chooses, prefer a shared key when the instance has one.
+  useEffect(() => {
+    if (source || !keysQuery.isSuccess) return
+    form.setValue(
+      'ios_signing_api_key_source',
+      keysQuery.data[0]?.id ?? OWN_KEY,
+      { shouldDirty: false },
+    )
+  }, [form, keysQuery.data, keysQuery.isSuccess, source])
+
+  const sourceItems: Record<string, string> = Object.fromEntries([
+    ...keys.map((key) => [key.id, `${key.name} (${key.key_id})`]),
+    [OWN_KEY, "This pipeline's own key"],
+  ])
+  const sharedKey = keys.find((key) => key.id === source)
+  const manageLink = canManageKeys ? (
+    <Link
+      to="/settings/store-credentials"
+      className="underline underline-offset-4"
+    >
+      Store credentials
+    </Link>
+  ) : (
+    'Store credentials'
+  )
+
   return (
     <div className="grid gap-3 rounded-[min(var(--radius-2xl),16px)] bg-muted/40 p-4">
       <FormField
         control={form.control}
-        name="ios_signing_api_key_id"
+        name="ios_signing_api_key_source"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>API key ID</FormLabel>
-            <FormControl>
-              <Input placeholder="ABC123XYZ" className="font-mono" {...field} />
-            </FormControl>
+            <FormLabel>App Store Connect API key</FormLabel>
+            <Select
+              value={field.value || OWN_KEY}
+              onValueChange={field.onChange}
+              items={sourceItems}
+            >
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent>
+                {Object.entries(sourceItems).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FormDescription>
+              {sharedKey ? (
+                <>
+                  Shared with every pipeline that picks it. Issuer{' '}
+                  <span className="font-mono">{sharedKey.issuer_id}</span>.
+                  Manage it in {manageLink}.
+                </>
+              ) : keys.length > 0 ? (
+                <>
+                  Overrides the shared keys in {manageLink} for this pipeline
+                  only.
+                </>
+              ) : (
+                <>
+                  Apps in the same Apple team can share one key from{' '}
+                  {manageLink} instead.
+                </>
+              )}
+            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
       />
-      <FormField
-        control={form.control}
-        name="ios_signing_api_issuer_id"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>API issuer ID (UUID)</FormLabel>
-            <FormControl>
-              <Input
-                placeholder="00000000-0000-0000-0000-000000000000"
-                className="font-mono"
-                {...field}
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-      <div className="space-y-2">
-        <Label htmlFor="ios-signing-api-key">App Store Connect key (.p8)</Label>
-        <Input
-          id="ios-signing-api-key"
-          type="file"
-          accept=".p8,text/plain"
-          onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
-        />
-        <p className="text-xs text-muted-foreground">
-          {file
-            ? `Selected: ${file.name}`
-            : signingData?.has_api_key
-              ? `Stored key: ${signingData.api_key_id ?? 'present'}`
-              : 'Upload App Store Connect private key file (.p8)'}
-        </p>
-      </div>
+      {usesOwnApiKey(source) ? (
+        <>
+          <FormField
+            control={form.control}
+            name="ios_signing_api_key_id"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>API key ID</FormLabel>
+                <FormControl>
+                  <Input
+                    placeholder="ABC123XYZ"
+                    className="font-mono"
+                    {...field}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="ios_signing_api_issuer_id"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>API issuer ID (UUID)</FormLabel>
+                <FormControl>
+                  <Input
+                    placeholder="00000000-0000-0000-0000-000000000000"
+                    className="font-mono"
+                    {...field}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <div className="space-y-2">
+            <Label htmlFor="ios-signing-api-key">
+              App Store Connect key (.p8)
+            </Label>
+            <Input
+              id="ios-signing-api-key"
+              type="file"
+              accept=".p8,text/plain"
+              onChange={(event) =>
+                onFileChange(event.target.files?.[0] ?? null)
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              {file
+                ? `Selected: ${file.name}`
+                : signingData?.has_api_key
+                  ? `Stored key: ${signingData.api_key_id ?? 'present'}`
+                  : 'Upload App Store Connect private key file (.p8)'}
+            </p>
+          </div>
+        </>
+      ) : null}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
@@ -16,6 +16,7 @@ import {
   type SecretTarget,
 } from '@/hooks/use-secrets'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -68,22 +69,28 @@ const SCOPE_EFFECT = {
 
 /**
  * Create a secret, or replace the value of an existing one when `name` is set.
- * Values are write-only: the dialog never shows a stored value.
+ * Values are write-only: the dialog never shows a stored value. With
+ * `sharedTarget`, a new secret can be saved there instead, such as the
+ * instance so every project can use it.
  */
 export function SecretValueDialog({
   defaultName,
   name,
   onOpenChange,
   open,
-  target,
+  sharedTarget,
+  target: ownTarget,
 }: {
   defaultName?: string
   name?: string
   onOpenChange: (open: boolean) => void
   open: boolean
+  sharedTarget?: SecretTarget
   target: SecretTarget
 }) {
   const isRotate = name !== undefined
+  const [shared, setShared] = useState(true)
+  const target = sharedTarget && shared && !isRotate ? sharedTarget : ownTarget
   const createMutation = useCreateSecret(target)
   const rotateMutation = useRotateSecret(target)
   const mutation = isRotate ? rotateMutation : createMutation
@@ -97,6 +104,7 @@ export function SecretValueDialog({
     if (!next) {
       form.reset()
       mutation.reset()
+      setShared(true)
     }
     onOpenChange(next)
   }
@@ -149,6 +157,22 @@ export function SecretValueDialog({
             onSubmit={(event) => void form.handleSubmit(onSubmit)(event)}
             className="space-y-4"
           >
+            {sharedTarget && !isRotate ? (
+              <label className="flex items-start gap-2 text-sm">
+                <Checkbox
+                  checked={shared}
+                  onCheckedChange={(checked) => setShared(!!checked)}
+                  className="mt-0.5"
+                />
+                <span className="flex flex-col gap-0.5">
+                  <span className="font-medium">Share with every project</span>
+                  <span className="text-muted-foreground">
+                    Saves an instance secret. A project secret with the same
+                    name still takes precedence.
+                  </span>
+                </span>
+              </label>
+            ) : null}
             {isRotate ? null : (
               <FormField
                 control={form.control}

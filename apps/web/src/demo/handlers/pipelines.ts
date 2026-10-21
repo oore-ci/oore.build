@@ -9,6 +9,11 @@ import {
 } from '../authorization'
 import { demoState } from '../state'
 import { parseDemoJsonObject } from '../request'
+import {
+  DEMO_SHARED_KEY_ID,
+  demoSharedKeySummary,
+  setDemoSharedKeyUsage,
+} from './store-credentials'
 import type { JsonObject } from '@/lib/types'
 import type {
   AppStorePublishConfig,
@@ -197,6 +202,7 @@ const iosSigningByPipeline: IosSigningFixtures = {
     has_api_key: true,
     api_key_id: 'M3N4P5Q6RS',
     api_issuer_id: '69d2de96-0000-47e3-e053-0824d011072a',
+    shared_api_key_id: DEMO_SHARED_KEY_ID,
     provisioning_profiles: [
       {
         bundle_id: 'com.example.nativepayments',
@@ -261,12 +267,32 @@ const iosSigningSummarySchema = z.object({
   enabled: z.boolean().optional(),
   export_method: z.string().optional(),
   has_api_key: z.boolean().optional(),
+  shared_api_key_id: z.string().optional(),
 })
 
-function appStoreResponse(pipelineId: string) {
-  const signing = iosSigningSummarySchema.parse(
+function storedIosSigning(pipelineId: string) {
+  return iosSigningSummarySchema.parse(
     demoState.iosSigning[pipelineId] ?? iosSigningByPipeline[pipelineId] ?? {},
   )
+}
+
+setDemoSharedKeyUsage(
+  (keyId) =>
+    demoState.pipelines.filter(
+      (pipeline) => storedIosSigning(pipeline.id).shared_api_key_id === keyId,
+    ).length,
+)
+
+/** The daemon returns the selected shared key, not its id. */
+function iosSigningResponse(data: JsonObject) {
+  const { shared_api_key_id: sharedKeyId, ...rest } = data
+  const id = z.string().safeParse(sharedKeyId).data
+  const sharedKey = id ? demoSharedKeySummary(id) : undefined
+  return sharedKey ? { ...rest, shared_api_key: sharedKey } : rest
+}
+
+function appStoreResponse(pipelineId: string) {
+  const signing = storedIosSigning(pipelineId)
   const saved = demoAppStoreConfigs.get(pipelineId)
   return {
     pipeline_id: pipelineId,
@@ -280,7 +306,7 @@ function appStoreResponse(pipelineId: string) {
       phased_release: false,
     },
     updated_at: saved?.updated_at,
-    has_api_key: signing.has_api_key ?? false,
+    has_api_key: !!signing.has_api_key || !!signing.shared_api_key_id,
     app_store_export:
       (signing.enabled ?? false) && signing.export_method === 'app_store',
   }
@@ -603,7 +629,7 @@ export const pipelineHandlers = [
         : undefined)
     if (data) {
       demoState.iosSigning[id] = data
-      return HttpResponse.json({ pipeline_id: id, ...data })
+      return HttpResponse.json(iosSigningResponse({ pipeline_id: id, ...data }))
     }
     return HttpResponse.json({
       pipeline_id: id,
@@ -632,15 +658,20 @@ export const pipelineHandlers = [
     const methodChanged =
       body.export_method != null &&
       body.export_method !== (existing.export_method ?? 'ad_hoc')
+    const { shared_api_key_id: rawSharedKeyId, ...changes } = body
+    const sharedKeyId = z.string().optional().parse(rawSharedKeyId)
     const merged: JsonObject = {
       pipeline_id: id,
       ...existing,
-      ...body,
+      ...changes,
       updated_at: ago(0),
     }
+    // Omitted keeps the shared key, an empty string switches to the own key.
+    if (sharedKeyId === '') delete merged.shared_api_key_id
+    else if (sharedKeyId) merged.shared_api_key_id = sharedKeyId
     if (methodChanged) merged.provisioning_profiles = []
     demoState.iosSigning[id] = merged
-    return HttpResponse.json(merged)
+    return HttpResponse.json(iosSigningResponse(merged))
   }),
 
   demoApi.getPipelineAppStorePublish(async ({ params }) => {

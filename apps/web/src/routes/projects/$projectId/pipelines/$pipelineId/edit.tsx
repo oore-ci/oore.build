@@ -197,6 +197,9 @@ function EditPipelinePage() {
     ios_signing_p12_password: '',
     ios_signing_api_key_id: iosSigningQuery.data?.api_key_id ?? '',
     ios_signing_api_issuer_id: iosSigningQuery.data?.api_issuer_id ?? '',
+    ios_signing_api_key_source:
+      iosSigningQuery.data?.shared_api_key?.id ??
+      (iosSigningQuery.data?.has_api_key ? 'own' : ''),
     flutter_version: pipeline.execution_config.flutter_version ?? '',
     build_number_offset: buildNumberOffsetField(pipeline.execution_config),
     runs_on: runsOnField(pipeline.execution_config),

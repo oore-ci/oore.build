@@ -24,8 +24,14 @@ the machine that built the app.
 
 ## 1. Store the service account key as a secret
 
-Store the whole JSON key file as a project secret. Any scope works; a
-project secret is shared by all of the project's pipelines.
+Store the whole JSON key file as a secret named `PLAY_SERVICE_ACCOUNT`. When
+all your apps are in one Play Console developer account, store it once in
+**Settings → Store credentials** as an instance secret. New pipelines then
+choose it on the Publishing tab without another upload. A project or pipeline
+secret with the same name overrides it.
+
+From the API, any scope works; a project secret is shared by all of the
+project's pipelines:
 
 ```bash
 jq -n --rawfile value play-service-account.json \
