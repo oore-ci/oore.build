@@ -187,6 +187,7 @@ use utoipa::{
         operations::get_runner,
         operations::update_runner,
         operations::delete_runner,
+        operations::purge_runner_caches,
         operations::runner_heartbeat,
         operations::claim_job,
         operations::gitlab_checkout_discovery,
@@ -440,6 +441,7 @@ use utoipa::{
         oore_contract::RegisterRunnerRequest,
         oore_contract::RegisterRunnerResponse,
         oore_contract::RunnerHeartbeatRequest,
+        oore_contract::RunnerHeartbeatResponse,
         oore_contract::UpdateRunnerRequest,
         oore_contract::UpdateRunnerResponse,
         oore_contract::ClaimJobRequest,
@@ -2487,15 +2489,33 @@ mod operations {
     )]
     pub(super) fn delete_runner() {}
 
+    /// Purge runner caches
+    ///
+    /// Asks a runner to delete its dependency caches (pub, Gradle, CocoaPods and
+    /// Xcode DerivedData). The runner purges before its next build and clears
+    /// `cache_purge_requested_at` through its heartbeat.
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/caches/purge", tag = "Runners",
+        params(("runner_id" = String, Path, description = "Runner ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Purge requested", body = UpdateRunnerResponse),
+            (status = 403, description = "Insufficient permissions", body = ApiError),
+            (status = 404, description = "Runner not found", body = ApiError),
+        )
+    )]
+    pub(super) fn purge_runner_caches() {}
+
     /// Runner heartbeat
     ///
     /// Sends a heartbeat from a runner to report its status. Authenticated via runner token.
+    /// `capabilities.caches` carries dependency cache sizes; the response carries a pending
+    /// cache purge request.
     #[utoipa::path(post, path = "/v1/runners/{runner_id}/heartbeat", tag = "Runners",
         params(("runner_id" = String, Path, description = "Runner ID")),
         request_body = RunnerHeartbeatRequest,
         security(("bearer_auth" = [])),
         responses(
-            (status = 204, description = "Heartbeat recorded"),
+            (status = 200, description = "Heartbeat recorded", body = RunnerHeartbeatResponse),
         )
     )]
     pub(super) fn runner_heartbeat() {}

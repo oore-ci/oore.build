@@ -7107,6 +7107,64 @@
         ]
       }
     },
+    "/v1/runners/{runner_id}/caches/purge": {
+      "post": {
+        "tags": [
+          "Runners"
+        ],
+        "summary": "Purge runner caches",
+        "description": "Asks a runner to delete its dependency caches (pub, Gradle, CocoaPods and\nXcode DerivedData). The runner purges before its next build and clears\n`cache_purge_requested_at` through its heartbeat.",
+        "operationId": "purge_runner_caches",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Purge requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateRunnerResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient permissions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Runner not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/runners/{runner_id}/claim": {
       "post": {
         "tags": [
@@ -7161,7 +7219,7 @@
           "Runners"
         ],
         "summary": "Runner heartbeat",
-        "description": "Sends a heartbeat from a runner to report its status. Authenticated via runner token.",
+        "description": "Sends a heartbeat from a runner to report its status. Authenticated via runner token.\n`capabilities.caches` carries dependency cache sizes; the response carries a pending\ncache purge request.",
         "operationId": "runner_heartbeat",
         "parameters": [
           {
@@ -7185,8 +7243,15 @@
           "required": true
         },
         "responses": {
-          "204": {
-            "description": "Heartbeat recorded"
+          "200": {
+            "description": "Heartbeat recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerHeartbeatResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -15902,6 +15967,14 @@
           "updated_at"
         ],
         "properties": {
+          "cache_purge_requested_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Set while a dependency cache purge waits for the runner to pick it up."
+          },
           "capabilities": {
             "type": "object"
           },
@@ -16044,6 +16117,19 @@
           },
           "status": {
             "type": "string"
+          }
+        }
+      },
+      "RunnerHeartbeatResponse": {
+        "type": "object",
+        "description": "Heartbeat answer. Runners purge their dependency caches when\n`cache_purge_requested_at` is newer than their last purge, then report\n`capabilities.caches.purged_at` to clear the request.",
+        "properties": {
+          "cache_purge_requested_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           }
         }
       },
