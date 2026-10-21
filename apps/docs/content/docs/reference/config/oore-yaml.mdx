@@ -16,6 +16,8 @@ platforms:
 
 flutter_version: '3.24.5'
 
+isolation: vm
+
 commands:
   pre_build:
     - flutter pub get
@@ -54,8 +56,18 @@ The schema rejects unknown fields.
 | `env`                 | object[] | No       | `[]`                            |
 | `artifacts`           | object   | No       | Platform-specific default globs |
 | `build_number_offset` | integer  | No       | `0`                             |
+| `isolation`           | string   | No       | `host`                          |
 
 `platforms` accepts `android`, `ios`, and `macos`.
+
+## Isolation
+
+`isolation` chooses where the build steps run:
+
+- `host` runs them directly on the Runner Mac with its installed toolchains.
+- `vm` runs them in a fresh Tart VM cloned from the image for the build's
+  Flutter version, and deletes the VM when the build ends. See
+  [Run builds in VMs](/operate/runners/vm-isolation).
 
 ## Commands
 

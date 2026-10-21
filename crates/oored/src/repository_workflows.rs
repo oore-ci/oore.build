@@ -102,6 +102,7 @@ fn preview(path: String, raw: &str) -> RepositoryWorkflowPreview {
                 env_keys: config.env.into_iter().map(|entry| entry.key).collect(),
                 artifact_patterns: config.artifact_patterns,
                 build_number_offset: config.build_number_offset,
+                isolation: config.isolation,
             }),
         },
         Err(error) => RepositoryWorkflowPreview {

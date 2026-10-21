@@ -16,13 +16,13 @@ use anyhow::Context;
 use base64::Engine as _;
 use caches::{CacheObservation, CacheStats, RunnerCaches};
 use oore_contract::{
-    AndroidSigningBuildType, BuildPlatform, BuildStatus, ClaimJobRequest, ClaimJobResponse,
-    ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse, IosExportMethod,
-    JobStatusResponse, PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig,
-    PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
-    RunnerAndroidSigningResponse, RunnerHeartbeatResponse, RunnerIosSigningBundle,
-    RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult,
-    StepResult, artifact_pattern_matches, is_valid_pipeline_env_key,
+    AndroidSigningBuildType, BuildIsolation, BuildPlatform, BuildStatus, ClaimJobRequest,
+    ClaimJobResponse, ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse,
+    IosExportMethod, JobStatusResponse, PipelineCommandStages, PipelineEnvVar,
+    PipelineExecutionConfig, PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION,
+    RunnerAndroidSigningProfile, RunnerAndroidSigningResponse, RunnerHeartbeatResponse,
+    RunnerIosSigningBundle, RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan,
+    RunnerPublishResult, StepResult, artifact_pattern_matches, is_valid_pipeline_env_key,
     parse_repository_pipeline_yaml, replace_secret_references, store_version_code,
     validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
 };
@@ -34,6 +34,7 @@ use zeroize::Zeroize;
 mod app_store_upload;
 mod caches;
 mod publish;
+mod tart;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
 const OORE_ANDROID_KEYSTORE_PATH_ENV: &str = "OORE_ANDROID_KEYSTORE_PATH";
@@ -499,11 +500,16 @@ pub async fn detect_capabilities() -> serde_json::Value {
         .map(|path| runner_version_for_executable(&path))
         .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
 
+    let tart_version = tart::find_tart()
+        .and_then(|tart| tart::tart_version(&tart))
+        .unwrap_or_default();
+
     serde_json::json!({
         "os": "macos",
         "os_version": os_version,
         "arch": arch,
         "xcode_version": xcode_version,
+        "tart_version": tart_version,
         "version": version,
         "protocol_version": RUNNER_PROTOCOL_VERSION,
     })
@@ -1465,6 +1471,10 @@ fn run_security_command(args: &[&str]) -> anyhow::Result<String> {
 }
 
 fn require_ios_signing_user_session() -> anyhow::Result<()> {
+    require_gui_login_session("iOS signing")
+}
+
+fn require_gui_login_session(purpose: &str) -> anyhow::Result<()> {
     // SAFETY: `geteuid` accepts no arguments and has no failure state.
     let uid = unsafe { libc::geteuid() };
     let output = Command::new("/bin/launchctl")
@@ -1473,10 +1483,10 @@ fn require_ios_signing_user_session() -> anyhow::Result<()> {
         .context("failed to inspect the runner account login session")?;
     anyhow::ensure!(
         output.status.success(),
-        "iOS signing requires an active macOS login session. Log into the runner account and retry the build"
+        "{purpose} requires an active macOS login session. Log into the runner account and retry the build"
     );
     if is_managed_system_runner() {
-        active_gui_session_process_id(uid)?;
+        active_gui_session_process_id(uid, purpose)?;
     }
     Ok(())
 }
@@ -1485,7 +1495,7 @@ fn is_managed_system_runner() -> bool {
     std::env::var_os("XPC_SERVICE_NAME").is_some_and(|name| name == MANAGED_RUNNER_SERVICE_LABEL)
 }
 
-fn active_gui_session_process_id(uid: u32) -> anyhow::Result<u32> {
+fn active_gui_session_process_id(uid: u32, purpose: &str) -> anyhow::Result<u32> {
     let output = Command::new("/usr/bin/pgrep")
         .args(["-u", &uid.to_string(), "-x", "Dock"])
         .output()
@@ -1496,7 +1506,7 @@ fn active_gui_session_process_id(uid: u32) -> anyhow::Result<u32> {
         .filter(|pid| *pid > 0);
     pid.ok_or_else(|| {
         anyhow::anyhow!(
-            "iOS signing requires an active macOS login session. Log into the runner account and retry the build"
+            "{purpose} requires an active macOS login session. Log into the runner account and retry the build"
         )
     })
 }
@@ -3186,6 +3196,13 @@ pub async fn run_runner_forever(
 
     reconcile_stale_runner_mutations()
         .context("failed to reconcile stale runner state before startup")?;
+    if let Some(tart_bin) = tart::find_tart() {
+        match tart::delete_stale_vms(&tart_bin, &config.runner_id) {
+            Ok(removed) if removed > 0 => println!("Deleted {removed} leftover build VM(s)"),
+            Ok(_) => {}
+            Err(error) => eprintln!("Warning: could not delete leftover build VMs: {error:#}"),
+        }
+    }
 
     println!("Starting runner '{}' ({})", config.name, config.runner_id);
     println!("Connecting to: {}", daemon_url);
@@ -3552,6 +3569,9 @@ struct ResolvedExecutionPlan {
     /// Env keys whose values came from a secret.
     secret_env_keys: std::collections::HashSet<String>,
     build_number_offset: i64,
+    isolation: BuildIsolation,
+    /// From `.fvmrc`, then the pipeline config, then the managed default.
+    flutter_version: String,
     source: String,
 }
 
@@ -3952,6 +3972,7 @@ fn normalize_execution_config(
         env,
         artifact_patterns,
         build_number_offset: config.build_number_offset,
+        isolation: config.isolation,
     })
 }
 
@@ -4120,10 +4141,14 @@ fn resolve_execution_plan(
             .or_else(|| file_config.flutter_version.clone())
             .unwrap_or_else(|| DEFAULT_MANAGED_FLUTTER_VERSION.to_string());
         let include_defaults = file_config.commands.build.is_empty();
-        let stage_commands = apply_managed_flutter_toolchain(
-            materialize_stage_commands(&file_config, include_defaults),
-            &resolved_flutter_version,
-        );
+        let stage_commands = materialize_stage_commands(&file_config, include_defaults);
+        // A VM image carries exactly one Flutter SDK, so only host builds need FVM.
+        let stage_commands = match file_config.isolation {
+            BuildIsolation::Host => {
+                apply_managed_flutter_toolchain(stage_commands, &resolved_flutter_version)
+            }
+            BuildIsolation::Vm => stage_commands,
+        };
 
         return Ok(ResolvedExecutionPlan {
             stage_commands,
@@ -4132,6 +4157,8 @@ fn resolve_execution_plan(
             secret_env: Vec::new(),
             secret_env_keys: Default::default(),
             build_number_offset: file_config.build_number_offset,
+            isolation: file_config.isolation,
+            flutter_version: resolved_flutter_version,
             source: format!("file:{}", full_path.display()),
         });
     }
@@ -4140,10 +4167,13 @@ fn resolve_execution_plan(
     let resolved_flutter_version = fvmrc_version
         .or_else(|| fallback.flutter_version.clone())
         .unwrap_or_else(|| DEFAULT_MANAGED_FLUTTER_VERSION.to_string());
-    let stage_commands = apply_managed_flutter_toolchain(
-        materialize_stage_commands(&fallback, true),
-        &resolved_flutter_version,
-    );
+    let stage_commands = materialize_stage_commands(&fallback, true);
+    let stage_commands = match fallback.isolation {
+        BuildIsolation::Host => {
+            apply_managed_flutter_toolchain(stage_commands, &resolved_flutter_version)
+        }
+        BuildIsolation::Vm => stage_commands,
+    };
     Ok(ResolvedExecutionPlan {
         stage_commands,
         artifact_patterns: fallback.artifact_patterns,
@@ -4151,6 +4181,8 @@ fn resolve_execution_plan(
         secret_env: Vec::new(),
         secret_env_keys: Default::default(),
         build_number_offset: fallback.build_number_offset,
+        isolation: fallback.isolation,
+        flutter_version: resolved_flutter_version,
         source: "ui_fallback".to_string(),
     })
 }
@@ -4689,7 +4721,10 @@ async fn execute_build_steps(
         .chain(&execution_plan.stage_commands.build)
         .chain(&execution_plan.stage_commands.post_build)
         .any(|command| command_uses_flutter_toolchain(command));
-    if requires_managed_fvm && bundled_fvm_install_root().is_none() {
+    if execution_plan.isolation == BuildIsolation::Host
+        && requires_managed_fvm
+        && bundled_fvm_install_root().is_none()
+    {
         let _ = append_runner_log_line(
             client,
             daemon_url,
@@ -4900,6 +4935,92 @@ async fn execute_build_steps(
         Some(".env".to_string())
     };
 
+    let vm = match execution_plan.isolation {
+        BuildIsolation::Host => None,
+        BuildIsolation::Vm => {
+            let started = now_unix();
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &step_start_marker("vm-start", "Start a clean Tart VM for this build"),
+            )
+            .await;
+            let shares = caches
+                .map(|caches| {
+                    caches
+                        .mounts()
+                        .into_iter()
+                        .map(|mount| tart::HostShare {
+                            name: mount.name,
+                            env: mount.env,
+                            host_dir: mount.host_dir,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let result = start_build_vm(
+                job,
+                client,
+                daemon_url,
+                config,
+                log_seq,
+                &authority,
+                &workspace,
+                &shares,
+                &execution_plan.flutter_version,
+            )
+            .await;
+            let finished = now_unix();
+            let succeeded = result.is_ok();
+            steps.push(StepResult {
+                name: "vm-start".to_string(),
+                status: if succeeded { "succeeded" } else { "failed" }.to_string(),
+                exit_code: Some(if succeeded { 0 } else { 1 }),
+                started_at: started,
+                finished_at: finished,
+                duration_ms: (finished - started) * 1000,
+            });
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &step_end_marker(
+                    "vm-start",
+                    if succeeded { "succeeded" } else { "failed" },
+                    Some(if succeeded { 0 } else { 1 }),
+                ),
+            )
+            .await;
+            match result {
+                Ok(vm) => {
+                    // Point the cache variables at the guest mounts, leaving
+                    // any value a pipeline set for itself alone.
+                    if let Some(caches) = caches {
+                        let host_env = caches.step_env();
+                        for (key, value) in step_env.iter_mut() {
+                            let is_host_cache =
+                                host_env.iter().any(|(k, v)| k == key && v == value);
+                            if let Some((_, guest)) = vm.guest_env().iter().find(|(k, _)| k == key)
+                                && is_host_cache
+                            {
+                                *value = guest.clone();
+                            }
+                        }
+                    }
+                    Some(vm)
+                }
+                Err(error) => return (steps, Err(error)),
+            }
+        }
+    };
+
     let mut ios_signing_command_applied = false;
     let ios_signing_expected = ios_signing_bundle.is_some();
     let mut ios_artifact_metadata: Option<serde_json::Value> = None;
@@ -4967,18 +5088,24 @@ async fn execute_build_steps(
             )
             .await;
 
-            let mut step_cmd = repository_shell_command(&normalized_command, &workspace);
-            step_cmd
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true);
-            for (key, value) in &step_env {
-                step_cmd.env(key, value);
-            }
-            scrub_managed_runner_env(&mut step_cmd);
-            let child = match step_cmd.spawn() {
+            let spawned = match &vm {
+                Some(vm) => vm.spawn_step(&normalized_command, &step_env).await,
+                None => {
+                    let mut step_cmd = repository_shell_command(&normalized_command, &workspace);
+                    step_cmd
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .kill_on_drop(true);
+                    for (key, value) in &step_env {
+                        step_cmd.env(key, value);
+                    }
+                    scrub_managed_runner_env(&mut step_cmd);
+                    step_cmd.spawn().map_err(anyhow::Error::from)
+                }
+            };
+            let child = match spawned {
                 Ok(c) => c,
-                Err(e) => return (steps, Err(e.into())),
+                Err(e) => return (steps, Err(e)),
             };
 
             let step_status = run_and_stream(
@@ -5056,7 +5183,14 @@ async fn execute_build_steps(
                     )
                     .await;
                     if exit_code != 0 {
-                        let err = if exit_code == 127 {
+                        let err = if exit_code == 127 && vm.is_some() {
+                            anyhow::anyhow!(
+                                "Step failed with exit code 127 (command not found). \
+The VM image for Flutter {} does not provide this command. Command: {}",
+                                execution_plan.flutter_version,
+                                command_preview
+                            )
+                        } else if exit_code == 127 {
                             anyhow::anyhow!(
                                 "Step failed with exit code 127 (command not found). \
 Install required tooling (for example Flutter/FVM) or override build commands. Command: {}",
@@ -5311,6 +5445,9 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
             }
         }
     }
+
+    // Every step has run; free the VM slot before the upload.
+    drop(vm);
 
     if ios_signing_expected && !ios_signing_command_applied {
         return (
@@ -5595,6 +5732,102 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
     }
 
     (steps, Ok(()))
+}
+
+/// Waits for one of the host's macOS VM slots, then boots the build's VM.
+#[allow(clippy::too_many_arguments)]
+async fn start_build_vm(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    authority: &BuildAuthorityState,
+    workspace: &Path,
+    shares: &[tart::HostShare],
+    flutter_version: &str,
+) -> anyhow::Result<tart::TartVm> {
+    let tart_bin = tart::find_tart().with_context(|| {
+        format!(
+            "This pipeline runs in a VM (isolation: vm), but Tart is not installed on this runner; install Tart {} or newer",
+            tart::PINNED_TART_VERSION
+        )
+    })?;
+    let tart_version = tart::tart_version(&tart_bin).unwrap_or_default();
+    anyhow::ensure!(
+        tart::version_is_supported(&tart_version),
+        "Tart {} or newer is required for VM builds; this runner has '{}'",
+        tart::PINNED_TART_VERSION,
+        tart_version
+    );
+    // Virtualization.framework needs the runner account's GUI session, the
+    // same one iOS signing uses; a bare launchd daemon context cannot boot VMs.
+    require_gui_login_session("Running builds in a VM")?;
+    let image = tart::resolve_image(&tart::image_template(), flutter_version)?;
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!("Flutter {flutter_version} uses VM image {image} (Tart {tart_version})"),
+    )
+    .await;
+
+    let slot_dir = tart::slot_dir()?;
+    let mut waiting_logged = false;
+    let slot = loop {
+        if let Some(slot) = tart::try_acquire_slot(&slot_dir, tart::MAX_MACOS_VMS)? {
+            break slot;
+        }
+        if !waiting_logged {
+            waiting_logged = true;
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &format!(
+                    "Waiting for a macOS VM slot; this host runs at most {} at a time",
+                    tart::MAX_MACOS_VMS
+                ),
+            )
+            .await;
+        }
+        check_build_active(client, daemon_url, config, &job.build_id, authority).await?;
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    };
+
+    let name = tart::vm_name(&config.runner_id, &job.build_id);
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!("Cloning {image} into {name} (VM slot {})", slot.index + 1),
+    )
+    .await;
+    let vm = tart::TartVm::start(tart_bin, &image, name, workspace, shares, slot).await?;
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!(
+            "VM {} is ready; the workspace is mounted at {}",
+            vm.name(),
+            vm.guest_workspace()
+        ),
+    )
+    .await;
+    Ok(vm)
 }
 
 async fn fetch_job_publish_plan(
@@ -6331,9 +6564,51 @@ async fn run_and_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::{choose_ios_export_method, load_ui_execution_config, pubspec_version_name};
-    use oore_contract::IosExportMethod;
+    use super::{
+        choose_ios_export_method, load_ui_execution_config, pubspec_version_name,
+        resolve_execution_plan,
+    };
+    use oore_contract::{BuildIsolation, IosExportMethod};
     use serde_json::json;
+
+    #[test]
+    fn vm_isolation_runs_flutter_without_fvm() {
+        let workspace =
+            std::env::temp_dir().join(format!("oore-vm-plan-test-{}", std::process::id()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join(".fvmrc"), r#"{"flutter": "3.47.7"}"#).unwrap();
+        std::fs::write(
+            workspace.join(".oore.yaml"),
+            "version: 1\nplatforms: [android]\nisolation: vm\n",
+        )
+        .unwrap();
+
+        let plan = resolve_execution_plan(&workspace, &json!({})).unwrap();
+        assert_eq!(plan.isolation, BuildIsolation::Vm);
+        assert_eq!(plan.flutter_version, "3.47.7");
+        assert_eq!(plan.stage_commands.pre_build, vec!["flutter pub get"]);
+        assert_eq!(
+            plan.stage_commands.build,
+            vec!["flutter build apk --release"]
+        );
+
+        std::fs::write(
+            workspace.join(".oore.yaml"),
+            "version: 1\nplatforms: [android]\n",
+        )
+        .unwrap();
+        let plan = resolve_execution_plan(&workspace, &json!({})).unwrap();
+        assert_eq!(plan.isolation, BuildIsolation::Host);
+        assert_eq!(
+            plan.stage_commands.pre_build,
+            vec![
+                "fvm use 3.47.7 --force --skip-pub-get",
+                "fvm flutter pub get"
+            ]
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
 
     #[test]
     fn export_method_follows_pipeline_and_xcode_naming() {
@@ -6445,6 +6720,8 @@ mod secret_tests {
             secret_env: vec![],
             secret_env_keys: Default::default(),
             build_number_offset: 0,
+            isolation: BuildIsolation::Host,
+            flutter_version: "stable".to_string(),
             source: "test".to_string(),
         }
     }

@@ -5542,6 +5542,17 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
         ));
     }
 
+    if let Some(version) = command_version("tart", &["--version"]) {
+        checks.push(doctor_check("tart", "ok", Some(version), None));
+    } else {
+        checks.push(doctor_check(
+            "tart",
+            "ok",
+            Some("not installed; only pipelines with isolation: vm need it".to_string()),
+            None,
+        ));
+    }
+
     add_managed_runner_service_check(&mut checks);
 
     if doctor_has_platform(&args, DoctorPlatform::Android) {

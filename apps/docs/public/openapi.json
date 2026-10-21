@@ -11956,6 +11956,14 @@
           }
         }
       },
+      "BuildIsolation": {
+        "type": "string",
+        "description": "Where a build's steps run.",
+        "enum": [
+          "host",
+          "vm"
+        ]
+      },
       "BuildLogChunk": {
         "type": "object",
         "required": [
@@ -14664,6 +14672,9 @@
               "null"
             ]
           },
+          "isolation": {
+            "$ref": "#/components/schemas/BuildIsolation"
+          },
           "platform_build_args": {
             "$ref": "#/components/schemas/PlatformBuildArgs"
           },
@@ -15732,6 +15743,9 @@
               "string",
               "null"
             ]
+          },
+          "isolation": {
+            "$ref": "#/components/schemas/BuildIsolation"
           },
           "platform_build_args": {
             "$ref": "#/components/schemas/PlatformBuildArgs"

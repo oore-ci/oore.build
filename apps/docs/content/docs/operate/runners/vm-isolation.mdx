@@ -1,0 +1,81 @@
+---
+title: 'Run builds in VMs'
+status: implemented
+description: 'Give every build a clean macOS VM with Tart, picked by the Flutter version.'
+---
+
+A pipeline with `isolation: vm` runs each build in a new [Tart](https://github.com/openai/tart)
+VM. The Runner clones the VM from an image, shares the build workspace into it,
+runs every step inside it, and deletes it when the build ends. Nothing a build
+installs or changes survives into the next one, and the Runner Mac only needs
+Tart and the images.
+
+## What you need
+
+- Tart 2.41.1 or newer on the Runner Mac: `brew install cirruslabs/cli/tart`.
+- The Runner account logged in to macOS. Apple's Virtualization framework
+  needs that login session, the same one iOS signing uses, so turn on
+  automatic login for the Runner account on a dedicated build Mac.
+- One image per Flutter version your pipelines use (see below).
+
+`oore doctor` reports the installed Tart version.
+
+## Turn it on
+
+Set `isolation` in the repository's `.oore.yaml`:
+
+```yaml
+version: 1
+platforms: [android, ios]
+isolation: vm
+```
+
+## Images
+
+The Runner resolves the Flutter version the same way as for host builds: a
+checked-in `.fvmrc` wins, then `flutter_version` from the pipeline, then
+`stable`. It turns that version into an image name with the template in
+`OORE_TART_IMAGE` on the Runner, where `{flutter}` stands for the version. The
+default template is `oore-flutter-{flutter}`, so a repository that pins
+`3.47.7` in `.fvmrc` builds in the local VM `oore-flutter-3.47.7`.
+
+The template can also name an OCI reference such as
+`ghcr.io/acme/flutter:{flutter}-xcode26`; Tart pulls it on first use and keeps
+it cached.
+
+An image must:
+
+- run the [Tart Guest Agent](https://github.com/cirruslabs/tart-guest-agent)
+  as a launchd global agent, which the Cirrus Labs macOS images already do
+- log in its build user automatically
+- have Flutter on the `PATH` of a zsh login shell, along with Xcode,
+  CocoaPods, a JDK and the Android SDK your apps need
+
+No FVM is used inside a VM: each image carries exactly one Flutter SDK.
+
+## How a build runs
+
+1. The Runner checks out the repository on the host and resolves the image.
+2. It waits for a free VM slot. Apple allows two macOS VMs per host, so a Mac
+   runs at most two VM builds at a time across all of its Runners; a third
+   build waits and its log says so.
+3. It clones the image, boots it headless and mounts the workspace at
+   `~/oore-workspace` inside the guest. The `vm-start` step records how long
+   this took, usually 10 to 30 seconds.
+   The Runner's [dependency caches](/operate/runners/caches) are mounted too:
+   pub, Gradle and CocoaPods under `~/oore-cache`, with `PUB_CACHE`,
+   `GRADLE_USER_HOME`, `CP_CACHE_DIR` and `CP_HOME_DIR` pointing there, and
+   DerivedData at Xcode's default location, so a clean VM still builds warm.
+4. Every pipeline step runs in the guest through `tart exec`, with the same
+   environment and secrets as a host build. Secrets travel over the guest
+   agent's channel and are never written to the shared workspace.
+5. Signing and artifact upload run on the host against the shared workspace.
+6. The VM is stopped and deleted. A Runner that restarts deletes any VM it
+   left behind.
+
+## Limits
+
+- Images take 30 to 80 GB each, so budget the Runner Mac's disk for them.
+- Android emulators have no hardware acceleration inside a macOS guest, so
+  keep instrumented tests on a host pipeline.
+- Signing still needs its tools on the host for now.

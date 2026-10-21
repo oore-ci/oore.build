@@ -349,6 +349,7 @@ use utoipa::{
         oore_contract::ListProjectMemberCandidatesResponse,
         // Pipelines
         oore_contract::BuildPlatform,
+        oore_contract::BuildIsolation,
         oore_contract::PipelineCommandStages,
         oore_contract::PlatformBuildArgs,
         oore_contract::PlatformBuildCommands,
