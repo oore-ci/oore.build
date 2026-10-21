@@ -1,6 +1,7 @@
 import { isMatch, Link, useMatches, useParams } from '@tanstack/react-router'
 import {
   Breadcrumb,
+  BreadcrumbEllipsis,
   BreadcrumbItem,
   BreadcrumbLink,
   BreadcrumbList,
@@ -57,6 +58,9 @@ function useEntityCrumbLabels(): Map<string, string> {
   return labels
 }
 
+/** Phones only get the parent and the current page; the rest collapses. */
+const PHONE_VISIBLE_CRUMBS = 2
+
 export default function PageBreadcrumb() {
   const entityLabels = useEntityCrumbLabels()
   const breadcrumbs = useMatches({
@@ -68,16 +72,29 @@ export default function PageBreadcrumb() {
           label: match.staticData?.breadcrumb?.title,
         })),
   })
+  const collapsedCount = Math.max(0, breadcrumbs.length - PHONE_VISIBLE_CRUMBS)
 
   return (
     <Breadcrumb>
       <BreadcrumbList>
+        {collapsedCount > 0 ? (
+          <>
+            <BreadcrumbItem className="sm:hidden">
+              <BreadcrumbEllipsis />
+            </BreadcrumbItem>
+            <BreadcrumbSeparator className="sm:hidden" />
+          </>
+        ) : null}
         {breadcrumbs.map((item, index) => {
           const label =
             entityLabels.get(item.href.replace(/\/$/, '')) ?? item.label
           const isLeaf = index === breadcrumbs.length - 1
+          const phoneHidden = index < collapsedCount
           return [
-            <BreadcrumbItem key={item.href}>
+            <BreadcrumbItem
+              key={item.href}
+              className={phoneHidden ? 'hidden sm:inline-flex' : undefined}
+            >
               {isLeaf ? (
                 <BreadcrumbPage>{label}</BreadcrumbPage>
               ) : (
@@ -87,7 +104,10 @@ export default function PageBreadcrumb() {
               )}
             </BreadcrumbItem>,
             isLeaf ? null : (
-              <BreadcrumbSeparator key={item.href + '_separator'} />
+              <BreadcrumbSeparator
+                key={item.href + '_separator'}
+                className={phoneHidden ? 'hidden sm:block' : undefined}
+              />
             ),
           ]
         })}
