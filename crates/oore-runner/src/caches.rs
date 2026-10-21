@@ -188,6 +188,10 @@ pub(crate) struct RunnerCaches {
     /// Xcode's default DerivedData folder. Host builds leave DerivedData
     /// there; folders whose workspace is one of this runner's are ours.
     xcode_derived_data: Option<PathBuf>,
+    /// The Gradle home builds used before the runner owned one. Its
+    /// `gradle.properties` often carries proxy and JVM settings the host
+    /// needs, so builds keep getting it.
+    host_gradle_home: Option<PathBuf>,
     workspace_marker: String,
 }
 
@@ -208,8 +212,15 @@ impl RunnerCaches {
             .and_then(|value| value.trim().parse::<u64>().ok())
             .filter(|gb| *gb > 0)
             .map_or(DEFAULT_MAX_BYTES, |gb| gb.saturating_mul(GIB));
-        let xcode_derived_data = home.map(|home| home.join("Library/Developer/Xcode/DerivedData"));
-        Self::new(root, max_bytes, xcode_derived_data, workspace_prefix)
+        let xcode_derived_data = home
+            .as_ref()
+            .map(|home| home.join("Library/Developer/Xcode/DerivedData"));
+        let mut caches = Self::new(root, max_bytes, xcode_derived_data, workspace_prefix)?;
+        caches.host_gradle_home = std::env::var_os("GRADLE_USER_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| home.map(|home| home.join(".gradle")));
+        Ok(caches)
     }
 
     fn new(
@@ -232,6 +243,7 @@ impl RunnerCaches {
             root,
             max_bytes,
             xcode_derived_data,
+            host_gradle_home: None,
             workspace_marker: format!("/{workspace_prefix}"),
         })
     }
@@ -296,6 +308,16 @@ impl RunnerCaches {
             "Dependency caches at {}{size}",
             self.root.display()
         ));
+        match self.sync_host_gradle_properties() {
+            Ok(Some(source)) => observation.lines.push(format!(
+                "  gradle: using settings from {}",
+                source.display()
+            )),
+            Ok(None) => {}
+            Err(error) => observation.lines.push(format!(
+                "  gradle: could not copy host gradle.properties: {error}"
+            )),
+        }
 
         for kind in LockKind::ALL {
             let files: Vec<&(String, PathBuf)> = lockfiles
@@ -354,6 +376,41 @@ impl RunnerCaches {
             ));
         }
         observation
+    }
+
+    /// Copies the host's `gradle.properties` into the runner's Gradle home so
+    /// proxy (`systemProp.*`) and JVM settings still apply. A copy, not a
+    /// symlink, so the directory stays self-contained for VM mounts.
+    fn sync_host_gradle_properties(&self) -> std::io::Result<Option<PathBuf>> {
+        let target = self.root.join("gradle/gradle.properties");
+        let source = self
+            .host_gradle_home
+            .as_ref()
+            .map(|home| home.join("gradle.properties"))
+            .filter(|source| *source != target);
+        let content = match source.as_deref().map(fs::read) {
+            Some(Ok(content)) => content,
+            Some(Err(error)) if error.kind() != ErrorKind::NotFound => return Err(error),
+            _ => {
+                remove_path(&target)?;
+                return Ok(None);
+            }
+        };
+        if fs::read(&target).ok().as_deref() != Some(content.as_slice()) {
+            let temporary = self.root.join("gradle/gradle.properties.tmp");
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&temporary)?;
+            file.write_all(&content)?;
+            file.sync_all()?;
+            fs::rename(&temporary, &target)?;
+        }
+        Ok(source)
     }
 
     /// Records a finished build. Keys are kept only for successful builds, so a
@@ -1034,6 +1091,39 @@ sdks:
                 .iter()
                 .any(|line| line.starts_with("  pub: miss"))
         );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn host_gradle_properties_follow_builds_into_the_runner_gradle_home() {
+        let dir = temp_dir("gradle-props");
+        let mut caches = caches(&dir, GIB);
+        let host = dir.join("host-gradle");
+        caches.host_gradle_home = Some(host.clone());
+        let workspace = dir.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let mirrored = dir.join("caches/gradle/gradle.properties");
+
+        let props = b"systemProp.https.proxyHost=proxy.office\nsystemProp.https.proxyPort=3128\n";
+        write(&host.join("gradle.properties"), props);
+        let observation = caches.observe(&workspace);
+        assert_eq!(fs::read(&mirrored).unwrap(), props);
+        assert!(
+            observation
+                .lines
+                .iter()
+                .any(|line| line.starts_with("  gradle: using settings from"))
+        );
+        assert!(
+            !fs::symlink_metadata(&mirrored)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+
+        fs::remove_file(host.join("gradle.properties")).unwrap();
+        caches.observe(&workspace);
+        assert!(!mirrored.exists());
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -90,7 +90,7 @@ const PROVIDERS = [
     heading: 'Token scopes',
     items: [
       'Use read_user, read_api, and read_repository.',
-      'Avoid full api unless a write feature needs it.',
+      'Use api instead of read_api to show statuses on merge requests.',
     ],
   },
 ]

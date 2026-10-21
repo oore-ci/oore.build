@@ -98,8 +98,8 @@ export function GitLabAuthStep({
                     <code>read_repository</code>.
                   </span>,
                   <span key={1}>
-                    Do not select full <code>api</code> unless you are testing a
-                    future write-capable GitLab feature.
+                    To show build statuses on merge requests, select{' '}
+                    <code>api</code> instead of <code>read_api</code>.
                   </span>,
                   <span key={2}>
                     Create it at{' '}

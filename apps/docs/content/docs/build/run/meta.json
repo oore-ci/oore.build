@@ -1,4 +1,4 @@
 {
   "title": "Run builds",
-  "pages": ["trigger", "cancel"]
+  "pages": ["trigger", "pull-request-checks", "cancel"]
 }

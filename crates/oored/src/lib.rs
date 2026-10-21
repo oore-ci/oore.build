@@ -9,6 +9,7 @@ pub mod audit_logs;
 pub mod auth;
 pub mod background;
 pub mod builds;
+pub mod commit_checks;
 pub mod crypto;
 pub mod events;
 pub mod extractors;
@@ -2436,6 +2437,10 @@ pub async fn build_router_with_recovery(
             shared_state.storage.clone(),
         );
         events::start_change_watcher(pool.clone(), sched.clone(), shared_state.events.clone());
+        commit_checks::start_commit_check_reporter(
+            pool.clone(),
+            shared_state.encryption_key.to_vec(),
+        );
         notification_dispatch::start_notification_dispatcher(
             pool,
             sched,
