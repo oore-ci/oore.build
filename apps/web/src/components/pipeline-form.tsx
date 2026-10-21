@@ -1,5 +1,5 @@
 import type { IosSigningFiles } from '@/lib/pipeline-signing'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useBlocker } from '@tanstack/react-router'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -26,6 +26,7 @@ import { PipelineBasicsSection } from '@/components/pipeline-form-basic-sections
 import { PipelineBuildSection } from '@/components/pipeline-form-build-sections'
 import { PipelineTriggersSection } from '@/components/pipeline-form-triggers-section'
 import { PipelineSigningSection } from '@/components/pipeline-form-signing-section'
+import type { IosAppStorePublishing } from '@/components/pipeline-form-ios-signing-section'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -63,6 +64,9 @@ interface PipelineFormProps {
   signingError?: string
   signingData?: PipelineAndroidSigningResponse
   iosSigningData?: PipelineIosSigningResponse
+  /** Rendered beside the iOS signing heading, such as the profile sync button. */
+  iosSigningActions?: ReactNode
+  iosAppStorePublishing?: IosAppStorePublishing
 }
 
 /** Open the per-platform disclosure when the saved pipeline already uses it. */
@@ -94,6 +98,8 @@ export default function PipelineForm({
   signingError,
   signingData,
   iosSigningData,
+  iosSigningActions,
+  iosAppStorePublishing,
 }: PipelineFormProps) {
   const form = useForm<PipelineFormValues>({
     resolver: zodResolver(pipelineFormSchema),
@@ -175,7 +181,9 @@ export default function PipelineForm({
           androidSigningData={signingData}
           bundleIds={iosBundleIds}
           debugKeystoreFile={debugKeystoreFile}
+          iosActions={iosSigningActions}
           iosApiKeyFile={iosApiKeyFile}
+          iosAppStorePublishing={iosAppStorePublishing}
           iosP12File={iosP12File}
           iosProfileFiles={iosProfileFiles}
           iosSigningData={iosSigningData}
