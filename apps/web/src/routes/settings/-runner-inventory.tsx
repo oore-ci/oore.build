@@ -12,9 +12,24 @@ import {
   resolveDataTableSorting,
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { MoreHorizontalCircle01Icon } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
 import RunnerStatusDot from '@/components/runner-status-dot'
+import {
+  runnerCachePurgeRequestedAt,
+  runnerCacheStats,
+} from '@/hooks/use-runners'
+import { formatFileSize } from '@/lib/format-utils'
 import { getRunnerStatusVariant } from '@/lib/status-variants'
 
 export type RunnerSort = 'created_at' | 'name' | 'status' | 'last_heartbeat_at'
@@ -41,11 +56,30 @@ function capabilities(value: Runner['capabilities']) {
   )
 }
 
+function RunnerCacheCell({ runner }: { runner: Runner }) {
+  const stats = runnerCacheStats(runner)
+  const purgePending = runnerCachePurgeRequestedAt(runner) !== undefined
+  return (
+    <>
+      <p>{stats ? formatFileSize(stats.total_bytes) : 'Not reported'}</p>
+      {purgePending ? (
+        <p className="text-xs text-muted-foreground">Purge pending</p>
+      ) : stats ? (
+        <p className="text-xs text-muted-foreground">
+          of {formatFileSize(stats.max_bytes)}
+        </p>
+      ) : null}
+    </>
+  )
+}
+
 function getRunnerColumns({
   canWrite,
+  onPurgeCaches,
   onRename,
 }: {
   canWrite: boolean
+  onPurgeCaches: (runner: Runner) => void
   onRename: (runner: Runner) => void
 }): Array<DataTableColumnDef<Runner>> {
   const columns: Array<DataTableColumnDef<Runner>> = [
@@ -101,6 +135,13 @@ function getRunnerColumns({
       enableSorting: false,
     },
     {
+      id: 'cache',
+      accessorFn: (runner) => runnerCacheStats(runner)?.total_bytes,
+      header: 'Cache',
+      cell: ({ row }) => <RunnerCacheCell runner={row.original} />,
+      enableSorting: false,
+    },
+    {
       accessorKey: 'registered_by',
       header: 'Registered by',
       cell: ({ row }) => row.original.registered_by ?? 'embedded',
@@ -112,20 +153,34 @@ function getRunnerColumns({
     columns.push({
       id: 'actions',
       header: 'Action',
-      cell: ({ row }) =>
-        row.original.registered_by ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onRename(row.original)}
+      cell: ({ row }) => (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<Button variant="ghost" size="icon-xs" />}
           >
-            Rename
-          </Button>
-        ) : (
-          <span className="text-xs text-muted-foreground">
-            Managed by daemon
-          </span>
-        ),
+            <span className="sr-only">Open menu</span>
+            <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+              {row.original.registered_by ? (
+                <DropdownMenuItem onClick={() => onRename(row.original)}>
+                  Rename
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem
+                disabled={
+                  runnerCachePurgeRequestedAt(row.original) !== undefined
+                }
+                onClick={() => onPurgeCaches(row.original)}
+              >
+                Purge cache
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ),
       enableHiding: false,
       enableSorting: false,
     })
@@ -139,6 +194,7 @@ export function RunnerInventory({
   direction,
   isLoading,
   onPageChange,
+  onPurgeCaches,
   onRename,
   onSearch,
   onSortChange,
@@ -153,6 +209,7 @@ export function RunnerInventory({
   direction: SortDirection
   isLoading: boolean
   onPageChange: (page: number) => void
+  onPurgeCaches: (runner: Runner) => void
   onRename: (runner: Runner) => void
   onSearch: (query: string) => void
   onSortChange: (sort: RunnerSort, direction: SortDirection) => void
@@ -164,8 +221,8 @@ export function RunnerInventory({
   total: number
 }) {
   const columns = useMemo(
-    () => getRunnerColumns({ canWrite, onRename }),
-    [canWrite, onRename],
+    () => getRunnerColumns({ canWrite, onPurgeCaches, onRename }),
+    [canWrite, onPurgeCaches, onRename],
   )
   const sorting = useMemo(
     () => dataTableSortingState(sort, direction),

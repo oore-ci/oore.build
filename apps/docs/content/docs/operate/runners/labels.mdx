@@ -1,0 +1,71 @@
+---
+title: 'Route builds with runner labels'
+status: implemented
+description: 'Give runners labels, pick them with runs_on, and watch runner utilisation and disk space.'
+---
+
+Each runner advertises labels. A pipeline lists the labels it needs in
+`runs_on`, and a runner claims a build only when it has every one of them.
+
+## Detected labels
+
+Runners report their host on every heartbeat, and Oore derives labels from it:
+
+| Label               | From                |
+| ------------------- | ------------------- |
+| `macos` or `linux`  | Operating system    |
+| `macos-15`          | macOS major version |
+| `xcode-16`          | Xcode major version |
+| `arm64` or `x86_64` | CPU architecture    |
+
+Upgrading Xcode or macOS updates these labels on the next heartbeat.
+
+## Custom labels
+
+Add your own labels when registering a runner:
+
+```bash
+oore runner register --token "$OORE_SESSION_TOKEN" --label release --label gpu
+```
+
+To change them later, send the full list to the runner. Detected labels are
+kept:
+
+```bash
+curl -X PATCH "$OORE_URL/v1/runners/$RUNNER_ID" \
+  -H "Authorization: Bearer $OORE_SESSION_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"custom_labels": ["release", "gpu"]}'
+```
+
+Labels are lowercase and use letters, digits, `.`, `_` and `-`.
+
+## Select runners with `runs_on`
+
+Set `runs_on` on the pipeline's execution settings, either as one label or as a
+list. A pipeline without `runs_on` runs on `macos`.
+
+```yaml
+runs_on: [macos, xcode-16]
+```
+
+The scheduler reads `runs_on` from the pipeline, so a build never lands on a
+runner without those labels. A repository `.oore.yaml` can also set `runs_on`;
+the runner checks it after checkout and fails the build before any command runs
+when it lacks a label the file asks for. Keep the two in step so the scheduler
+picks the right runner in the first place.
+
+Builds that wait because no online runner has their labels are counted on
+**Settings → Runners**.
+
+## Utilisation and disk space
+
+Every heartbeat carries CPU load, memory use, free disk space on the volume
+that holds build workspaces, and the size of the runner's
+[dependency caches](/operate/runners/caches). **Settings → Runners** shows these
+with the queue depth.
+
+When free disk space drops below 20 GiB, Oore opens a warning operator incident
+for the runner, and raises it to critical below 10 GiB. Owners and Admins are
+notified. The incident resolves on its own once free space is back above
+20 GiB.

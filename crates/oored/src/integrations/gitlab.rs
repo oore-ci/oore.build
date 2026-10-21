@@ -895,6 +895,85 @@ pub(crate) async fn resolve_branch_commit(
         })
 }
 
+/// One GitLab commit status, posted to `POST /projects/:id/statuses/:sha`.
+pub(crate) struct CommitStatus<'a> {
+    pub sha: &'a str,
+    pub state: &'a str,
+    pub name: &'a str,
+    pub git_ref: Option<&'a str>,
+    pub target_url: Option<&'a str>,
+    pub description: &'a str,
+}
+
+/// Set a commit status. Needs a credential with the `api` scope; GitLab
+/// refuses read-only tokens with 403.
+pub(crate) async fn set_commit_status(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    host_url: &str,
+    auth_mode: &str,
+    repository_external_id: &str,
+    status: &CommitStatus<'_>,
+) -> anyhow::Result<()> {
+    let host_url =
+        normalize_gitlab_host_url(host_url).map_err(|(_, Json(e))| anyhow::anyhow!(e.error))?;
+    let token = access_token(pool, encryption_key, integration_id)
+        .await
+        .map_err(|(_, Json(e))| anyhow::anyhow!(e.error))?;
+    let client = build_http_client().map_err(|e| anyhow::anyhow!(e))?;
+    let mut body = serde_json::json!({
+        "state": status.state,
+        "name": status.name,
+        "description": status.description,
+    });
+    if let Some(git_ref) = status.git_ref {
+        body["ref"] = git_ref.into();
+    }
+    if let Some(target_url) = status.target_url {
+        body["target_url"] = target_url.into();
+    }
+    let request = client
+        .post(format!(
+            "{}/api/v4/projects/{}/statuses/{}",
+            host_url,
+            urlencoding::encode(repository_external_id),
+            urlencoding::encode(status.sha)
+        ))
+        .header("User-Agent", "oore-ci")
+        .json(&body);
+    let request = if auth_mode == "oauth_app" {
+        request.header("Authorization", format!("Bearer {token}"))
+    } else {
+        request.header("PRIVATE-TOKEN", token)
+    };
+    let response = request.send().await?;
+    let http_status = response.status();
+    // A 403 here usually means a read-only token, which still reads fine, so
+    // it is not recorded as a credential failure.
+    if http_status != reqwest::StatusCode::FORBIDDEN {
+        classify_authenticated_gitlab_response(pool, integration_id, auth_mode, http_status)
+            .await?;
+    }
+    if http_status.is_success() {
+        return Ok(());
+    }
+    let message = response.text().await.unwrap_or_default();
+    // GitLab rejects posting the state a status already has.
+    if http_status == reqwest::StatusCode::BAD_REQUEST
+        && message.contains("Cannot transition status")
+    {
+        return Ok(());
+    }
+    if http_status == reqwest::StatusCode::FORBIDDEN {
+        return Err(crate::commit_checks::Refused(
+            "GitLab refused the commit status; the source credential needs the api scope",
+        )
+        .into());
+    }
+    anyhow::bail!("GitLab returned {http_status} setting a commit status")
+}
+
 pub(crate) async fn compare_commits(
     pool: &sqlx::SqlitePool,
     encryption_key: &[u8],

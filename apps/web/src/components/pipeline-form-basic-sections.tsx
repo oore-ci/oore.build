@@ -189,9 +189,9 @@ export function PipelineIdentityAndConfigSection({
                         </FormControl>
                         <p className="text-xs text-muted-foreground">
                           Oore uses <span className="font-mono">.fvmrc</span>{' '}
-                          when present, then this value, then managed stable
-                          Flutter. The SDK downloads automatically on the first
-                          build and is cached for later builds.
+                          when present, then this value, then stable. VM builds
+                          use the image for that version; host builds use the
+                          runner's installed Flutter.
                         </p>
                         <FormMessage />
                       </FormItem>

@@ -349,8 +349,6 @@ fn legacy_component_artifact_exists(
         ),
         install_manifest::InstallComponent::Runner => (
             vec![
-                install_root.join("bin/fvm"),
-                install_root.join("libexec/fvm"),
                 install_root.join("runner.json"),
                 install_root.join("managed-runner.json"),
                 install_root.join(oore_runner::RUNNER_RELEASE_MARKER_FILE),
@@ -885,6 +883,12 @@ struct UpdateArgs {
     #[arg(long)]
     channel: Option<String>,
 
+    /// Move this installation to the --channel release channel in place
+    ///
+    /// The target release must be the same as or newer than the installed version.
+    #[arg(long, default_value = "false", requires = "channel")]
+    switch_channel: bool,
+
     /// GitHub repository in `owner/name` format
     ///
     /// If not specified, this defaults to the installed GITHUB_REPO file (if available) or
@@ -1189,6 +1193,10 @@ struct RunnerRegisterArgs {
     /// Runner name (defaults to hostname)
     #[arg(long)]
     name: Option<String>,
+    /// Extra label for pipelines to select with `runs_on`, added to the
+    /// detected labels such as `macos-15` and `xcode-16`. Repeatable.
+    #[arg(long = "label")]
+    labels: Vec<String>,
     /// Auth session token for registration
     #[arg(long, env = "OORE_SESSION_TOKEN")]
     token: String,
@@ -4326,6 +4334,7 @@ async fn handle_runner_register_with_lifecycle_lock(
         .json(&serde_json::json!({
             "name": name,
             "capabilities": capabilities,
+            "labels": args.labels,
         }))
         .send()
         .await?;
@@ -5511,27 +5520,24 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
         }
     }
 
-    let fvm_available = command_version("fvm", &["--version"]);
-    if let Some(version) = &fvm_available {
-        checks.push(doctor_check("fvm", "ok", Some(version.clone()), None));
-    } else {
-        checks.push(doctor_check(
-            "fvm",
-            "ok",
-            Some("managed by Oore; prepared automatically on the first Flutter build".to_string()),
-            None,
-        ));
-    }
-
     if let Some(version) = command_version("flutter", &["--version"]) {
         checks.push(doctor_check("flutter", "ok", Some(version), None));
     } else {
         checks.push(doctor_check(
             "flutter",
             "ok",
-            Some(
-                "managed by Oore through FVM; downloaded and cached on the first build".to_string(),
-            ),
+            Some("not installed; host builds need it, VM builds use the image's".to_string()),
+            None,
+        ));
+    }
+
+    if let Some(version) = command_version("tart", &["--version"]) {
+        checks.push(doctor_check("tart", "ok", Some(version), None));
+    } else {
+        checks.push(doctor_check(
+            "tart",
+            "ok",
+            Some("not installed; only pipelines with isolation: vm need it".to_string()),
             None,
         ));
     }
@@ -8317,8 +8323,6 @@ fn render_runner_launch_daemon(
         <string>{}</string>
         <key>PATH</key>
         <string>{}</string>
-        <key>FVM_CACHE_PATH</key>
-        <string>{}</string>
         <key>{}</key>
         <string>{}</string>
     </dict>
@@ -8339,7 +8343,6 @@ fn render_runner_launch_daemon(
 "#,
         launchd_xml_escape(&home.display().to_string()),
         launchd_xml_escape(path),
-        launchd_xml_escape(&working_dir.join("toolchains/flutter").display().to_string()),
         oore_runner::RUNNER_SERVICE_ACK_PATH_ENV,
         launchd_xml_escape(&acknowledgement.display().to_string()),
         launchd_xml_escape(&working_dir.display().to_string()),
@@ -9866,7 +9869,6 @@ fn copy_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Result
         "bin/oore",
         "bin/oored",
         "bin/oore-web",
-        "bin/fvm",
         "VERSION",
         "WEB_VERSION",
         "CHANNEL",
@@ -9889,10 +9891,6 @@ fn copy_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Result
     let web = install_root.join("web-dist");
     if web.is_dir() {
         copy_dir_recursive(&web, &snapshot.join("web-dist"))?;
-    }
-    let fvm = install_root.join("libexec/fvm");
-    if fvm.is_dir() {
-        copy_dir_recursive(&fvm, &snapshot.join("libexec/fvm"))?;
     }
     Ok(())
 }
@@ -10024,7 +10022,6 @@ fn restore_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Res
         "bin/oore",
         "bin/oored",
         "bin/oore-web",
-        "bin/fvm",
         "VERSION",
         "WEB_VERSION",
         "CHANNEL",
@@ -10052,13 +10049,6 @@ fn restore_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Res
     } else if destination.exists() {
         fs::remove_dir_all(destination)?;
     }
-    let source = snapshot.join("libexec/fvm");
-    let destination = install_root.join("libexec/fvm");
-    if source.is_dir() {
-        atomic_replace_directory(&source, &destination)?;
-    } else if destination.exists() {
-        fs::remove_dir_all(destination)?;
-    }
     Ok(())
 }
 
@@ -10073,13 +10063,11 @@ fn install_staged_release(
         ("bin/oore", true),
         ("bin/oored", true),
         ("bin/oore-web", true),
-        ("bin/fvm", true),
         ("VERSION", false),
     ] {
         let selected = match relative {
             "bin/oored" => payload.is_none_or(|payload| payload.control_plane),
             "bin/oore-web" => payload.is_none_or(|payload| payload.web),
-            "bin/fvm" => payload.is_none_or(|payload| payload.runner),
             _ => true,
         };
         if !selected {
@@ -10099,10 +10087,6 @@ fn install_staged_release(
         atomic_replace_directory(&web, &install_root.join("web-dist"))?;
         fs::write(install_root.join("WEB_CHANNEL"), channel.as_str())?;
         fs::write(install_root.join("WEB_GITHUB_REPO"), repo)?;
-    }
-    let fvm = stage.join("libexec/fvm");
-    if payload.is_none_or(|payload| payload.runner) && fvm.is_dir() {
-        atomic_replace_directory(&fvm, &install_root.join("libexec/fvm"))?;
     }
     let license = stage.join("LICENSE");
     if license.is_file() {
@@ -11455,7 +11439,6 @@ fn load_backend_update_manifest(
 #[derive(Clone, Copy)]
 struct UpdatePayloadSelection {
     control_plane: bool,
-    runner: bool,
     web: bool,
 }
 
@@ -11472,6 +11455,7 @@ fn prepare_profile_update_plan(
     channel: ReleaseChannel,
     repository: &str,
     include_web: bool,
+    switch_channel: bool,
 ) -> anyhow::Result<Option<ProfileUpdatePlan>> {
     let Some(manifest) = manifest else {
         return Ok(None);
@@ -11487,10 +11471,12 @@ fn prepare_profile_update_plan(
         installed_version,
         prepared.version
     );
-    let same_release_stream =
-        manifest.release.channel == channel.as_str() && manifest.release.repository == repository;
-    let prerelease_to_stable = manifest.release.repository == repository
-        && matches!(manifest.release.channel.as_str(), "alpha" | "beta")
+    anyhow::ensure!(
+        manifest.release.repository == repository,
+        "profile updates must stay on the recorded {} repository",
+        manifest.release.repository
+    );
+    let prerelease_to_stable = matches!(manifest.release.channel.as_str(), "alpha" | "beta")
         && channel == ReleaseChannel::Stable
         && !installed_version.pre.is_empty()
         && prepared.version.pre.is_empty()
@@ -11498,10 +11484,10 @@ fn prepare_profile_update_plan(
         && installed_version.minor == prepared.version.minor
         && installed_version.patch == prepared.version.patch;
     anyhow::ensure!(
-        same_release_stream || prerelease_to_stable,
-        "profile updates must stay on the recorded {} channel and {} repository, except for a same-version-line alpha or beta promotion to stable",
+        manifest.release.channel == channel.as_str() || prerelease_to_stable || switch_channel,
+        "profile updates stay on the recorded {} channel; pass --switch-channel to move this installation to the {} channel",
         manifest.release.channel,
-        manifest.release.repository
+        channel.as_str()
     );
     let release = install_manifest::InstallRelease::new(
         prepared.version.to_string(),
@@ -11512,7 +11498,6 @@ fn prepare_profile_update_plan(
     )?;
     let payload = UpdatePayloadSelection {
         control_plane: true,
-        runner: manifest.profile == install_manifest::InstallProfile::Complete,
         web: include_web && manifest.profile == install_manifest::InstallProfile::Complete,
     };
     Ok(Some(ProfileUpdatePlan {
@@ -11591,8 +11576,14 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
         return Ok(());
     }
     anyhow::ensure!(!args.check, "deferred update cannot use --check");
-    let profile_update =
-        prepare_profile_update_plan(profile_manifest, &prepared, channel, &repo, false)?;
+    let profile_update = prepare_profile_update_plan(
+        profile_manifest,
+        &prepared,
+        channel,
+        &repo,
+        false,
+        args.switch_channel,
+    )?;
 
     let managed_runner_service = managed_runner_update_service(&install_root)?;
     if profile_update.as_ref().is_some_and(|profile| {
@@ -11825,6 +11816,7 @@ async fn supervise_update_request(install_root: &Path, request_file: &Path) -> a
         check: false,
         force: false,
         channel: None,
+        switch_channel: false,
         repo: None,
         staged_release: None,
         ensure_managed_runner: false,
@@ -11919,12 +11911,11 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         .or_else(|| read_installed_repo(&install_root))
         .unwrap_or_else(|| DEFAULT_GITHUB_REPO.to_string());
 
-    let channel = if let Some(raw) = &args.channel {
-        ReleaseChannel::parse(raw)?
-    } else if let Some(ch) = read_installed_channel(&install_root) {
-        ch
-    } else {
-        infer_channel_from_version(&current)
+    let installed_channel = read_installed_channel(&install_root)
+        .unwrap_or_else(|| infer_channel_from_version(&current));
+    let channel = match &args.channel {
+        Some(raw) => ReleaseChannel::parse(raw)?,
+        None => installed_channel,
     };
 
     let client = http_client()?;
@@ -11941,6 +11932,20 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     println!("GitHub repo:     {repo}");
     println!("Current version: {current}");
     println!("Latest version:  {latest} ({})", prepared.label);
+    if channel != installed_channel {
+        anyhow::ensure!(
+            current <= *latest,
+            "cannot switch from the {} channel to the {} channel yet: its latest release {latest} is older than the installed {current}, and updates never downgrade; wait for a newer {} release",
+            installed_channel.as_str(),
+            channel.as_str(),
+            channel.as_str()
+        );
+        println!(
+            "Switching channel: {} -> {}",
+            installed_channel.as_str(),
+            channel.as_str()
+        );
+    }
 
     if current >= *latest && !args.force {
         println!("Already up to date.");
@@ -11955,8 +11960,14 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     if args.check {
         return Ok(());
     }
-    let profile_update =
-        prepare_profile_update_plan(profile_manifest, &prepared, channel, &repo, true)?;
+    let profile_update = prepare_profile_update_plan(
+        profile_manifest,
+        &prepared,
+        channel,
+        &repo,
+        true,
+        args.switch_channel,
+    )?;
     fs::create_dir_all(&install_root)
         .with_context(|| format!("failed to create install root {}", install_root.display()))?;
     let update_stage = tempfile::Builder::new()
@@ -12680,5 +12691,130 @@ mod tests {
             "unknown setup state: invalid"
         );
         pool.close().await;
+    }
+
+    fn profile_manifest_on(version: &str, channel: &str) -> install_manifest::InstallManifest {
+        let release = install_manifest::InstallRelease::new(
+            version.to_string(),
+            channel.to_string(),
+            DEFAULT_GITHUB_REPO.to_string(),
+            format!("oore_{version}_darwin_arm64.tar.gz"),
+            "a".repeat(64),
+        )
+        .unwrap();
+        install_manifest::InstallManifest::new(
+            install_manifest::InstallProfile::ControlPlane,
+            release,
+            Vec::new(),
+        )
+        .unwrap()
+    }
+
+    fn signed_update_release(version: &str) -> PreparedUpdateRelease {
+        PreparedUpdateRelease {
+            path: None,
+            version: semver::Version::parse(version).unwrap(),
+            package_version: None,
+            label: format!("v{version}"),
+            provenance: Some(PreparedUpdateProvenance {
+                archive: format!("oore_{version}_darwin_arm64.tar.gz"),
+                archive_sha256: "b".repeat(64),
+                manifest_sha256: "c".repeat(64),
+            }),
+            _temporary: None,
+        }
+    }
+
+    fn plan_profile_update(
+        installed: (&str, &str),
+        target: (&str, ReleaseChannel),
+        switch_channel: bool,
+    ) -> anyhow::Result<ProfileUpdatePlan> {
+        prepare_profile_update_plan(
+            Some(profile_manifest_on(installed.0, installed.1)),
+            &signed_update_release(target.0),
+            target.1,
+            DEFAULT_GITHUB_REPO,
+            false,
+            switch_channel,
+        )
+        .map(Option::unwrap)
+    }
+
+    #[test]
+    fn profile_updates_switch_channel_only_when_asked() {
+        let error = plan_profile_update(
+            ("0.1.47", "stable"),
+            ("0.1.48-alpha.1", ReleaseChannel::Alpha),
+            false,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "profile updates stay on the recorded stable channel; pass --switch-channel to move this installation to the alpha channel"
+        );
+
+        let plan = plan_profile_update(
+            ("0.1.47", "stable"),
+            ("0.1.48-alpha.1", ReleaseChannel::Alpha),
+            true,
+        )
+        .unwrap();
+        assert_eq!(plan.release.version, "0.1.48-alpha.1");
+        assert_eq!(plan.release.channel, "alpha");
+
+        let plan = plan_profile_update(
+            ("0.1.48-alpha.2", "alpha"),
+            ("0.1.48-beta.1", ReleaseChannel::Beta),
+            true,
+        )
+        .unwrap();
+        assert_eq!(plan.release.channel, "beta");
+    }
+
+    #[test]
+    fn profile_channel_switches_never_downgrade() {
+        let error = plan_profile_update(
+            ("0.1.47", "stable"),
+            ("0.1.47-alpha.3", ReleaseChannel::Alpha),
+            true,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "profile updates cannot downgrade from 0.1.47 to 0.1.47-alpha.3"
+        );
+        let error = plan_profile_update(
+            ("0.1.48-alpha.1", "alpha"),
+            ("0.1.47", ReleaseChannel::Stable),
+            true,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "profile updates cannot downgrade from 0.1.48-alpha.1 to 0.1.47"
+        );
+    }
+
+    #[test]
+    fn profile_updates_promote_a_prerelease_to_its_stable_release_without_a_switch() {
+        let plan = plan_profile_update(
+            ("0.1.48-alpha.3", "alpha"),
+            ("0.1.48", ReleaseChannel::Stable),
+            false,
+        )
+        .unwrap();
+        assert_eq!(plan.release.channel, "stable");
+        assert!(
+            plan_profile_update(
+                ("0.1.48-alpha.3", "alpha"),
+                ("0.1.49", ReleaseChannel::Stable),
+                false,
+            )
+            .is_err()
+        );
     }
 }

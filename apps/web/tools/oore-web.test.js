@@ -6,11 +6,15 @@ import { gunzipSync } from 'node:zlib'
 import { test } from 'bun:test'
 import {
   evaluateSystemdWebUnit,
+  isEventStreamRequest,
   ownerCheckFailureReason,
   parseSavedWebUpdateState,
   parseSystemctlShow,
+  parseUpdateArgs,
+  parseVersion,
   restoreWebUpdateState,
   spaFileResponse,
+  validateManagedUpdateTransition,
 } from './oore-web.js'
 
 test('static assets negotiate gzip without changing bytes, type or cache policy', async () => {
@@ -163,5 +167,80 @@ test('the owner check explains identity headers stripped behind a trusted proxy'
   assert.match(
     ownerCheckFailureReason(request(identity), 500, config),
     /HTTP 500/,
+  )
+})
+
+test('SSE requests are recognised so they skip the idle timeout', () => {
+  assert.equal(isEventStreamRequest('/v1/events'), true)
+  assert.equal(isEventStreamRequest('/v1/builds/b1/logs/stream'), true)
+  assert.equal(isEventStreamRequest('/v1/projects', 'text/event-stream'), true)
+  assert.equal(isEventStreamRequest('/v1/builds/b1/logs'), false)
+  assert.equal(isEventStreamRequest('/v1/builds', 'application/json'), false)
+})
+
+const REPO = 'oore-ci/oore.build'
+
+function installedFrontend(version, channel) {
+  return { version, channel, github_repo: REPO }
+}
+
+test('frontend updates switch channel only when asked', () => {
+  const installed = installedFrontend('0.1.47', 'stable')
+  const target = parseVersion('0.1.48-alpha.1')
+  assert.throws(
+    () => validateManagedUpdateTransition(installed, target, 'alpha', REPO),
+    /stay on the recorded stable channel; pass --switch-channel to move this frontend to the alpha channel/,
+  )
+  validateManagedUpdateTransition(installed, target, 'alpha', REPO, true)
+})
+
+test('frontend channel switches never downgrade', () => {
+  assert.throws(
+    () =>
+      validateManagedUpdateTransition(
+        installedFrontend('0.1.47', 'stable'),
+        parseVersion('0.1.47-alpha.3'),
+        'alpha',
+        REPO,
+        true,
+      ),
+    /cannot downgrade from 0.1.47 to 0.1.47-alpha.3/,
+  )
+  assert.throws(
+    () =>
+      validateManagedUpdateTransition(
+        installedFrontend('0.1.48-alpha.1', 'alpha'),
+        parseVersion('0.1.47'),
+        'stable',
+        REPO,
+        true,
+      ),
+    /cannot downgrade/,
+  )
+})
+
+test('frontend updates promote a prerelease to its stable release without a switch', () => {
+  validateManagedUpdateTransition(
+    installedFrontend('0.1.48-alpha.3', 'alpha'),
+    parseVersion('0.1.48'),
+    'stable',
+    REPO,
+  )
+})
+
+test('update arguments only switch channel with an explicit channel', () => {
+  assert.deepEqual(
+    parseUpdateArgs(['--channel', 'alpha', '--switch-channel']),
+    {
+      channel: 'alpha',
+      repo: process.env.OORE_GITHUB_REPO || '',
+      switchChannel: true,
+      check: false,
+      force: false,
+    },
+  )
+  assert.throws(
+    () => parseUpdateArgs(['--switch-channel']),
+    /--switch-channel requires --channel/,
   )
 })

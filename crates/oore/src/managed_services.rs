@@ -1716,12 +1716,10 @@ fn validate_owned_document(
     match service {
         InstallService::Runner => {
             anyhow::ensure!(
-                environment.len() == 4
+                environment.len() == 3
                     && environment.get("PATH").and_then(Value::as_str) == Some(SERVICE_PATH)
                     && environment.get("HOME").and_then(Value::as_str)
                         == Some(owner.home.to_string_lossy().as_ref())
-                    && environment.get("FVM_CACHE_PATH").and_then(Value::as_str)
-                        == Some(root.join("toolchains/flutter").to_string_lossy().as_ref())
                     && environment
                         .get(oore_runner::RUNNER_SERVICE_ACK_PATH_ENV)
                         .and_then(Value::as_str)

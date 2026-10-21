@@ -109,6 +109,21 @@ sudo systemctl restart oore-web
 
 `oore-web update` warns when it cannot find a suitable `oore-web.service` unit.
 
+## Change the release channel
+
+`oore-web update` stays on the channel the Web node was installed from. To move the Web node to another channel, for example to follow a control plane that moved from stable to alpha, name the channel and confirm the switch:
+
+```bash
+sudo -u oore-web OORE_INSTALL_ROOT=/opt/oore-web /opt/oore-web/bin/oore-web update --channel alpha --switch-channel
+sudo systemctl restart oore-web
+```
+
+`oore-web` records the new release and channel, so later updates follow it. **Update Oore** in the web UI also moves the frontend to the backend's channel.
+
+A switch never downgrades. If the target channel's latest release is older than the installed version, the update stops without changes.
+
+Run `oore-web status` from step 3 and confirm that the frontend reports the new version and channel.
+
 ## Troubleshooting
 
 If **Update frontend** stays disabled, the Runtime section shows the reason. Common reasons are a unit with another name, a unit without a restart policy, a user unit without lingering, and an `oore-web` process started from a shell instead of by systemd.
