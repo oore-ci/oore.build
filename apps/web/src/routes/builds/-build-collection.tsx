@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/status-badge'
 import { relativeTime } from '@/lib/format-utils'
 import {
+  getStatusPresentation,
   getRunnerPolicyBlockLabel,
   TRIGGER_TYPE_LABELS,
 } from '@/lib/status-variants'
@@ -75,6 +76,14 @@ const columns: Array<DataTableColumnDef<Build>> = [
     cell: ({ row }) => (
       <div>
         <StatusBadge kind="build" value={row.original.status} />
+        {row.original.approval?.state === 'pending' ? (
+          <div className="text-warning">
+            {
+              getStatusPresentation('approval', row.original.approval.state)
+                .label
+            }
+          </div>
+        ) : null}
         {row.original.runner_policy_block_reason ? (
           <div className="text-warning">
             {getRunnerPolicyBlockLabel(row.original.runner_policy_block_reason)}

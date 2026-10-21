@@ -7,6 +7,8 @@ import { requireDemoProjectPermission } from '../authorization'
 import { demoState } from '../state'
 import type { CreateBuildRequest } from '@oore/client/models'
 
+const approvalDecisionSchema = z.object({ reason: z.string().nullish() })
+
 const createBuildRequestSchema = z.toZod<CreateBuildRequest>()(
   z.object({
     pipeline_id: z.string(),
@@ -290,6 +292,65 @@ export const buildHandlers = [
     })
     return HttpResponse.json({ build: withBuildContext(build) })
   }),
+
+  ...(['approve', 'reject'] as const).map((decision) =>
+    demoApi[decision === 'approve' ? 'approveBuild' : 'rejectBuild'](
+      async ({ params, request }) => {
+        await delay(300)
+        const build = demoState.builds.find((b) => b.id === params.build_id)
+        if (!build) {
+          return HttpResponse.json(
+            { error: 'Build not found', code: 'not_found' },
+            { status: 404 },
+          )
+        }
+        const forbidden = requireDemoProjectPermission(
+          request,
+          build.project_id,
+          'builds:approve',
+        )
+        if (forbidden) return forbidden
+        if (build.status !== 'queued' || build.approval?.state !== 'pending') {
+          return HttpResponse.json(
+            {
+              error: 'This build is not waiting for approval',
+              code: 'not_awaiting_approval',
+            },
+            { status: 409 },
+          )
+        }
+        const persona = getDemoPersonaFromRequest(request)
+        const body = approvalDecisionSchema.parse(
+          await request.json().catch(() => ({})),
+        )
+        const reason = body.reason?.trim() || undefined
+        const approved = decision === 'approve'
+        build.approval = {
+          ...build.approval,
+          state: approved ? 'approved' : 'rejected',
+          decided_by: persona.email,
+          decided_at: ago(0),
+          reason,
+        }
+        build.updated_at = ago(0)
+        if (!approved) {
+          build.status = 'canceled'
+          build.finished_at = ago(0)
+        }
+        const verb = approved ? 'approved' : 'rejected'
+        ;(demoState.buildEvents[build.id] ??= []).push({
+          id: `evt-${build.id}-${verb}-${Date.now()}`,
+          build_id: build.id,
+          from_status: 'queued',
+          to_status: build.status,
+          actor: persona.email,
+          reason: `${verb} by ${persona.email}${reason ? `: ${reason}` : ''}`,
+          created_at: build.updated_at,
+        })
+        return HttpResponse.json({ build: withBuildContext(build) })
+      },
+    ),
+  ),
 
   demoApi.rerunBuild(async ({ params, request }) => {
     await delay(300)

@@ -1,5 +1,6 @@
 import type { BadgeVariant } from '@/components/ui/badge'
 import type {
+  BuildApprovalState,
   BuildStatus,
   IntegrationStatus,
   NotificationDeliveryStatus,
@@ -80,6 +81,7 @@ export function getRunnerStatusVariant(status: string): BadgeVariant {
 
 /** Which product enum a `StatusBadge` is rendering. */
 export type StatusKind =
+  | 'approval'
   | 'build'
   | 'delivery'
   | 'enabled'
@@ -92,6 +94,18 @@ export interface StatusPresentation {
   label: string
   variant: BadgeVariant
 }
+
+const APPROVAL_STATE_LABEL = {
+  pending: 'Awaiting approval',
+  approved: 'Approved',
+  rejected: 'Rejected',
+} satisfies Record<BuildApprovalState, string>
+
+const APPROVAL_STATE_VARIANT = {
+  pending: 'outline',
+  approved: 'success',
+  rejected: 'destructive',
+} satisfies Record<BuildApprovalState, BadgeVariant>
 
 const INTEGRATION_STATUS_LABEL = {
   active: 'Active',
@@ -170,6 +184,11 @@ export function getStatusPresentation(
   value: string,
 ): StatusPresentation {
   switch (kind) {
+    case 'approval':
+      return {
+        label: lookupLabel(APPROVAL_STATE_LABEL, value),
+        variant: lookupVariant(APPROVAL_STATE_VARIANT, value),
+      }
     case 'build':
       return {
         label: lookupLabel(BUILD_STATUS_FILTER_OPTIONS, value),

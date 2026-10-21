@@ -3,6 +3,8 @@ import type { Build, BuildEvent } from '@oore/client/models'
 export function buildStateDescription(build: Build, events: Array<BuildEvent>) {
   if (build.runner_policy_block_reason || build.status === 'succeeded')
     return null
+  if (build.approval?.state === 'pending')
+    return 'Waiting for a project maintainer to approve this build. No runner will pick it up until then.'
 
   const reason = [...events]
     .reverse()

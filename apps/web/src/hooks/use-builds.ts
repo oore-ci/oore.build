@@ -17,8 +17,10 @@ import type {
   ListBuildsResponse,
 } from '@oore/client/models'
 import {
+  approveBuild,
   cancelBuild,
   createBuild,
+  rejectBuild,
   rerunBuild,
   createArtifactInstallLink,
   generateDownloadLink as getArtifactDownloadLink,
@@ -230,6 +232,35 @@ export function useCancelBuild() {
       return cancelBuild({ client, path: { build_id: buildId } })
     },
     onSuccess: (_data, buildId) => {
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(instanceId, listBuildsQueryKey({ client })),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(
+          instanceId,
+          getBuildQueryKey({ client, path: { build_id: buildId } }),
+        ),
+      })
+    },
+  })
+}
+
+export function useBuildApprovalDecision(decision: 'approve' | 'reject') {
+  const queryClient = useQueryClient()
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useMutation({
+    mutationFn: ({ buildId, reason }: { buildId: string; reason?: string }) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      const decide = decision === 'approve' ? approveBuild : rejectBuild
+      return decide({
+        client,
+        path: { build_id: buildId },
+        body: { reason: reason?.trim() || undefined },
+      })
+    },
+    onSuccess: (_data, { buildId }) => {
       void queryClient.invalidateQueries({
         queryKey: scopeOoreQueryKey(instanceId, listBuildsQueryKey({ client })),
       })

@@ -19,6 +19,7 @@ import {
   isTerminalStatus,
   useArtifacts,
   useBuild,
+  useBuildApprovalDecision,
   useBuildLogs,
   useCancelBuild,
   useRerunBuild,
@@ -49,6 +50,8 @@ import { useTime } from '@/hooks/use-time'
 
 const loadCancelBuildDialog = () => import('./cancel-build-dialog')
 const CancelBuildDialog = lazy(loadCancelBuildDialog)
+const loadRejectBuildDialog = () => import('./reject-build-dialog')
+const RejectBuildDialog = lazy(loadRejectBuildDialog)
 
 export function BuildDetailPage({
   buildId,
@@ -87,6 +90,7 @@ export function BuildDetailPage({
     canTriggerBuildGlobally && hasProjectPermission(projectRole, 'builds:write')
   const canCancelBuild =
     canCancelBuildGlobally && hasProjectPermission(projectRole, 'builds:cancel')
+  const canApproveBuild = hasProjectPermission(projectRole, 'builds:approve')
   const canManageShareLinks =
     canManageShareLinksGlobally &&
     hasProjectPermission(projectRole, 'artifacts:write')
@@ -99,6 +103,9 @@ export function BuildDetailPage({
   const { refetch: refetchArtifacts } = artifactsQuery
   const cancelMutation = useCancelBuild()
   const [cancelOpen, setCancelOpen] = useState(false)
+  const approveMutation = useBuildApprovalDecision('approve')
+  const rejectMutation = useBuildApprovalDecision('reject')
+  const [rejectOpen, setRejectOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<string | number>(
     initialTab ?? 'logs',
   )
@@ -133,6 +140,29 @@ export function BuildDetailPage({
   const mergedLogs: Array<BuildLogChunk> = useMemo(() => {
     return mergeBuildLogSnapshots(streamLogs, fullLogsData?.logs ?? [])
   }, [streamLogs, fullLogsData?.logs])
+
+  function handleApprove() {
+    approveMutation.mutate(
+      { buildId },
+      {
+        onSuccess: () => toast.success('Build approved'),
+        onError: (err) => toast.error(`Failed to approve: ${err.message}`),
+      },
+    )
+  }
+
+  function handleReject(reason: string) {
+    rejectMutation.mutate(
+      { buildId, reason },
+      {
+        onSuccess: () => {
+          toast.success('Build rejected')
+          setRejectOpen(false)
+        },
+        onError: (err) => toast.error(`Failed to reject: ${err.message}`),
+      },
+    )
+  }
 
   function handleCancel() {
     cancelMutation.mutate(buildId, {
@@ -197,7 +227,10 @@ export function BuildDetailPage({
   if (!data) return null
 
   const { build, events } = data
-  const canCancel = !isTerminal && canCancelBuild
+  const awaitingApproval = build.approval?.state === 'pending'
+  const canDecideApproval = awaitingApproval && canApproveBuild
+  // A maintainer rejects rather than cancels a build waiting for approval.
+  const canCancel = !isTerminal && canCancelBuild && !canDecideApproval
   const duration = build.started_at
     ? (build.finished_at ?? Math.floor(time / 1000)) - build.started_at
     : null
@@ -225,6 +258,9 @@ export function BuildDetailPage({
             <Badge variant="outline">
               {TRIGGER_TYPE_LABELS[build.trigger_type]}
             </Badge>
+            {build.approval ? (
+              <StatusBadge kind="approval" value={build.approval.state} />
+            ) : null}
             <span aria-hidden className="h-3 w-px bg-border" />
             <BuildSummary build={build} duration={duration} />
           </>
@@ -256,6 +292,29 @@ export function BuildDetailPage({
                 <HugeiconsIcon icon={Refresh01Icon} size={14} />
                 {rerunMutation.isPending ? 'Re-running...' : 'Re-run'}
               </Button>
+            ) : null}
+            {canDecideApproval ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setRejectOpen(true)}
+                  disabled={
+                    approveMutation.isPending || rejectMutation.isPending
+                  }
+                >
+                  Reject
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleApprove}
+                  disabled={
+                    approveMutation.isPending || rejectMutation.isPending
+                  }
+                >
+                  {approveMutation.isPending ? 'Approving...' : 'Approve'}
+                </Button>
+              </>
             ) : null}
             {canCancel ? (
               <Button
@@ -442,6 +501,23 @@ export function BuildDetailPage({
         </div>
       </Tabs>
 
+      {rejectOpen ? (
+        <Suspense
+          fallback={
+            <span className="sr-only" role="status">
+              Loading reject confirmation
+            </span>
+          }
+        >
+          <RejectBuildDialog
+            buildNumber={build.build_number}
+            isPending={rejectMutation.isPending}
+            onReject={handleReject}
+            onOpenChange={setRejectOpen}
+            open
+          />
+        </Suspense>
+      ) : null}
       {cancelOpen ? (
         <Suspense
           fallback={

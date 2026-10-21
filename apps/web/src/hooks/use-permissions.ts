@@ -68,6 +68,7 @@ const RBAC_MATRIX = {
 
 const PROJECT_RBAC_MATRIX = {
   maintainer: new Set<PermissionTemplate>([
+    'builds:approve',
     'projects:write',
     'projects:delete',
     'pipelines:write',
