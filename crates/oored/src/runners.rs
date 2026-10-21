@@ -7,8 +7,10 @@ use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
     ApiError, BuildDetailResponse, BuildStatus, ClaimJobRequest, ClaimJobResponse, ClaimedJob,
     JobStatusResponse, ListRunnersResponse, RUNNER_PROTOCOL_VERSION, RegisterRunnerRequest,
-    RegisterRunnerResponse, Runner, RunnerHeartbeatRequest, RunnerHeartbeatResponse, RunnerStatus,
-    UpdateJobStatusRequest, UpdateRunnerRequest, UpdateRunnerResponse,
+    RegisterRunnerResponse, Runner, RunnerDiskPressure, RunnerHeartbeatRequest,
+    RunnerHeartbeatResponse, RunnerMetrics, RunnerStatus, UpdateJobStatusRequest,
+    UpdateRunnerRequest, UpdateRunnerResponse, effective_runner_labels, normalize_runner_labels,
+    runner_disk_pressure,
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -18,6 +20,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::builds::{fetch_build_events, transition_build};
 use crate::extractors::AuthUser;
+use crate::incidents::{self, IncidentInput};
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::token::{generate_token, hash_token};
@@ -153,15 +156,28 @@ impl FromRequestParts<Arc<AppState>> for RunnerAuth {
 
 // ── Row conversion ──────────────────────────────────────────────
 
+fn json_labels(raw: &str) -> Vec<String> {
+    serde_json::from_str(raw).unwrap_or_default()
+}
+
 fn row_to_runner(row: &sqlx::sqlite::SqliteRow) -> Runner {
     let caps_str: String = row.get("capabilities");
     let capabilities: serde_json::Value = serde_json::from_str(&caps_str).unwrap_or_default();
+    let metrics: Option<RunnerMetrics> = row
+        .get::<Option<String>, _>("metrics")
+        .and_then(|raw| serde_json::from_str(&raw).ok());
 
     Runner {
         id: row.get("id"),
         name: row.get("name"),
         status: row.get("status"),
         capabilities,
+        labels: json_labels(&row.get::<String, _>("labels")),
+        custom_labels: json_labels(&row.get::<String, _>("custom_labels")),
+        disk_pressure: metrics
+            .as_ref()
+            .and_then(|metrics| runner_disk_pressure(metrics.disk_free_bytes)),
+        metrics,
         last_heartbeat_at: row.get("last_heartbeat_at"),
         registered_by: row.get("registered_by"),
         cache_purge_requested_at: row.get("cache_purge_requested_at"),
@@ -190,6 +206,10 @@ pub async fn register_runner(
         ));
     }
 
+    let custom_labels = normalize_runner_labels(&req.labels)
+        .map_err(|error| api_err(StatusCode::BAD_REQUEST, "invalid_labels", error))?;
+    let labels = effective_runner_labels(&req.capabilities, &custom_labels);
+
     let token = generate_token();
     let token_hash = hash_token(&token);
     let runner_id = Uuid::new_v4().to_string();
@@ -199,13 +219,15 @@ pub async fn register_runner(
     let pool = &state.db;
 
     sqlx::query(
-        "INSERT INTO runners (id, name, token_hash, status, capabilities, registered_by, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, 'offline', ?4, ?5, ?6, ?6)",
+        "INSERT INTO runners (id, name, token_hash, status, capabilities, custom_labels, labels, registered_by, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, 'offline', ?4, ?5, ?6, ?7, ?8, ?8)",
     )
     .bind(&runner_id)
     .bind(name)
     .bind(&token_hash)
     .bind(&caps_str)
+    .bind(serde_json::to_string(&custom_labels).unwrap_or_else(|_| "[]".to_string()))
+    .bind(serde_json::to_string(&labels).unwrap_or_else(|_| "[]".to_string()))
     .bind(&auth.0.user_id)
     .bind(now)
     .execute(pool)
@@ -238,6 +260,10 @@ pub async fn register_runner(
         name: name.to_string(),
         status: "offline".to_string(),
         capabilities: req.capabilities,
+        labels,
+        custom_labels,
+        metrics: None,
+        disk_pressure: None,
         last_heartbeat_at: None,
         registered_by: Some(auth.0.user_id),
         cache_purge_requested_at: None,
@@ -278,33 +304,62 @@ pub async fn runner_heartbeat(
 
     let pool = &state.db;
 
+    let previous = sqlx::query("SELECT name, custom_labels, metrics FROM runners WHERE id = ?1")
+        .bind(&runner_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, runner_id = %runner_id, "failed to load runner for heartbeat");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to update runner",
+            )
+        })?
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Runner not found"))?;
+    let runner_name: String = previous.get("name");
+    let previous_pressure = previous
+        .get::<Option<String>, _>("metrics")
+        .and_then(|raw| serde_json::from_str::<RunnerMetrics>(&raw).ok())
+        .and_then(|metrics| runner_disk_pressure(metrics.disk_free_bytes));
+
+    let mut update = QueryBuilder::<Sqlite>::new("UPDATE runners SET status = ");
+    update
+        .push_bind(&req.status)
+        .push(", last_heartbeat_at = ")
+        .push_bind(now)
+        .push(", updated_at = ")
+        .push_bind(now);
     // Only overwrite capabilities when the runner sends a non-empty object
-    let result = if has_capabilities {
-        let caps_str = serde_json::to_string(&req.capabilities).unwrap_or_else(|_| "{}".to_string());
-        sqlx::query(
-            "UPDATE runners SET status = ?1, capabilities = ?2, last_heartbeat_at = ?3, updated_at = ?3 \
-             WHERE id = ?4",
-        )
-        .bind(&req.status)
-        .bind(&caps_str)
-        .bind(now)
-        .bind(&runner_id)
-        .execute(pool)
-        .await
-    } else {
-        sqlx::query(
-            "UPDATE runners SET status = ?1, last_heartbeat_at = ?2, updated_at = ?2 \
-             WHERE id = ?3",
-        )
-        .bind(&req.status)
-        .bind(now)
-        .bind(&runner_id)
-        .execute(pool)
-        .await
+    if has_capabilities {
+        let custom_labels = json_labels(&previous.get::<String, _>("custom_labels"));
+        let labels = effective_runner_labels(&req.capabilities, &custom_labels);
+        update
+            .push(", capabilities = ")
+            .push_bind(
+                serde_json::to_string(&req.capabilities).unwrap_or_else(|_| "{}".to_string()),
+            )
+            .push(", labels = ")
+            .push_bind(serde_json::to_string(&labels).unwrap_or_else(|_| "[]".to_string()));
     }
-    .map_err(|e| {
+    let metrics = req.metrics.map(|metrics| RunnerMetrics {
+        collected_at: Some(now),
+        ..metrics
+    });
+    if let Some(metrics) = &metrics {
+        update
+            .push(", metrics = ")
+            .push_bind(serde_json::to_string(metrics).unwrap_or_default());
+    }
+    update.push(" WHERE id = ").push_bind(&runner_id);
+
+    let result = update.build().execute(pool).await.map_err(|e| {
         error!(error = %e, runner_id = %runner_id, "failed to update runner heartbeat");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to update runner")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to update runner",
+        )
     })?;
 
     if result.rows_affected() == 0 {
@@ -313,6 +368,16 @@ pub async fn runner_heartbeat(
             "not_found",
             "Runner not found",
         ));
+    }
+
+    if let Some(metrics) = &metrics {
+        let pressure = runner_disk_pressure(metrics.disk_free_bytes);
+        if pressure != previous_pressure
+            && let Err(error) =
+                record_disk_pressure(pool, &runner_id, &runner_name, metrics, pressure).await
+        {
+            warn!(%error, runner_id = %runner_id, "failed to record runner disk pressure");
+        }
     }
 
     // A runner reports the purge request it last completed; clear it unless a
@@ -402,6 +467,48 @@ pub async fn purge_runner_caches(
     }))
 }
 
+/// Open, escalate or resolve the runner's low-disk incident. Called only when
+/// the pressure level changes, so steady heartbeats do not bump the incident.
+async fn record_disk_pressure(
+    pool: &sqlx::SqlitePool,
+    runner_id: &str,
+    runner_name: &str,
+    metrics: &RunnerMetrics,
+    pressure: Option<RunnerDiskPressure>,
+) -> anyhow::Result<()> {
+    let deduplication_key = format!("runner-disk:{runner_id}");
+    let Some(pressure) = pressure else {
+        return incidents::resolve_incident(pool, &deduplication_key).await;
+    };
+    let severity = match pressure {
+        RunnerDiskPressure::Warning => "warning",
+        RunnerDiskPressure::Critical => "critical",
+    };
+    warn!(
+        runner_id,
+        disk_free_bytes = metrics.disk_free_bytes,
+        severity,
+        "runner disk space is low"
+    );
+    incidents::open_incident(
+        pool,
+        IncidentInput {
+            deduplication_key: &deduplication_key,
+            severity,
+            reason: "low_disk",
+            resource_kind: "runner",
+            resource_id: runner_id,
+            resource_name: runner_name,
+            repair_action: "Free disk space",
+            repair_url: "/settings/runners",
+            audience_resource: "runners",
+            audience_action: "write",
+        },
+    )
+    .await?;
+    Ok(())
+}
+
 /// Atomically linearize a direct-runner claim against the operational pause.
 ///
 /// The initial queue lookup chooses the oldest eligible build. Rechecking the
@@ -425,7 +532,13 @@ async fn schedule_eligible_direct_runner_build(
     let result = sqlx::query(
         "UPDATE builds SET status = 'scheduled', updated_at = ?1 \
          WHERE id = ?2 AND status = 'queued' \
-           AND EXISTS (SELECT 1 FROM runners runner WHERE runner.id = ?3) \
+           AND EXISTS ( \
+             SELECT 1 FROM runners runner WHERE runner.id = ?3 \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM json_each(builds.config_snapshot, '$.runs_on') required \
+                 WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
+               ) \
+           ) \
            AND EXISTS ( \
              SELECT 1 FROM projects p \
              JOIN integration_repositories r ON r.id = p.repository_id \
@@ -583,6 +696,44 @@ async fn fail_credential_blocked_builds(
     Ok(())
 }
 
+/// The oldest queued build this runner may take.
+///
+/// A missing repository remains ineligible. Missing preferences means the
+/// ordinary running state. Filtering before ordering prevents blocked work,
+/// and work that needs labels this runner lacks, from starving later eligible
+/// builds.
+async fn next_eligible_build(
+    pool: &sqlx::SqlitePool,
+    runner_id: &str,
+) -> sqlx::Result<Option<sqlx::sqlite::SqliteRow>> {
+    sqlx::query(
+        "SELECT b.* FROM builds b \
+         JOIN projects p ON p.id = b.project_id \
+         JOIN integration_repositories r ON r.id = p.repository_id \
+         JOIN integration_installations inst ON inst.id = r.installation_id \
+         JOIN runners runner ON runner.id = ?1 \
+         LEFT JOIN instance_preferences pref ON pref.id = 1 \
+         WHERE b.status = 'queued' \
+           AND NOT EXISTS ( \
+             SELECT 1 FROM json_each(b.config_snapshot, '$.runs_on') required \
+             WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
+           ) \
+           AND json_extract(b.config_snapshot, '$.repository_id') = p.repository_id \
+           AND COALESCE(pref.direct_macos_runner_paused, 0) = 0 \
+           AND NOT EXISTS ( \
+             SELECT 1 FROM operator_incidents incident \
+             WHERE incident.status = 'open' \
+               AND incident.resource_kind = 'source' \
+               AND incident.resource_id = inst.integration_id \
+               AND incident.reason IN ('expired', 'rejected', 'refresh_failed') \
+           ) \
+         ORDER BY b.queued_at ASC, b.id ASC LIMIT 1",
+    )
+    .bind(runner_id)
+    .fetch_optional(pool)
+    .await
+}
+
 /// `POST /v1/runners/{runner_id}/claim` — runner claims next available build.
 pub async fn claim_job(
     State(state): State<Arc<AppState>>,
@@ -611,30 +762,7 @@ pub async fn claim_job(
     let pool = &state.db;
     fail_credential_blocked_builds(pool).await?;
 
-    // A missing repository remains ineligible. Missing preferences means the
-    // ordinary running state. Filtering before ordering prevents blocked work
-    // from starving later eligible builds.
-    let build_row = sqlx::query(
-        "SELECT b.* FROM builds b \
-         JOIN projects p ON p.id = b.project_id \
-         JOIN integration_repositories r ON r.id = p.repository_id \
-         JOIN integration_installations inst ON inst.id = r.installation_id \
-         LEFT JOIN instance_preferences pref ON pref.id = 1 \
-         WHERE b.status = 'queued' \
-           AND json_extract(b.config_snapshot, '$.repository_id') = p.repository_id \
-           AND COALESCE(pref.direct_macos_runner_paused, 0) = 0 \
-           AND NOT EXISTS ( \
-             SELECT 1 FROM operator_incidents incident \
-             WHERE incident.status = 'open' \
-               AND incident.resource_kind = 'source' \
-               AND incident.resource_id = inst.integration_id \
-               AND incident.reason IN ('expired', 'rejected', 'refresh_failed') \
-           ) \
-         ORDER BY b.queued_at ASC, b.id ASC LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| {
+    let build_row = next_eligible_build(pool, &runner_id).await.map_err(|e| {
         error!(error = %e, "failed to query queued builds");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -691,6 +819,28 @@ pub async fn claim_job(
         snapshot.insert(
             "checkout_proxy_path".to_string(),
             format!("/v1/runners/{runner_id}/jobs/{build_id}/gitlab/{encoded_name}.git").into(),
+        );
+    }
+
+    // The runner checks a repository file's `runs_on` against these, since the
+    // scheduler only sees the pipeline's.
+    let runner_labels: Option<String> =
+        sqlx::query_scalar("SELECT labels FROM runners WHERE id = ?1")
+            .bind(&runner_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, runner_id = %runner_id, "failed to load runner labels");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to claim build",
+                )
+            })?;
+    if let Some(snapshot) = config_snapshot.as_object_mut() {
+        snapshot.insert(
+            "runner_labels".to_string(),
+            json_labels(runner_labels.as_deref().unwrap_or("[]")).into(),
         );
     }
 
@@ -1011,7 +1161,7 @@ pub async fn list_runners(
     let mut count = QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM runners");
     if let Some(search) = search {
         count
-            .push(" WHERE lower(name || ' ' || id || ' ' || status || ' ' || COALESCE(registered_by, 'embedded') || ' ' || capabilities_json) LIKE ")
+            .push(" WHERE lower(name || ' ' || id || ' ' || status || ' ' || COALESCE(registered_by, 'embedded') || ' ' || capabilities || ' ' || labels) LIKE ")
             .push_bind(format!("%{}%", search.to_lowercase()));
     }
     let total: i64 = count
@@ -1042,7 +1192,7 @@ pub async fn list_runners(
     let mut query = QueryBuilder::<Sqlite>::new("SELECT * FROM runners");
     if let Some(search) = search {
         query
-            .push(" WHERE lower(name || ' ' || id || ' ' || status || ' ' || COALESCE(registered_by, 'embedded') || ' ' || capabilities_json) LIKE ")
+            .push(" WHERE lower(name || ' ' || id || ' ' || status || ' ' || COALESCE(registered_by, 'embedded') || ' ' || capabilities || ' ' || labels) LIKE ")
             .push_bind(format!("%{}%", search.to_lowercase()));
     }
     query
@@ -1066,14 +1216,39 @@ pub async fn list_runners(
 
     let runners = rows.iter().map(row_to_runner).collect();
 
+    let queue = sqlx::query(
+        "SELECT COUNT(*) AS queued_total, \
+                COALESCE(SUM(NOT EXISTS ( \
+                  SELECT 1 FROM runners runner \
+                  WHERE runner.status IN ('online', 'busy') \
+                    AND NOT EXISTS ( \
+                      SELECT 1 FROM json_each(b.config_snapshot, '$.runs_on') required \
+                      WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
+                    ) \
+                )), 0) AS unmatched_queued_total \
+         FROM builds b WHERE b.status = 'queued'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to count queued builds");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list runners",
+        )
+    })?;
+
     Ok(Json(ListRunnersResponse {
         runners,
         total,
         online_total,
+        queued_total: queue.get("queued_total"),
+        unmatched_queued_total: queue.get("unmatched_queued_total"),
     }))
 }
 
-/// `PATCH /v1/runners/{runner_id}` — rename a runner (admin/owner only).
+/// `PATCH /v1/runners/{runner_id}` — rename a runner or set its labels (admin/owner only).
 pub async fn update_runner(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1082,55 +1257,63 @@ pub async fn update_runner(
 ) -> ApiResult<UpdateRunnerResponse> {
     check_permission(&state.enforcer, &auth.0.role, "runners", "write").await?;
 
-    let name = req
-        .name
-        .as_deref()
-        .ok_or_else(|| {
-            api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_input",
-                "Runner name is required",
-            )
-        })?
-        .trim();
-
-    if name.is_empty() || name.len() > 255 {
+    let name = req.name.as_deref().map(str::trim);
+    if name.is_none() && req.custom_labels.is_none() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "Provide a runner name or custom labels",
+        ));
+    }
+    if name.is_some_and(|name| name.is_empty() || name.len() > 255) {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
             "invalid_name",
             "Runner name must be between 1 and 255 characters",
         ));
     }
+    let custom_labels = req
+        .custom_labels
+        .as_deref()
+        .map(normalize_runner_labels)
+        .transpose()
+        .map_err(|error| api_err(StatusCode::BAD_REQUEST, "invalid_labels", error))?;
 
     let now = now_unix();
     let pool = &state.db;
 
-    let existing = sqlx::query("SELECT name, registered_by FROM runners WHERE id = ?1")
-        .bind(&runner_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, runner_id = %runner_id, "failed to fetch runner");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to fetch runner",
-            )
-        })?
-        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Runner not found"))?;
+    let existing = sqlx::query(
+        "SELECT name, registered_by, capabilities, custom_labels FROM runners WHERE id = ?1",
+    )
+    .bind(&runner_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, runner_id = %runner_id, "failed to fetch runner");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch runner",
+        )
+    })?
+    .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Runner not found"))?;
 
     let previous_name: String = existing.get("name");
     let registered_by: Option<String> = existing.get("registered_by");
 
-    if registered_by.is_none() {
-        return Err(api_err(
-            StatusCode::CONFLICT,
-            "managed_runner_locked",
-            "Managed runner name cannot be changed",
-        ));
-    }
+    if let Some(name) = name
+        && previous_name != name
+    {
+        // Labels are scheduling policy, not identity, so managed runners keep
+        // them editable; only the name is owned by the daemon.
+        if registered_by.is_none() {
+            return Err(api_err(
+                StatusCode::CONFLICT,
+                "managed_runner_locked",
+                "Managed runner name cannot be changed",
+            ));
+        }
 
-    if previous_name != name {
         sqlx::query("UPDATE runners SET name = ?1, updated_at = ?2 WHERE id = ?3")
             .bind(name)
             .bind(now)
@@ -1169,6 +1352,48 @@ pub async fn update_runner(
             updated_by = %auth.0.email,
             "runner renamed"
         );
+    }
+
+    let previous_labels = json_labels(&existing.get::<String, _>("custom_labels"));
+    if let Some(custom_labels) = custom_labels
+        && custom_labels != previous_labels
+    {
+        let capabilities: serde_json::Value =
+            serde_json::from_str(&existing.get::<String, _>("capabilities")).unwrap_or_default();
+        let labels = effective_runner_labels(&capabilities, &custom_labels);
+        sqlx::query(
+            "UPDATE runners SET custom_labels = ?1, labels = ?2, updated_at = ?3 WHERE id = ?4",
+        )
+        .bind(serde_json::to_string(&custom_labels).unwrap_or_else(|_| "[]".to_string()))
+        .bind(serde_json::to_string(&labels).unwrap_or_else(|_| "[]".to_string()))
+        .bind(now)
+        .bind(&runner_id)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, runner_id = %runner_id, "failed to update runner labels");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to update runner",
+            )
+        })?;
+
+        let details = serde_json::json!({
+            "previous_labels": previous_labels,
+            "new_labels": custom_labels,
+            "updated_by": auth.0.email,
+        })
+        .to_string();
+        let _ = write_audit_log(
+            pool,
+            Some(&auth.0.user_id),
+            "runner_labels_updated",
+            "runner",
+            Some(&runner_id),
+            Some(&details),
+        )
+        .await;
     }
 
     let row = sqlx::query("SELECT * FROM runners WHERE id = ?1")
@@ -1312,6 +1537,11 @@ pub async fn delete_runner(
         )
     })?;
 
+    if let Err(error) = incidents::resolve_incident(pool, &format!("runner-disk:{runner_id}")).await
+    {
+        warn!(%error, runner_id = %runner_id, "failed to resolve deleted runner's disk incident");
+    }
+
     info!(
         runner_id = %runner_id,
         deleted_by = %auth.0.email,
@@ -1322,7 +1552,200 @@ pub async fn delete_runner(
 
 #[cfg(test)]
 mod tests {
-    use super::settle_cache_purge_request;
+    use super::*;
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+
+    async fn pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        for statement in [
+            "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+             VALUES ('u1', 'owner@example.com', 'sub', 'owner', 0, 0)",
+            "INSERT INTO integrations (id, provider, auth_mode, created_by, created_at, updated_at) \
+             VALUES ('i1', 'github', 'github_app', 'u1', 0, 0)",
+            "INSERT INTO integration_installations (id, integration_id, external_id, account_name, created_at, updated_at) \
+             VALUES ('inst1', 'i1', '1', 'acme', 0, 0)",
+            "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, created_at, updated_at) \
+             VALUES ('repo1', 'inst1', '1', 'acme/app', 0, 0)",
+            "INSERT INTO projects (id, name, created_by, repository_id, created_at, updated_at) \
+             VALUES ('p1', 'App', 'u1', 'repo1', 0, 0)",
+            "INSERT INTO pipelines (id, project_id, name, created_at, updated_at) VALUES ('pl1', 'p1', 'main', 0, 0)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+        pool
+    }
+
+    async fn insert_runner(pool: &sqlx::SqlitePool, id: &str, os: &str) {
+        let capabilities = serde_json::json!({ "os": os, "arch": "aarch64" });
+        let labels = effective_runner_labels(&capabilities, &[]);
+        sqlx::query(
+            "INSERT INTO runners (id, name, token_hash, status, capabilities, labels, created_at, updated_at) \
+             VALUES (?1, ?1, ?1, 'online', ?2, ?3, 0, 0)",
+        )
+        .bind(id)
+        .bind(capabilities.to_string())
+        .bind(serde_json::to_string(&labels).unwrap())
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn queue_build(pool: &sqlx::SqlitePool, id: &str, number: i64, runs_on: &[&str]) {
+        let snapshot = serde_json::json!({ "repository_id": "repo1", "runs_on": runs_on });
+        sqlx::query(
+            "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, config_snapshot, queued_at, created_at, updated_at) \
+             VALUES (?1, 'p1', 'pl1', ?2, 'queued', 'manual', ?3, ?2, 0, 0)",
+        )
+        .bind(id)
+        .bind(number)
+        .bind(snapshot.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn next_build_id(pool: &sqlx::SqlitePool, runner_id: &str) -> Option<String> {
+        next_eligible_build(pool, runner_id)
+            .await
+            .unwrap()
+            .map(|row| row.get("id"))
+    }
+
+    #[tokio::test]
+    async fn linux_build_never_lands_on_a_macos_runner() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        insert_runner(&pool, "linux", "linux").await;
+        queue_build(&pool, "linux-build", 1, &["linux"]).await;
+        queue_build(&pool, "mac-build", 2, &["macos"]).await;
+
+        // The older Linux build must not block the macOS runner's queue.
+        assert_eq!(
+            next_build_id(&pool, "mac").await.as_deref(),
+            Some("mac-build")
+        );
+        assert_eq!(
+            next_build_id(&pool, "linux").await.as_deref(),
+            Some("linux-build")
+        );
+        assert!(
+            !schedule_eligible_direct_runner_build(&pool, "linux-build", "mac", "runner:mac")
+                .await
+                .unwrap()
+        );
+        assert!(
+            schedule_eligible_direct_runner_build(&pool, "linux-build", "linux", "runner:linux")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn build_needs_every_runs_on_label() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        queue_build(&pool, "b1", 1, &["macos", "gpu"]).await;
+        assert_eq!(next_build_id(&pool, "mac").await, None);
+
+        sqlx::query("UPDATE runners SET labels = ?1 WHERE id = 'mac'")
+            .bind(r#"["arm64","gpu","macos"]"#)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(next_build_id(&pool, "mac").await.as_deref(), Some("b1"));
+    }
+
+    #[tokio::test]
+    async fn builds_from_before_runs_on_match_any_runner() {
+        let pool = pool().await;
+        insert_runner(&pool, "linux", "linux").await;
+        sqlx::query(
+            "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, config_snapshot, queued_at, created_at, updated_at) \
+             VALUES ('old', 'p1', 'pl1', 1, 'queued', 'manual', '{\"repository_id\":\"repo1\"}', 1, 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(next_build_id(&pool, "linux").await.as_deref(), Some("old"));
+    }
+
+    fn metrics(disk_free_bytes: u64) -> RunnerMetrics {
+        RunnerMetrics {
+            cpu_percent: 10.0,
+            memory_used_bytes: GIB,
+            memory_total_bytes: 16 * GIB,
+            disk_free_bytes,
+            disk_total_bytes: 500 * GIB,
+            cache_bytes: None,
+            collected_at: None,
+        }
+    }
+
+    async fn disk_incident(pool: &sqlx::SqlitePool) -> Option<(String, String)> {
+        sqlx::query(
+            "SELECT status, severity FROM operator_incidents WHERE deduplication_key = 'runner-disk:mac'",
+        )
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+        .map(|row| (row.get("status"), row.get("severity")))
+    }
+
+    #[tokio::test]
+    async fn low_disk_opens_escalates_and_resolves_an_incident() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+
+        let low = metrics(15 * GIB);
+        record_disk_pressure(
+            &pool,
+            "mac",
+            "mac",
+            &low,
+            runner_disk_pressure(low.disk_free_bytes),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            disk_incident(&pool).await,
+            Some(("open".into(), "warning".into()))
+        );
+        let notified: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM operator_incident_notifications")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(notified, 1);
+
+        let critical = metrics(5 * GIB);
+        record_disk_pressure(
+            &pool,
+            "mac",
+            "mac",
+            &critical,
+            runner_disk_pressure(critical.disk_free_bytes),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            disk_incident(&pool).await,
+            Some(("open".into(), "critical".into()))
+        );
+
+        record_disk_pressure(&pool, "mac", "mac", &metrics(100 * GIB), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            disk_incident(&pool).await,
+            Some(("resolved".into(), "critical".into()))
+        );
+    }
 
     #[tokio::test]
     async fn purge_request_clears_only_once_the_runner_caught_up() {

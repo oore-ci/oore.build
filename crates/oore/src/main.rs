@@ -1195,6 +1195,10 @@ struct RunnerRegisterArgs {
     /// Runner name (defaults to hostname)
     #[arg(long)]
     name: Option<String>,
+    /// Extra label for pipelines to select with `runs_on`, added to the
+    /// detected labels such as `macos-15` and `xcode-16`. Repeatable.
+    #[arg(long = "label")]
+    labels: Vec<String>,
     /// Auth session token for registration
     #[arg(long, env = "OORE_SESSION_TOKEN")]
     token: String,
@@ -4332,6 +4336,7 @@ async fn handle_runner_register_with_lifecycle_lock(
         .json(&serde_json::json!({
             "name": name,
             "capabilities": capabilities,
+            "labels": args.labels,
         }))
         .send()
         .await?;

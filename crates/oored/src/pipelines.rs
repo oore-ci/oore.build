@@ -8,8 +8,9 @@ use oore_contract::{
     ApiError, BuildPlatform, ConcurrencyPolicy, CreatePipelineRequest, CreatePipelineResponse,
     ListPipelinesResponse, OkResponse, Pipeline, PipelineDetailResponse, PipelineExecutionConfig,
     TriggerConfig, UpdatePipelineRequest, ValidatePipelineRequest, ValidatePipelineResponse,
-    is_valid_pipeline_env_key, parse_repository_pipeline_yaml, secret_expression_errors,
-    validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
+    is_valid_pipeline_env_key, normalize_runner_labels, parse_repository_pipeline_yaml,
+    secret_expression_errors, validate_artifact_pattern, validate_build_number_offset,
+    validate_repository_config_path,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -156,6 +157,10 @@ fn validate_execution_config(cfg: &PipelineExecutionConfig) -> Vec<String> {
 
     if let Err(error) = validate_build_number_offset(cfg.build_number_offset) {
         errors.push(format!("execution_config.build_number_offset {error}"));
+    }
+
+    if let Err(error) = normalize_runner_labels(&cfg.runs_on) {
+        errors.push(format!("execution_config.runs_on {error}"));
     }
 
     if cfg.artifact_patterns.len() > MAX_ARTIFACT_PATTERNS {
@@ -484,7 +489,7 @@ pub async fn create_pipeline(
         ));
     }
 
-    let execution_config = req.execution_config.unwrap_or_default();
+    let mut execution_config = req.execution_config.unwrap_or_default();
     let exec_errors = validate_execution_config(&execution_config);
     if !exec_errors.is_empty() {
         return Err(api_err(
@@ -493,6 +498,8 @@ pub async fn create_pipeline(
             exec_errors.join("; "),
         ));
     }
+    execution_config.runs_on =
+        normalize_runner_labels(&execution_config.runs_on).expect("runs_on validated above");
 
     let now = now_unix();
     let pipeline_id = Uuid::new_v4().to_string();
@@ -839,7 +846,7 @@ pub async fn update_pipeline(
         pipeline.concurrency = concurrency;
     }
 
-    if let Some(execution_config) = req.execution_config {
+    if let Some(mut execution_config) = req.execution_config {
         let errors = validate_execution_config(&execution_config);
         if !errors.is_empty() {
             return Err(api_err(
@@ -848,6 +855,8 @@ pub async fn update_pipeline(
                 errors.join("; "),
             ));
         }
+        execution_config.runs_on =
+            normalize_runner_labels(&execution_config.runs_on).expect("runs_on validated above");
         pipeline.execution_config = execution_config;
     }
 

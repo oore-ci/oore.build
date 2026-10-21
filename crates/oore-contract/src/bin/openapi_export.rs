@@ -440,6 +440,8 @@ use utoipa::{
         // Runners
         oore_contract::RunnerStatus,
         oore_contract::Runner,
+        oore_contract::RunnerMetrics,
+        oore_contract::RunnerDiskPressure,
         oore_contract::RegisterRunnerRequest,
         oore_contract::RegisterRunnerResponse,
         oore_contract::RunnerHeartbeatRequest,

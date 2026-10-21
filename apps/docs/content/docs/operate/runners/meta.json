@@ -1,4 +1,4 @@
 {
   "title": "Runners",
-  "pages": ["direct", "caches", "vm-isolation"]
+  "pages": ["direct", "labels", "caches", "vm-isolation"]
 }
