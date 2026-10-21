@@ -191,6 +191,27 @@ pub(crate) fn local_image_exists(tart: &Path, name: &str) -> anyhow::Result<bool
     Ok(listing.lines().any(|line| line.trim() == name))
 }
 
+/// Whether Tart's OCI cache already holds the registry image `reference`.
+pub(crate) fn registry_image_cached(tart: &Path, reference: &str) -> anyhow::Result<bool> {
+    let listing = run_tart(tart, &["list", "--source", "oci", "--quiet"])?;
+    Ok(listing.lines().any(|line| line.trim() == reference))
+}
+
+/// Starts `tart pull` for a registry image. `CI` makes Tart print its
+/// percentage on a new line about once a second instead of redrawing one
+/// line, so the progress streams into a build log.
+pub(crate) fn spawn_pull(tart: &Path, reference: &str) -> anyhow::Result<tokio::process::Child> {
+    tokio::process::Command::new(tart)
+        .args(["pull", reference])
+        .env("CI", "true")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("failed to start tart pull")
+}
+
 /// Serialises image builds across this host's runners, so two builds that need
 /// the same missing image build it once.
 pub(crate) fn try_lock_image(dir: &Path, image: &str) -> anyhow::Result<Option<fs::File>> {

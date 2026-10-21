@@ -5814,7 +5814,12 @@ async fn start_build_vm(
     };
 
     let name = tart::vm_name(&config.runner_id, &job.build_id);
-    if !tart::is_registry_reference(&plan.name) {
+    if tart::is_registry_reference(&plan.name) {
+        pull_registry_image(
+            job, client, daemon_url, config, log_seq, authority, &tart_bin, &plan.name,
+        )
+        .await?;
+    } else {
         ensure_vm_image(
             job, client, daemon_url, config, log_seq, authority, &tart_bin, &slot_dir, &plan, &name,
         )
@@ -5850,6 +5855,56 @@ async fn start_build_vm(
     )
     .await;
     Ok(BuildVm { vm, _slot: slot })
+}
+
+/// Downloads a registry image into Tart's cache unless it is already there,
+/// streaming Tart's progress into the build log. Without this, the clone that
+/// follows would download tens of gigabytes with no output and no way to cancel.
+#[allow(clippy::too_many_arguments)]
+async fn pull_registry_image(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    authority: &Arc<BuildAuthorityState>,
+    tart_bin: &Path,
+    reference: &str,
+) -> anyhow::Result<()> {
+    if tart::registry_image_cached(tart_bin, reference)? {
+        return Ok(());
+    }
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!("Downloading {reference}; Tart reports its progress below"),
+    )
+    .await;
+    let child = tart::spawn_pull(tart_bin, reference)?;
+    let status = run_and_stream(
+        child,
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
+    )
+    .await;
+    match status {
+        None => Err(BuildTerminated {
+            status: "canceled".to_string(),
+        }
+        .into()),
+        Some(status) if !status.success() => {
+            anyhow::bail!("Downloading {reference} failed with {status}; see the log above")
+        }
+        Some(_) => Ok(()),
+    }
 }
 
 /// Builds `plan.name` from its base image unless this host already has it.
@@ -5912,6 +5967,12 @@ async fn ensure_vm_image(
         ),
     )
     .await;
+    if tart::is_registry_reference(&plan.base) {
+        pull_registry_image(
+            job, client, daemon_url, config, log_seq, authority, tart_bin, &plan.base,
+        )
+        .await?;
+    }
     let builder = tart::TartVm::start(
         tart_bin.to_path_buf(),
         &plan.base,
