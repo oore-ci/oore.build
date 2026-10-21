@@ -15,6 +15,26 @@ Oore drains active runner work, creates a backup, restarts managed services, and
 
 Use `oore-web update` on a separate Web node.
 
+## When an in-place update fails
+
+`oore update` prints why the new release was rejected, then restores the previous release. If `oore status` still reports a refused connection afterwards, check the daemon service and its binary:
+
+```bash
+sudo launchctl print system/build.oore.oored | grep -E 'state|last exit'
+ls -l ~/.oore/bin/oored
+```
+
+A `last exit code = 78` together with a missing `bin/oored` means launchd has nothing to start. Download the `oore_<version>_darwin_<arch>.tar.gz` archive for the version `oore version` reports, verify it against the release's signed checksums, and put the daemon back:
+
+```bash
+tar -xzf oore_<version>_darwin_<arch>.tar.gz
+install -m 0755 bin/oored ~/.oore/bin/oored
+sudo launchctl kickstart -k system/build.oore.oored
+oore status
+```
+
+This touches only the daemon binary. The database, configuration, and runner registration stay as they were.
+
 ## Switch the release channel
 
 To move a Ready Complete or Control plane installation to another channel in place, name the channel and confirm the switch:

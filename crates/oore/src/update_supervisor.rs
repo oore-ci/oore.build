@@ -196,31 +196,120 @@ impl Drop for HeldDaemonExecutable {
     }
 }
 
+/// A candidate daemon executable moved out of `bin/` so that launchd cannot
+/// respawn it while the previous release is restored. Dropping the guard puts
+/// the executable back when nothing has replaced it, so a rollback that fails or
+/// is interrupted never leaves the install without a daemon to run.
+pub(crate) struct QuiescedCandidateDaemon {
+    installed: PathBuf,
+    held: PathBuf,
+}
+
+impl QuiescedCandidateDaemon {
+    /// Put the candidate back when `bin/oored` is still missing. Returns
+    /// whether a file was moved.
+    pub(crate) fn restore(&self) -> anyhow::Result<bool> {
+        if self.held.is_file() && !self.installed.exists() {
+            fs::rename(&self.held, &self.installed).with_context(|| {
+                format!(
+                    "failed to restore the candidate daemon executable to {}",
+                    self.installed.display()
+                )
+            })?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+}
+
+impl Drop for QuiescedCandidateDaemon {
+    fn drop(&mut self) {
+        if let Ok(true) = self.restore() {
+            eprintln!(
+                "Restored the candidate daemon executable at {} because no other release replaced it.",
+                self.installed.display()
+            );
+        }
+    }
+}
+
 pub(crate) fn quiesce_candidate_daemon(
     install_root: &Path,
     transaction_dir: &Path,
-) -> anyhow::Result<PathBuf> {
+) -> anyhow::Result<QuiescedCandidateDaemon> {
     let installed = install_root.join("bin/oored");
     let held = transaction_dir.join("oored.failed-candidate");
-    let mut moved = false;
     if installed.is_file() {
         fs::rename(&installed, &held)
             .context("failed to hold the failed candidate daemon executable")?;
-        moved = true;
     }
-    let stop_result = (|| -> anyhow::Result<()> {
-        if let Some(pid) = launchd_pid(DAEMON_SERVICE)? {
-            stop_pid(pid)?;
-        }
-        Ok(())
-    })();
-    if let Err(error) = stop_result {
-        if moved && held.is_file() && !installed.exists() {
-            fs::rename(&held, &installed).with_context(|| {
-                format!("failed to restore candidate daemon after quiesce failed: {error:#}")
-            })?;
-        }
+    let guard = QuiescedCandidateDaemon { installed, held };
+    if let Some(pid) = launchd_pid(DAEMON_SERVICE)?
+        && let Err(error) = stop_pid(pid)
+    {
+        guard.restore().with_context(|| {
+            format!("failed to restore candidate daemon after quiesce failed: {error:#}")
+        })?;
         return Err(error);
     }
-    Ok(held)
+    Ok(guard)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::QuiescedCandidateDaemon;
+    use std::fs;
+
+    #[test]
+    fn dropping_a_quiesced_candidate_restores_the_missing_daemon() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let installed = root.path().join("bin/oored");
+        let held = root.path().join("transaction/oored.failed-candidate");
+        fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        fs::create_dir_all(held.parent().unwrap()).unwrap();
+        fs::write(&held, b"candidate").unwrap();
+
+        drop(QuiescedCandidateDaemon {
+            installed: installed.clone(),
+            held: held.clone(),
+        });
+
+        assert_eq!(fs::read(&installed).unwrap(), b"candidate");
+        assert!(!held.exists());
+    }
+
+    #[test]
+    fn a_quiesced_candidate_never_replaces_a_restored_daemon() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let installed = root.path().join("bin/oored");
+        let held = root.path().join("transaction/oored.failed-candidate");
+        fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        fs::create_dir_all(held.parent().unwrap()).unwrap();
+        fs::write(&installed, b"previous release").unwrap();
+        fs::write(&held, b"candidate").unwrap();
+
+        let guard = QuiescedCandidateDaemon {
+            installed: installed.clone(),
+            held: held.clone(),
+        };
+        assert!(!guard.restore().unwrap());
+        drop(guard);
+
+        assert_eq!(fs::read(&installed).unwrap(), b"previous release");
+        assert_eq!(fs::read(&held).unwrap(), b"candidate");
+    }
+
+    #[test]
+    fn a_quiesced_candidate_with_nothing_held_is_a_no_op() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let installed = root.path().join("bin/oored");
+        let held = root.path().join("transaction/oored.failed-candidate");
+        let guard = QuiescedCandidateDaemon {
+            installed: installed.clone(),
+            held,
+        };
+        assert!(!guard.restore().unwrap());
+        drop(guard);
+        assert!(!installed.exists());
+    }
 }
