@@ -74,8 +74,8 @@ build that needs it and keeps it for every later one:
 3. It saves the result as the local image and deletes nothing else.
 
 The output streams into the build log under `vm-start`. The very first image
-also downloads the base, which is tens of gigabytes, so expect that build to
-take 20 minutes or more. Two builds that need the same missing image build it
+also downloads the base, about 69 GB for the default, so that build can take
+an hour or more depending on the connection. Two builds that need the same missing image build it
 once: the second waits for the first.
 
 To build an image ahead of time, start any `isolation: vm` build that uses the
@@ -152,7 +152,10 @@ Each image carries exactly one Flutter SDK.
 
 ## Limits
 
-- Images take 30 to 80 GB each, so budget the Runner Mac's disk for them.
+- The default base is about 69 GB to download and unpacks to a 140 GB VM
+  disk. APFS stores disks sparsely, so actual use is lower, but budget well
+  over 100 GB on the Runner Mac for the cached base and its first Flutter
+  image, and more for each further version or customised image.
 - Android emulators have no hardware acceleration inside a macOS guest, so
   keep instrumented tests on a host pipeline.
 - App Store Connect upload uses `xcrun altool`, so a Runner Mac that

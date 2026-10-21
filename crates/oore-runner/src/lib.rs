@@ -5962,7 +5962,7 @@ async fn ensure_vm_image(
         log_seq,
         "stdout",
         &format!(
-            "This runner has no VM image {}; building it from {}. The first build of a new image downloads the base and Flutter and can take 20 minutes or more",
+            "This runner has no VM image {}; building it from {}. The first build of a new image downloads the base and Flutter and can take an hour or more",
             plan.name, plan.base
         ),
     )
