@@ -527,7 +527,7 @@ function PipelineDetailPage() {
                           <Link
                             to="/projects/$projectId"
                             params={{ projectId }}
-                            search={{ tab: 'builds' }}
+                            search={{ tab: 'builds', pipeline: pipelineId }}
                           />
                         }
                       >

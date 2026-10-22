@@ -35,6 +35,7 @@ interface BuildsSearch {
   direction?: SortDirection
   page?: number
   pageSize?: 20 | 50 | 100
+  pipeline?: string
   project?: string
   q?: string
   sort?: BuildSort
@@ -54,6 +55,7 @@ function parseSearch(search: SearchInput): BuildsSearch {
   const pageSize = searchNumber(search, 'pageSize')
   const q = searchString(search, 'q')?.trim() ?? ''
   const project = searchString(search, 'project')?.trim() ?? ''
+  const pipeline = searchString(search, 'pipeline')?.trim() ?? ''
   const statusValue = searchString(search, 'status')
   const status =
     statusValue && statusValue in BUILD_STATUS_FILTER_OPTIONS ? statusValue : ''
@@ -62,6 +64,7 @@ function parseSearch(search: SearchInput): BuildsSearch {
   return {
     q: q || undefined,
     project: project || undefined,
+    pipeline: pipeline || undefined,
     status: status && status !== 'all' ? status : undefined,
     sort,
     direction: searchString(search, 'direction') === 'asc' ? 'asc' : undefined,
@@ -93,6 +96,7 @@ function OperationsBuildsPage() {
   const buildsQuery = useBuilds({
     q: search.q,
     project_id: search.project,
+    pipeline_id: search.pipeline,
     status: search.status,
     sort,
     direction,
@@ -112,7 +116,8 @@ function OperationsBuildsPage() {
   const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'local'
   const missingProjects =
     !projectsQuery.isLoading && !projectsQuery.error && !hasProjects
-  const hasFilters = !!search.q || !!search.project || !!search.status
+  const hasFilters =
+    !!search.q || !!search.project || !!search.pipeline || !!search.status
   const buildCapabilities = {
     triggerBuild: canTriggerBuild,
     writeProjects: canWriteProjects,
@@ -190,7 +195,11 @@ function OperationsBuildsPage() {
         />
       ) : (
         <BuildCollection
-          activeFilterCount={Number(!!search.project) + Number(!!search.status)}
+          activeFilterCount={
+            Number(!!search.project) +
+            Number(!!search.pipeline) +
+            Number(!!search.status)
+          }
           builds={builds}
           direction={direction}
           emptyState={
@@ -210,6 +219,7 @@ function OperationsBuildsPage() {
             updateSearch({
               q: undefined,
               project: undefined,
+              pipeline: undefined,
               status: undefined,
               page: undefined,
             })
