@@ -13,15 +13,16 @@ You do not need a project, Flutter, Xcode, or Android Studio to install Oore.
 - Use macOS on an `arm64` or `x86_64` processor.
 - Use a normal macOS account.
 - Allow HTTPS access to the Oore release index and GitHub Releases.
-- Keep `curl`, `tar`, `lockf`, `ssh-keygen`, and either `shasum` or `sha256sum` available.
+- Keep `curl`, `tar`, and `ssh-keygen` available.
+- Keep the macOS system tools `/usr/bin/stat`, `/usr/bin/lockf`, and `/usr/bin/shasum`. The installer calls them by absolute path, so Homebrew GNU coreutils earlier in `PATH` do not affect it.
 
 Run these commands to verify the host:
 
 ```bash
 uname -s
 uname -m
-command -v curl tar lockf ssh-keygen
-command -v shasum || command -v sha256sum
+command -v curl tar ssh-keygen
+ls /usr/bin/stat /usr/bin/lockf /usr/bin/shasum
 ```
 
 The first command must print `Darwin`. The second command must print `arm64` or `x86_64`.

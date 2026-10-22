@@ -472,6 +472,10 @@ async fn report_build(
     if reported_phase == Some(phase(ctx.status)) {
         return Ok(());
     }
+    // Retention expires finished builds. The source keeps their result.
+    if ctx.status == BuildStatus::Expired && matches!(reported_phase, Some(Phase::Done(_))) {
+        return Ok(());
+    }
 
     let base = frontend_base_url(pool).await;
     let artifacts = if ctx.status.is_terminal() {
@@ -498,6 +502,9 @@ async fn report_build(
         "gitlab" => {
             for report in &reports {
                 let name = format!("Oore: {}", report.name);
+                if let CheckOwner::Newer = check_owner(pool, &ctx, &report.platform).await? {
+                    continue;
+                }
                 gitlab::set_commit_status(
                     pool,
                     encryption_key,
@@ -515,6 +522,7 @@ async fn report_build(
                     },
                 )
                 .await?;
+                record_check_owner(pool, &ctx, &report.platform, &name).await?;
             }
             Ok(())
         }
@@ -522,9 +530,69 @@ async fn report_build(
     }
 }
 
-/// Create or update one check run per platform. The newest build of a
-/// pipeline and commit owns its checks, so an older build finishing late
-/// does not overwrite a rerun.
+/// Who reports a platform's check for a pipeline and commit. The newest
+/// build owns it, so an older build finishing late does not overwrite a rerun.
+enum CheckOwner {
+    /// A newer build reported this check; leave it alone.
+    Newer,
+    /// This build may report, updating the existing check if there is one.
+    This(Option<String>),
+}
+
+async fn check_owner(
+    pool: &SqlitePool,
+    ctx: &BuildContext,
+    platform: &str,
+) -> anyhow::Result<CheckOwner> {
+    let Some(row) = sqlx::query(
+        "SELECT c.external_id, c.build_id, owner.created_at AS owner_created_at \
+         FROM scm_check_runs c LEFT JOIN builds owner ON owner.id = c.build_id \
+         WHERE c.pipeline_id = ?1 AND c.commit_sha = ?2 AND c.platform = ?3",
+    )
+    .bind(&ctx.pipeline_id)
+    .bind(&ctx.commit_sha)
+    .bind(platform)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(CheckOwner::This(None));
+    };
+    let owner: Option<String> = row.get("build_id");
+    let owner_created_at: Option<i64> = row.get("owner_created_at");
+    if owner.as_deref() != Some(ctx.build_id.as_str())
+        && owner_created_at.is_some_and(|created_at| created_at > ctx.created_at)
+    {
+        debug!(build_id = %ctx.build_id, "a newer build owns this check");
+        return Ok(CheckOwner::Newer);
+    }
+    Ok(CheckOwner::This(Some(row.get("external_id"))))
+}
+
+async fn record_check_owner(
+    pool: &SqlitePool,
+    ctx: &BuildContext,
+    platform: &str,
+    external_id: &str,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO scm_check_runs (pipeline_id, commit_sha, platform, external_id, build_id, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+         ON CONFLICT (pipeline_id, commit_sha, platform) DO UPDATE SET \
+             external_id = excluded.external_id, build_id = excluded.build_id, \
+             updated_at = excluded.updated_at",
+    )
+    .bind(&ctx.pipeline_id)
+    .bind(&ctx.commit_sha)
+    .bind(platform)
+    .bind(external_id)
+    .bind(&ctx.build_id)
+    .bind(now_unix())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Create or update one check run per platform the build owns.
 async fn report_github(
     pool: &SqlitePool,
     client: &reqwest::Client,
@@ -534,30 +602,9 @@ async fn report_github(
     reports: &[PlatformReport],
 ) -> anyhow::Result<()> {
     for report in reports {
-        let existing = sqlx::query(
-            "SELECT c.external_id, c.build_id, owner.created_at AS owner_created_at \
-             FROM scm_check_runs c LEFT JOIN builds owner ON owner.id = c.build_id \
-             WHERE c.pipeline_id = ?1 AND c.commit_sha = ?2 AND c.platform = ?3",
-        )
-        .bind(&ctx.pipeline_id)
-        .bind(&ctx.commit_sha)
-        .bind(&report.platform)
-        .fetch_optional(pool)
-        .await?;
-        let existing_id = existing
-            .as_ref()
-            .map(|row| row.get::<String, _>("external_id"));
-        if let Some(row) = &existing {
-            let owner: Option<String> = row.get("build_id");
-            let owner_created_at: Option<i64> = row.get("owner_created_at");
-            if owner.as_deref() != Some(ctx.build_id.as_str())
-                && owner_created_at.is_some_and(|created_at| created_at > ctx.created_at)
-            {
-                debug!(build_id = %ctx.build_id, "a newer build owns this check run");
-                continue;
-            }
-        }
-
+        let CheckOwner::This(existing_id) = check_owner(pool, ctx, &report.platform).await? else {
+            continue;
+        };
         let check_run_id = github::upsert_check_run(
             client,
             api_base_url,
@@ -567,21 +614,7 @@ async fn report_github(
             &github_check_run(ctx, report),
         )
         .await?;
-        sqlx::query(
-            "INSERT INTO scm_check_runs (pipeline_id, commit_sha, platform, external_id, build_id, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
-             ON CONFLICT (pipeline_id, commit_sha, platform) DO UPDATE SET \
-                 external_id = excluded.external_id, build_id = excluded.build_id, \
-                 updated_at = excluded.updated_at",
-        )
-        .bind(&ctx.pipeline_id)
-        .bind(&ctx.commit_sha)
-        .bind(&report.platform)
-        .bind(&check_run_id)
-        .bind(&ctx.build_id)
-        .bind(now_unix())
-        .execute(pool)
-        .await?;
+        record_check_owner(pool, ctx, &report.platform, &check_run_id).await?;
     }
     Ok(())
 }
@@ -761,19 +794,38 @@ mod tests {
         assert_eq!(calls[4].2["external_id"], "b2");
     }
 
-    #[tokio::test]
-    async fn gitlab_statuses_follow_build_transitions() {
-        let (base, received) = capture_server().await;
-        let pool = seeded_pool("gitlab", &base).await;
-        let key = vec![7u8; 32];
+    async fn gitlab_pool(base: &str, key: &[u8]) -> SqlitePool {
+        let pool = seeded_pool("gitlab", base).await;
         sqlx::query(
             "INSERT INTO integration_credentials (id, integration_id, credential_type, encrypted_value, created_at, updated_at) \
              VALUES ('c1', 'i1', 'access_token', ?1, 0, 0)",
         )
-        .bind(crate::crypto::encrypt("glpat-test", &key).unwrap())
+        .bind(crate::crypto::encrypt("glpat-test", key).unwrap())
         .execute(&pool)
         .await
         .unwrap();
+        pool
+    }
+
+    fn gitlab_states(received: &Received) -> Vec<(String, String)> {
+        received
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, _, body)| {
+                (
+                    body["description"].as_str().unwrap().to_string(),
+                    body["state"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn gitlab_statuses_follow_build_transitions() {
+        let (base, received) = capture_server().await;
+        let key = vec![7u8; 32];
+        let pool = gitlab_pool(&base, &key).await;
         insert_build(&pool, "b1", 1, 100).await;
 
         report_due_builds(&pool, &key, &base).await.unwrap();
@@ -809,6 +861,53 @@ mod tests {
             "https://oore.example.com/builds/b1"
         );
 
+        let reported: Option<String> =
+            sqlx::query_scalar("SELECT scm_reported_status FROM builds WHERE id = 'b1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(reported.as_deref(), Some("failed"));
+    }
+
+    #[tokio::test]
+    async fn retention_expiring_a_reported_build_leaves_its_result_alone() {
+        let (base, received) = capture_server().await;
+        let key = vec![7u8; 32];
+        let pool = gitlab_pool(&base, &key).await;
+        insert_build(&pool, "b1", 1, 100).await;
+        set_status(&pool, "b1", "succeeded").await;
+        report_due_builds(&pool, &key, &base).await.unwrap();
+        assert_eq!(received.lock().unwrap().len(), 2);
+
+        set_status(&pool, "b1", "expired").await;
+        report_due_builds(&pool, &key, &base).await.unwrap();
+
+        assert_eq!(received.lock().unwrap().len(), 2);
+        let reported: Option<String> =
+            sqlx::query_scalar("SELECT scm_reported_status FROM builds WHERE id = 'b1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(reported.as_deref(), Some("expired"));
+    }
+
+    #[tokio::test]
+    async fn gitlab_older_build_finishing_late_does_not_overwrite_a_rerun() {
+        let (base, received) = capture_server().await;
+        let key = vec![7u8; 32];
+        let pool = gitlab_pool(&base, &key).await;
+        insert_build(&pool, "b1", 1, 100).await;
+        report_due_builds(&pool, &key, &base).await.unwrap();
+        insert_build(&pool, "b2", 2, 200).await;
+        set_status(&pool, "b2", "succeeded").await;
+        report_due_builds(&pool, &key, &base).await.unwrap();
+        set_status(&pool, "b1", "failed").await;
+        report_due_builds(&pool, &key, &base).await.unwrap();
+
+        let succeeded = ("Build #2 succeeded".to_string(), "success".to_string());
+        let states = gitlab_states(&received);
+        assert_eq!(states.len(), 4, "{states:?}");
+        assert_eq!(states[2..], [succeeded.clone(), succeeded]);
         let reported: Option<String> =
             sqlx::query_scalar("SELECT scm_reported_status FROM builds WHERE id = 'b1'")
                 .fetch_one(&pool)

@@ -20,6 +20,10 @@ The script supports macOS on `arm64` and `x86_64`.
 
 The Mac must provide `ssh-keygen` with OpenSSH signature support.
 
+The script calls the macOS system tools `/usr/bin/stat`, `/usr/bin/lockf`, and `/usr/bin/shasum` by absolute path. GNU coreutils from Homebrew can stay first in `PATH`.
+
+On macOS 14 and earlier, `lockf` cannot lock an open descriptor. The script then holds the installation lock with a helper process until it exits.
+
 ## Script options
 
 Pass options after `bash -s --`:
@@ -56,6 +60,8 @@ An exact version overrides channel discovery. The script records the channel tha
 | `OORE_ALLOW_UNSIGNED_LOCAL_RELEASE` | Unset                         | Allow an unsigned exact literal-loopback release.      |
 
 Use command options for normal installations. Use origin variables only with a trusted release mirror.
+
+`oore install` and `oore update` read the same origin variables. The bootstrap does not store them, so set them again for those commands when you use a mirror.
 
 The mirror must serve the official signatures beside the index and checksum manifest.
 

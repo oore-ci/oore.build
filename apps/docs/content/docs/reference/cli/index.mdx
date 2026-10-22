@@ -11,30 +11,39 @@ version installed on your host.
 oore <COMMAND>
 ```
 
-| Command    | Purpose                                                     |
-| ---------- | ----------------------------------------------------------- |
-| `setup`    | Configure a new backend or mint a browser setup token       |
-| `frontend` | Create a short-lived frontend pairing invitation            |
-| `login`    | Create a Local Only session or import an existing session   |
-| `recovery` | Mint a single-use browser recovery link on the backend host |
-| `status`   | Show public setup status and authenticated runtime details  |
-| `runner`   | Register, start, install, or remove a Direct macOS runner   |
-| `config`   | Read or write persistent CLI defaults                       |
-| `doctor`   | Check the host and selected build-platform toolchains       |
-| `pipeline` | Validate repository pipeline configuration                  |
-| `version`  | Print the installed CLI version                             |
-| `update`   | Check for or install a release from an Oore channel         |
-| `backup`   | Create, verify, or restore an encrypted-state backup        |
+| Command     | Purpose                                                     |
+| ----------- | ----------------------------------------------------------- |
+| `install`   | Choose and install the role for this device                 |
+| `uninstall` | Remove this Oore installation                               |
+| `setup`     | Configure a new backend or mint a browser setup token       |
+| `frontend`  | Create a short-lived frontend pairing invitation            |
+| `login`     | Create a Local Only session or import an existing session   |
+| `recovery`  | Mint a single-use browser recovery link on the backend host |
+| `status`    | Show public setup status and authenticated runtime details  |
+| `runner`    | Register, start, install, or remove a Direct macOS runner   |
+| `config`    | Read or write persistent CLI defaults                       |
+| `doctor`    | Check the host and selected build-platform toolchains       |
+| `pipeline`  | Validate repository pipeline configuration                  |
+| `version`   | Print the installed CLI version                             |
+| `update`    | Check for or install a release from an Oore channel         |
+| `backup`    | Create, verify, or restore an encrypted-state backup        |
 
 ## Detailed pages
 
-- [`oore config`](/reference/cli/oore-config)
+- [`oore install`](/reference/cli/oore-install)
 - [`oore setup`](/reference/cli/oore-setup)
+- [`oore uninstall`](/reference/cli/oore-uninstall)
+- [`oore update`](/reference/cli/oore-update)
+- [`oore backup`](/reference/cli/oore-backup)
+- [`oore runner`](/reference/cli/oore-runner)
+- [`oore frontend`](/reference/cli/oore-frontend)
+- [`oore config`](/reference/cli/oore-config)
 - [`oore recovery`](/reference/cli/oore-recovery)
 - [`oore doctor`](/reference/cli/oore-doctor)
 - [`oore status`](/reference/cli/oore-status)
 - [`oore login`](/reference/cli/oore-login)
 - [`oore pipeline validate`](/reference/cli/oore-pipeline-validate)
+- [`oore version`](/reference/cli/oore-version)
 
 The `oore` CLI is distinct from `oored`, the backend daemon. The installer owns
 managed daemon installation and privileged service setup. Use

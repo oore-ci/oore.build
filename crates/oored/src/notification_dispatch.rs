@@ -13,6 +13,7 @@ use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use oore_contract::{NotificationChannelType, SmtpConfig, SmtpTlsMode};
 use ring::hmac;
+use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -27,6 +28,21 @@ use crate::util::now_unix;
 /// Terminal build statuses that trigger notifications.
 const TERMINAL_STATUSES: &[&str] = &["succeeded", "failed", "canceled", "timed_out", "expired"];
 const MAX_NOTIFICATION_ERROR_BODY_BYTES: usize = 1024;
+/// How often finished builds are checked for notifications. A published
+/// build event checks at once.
+const BUILD_SCAN_INTERVAL: Duration = Duration::from_secs(2);
+const BUILD_SCAN_BATCH_SIZE: i64 = 50;
+/// How often pending deliveries are checked for a due retry.
+const RETRY_SCAN_INTERVAL: Duration = Duration::from_secs(10);
+const RETRY_BATCH_SIZE: i64 = 50;
+/// Attempts per delivery before it is marked failed. Retries wait 30s, 1m,
+/// 2m and 4m.
+const MAX_DELIVERY_ATTEMPTS: i64 = 5;
+const RETRY_BASE_SECS: i64 = 30;
+/// Longer than the 30s send timeout plus the Slack mention lookup.
+const DELIVERY_LEASE_SECS: i64 = 120;
+/// Sends in flight across every channel.
+const MAX_CONCURRENT_SENDS: usize = 8;
 /// Keeps a slow Slack lookup from delaying the message itself.
 const SLACK_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -123,12 +139,14 @@ fn release_event_type(kind: ReleaseEventKind) -> Option<&'static str> {
     }
 }
 
-/// One event ready to fan out to every matching channel.
+/// One event ready to fan out to every matching channel. Each delivery
+/// stores it, so a failed send can be retried after a restart.
+#[derive(Debug, Serialize, Deserialize)]
 struct Notification {
     /// Name matched against a channel's event filter, e.g. `failed`.
     event_type: String,
     /// `build`, `runner` or `release`; selects the message renderer.
-    category: &'static str,
+    category: String,
     /// `None` for instance-wide events, which only reach unscoped channels.
     project_id: Option<String>,
     build_id: Option<String>,
@@ -140,37 +158,50 @@ struct Notification {
     payload: serde_json::Value,
 }
 
-/// Start the notification dispatch background task.
+/// Start the notification dispatch background tasks.
 pub fn start_notification_dispatcher(
     pool: SqlitePool,
     scheduler: Arc<Scheduler>,
     encryption_key: Vec<u8>,
 ) {
-    // Build event dispatcher
+    let encryption_key: Arc<[u8]> = encryption_key.into();
+
+    // Build notifications come from a scan of the builds table, so terminal
+    // writes that publish no event still notify. Published events only make
+    // the scan run sooner.
     let build_pool = pool.clone();
     let build_key = encryption_key.clone();
     let mut build_rx = scheduler.subscribe_events();
     tokio::spawn(async move {
         loop {
-            match build_rx.recv().await {
-                Ok(event) => {
-                    if !TERMINAL_STATUSES.contains(&event.to_status.as_str()) {
-                        continue;
-                    }
-                    if let Err(e) = dispatch_build_event(&build_pool, &build_key, &event).await {
-                        error!(error = %e, build_id = %event.build_id, "notification dispatch error");
+            tokio::select! {
+                received = build_rx.recv() => {
+                    if let Err(tokio::sync::broadcast::error::RecvError::Closed) = received {
+                        info!("build event bus closed, stopping build notifications");
+                        break;
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    warn!(
-                        missed = n,
-                        "notification dispatcher lagged behind event bus"
-                    );
+                () = tokio::time::sleep(BUILD_SCAN_INTERVAL) => {}
+            }
+            match notify_due_builds(&build_pool).await {
+                Ok(deliveries) if !deliveries.is_empty() => {
+                    tokio::spawn(deliver(build_pool.clone(), build_key.clone(), deliveries));
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    info!("notification event bus closed, stopping dispatcher");
-                    break;
-                }
+                Ok(_) => {}
+                Err(e) => error!(error = %e, "build notification scan failed"),
+            }
+        }
+    });
+
+    // Retries failed sends, and sends left pending by a restart.
+    let retry_pool = pool.clone();
+    let retry_key = encryption_key.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(RETRY_SCAN_INTERVAL).await;
+            match due_deliveries(&retry_pool).await {
+                Ok(deliveries) => deliver(retry_pool.clone(), retry_key.clone(), deliveries).await,
+                Err(e) => error!(error = %e, "notification retry scan failed"),
             }
         }
     });
@@ -188,7 +219,7 @@ pub fn start_notification_dispatcher(
                     }
                     let notification = Notification {
                         event_type: "runner_offline".to_string(),
-                        category: "runner",
+                        category: "runner".to_string(),
                         project_id: None,
                         build_id: None,
                         runner_id: Some(event.runner_id.clone()),
@@ -196,12 +227,19 @@ pub fn start_notification_dispatcher(
                         actor_email: None,
                         payload: runner_notification_payload(&event),
                     };
-                    if let Err(e) = dispatch(&runner_pool, &runner_key, &notification).await {
-                        error!(
+                    match enqueue(&runner_pool, &notification).await {
+                        Ok(deliveries) => {
+                            tokio::spawn(deliver(
+                                runner_pool.clone(),
+                                runner_key.clone(),
+                                deliveries,
+                            ));
+                        }
+                        Err(e) => error!(
                             error = %e,
                             runner_id = %event.runner_id,
                             "runner notification dispatch error"
-                        );
+                        ),
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -223,15 +261,16 @@ pub fn start_notification_dispatcher(
     tokio::spawn(async move {
         loop {
             match release_rx.recv().await {
-                Ok(event) => {
-                    if let Err(e) = dispatch_release_event(&pool, &encryption_key, &event).await {
-                        error!(
-                            error = %e,
-                            release_id = %event.release_id,
-                            "release notification dispatch error"
-                        );
+                Ok(event) => match dispatch_release_event(&pool, &event).await {
+                    Ok(deliveries) => {
+                        tokio::spawn(deliver(pool.clone(), encryption_key.clone(), deliveries));
                     }
-                }
+                    Err(e) => error!(
+                        error = %e,
+                        release_id = %event.release_id,
+                        "release notification dispatch error"
+                    ),
+                },
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     warn!(
                         missed = n,
@@ -264,25 +303,76 @@ pub async fn dispatch_build_approval_needed(
         reason: None,
         timestamp: now_unix(),
     };
-    dispatch_build_notification(pool, encryption_key, &event, "build_approval_needed").await
+    let Some(notification) = build_notification(pool, &event, "build_approval_needed").await?
+    else {
+        return Ok(());
+    };
+    let deliveries = enqueue(pool, &notification).await?;
+    deliver(pool.clone(), encryption_key.into(), deliveries).await;
+    Ok(())
 }
 
-/// Dispatch notifications for a single build state event.
-async fn dispatch_build_event(
-    pool: &SqlitePool,
-    encryption_key: &[u8],
-    event: &BuildStateEvent,
-) -> anyhow::Result<()> {
-    dispatch_build_notification(pool, encryption_key, event, &event.to_status).await
+/// Record notifications for builds that finished since the last scan.
+/// Returns the deliveries to send.
+pub(crate) async fn notify_due_builds(pool: &SqlitePool) -> anyhow::Result<Vec<String>> {
+    let rows = sqlx::query(
+        "SELECT id, status, notified_status, COALESCE(finished_at, updated_at) AS finished_at \
+         FROM builds WHERE notified_status IS NOT status \
+           AND status IN ('succeeded', 'failed', 'canceled', 'timed_out', 'expired') \
+         ORDER BY updated_at LIMIT ?1",
+    )
+    .bind(BUILD_SCAN_BATCH_SIZE)
+    .fetch_all(pool)
+    .await?;
+
+    let mut deliveries = Vec::new();
+    for row in rows {
+        let build_id: String = row.get("id");
+        let status: String = row.get("status");
+        let notified: Option<String> = row.get("notified_status");
+        // Retention expires finished builds; their result was already sent.
+        let already_finished = notified
+            .as_deref()
+            .is_some_and(|notified| TERMINAL_STATUSES.contains(&notified));
+        let event = BuildStateEvent {
+            build_id: build_id.clone(),
+            from_status: None,
+            to_status: status.clone(),
+            actor: None,
+            reason: None,
+            timestamp: row.get("finished_at"),
+        };
+        let notification = if already_finished {
+            None
+        } else {
+            build_notification(pool, &event, &status).await?
+        };
+
+        let mut tx = pool.begin().await?;
+        let marked =
+            sqlx::query("UPDATE builds SET notified_status = status WHERE id = ?1 AND status = ?2")
+                .bind(&build_id)
+                .bind(&status)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+        if marked == 1
+            && let Some(notification) = &notification
+        {
+            deliveries.extend(enqueue_on(&mut tx, notification).await?);
+        }
+        tx.commit().await?;
+    }
+    Ok(deliveries)
 }
 
-/// Dispatch a build notification under the channel filter name `event_type`.
-async fn dispatch_build_notification(
+/// A build notification under the channel filter name `event_type`, or
+/// `None` when the build is gone.
+async fn build_notification(
     pool: &SqlitePool,
-    encryption_key: &[u8],
     event: &BuildStateEvent,
     event_type: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<Notification>> {
     let build_row = sqlx::query(
         "SELECT b.*, p.name as project_name, pl.name as pipeline_name \
          FROM builds b \
@@ -296,31 +386,30 @@ async fn dispatch_build_notification(
 
     let Some(build_row) = build_row else {
         warn!(build_id = %event.build_id, "build not found for notification dispatch");
-        return Ok(());
+        return Ok(None);
     };
 
     let trigger_actor: Option<String> = build_row.try_get("trigger_actor").ok().flatten();
-    let notification = Notification {
+    Ok(Some(Notification {
         event_type: event_type.to_string(),
-        category: "build",
+        category: "build".to_string(),
         project_id: build_row.try_get("project_id").ok(),
         build_id: Some(event.build_id.clone()),
         runner_id: None,
         release_id: None,
         actor_email: trigger_actor.filter(|actor| actor.contains('@')),
         payload: build_notification_payload(&build_row, event),
-    };
-    dispatch(pool, encryption_key, &notification).await
+    }))
 }
 
-/// Dispatch notifications for a release or rollout event.
+/// Record deliveries for a release or rollout event. Returns the deliveries
+/// to send.
 async fn dispatch_release_event(
     pool: &SqlitePool,
-    encryption_key: &[u8],
     event: &ReleaseEvent,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<String>> {
     let Some(event_type) = release_event_type(event.kind) else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let project_name: Option<String> =
         sqlx::query_scalar("SELECT name FROM projects WHERE id = ?1")
@@ -330,7 +419,7 @@ async fn dispatch_release_event(
 
     let notification = Notification {
         event_type: event_type.to_string(),
-        category: "release",
+        category: "release".to_string(),
         project_id: Some(event.project_id.clone()),
         build_id: event.build_id.clone(),
         runner_id: None,
@@ -338,162 +427,246 @@ async fn dispatch_release_event(
         actor_email: event.actor.clone().filter(|actor| actor.contains('@')),
         payload: release_notification_payload(event, event_type, project_name.as_deref()),
     };
-    dispatch(pool, encryption_key, &notification).await
+    enqueue(pool, &notification).await
 }
 
-/// Deliver one notification to every enabled channel whose project scope and
-/// event filter match, recording a delivery row per channel.
-async fn dispatch(
-    pool: &SqlitePool,
-    encryption_key: &[u8],
+async fn enqueue(pool: &SqlitePool, notification: &Notification) -> anyhow::Result<Vec<String>> {
+    let mut conn = pool.acquire().await?;
+    enqueue_on(&mut conn, notification).await
+}
+
+/// Record a pending delivery for every enabled channel whose project scope
+/// and event filter match. Returns the delivery ids.
+async fn enqueue_on(
+    conn: &mut sqlx::SqliteConnection,
     notification: &Notification,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<String>> {
     // `project_id = NULL` never matches, so instance-wide events only reach
     // unscoped channels.
     let channels = sqlx::query(
-        "SELECT * FROM notification_channels \
+        "SELECT id, event_filter_json FROM notification_channels \
          WHERE enabled = 1 AND (project_id IS NULL OR project_id = ?1)",
     )
     .bind(&notification.project_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
 
-    if channels.is_empty() {
-        return Ok(());
-    }
-
-    let public_url = load_effective_external_access_network_settings(pool)
-        .await
-        .ok()
-        .and_then(|settings| settings.public_url);
-    let link = notification_link(public_url.as_deref(), notification);
-
-    for channel_row in &channels {
-        let channel_id: String = channel_row.get("id");
-        let channel_type_str: String = channel_row.get("channel_type");
-        let channel_name: String = channel_row.get("name");
-
-        let event_filter_json: Option<String> = channel_row.get("event_filter_json");
+    let notification_json = serde_json::to_string(notification)?;
+    let now = now_unix();
+    let mut deliveries = Vec::new();
+    for channel in channels {
+        let event_filter_json: Option<String> = channel.get("event_filter_json");
         if !event_filter_matches(event_filter_json.as_deref(), &notification.event_type) {
             continue;
         }
-
-        let channel_type = channel_type_str
-            .parse::<NotificationChannelType>()
-            .unwrap_or(NotificationChannelType::Webhook);
-
         let delivery_id = Uuid::new_v4().to_string();
-        let now = now_unix();
-        let _ = sqlx::query(
+        sqlx::query(
             "INSERT INTO notification_deliveries \
-             (id, channel_id, build_id, runner_id, release_id, event_type, event_category, status, attempt_count, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', 0, ?8)",
+             (id, channel_id, build_id, runner_id, release_id, event_type, event_category, status, \
+              attempt_count, notification_json, next_attempt_at, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', 0, ?8, ?9, ?9)",
         )
         .bind(&delivery_id)
-        .bind(&channel_id)
+        .bind(channel.get::<String, _>("id"))
         .bind(&notification.build_id)
         .bind(&notification.runner_id)
         .bind(&notification.release_id)
         .bind(&notification.event_type)
-        .bind(notification.category)
+        .bind(&notification.category)
+        .bind(&notification_json)
         .bind(now)
-        .execute(pool)
-        .await;
+        .execute(&mut *conn)
+        .await?;
+        deliveries.push(delivery_id);
+    }
+    Ok(deliveries)
+}
 
-        let payload = &notification.payload;
-        let result = match channel_type {
-            NotificationChannelType::Email => {
-                dispatch_email(
-                    channel_row,
-                    encryption_key,
-                    &channel_id,
-                    || match notification.category {
-                        "runner" => runner_email_html(payload),
-                        "release" => release_email_html(payload),
-                        _ => build_email_html(payload),
-                    },
-                )
-                .await
-            }
-            NotificationChannelType::Slack => {
-                dispatch_slack(
-                    channel_row,
-                    encryption_key,
-                    &channel_id,
-                    notification,
-                    link.as_deref(),
-                )
-                .await
-            }
-            NotificationChannelType::Mattermost => {
-                let body = match notification.category {
-                    "runner" => runner_mattermost_payload(payload),
-                    "release" => release_mattermost_payload(payload),
-                    _ => build_mattermost_payload(payload),
-                };
-                dispatch_http(
-                    channel_row,
-                    encryption_key,
-                    &channel_id,
-                    channel_type,
-                    &body,
-                )
-                .await
-            }
-            NotificationChannelType::Webhook => {
-                dispatch_http(
-                    channel_row,
-                    encryption_key,
-                    &channel_id,
-                    channel_type,
-                    payload,
-                )
-                .await
-            }
-        };
+/// Pending deliveries whose next attempt is due.
+async fn due_deliveries(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT id FROM notification_deliveries \
+         WHERE status = 'pending' AND next_attempt_at <= ?1 \
+         ORDER BY next_attempt_at LIMIT ?2",
+    )
+    .bind(now_unix())
+    .bind(RETRY_BATCH_SIZE)
+    .fetch_all(pool)
+    .await
+}
 
-        match result {
-            Ok(()) => {
-                let delivered_at = now_unix();
-                let _ = sqlx::query(
-                    "UPDATE notification_deliveries \
-                     SET status = 'delivered', attempt_count = 1, delivered_at = ?1 \
-                     WHERE id = ?2",
-                )
-                .bind(delivered_at)
-                .bind(&delivery_id)
-                .execute(pool)
-                .await;
-                info!(
-                    channel_id = %channel_id,
-                    channel_name = %channel_name,
-                    event_type = %notification.event_type,
-                    "notification delivered"
-                );
+/// Send deliveries concurrently, so a slow channel does not hold up the rest.
+async fn deliver(pool: SqlitePool, encryption_key: Arc<[u8]>, deliveries: Vec<String>) {
+    let mut sends = tokio::task::JoinSet::new();
+    for delivery_id in deliveries {
+        let pool = pool.clone();
+        let encryption_key = encryption_key.clone();
+        sends.spawn(async move {
+            if let Err(e) = attempt_delivery(&pool, &encryption_key, &delivery_id).await {
+                error!(error = %e, %delivery_id, "notification delivery could not be recorded");
             }
-            Err(e) => {
-                let error_msg = e.to_string();
-                let _ = sqlx::query(
-                    "UPDATE notification_deliveries \
-                     SET status = 'failed', attempt_count = 1, last_error = ?1 \
-                     WHERE id = ?2",
-                )
-                .bind(&error_msg)
-                .bind(&delivery_id)
-                .execute(pool)
-                .await;
-                warn!(
-                    channel_id = %channel_id,
-                    channel_name = %channel_name,
-                    event_type = %notification.event_type,
-                    error = %error_msg,
-                    "notification delivery failed"
-                );
-            }
+        });
+    }
+    while sends.join_next().await.is_some() {}
+}
+
+/// Limits sends in flight across every channel.
+fn send_permits() -> &'static tokio::sync::Semaphore {
+    static PERMITS: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+    PERMITS.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_SENDS))
+}
+
+/// Make one attempt at a due delivery and record the result. A failed send
+/// is retried with backoff until it runs out of attempts.
+async fn attempt_delivery(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    delivery_id: &str,
+) -> anyhow::Result<()> {
+    let _permit = send_permits().acquire().await?;
+    // Claiming pushes the next attempt past the send timeout, so a crash
+    // mid-send is retried and a concurrent retry scan skips this delivery.
+    let now = now_unix();
+    let Some(claimed) = sqlx::query(
+        "UPDATE notification_deliveries \
+         SET attempt_count = attempt_count + 1, next_attempt_at = ?1 \
+         WHERE id = ?2 AND status = 'pending' AND next_attempt_at <= ?3 \
+         RETURNING channel_id, attempt_count, notification_json",
+    )
+    .bind(now + DELIVERY_LEASE_SECS)
+    .bind(delivery_id)
+    .bind(now)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(());
+    };
+    let channel_id: String = claimed.get("channel_id");
+    let attempt: i64 = claimed.get("attempt_count");
+    let notification_json: Option<String> = claimed.get("notification_json");
+
+    let channel = sqlx::query("SELECT * FROM notification_channels WHERE id = ?1 AND enabled = 1")
+        .bind(&channel_id)
+        .fetch_optional(pool)
+        .await?;
+    let notification = notification_json
+        .as_deref()
+        .map(serde_json::from_str::<Notification>)
+        .transpose();
+    let (result, retry) = match (channel, notification) {
+        (None, _) => (Err(anyhow::anyhow!("channel was disabled")), false),
+        (_, Ok(None)) => (Err(anyhow::anyhow!("notification was not recorded")), false),
+        (_, Err(e)) => (
+            Err(anyhow::anyhow!("notification is unreadable: {e}")),
+            false,
+        ),
+        (Some(channel), Ok(Some(notification))) => {
+            let public_url = load_effective_external_access_network_settings(pool)
+                .await
+                .ok()
+                .and_then(|settings| settings.public_url);
+            let link = notification_link(public_url.as_deref(), &notification);
+            let result = send(&channel, encryption_key, &notification, link.as_deref()).await;
+            (result, attempt < MAX_DELIVERY_ATTEMPTS)
+        }
+    };
+
+    match result {
+        Ok(()) => {
+            sqlx::query(
+                "UPDATE notification_deliveries \
+                 SET status = 'delivered', delivered_at = ?1, next_attempt_at = NULL, last_error = NULL \
+                 WHERE id = ?2",
+            )
+            .bind(now_unix())
+            .bind(delivery_id)
+            .execute(pool)
+            .await?;
+            info!(%channel_id, attempt, "notification delivered");
+        }
+        Err(e) => {
+            let error_msg = e.to_string();
+            let next_attempt_at =
+                retry.then(|| now_unix() + RETRY_BASE_SECS * (1 << (attempt - 1).min(10)));
+            sqlx::query(
+                "UPDATE notification_deliveries \
+                 SET status = CASE WHEN ?1 IS NULL THEN 'failed' ELSE 'pending' END, \
+                     next_attempt_at = ?1, last_error = ?2 \
+                 WHERE id = ?3",
+            )
+            .bind(next_attempt_at)
+            .bind(&error_msg)
+            .bind(delivery_id)
+            .execute(pool)
+            .await?;
+            warn!(
+                %channel_id,
+                attempt,
+                retrying = next_attempt_at.is_some(),
+                error = %error_msg,
+                "notification delivery failed"
+            );
         }
     }
-
     Ok(())
+}
+
+/// Render and send a notification to one channel.
+async fn send(
+    channel_row: &sqlx::sqlite::SqliteRow,
+    encryption_key: &[u8],
+    notification: &Notification,
+    link: Option<&str>,
+) -> anyhow::Result<()> {
+    let channel_id: String = channel_row.get("id");
+    let channel_type = channel_row
+        .get::<String, _>("channel_type")
+        .parse::<NotificationChannelType>()
+        .unwrap_or(NotificationChannelType::Webhook);
+    let payload = &notification.payload;
+    match channel_type {
+        NotificationChannelType::Email => {
+            dispatch_email(
+                channel_row,
+                encryption_key,
+                &channel_id,
+                || match notification.category.as_str() {
+                    "runner" => runner_email_html(payload),
+                    "release" => release_email_html(payload),
+                    _ => build_email_html(payload),
+                },
+            )
+            .await
+        }
+        NotificationChannelType::Slack => {
+            dispatch_slack(channel_row, encryption_key, &channel_id, notification, link).await
+        }
+        NotificationChannelType::Mattermost => {
+            let body = match notification.category.as_str() {
+                "runner" => runner_mattermost_payload(payload),
+                "release" => release_mattermost_payload(payload),
+                _ => build_mattermost_payload(payload),
+            };
+            dispatch_http(
+                channel_row,
+                encryption_key,
+                &channel_id,
+                channel_type,
+                &body,
+            )
+            .await
+        }
+        NotificationChannelType::Webhook => {
+            dispatch_http(
+                channel_row,
+                encryption_key,
+                &channel_id,
+                channel_type,
+                payload,
+            )
+            .await
+        }
+    }
 }
 
 /// An empty or missing filter matches every event.
@@ -896,7 +1069,7 @@ async fn dispatch_slack(
         None => None,
     };
     let body = slack_message(
-        notification.category,
+        &notification.category,
         &notification.payload,
         link,
         mention.as_deref(),
@@ -1381,7 +1554,7 @@ mod tests {
     fn notification(build_id: Option<&str>, release_id: Option<&str>) -> Notification {
         Notification {
             event_type: "failed".to_string(),
-            category: "build",
+            category: "build".to_string(),
             project_id: Some("p1".to_string()),
             build_id: build_id.map(String::from),
             runner_id: None,
@@ -1580,7 +1753,8 @@ mod tests {
             reason: None,
             timestamp: 0,
         };
-        dispatch_release_event(&pool, &key, &event).await.unwrap();
+        let deliveries = dispatch_release_event(&pool, &event).await.unwrap();
+        deliver(pool.clone(), key.clone().into(), deliveries).await;
 
         let mut received = received.lock().unwrap().clone();
         received.sort_by(|a, b| a.0.cmp(&b.0));
@@ -1611,6 +1785,229 @@ mod tests {
                     "r1".to_string(),
                     "delivered".to_string()
                 ),
+            ]
+        );
+    }
+
+    async fn channel_pool(channels: &[(&str, String)], key: &[u8]) -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        for statement in [
+            "INSERT INTO users (id, email, oidc_subject, created_at, updated_at) \
+             VALUES ('u1', 'dev@example.com', 'sub', 0, 0)",
+            "INSERT INTO projects (id, name, created_by, created_at, updated_at) \
+             VALUES ('p1', 'Kite', 'u1', 0, 0)",
+            "INSERT INTO pipelines (id, project_id, name, created_at, updated_at) \
+             VALUES ('pl1', 'p1', 'Android', 0, 0)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+        for (id, url) in channels {
+            sqlx::query(
+                "INSERT INTO notification_channels \
+                 (id, name, channel_type, enabled, encrypted_url, created_at, updated_at) \
+                 VALUES (?1, ?1, 'webhook', 1, ?2, 0, 0)",
+            )
+            .bind(id)
+            .bind(crypto::encrypt(url, key).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        pool
+    }
+
+    async fn deliveries(pool: &SqlitePool) -> Vec<(String, String, String, i64)> {
+        sqlx::query_as(
+            "SELECT channel_id, event_type, status, attempt_count FROM notification_deliveries \
+             ORDER BY channel_id, created_at",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_failed_delivery_is_retried_until_it_succeeds() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = axum::Router::new()
+            .route(
+                "/hook",
+                axum::routing::post(
+                    |axum::extract::State(calls): axum::extract::State<Arc<AtomicUsize>>| async move {
+                        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                            axum::http::StatusCode::BAD_GATEWAY
+                        } else {
+                            axum::http::StatusCode::OK
+                        }
+                    },
+                ),
+            )
+            .with_state(calls.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let key = vec![7u8; 32];
+        let pool = channel_pool(&[("hook", format!("http://localhost:{port}/hook"))], &key).await;
+
+        let notification = notification(None, None);
+        let ids = enqueue(&pool, &notification).await.unwrap();
+        deliver(pool.clone(), key.clone().into(), ids).await;
+        let pending: (String, i64, Option<i64>, Option<String>) = sqlx::query_as(
+            "SELECT status, attempt_count, next_attempt_at, last_error FROM notification_deliveries",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((pending.0.as_str(), pending.1), ("pending", 1));
+        assert!(pending.2.unwrap() > now_unix());
+        assert!(pending.3.unwrap().contains("502"));
+
+        // Not due yet, so a retry scan leaves it alone.
+        assert!(due_deliveries(&pool).await.unwrap().is_empty());
+        sqlx::query("UPDATE notification_deliveries SET next_attempt_at = 0")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let due = due_deliveries(&pool).await.unwrap();
+        deliver(pool.clone(), key.clone().into(), due).await;
+
+        assert_eq!(
+            deliveries(&pool).await,
+            [(
+                "hook".to_string(),
+                "failed".to_string(),
+                "delivered".to_string(),
+                2
+            )]
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_slow_channel_does_not_hold_up_another() {
+        let (release, released) = tokio::sync::watch::channel(false);
+        let app = axum::Router::new()
+            .route(
+                "/slow",
+                axum::routing::post(
+                    |axum::extract::State(mut released): axum::extract::State<
+                        tokio::sync::watch::Receiver<bool>,
+                    >| async move {
+                        let _ = released.wait_for(|released| *released).await;
+                        "ok"
+                    },
+                ),
+            )
+            .route("/fast", axum::routing::post(|| async { "ok" }))
+            .with_state(released);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let key = vec![7u8; 32];
+        let base = format!("http://localhost:{port}");
+        let pool = channel_pool(
+            &[
+                ("fast", format!("{base}/fast")),
+                ("slow", format!("{base}/slow")),
+            ],
+            &key,
+        )
+        .await;
+
+        let ids = enqueue(&pool, &notification(None, None)).await.unwrap();
+        let sending = tokio::spawn(deliver(pool.clone(), key.clone().into(), ids));
+        let fast_delivered = async {
+            loop {
+                let status: String = sqlx::query_scalar(
+                    "SELECT status FROM notification_deliveries WHERE channel_id = 'fast'",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                if status == "delivered" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(10), fast_delivered)
+            .await
+            .expect("the fast channel waited for the slow one");
+        release.send(true).unwrap();
+        sending.await.unwrap();
+        let statuses: Vec<String> = deliveries(&pool)
+            .await
+            .into_iter()
+            .map(|(_, _, status, _)| status)
+            .collect();
+        assert_eq!(statuses, ["delivered", "delivered"]);
+    }
+
+    #[tokio::test]
+    async fn every_terminal_write_notifies_once_and_retention_stays_quiet() {
+        let (base, received) = capture_server().await;
+        let key = vec![7u8; 32];
+        let pool = channel_pool(&[("hook", format!("{base}/hook"))], &key).await;
+        for (id, number) in [("b1", 1), ("b2", 2), ("b3", 3)] {
+            sqlx::query(
+                "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, \
+                     config_snapshot, queued_at, created_at, updated_at) \
+                 VALUES (?1, 'p1', 'pl1', ?2, 'queued', 'manual', '{}', 0, 0, 0)",
+            )
+            .bind(id)
+            .bind(number)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        assert!(notify_due_builds(&pool).await.unwrap().is_empty());
+
+        // Writes that publish no event, like preflight failures and
+        // project-wide cancels.
+        sqlx::query("UPDATE builds SET status = 'failed', finished_at = 5 WHERE id = 'b1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE builds SET status = 'canceled', finished_at = 5 WHERE id = 'b2'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let ids = notify_due_builds(&pool).await.unwrap();
+        assert_eq!(ids.len(), 2);
+        deliver(pool.clone(), key.clone().into(), ids).await;
+        assert!(notify_due_builds(&pool).await.unwrap().is_empty());
+
+        sqlx::query("UPDATE builds SET status = 'expired' WHERE id IN ('b1', 'b2')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(notify_due_builds(&pool).await.unwrap().is_empty());
+
+        let mut events: Vec<String> = received
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, body)| body["event"].as_str().unwrap().to_string())
+            .collect();
+        events.sort();
+        assert_eq!(events, ["build.canceled", "build.failed"]);
+        let notified: Vec<Option<String>> =
+            sqlx::query_scalar("SELECT notified_status FROM builds ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            notified,
+            [
+                Some("expired".to_string()),
+                Some("expired".to_string()),
+                None
             ]
         );
     }

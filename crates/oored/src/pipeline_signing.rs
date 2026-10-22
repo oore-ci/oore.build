@@ -10,7 +10,7 @@ use oore_contract::{
     UpdatePipelineAndroidSigningRequest,
 };
 use sha2::{Digest, Sha256};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -188,7 +188,7 @@ async fn load_profile_rows(
 }
 
 async fn upsert_profile(
-    pool: &SqlitePool,
+    connection: &mut SqliteConnection,
     encryption_key: &[u8],
     pipeline_id: &str,
     actor_id: &str,
@@ -201,7 +201,7 @@ async fn upsert_profile(
     )
     .bind(pipeline_id)
     .bind(build_type_label)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *connection)
     .await
     .map_err(|e| {
         error!(error = %e, "failed to load android signing profile");
@@ -353,7 +353,7 @@ async fn upsert_profile(
         .bind(actor_id)
         .bind(now)
         .bind(id)
-        .execute(pool)
+        .execute(&mut *connection)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to update Android signing profile");
@@ -389,7 +389,7 @@ async fn upsert_profile(
         .bind(key_password_encrypted)
         .bind(actor_id)
         .bind(now)
-        .execute(pool)
+        .execute(&mut *connection)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to insert Android signing profile");
@@ -402,6 +402,44 @@ async fn upsert_profile(
     }
 
     Ok(())
+}
+
+/// Saves the debug and release profiles together, so a rejected release
+/// profile does not leave a changed debug one behind.
+async fn save_profiles(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    pipeline_id: &str,
+    actor_id: &str,
+    debug: Option<AndroidSigningProfileInput>,
+    release: Option<AndroidSigningProfileInput>,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let store_error = |e: sqlx::Error| {
+        error!(error = %e, "failed to save Android signing profiles");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to save Android signing settings",
+        )
+    };
+    let mut transaction = pool.begin().await.map_err(store_error)?;
+    for (build_type, input) in [
+        (AndroidSigningBuildType::Debug, debug),
+        (AndroidSigningBuildType::Release, release),
+    ] {
+        if let Some(input) = input {
+            upsert_profile(
+                &mut transaction,
+                encryption_key,
+                pipeline_id,
+                actor_id,
+                build_type,
+                input,
+            )
+            .await?;
+        }
+    }
+    transaction.commit().await.map_err(store_error)
 }
 
 pub async fn get_pipeline_android_signing(
@@ -527,28 +565,15 @@ pub async fn update_pipeline_android_signing(
     let debug_updated = req.debug.is_some();
     let release_updated = req.release.is_some();
 
-    if let Some(debug) = req.debug {
-        upsert_profile(
-            &pool,
-            &state.encryption_key,
-            &pipeline_id,
-            &auth.0.user_id,
-            AndroidSigningBuildType::Debug,
-            debug,
-        )
-        .await?;
-    }
-    if let Some(release) = req.release {
-        upsert_profile(
-            &pool,
-            &state.encryption_key,
-            &pipeline_id,
-            &auth.0.user_id,
-            AndroidSigningBuildType::Release,
-            release,
-        )
-        .await?;
-    }
+    save_profiles(
+        &pool,
+        &state.encryption_key,
+        &pipeline_id,
+        &auth.0.user_id,
+        req.debug,
+        req.release,
+    )
+    .await?;
 
     let details = serde_json::json!({
         "pipeline_id": &pipeline_id,
@@ -631,4 +656,79 @@ pub async fn get_job_android_signing(
     })?;
 
     Ok(Json(RunnerAndroidSigningResponse { debug, release }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn pool() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        for statement in [
+            "CREATE TABLE users (id TEXT PRIMARY KEY)",
+            "CREATE TABLE pipelines (id TEXT PRIMARY KEY)",
+            include_str!("../migrations/013_pipeline_android_signing.sql"),
+            "INSERT INTO users VALUES ('u1')",
+            "INSERT INTO pipelines VALUES ('pl1')",
+        ] {
+            sqlx::raw_sql(statement).execute(&pool).await.unwrap();
+        }
+        pool
+    }
+
+    fn profile(keystore_base64: &str) -> AndroidSigningProfileInput {
+        AndroidSigningProfileInput {
+            enabled: true,
+            keystore_filename: Some("app.jks".to_string()),
+            keystore_base64: Some(keystore_base64.to_string()),
+            store_password: Some("store".to_string()),
+            key_alias: Some("alias".to_string()),
+            key_password: Some("key".to_string()),
+        }
+    }
+
+    async fn saved_build_types(pool: &SqlitePool) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT build_type FROM pipeline_android_signing_profiles ORDER BY build_type",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_invalid_release_profile_does_not_save_the_debug_one() {
+        let pool = pool().await;
+        let key = [7u8; 32];
+        let keystore = base64::engine::general_purpose::STANDARD.encode(b"keystore");
+
+        let (status, _) = save_profiles(
+            &pool,
+            &key,
+            "pl1",
+            "u1",
+            Some(profile(&keystore)),
+            Some(profile("not base64!")),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(saved_build_types(&pool).await.is_empty());
+
+        save_profiles(
+            &pool,
+            &key,
+            "pl1",
+            "u1",
+            Some(profile(&keystore)),
+            Some(profile(&keystore)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(saved_build_types(&pool).await, ["debug", "release"]);
+    }
 }
