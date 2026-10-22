@@ -210,6 +210,30 @@ jobs:
       - name: Test
         run: make test-rust
 
+  installer:
+    name: Installer
+    needs: changes
+    if: needs.changes.result == 'success' && needs.changes.outputs.rust == 'true'
+    # The self-hosted Macs run real Oore services, which the bootstrap guard
+    # rightly refuses to install over, so this needs a clean GitHub-hosted Mac.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-bin: false
+          cache-on-failure: true
+
       - name: Install, update and uninstall through the bootstrap scripts
         run: make smoke-install
 
@@ -260,7 +284,7 @@ jobs:
   required:
     name: Required validation
     if: ${{ always() && !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
-    needs: [changes, frontend, docs, rust, tooling]
+    needs: [changes, frontend, docs, rust, installer, tooling]
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || vars.RUNNER_LINUX || 'oore-linux' }}
     timeout-minutes: 5
     env:
@@ -268,6 +292,7 @@ jobs:
       FRONTEND_RESULT: ${{ needs.frontend.result }}
       DOCS_RESULT: ${{ needs.docs.result }}
       RUST_RESULT: ${{ needs.rust.result }}
+      INSTALLER_RESULT: ${{ needs.installer.result }}
       TOOLING_RESULT: ${{ needs.tooling.result }}
     steps:
       - name: Evaluate path-aware validation
@@ -276,4 +301,5 @@ jobs:
           case "$FRONTEND_RESULT" in success|skipped) ;; *) exit 1 ;; esac
           case "$DOCS_RESULT" in success|skipped) ;; *) exit 1 ;; esac
           case "$RUST_RESULT" in success|skipped) ;; *) exit 1 ;; esac
+          case "$INSTALLER_RESULT" in success|skipped) ;; *) exit 1 ;; esac
           case "$TOOLING_RESULT" in success|skipped) ;; *) exit 1 ;; esac
