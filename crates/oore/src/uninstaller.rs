@@ -40,6 +40,16 @@ pub(crate) struct UninstallArgs {
         conflicts_with = "purge"
     )]
     legacy_v0_1_41: bool,
+
+    /// Uninstall even though the installation manifest cannot be read. Oore
+    /// then removes every component path and owned service it can prove
+    /// belongs to this install root.
+    #[arg(
+        long = "ignore-invalid-manifest",
+        default_value_t = false,
+        conflicts_with = "legacy_v0_1_41"
+    )]
+    ignore_invalid_manifest: bool,
 }
 
 struct RemovalPlan {
@@ -56,6 +66,7 @@ struct RemovalPlan {
 #[derive(Clone, Copy)]
 enum InstallationKind {
     Profile(InstallProfile),
+    InvalidManifest,
     BootstrapOnly,
     LegacyV0141(LegacyInstallMode),
 }
@@ -123,33 +134,51 @@ pub(crate) fn handle(args: UninstallArgs, terminal: Terminal) -> anyhow::Result<
                     !args.legacy_v0_1_41,
                     "--legacy-v0-1-41 requires a pre-manifest v0.1.41 installation"
                 );
-                let manifest = InstallManifest::load(&manifest_path).with_context(|| {
-                    format!(
-                        "cannot uninstall safely without a valid installation manifest at {}",
-                        manifest_path.display()
-                    )
-                })?;
-                let services = manifest
-                    .lifecycle
-                    .services
-                    .iter()
-                    .map(|managed| managed.service)
-                    .collect::<Vec<_>>();
-                let mut services = services;
-                if matches!(
-                    manifest.profile,
-                    InstallProfile::Complete | InstallProfile::ControlPlane
-                ) {
-                    services.push(InstallService::Updater);
+                match InstallManifest::load(&manifest_path) {
+                    Ok(manifest) => {
+                        let mut services = manifest
+                            .lifecycle
+                            .services
+                            .iter()
+                            .map(|managed| managed.service)
+                            .collect::<Vec<_>>();
+                        if matches!(
+                            manifest.profile,
+                            InstallProfile::Complete | InstallProfile::ControlPlane
+                        ) {
+                            services.push(InstallService::Updater);
+                        }
+                        let targets =
+                            preflight_component_targets(&install_root, &manifest.components)?;
+                        (
+                            InstallationKind::Profile(manifest.profile),
+                            services,
+                            manifest.shell_path_files,
+                            targets,
+                            false,
+                        )
+                    }
+                    Err(error) if args.ignore_invalid_manifest => {
+                        // Refuse a manifest that is foreign-owned or a link: only
+                        // unreadable contents are safe to set aside.
+                        crate::install_manifest::ensure_private_manifest_file(&manifest_path)
+                            .map_err(|metadata_error| {
+                                metadata_error.context(format!("{error:#}"))
+                            })?;
+                        let targets = preflight_component_targets(
+                            &install_root,
+                            InstallProfile::Complete.components(),
+                        )?;
+                        (
+                            InstallationKind::InvalidManifest,
+                            ALL_SERVICES.to_vec(),
+                            SHELL_PATH_FILES.map(String::from).to_vec(),
+                            targets,
+                            false,
+                        )
+                    }
+                    Err(error) => return Err(error),
                 }
-                let targets = preflight_component_targets(&install_root, &manifest)?;
-                (
-                    InstallationKind::Profile(manifest.profile),
-                    services,
-                    manifest.shell_path_files,
-                    targets,
-                    false,
-                )
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 anyhow::ensure!(
@@ -474,18 +503,26 @@ fn inspect_runtime_update_status(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Every service Oore can register. Each one is removed only when its launchd
+/// definition proves that it belongs to the install root.
+const ALL_SERVICES: [InstallService; 4] = [
+    InstallService::Updater,
+    InstallService::Web,
+    InstallService::Runner,
+    InstallService::Daemon,
+];
+
+/// Every shell file that can hold the Oore PATH block. Files without the exact
+/// block are left unchanged.
+const SHELL_PATH_FILES: [&str; 3] = [".zshrc", ".bashrc", ".bash_profile"];
+
 fn preflight_services(
     root: &Path,
     recorded: &[InstallService],
 ) -> anyhow::Result<Vec<InstallService>> {
     let mut present = Vec::new();
 
-    for service in [
-        InstallService::Updater,
-        InstallService::Web,
-        InstallService::Runner,
-        InstallService::Daemon,
-    ] {
+    for service in ALL_SERVICES {
         let owned = service_is_owned(root, service).with_context(|| {
             format!(
                 "cannot prove ownership of service {}; no services or files were removed",
@@ -723,7 +760,7 @@ fn escape_double_quoted(value: &str) -> String {
 
 fn preflight_component_targets(
     root: &Path,
-    manifest: &InstallManifest,
+    components: &[InstallComponent],
 ) -> anyhow::Result<Vec<OwnedTarget>> {
     let root_dev = fs::symlink_metadata(root)?.dev();
     let mut paths = BTreeSet::from([
@@ -737,11 +774,9 @@ fn preflight_component_targets(
         "SHELL_PATH_FILE",
         "install-manifest.json",
     ]);
-    let control_plane = manifest
-        .components
-        .contains(&InstallComponent::ControlPlane);
-    let web = manifest.components.contains(&InstallComponent::Web);
-    let runner = manifest.components.contains(&InstallComponent::Runner);
+    let control_plane = components.contains(&InstallComponent::ControlPlane);
+    let web = components.contains(&InstallComponent::Web);
+    let runner = components.contains(&InstallComponent::Runner);
     if control_plane {
         paths.insert("bin/oored");
     }
@@ -1344,6 +1379,7 @@ fn format_plan(plan: &RemovalPlan, purge: bool) -> String {
         InstallationKind::Profile(InstallProfile::Runner) => "runner",
         InstallationKind::Profile(InstallProfile::WebNode) => "web-node",
         InstallationKind::Profile(InstallProfile::CliOnly) => "cli-only",
+        InstallationKind::InvalidManifest => "unknown (invalid installation manifest)",
         InstallationKind::BootstrapOnly => "bootstrap-only",
         InstallationKind::LegacyV0141(LegacyInstallMode::All) => "v0.1.41 all",
         InstallationKind::LegacyV0141(LegacyInstallMode::Backend) => "v0.1.41 backend",
