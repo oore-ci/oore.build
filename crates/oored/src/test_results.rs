@@ -330,7 +330,7 @@ mod tests {
         for statement in [
             "CREATE TABLE builds (id TEXT PRIMARY KEY, pipeline_id TEXT, build_number INTEGER)",
             include_str!("../migrations/053_build_test_results.sql"),
-            include_str!("../migrations/057_build_test_step_summaries.sql"),
+            include_str!("../migrations/062_build_test_step_summaries.sql"),
         ] {
             sqlx::raw_sql(statement).execute(&pool).await.unwrap();
         }
