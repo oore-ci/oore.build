@@ -21,6 +21,7 @@ import {
 import {
   getReleaseOptions,
   getReleaseQueryKey,
+  getStoreVitalsOptions,
   listReleaseEventsOptions,
   listReleaseEventsQueryKey,
   listReleasesOptions,
@@ -71,6 +72,23 @@ export function useReleases<TData = ListReleasesResponse>(
       query.state.data?.releases.some(isLiveRelease) ? pollInterval : false,
     placeholderData: keepPreviousData,
     select: options?.select,
+  })
+}
+
+/** Store crash, ANR, hang and launch numbers the daemon caches per app. */
+export function useStoreVitals() {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    getStoreVitalsOptions({ client }),
+  )
+
+  return useQuery({
+    ...query,
+    enabled: !!baseUrl && !!token,
+    // The daemon refreshes stores every few hours; minutes are fresh enough.
+    staleTime: 5 * 60_000,
+    refetchInterval: 15 * 60_000,
   })
 }
 

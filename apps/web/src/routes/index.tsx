@@ -21,6 +21,7 @@ import DashboardBuildIncident, {
 } from '@/components/dashboard-build-incident'
 import { DashboardBuildHealth } from '@/components/dashboard-build-health'
 import { DashboardProjectHealth } from '@/components/dashboard-project-health'
+import { DashboardStoreHealth } from '@/components/dashboard-store-health'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -495,6 +496,8 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
             <ReleaseBoard />
           </Suspense>
         ) : null}
+
+        {hasProjects ? <DashboardStoreHealth /> : null}
 
         {hasProjects || projectsQuery.error ? (
           <DashboardBuildActivity
