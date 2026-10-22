@@ -24,8 +24,10 @@ import {
   type SecretScope,
   type SecretTarget,
 } from '@/hooks/use-secrets'
+import { useHasPermissions } from '@/hooks/use-permissions'
 import { CollectionError } from '@/components/collection'
 import { SecretValueDialog } from '@/components/secrets/secret-value-dialog'
+import { PLAY_SERVICE_ACCOUNT_SECRET } from '@/components/store-credentials/google-play-service-account-panel'
 import {
   SettingsSection,
   SettingsSurface,
@@ -192,12 +194,19 @@ function isTrackChoice(track: string): track is Exclude<TrackChoice, 'custom'> {
   return track in TRACKS && track !== 'custom'
 }
 
-function toFormValues(config: GooglePlayPublishConfig | null | undefined) {
+/**
+ * `defaultSecret` is preselected for new settings, so a service account
+ * shared across projects needs no choice.
+ */
+function toFormValues(
+  config: GooglePlayPublishConfig | null | undefined,
+  defaultSecret = '',
+) {
   const track = config?.track ?? 'internal'
   const percent = config?.rollout_percent
   return {
     enabled: config?.enabled ?? true,
-    service_account_secret: config?.service_account_secret ?? '',
+    service_account_secret: config?.service_account_secret ?? defaultSecret,
     track: isTrackChoice(track) ? track : 'custom',
     custom_track: isTrackChoice(track) ? '' : track,
     release_type: config?.draft
@@ -691,12 +700,14 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
 }
 
 function GooglePlayPublishForm({
+  canShareSecrets,
   canWrite,
   pipelineId,
   projectId,
   saved,
   secretScopes,
 }: {
+  canShareSecrets: boolean
   canWrite: boolean
   pipelineId: string
   projectId: string
@@ -705,9 +716,12 @@ function GooglePlayPublishForm({
 }) {
   const updateMutation = useUpdatePipelineGooglePlayPublish(pipelineId)
   const [addSecretOpen, setAddSecretOpen] = useState(false)
+  const defaultSecret = secretScopes.has(PLAY_SERVICE_ACCOUNT_SECRET)
+    ? PLAY_SERVICE_ACCOUNT_SECRET
+    : ''
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    values: toFormValues(saved.config),
+    values: toFormValues(saved.config, defaultSecret),
     resetOptions: { keepDirtyValues: true },
   })
   const { isDirty } = useFormState({ control: form.control })
@@ -795,7 +809,8 @@ function GooglePlayPublishForm({
         onOpenChange={(open) => {
           setAddSecretOpen(open)
         }}
-        defaultName="PLAY_SERVICE_ACCOUNT"
+        defaultName={PLAY_SERVICE_ACCOUNT_SECRET}
+        sharedTarget={canShareSecrets ? { scope: 'instance' } : undefined}
         target={{ scope: 'project', projectId }}
       />
     </Form>
@@ -816,6 +831,7 @@ export function GooglePlayPublishSection({
   projectId: string
 }) {
   const publishQuery = usePipelineGooglePlayPublish(pipelineId)
+  const [canShareSecrets] = useHasPermissions(['instance_settings:write'])
   const secretTargets: Array<SecretTarget> = [
     { scope: 'pipeline', pipelineId },
     { scope: 'project', projectId },
@@ -855,6 +871,7 @@ export function GooglePlayPublishSection({
         />
       ) : publishQuery.data ? (
         <GooglePlayPublishForm
+          canShareSecrets={canShareSecrets}
           canWrite={canWrite}
           pipelineId={pipelineId}
           projectId={projectId}

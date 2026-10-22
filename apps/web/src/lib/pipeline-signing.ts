@@ -1,4 +1,4 @@
-import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import { usesOwnApiKey, type PipelineFormValues } from '@/lib/pipeline-schema'
 import type {
   PipelineAndroidSigningResponse,
   PipelineIosSigningResponse,
@@ -185,6 +185,17 @@ export async function buildIosSigningPayload(
   const p12Password = trimToUndefined(values.ios_signing_p12_password)
   const apiKeyId = trimToUndefined(values.ios_signing_api_key_id)
   const apiIssuerId = trimToUndefined(values.ios_signing_api_issuer_id)
+  const usesApi =
+    values.ios_signing_mode === 'api' || values.ios_signing_mode === 'hybrid'
+  const apiKeySource = values.ios_signing_api_key_source || undefined
+  const ownApiKey = usesOwnApiKey(apiKeySource)
+  // Only API and hybrid mode use the key, so manual mode keeps the stored choice.
+  const sharedApiKeyId =
+    usesApi && apiKeySource
+      ? apiKeySource === 'own'
+        ? ''
+        : apiKeySource
+      : undefined
   const hasFiles =
     !!files.p12File ||
     !!files.apiKeyFile ||
@@ -197,6 +208,8 @@ export async function buildIosSigningPayload(
       teamId !== trimToUndefined(previous.team_id) ||
       apiKeyId !== trimToUndefined(previous.api_key_id) ||
       apiIssuerId !== trimToUndefined(previous.api_issuer_id) ||
+      (sharedApiKeyId !== undefined &&
+        sharedApiKeyId !== (previous.shared_api_key?.id ?? '')) ||
       !!p12Password ||
       hasFiles
     : values.ios_signing_enabled ||
@@ -245,9 +258,7 @@ export async function buildIosSigningPayload(
     }
   }
 
-  const needsApi =
-    values.ios_signing_enabled &&
-    (values.ios_signing_mode === 'api' || values.ios_signing_mode === 'hybrid')
+  const needsApi = values.ios_signing_enabled && usesApi && ownApiKey
   if (needsApi) {
     if (!apiKeyId && !previous?.api_key_id) {
       errors.push('API/Hybrid iOS signing requires API key ID')
@@ -276,7 +287,7 @@ export async function buildIosSigningPayload(
           : []
       }),
     ),
-    files.apiKeyFile ? files.apiKeyFile.text() : undefined,
+    files.apiKeyFile && ownApiKey ? files.apiKeyFile.text() : undefined,
     files.p12File ? fileToBase64(files.p12File) : undefined,
   ])
 
@@ -297,8 +308,9 @@ export async function buildIosSigningPayload(
             }
           : undefined,
       provisioning_profiles: provisioningProfiles,
+      shared_api_key_id: sharedApiKeyId,
       api_credentials:
-        apiKeyId || apiIssuerId || apiPrivateKey
+        ownApiKey && (apiKeyId || apiIssuerId || apiPrivateKey)
           ? {
               key_id: apiKeyId ?? previous?.api_key_id,
               issuer_id: apiIssuerId ?? previous?.api_issuer_id,

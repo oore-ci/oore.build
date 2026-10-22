@@ -99,6 +99,7 @@ const emptyDefaults: PipelineFormValues = {
   ios_signing_p12_password: '',
   ios_signing_api_key_id: '',
   ios_signing_api_issuer_id: '',
+  ios_signing_api_key_source: '',
   flutter_version: '',
   build_number_offset: '',
   enable_customization: false,
