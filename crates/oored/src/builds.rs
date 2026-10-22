@@ -2231,11 +2231,13 @@ pub async fn trigger_build_from_webhook(
                 );
                 continue;
             }
-            if commit_sha.is_none() && branch.is_none() {
+            // A build without a commit cannot check out anything, for example
+            // a deleted branch.
+            if commit_sha.is_none_or(str::is_empty) {
                 warn!(
                     pipeline_id = %pipeline_id,
                     event_type = %event_type,
-                    "webhook payload missing branch and commit_sha; skipping build creation"
+                    "webhook payload has no commit_sha; skipping build creation"
                 );
                 continue;
             }
@@ -2734,6 +2736,34 @@ mod tests {
                 .await
                 .len(),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_superseded_build_is_notified() {
+        let pool = pool("{}", "{}", 60).await;
+        sqlx::query(
+            "UPDATE pipelines SET concurrency = '{\"cancel_previous\":true}'; \
+             INSERT INTO notification_channels (id, name, channel_type, enabled, created_at, updated_at) \
+             VALUES ('hook', 'hook', 'webhook', 1, 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let first = deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await;
+        deliver(&pool, "d2", Some("main"), None, ChangeSet::Unknown).await;
+
+        crate::notification_dispatch::notify_due_builds(&pool)
+            .await
+            .unwrap();
+        let notified: Vec<(Option<String>, String)> =
+            sqlx::query_as("SELECT build_id, event_type FROM notification_deliveries")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            notified,
+            [(Some(first[0].id.clone()), "canceled".to_string())]
         );
     }
 
