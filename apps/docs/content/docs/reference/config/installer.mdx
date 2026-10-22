@@ -20,6 +20,10 @@ The script supports macOS on `arm64` and `x86_64`.
 
 The Mac must provide `ssh-keygen` with OpenSSH signature support.
 
+The script calls the macOS system tools `/usr/bin/stat`, `/usr/bin/lockf`, and `/usr/bin/shasum` by absolute path. GNU coreutils from Homebrew can stay first in `PATH`.
+
+On macOS 14 and earlier, `lockf` cannot lock an open descriptor. The script then holds the installation lock with a helper process until it exits.
+
 ## Script options
 
 Pass options after `bash -s --`:
