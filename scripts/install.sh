@@ -368,6 +368,42 @@ infer_channel() {
   esac
 }
 
+# Prints "major minor patch prerelease" for a release version, with stable
+# releases ordered after every prerelease of the same version.
+release_version_key() {
+  [[ "$1" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)(-(alpha|beta)\.([0-9]+))?$ ]] || return 1
+  printf '%s %s %s %s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+    "${BASH_REMATCH[6]:-999999999}"
+}
+
+# Succeeds when release version $1 is older than release version $2.
+release_version_older() {
+  local left=() right=() index=0
+  read -r -a left <<< "$(release_version_key "$1")" || return 1
+  read -r -a right <<< "$(release_version_key "$2")" || return 1
+  [[ "${#left[@]}" -eq 4 && "${#right[@]}" -eq 4 ]] || return 1
+  for index in 0 1 2 3; do
+    ((10#${left[index]} == 10#${right[index]})) && continue
+    ((10#${left[index]} < 10#${right[index]}))
+    return
+  done
+  return 1
+}
+
+# A signed index stays valid forever, so a stale mirror, a cache, or a rerun of
+# an old release job can serve an older one. Every client only installs what an
+# index listed, so the installed release on this channel is a version this
+# machine has already seen, and the channel's latest can never be older.
+reject_stale_release_index() {
+  local installed=""
+  [[ -f "$OORE_INSTALL_ROOT/VERSION" && ! -L "$OORE_INSTALL_ROOT/VERSION" ]] || return 0
+  installed="$(head -n 1 "$OORE_INSTALL_ROOT/VERSION" 2>/dev/null | tr -d '[:space:]')" || return 0
+  [[ -n "$installed" && "$(infer_channel "$installed")" == "$OORE_CHANNEL" ]] || return 0
+  if release_version_older "$1" "$installed"; then
+    die "The signed $OORE_CHANNEL release index lists $1, older than the installed $installed. Refusing a stale or rolled-back index; retry later, or pass --version to install a specific release."
+  fi
+}
+
 resolve_release() {
   local manifest_channel=""
   local manifest_schema=""
@@ -395,6 +431,7 @@ resolve_release() {
       || die "The signed release index does not match the $OORE_CHANNEL channel."
     [[ "$(infer_channel "$tag")" == "$OORE_CHANNEL" ]] \
       || die "The signed release tag does not match the $OORE_CHANNEL channel."
+    reject_stale_release_index "${tag#v}"
     RESOLVED_CHANNEL="$OORE_CHANNEL"
   else
     tag="$OORE_VERSION"
