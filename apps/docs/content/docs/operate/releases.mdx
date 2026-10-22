@@ -233,7 +233,7 @@ Each deploy step refuses to run once a newer release has been published. Rerunni
 
 Before index signing, the matching channel history and latest entry must both name the requested tag.
 
-The workflow publishes release assets once. It refuses to replace assets for an existing tag.
+The workflow publishes release assets once and never replaces the assets of a published release. Dispatching a published tag again keeps its published assets and finishes the remaining steps. An unpublished draft from an interrupted run is replaced.
 
 It creates the GitHub release as a draft and publishes it only after every signed asset uploads.
 
