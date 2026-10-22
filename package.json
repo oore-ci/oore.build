@@ -19,7 +19,7 @@
     "oxlint": "1.80.0",
     "oxlint-tailwindcss": "^1.10.2",
     "oxlint-tsgolint": "7.0.2001",
-    "wrangler": "4.127.1"
+    "wrangler": "4.151.3"
   },
   "overrides": {
     "sharp": "0.35.5",
