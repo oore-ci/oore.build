@@ -53,6 +53,7 @@ import {
 } from '@/components/ui/empty'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import { BuildSourceValue } from '@/components/table-values'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { searchChoice } from '@/lib/search-input'
@@ -64,7 +65,11 @@ const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
     accessorKey: 'build_number',
     header: 'Build',
     cell: ({ row }) => (
-      <Link to="/builds/$buildId" params={{ buildId: row.original.id }}>
+      <Link
+        to="/builds/$buildId"
+        params={{ buildId: row.original.id }}
+        className="font-mono font-medium"
+      >
         #{row.original.build_number}
       </Link>
     ),
@@ -79,7 +84,13 @@ const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
     accessorKey: 'branch',
     header: 'Branch',
-    cell: ({ row }) => row.original.branch ?? 'n/a',
+    cell: ({ row }) => (
+      <BuildSourceValue
+        branch={row.original.branch}
+        commitSha={row.original.commit_sha}
+        context={row.original.context}
+      />
+    ),
     enableSorting: false,
   },
   {

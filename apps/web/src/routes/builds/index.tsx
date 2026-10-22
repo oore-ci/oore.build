@@ -101,8 +101,10 @@ function OperationsBuildsPage() {
   })
   const projectsQuery = useProjects({ limit: 1 })
   const setupStatusQuery = useSetupStatus()
-  const [canTriggerBuildGlobally, canWriteProjects, canWriteIntegrations] =
-    useHasPermissions(['builds:write', 'projects:write', 'integrations:write'])
+  const [canTriggerBuildGlobally, canWriteProjects] = useHasPermissions([
+    'builds:write',
+    'projects:write',
+  ])
   const builds = buildsQuery.data?.builds ?? []
   const hasProjects = (projectsQuery.data?.total ?? 0) > 0
   const total = buildsQuery.data?.total ?? 0
@@ -113,7 +115,6 @@ function OperationsBuildsPage() {
   const hasFilters = !!search.q || !!search.project || !!search.status
   const buildCapabilities = {
     triggerBuild: canTriggerBuild,
-    writeIntegrations: canWriteIntegrations,
     writeProjects: canWriteProjects,
   }
 
@@ -189,6 +190,7 @@ function OperationsBuildsPage() {
         />
       ) : (
         <BuildCollection
+          activeFilterCount={Number(!!search.project) + Number(!!search.status)}
           builds={builds}
           direction={direction}
           emptyState={
@@ -204,6 +206,14 @@ function OperationsBuildsPage() {
           isFiltered={hasFilters}
           isLoading={buildsQuery.isLoading}
           isRefreshing={buildsQuery.isFetching && !buildsQuery.isLoading}
+          onClearFilters={() =>
+            updateSearch({
+              q: undefined,
+              project: undefined,
+              status: undefined,
+              page: undefined,
+            })
+          }
           onPageChange={(nextPage) =>
             updateSearch({ page: nextPage > 1 ? nextPage : undefined })
           }

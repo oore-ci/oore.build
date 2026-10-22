@@ -1,17 +1,14 @@
 import { Link } from '@tanstack/react-router'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { MoreHorizontalCircle01Icon } from '@hugeicons/core-free-icons'
 
 import type { Project } from '@oore/client/models'
-import { Button } from '@/components/ui/button'
+import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
+import { DataTableRowActionsTrigger } from '@/components/data-table'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
 export default function ProjectActionsMenu({
@@ -21,28 +18,32 @@ export default function ProjectActionsMenu({
   canManage: boolean
   project: Project
 }) {
+  const canTriggerGlobally = useHasPermission('builds:write')
+  const canRunBuild =
+    canTriggerGlobally &&
+    hasProjectPermission(project.current_user_role, 'builds:write')
+
+  // The project name already opens the project, so the menu holds only what
+  // the row cannot: start a build, jump to its builds, or manage it.
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" />}>
-        <span className="sr-only">Open menu</span>
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
-      </DropdownMenuTrigger>
+      <DataTableRowActionsTrigger label={`Actions for ${project.name}`} />
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Actions</DropdownMenuLabel>
-          <DropdownMenuItem
-            render={
-              <Link
-                to="/projects/$projectId"
-                params={{ projectId: project.id }}
-              />
-            }
-          >
-            Open project
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
+          {canRunBuild ? (
+            <DropdownMenuItem
+              render={
+                <Link
+                  to="/projects/$projectId"
+                  params={{ projectId: project.id }}
+                  search={{ run: '1' }}
+                />
+              }
+            >
+              Run build
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem
             render={
               <Link

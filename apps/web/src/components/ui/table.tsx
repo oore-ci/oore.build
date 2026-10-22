@@ -4,7 +4,9 @@ import { cn } from '@/lib/utils'
 
 /**
  * Marks the container with `data-overflow` while the table is wider than it,
- * so the right edge can fade and signal that the rest scrolls sideways.
+ * so the right edge can fade and signal that the rest scrolls sideways, and
+ * with `data-scrolled` once it has moved, so a sticky first column can show
+ * its edge.
  */
 function useOverflowHint() {
   const ref = React.useRef<HTMLDivElement>(null)
@@ -16,6 +18,7 @@ function useOverflowHint() {
       const hidden = container.scrollWidth - container.clientWidth
       const atEnd = container.scrollLeft >= hidden - 1
       container.dataset.overflow = hidden > 1 && !atEnd ? 'end' : ''
+      container.dataset.scrolled = container.scrollLeft > 0 ? 'true' : ''
     }
     const observer = new ResizeObserver(update)
     observer.observe(container)

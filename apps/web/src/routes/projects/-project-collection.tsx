@@ -14,6 +14,7 @@ import {
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
 import RepositoryAvatar from '@/components/repository-avatar'
+import { EmptyValue } from '@/components/table-values'
 import { relativeTime } from '@/lib/format-utils'
 import type { Project } from '@oore/client/models'
 import ProjectActionsMenu from './-project-actions-menu'
@@ -64,13 +65,13 @@ function getProjectColumns(
     {
       accessorKey: 'default_branch',
       header: 'Default branch',
-      cell: ({ row }) => row.original.default_branch ?? 'Not set',
+      cell: ({ row }) => row.original.default_branch ?? <EmptyValue />,
       enableSorting: false,
     },
     {
       accessorKey: 'description',
       header: 'Description',
-      cell: ({ row }) => row.original.description ?? 'No description',
+      cell: ({ row }) => row.original.description || <EmptyValue />,
       enableSorting: false,
     },
     {
@@ -162,7 +163,7 @@ export function ProjectCollection({
         />
       ) : null}
 
-      {!isLoading && total === 0 && !error ? (
+      {!isLoading && total === 0 && !error && !query ? (
         emptyState
       ) : (
         <DataTable
@@ -173,6 +174,7 @@ export function ProjectCollection({
             placeholder: 'Search projects',
           }}
           pagination={{ onPageChange, page, pageSize, total }}
+          isLoading={isLoading}
           emptyMessage={isLoading ? 'Loading projects…' : undefined}
         />
       )}

@@ -1,4 +1,5 @@
 import { useMemo, type ReactNode } from 'react'
+import { Link } from '@tanstack/react-router'
 
 import { CollectionError, CollectionFrame } from '@/components/collection'
 import {
@@ -77,6 +78,58 @@ function AuditTime({ entry }: { entry: AuditLogEntry }) {
   )
 }
 
+// The full id, linked to the resource when it has a page of its own.
+function AuditResourceId({
+  id,
+  type,
+}: {
+  id: string | null | undefined
+  type: string
+}) {
+  if (!id) return <NotRecorded />
+  const className =
+    'block max-w-48 truncate font-mono text-xs text-muted-foreground'
+  const linkClassName = `${className} hover:text-foreground hover:underline`
+  if (type === 'build')
+    return (
+      <Link
+        to="/builds/$buildId"
+        params={{ buildId: id }}
+        title={id}
+        className={linkClassName}
+      >
+        {id}
+      </Link>
+    )
+  if (type === 'project')
+    return (
+      <Link
+        to="/projects/$projectId"
+        params={{ projectId: id }}
+        title={id}
+        className={linkClassName}
+      >
+        {id}
+      </Link>
+    )
+  if (type === 'integration')
+    return (
+      <Link
+        to="/settings/integrations/$integrationId"
+        params={{ integrationId: id }}
+        title={id}
+        className={linkClassName}
+      >
+        {id}
+      </Link>
+    )
+  return (
+    <span title={id} className={className}>
+      {id}
+    </span>
+  )
+}
+
 const auditColumns: Array<DataTableColumnDef<AuditLogEntry>> = [
   {
     accessorKey: 'created_at',
@@ -120,14 +173,12 @@ const auditColumns: Array<DataTableColumnDef<AuditLogEntry>> = [
   {
     accessorKey: 'resource_id',
     header: 'Resource ID',
-    cell: ({ row }) =>
-      row.original.resource_id ? (
-        <span className="font-mono text-xs" title={row.original.resource_id}>
-          {row.original.resource_id.slice(0, 8)}
-        </span>
-      ) : (
-        <NotRecorded />
-      ),
+    cell: ({ row }) => (
+      <AuditResourceId
+        id={row.original.resource_id}
+        type={row.original.resource_type}
+      />
+    ),
     enableSorting: false,
   },
   {
@@ -150,8 +201,10 @@ export function AuditLogCollection({
   emptyState,
   entries,
   error,
+  activeFilterCount,
   filters,
   isFiltered,
+  onClearFilters,
   isLoading,
   isRefreshing,
   onPageChange,
@@ -168,8 +221,10 @@ export function AuditLogCollection({
   emptyState: ReactNode
   entries: Array<AuditLogEntry>
   error: Error | null
+  activeFilterCount: number
   filters: ReactNode
   isFiltered: boolean
+  onClearFilters: () => void
   isLoading: boolean
   isRefreshing: boolean
   onPageChange: (page: number) => void
@@ -217,12 +272,15 @@ export function AuditLogCollection({
         <DataTable
           table={table}
           filters={filters}
+          activeFilterCount={activeFilterCount}
+          onClearFilters={isFiltered ? onClearFilters : undefined}
           search={{
             value: query,
             onChange: onSearch,
             placeholder: 'Search actions',
           }}
           pagination={{ onPageChange, page, pageSize, total }}
+          isLoading={isLoading}
           emptyMessage={
             isLoading
               ? 'Loading audit entries…'

@@ -31,14 +31,10 @@ import {
 } from '@/lib/format-utils'
 import { qaBuildVersion, qaProjectVersionBase } from '@/lib/qa-releases'
 import { PageMeta } from '@/lib/seo'
-import {
-  BUILD_STATUS_FILTER_OPTIONS,
-  getStatusVariant,
-} from '@/lib/status-variants'
+import { cn } from '@/lib/utils'
 import type { Project } from '@oore/client/models'
 import type { Artifact, Build } from '@oore/client/models'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -62,7 +58,7 @@ import {
   ItemTitle,
 } from '@/components/ui/item'
 import PageLayout from '@/components/page-layout'
-import RepositoryAvatar from '@/components/repository-avatar'
+import QaBuildStatusBadge from '@/components/qa-build-status-badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
@@ -80,6 +76,8 @@ const QaInstallReadinessAlerts = lazy(
 const OperatorArtifactInstallPage = lazy(
   () => import('./artifact-install-operator-page'),
 )
+const PLATFORM_TOGGLE_CLASS =
+  'h-11 px-4 sm:h-9 aria-pressed:border-primary aria-pressed:bg-primary aria-pressed:text-primary-foreground hover:aria-pressed:bg-primary/90 hover:aria-pressed:text-primary-foreground'
 const expiryFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
   timeStyle: 'short',
@@ -201,93 +199,109 @@ function QaReleaseDetail({
   return (
     <PageLayout
       width="default"
-      className={artifact ? 'px-4 pt-4 pb-28 sm:px-6 sm:py-8' : undefined}
+      className={cn('px-4 py-6 sm:px-6 sm:py-10', artifact && 'pb-28')}
     >
       <PageMeta
         title={`${projectName ? `${projectName} · ` : ''}${appName}`}
         noindex
       />
 
-      <header>
-        <div className="flex items-center gap-2">
-          {project ? (
-            <RepositoryAvatar
-              fullName={project.repository_full_name ?? project.name}
-              avatarUrl={project.repository_avatar_url}
-              repositoryId={project.repository_id}
-              provider={project.repository_provider}
-              size="sm"
-            />
-          ) : null}
-          <p className="truncate text-sm text-muted-foreground">
-            {projectName ?? 'Test release'}
-          </p>
-        </div>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight wrap-break-word sm:text-3xl">
-          {appName}
-        </h1>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Badge variant={getStatusVariant(build.status)}>
-            {build.status === 'succeeded'
-              ? 'Ready to test'
-              : BUILD_STATUS_FILTER_OPTIONS[build.status]}
-          </Badge>
-          {artifact ? (
-            <Badge variant="outline">{isIos ? 'iOS' : 'Android'}</Badge>
-          ) : null}
-          <span className="text-xs text-muted-foreground">
-            Released {relativeTime(releasedAt)}
-          </span>
-        </div>
-      </header>
-
-      {(androidArtifact && iosArtifact) ||
-      (artifact && artifact.id !== androidArtifact?.id) ? (
-        <ToggleGroup
-          aria-label="Choose platform"
-          value={artifact ? [artifact.id] : []}
-          variant="outline"
-          size="sm"
-          onValueChange={(value) => {
-            const artifactId = value.at(0)
-            if (!artifactId) return
-            void navigate({
-              to: '/builds/$buildId',
-              params: { buildId: build.id },
-              search: { install: artifactId },
-              resetScroll: true,
-            })
-          }}
-        >
-          {androidArtifact ? (
-            <ToggleGroupItem value={androidArtifact.id}>
-              <HugeiconsIcon icon={AndroidIcon} data-icon="inline-start" />
-              Android
-              {isAndroid ? (
-                <HugeiconsIcon
-                  icon={CheckmarkCircle02Icon}
-                  data-icon="inline-end"
-                />
+      <div className="grid items-start gap-x-8 gap-y-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <header className="min-w-0 space-y-3">
+          <h1 className="text-2xl font-semibold tracking-tight wrap-break-word sm:text-3xl">
+            {appName}
+          </h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <QaBuildStatusBadge status={build.status} />
+            <span className="text-xs text-muted-foreground">
+              Released {relativeTime(releasedAt)}
+            </span>
+          </div>
+          {(androidArtifact && iosArtifact) ||
+          (artifact && artifact.id !== androidArtifact?.id) ? (
+            <ToggleGroup
+              aria-label="Choose platform"
+              value={artifact ? [artifact.id] : []}
+              variant="outline"
+              spacing={0}
+              onValueChange={(value) => {
+                const artifactId = value.at(0)
+                if (!artifactId) return
+                void navigate({
+                  to: '/builds/$buildId',
+                  params: { buildId: build.id },
+                  search: { install: artifactId },
+                  resetScroll: true,
+                })
+              }}
+            >
+              {androidArtifact ? (
+                <ToggleGroupItem
+                  value={androidArtifact.id}
+                  className={PLATFORM_TOGGLE_CLASS}
+                >
+                  <HugeiconsIcon icon={AndroidIcon} data-icon="inline-start" />
+                  Android
+                </ToggleGroupItem>
               ) : null}
-            </ToggleGroupItem>
-          ) : null}
-          {iosArtifact ? (
-            <ToggleGroupItem value={iosArtifact.id}>
-              <HugeiconsIcon icon={AppleIcon} data-icon="inline-start" />
-              iOS
-              {isIos ? (
-                <HugeiconsIcon
-                  icon={CheckmarkCircle02Icon}
-                  data-icon="inline-end"
-                />
+              {iosArtifact ? (
+                <ToggleGroupItem
+                  value={iosArtifact.id}
+                  className={PLATFORM_TOGGLE_CLASS}
+                >
+                  <HugeiconsIcon icon={AppleIcon} data-icon="inline-start" />
+                  iOS
+                </ToggleGroupItem>
               ) : null}
-            </ToggleGroupItem>
+            </ToggleGroup>
           ) : null}
-        </ToggleGroup>
-      ) : null}
+        </header>
 
-      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <div className="min-w-0 space-y-6">
+        {artifact ? (
+          <Card className="lg:sticky lg:top-20 lg:col-start-2 lg:row-span-2 lg:row-start-1">
+            <CardHeader>
+              <CardTitle>Install this release</CardTitle>
+              <CardDescription>
+                {isIos ? 'iOS' : 'Android'} ·{' '}
+                {artifact.file_size != null
+                  ? formatFileSize(artifact.file_size ?? undefined)
+                  : 'Size unavailable'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-xs text-muted-foreground">
+                {expiryLabel(artifact.expires_at ?? undefined)}
+              </p>
+              <div className="space-y-1.5 text-sm">
+                <p className="font-medium">Before you install</p>
+                <p className="text-muted-foreground">
+                  {isIos
+                    ? 'Open this page in Safari on a registered iPhone, then confirm the iOS install prompt.'
+                    : 'Download the APK, allow installs from this browser if asked, then confirm installation.'}
+                </p>
+              </div>
+            </CardContent>
+            <CardFooter className="hidden sm:flex">
+              <Button
+                size="lg"
+                onClick={handleInstall}
+                disabled={!canInstall || installMutation.isPending}
+                className="w-full"
+              >
+                {installMutation.isPending ? (
+                  <Spinner />
+                ) : (
+                  <HugeiconsIcon icon={SmartPhone01Icon} />
+                )}
+                {primaryLabel}
+              </Button>
+            </CardFooter>
+          </Card>
+        ) : historyLoading ? (
+          <Skeleton className="h-52 w-full lg:col-start-2 lg:row-span-2 lg:row-start-1" />
+        ) : null}
+
+        <div className="min-w-0 space-y-6 lg:col-start-1 lg:row-start-2">
           {build.changelog ? (
             <section aria-labelledby="release-notes-title">
               <h2 id="release-notes-title" className="text-sm font-medium">
@@ -410,50 +424,6 @@ function QaReleaseDetail({
             </p>
           ) : null}
         </div>
-
-        {artifact ? (
-          <Card className="lg:sticky lg:top-20">
-            <CardHeader>
-              <CardTitle>Install this release</CardTitle>
-              <CardDescription>
-                {isIos ? 'iOS' : 'Android'} ·{' '}
-                {artifact.file_size != null
-                  ? formatFileSize(artifact.file_size ?? undefined)
-                  : 'Size unavailable'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4 pb-(--card-spacing) sm:pb-0">
-              <p className="text-xs text-muted-foreground">
-                {expiryLabel(artifact.expires_at ?? undefined)}
-              </p>
-              <div className="space-y-1.5 text-sm">
-                <p className="font-medium">Before you install</p>
-                <p className="text-muted-foreground">
-                  {isIos
-                    ? 'Open this page in Safari on a registered iPhone, then confirm the iOS install prompt.'
-                    : 'Download the APK, allow installs from this browser if asked, then confirm installation.'}
-                </p>
-              </div>
-            </CardContent>
-            <CardFooter className="hidden sm:flex">
-              <Button
-                size="lg"
-                onClick={handleInstall}
-                disabled={!canInstall || installMutation.isPending}
-                className="w-full"
-              >
-                {installMutation.isPending ? (
-                  <Spinner />
-                ) : (
-                  <HugeiconsIcon icon={SmartPhone01Icon} />
-                )}
-                {primaryLabel}
-              </Button>
-            </CardFooter>
-          </Card>
-        ) : historyLoading ? (
-          <Skeleton className="h-52 w-full" />
-        ) : null}
       </div>
 
       {artifact ? (
