@@ -5119,6 +5119,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "description": "Delete even when Google Play publishing uses the secret",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -5144,6 +5153,16 @@
           },
           "404": {
             "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A pipeline uses the secret as its Google Play service account",
             "content": {
               "application/json": {
                 "schema": {
@@ -5573,7 +5592,7 @@
             }
           },
           "409": {
-            "description": "Project source is not configured or resolvable",
+            "description": "Project source is not configured or resolvable, or the Google Play service account secret is missing",
             "content": {
               "application/json": {
                 "schema": {
@@ -6559,6 +6578,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "description": "Delete even when Google Play publishing uses the secret",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -6584,6 +6612,16 @@
           },
           "404": {
             "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A pipeline uses the secret as its Google Play service account",
             "content": {
               "application/json": {
                 "schema": {
@@ -9303,6 +9341,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "description": "Delete even when Google Play publishing uses the secret",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -9328,6 +9375,16 @@
           },
           "404": {
             "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A pipeline uses the secret as its Google Play service account",
             "content": {
               "application/json": {
                 "schema": {
