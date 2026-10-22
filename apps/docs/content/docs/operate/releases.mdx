@@ -239,17 +239,9 @@ It creates the GitHub release as a draft and publishes it only after every signe
 
 Before the signed channel index changes, the workflow deploys the installer that verifies these signatures. It generates that installer from protected `master` over stable site content. A deployment failure therefore stops the release instead of leaving an unsigned installation window.
 
-Run the non-publishing preflight before the first release and after each key change:
+Before index signing, every channel's history must be well formed, hold only that channel's releases newest first, and agree with its latest entry.
 
-```bash
-gh workflow run sign-release-metadata.yml --ref master
-```
-
-The preflight derives the public key and compares it with the trusted pin.
-
-The manual preflight does not create a release, sign metadata, or deploy files.
-
-The release workflow uses a local reusable workflow. [GitHub reusable workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows) resolve this form from the caller's exact commit.
+Signing runs in the local composite action `.github/actions/sign-release-metadata`, which `release.yml` loads from the protected `master` commit.
 
 For a local `vX.Y.Z-dev` package, set both acceptance flags:
 
