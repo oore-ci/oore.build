@@ -33,7 +33,7 @@ export const demoIntegrations: Array<Integration> = [
     host_url: 'https://gitlab.com',
     auth_mode: 'oauth_app',
     status: 'active',
-    display_name: 'GitLab CI Integration',
+    display_name: 'GitLab CI',
     created_by: USER_IDS.admin,
     created_at: ago(86400 * 30),
     updated_at: ago(86400 * 5),

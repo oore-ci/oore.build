@@ -51,6 +51,7 @@ import { StatusBadge } from '@/components/status-badge'
 import PageHeader from '@/components/page-header'
 import { ResumeRunnersButton } from '@/components/settings/direct-runner-policy-panel'
 import PageLayout from '@/components/page-layout'
+import { NotFoundState } from '@/components/root-route-boundaries'
 import TerminalLogViewer from '@/components/terminal-log-viewer'
 import {
   currentStepName,
@@ -300,35 +301,43 @@ export function BuildDetailPage({
   }
 
   if (error) {
-    const notFound = isOoreApiError(error) && error.status === 404
+    if (isOoreApiError(error) && error.status === 404) {
+      return (
+        <PageLayout width="full">
+          <PageMeta title="Build not found" noindex />
+          <NotFoundState
+            title="Build not found"
+            description="This build was deleted, expired, or the link is wrong."
+            backTo="/builds"
+            backLabel="Back to builds"
+          />
+        </PageLayout>
+      )
+    }
+
     return (
       <PageLayout width="full">
         <PageMeta title={label} noindex />
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              {notFound
-                ? 'This build was not found or is no longer available.'
-                : `Failed to load build: ${error.message}`}
-            </span>
+            <span>Failed to load build: {error.message}</span>
             <span className="flex gap-2">
               <Button
                 variant="outline"
                 size="sm"
                 render={<Link to="/builds" />}
+                nativeButton={false}
               >
                 Back to builds
               </Button>
-              {!notFound ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void refetchBuild()}
-                >
-                  Retry
-                </Button>
-              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void refetchBuild()}
+              >
+                Retry
+              </Button>
             </span>
           </AlertDescription>
         </Alert>

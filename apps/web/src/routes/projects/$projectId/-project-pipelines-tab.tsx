@@ -1,11 +1,7 @@
 import { useMemo } from 'react'
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Add01Icon,
-  InformationCircleIcon,
-  MoreHorizontalCircle01Icon,
-} from '@hugeicons/core-free-icons'
+import { Add01Icon, InformationCircleIcon } from '@hugeicons/core-free-icons'
 
 import type { Pipeline } from '@oore/client/models'
 import type { SortDirection } from '@/components/data-table-features'
@@ -14,6 +10,7 @@ import {
   DataTableColumnHeader,
   useDataTable,
   type DataTableColumnDef,
+  DataTableRowActionsTrigger,
 } from '@/components/data-table'
 import {
   dataTableSortingState,
@@ -28,7 +25,6 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
   Empty,
@@ -79,10 +75,7 @@ function PipelineActions({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" />}>
-        <span className="sr-only">Open menu</span>
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
-      </DropdownMenuTrigger>
+      <DataTableRowActionsTrigger label={`Actions for ${pipeline.name}`} />
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Actions</DropdownMenuLabel>
@@ -354,7 +347,7 @@ export function ProjectPipelinesTab({
               onChange: onQueryChange,
               placeholder: 'Search pipelines',
             }}
-            filters={
+            actions={
               canWritePipelines ? (
                 <Button
                   nativeButton={false}
@@ -371,6 +364,7 @@ export function ProjectPipelinesTab({
               ) : undefined
             }
             pagination={{ onPageChange, page, pageSize, total }}
+            isLoading={isLoading}
             emptyMessage={isLoading ? 'Loading pipelines…' : undefined}
           />
         )}
