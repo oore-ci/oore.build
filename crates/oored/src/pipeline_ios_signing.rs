@@ -675,117 +675,61 @@ async fn parse_p12_metadata(
     .map_err(|e| anyhow::anyhow!("parse_p12_metadata task panicked: {e}"))?
 }
 
+/// Imports the p12 into a scratch keychain and checks that it yields a signing
+/// identity. The keychain calls run in-process so neither the p12 password nor
+/// the keychain password ever appears on a process command line.
 async fn verify_p12_keychain_import_compatibility(
     p12_bytes: Vec<u8>,
     p12_password: String,
 ) -> anyhow::Result<()> {
     tokio::task::spawn_blocking(move || {
         let mut scratch = SigningScratch::new()?;
-        let token = Uuid::new_v4().to_string();
-        let p12_path = scratch.path(&format!("import-check-{token}.p12"));
-        let keychain_path = scratch.path(&format!("import-check-{token}.keychain-db"));
-        let exported_identity_path = scratch.path(&format!("identity-check-{token}.p12"));
+        let keychain_path = scratch.path(&format!("import-check-{}.keychain-db", Uuid::new_v4()));
         scratch.keychain = Some(keychain_path.clone());
-        let keychain_password = random_secret_hex();
-
-        fs::write(&p12_path, &p12_bytes).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to write temporary p12 for keychain compatibility check '{}': {e}",
-                p12_path.display()
-            )
-        })?;
-        set_strict_permissions(&p12_path);
-
-        let cleanup = || {
-            let _ = Command::new("security")
-                .args(["delete-keychain", keychain_path.to_string_lossy().as_ref()])
-                .output();
-            let _ = fs::remove_file(&keychain_path);
-            let _ = fs::remove_file(&p12_path);
-            let _ = fs::remove_file(&exported_identity_path);
-        };
-
-        let create_output = Command::new("security")
-            .args([
-                "create-keychain",
-                "-p",
-                &keychain_password,
-                keychain_path.to_string_lossy().as_ref(),
-            ])
-            .output()
-            .map_err(|e| anyhow::anyhow!("failed to execute security create-keychain: {e}"))?;
-        if !create_output.status.success() {
-            let stderr = String::from_utf8_lossy(&create_output.stderr);
-            cleanup();
-            anyhow::bail!(
-                "failed to create temporary keychain for iOS signing validation: {stderr}"
-            );
-        }
-
-        let unlock_output = Command::new("security")
-            .args([
-                "unlock-keychain",
-                "-p",
-                &keychain_password,
-                keychain_path.to_string_lossy().as_ref(),
-            ])
-            .output()
-            .map_err(|e| anyhow::anyhow!("failed to execute security unlock-keychain: {e}"))?;
-        if !unlock_output.status.success() {
-            let stderr = String::from_utf8_lossy(&unlock_output.stderr);
-            cleanup();
-            anyhow::bail!(
-                "failed to unlock temporary keychain for iOS signing validation: {stderr}"
-            );
-        }
-
-        let import_output = Command::new("security")
-            .args([
-                "import",
-                p12_path.to_string_lossy().as_ref(),
-                "-f",
-                "pkcs12",
-                "-k",
-                keychain_path.to_string_lossy().as_ref(),
-                "-P",
-                &p12_password,
-                "-A",
-            ])
-            .output()
-            .map_err(|e| anyhow::anyhow!("failed to execute security import: {e}"))?;
-
-        if !import_output.status.success() {
-            let stderr = String::from_utf8_lossy(&import_output.stderr);
-            cleanup();
-            anyhow::bail!("failed to import p12 into macOS keychain: {stderr}");
-        }
-
-        let export_output = Command::new("security")
-            .args([
-                "export",
-                "-k",
-                keychain_path.to_string_lossy().as_ref(),
-                "-t",
-                "identities",
-                "-f",
-                "pkcs12",
-                "-P",
-                &keychain_password,
-                "-o",
-                exported_identity_path.to_string_lossy().as_ref(),
-            ])
-            .output()
-            .map_err(|e| anyhow::anyhow!("failed to execute security identity export: {e}"))?;
-        cleanup();
-        if !export_output.status.success() {
-            let stderr = String::from_utf8_lossy(&export_output.stderr);
-            anyhow::bail!("p12 imported without a usable macOS signing identity: {stderr}");
-        }
-
-        Ok(())
+        import_p12_into_scratch_keychain(&keychain_path, &p12_bytes, &p12_password)
     })
     .await
     .map_err(|e| anyhow::anyhow!("verify_p12_keychain_import_compatibility task panicked: {e}"))?
+}
+
+#[cfg(target_os = "macos")]
+fn import_p12_into_scratch_keychain(
+    keychain_path: &FsPath,
+    p12_bytes: &[u8],
+    p12_password: &str,
+) -> anyhow::Result<()> {
+    use security_framework::import_export::Pkcs12ImportOptions;
+    use security_framework::os::macos::keychain::CreateOptions;
+
+    let keychain_password = random_secret_hex();
+    let mut keychain = CreateOptions::new()
+        .password(&keychain_password)
+        .create(keychain_path)
+        .map_err(|e| {
+            anyhow::anyhow!("failed to create temporary keychain for iOS signing validation: {e}")
+        })?;
+    keychain.unlock(Some(&keychain_password)).map_err(|e| {
+        anyhow::anyhow!("failed to unlock temporary keychain for iOS signing validation: {e}")
+    })?;
+
+    let imported = Pkcs12ImportOptions::new()
+        .passphrase(p12_password)
+        .keychain(keychain)
+        .import(p12_bytes)
+        .map_err(|e| anyhow::anyhow!("failed to import p12 into macOS keychain: {e}"))?;
+    if !imported.iter().any(|item| item.identity.is_some()) {
+        anyhow::bail!("p12 imported without a usable macOS signing identity");
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn import_p12_into_scratch_keychain(
+    _keychain_path: &FsPath,
+    _p12_bytes: &[u8],
+    _p12_password: &str,
+) -> anyhow::Result<()> {
+    anyhow::bail!("macOS keychain validation is only available on macOS")
 }
 
 /// Re-export a p12 bundle using legacy 3DES+SHA1 encoding that macOS `security import` supports.
@@ -3733,6 +3677,32 @@ mod tests {
             "pass:secret",
         ]);
         (fs::read(p12).unwrap(), "secret".to_string())
+    }
+
+    #[test]
+    fn no_command_in_this_module_takes_a_password_flag() {
+        let source = include_str!("pipeline_ios_signing.rs");
+        let production = &source[..source.find("#[cfg(test)]\nmod tests").unwrap()];
+        for flag in ['p', 'P'] {
+            let literal = format!("\"-{flag}\"");
+            assert!(
+                !production.contains(&literal),
+                "{literal} would put a password on a process command line"
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn keychain_import_check_accepts_the_right_password_only() {
+        let (p12, password) = test_p12("5a");
+        let (p12, password) = reexport_p12_legacy(p12, password).await.unwrap();
+        verify_p12_keychain_import_compatibility(p12.clone(), password)
+            .await
+            .unwrap();
+        verify_p12_keychain_import_compatibility(p12, "wrong".to_string())
+            .await
+            .unwrap_err();
     }
 
     /// An Apple team that issues the same certificate each time and counts how
