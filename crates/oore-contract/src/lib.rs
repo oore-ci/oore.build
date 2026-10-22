@@ -4894,6 +4894,85 @@ pub struct ListNotificationDeliveriesResponse {
 
 // ── Release domain types ────────────────────────────────────────
 
+/// A store health metric shown on Home.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StoreVitalKind {
+    /// Google Play user-perceived crash rate, 0..1.
+    CrashRate,
+    /// Google Play user-perceived ANR rate, 0..1.
+    AnrRate,
+    /// App Store hang rate, in the unit Apple reports (seconds of hang per hour).
+    HangRate,
+    /// App Store time to first frame at launch, in the unit Apple reports.
+    LaunchTime,
+}
+
+/// One point of a store metric: a day for Google Play, an app version for the App Store.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct StoreVitalPoint {
+    /// `YYYY-MM-DD` for Google Play, the app version for the App Store.
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct StoreVital {
+    pub kind: StoreVitalKind,
+    /// Headline value: Play's 28-day user-weighted rate, or the latest App Store version's value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    /// Unit as the store names it; `ratio` for Play rates.
+    pub unit: String,
+    /// Where the store starts treating the value as bad: Play's bad-behavior
+    /// threshold, or Apple's recommended goal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f64>,
+    /// Oldest first.
+    pub points: Vec<StoreVitalPoint>,
+}
+
+/// A grouped crash or ANR reported by the store.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct StoreErrorIssue {
+    /// `crash` or `anr`.
+    pub kind: String,
+    pub cause: String,
+    pub location: String,
+    pub reports: i64,
+    pub users: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_reported_at: Option<i64>,
+    /// The issue in the store's console.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// Store health of one app: a project shipped to one store under one package name or bundle id.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct StoreAppVitals {
+    pub project_id: String,
+    pub project_name: String,
+    pub store: ReleaseStore,
+    /// Package name on Google Play, bundle id on the App Store.
+    pub app_identifier: String,
+    pub vitals: Vec<StoreVital>,
+    /// Most-reported issues of the last 28 days. Google Play only.
+    pub issues: Vec<StoreErrorIssue>,
+    /// When Oore last read the store; absent until the first read finishes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refreshed_at: Option<i64>,
+    /// Why the last read failed, such as missing credentials or access.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct StoreVitalsResponse {
+    pub apps: Vec<StoreAppVitals>,
+}
+
 /// Store a release is published to.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]

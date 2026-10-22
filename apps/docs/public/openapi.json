@@ -11062,6 +11062,33 @@
         ]
       }
     },
+    "/v1/store-vitals": {
+      "get": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Get store vitals",
+        "description": "Google Play crash and ANR rates with top issues, and App Store hang\nrate and launch time, for every app the caller's projects released to a\nstore. The daemon reads the stores every few hours with the projects'\npublishing credentials and serves its latest copy.",
+        "operationId": "get_store_vitals",
+        "responses": {
+          "200": {
+            "description": "Store vitals",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreVitalsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/system/update": {
       "get": {
         "tags": [
@@ -18918,6 +18945,190 @@
           },
           "status": {
             "type": "string"
+          }
+        }
+      },
+      "StoreAppVitals": {
+        "type": "object",
+        "description": "Store health of one app: a project shipped to one store under one package name or bundle id.",
+        "required": [
+          "project_id",
+          "project_name",
+          "store",
+          "app_identifier",
+          "vitals",
+          "issues"
+        ],
+        "properties": {
+          "app_identifier": {
+            "type": "string",
+            "description": "Package name on Google Play, bundle id on the App Store."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last read failed, such as missing credentials or access."
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoreErrorIssue"
+            },
+            "description": "Most-reported issues of the last 28 days. Google Play only."
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "refreshed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When Oore last read the store; absent until the first read finishes."
+          },
+          "store": {
+            "$ref": "#/components/schemas/ReleaseStore"
+          },
+          "vitals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoreVital"
+            }
+          }
+        }
+      },
+      "StoreErrorIssue": {
+        "type": "object",
+        "description": "A grouped crash or ANR reported by the store.",
+        "required": [
+          "kind",
+          "cause",
+          "location",
+          "reports",
+          "users"
+        ],
+        "properties": {
+          "cause": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`crash` or `anr`."
+          },
+          "last_reported_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "location": {
+            "type": "string"
+          },
+          "reports": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The issue in the store's console."
+          },
+          "users": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "StoreVital": {
+        "type": "object",
+        "required": [
+          "kind",
+          "unit",
+          "points"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/StoreVitalKind"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoreVitalPoint"
+            },
+            "description": "Oldest first."
+          },
+          "threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Where the store starts treating the value as bad: Play's bad-behavior\nthreshold, or Apple's recommended goal."
+          },
+          "unit": {
+            "type": "string",
+            "description": "Unit as the store names it; `ratio` for Play rates."
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Headline value: Play's 28-day user-weighted rate, or the latest App Store version's value."
+          }
+        }
+      },
+      "StoreVitalKind": {
+        "type": "string",
+        "description": "A store health metric shown on Home.",
+        "enum": [
+          "crash_rate",
+          "anr_rate",
+          "hang_rate",
+          "launch_time"
+        ]
+      },
+      "StoreVitalPoint": {
+        "type": "object",
+        "description": "One point of a store metric: a day for Google Play, an app version for the App Store.",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "`YYYY-MM-DD` for Google Play, the app version for the App Store."
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "StoreVitalsResponse": {
+        "type": "object",
+        "required": [
+          "apps"
+        ],
+        "properties": {
+          "apps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoreAppVitals"
+            }
           }
         }
       },

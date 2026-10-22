@@ -175,6 +175,7 @@ use utoipa::{
         operations::retry_build_step,
         // ── Releases ──
         operations::list_releases,
+        operations::get_store_vitals,
         operations::create_release,
         operations::get_release,
         operations::raise_release,
@@ -458,6 +459,12 @@ use utoipa::{
         oore_contract::StepResult,
         // Releases
         oore_contract::ReleaseStore,
+        oore_contract::StoreVitalKind,
+        oore_contract::StoreVitalPoint,
+        oore_contract::StoreVital,
+        oore_contract::StoreErrorIssue,
+        oore_contract::StoreAppVitals,
+        oore_contract::StoreVitalsResponse,
         oore_contract::ReleaseState,
         oore_contract::ReleaseAction,
         oore_contract::ReleaseHealth,
@@ -2340,6 +2347,20 @@ mod operations {
         )
     )]
     pub(super) fn get_build_insights() {}
+
+    /// Get store vitals
+    ///
+    /// Google Play crash and ANR rates with top issues, and App Store hang
+    /// rate and launch time, for every app the caller's projects released to a
+    /// store. The daemon reads the stores every few hours with the projects'
+    /// publishing credentials and serves its latest copy.
+    #[utoipa::path(get, path = "/v1/store-vitals", tag = "Releases",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Store vitals", body = StoreVitalsResponse),
+        )
+    )]
+    pub(super) fn get_store_vitals() {}
 
     /// Get build detail
     #[utoipa::path(get, path = "/v1/builds/{build_id}", tag = "Builds",

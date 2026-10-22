@@ -47,6 +47,7 @@ pub mod session;
 pub mod step_retry;
 pub mod storage;
 pub mod store;
+pub mod store_vitals;
 pub mod test_results;
 pub mod token;
 pub mod users;
@@ -2455,6 +2456,7 @@ pub async fn build_router_with_recovery(
         integrations::gitlab::start_credential_health_monitor(shared_state.clone());
         app_store_publish::start_release_monitor(shared_state.clone());
         background::start_release_rollout_monitor(shared_state.clone());
+        store_vitals::start_store_vitals_monitor(shared_state.clone());
         pipeline_schedules::start_schedule_monitor(shared_state.clone());
     }
 
@@ -2828,6 +2830,7 @@ pub async fn build_router_with_recovery(
             "/v1/builds/insights",
             get(build_insights::get_build_insights),
         )
+        .route("/v1/store-vitals", get(store_vitals::get_store_vitals))
         .route("/v1/builds/{build_id}", get(builds::get_build))
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
         .route("/v1/builds/{build_id}/approve", post(builds::approve_build))

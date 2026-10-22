@@ -230,6 +230,34 @@ impl<'a> AppStoreConnect<'a> {
             .map(|app| app.id))
     }
 
+    /// Hang and launch metrics for the app's recent versions, in Apple's
+    /// Xcode metrics format.
+    pub async fn perf_power_metrics(&self, app_id: &str) -> AscResult<Value> {
+        let body = self
+            .send(
+                "Power and performance metrics",
+                self.client
+                    .get(apple_api::endpoint(&format!(
+                        "/v1/apps/{app_id}/perfPowerMetrics"
+                    )))
+                    .query(&[
+                        ("filter[metricType]", "HANG,LAUNCH"),
+                        ("filter[platform]", "IOS"),
+                    ])
+                    .header(
+                        reqwest::header::ACCEPT,
+                        "application/vnd.apple.xcode-metrics+json",
+                    ),
+            )
+            .await?
+            .unwrap_or_default();
+        serde_json::from_str(if body.is_empty() { "{}" } else { &body }).map_err(|error| {
+            AscError(format!(
+                "Power and performance metrics returned an invalid response: {error}"
+            ))
+        })
+    }
+
     /// Finds the build uploaded for `version` (CFBundleShortVersionString) and
     /// `build_number` (CFBundleVersion). Apple lists a build only after it has
     /// started processing, so `None` is normal shortly after upload.

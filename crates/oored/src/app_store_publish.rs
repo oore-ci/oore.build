@@ -1181,7 +1181,7 @@ async fn record_poll_error(pool: &SqlitePool, release_id: &str, message: &str) {
     }
 }
 
-async fn load_credentials(
+pub(crate) async fn load_credentials(
     state: &AppState,
     pipeline_id: &str,
 ) -> anyhow::Result<AppleApiCredentials> {

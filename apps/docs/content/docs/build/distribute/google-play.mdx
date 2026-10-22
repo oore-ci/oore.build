@@ -115,6 +115,19 @@ building again.
 - Play Console shows the version on the chosen track at the chosen rollout.
 - The audit log has a `store_upload_completed` entry for the build.
 
+## Store health on Home
+
+After the first release, the daemon reads the app's user-perceived crash rate
+and ANR rate over the last 28 days from the Play Developer Reporting API, with
+the top crash and ANR clusters. Home shows them against Google Play's
+bad-behavior thresholds of 1.09% and 0.47%. The numbers refresh every six
+hours with the service account of the pipeline that made the newest release.
+
+The service account needs **View app information** for the app in Play
+Console, and the daemon host needs outbound HTTPS to
+`playdeveloperreporting.googleapis.com`. Without them, Home shows why the
+numbers could not be read.
+
 ## Limits
 
 - One App Bundle per publish. A pipeline that builds several release flavors

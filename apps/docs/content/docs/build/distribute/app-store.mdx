@@ -67,6 +67,15 @@ For an App Store release, set `"destination": "app_store"`. Then
 Pause, resume and complete on the release change Apple's phased release.
 Apple sets the percentages, so raising a step is not available.
 
+## Store health on Home
+
+After the first release, the daemon reads the app's hang rate and launch time
+per version from App Store Connect power and performance metrics, using the
+App Store Connect key of the pipeline that made the newest release. Home shows
+the latest version's numbers for a typical user on all iPhones. They refresh
+every six hours, and Apple only reports them once enough users have run a
+version.
+
 ## Troubleshooting
 
 **The `publish-app-store` step fails**
