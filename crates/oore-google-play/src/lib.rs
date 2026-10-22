@@ -569,17 +569,19 @@ pub async fn app_vitals_rate(
     };
     let start = end.days_before(VITALS_LOOKBACK_DAYS)?;
     let response: serde_json::Value = play_json(
-        http.post(format!("{REPORTING_BASE}/{package_name}/{metric_set}:query"))
-            .bearer_auth(reporting_token)
-            .json(&serde_json::json!({
-                "timelineSpec": {
-                    "aggregationPeriod": "DAILY",
-                    "startTime": start.to_wire(),
-                    "endTime": end.to_wire(),
-                },
-                "metrics": [daily, rolling],
-                "pageSize": 100,
-            })),
+        http.post(format!(
+            "{REPORTING_BASE}/{package_name}/{metric_set}:query"
+        ))
+        .bearer_auth(reporting_token)
+        .json(&serde_json::json!({
+            "timelineSpec": {
+                "aggregationPeriod": "DAILY",
+                "startTime": start.to_wire(),
+                "endTime": end.to_wire(),
+            },
+            "metrics": [daily, rolling],
+            "pageSize": 100,
+        })),
         "query vitals",
     )
     .await?;
@@ -681,9 +683,11 @@ pub async fn top_error_issues(
         }
     }
     let response: serde_json::Value = play_json(
-        http.get(format!("{REPORTING_BASE}/{package_name}/errorIssues:search"))
-            .query(&query)
-            .bearer_auth(reporting_token),
+        http.get(format!(
+            "{REPORTING_BASE}/{package_name}/errorIssues:search"
+        ))
+        .query(&query)
+        .bearer_auth(reporting_token),
         "search crash and ANR issues",
     )
     .await?;
@@ -820,7 +824,11 @@ mod tests {
         );
 
         assert_eq!(rate.rate_28d, Some(0.011));
-        let days: Vec<_> = rate.days.iter().map(|d| (d.date.as_str(), d.rate)).collect();
+        let days: Vec<_> = rate
+            .days
+            .iter()
+            .map(|d| (d.date.as_str(), d.rate))
+            .collect();
         assert_eq!(
             days,
             [
