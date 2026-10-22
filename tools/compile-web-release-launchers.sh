@@ -28,7 +28,7 @@ mkdir -p "$output_dir"
 }
 
 bun_version="$(bun --version)"
-pinned_bun_version=1.4.0
+pinned_bun_version=1.4.4
 [[ "$bun_version" == "$pinned_bun_version" ]] || {
   echo "The release requires Bun $pinned_bun_version, but Bun reported $bun_version." >&2
   exit 1

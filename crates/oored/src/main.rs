@@ -130,16 +130,29 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
         .await
         .context("failed to ensure owner user")?;
 
-    // Load or generate the AES-256 encryption key for secrets at rest.
+    // Load the AES-256 encryption key for secrets at rest.
     // Key storage mode is persisted in instance preferences and applied on restart.
     let key_storage_mode = oored::instance_settings::load_key_storage_mode(store.pool())
         .await
         .context("failed to load key storage mode preference")?;
-    let runtime_key = crypto::load_runtime_key_with_mode(key_storage_mode)
-        .context("failed to load runtime encryption key")?;
+    // A key is generated only when the database holds no ciphertext, and an
+    // existing key must decrypt the database's key check value.
+    let (runtime_key, key_check) = oored::key_check::load_verified_runtime_key(
+        store.pool(),
+        key_storage_mode,
+        crypto::resolve_key_path()?,
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "failed to load the runtime encryption key for database {}",
+            db_path.display()
+        )
+    })?;
     info!(
         mode = %key_storage_mode,
         source = runtime_key.source.as_str(),
+        check = ?key_check,
         legacy_file_path = %runtime_key.legacy_file_path.display(),
         "encryption key ready"
     );
