@@ -1,0 +1,67 @@
+---
+title: '`oore runner`'
+status: implemented
+description: 'Low-level Direct macOS runner commands for registration, service management, and token rotation.'
+---
+
+Profile installations manage their runner through `oore install` and `oore setup`. Use these commands only where this page says so.
+
+```text
+oore runner register --token <TOKEN> [--daemon-url <URL>] [--name <NAME>] [--label <LABEL>]...
+oore runner start [--daemon-url <URL>] [--config <PATH>]
+oore runner install-service [--config <PATH> | --managed-local [--daemon-url <URL>] [--state-file <PATH>] [--name <NAME>]]
+oore runner rotate-token
+oore runner uninstall-service
+```
+
+To add a build Mac, install the Runner profile instead. See [Add a Direct macOS runner](/operate/runners/direct).
+
+## `oore runner register`
+
+Registers this Mac as a build runner and writes its config.
+
+| Option         | Purpose                                                                               |
+| -------------- | ------------------------------------------------------------------------------------- |
+| `--token`      | Owner or Admin session token. Also reads `OORE_SESSION_TOKEN`.                        |
+| `--daemon-url` | Control-plane URL. Also reads `OORE_DAEMON_URL`. Defaults to `http://127.0.0.1:8787`. |
+| `--name`       | Runner name. Defaults to the host name.                                               |
+| `--label`      | Extra label that pipelines can select with `runs_on`. Repeat it for more labels.      |
+
+Oore adds detected labels such as `macos-15` and `xcode-16`. See [Runner labels](/operate/runners/labels).
+
+## `oore runner start`
+
+Runs the runner in the foreground. It polls for jobs and runs builds until you stop it.
+
+| Option         | Purpose                                                            |
+| -------------- | ------------------------------------------------------------------ |
+| `--daemon-url` | Control-plane URL. Defaults to the URL in the runner config.       |
+| `--config`     | Runner config file. Defaults to `runner.json` in the install root. |
+
+Run `oore runner register` first.
+
+## `oore runner install-service`
+
+Installs and starts a registered runner as a boot-time macOS service.
+
+| Option            | Purpose                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------- |
+| `--config`        | Runner config file. Defaults to `runner.json` in the install root.                          |
+| `--managed-local` | Install or repair the runner that this Mac's own control plane manages.                     |
+| `--daemon-url`    | With `--managed-local`, the control-plane URL to enroll with. Also reads `OORE_DAEMON_URL`. |
+| `--state-file`    | With `--managed-local`, the local Oore database. Also reads `OORE_SETUP_STATE_FILE`.        |
+| `--name`          | With `--managed-local`, the runner name. Defaults to the host name.                         |
+
+A profile installation refuses this command. Run `oore setup` to repair its runner service instead.
+
+## `oore runner rotate-token`
+
+Issues a new credential for the managed runner of a Ready Complete installation and installs it in the runner service.
+
+Other installations refuse it. If the runner service or its config does not match the installation, run `oore setup` to repair it first.
+
+## `oore runner uninstall-service`
+
+Stops and removes the macOS runner service that `install-service` created.
+
+A profile installation refuses this command. Run `oore uninstall` to remove the whole role.

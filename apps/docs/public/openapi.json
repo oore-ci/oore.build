@@ -12281,6 +12281,15 @@
             },
             "description": "Trigger events that need approval: `push`, `pull_request`,\n`tag_push`, `manual` or `schedule`. Empty means every build."
           },
+          "expires_after_hours": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Hours a build waits for a decision before it is canceled. Defaults\nto 168 (7 days).",
+            "minimum": 0
+          },
           "required": {
             "type": "boolean"
           }

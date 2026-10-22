@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -7,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::{Output, Stdio};
 use std::time::{Duration, Instant};
-use std::{ffi::OsStr, fs};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
@@ -270,12 +270,8 @@ fn resolve_install_root() -> anyhow::Result<PathBuf> {
         }
     }
 
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(bin_dir) = exe.parent()
-        && bin_dir.file_name() == Some(OsStr::new("bin"))
-        && let Some(root) = bin_dir.parent()
-    {
-        return Ok(root.to_path_buf());
+    if let Some(root) = oore_contract::install_root::install_root_for_current_executable() {
+        return Ok(root);
     }
 
     let home = dirs::home_dir().context("could not determine home directory")?;
@@ -286,14 +282,8 @@ fn refuse_manifest_managed_service_command(
     command: &str,
     supported_command: &str,
 ) -> anyhow::Result<()> {
-    let executable = std::env::current_exe().context("failed to resolve current executable")?;
-    let Some(bin_dir) = executable.parent() else {
-        return Ok(());
-    };
-    if bin_dir.file_name() != Some(OsStr::new("bin")) {
-        return Ok(());
-    }
-    let Some(install_root) = bin_dir.parent() else {
+    let Some(install_root) = oore_contract::install_root::install_root_for_current_executable()
+    else {
         return Ok(());
     };
     let manifest = install_root.join("install-manifest.json");

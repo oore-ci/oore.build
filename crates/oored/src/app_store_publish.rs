@@ -31,8 +31,8 @@ use crate::crypto;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{ProjectPermission, require_pipeline_project_permission};
 use crate::releases::{
-    self, BoxFuture, NewRelease, NoopReleaseStoreClient, ReleaseActor, ReleaseChange, ReleaseDeps,
-    ReleaseError, ReleaseStoreClient, StoreChange,
+    self, BoxFuture, NewRelease, ReleaseActor, ReleaseChange, ReleaseDeps, ReleaseError,
+    ReleaseStoreClient, StoreChange,
 };
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -1093,10 +1093,6 @@ fn state_matches(
 /// Records what one poll read from Apple. Apple already holds that state, so
 /// nothing is sent back to App Store Connect.
 async fn apply_step(deps: ReleaseDeps<'_>, link: &LinkRow, step: Step) -> anyhow::Result<()> {
-    let record = ReleaseDeps {
-        store: &NoopReleaseStoreClient,
-        ..deps
-    };
     let mut next_poll_in = step.next_poll_in;
     let mut stage = step.stage;
     if let Some((target, target_fraction, reason)) = step.transition
@@ -1139,13 +1135,14 @@ async fn apply_step(deps: ReleaseDeps<'_>, link: &LinkRow, step: Step) -> anyhow
                 _ => to_fraction,
             };
             match releases::transition_release(
-                record,
+                deps,
                 &link.release_id,
                 ReleaseChange {
                     to_state,
                     to_fraction,
                     audit_action: "app_store_release_updated",
                     expect: expect.take(),
+                    from_store: true,
                 },
                 &ReleaseActor::System,
                 Some(&reason),
@@ -1230,19 +1227,16 @@ async fn try_record_poll_error(
             .chars()
             .take(500)
             .collect();
-    let record = ReleaseDeps {
-        store: &NoopReleaseStoreClient,
-        ..deps
-    };
     for to_state in transition_path(release.state, ReleaseState::Failed) {
         releases::transition_release(
-            record,
+            deps,
             release_id,
             ReleaseChange {
                 to_state,
                 to_fraction: None,
                 audit_action: "app_store_release_updated",
                 expect: None,
+                from_store: true,
             },
             &ReleaseActor::System,
             Some(&reason),
@@ -1596,6 +1590,7 @@ mod tests {
                 to_fraction: None,
                 audit_action: "release_paused",
                 expect: None,
+                from_store: false,
             },
             &ReleaseActor::System,
             None,

@@ -756,6 +756,11 @@ fn modified_unix(metadata: &fs::Metadata) -> i64 {
         .map_or(0, |duration| duration.as_secs() as i64)
 }
 
+/// Bytes `path` takes on disk, counting everything under a directory.
+pub(crate) fn allocated_size(path: &Path) -> u64 {
+    measure(path).bytes
+}
+
 fn allocated_bytes(metadata: &fs::Metadata) -> u64 {
     #[cfg(unix)]
     {
