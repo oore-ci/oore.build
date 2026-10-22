@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import * as z from 'zod'
 
 import type {
   AppStorePublishConfig,
+  GooglePlayCredentialsTestRequest,
   GooglePlayPublishConfig,
 } from '@oore/client/models'
 import {
+  testPipelineGooglePlayCredentials,
   updatePipelineAppStorePublish,
   updatePipelineGooglePlayPublish,
 } from '@oore/client/operations'
@@ -23,6 +24,7 @@ import {
 
 export type {
   AppStorePublishConfig,
+  GooglePlayCredentialsTestResponse as GooglePlayCredentialsTest,
   GooglePlayPublishConfig,
   PipelineAppStorePublishResponse as AppStorePublishResponse,
   PipelineGooglePlayPublishResponse as GooglePlayPublishResponse,
@@ -74,19 +76,6 @@ export function useUpdatePipelineGooglePlayPublish(pipelineId: string) {
   })
 }
 
-/** Not yet in the generated client. */
-const googlePlayCredentialsTestSchema = z.object({
-  ok: z.boolean(),
-  message: z.string(),
-  package_name: z.string().nullish(),
-  service_account_email: z.string().nullish(),
-  checked_at: z.number(),
-})
-
-export type GooglePlayCredentialsTest = z.infer<
-  typeof googlePlayCredentialsTestSchema
->
-
 /**
  * Checks a service account key against Google Play by opening and discarding
  * an edit for the app. A rejected key is a result with `ok: false`, not an
@@ -96,20 +85,13 @@ export function useTestGooglePlayCredentials(pipelineId: string) {
   const { baseUrl, client, token } = useApiContext()
 
   return useMutation({
-    mutationFn: async (body: {
-      service_account_secret: string
-      package_name: string | null
-    }) => {
+    mutationFn: async (body: GooglePlayCredentialsTestRequest) => {
       if (!baseUrl || !token) throw new Error('Not authenticated')
-      const response = await client.post({
+      return testPipelineGooglePlayCredentials({
         body,
-        headers: { 'Content-Type': 'application/json' },
-        responseStyle: 'data',
-        security: [{ scheme: 'bearer', type: 'http' }],
-        throwOnError: true,
-        url: `/v1/pipelines/${encodeURIComponent(pipelineId)}/publish/google-play/test-credentials`,
+        client,
+        path: { pipeline_id: pipelineId },
       })
-      return googlePlayCredentialsTestSchema.parse(response)
     },
   })
 }
