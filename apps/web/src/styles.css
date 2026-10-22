@@ -5,7 +5,6 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --font-inter: 'DM Sans Variable', sans-serif;
   --font-jetbrains-mono: 'JetBrains Mono Variable', monospace;
   --safe-area-top: env(safe-area-inset-top, 0px);
   --safe-area-right: env(safe-area-inset-right, 0px);
@@ -258,16 +257,49 @@
 }
 
 @media (max-width: 639px), (pointer: coarse) {
-  [data-slot='button'],
+  [data-button-size],
   [data-slot='input'],
   [data-slot='native-select'],
   [data-slot='select-trigger'],
-  [data-slot='select-item'] {
+  [data-slot='select-item'],
+  [data-slot='dropdown-menu-item'],
+  [data-slot='dropdown-menu-sub-trigger'],
+  [data-slot='dropdown-menu-checkbox-item'],
+  [data-slot='dropdown-menu-radio-item'],
+  [data-slot='command-item'],
+  [data-slot='collapsible-trigger'],
+  [data-slot='sidebar-menu-button'] {
     min-height: 44px;
   }
 
-  [data-slot='button'][data-size^='icon'] {
+  [data-button-size^='icon'] {
     min-width: 44px;
+    min-height: 44px;
+  }
+
+  /*
+   * Controls that stay visually small get an invisible 44px hit area instead
+   * of growing, so dense rows keep their rhythm.
+   */
+  [data-slot='checkbox']::after,
+  [data-slot='radio-group-item']::after,
+  [data-slot='switch']::after {
+    inset: min(0px, calc((100% - 44px) / 2));
+  }
+
+  [data-slot='tabs-trigger'],
+  [data-slot='toggle-group-item'],
+  [data-slot='breadcrumb-link'] {
+    position: relative;
+  }
+
+  [data-slot='tabs-trigger']::before,
+  [data-slot='toggle-group-item']::before,
+  [data-slot='breadcrumb-link']::before {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    inset-block: min(0px, calc((100% - 44px) / 2));
   }
 }
 

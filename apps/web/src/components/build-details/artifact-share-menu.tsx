@@ -70,7 +70,10 @@ export default function ArtifactShareMenu({
     downloadMutation.mutate(artifact.id, {
       onSuccess: (response) => {
         void navigator.clipboard.writeText(response.download_url).then(
-          () => toast.success(`Download link copied for ${artifact.name}`),
+          () =>
+            toast.success(
+              `Download link for ${artifact.name} copied. It works for 15 minutes.`,
+            ),
           () => toast.error('Failed to copy link'),
         )
       },
@@ -133,11 +136,21 @@ export default function ArtifactShareMenu({
               disabled={downloadMutation.isPending}
             >
               <HugeiconsIcon icon={Copy01Icon} />
-              Copy temporary link
+              <span className="flex flex-col">
+                Copy download link
+                <span className="text-xs text-muted-foreground">
+                  Anyone with it can download for 15 minutes
+                </span>
+              </span>
             </DropdownMenuItem>
             <DropdownMenuItem onClick={openShareDialog}>
               <HugeiconsIcon icon={Share08Icon} />
-              Create share link
+              <span className="flex flex-col">
+                Create share link…
+                <span className="text-xs text-muted-foreground">
+                  Lasts 1 hour to 7 days, no sign-in needed
+                </span>
+              </span>
             </DropdownMenuItem>
           </DropdownMenuGroup>
         </DropdownMenuContent>

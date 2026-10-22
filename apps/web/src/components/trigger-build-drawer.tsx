@@ -299,7 +299,8 @@ interface TriggerBuildDrawerProps {
   onBuildCreated?: (buildId: string) => void
   open?: boolean
   onOpenChange?: (open: boolean) => void
-  children: ReactElement
+  /** Omit when something else (such as Quick open) controls `open`. */
+  children?: ReactElement
 }
 
 function defaults(
@@ -596,7 +597,7 @@ export default function TriggerBuildDrawer({
       showSwipeHandle={isMobile}
       swipeDirection={isMobile ? 'down' : 'right'}
     >
-      <DrawerTrigger render={children} />
+      {children ? <DrawerTrigger render={children} /> : null}
       <DrawerContent>
         <DrawerHeader>
           <DrawerTitle>{title}</DrawerTitle>

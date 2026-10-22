@@ -8,6 +8,7 @@ export const Route = createFileRoute('/settings')({
   staticData: {
     breadcrumb: {
       title: 'Settings',
+      link: false,
     },
   },
   beforeLoad: (context) => {

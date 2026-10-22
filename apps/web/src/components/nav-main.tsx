@@ -30,7 +30,7 @@ interface NavGroup {
   items: Array<NavItem>
 }
 
-const WORKSPACE_ITEMS: Array<NavItem> = [
+export const WORKSPACE_ITEMS: Array<NavItem> = [
   { title: 'Home', to: '/', icon: DashboardSquare02Icon },
   { title: 'Projects', to: '/projects', icon: Folder02Icon },
   { title: 'Builds', to: '/builds', icon: CommandLineIcon },

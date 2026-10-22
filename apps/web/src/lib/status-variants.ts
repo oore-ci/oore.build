@@ -43,15 +43,24 @@ export const TRIGGER_TYPE_LABELS = {
   schedule: 'Schedule',
 } as const satisfies Record<TriggerType, string>
 
-const BUILD_STATUS_VARIANT = new Map<string, BadgeVariant>([
-  ['succeeded', 'success'],
-  ['active', 'secondary'],
-  ['failed', 'destructive'],
-  ['error', 'destructive'],
-])
+/**
+ * One tone per build status: green done, red needs fixing, blue in progress,
+ * outline waiting, grey stopped on purpose.
+ */
+const BUILD_STATUS_VARIANT = {
+  queued: 'outline',
+  scheduled: 'outline',
+  assigned: 'outline',
+  running: 'info',
+  succeeded: 'success',
+  failed: 'destructive',
+  timed_out: 'destructive',
+  canceled: 'secondary',
+  expired: 'secondary',
+} satisfies Record<BuildStatus, BadgeVariant>
 
 export function getStatusVariant(status: string): BadgeVariant {
-  return BUILD_STATUS_VARIANT.get(status) ?? 'outline'
+  return lookupVariant(BUILD_STATUS_VARIANT, status)
 }
 
 const RUNNER_POLICY_BLOCK_LABEL = {
@@ -66,17 +75,23 @@ export function getRunnerPolicyBlockLabel(
 }
 
 export function getIntegrationStatusVariant(status: string): BadgeVariant {
-  if (status === 'active') return 'secondary'
+  if (status === 'active') return 'success'
   return status === 'error' ? 'destructive' : 'outline'
 }
 
 export function getPipelineStatusVariant(enabled: boolean): BadgeVariant {
-  return enabled ? 'secondary' : 'outline'
+  return enabled ? 'success' : 'outline'
 }
 
+const RUNNER_STATUS_VARIANT = {
+  online: 'success',
+  busy: 'info',
+  draining: 'warning',
+  offline: 'destructive',
+} satisfies Record<RunnerStatus, BadgeVariant>
+
 export function getRunnerStatusVariant(status: string): BadgeVariant {
-  if (status === 'online' || status === 'busy') return 'secondary'
-  return status === 'draining' ? 'warning' : 'outline'
+  return lookupVariant(RUNNER_STATUS_VARIANT, status)
 }
 
 /** Which product enum a `StatusBadge` is rendering. */

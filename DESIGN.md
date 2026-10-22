@@ -21,7 +21,7 @@ The authoritative configuration is the pair of identical
 - Hugeicons
 - Default translucent menus with subtle menu accents
 
-The web app uses Inter for interface text and JetBrains Mono for machine data.
+The web app uses DM Sans for interface text and JetBrains Mono for machine data.
 It supports light, dark, and system appearance through `next-themes`. Component
 geometry and color palettes are not runtime-selectable.
 

@@ -1,11 +1,7 @@
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Delete02Icon,
-  MoreHorizontalCircle01Icon,
-  TestTube01Icon,
-} from '@hugeicons/core-free-icons'
+import { Delete02Icon, TestTube01Icon } from '@hugeicons/core-free-icons'
 
-import { Button } from '@/components/ui/button'
+import { DataTableRowActionsTrigger } from '@/components/data-table'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,24 +9,22 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
 export function ChannelActions({
+  name,
   pending,
   onDelete,
   onTest,
 }: {
+  name: string
   pending: boolean
   onDelete: () => void
   onTest: () => void
 }) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" />}>
-        <span className="sr-only">Open menu</span>
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
-      </DropdownMenuTrigger>
+      <DataTableRowActionsTrigger label={`Actions for ${name}`} />
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Actions</DropdownMenuLabel>

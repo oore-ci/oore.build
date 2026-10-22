@@ -41,6 +41,7 @@ import {
 } from '@/components/settings/settings-section'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import { NotFoundState } from '@/components/root-route-boundaries'
 import { ResumeRunnersButton } from '@/components/settings/direct-runner-policy-panel'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -293,7 +294,19 @@ function ProjectDetailPage() {
   }
 
   if (error) {
-    const notFound = isOoreApiError(error) && error.status === 404
+    if (isOoreApiError(error) && error.status === 404) {
+      return (
+        <PageLayout width="wide">
+          <PageMeta title="Project not found" noindex />
+          <NotFoundState
+            title="Project not found"
+            description="This project was deleted, expired, or the link is wrong."
+            backTo="/projects"
+            backLabel="Back to projects"
+          />
+        </PageLayout>
+      )
+    }
 
     return (
       <PageLayout width="wide">
@@ -301,28 +314,23 @@ function ProjectDetailPage() {
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              {notFound
-                ? 'This project was not found or is no longer available.'
-                : `Failed to load project: ${error.message}`}
-            </span>
+            <span>Failed to load project: {error.message}</span>
             <span className="flex gap-2">
               <Button
                 variant="outline"
                 size="sm"
                 render={<Link to="/projects" />}
+                nativeButton={false}
               >
                 Back to projects
               </Button>
-              {!notFound ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void projectQuery.refetch()}
-                >
-                  Retry
-                </Button>
-              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void projectQuery.refetch()}
+              >
+                Retry
+              </Button>
             </span>
           </AlertDescription>
         </Alert>

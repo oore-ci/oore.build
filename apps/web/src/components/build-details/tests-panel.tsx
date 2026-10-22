@@ -41,9 +41,12 @@ function TestHistory({
       >
         {failure.history.map((run) => {
           const label = `Build #${run.build_number}: ${run.status}`
+          // Shape as well as colour: failed runs are squares, passes are dots.
           const square = cn(
-            'block size-3 rounded-sm',
-            run.status === 'failed' ? 'bg-destructive' : 'bg-success/60',
+            'block size-3',
+            run.status === 'failed'
+              ? 'rounded-[2px] bg-destructive'
+              : 'scale-75 rounded-full bg-success/70',
             run.build_id === buildId &&
               'ring-2 ring-ring ring-offset-1 ring-offset-background',
           )
@@ -87,10 +90,8 @@ function FailureRow({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 space-y-0.5">
           <p className="text-sm font-medium break-words">{failure.name}</p>
-          <p className="font-mono text-xs break-all text-muted-foreground">
+          <p className="font-mono text-xs break-words text-muted-foreground">
             {failure.suite}
-            <span aria-hidden> · </span>
-            {failure.step}
             {failure.duration_ms != null
               ? ` · ${formatTestDuration(failure.duration_ms)}`
               : null}
@@ -198,8 +199,10 @@ export function TestsPanel({
           </ul>
           {hiddenFailures > 0 ? (
             <p className="mt-4 text-xs text-muted-foreground">
-              {hiddenFailures} more failed tests are not shown. Check the logs
-              for the rest.
+              {hiddenFailures === 1
+                ? '1 more failed test is not shown.'
+                : `${hiddenFailures} more failed tests are not shown.`}{' '}
+              Check the logs for the rest.
             </p>
           ) : null}
         </CardContent>

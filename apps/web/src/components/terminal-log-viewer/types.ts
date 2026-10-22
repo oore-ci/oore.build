@@ -1,4 +1,8 @@
-import type { BuildLogChunk, StepResult } from '@oore/client/models'
+import type {
+  BuildLogChunk,
+  BuildStatus,
+  StepResult,
+} from '@oore/client/models'
 
 export interface TerminalLogViewerProps {
   logs: Array<BuildLogChunk>
@@ -9,6 +13,21 @@ export interface TerminalLogViewerProps {
   logsUnavailable?: boolean
   onRetryLogs?: () => void
   isTerminal?: boolean
+  /** Picks the empty-state copy and when a dropped stream is worth showing. */
+  buildStatus?: BuildStatus
+  /** Names the downloaded file `build-<n>.log`. */
+  buildNumber?: number
+  /** The live stream dropped and lines arrive by polling. */
+  isPolling?: boolean
+  onReconnect?: () => void
+  /** Select a step and scroll to one of its lines; a new `key` repeats it. */
+  focusRequest?: LogFocusRequest | null
+}
+
+export interface LogFocusRequest {
+  step: string
+  sequence: number
+  key: number
 }
 
 export interface StepGroup {
