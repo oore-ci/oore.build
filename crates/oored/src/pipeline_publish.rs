@@ -17,7 +17,7 @@ use crate::extractors::AuthUser;
 use crate::project_rbac::{ProjectPermission, require_pipeline_project_permission};
 use crate::releases::{NewRelease, ReleaseActor, ReleaseDeps, create_release};
 use crate::runners::{RunnerAuth, require_active_job_signing_grant};
-use crate::secrets::resolve_secrets;
+use crate::secrets::secret_name_visible;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
@@ -58,16 +58,14 @@ async fn google_play_response(
         .await
         .map_err(|e| store_error("Failed to load Google Play settings", e))?;
     let service_account_secret_present = match &loaded {
-        Some((config, _)) => resolve_secrets(
+        Some((config, _)) => secret_name_visible(
             &state.db,
-            &state.encryption_key,
             project_id,
             Some(&pipeline_id),
+            &config.service_account_secret,
         )
         .await
-        .map_err(|e| store_error("Failed to check the service account secret", e))?
-        .iter()
-        .any(|secret| secret.name == config.service_account_secret),
+        .map_err(|e| store_error("Failed to check the service account secret", e))?,
         None => false,
     };
     let (config, updated_at) = loaded.unzip();

@@ -31,4 +31,4 @@ finish() {
 trap finish EXIT
 
 echo '[release-smoke] Checking release build inputs...'
-make format-rust-check lint-rust check-openapi
+make format-rust-check lint-rust check-openapi test-rust

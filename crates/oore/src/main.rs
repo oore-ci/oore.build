@@ -1298,18 +1298,8 @@ fn now_epoch_secs() -> i64 {
 }
 
 fn resolve_data_dir() -> anyhow::Result<PathBuf> {
-    for key in ["OORED_DATA_DIR", "OORE_DATA_DIR"] {
-        if let Ok(raw) = std::env::var(key) {
-            let trimmed = raw.trim();
-            if !trimmed.is_empty() {
-                return Ok(PathBuf::from(trimmed));
-            }
-        }
-    }
-
-    let data_dir =
-        dirs::data_dir().context("could not determine platform data directory (dirs::data_dir)")?;
-    Ok(data_dir.join("oore"))
+    oore_contract::data_paths::resolve_data_dir(|key| std::env::var(key).ok(), dirs::data_dir())
+        .context("could not determine platform data directory (dirs::data_dir)")
 }
 
 fn resolve_db_path(override_path: Option<&str>) -> anyhow::Result<PathBuf> {
@@ -1696,34 +1686,20 @@ impl NonceSequence for SingleNonce {
     }
 }
 
-fn resolve_encryption_key_path() -> anyhow::Result<PathBuf> {
-    if let Ok(path) = std::env::var("OORE_ENCRYPTION_KEY_FILE") {
-        let trimmed = path.trim();
-        if !trimmed.is_empty() {
-            return Ok(PathBuf::from(trimmed));
-        }
-    }
-
-    if let Ok(data_dir) = std::env::var("OORED_DATA_DIR")
-        && !data_dir.trim().is_empty()
-    {
-        return Ok(PathBuf::from(data_dir.trim()).join("encryption.key"));
-    }
-    if let Ok(data_dir) = std::env::var("OORE_DATA_DIR")
-        && !data_dir.trim().is_empty()
-    {
-        return Ok(PathBuf::from(data_dir.trim()).join("encryption.key"));
-    }
-
-    let data_dir =
-        dirs::data_dir().context("could not determine platform data directory (dirs::data_dir)")?;
-    Ok(data_dir.join("oore").join("encryption.key"))
+/// Load the daemon's encryption key, generating one only for a database
+/// that holds no encrypted data. An existing key must decrypt the database's
+/// key check value, so the CLI never writes ciphertext the daemon cannot read.
+async fn load_or_generate_encryption_key(pool: &SqlitePool) -> anyhow::Result<Vec<u8>> {
+    load_or_generate_encryption_key_at(pool, &resolve_key_path()?).await
 }
 
-fn load_or_generate_encryption_key() -> anyhow::Result<Vec<u8>> {
-    let path = resolve_encryption_key_path()?;
+async fn load_or_generate_encryption_key_at(
+    pool: &SqlitePool,
+    path: &Path,
+) -> anyhow::Result<Vec<u8>> {
+    let check = load_encryption_key_check(pool).await?;
     if path.exists() {
-        let key = fs::read(&path)
+        let key = fs::read(path)
             .with_context(|| format!("failed to read encryption key: {}", path.display()))?;
         if key.len() != 32 {
             anyhow::bail!(
@@ -1732,7 +1708,23 @@ fn load_or_generate_encryption_key() -> anyhow::Result<Vec<u8>> {
                 key.len()
             );
         }
+        if let Some(check) = check
+            && decrypt_secret(&check, &key).ok().as_deref()
+                != Some(oore_contract::data_paths::ENCRYPTION_KEY_CHECK_PLAINTEXT)
+        {
+            anyhow::bail!(
+                "encryption key {} does not match this database. Restore the original key with `oore backup restore`, or set OORED_DATA_DIR to the directory that holds it.",
+                path.display()
+            );
+        }
         return Ok(key);
+    }
+
+    if check.is_some() || database_has_encrypted_data(pool).await? {
+        anyhow::bail!(
+            "encryption key {} is missing, but the database already holds data encrypted with it. Refusing to generate a new key. Restore the original key with `oore backup restore`, or set OORED_DATA_DIR to the directory that holds it.",
+            path.display()
+        );
     }
 
     if let Some(parent) = path.parent() {
@@ -1744,15 +1736,82 @@ fn load_or_generate_encryption_key() -> anyhow::Result<Vec<u8>> {
     let mut key = vec![0u8; 32];
     rng.fill(&mut key)
         .map_err(|_| anyhow::anyhow!("failed to generate encryption key"))?;
-    fs::write(&path, &key)
+    fs::write(path, &key)
         .with_context(|| format!("failed to write encryption key: {}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
             .with_context(|| format!("failed to set permissions on {}", path.display()))?;
     }
     Ok(key)
+}
+
+/// The daemon's key check value, if this database has one.
+async fn load_encryption_key_check(pool: &SqlitePool) -> anyhow::Result<Option<String>> {
+    let has_table: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'encryption_key_check')",
+    )
+    .fetch_one(pool)
+    .await
+    .context("failed to inspect database schema for encryption_key_check")?;
+    if !has_table {
+        return Ok(None);
+    }
+    sqlx::query_scalar("SELECT check_ciphertext FROM encryption_key_check WHERE id = 1")
+        .fetch_optional(pool)
+        .await
+        .context("failed to load the encryption key check value")
+}
+
+/// Whether any column named like `*encrypted*` holds a value.
+async fn database_has_encrypted_data(pool: &SqlitePool) -> anyhow::Result<bool> {
+    let columns: Vec<(String, String)> = sqlx::query_as(
+        "SELECT m.name, c.name
+         FROM sqlite_master m, pragma_table_info(m.name) c
+         WHERE m.type = 'table'
+           AND m.name NOT LIKE 'sqlite_%'
+           AND c.name LIKE '%encrypted%'",
+    )
+    .fetch_all(pool)
+    .await
+    .context("failed to list encrypted columns")?;
+    for (table, column) in columns {
+        let table = format!("\"{}\"", table.replace('"', "\"\""));
+        let column = format!("\"{}\"", column.replace('"', "\"\""));
+        // Identifiers come from sqlite_master and are quoted.
+        let exists: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS (SELECT 1 FROM {table} WHERE {column} IS NOT NULL AND {column} != '')"
+        )))
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("failed to inspect {table}.{column}"))?;
+        if exists {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn decrypt_secret(ciphertext_b64: &str, key: &[u8]) -> anyhow::Result<String> {
+    let data = BASE64
+        .decode(ciphertext_b64)
+        .context("failed to decode base64 ciphertext")?;
+    anyhow::ensure!(
+        data.len() >= NONCE_LEN + AES_256_GCM.tag_len(),
+        "ciphertext too short"
+    );
+    let (nonce_bytes, ciphertext_and_tag) = data.split_at(NONCE_LEN);
+    let mut nonce = [0u8; NONCE_LEN];
+    nonce.copy_from_slice(nonce_bytes);
+    let unbound_key = UnboundKey::new(&AES_256_GCM, key)
+        .map_err(|_| anyhow::anyhow!("invalid encryption key"))?;
+    let mut opening_key = aead::OpeningKey::new(unbound_key, SingleNonce(Some(nonce)));
+    let mut in_out = ciphertext_and_tag.to_vec();
+    let plaintext = opening_key
+        .open_in_place(Aad::empty(), &mut in_out)
+        .map_err(|_| anyhow::anyhow!("decryption failed"))?;
+    String::from_utf8(plaintext.to_vec()).context("decrypted data is not valid UTF-8")
 }
 
 fn encrypt_secret(plaintext: &str, key: &[u8]) -> anyhow::Result<String> {
@@ -2246,7 +2305,7 @@ async fn handle_setup_init(args: SetupInitArgs, quiet: bool) -> anyhow::Result<(
         .context(
             "trusted-proxy setup init requires a shared secret; pass --shared-secret-file or set OORE_TRUSTED_PROXY_SHARED_SECRET_FILE",
         )?;
-        let key = load_or_generate_encryption_key()?;
+        let key = load_or_generate_encryption_key(&pool).await?;
         encrypted_shared_secret = Some(encrypt_secret(&shared_secret, &key)?);
         has_shared_secret = encrypted_shared_secret.is_some();
         trusted_proxy_cidrs = cidrs;
@@ -6628,8 +6687,11 @@ fn read_restore_journal(path: &Path) -> anyhow::Result<Option<BackupRestoreJourn
     Ok(Some(journal))
 }
 
+/// The encryption key path, resolved exactly as `oored` resolves it.
 fn resolve_key_path() -> anyhow::Result<PathBuf> {
-    Ok(resolve_data_dir()?.join(BACKUP_KEY_FILE))
+    Ok(oore_contract::data_paths::encryption_key_path(
+        &resolve_data_dir()?,
+    ))
 }
 
 fn set_private_permissions(path: &Path) -> anyhow::Result<()> {
@@ -9588,9 +9650,8 @@ fn daemon_data_paths_from_plist(
         .or_else(|| env_value("OORE_SETUP_STATE_FILE"))
         .map(absolute)
         .unwrap_or_else(|| data_dir.join(BACKUP_DATABASE_FILE));
-    let key = env_value("OORE_ENCRYPTION_KEY_FILE")
-        .map(absolute)
-        .unwrap_or_else(|| data_dir.join(BACKUP_KEY_FILE));
+    // oored has no key path override: the key always lives in its data root.
+    let key = oore_contract::data_paths::encryption_key_path(&data_dir);
     Ok((database, key))
 }
 
@@ -12584,6 +12645,86 @@ fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    async fn key_check_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE trusted_proxy_settings (id INTEGER PRIMARY KEY, encrypted_shared_secret TEXT);
+             CREATE TABLE encryption_key_check (id INTEGER PRIMARY KEY, check_ciphertext TEXT NOT NULL, created_at INTEGER NOT NULL);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn setup_key_is_generated_only_for_a_database_without_ciphertext() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("encryption.key");
+        let pool = key_check_pool().await;
+
+        let key = load_or_generate_encryption_key_at(&pool, &path)
+            .await
+            .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), key);
+
+        fs::remove_file(&path).unwrap();
+        sqlx::query("INSERT INTO trusted_proxy_settings VALUES (1, ?1)")
+            .bind(encrypt_secret("secret", &key).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let error = load_or_generate_encryption_key_at(&pool, &path)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("is missing"));
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn setup_key_must_match_the_daemon_key_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("encryption.key");
+        let pool = key_check_pool().await;
+        let daemon_key = [1u8; 32];
+        sqlx::query("INSERT INTO encryption_key_check VALUES (1, ?1, 0)")
+            .bind(
+                encrypt_secret(
+                    oore_contract::data_paths::ENCRYPTION_KEY_CHECK_PLAINTEXT,
+                    &daemon_key,
+                )
+                .unwrap(),
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(
+            load_or_generate_encryption_key_at(&pool, &path)
+                .await
+                .is_err()
+        );
+        assert!(!path.exists());
+
+        fs::write(&path, [2u8; 32]).unwrap();
+        let error = load_or_generate_encryption_key_at(&pool, &path)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("does not match this database"));
+
+        fs::write(&path, daemon_key).unwrap();
+        assert_eq!(
+            load_or_generate_encryption_key_at(&pool, &path)
+                .await
+                .unwrap(),
+            daemon_key
+        );
+    }
+
     fn queue_update_request(
         install_root: &Path,
         request: &serde_json::Value,
@@ -12842,5 +12983,264 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[derive(Default)]
+    struct ScriptedServiceControl {
+        calls: Vec<String>,
+        failures: BTreeSet<usize>,
+    }
+
+    impl ScriptedServiceControl {
+        fn record(&mut self, call: String) -> anyhow::Result<()> {
+            let index = self.calls.len();
+            self.calls.push(call.clone());
+            anyhow::ensure!(!self.failures.contains(&index), "{call} failed");
+            Ok(())
+        }
+    }
+
+    impl UpdateServiceControl for ScriptedServiceControl {
+        fn restart_managed_service(&mut self, label: &str) -> anyhow::Result<()> {
+            self.record(format!("restart {label}"))
+        }
+
+        async fn activate_runner_service(
+            &mut self,
+            label: &str,
+            _previous_pid: Option<u32>,
+            _ack: Option<&RunnerUpdateAck>,
+            activation: ReleaseActivation,
+        ) -> anyhow::Result<()> {
+            let activation = match activation {
+                ReleaseActivation::Installed => "installed",
+                ReleaseActivation::Restored => "restored",
+            };
+            self.record(format!("activate {label} {activation}"))
+        }
+
+        fn stop_managed_service(&mut self, label: &str) -> anyhow::Result<()> {
+            self.record(format!("stop {label}"))
+        }
+
+        async fn restart_unmanaged_daemon(&mut self, listen: &str) -> anyhow::Result<()> {
+            self.record(format!("restart unmanaged {listen}"))
+        }
+
+        async fn stop_unmanaged_daemon(&mut self, listen: &str) -> anyhow::Result<()> {
+            self.record(format!("stop unmanaged {listen}"))
+        }
+
+        async fn wait_for_endpoint(&mut self, url: &str, _name: &str) -> anyhow::Result<()> {
+            self.record(format!("wait {url}"))
+        }
+
+        async fn wait_for_daemon_release(
+            &mut self,
+            ready_url: &str,
+            expected_package_version: &str,
+            _name: &str,
+        ) -> anyhow::Result<()> {
+            self.record(format!("wait {ready_url} {expected_package_version}"))
+        }
+    }
+
+    const INSTALLED_CALLS: [&str; 5] = [
+        "restart build.oore.oored",
+        "wait http://127.0.0.1:8787/readyz 0.1.49",
+        "restart build.oore.oore-web",
+        "wait http://127.0.0.1:3000/",
+        "activate build.oore.oore-runner installed",
+    ];
+
+    const ROLLBACK_CALLS: [&str; 6] = [
+        "stop build.oore.oored",
+        "restart build.oore.oored",
+        "wait http://127.0.0.1:8787/readyz 0.1.48",
+        "restart build.oore.oore-web",
+        "wait http://127.0.0.1:3000/",
+        "activate build.oore.oore-runner restored",
+    ];
+
+    struct UpdateFixture {
+        _temporary: tempfile::TempDir,
+        install_root: PathBuf,
+        previous_release: PathBuf,
+        stage: PathBuf,
+    }
+
+    impl UpdateFixture {
+        fn new() -> Self {
+            let temporary = tempfile::tempdir().unwrap();
+            let install_root = temporary.path().join("oore");
+            let previous_release = temporary.path().join("previous");
+            let stage = temporary.path().join("stage");
+            for (root, version) in [
+                (&install_root, "0.1.48"),
+                (&previous_release, "0.1.48"),
+                (&stage, "0.1.49"),
+            ] {
+                for binary in ["oore", "oored", "oore-web"] {
+                    let path = root.join("bin").join(binary);
+                    fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    fs::write(&path, format!("{binary} {version}")).unwrap();
+                    set_executable(&path).unwrap();
+                }
+                fs::write(root.join("VERSION"), version).unwrap();
+            }
+            for root in [&install_root, &previous_release] {
+                fs::write(root.join("CHANNEL"), "stable").unwrap();
+                fs::write(root.join("GITHUB_REPO"), "oore-ci/oore.build").unwrap();
+            }
+            fs::create_dir(stage.join("web-dist")).unwrap();
+            fs::write(stage.join("web-dist/index.html"), "0.1.49").unwrap();
+            Self {
+                _temporary: temporary,
+                install_root,
+                previous_release,
+                stage,
+            }
+        }
+
+        fn services() -> UpdateServicePlan {
+            UpdateServicePlan {
+                profile_update: None,
+                defer_daemon_restart: false,
+                daemon_is_managed: true,
+                unmanaged_daemon_listen: None,
+                daemon_should_be_running: true,
+                daemon_ready_url: "http://127.0.0.1:8787/readyz".to_string(),
+                installed_version: "0.1.49".to_string(),
+                restored_version: "0.1.48".to_string(),
+                runner_service: Some(RUNNER_SERVICE_LABEL),
+                runner_previous_pid: None,
+                runner_ack: None,
+                runner_installed_version: "0.1.49".to_string(),
+                runner_restored_version: "0.1.48".to_string(),
+                install_managed_runner: false,
+                managed_runner_service_existed: false,
+                managed_runner_config_existed: false,
+                managed_runner_database: None,
+                web_is_managed: true,
+                web_was_running: true,
+                web_ready_url: Some("http://127.0.0.1:3000/".to_string()),
+            }
+        }
+
+        async fn install(&self, control: &mut ScriptedServiceControl) -> anyhow::Result<()> {
+            install_release_with_rollback(
+                &self.stage,
+                &self.install_root,
+                &self.previous_release,
+                ReleaseChannel::Beta,
+                "oore-ci/oore.build",
+                None,
+                None,
+                None,
+                &Self::services(),
+                None,
+                control,
+            )
+            .await
+        }
+
+        fn read(&self, relative: &str) -> Option<String> {
+            fs::read_to_string(self.install_root.join(relative)).ok()
+        }
+
+        fn assert_release(&self, version: &str, channel: &str) {
+            for binary in ["oore", "oored", "oore-web"] {
+                assert_eq!(
+                    self.read(&format!("bin/{binary}")).as_deref(),
+                    Some(format!("{binary} {version}").as_str())
+                );
+            }
+            assert_eq!(self.read("VERSION").as_deref(), Some(version));
+            assert_eq!(self.read("CHANNEL").as_deref(), Some(channel));
+            // Markers are `v2:<nonce>:<executable identity>`; the nonce differs per write.
+            let identity =
+                |marker: &str| marker.trim_end().splitn(3, ':').nth(2).map(str::to_owned);
+            let expected =
+                oore_runner::runner_release_marker(&self.install_root.join("bin/oore")).unwrap();
+            let published = self.read(oore_runner::RUNNER_RELEASE_MARKER_FILE).unwrap();
+            assert_eq!(identity(&published), identity(&expected));
+            assert!(identity(&expected).is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn updates_install_the_staged_release_and_activate_every_service() {
+        let fixture = UpdateFixture::new();
+        let mut control = ScriptedServiceControl::default();
+
+        fixture.install(&mut control).await.unwrap();
+
+        assert_eq!(control.calls, INSTALLED_CALLS);
+        fixture.assert_release("0.1.49", "beta");
+        assert_eq!(fixture.read("WEB_VERSION").as_deref(), Some("0.1.49"));
+        assert_eq!(
+            fixture.read("web-dist/index.html").as_deref(),
+            Some("0.1.49")
+        );
+    }
+
+    #[tokio::test]
+    async fn updates_restore_the_previous_release_when_any_activation_step_fails() {
+        for failed_step in 0..INSTALLED_CALLS.len() {
+            let fixture = UpdateFixture::new();
+            let mut control = ScriptedServiceControl {
+                failures: BTreeSet::from([failed_step]),
+                ..Default::default()
+            };
+
+            let error = fixture.install(&mut control).await.unwrap_err();
+
+            assert_eq!(
+                error.to_string(),
+                format!("{} failed", INSTALLED_CALLS[failed_step]),
+            );
+            let expected = INSTALLED_CALLS[..=failed_step]
+                .iter()
+                .chain(ROLLBACK_CALLS.iter())
+                .collect::<Vec<_>>();
+            assert_eq!(control.calls.iter().collect::<Vec<_>>(), expected);
+            fixture.assert_release("0.1.48", "stable");
+            assert_eq!(fixture.read("WEB_VERSION"), None);
+            assert!(!fixture.install_root.join("web-dist").exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn updates_report_both_errors_when_the_rollback_also_fails() {
+        let fixture = UpdateFixture::new();
+        let rollback_restart = 1 + ROLLBACK_CALLS
+            .iter()
+            .position(|call| *call == "restart build.oore.oored")
+            .unwrap();
+        let mut control = ScriptedServiceControl {
+            failures: BTreeSet::from([0, rollback_restart]),
+            ..Default::default()
+        };
+
+        let error = fixture.install(&mut control).await.unwrap_err();
+
+        assert_eq!(
+            format!("{error:#}"),
+            "rollback also failed: restart build.oore.oored failed: restart build.oore.oored failed"
+        );
+        assert_eq!(control.calls.len(), rollback_restart + 1);
+        // The files were restored before the services failed to restart.
+        fixture.assert_release("0.1.48", "stable");
+    }
+
+    #[tokio::test]
+    async fn updates_refuse_to_start_without_an_installed_cli() {
+        let fixture = UpdateFixture::new();
+        fs::remove_file(fixture.install_root.join("bin/oore")).unwrap();
+        let mut control = ScriptedServiceControl::default();
+
+        assert!(fixture.install(&mut control).await.is_err());
+        assert!(control.calls.is_empty());
+        assert_eq!(fixture.read("VERSION").as_deref(), Some("0.1.48"));
     }
 }
