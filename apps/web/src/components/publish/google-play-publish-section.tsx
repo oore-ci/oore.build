@@ -510,7 +510,7 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
               {releaseType === 'draft'
                 ? 'Nothing reaches users until you review and roll out the draft in Play Console.'
                 : releaseType === 'staged'
-                  ? 'Only the share below gets the update at first. Raise, halt or complete it later from the release board or Play Console.'
+                  ? 'Only the share below gets the update at first. Increase, halt or complete it later from the release board or Play Console.'
                   : track === 'internal'
                     ? 'Every internal tester gets the update. The internal track does not support staged rollouts.'
                     : 'Everyone on the track gets the update as soon as Google approves it.'}

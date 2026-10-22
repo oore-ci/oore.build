@@ -46,7 +46,7 @@ const NOTIFICATION_EVENTS = [
   { value: 'expired', label: 'Expired' },
   { value: 'runner_offline', label: 'Runner offline' },
   { value: 'release_uploaded', label: 'Release uploaded' },
-  { value: 'rollout_step_raised', label: 'Rollout raised' },
+  { value: 'rollout_step_raised', label: 'Rollout increased' },
   { value: 'rollout_halted', label: 'Rollout halted' },
   { value: 'rollout_completed', label: 'Rollout complete' },
   { value: 'release_approval_needed', label: 'Approval needed' },
