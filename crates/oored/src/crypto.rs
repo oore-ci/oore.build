@@ -29,9 +29,12 @@ impl NonceSequence for SingleNonce {
 
 /// Resolve the encryption key file path from the platform data directory.
 ///
-/// The key is stored at `{data_root}/encryption.key`.
+/// The key is stored at `{data_root}/encryption.key`, the same path the
+/// `oore` CLI uses.
 pub fn resolve_key_path() -> anyhow::Result<PathBuf> {
-    Ok(resolve_oored_data_dir()?.join("encryption.key"))
+    Ok(oore_contract::data_paths::encryption_key_path(
+        &resolve_oored_data_dir()?,
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,12 +65,14 @@ pub struct RuntimeKey {
     pub legacy_file_path: PathBuf,
 }
 
-/// Load or generate the AES-256 encryption key.
+/// Load the AES-256 encryption key, generating one only when allowed.
 ///
-/// If the key file exists at `path`, reads and returns it.
-/// Otherwise, generates a new random 256-bit key, writes it to `path`
-/// with restrictive permissions (0o600), and returns it.
-pub fn load_or_generate_key(path: &Path) -> anyhow::Result<Vec<u8>> {
+/// If the key file exists at `path`, reads and returns it. Otherwise, when
+/// `allow_generate` is set, generates a new random 256-bit key, writes it to
+/// `path` with restrictive permissions (0o600), and returns it. Callers pass
+/// `allow_generate = false` when the database already holds ciphertext, since
+/// a new key would make all of it unreadable.
+pub fn load_or_generate_key(path: &Path, allow_generate: bool) -> anyhow::Result<Vec<u8>> {
     if path.exists() {
         let key = fs::read(path)
             .with_context(|| format!("failed to read encryption key: {}", path.display()))?;
@@ -80,6 +85,16 @@ pub fn load_or_generate_key(path: &Path) -> anyhow::Result<Vec<u8>> {
             );
         }
         return Ok(key);
+    }
+
+    if !allow_generate {
+        bail!(
+            "encryption key {} is missing, but the database already holds data encrypted with it. \
+             Refusing to generate a new key, because every stored credential would become unreadable. \
+             Restore the original key with `oore backup restore`, or set OORED_DATA_DIR to the \
+             directory that holds it.",
+            path.display()
+        );
     }
 
     let key = generate_random_key()?;
@@ -126,20 +141,20 @@ fn generate_random_key() -> anyhow::Result<Vec<u8>> {
     Ok(key)
 }
 
-pub fn load_runtime_key() -> anyhow::Result<RuntimeKey> {
-    load_runtime_key_with_mode(default_key_storage_mode())
-}
-
-pub fn load_runtime_key_with_mode(mode: KeyStorageMode) -> anyhow::Result<RuntimeKey> {
-    let legacy_file_path = resolve_key_path()?;
-
+/// Load the runtime key for `mode` from `legacy_file_path`. See
+/// [`load_or_generate_key`] for `allow_generate`.
+pub fn load_runtime_key_with_mode(
+    mode: KeyStorageMode,
+    legacy_file_path: PathBuf,
+    allow_generate: bool,
+) -> anyhow::Result<RuntimeKey> {
     #[cfg(target_os = "macos")]
     {
         if mode == KeyStorageMode::Keychain {
             warn!("keychain key storage is temporarily disabled; using file mode");
         }
 
-        let key = load_or_generate_key(&legacy_file_path)?;
+        let key = load_or_generate_key(&legacy_file_path, allow_generate)?;
         Ok(RuntimeKey {
             key,
             source: KeySource::LegacyFile,
@@ -152,7 +167,7 @@ pub fn load_runtime_key_with_mode(mode: KeyStorageMode) -> anyhow::Result<Runtim
         if mode == KeyStorageMode::Keychain {
             bail!("keychain mode is not supported on this platform");
         }
-        let key = load_or_generate_key(&legacy_file_path)?;
+        let key = load_or_generate_key(&legacy_file_path, allow_generate)?;
         Ok(RuntimeKey {
             key,
             source: KeySource::LegacyFile,
@@ -171,10 +186,6 @@ pub fn persist_current_key_for_mode(key: &[u8], mode: KeyStorageMode) -> anyhow:
         }
         KeyStorageMode::Keychain => bail!("keychain mode is disabled in this release"),
     }
-}
-
-pub fn default_key_storage_mode() -> KeyStorageMode {
-    KeyStorageMode::File
 }
 
 /// Encrypt plaintext using AES-256-GCM.

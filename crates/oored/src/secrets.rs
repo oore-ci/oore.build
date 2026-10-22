@@ -1,14 +1,16 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use anyhow::Context;
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
     ApiError, CreateSecretRequest, ListSecretsResponse, MAX_SECRET_VALUE_BYTES, OkResponse,
     RotateSecretRequest, RunnerJobSecret, RunnerJobSecretsResponse, SecretResponse, SecretScope,
     SecretSummary, validate_secret_name,
 };
+use serde::Deserialize;
 use sqlx::{Row, SqlitePool};
 use tracing::{error, info};
 use uuid::Uuid;
@@ -267,12 +269,90 @@ async fn rotate_for_target(
     Ok(Json(SecretResponse { secret }))
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct DeleteSecretQuery {
+    /// Delete even when Google Play publishing uses the secret.
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// Names of pipelines whose Google Play settings resolve their service
+/// account to this secret, so deleting it would break their publishing,
+/// rollout controls and store vitals. A pipeline with a narrower secret of
+/// the same name does not depend on it.
+async fn google_play_dependents(
+    pool: &SqlitePool,
+    target: &SecretTarget,
+    name: &str,
+) -> sqlx::Result<Vec<String>> {
+    sqlx::query_scalar(
+        "SELECT p.name FROM pipeline_publish_targets t \
+         JOIN pipelines p ON p.id = t.pipeline_id \
+         WHERE t.store = 'google_play' \
+           AND json_extract(t.config, '$.service_account_secret') = ?4 \
+           AND CASE ?1 \
+                 WHEN 'instance' THEN 1 \
+                 WHEN 'project' THEN p.project_id = ?2 \
+                 ELSE p.id = ?3 \
+               END \
+           AND (?1 = 'pipeline' OR NOT EXISTS ( \
+                 SELECT 1 FROM secrets s WHERE s.name = ?4 AND s.scope = 'pipeline' \
+                   AND s.pipeline_id = p.id)) \
+           AND (?1 != 'instance' OR NOT EXISTS ( \
+                 SELECT 1 FROM secrets s WHERE s.name = ?4 AND s.scope = 'project' \
+                   AND s.project_id = p.project_id)) \
+         ORDER BY p.name",
+    )
+    .bind(target.scope.as_str())
+    .bind(&target.project_id)
+    .bind(&target.pipeline_id)
+    .bind(name)
+    .fetch_all(pool)
+    .await
+}
+
+fn secret_in_use_message(name: &str, pipelines: &[String]) -> String {
+    const SHOWN: usize = 3;
+    let mut listed = pipelines
+        .iter()
+        .take(SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if pipelines.len() > SHOWN {
+        listed.push_str(&format!(" and {} more", pipelines.len() - SHOWN));
+    }
+    let subject = if pipelines.len() == 1 {
+        "1 pipeline uses".to_string()
+    } else {
+        format!("{} pipelines use", pipelines.len())
+    };
+    format!(
+        "{subject} {name} as the Google Play service account ({listed}). Point them at another \
+         secret before deleting it, or they will fail to publish and their rollouts can't be \
+         managed."
+    )
+}
+
 async fn delete_for_target(
     state: &AppState,
     auth: &AuthUser,
     target: SecretTarget,
     name: String,
+    query: DeleteSecretQuery,
 ) -> ApiResult<OkResponse> {
+    if !query.force {
+        let dependents = google_play_dependents(&state.db, &target, &name)
+            .await
+            .map_err(|e| store_error("Failed to check where the secret is used", e))?;
+        if !dependents.is_empty() {
+            return Err(api_err(
+                StatusCode::CONFLICT,
+                "secret_in_use",
+                secret_in_use_message(&name, &dependents),
+            ));
+        }
+    }
     let result = sqlx::query(
         "DELETE FROM secrets WHERE scope = ?1 AND project_id IS ?2 AND pipeline_id IS ?3 AND name = ?4",
     )
@@ -391,9 +471,10 @@ pub async fn delete_instance_secret(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(name): Path<String>,
+    Query(query): Query<DeleteSecretQuery>,
 ) -> ApiResult<OkResponse> {
     check_permission(&state.enforcer, &auth.0.role, "instance_settings", "write").await?;
-    delete_for_target(&state, &auth, SecretTarget::instance(), name).await
+    delete_for_target(&state, &auth, SecretTarget::instance(), name, query).await
 }
 
 // ── Project handlers ────────────────────────────────────────────
@@ -447,6 +528,7 @@ pub async fn delete_project_secret(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path((project_id, name)): Path<(String, String)>,
+    Query(query): Query<DeleteSecretQuery>,
 ) -> ApiResult<OkResponse> {
     let target = project_target(
         &state,
@@ -455,7 +537,7 @@ pub async fn delete_project_secret(
         ProjectPermission::ManagePipelines,
     )
     .await?;
-    delete_for_target(&state, &auth, target, name).await
+    delete_for_target(&state, &auth, target, name, query).await
 }
 
 // ── Pipeline handlers ───────────────────────────────────────────
@@ -509,6 +591,7 @@ pub async fn delete_pipeline_secret(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path((pipeline_id, name)): Path<(String, String)>,
+    Query(query): Query<DeleteSecretQuery>,
 ) -> ApiResult<OkResponse> {
     let target = pipeline_target(
         &state,
@@ -517,7 +600,7 @@ pub async fn delete_pipeline_secret(
         ProjectPermission::ManagePipelines,
     )
     .await?;
-    delete_for_target(&state, &auth, target, name).await
+    delete_for_target(&state, &auth, target, name, query).await
 }
 
 // ── Resolution for jobs ─────────────────────────────────────────
@@ -530,40 +613,67 @@ fn scope_rank(scope: SecretScope) -> u8 {
     }
 }
 
-/// Decrypt every secret visible to a pipeline. On a name clash the pipeline
-/// scope wins over the project scope, which wins over the instance scope.
+/// The row that wins for each name visible to a pipeline, still encrypted.
+/// On a name clash the pipeline scope wins over the project scope, which
+/// wins over the instance scope.
+async fn visible_secret_rows(
+    pool: &SqlitePool,
+    project_id: &str,
+    pipeline_id: Option<&str>,
+    name: Option<&str>,
+) -> anyhow::Result<BTreeMap<String, (SecretScope, String)>> {
+    let rows = sqlx::query(
+        "SELECT name, scope, value_encrypted FROM secrets \
+         WHERE (scope = 'instance' \
+            OR (scope = 'project' AND project_id = ?1) \
+            OR (scope = 'pipeline' AND pipeline_id IS ?2 AND ?2 IS NOT NULL)) \
+           AND (?3 IS NULL OR name = ?3)",
+    )
+    .bind(project_id)
+    .bind(pipeline_id)
+    .bind(name)
+    .fetch_all(pool)
+    .await?;
+
+    let mut visible: BTreeMap<String, (SecretScope, String)> = BTreeMap::new();
+    for row in rows {
+        let name: String = row.get("name");
+        let scope = parse_scope(row.get::<String, _>("scope").as_str());
+        if visible
+            .get(&name)
+            .is_some_and(|(existing, _)| scope_rank(*existing) >= scope_rank(scope))
+        {
+            continue;
+        }
+        visible.insert(name, (scope, row.get("value_encrypted")));
+    }
+    Ok(visible)
+}
+
+fn decrypt_visible(
+    name: String,
+    scope: SecretScope,
+    encrypted: &str,
+    encryption_key: &[u8],
+) -> anyhow::Result<RunnerJobSecret> {
+    let value = crypto::decrypt(encrypted, encryption_key)
+        .with_context(|| format!("failed to decrypt the {} secret {name}", scope.as_str()))?;
+    Ok(RunnerJobSecret { name, value, scope })
+}
+
+/// Decrypt every secret visible to a pipeline. Shadowed rows are never
+/// decrypted, and an error names the secret that failed.
 pub async fn resolve_secrets(
     pool: &SqlitePool,
     encryption_key: &[u8],
     project_id: &str,
     pipeline_id: Option<&str>,
 ) -> anyhow::Result<Vec<RunnerJobSecret>> {
-    let rows = sqlx::query(
-        "SELECT name, scope, value_encrypted FROM secrets \
-         WHERE scope = 'instance' \
-            OR (scope = 'project' AND project_id = ?1) \
-            OR (scope = 'pipeline' AND pipeline_id IS ?2 AND ?2 IS NOT NULL)",
-    )
-    .bind(project_id)
-    .bind(pipeline_id)
-    .fetch_all(pool)
-    .await?;
-
-    let mut resolved: BTreeMap<String, RunnerJobSecret> = BTreeMap::new();
-    for row in rows {
-        let name: String = row.get("name");
-        let scope = parse_scope(row.get::<String, _>("scope").as_str());
-        if resolved
-            .get(&name)
-            .is_some_and(|existing| scope_rank(existing.scope) >= scope_rank(scope))
-        {
-            continue;
-        }
-        let encrypted: String = row.get("value_encrypted");
-        let value = crypto::decrypt(&encrypted, encryption_key)?;
-        resolved.insert(name.clone(), RunnerJobSecret { name, value, scope });
-    }
-    Ok(resolved.into_values().collect())
+    visible_secret_rows(pool, project_id, pipeline_id, None)
+        .await?
+        .into_iter()
+        .map(|(name, (scope, encrypted))| decrypt_visible(name, scope, &encrypted, encryption_key))
+        .collect()
 }
 
 /// Decrypt one secret by name for daemon-side store calls, using the same
@@ -575,13 +685,36 @@ pub async fn resolve_secret_value(
     pipeline_id: Option<&str>,
     name: &str,
 ) -> anyhow::Result<Option<String>> {
-    Ok(
-        resolve_secrets(pool, encryption_key, project_id, pipeline_id)
-            .await?
-            .into_iter()
-            .find(|secret| secret.name == name)
-            .map(|secret| secret.value),
+    visible_secret_rows(pool, project_id, pipeline_id, Some(name))
+        .await?
+        .remove(name)
+        .map(|(scope, encrypted)| {
+            decrypt_visible(name.to_string(), scope, &encrypted, encryption_key)
+                .map(|secret| secret.value)
+        })
+        .transpose()
+}
+
+/// Whether a secret named `name` is visible to a pipeline, without
+/// decrypting anything.
+pub async fn secret_name_visible(
+    pool: &SqlitePool,
+    project_id: &str,
+    pipeline_id: Option<&str>,
+    name: &str,
+) -> anyhow::Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM secrets \
+         WHERE name = ?3 \
+           AND (scope = 'instance' \
+            OR (scope = 'project' AND project_id = ?1) \
+            OR (scope = 'pipeline' AND pipeline_id IS ?2 AND ?2 IS NOT NULL)))",
     )
+    .bind(project_id)
+    .bind(pipeline_id)
+    .bind(name)
+    .fetch_one(pool)
+    .await?)
 }
 
 /// `GET /v1/runners/{runner_id}/jobs/{job_id}/secrets` — deliver resolved
@@ -620,7 +753,7 @@ pub async fn get_job_secrets(
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "decryption_error",
-            "Failed to load build secrets",
+            format!("Failed to load build secrets: {e:#}"),
         )
     })?;
     Ok(Json(RunnerJobSecretsResponse { secrets }))
@@ -639,10 +772,12 @@ mod tests {
         for statement in [
             "CREATE TABLE users (id TEXT PRIMARY KEY)",
             "CREATE TABLE projects (id TEXT PRIMARY KEY)",
-            "CREATE TABLE pipelines (id TEXT PRIMARY KEY, project_id TEXT)",
+            "CREATE TABLE pipelines (id TEXT PRIMARY KEY, project_id TEXT, name TEXT)",
             include_str!("../migrations/042_secrets.sql"),
+            include_str!("../migrations/043_pipeline_publish.sql"),
             "INSERT INTO projects VALUES ('p1'), ('p2')",
-            "INSERT INTO pipelines VALUES ('pl1', 'p1'), ('pl2', 'p1')",
+            "INSERT INTO pipelines VALUES ('pl1', 'p1', 'Android'), ('pl2', 'p1', 'Beta'), \
+             ('pl3', 'p2', 'Other app')",
         ] {
             sqlx::raw_sql(statement).execute(&pool).await.unwrap();
         }
@@ -753,5 +888,125 @@ mod tests {
             .await
             .unwrap();
         assert!(!stored.contains("plain-value"));
+    }
+
+    fn target(scope: SecretScope, project: Option<&str>, pipeline: Option<&str>) -> SecretTarget {
+        SecretTarget {
+            scope,
+            project_id: project.map(str::to_string),
+            pipeline_id: pipeline.map(str::to_string),
+        }
+    }
+
+    async fn publish_with(pool: &SqlitePool, pipeline: &str, secret: &str) {
+        sqlx::query(
+            "INSERT INTO pipeline_publish_targets (id, pipeline_id, store, enabled, config, created_at, updated_at) \
+             VALUES (?1, ?1, 'google_play', 1, ?2, 0, 0)",
+        )
+        .bind(pipeline)
+        .bind(
+            serde_json::json!({ "enabled": true, "service_account_secret": secret, "track": "internal" })
+                .to_string(),
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn google_play_dependents_follow_secret_precedence() {
+        let pool = pool().await;
+        let key = vec![7u8; 32];
+        for pipeline in ["pl1", "pl2", "pl3"] {
+            publish_with(&pool, pipeline, "PLAY").await;
+        }
+        insert(&pool, &key, "instance", None, None, "PLAY", "{}").await;
+        insert(
+            &pool,
+            &key,
+            "pipeline",
+            Some("p1"),
+            Some("pl2"),
+            "PLAY",
+            "{}",
+        )
+        .await;
+        insert(&pool, &key, "project", Some("p2"), None, "PLAY", "{}").await;
+
+        let dependents = |target: SecretTarget, name: &'static str| {
+            let pool = pool.clone();
+            async move { google_play_dependents(&pool, &target, name).await.unwrap() }
+        };
+        // pl2 has its own PLAY and p2 has a project PLAY, so only pl1 needs the instance one.
+        assert_eq!(
+            dependents(SecretTarget::instance(), "PLAY").await,
+            vec!["Android"]
+        );
+        assert_eq!(
+            dependents(target(SecretScope::Project, Some("p2"), None), "PLAY").await,
+            vec!["Other app"]
+        );
+        assert_eq!(
+            dependents(target(SecretScope::Project, Some("p1"), None), "PLAY").await,
+            vec!["Android"]
+        );
+        assert_eq!(
+            dependents(
+                target(SecretScope::Pipeline, Some("p1"), Some("pl2")),
+                "PLAY"
+            )
+            .await,
+            vec!["Beta"]
+        );
+        assert!(
+            dependents(SecretTarget::instance(), "OTHER")
+                .await
+                .is_empty()
+        );
+
+        let message = secret_in_use_message("PLAY", &["Android".to_string()]);
+        assert!(message.starts_with("1 pipeline uses PLAY"));
+        assert!(message.contains("(Android)"));
+    }
+
+    #[tokio::test]
+    async fn an_undecryptable_secret_is_named_and_does_not_break_name_checks() {
+        let pool = pool().await;
+        let key = vec![7u8; 32];
+        insert(&pool, &key, "instance", None, None, "PLAY", "{}").await;
+        insert(&pool, &[9u8; 32], "instance", None, None, "BROKEN", "x").await;
+        insert(&pool, &[9u8; 32], "instance", None, None, "SHADOWED", "x").await;
+        insert(&pool, &key, "project", Some("p1"), None, "SHADOWED", "ok").await;
+
+        let error = resolve_secrets(&pool, &key, "p1", Some("pl1"))
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("instance secret BROKEN"));
+
+        assert!(
+            secret_name_visible(&pool, "p1", Some("pl1"), "PLAY")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !secret_name_visible(&pool, "p1", Some("pl1"), "MISSING")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            resolve_secret_value(&pool, &key, "p1", Some("pl1"), "PLAY")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("{}")
+        );
+        // A broken row that a narrower scope shadows is never decrypted.
+        assert_eq!(
+            resolve_secret_value(&pool, &key, "p1", Some("pl1"), "SHADOWED")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("ok")
+        );
     }
 }
