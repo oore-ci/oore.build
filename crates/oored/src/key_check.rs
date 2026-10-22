@@ -212,7 +212,7 @@ mod tests {
             "CREATE TABLE projects (id TEXT PRIMARY KEY)",
             "CREATE TABLE pipelines (id TEXT PRIMARY KEY)",
             include_str!("../migrations/042_secrets.sql"),
-            include_str!("../migrations/057_encryption_key_check.sql"),
+            include_str!("../migrations/059_encryption_key_check.sql"),
         ] {
             sqlx::raw_sql(statement).execute(&pool).await.unwrap();
         }
