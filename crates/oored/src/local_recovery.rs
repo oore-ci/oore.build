@@ -228,24 +228,70 @@ impl ManagementSocket {
     }
 
     pub async fn serve(self) -> anyhow::Result<()> {
-        loop {
-            let (stream, _) = self.listener.accept().await.with_context(|| {
-                format!(
-                    "failed to accept management socket connection on {}",
-                    self.path.display()
-                )
-            })?;
-            let pool = self.pool.clone();
-            let capabilities = self.capabilities.clone();
-            let expected_uid = self.expected_uid;
-            let expected_gid = self.expected_gid;
-            tokio::spawn(async move {
-                if let Err(error) =
-                    handle_connection(stream, pool, capabilities, expected_uid, expected_gid).await
-                {
-                    warn!(%error, "local recovery management request failed");
+        let pool = self.pool.clone();
+        let capabilities = self.capabilities.clone();
+        let expected_uid = self.expected_uid;
+        let expected_gid = self.expected_gid;
+        accept_connections(
+            || self.listener.accept(),
+            || validate_socket(&self.path, expected_uid, expected_gid),
+            |stream| {
+                let pool = pool.clone();
+                let capabilities = capabilities.clone();
+                tokio::spawn(async move {
+                    if let Err(error) =
+                        handle_connection(stream, pool, capabilities, expected_uid, expected_gid)
+                            .await
+                    {
+                        warn!(%error, "local recovery management request failed");
+                    }
+                });
+            },
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "failed to accept management socket connection on {}",
+                self.path.display()
+            )
+        })
+    }
+}
+
+const ACCEPT_RETRY_MIN: Duration = Duration::from_millis(100);
+const ACCEPT_RETRY_MAX: Duration = Duration::from_secs(1);
+
+/// Accept connections until the socket itself is gone. A failed `accept`, for
+/// example when the daemon briefly runs out of file descriptors, only pauses
+/// the loop, so local recovery keeps working while the daemon stays up.
+async fn accept_connections<Accept, Fut, Stream>(
+    mut accept: Accept,
+    socket_is_usable: impl Fn() -> anyhow::Result<()>,
+    mut handle: impl FnMut(Stream),
+) -> anyhow::Result<()>
+where
+    Accept: FnMut() -> Fut,
+    Fut: Future<Output = std::io::Result<(Stream, tokio::net::unix::SocketAddr)>>,
+{
+    let mut retry = ACCEPT_RETRY_MIN;
+    loop {
+        match accept().await {
+            Ok((stream, _)) => {
+                retry = ACCEPT_RETRY_MIN;
+                handle(stream);
+            }
+            Err(error) => {
+                if let Err(unusable) = socket_is_usable() {
+                    return Err(anyhow::Error::from(error).context(unusable));
                 }
-            });
+                warn!(
+                    %error,
+                    retry_ms = retry.as_millis() as u64,
+                    "local recovery management socket failed to accept a connection; retrying"
+                );
+                tokio::time::sleep(retry).await;
+                retry = (retry * 2).min(ACCEPT_RETRY_MAX);
+            }
         }
     }
 }
@@ -620,5 +666,74 @@ async fn try_mint_capability(
 fn mint_error(code: &str, message: &str) -> LocalRecoveryMintResponse {
     LocalRecoveryMintResponse::Error {
         error: ApiError::new(code, message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::accept_connections;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+    use tokio::net::{UnixListener, UnixStream};
+
+    #[tokio::test]
+    async fn a_failed_accept_does_not_stop_the_socket() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("management.sock");
+        let listener = Arc::new(UnixListener::bind(&path).unwrap());
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let (accepted, mut connections) = tokio::sync::mpsc::unbounded_channel();
+        let server = tokio::spawn({
+            let listener = listener.clone();
+            let attempts = attempts.clone();
+            async move {
+                accept_connections(
+                    move || {
+                        let listener = listener.clone();
+                        let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+                        async move {
+                            if attempt == 0 {
+                                return Err(std::io::Error::from_raw_os_error(libc::EMFILE));
+                            }
+                            listener.accept().await
+                        }
+                    },
+                    || Ok(()),
+                    move |stream: UnixStream| accepted.send(stream).unwrap(),
+                )
+                .await
+            }
+        });
+
+        let _client = UnixStream::connect(&path).await.unwrap();
+        let connection = tokio::time::timeout(Duration::from_secs(5), connections.recv())
+            .await
+            .expect("the socket accepted a connection after the error");
+
+        assert!(connection.is_some());
+        assert!(attempts.load(Ordering::SeqCst) >= 2);
+        assert!(!server.is_finished());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_accept_error_on_a_removed_socket_stops_the_loop() {
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            accept_connections(
+                || async {
+                    Err::<(UnixStream, tokio::net::unix::SocketAddr), _>(
+                        std::io::Error::from_raw_os_error(libc::EBADF),
+                    )
+                },
+                || anyhow::bail!("management socket was removed"),
+                |_stream: UnixStream| {},
+            ),
+        )
+        .await
+        .expect("the loop ended");
+
+        assert!(format!("{:#}", result.unwrap_err()).contains("management socket was removed"));
     }
 }

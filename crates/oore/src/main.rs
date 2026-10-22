@@ -42,6 +42,7 @@ mod managed_services;
 mod setup_journey;
 mod uninstaller;
 mod update_supervisor;
+mod update_transaction;
 
 const FAVICON_DATA_URI: &str = "data:image/svg+xml;base64,PHN2ZwogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB2aWV3Qm94PSIxMDAgMTAwIDMyMCAzMjAiCiAgcm9sZT0iaW1nIgogIGFyaWEtbGFiZWxsZWRieT0idGl0bGUgZGVzY3JpcHRpb24iCj4KICA8dGl0bGUgaWQ9InRpdGxlIj5Pb3JlPC90aXRsZT4KICA8ZGVzYyBpZD0iZGVzY3JpcHRpb24iPgogICAgQSBjaXJjdWxhciBidWlsZCBzd2VlcCBjb25uZWN0aW5nIGEgc291cmNlIGNvbW1pdCB0byBhbiBhcnRpZmFjdC4KICA8L2Rlc2M+CiAgPGRlZnM+CiAgICA8bWFzawogICAgICBpZD0iY3V0b3V0cyIKICAgICAgeD0iMCIKICAgICAgeT0iMCIKICAgICAgd2lkdGg9IjUxMiIKICAgICAgaGVpZ2h0PSI1MTIiCiAgICAgIG1hc2tVbml0cz0idXNlclNwYWNlT25Vc2UiCiAgICA+CiAgICAgIDxyZWN0IHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiBmaWxsPSJ3aGl0ZSIgLz4KICAgICAgPGNpcmNsZSBjeD0iMTczIiBjeT0iMzQ5IiByPSIxNiIgZmlsbD0iYmxhY2siIC8+CiAgICAgIDxyZWN0IHg9IjMyOSIgeT0iMTk3IiB3aWR0aD0iNjYiIGhlaWdodD0iMTEiIGZpbGw9ImJsYWNrIiAvPgogICAgPC9tYXNrPgogIDwvZGVmcz4KICA8ZyBmaWxsPSIjYmI0ZDAwIiBtYXNrPSJ1cmwoI2N1dG91dHMpIj4KICAgIDxjaXJjbGUKICAgICAgY3g9IjI1NCIKICAgICAgY3k9IjI2MCIKICAgICAgcj0iMTE5IgogICAgICBmaWxsPSJub25lIgogICAgICBzdHJva2U9IiNiYjRkMDAiCiAgICAgIHN0cm9rZS13aWR0aD0iMjIiCiAgICAvPgogICAgPGNpcmNsZSBjeD0iMTczIiBjeT0iMzQ5IiByPSIzNSIgLz4KICAgIDxyZWN0IHg9IjMxNSIgeT0iMTcwIiB3aWR0aD0iNzkiIGhlaWdodD0iOTAiIHJ4PSIxNSIgLz4KICA8L2c+Cjwvc3ZnPgo=";
 const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:8787";
@@ -5526,6 +5527,10 @@ fn run_update_doctor(json: bool) -> anyhow::Result<()> {
     use oore_contract::RuntimeUpdateCheckStatus;
 
     let install_root = resolve_install_root()?;
+    // Taking the lifecycle lock puts back a daemon an interrupted update held.
+    if let Err(error) = install_lock::InstallLock::acquire(&install_root) {
+        eprintln!("Skipped interrupted update recovery: {error:#}");
+    }
     let preflight = oore_contract::runtime_update_preflight::run(&install_root);
     if json {
         println!("{}", serde_json::to_string_pretty(&preflight)?);
@@ -5784,6 +5789,25 @@ fn http_client() -> anyhow::Result<reqwest::Client> {
         .context("failed to build HTTP client")
 }
 
+const RELEASE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// A release download that receives no bytes for this long is treated as
+/// stalled. Slow but progressing downloads are bounded only by the total limit.
+const RELEASE_READ_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const RELEASE_METADATA_TIMEOUT: Duration = Duration::from_secs(120);
+const RELEASE_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const RELEASE_DOWNLOAD_ATTEMPTS: u32 = 3;
+
+/// The client for release index, signature and archive downloads. Unlike the
+/// loopback daemon client, it never waits forever on a stalled network.
+fn release_http_client() -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(format!("oore/{}/update", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(RELEASE_CONNECT_TIMEOUT)
+        .read_timeout(RELEASE_READ_IDLE_TIMEOUT)
+        .build()
+        .context("failed to build the release download client")
+}
+
 fn normalized_release_signing_public_key() -> anyhow::Result<String> {
     RELEASE_SIGNING_PUBLIC_KEY
         .lines()
@@ -5856,38 +5880,108 @@ fn verify_signed_release_metadata(
     Ok(())
 }
 
+enum ReleaseDownloadError {
+    Retryable(anyhow::Error),
+    Fatal(anyhow::Error),
+}
+
+fn release_download_status_is_retryable(status: reqwest::StatusCode) -> bool {
+    status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+}
+
+async fn download_release_bytes_once(
+    client: &reqwest::Client,
+    url: &str,
+    description: &str,
+    limit: usize,
+) -> Result<Vec<u8>, ReleaseDownloadError> {
+    use ReleaseDownloadError::{Fatal, Retryable};
+
+    let total_timeout = if limit > MAX_RELEASE_METADATA_BYTES {
+        RELEASE_ARCHIVE_TIMEOUT
+    } else {
+        RELEASE_METADATA_TIMEOUT
+    };
+    let mut response = client
+        .get(url)
+        .timeout(total_timeout)
+        .send()
+        .await
+        .map_err(|error| {
+            Retryable(
+                anyhow::Error::new(error).context(format!("failed to download {description}")),
+            )
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        let error = anyhow::anyhow!("{description} download failed with HTTP {status}: {url}");
+        return Err(if release_download_status_is_retryable(status) {
+            Retryable(error)
+        } else {
+            Fatal(error)
+        });
+    }
+    if let Some(length) = response.content_length()
+        && length > limit as u64
+    {
+        return Err(Fatal(anyhow::anyhow!(
+            "{description} exceeds the size limit"
+        )));
+    }
+    let mut bytes = Vec::new();
+    loop {
+        let chunk = response.chunk().await.map_err(|error| {
+            let context = if error.is_timeout() {
+                format!(
+                    "{description} download stalled or exceeded its {}-minute limit",
+                    total_timeout.as_secs().div_ceil(60)
+                )
+            } else {
+                format!("failed to read {description}")
+            };
+            Retryable(anyhow::Error::new(error).context(context))
+        })?;
+        let Some(chunk) = chunk else {
+            break;
+        };
+        if bytes.len().saturating_add(chunk.len()) > limit {
+            return Err(Fatal(anyhow::anyhow!(
+                "{description} exceeds the size limit"
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
 async fn download_release_bytes(
     client: &reqwest::Client,
     url: &str,
     description: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<u8>> {
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("failed to download {description}"))?
-        .error_for_status()
-        .with_context(|| format!("{description} download failed: {url}"))?;
-    if let Some(length) = response.content_length() {
-        anyhow::ensure!(
-            length <= limit as u64,
-            "{description} exceeds the size limit"
-        );
+    let mut attempt = 1;
+    loop {
+        match download_release_bytes_once(client, url, description, limit).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(ReleaseDownloadError::Fatal(error)) => return Err(error),
+            Err(ReleaseDownloadError::Retryable(error)) if attempt >= RELEASE_DOWNLOAD_ATTEMPTS => {
+                return Err(error.context(format!(
+                    "{description} download failed after {RELEASE_DOWNLOAD_ATTEMPTS} attempts"
+                )));
+            }
+            Err(ReleaseDownloadError::Retryable(error)) => {
+                let delay = Duration::from_secs(2u64.pow(attempt));
+                eprintln!(
+                    "Warning: {error:#}; retrying in {} seconds ({}/{RELEASE_DOWNLOAD_ATTEMPTS})...",
+                    delay.as_secs(),
+                    attempt + 1
+                );
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+            }
+        }
     }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .with_context(|| format!("failed to read {description}"))?
-    {
-        anyhow::ensure!(
-            bytes.len().saturating_add(chunk.len()) <= limit,
-            "{description} exceeds the size limit"
-        );
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
 }
 
 async fn download_verified_release_metadata(
@@ -8578,22 +8672,34 @@ fn stop_user_launchd_service(service: &str) -> anyhow::Result<()> {
     if !output.status.success() && user_launchd_service_loaded(service) {
         anyhow::bail!("failed to stop legacy runner service {service}");
     }
-    if !wait_for_launchd_service_unloaded(|| Ok(user_launchd_service_loaded(service)))? {
+    if !wait_for_launchd_service_unloaded(LAUNCHD_RUNNER_UNLOAD_TIMEOUT, || {
+        Ok(user_launchd_service_loaded(service))
+    })? {
         anyhow::bail!("failed to stop legacy runner service {service}");
     }
     Ok(())
 }
 
+/// How long a runner service may take to leave launchd after bootout.
+const LAUNCHD_RUNNER_UNLOAD_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the daemon or web service may take to leave launchd after bootout.
+/// It covers launchd's default 20 second exit timeout before it kills the job.
+const LAUNCHD_SERVICE_UNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
+
 fn wait_for_launchd_service_unloaded(
+    timeout: Duration,
     mut is_loaded: impl FnMut() -> anyhow::Result<bool>,
 ) -> anyhow::Result<bool> {
-    for _ in 0..20 {
+    let deadline = Instant::now() + timeout;
+    loop {
         if !is_loaded()? {
             return Ok(true);
         }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
-    Ok(false)
 }
 
 fn system_launchd_service_loaded(service: &str) -> anyhow::Result<bool> {
@@ -8656,7 +8762,9 @@ fn stop_system_launchd_service(service: &str) -> anyhow::Result<()> {
         "/bin/launchctl",
         &[OsStr::new("bootout"), OsStr::new(service)],
     );
-    if !wait_for_launchd_service_unloaded(|| system_launchd_service_loaded(service))? {
+    if !wait_for_launchd_service_unloaded(LAUNCHD_RUNNER_UNLOAD_TIMEOUT, || {
+        system_launchd_service_loaded(service)
+    })? {
         anyhow::bail!("failed to stop system runner service {service}");
     }
     Ok(())
@@ -9194,7 +9302,7 @@ async fn handle_runner_install_service_inner(
         })
         .transpose()?;
 
-    authorize_system_service_restart()?;
+    let sudo_keepalive = authorize_system_service_restart()?;
     let system_was_loaded = system_launchd_service_loaded(&system_service)?;
     if system_was_loaded && previous_system_contents.is_none() {
         anyhow::bail!(
@@ -9225,7 +9333,12 @@ async fn handle_runner_install_service_inner(
         let barrier =
             acquire_runner_claim_barrier(&active_runner.daemon_url, args.state_file.as_deref())
                 .await?;
-        if let Err(error) = barrier.wait_for_runner(&active_runner.runner_id).await {
+        if let Err(error) = async {
+            barrier.wait_for_runner(&active_runner.runner_id).await?;
+            sudo_keepalive.ensure_active()
+        }
+        .await
+        {
             barrier
                 .release()
                 .await
@@ -9435,7 +9548,7 @@ fn handle_runner_uninstall_service() -> anyhow::Result<()> {
     let system_service_present =
         system_plist.exists() || user_launchd_service_loaded(&system_service);
     if system_service_present {
-        authorize_system_service_restart()?;
+        let _sudo_keepalive = authorize_system_service_restart()?;
         stop_system_launchd_service(&system_service)?;
         if let Some(path) = &system_acknowledgement {
             clear_runner_service_acknowledgement(path)?;
@@ -9735,6 +9848,16 @@ fn restart_launchd_service(label: &str) -> anyhow::Result<()> {
         if !status.success() && launchd_service_loaded(label) {
             anyhow::bail!("failed to stop managed service {label} before restart");
         }
+        // Bootstrapping while the old job is still tearing down fails with
+        // "Input/output error" or "already in progress".
+        if !wait_for_launchd_service_unloaded(LAUNCHD_SERVICE_UNLOAD_TIMEOUT, || {
+            Ok(launchd_service_loaded(label))
+        })? {
+            anyhow::bail!(
+                "managed service {label} did not unload within {} seconds of being stopped for restart",
+                LAUNCHD_SERVICE_UNLOAD_TIMEOUT.as_secs()
+            );
+        }
     }
 
     let mut bootstrap = std::process::Command::new(command);
@@ -9782,6 +9905,14 @@ fn stop_launchd_service(label: &str) -> anyhow::Result<()> {
     if !status.success() && launchd_service_loaded(label) {
         anyhow::bail!("failed to stop managed service {label}");
     }
+    if !wait_for_launchd_service_unloaded(LAUNCHD_SERVICE_UNLOAD_TIMEOUT, || {
+        Ok(launchd_service_loaded(label))
+    })? {
+        anyhow::bail!(
+            "managed service {label} did not unload within {} seconds of being stopped",
+            LAUNCHD_SERVICE_UNLOAD_TIMEOUT.as_secs()
+        );
+    }
     Ok(())
 }
 
@@ -9813,7 +9944,71 @@ fn run_command_with_timeout(
     }
 }
 
-fn authorize_system_service_restart() -> anyhow::Result<()> {
+/// How long the interactive sudo password prompt may wait for an answer. It
+/// runs before anything is stopped, so a timeout leaves every service as it was.
+const SUDO_PROMPT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// How often a held sudo ticket is refreshed. macOS expires an idle ticket
+/// after five minutes by default, while a runner drain can wait 30 minutes.
+const SUDO_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Keeps the sudo ticket granted by `authorize_system_service_restart` fresh
+/// until it is dropped, so privileged `sudo -n` steps that follow a long
+/// runner drain, and their rollback, still run.
+#[must_use = "dropping the keepalive stops refreshing administrator access"]
+struct SudoKeepalive {
+    stop: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SudoKeepalive {
+    fn start() -> Self {
+        let (stop, stopped) = std::sync::mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || {
+            while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                stopped.recv_timeout(SUDO_KEEPALIVE_INTERVAL)
+            {
+                let mut refresh = std::process::Command::new("/usr/bin/sudo");
+                refresh
+                    .args(["-n", "-v"])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                // A failed refresh is reported by the privileged step that
+                // needs the ticket, which checks it before changing anything.
+                let _ = run_command_with_timeout(
+                    &mut refresh,
+                    "refreshing administrator access",
+                    Duration::from_secs(15),
+                );
+            }
+        });
+        Self {
+            stop: Some(stop),
+            thread: Some(thread),
+        }
+    }
+
+    /// Confirms that privileged steps can still run without a prompt.
+    fn ensure_active(&self) -> anyhow::Result<()> {
+        let output = sudo_tool_output("/usr/bin/true", &[])?;
+        anyhow::ensure!(
+            output.status.success(),
+            "administrator access expired before Oore could restart its services; nothing was stopped. Run `sudo -v`, then retry"
+        );
+        Ok(())
+    }
+}
+
+impl Drop for SudoKeepalive {
+    fn drop(&mut self) {
+        self.stop.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn authorize_system_service_restart() -> anyhow::Result<SudoKeepalive> {
     use std::io::IsTerminal;
 
     let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
@@ -9823,7 +10018,7 @@ fn authorize_system_service_restart() -> anyhow::Result<()> {
             output.status.success(),
             "administrator access is required; run `sudo -v` in an interactive terminal, then retry"
         );
-        return Ok(());
+        return Ok(SudoKeepalive::start());
     }
 
     eprintln!("\nAdministrator access is required to manage Oore's macOS system services.");
@@ -9833,12 +10028,18 @@ fn authorize_system_service_restart() -> anyhow::Result<()> {
     let status = run_command_with_timeout(
         &mut command,
         "requesting administrator access",
-        Duration::from_secs(60),
-    )?;
+        SUDO_PROMPT_TIMEOUT,
+    )
+    .with_context(|| {
+        format!(
+            "the administrator password prompt was not answered within {} minutes; no service changes were made",
+            SUDO_PROMPT_TIMEOUT.as_secs() / 60
+        )
+    })?;
     if !status.success() {
         anyhow::bail!("administrator access was not granted; no service changes were made");
     }
-    Ok(())
+    Ok(SudoKeepalive::start())
 }
 
 async fn endpoint_is_healthy(client: &reqwest::Client, url: &str) -> bool {
@@ -11114,6 +11315,7 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
     claim_barrier: Option<&RunnerClaimBarrier>,
     services: &UpdateServicePlan,
     rollback_state: Option<&UpdateRollbackState>,
+    mut transaction: Option<&mut update_transaction::UpdateTransaction>,
     control: &mut C,
 ) -> anyhow::Result<()> {
     if let Some(barrier) = claim_barrier {
@@ -11121,6 +11323,9 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
     }
     ensure_runner_release_marker(install_root)?;
     let update_result: anyhow::Result<()> = async {
+        if let Some(transaction) = transaction.as_deref_mut() {
+            transaction.record(update_transaction::UpdatePhase::Installing)?;
+        }
         install_staged_release(
             staged_release,
             install_root,
@@ -11136,6 +11341,9 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
         }
         if let Some(migration) = daemon_migration {
             migration.apply()?;
+        }
+        if let Some(transaction) = transaction.as_deref_mut() {
+            transaction.record(update_transaction::UpdatePhase::Installed)?;
         }
         services
             .activate_dependencies(control, ReleaseActivation::Installed)
@@ -11172,9 +11380,21 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
                 }
                 services.stop_daemon_for_database_restore(control).await?;
                 if let Some(state) = rollback_state {
+                    if let Some(transaction) = transaction.as_deref_mut() {
+                        transaction.record_rollback(Some(update_transaction::DatabaseRestore {
+                            backup: state.backup.clone(),
+                            database: state.database.clone(),
+                            key: state.key.clone(),
+                        }))?;
+                    }
                     restore_bounded_update_backup(&state.backup, &state.database, &state.key)
                         .await?;
                 }
+            }
+            if let Some(transaction) = transaction.as_deref_mut()
+                && transaction.phase() != update_transaction::UpdatePhase::RollingBack
+            {
+                transaction.record_rollback(None)?;
             }
             if let Some(migration) = daemon_migration {
                 migration.rollback()?;
@@ -11206,6 +11426,13 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
         }
         .await;
         if let Err(rollback_error) = rollback {
+            let rollback_error = match transaction.as_deref() {
+                Some(transaction) => rollback_error.context(format!(
+                    "the update record stays in {}, and the next Oore install, setup, update or uninstall command finishes the recovery",
+                    transaction.path().display()
+                )),
+                None => rollback_error,
+            };
             let recovery = match claim_barrier {
                 Some(barrier) => {
                     resume_daemon_for_planned_barrier(install_root, barrier, services, control)
@@ -11214,13 +11441,19 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
                 None => Ok(()),
             };
             return match recovery {
-                Ok(()) => Err(error.context(format!("rollback also failed: {rollback_error}"))),
+                Ok(()) => Err(error.context(format!("rollback also failed: {rollback_error:#}"))),
                 Err(recovery_error) => Err(error.context(format!(
-                    "rollback also failed: {rollback_error}; restarting the daemon for the runner claim barrier also failed: {recovery_error}"
+                    "rollback also failed: {rollback_error:#}; restarting the daemon for the runner claim barrier also failed: {recovery_error}"
                 ))),
             };
         }
+        if let Some(transaction) = transaction {
+            transaction.finish();
+        }
         return Err(error);
+    }
+    if let Some(transaction) = transaction {
+        transaction.finish();
     }
     let barrier_release = match claim_barrier {
         Some(barrier) => barrier.release().await,
@@ -11400,10 +11633,8 @@ async fn prepare_update_release(
     println!("Checksum verified (SHA-256).");
 
     let temporary = tempfile::tempdir().context("failed to create temporary directory")?;
-    let decoder = flate2::read::GzDecoder::new(&archive_bytes[..]);
-    tar::Archive::new(decoder)
-        .unpack(temporary.path())
-        .context("failed to extract archive")?;
+    installer::unpack_full_release(&archive_bytes[..], temporary.path(), &release.version)
+        .context("the release archive failed validation")?;
     validate_prepared_release(temporary.path())?;
     let package_version = compiled_daemon_package_version(&temporary.path().join("bin/oored"))?;
     Ok(PreparedUpdateRelease {
@@ -11651,7 +11882,7 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
     };
     let client = http_client()?;
     let prepared = prepare_update_release(
-        &client,
+        &release_http_client()?,
         &repo,
         channel,
         args.staged_release.as_deref(),
@@ -11722,7 +11953,7 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
 
     fs::create_dir_all(&install_root)?;
     let update_stage = tempfile::Builder::new()
-        .prefix(".supervised-update-")
+        .prefix(update_supervisor::TRANSACTION_PREFIX)
         .tempdir_in(&install_root)
         .context("failed to create supervised update transaction")?;
     let staged_release = update_stage.path().join("release");
@@ -11841,6 +12072,7 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
         Some(&barrier),
         &services,
         Some(&rollback),
+        None,
         &mut control,
     )
     .await;
@@ -11971,22 +12203,95 @@ fn read_claimed_update_request(
     Ok(request)
 }
 
+/// Keeps Ctrl-C and a closed terminal from killing `oore update` while it has
+/// services stopped or files half replaced. SIGINT is ignored. SIGHUP points
+/// standard output and error at /dev/null, so writes after an SSH drop neither
+/// fail nor stop the update. Dropping the shield restores both handlers.
+struct InterruptShield {
+    previous: Vec<(libc::c_int, libc::sigaction)>,
+}
+
+extern "C" fn detach_output_from_closed_terminal(_signal: libc::c_int) {
+    // SAFETY: `open`, `dup2` and `close` are async-signal-safe, and the path
+    // is a NUL-terminated static string.
+    unsafe {
+        let null = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
+        if null >= 0 {
+            libc::dup2(null, libc::STDOUT_FILENO);
+            libc::dup2(null, libc::STDERR_FILENO);
+            if null > libc::STDERR_FILENO {
+                libc::close(null);
+            }
+        }
+    }
+}
+
+impl InterruptShield {
+    fn engage() -> anyhow::Result<Self> {
+        let mut shield = Self {
+            previous: Vec::new(),
+        };
+        let hangup: extern "C" fn(libc::c_int) = detach_output_from_closed_terminal;
+        for (signal, handler) in [
+            (libc::SIGINT, libc::SIG_IGN),
+            (libc::SIGHUP, hangup as libc::sighandler_t),
+        ] {
+            // SAFETY: Both structures are zero-initialised plain C data that
+            // `sigaction` reads and writes for the duration of the call.
+            unsafe {
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = handler;
+                libc::sigemptyset(&mut action.sa_mask);
+                let mut previous: libc::sigaction = std::mem::zeroed();
+                if libc::sigaction(signal, &action, &mut previous) != 0 {
+                    return Err(std::io::Error::last_os_error())
+                        .context("failed to protect the update from interruption");
+                }
+                shield.previous.push((signal, previous));
+            }
+        }
+        println!("Ctrl-C is disabled until the update finishes or rolls back.");
+        Ok(shield)
+    }
+}
+
+impl Drop for InterruptShield {
+    fn drop(&mut self) {
+        for (signal, previous) in self.previous.drain(..).rev() {
+            // SAFETY: `previous` is the action `sigaction` returned for `signal`.
+            unsafe {
+                libc::sigaction(signal, &previous, std::ptr::null_mut());
+            }
+        }
+    }
+}
+
+/// Whether the installed `VERSION` belongs to this binary's release. Release
+/// binaries carry only the base version, so `0.1.48-alpha.3` matches `0.1.48`.
+fn installed_version_matches_binary(installed: &str, binary: &str) -> bool {
+    match (parse_semver_loose(installed), parse_semver_loose(binary)) {
+        (Ok(installed), Ok(binary)) => {
+            (installed.major, installed.minor, installed.patch)
+                == (binary.major, binary.minor, binary.patch)
+        }
+        _ => true,
+    }
+}
+
+/// The installed release metadata an update decision is based on. `oore
+/// update` reads it before downloading and again under the lifecycle lock, and
+/// refuses to continue when another command changed it in between.
+fn installed_release_identity(install_root: &Path) -> [Option<String>; 3] {
+    ["VERSION", "CHANNEL", "GITHUB_REPO"].map(|name| read_trimmed_file(&install_root.join(name)))
+}
+
 async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let install_root = resolve_install_root()?;
     let defer_daemon_restart = std::env::var_os("OORE_UPDATE_DEFER_DAEMON_RESTART").is_some();
     if defer_daemon_restart {
         return handle_deferred_update(args).await;
     }
-    let _lifecycle_lock = if args.check {
-        None
-    } else {
-        Some(install_lock::InstallLock::acquire(&install_root)?)
-    };
-    let profile_manifest = if args.check {
-        None
-    } else {
-        load_backend_update_manifest(&install_root)?
-    };
+    let release_identity = installed_release_identity(&install_root);
     let current_str = read_trimmed_file(&install_root.join("VERSION"))
         .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
     let current = parse_semver_loose(&current_str).context("failed to parse current version")?;
@@ -12005,15 +12310,26 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         None => installed_channel,
     };
 
-    let client = http_client()?;
+    // Download and verify before taking the lifecycle lock, so a slow or
+    // stalled network never blocks other install, setup or uninstall commands.
     let prepared = prepare_update_release(
-        &client,
+        &release_http_client()?,
         &repo,
         channel,
         args.staged_release.as_deref(),
         args.check,
     )
     .await?;
+    let _lifecycle_lock = if args.check {
+        None
+    } else {
+        let lock = install_lock::InstallLock::acquire(&install_root)?;
+        anyhow::ensure!(
+            installed_release_identity(&install_root) == release_identity,
+            "the installation changed while the update was downloading; run `oore update` again"
+        );
+        Some(lock)
+    };
     let latest = &prepared.version;
     println!("Channel:         {}", channel.as_str());
     println!("GitHub repo:     {repo}");
@@ -12047,6 +12363,8 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     if args.check {
         return Ok(());
     }
+    let profile_manifest = load_backend_update_manifest(&install_root)?;
+    let client = http_client()?;
     let profile_update = prepare_profile_update_plan(
         profile_manifest,
         &prepared,
@@ -12057,20 +12375,6 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     )?;
     fs::create_dir_all(&install_root)
         .with_context(|| format!("failed to create install root {}", install_root.display()))?;
-    let update_stage = tempfile::Builder::new()
-        .prefix(".update-")
-        .tempdir_in(&install_root)
-        .context("failed to create update staging directory")?;
-    let staged_release = update_stage.path().join("release");
-    copy_dir_recursive(
-        prepared
-            .path
-            .as_deref()
-            .context("verified update release was not prepared")?,
-        &staged_release,
-    )?;
-    let previous_release = update_stage.path().join("previous");
-    copy_release_snapshot(&install_root, &previous_release)?;
 
     let (daemon_service_plist, daemon_service_is_system) =
         managed_service_plist(DAEMON_SERVICE_LABEL)?;
@@ -12103,13 +12407,43 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
             );
         }
     }
-    if (daemon_service_is_installed && daemon_service_is_system)
+    let sudo_keepalive = if (daemon_service_is_installed && daemon_service_is_system)
         || (runner_plist.is_file() && runner_is_system)
         || (web_is_managed && web_is_system)
         || args.ensure_managed_runner
     {
-        authorize_system_service_restart()?;
-    }
+        Some(authorize_system_service_restart()?)
+    } else {
+        None
+    };
+    // Stage only after the sudo prompt, so cancelling it leaves nothing behind.
+    let managed_runner_service = managed_runner_update_service(&install_root)?;
+    let recovery_services = [
+        daemon_service_is_installed.then_some(DAEMON_SERVICE_LABEL),
+        web_is_managed.then_some(WEB_SERVICE_LABEL),
+        managed_runner_service,
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::to_string)
+    .collect();
+    let mut transaction = update_transaction::UpdateTransaction::begin(
+        &install_root,
+        &current.to_string(),
+        &latest.to_string(),
+        recovery_services,
+        args.ensure_managed_runner,
+    )?;
+    let staged_release = transaction.path().join("release");
+    copy_dir_recursive(
+        prepared
+            .path
+            .as_deref()
+            .context("verified update release was not prepared")?,
+        &staged_release,
+    )?;
+    let previous_release = transaction.path().join("previous");
+    copy_release_snapshot(&install_root, &previous_release)?;
 
     let daemon_document = daemon_service_is_installed
         .then(|| plist_json(&daemon_service_plist))
@@ -12184,12 +12518,11 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
                 daemon_document
                     .as_ref()
                     .context("managed daemon migration is missing its plist")?,
-                update_stage.path(),
+                transaction.path(),
             )
         })
         .transpose()?;
 
-    let managed_runner_service = managed_runner_update_service(&install_root)?;
     let install_managed_runner = args.ensure_managed_runner;
     let managed_runner_service_existed = managed_runner_service.is_some();
     let runner_migration = install_managed_runner
@@ -12278,11 +12611,24 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
             "The backend was stopped before this update. It will remain running because stopping it after the maintenance barrier opens can interrupt a remote runner claim."
         );
     }
-    if let Err(error) = barrier.wait_for_all_work().await {
+    if let Err(error) = async {
+        barrier.wait_for_all_work().await?;
+        // The drain can outlast the sudo ticket. Check it before the first
+        // privileged step so an expired ticket fails before anything stops.
+        match sudo_keepalive.as_ref() {
+            Some(keepalive) => keepalive.ensure_active(),
+            None => Ok(()),
+        }
+    }
+    .await
+    {
         barrier.release().await?;
         return Err(error);
     }
 
+    // From here until the update finishes or rolls back, an interrupted
+    // process would leave services stopped or files half replaced.
+    let interrupt_shield = InterruptShield::engage()?;
     if daemon_service_is_installed {
         barrier.begin_planned_daemon_outage().await?;
         if let Err(error) = stop_launchd_service(DAEMON_SERVICE_LABEL) {
@@ -12378,9 +12724,11 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         Some(&barrier),
         &services,
         Some(&rollback_state),
+        Some(&mut transaction),
         &mut control,
     )
     .await;
+    drop(interrupt_shield);
     if let Err(error) = update_result {
         return match barrier.release().await {
             Ok(()) => Err(error),
@@ -12615,10 +12963,17 @@ fn main() -> anyhow::Result<()> {
         },
         Commands::Version => {
             let install_root = resolve_install_root()?;
-            if let Some(v) = read_trimmed_file(&install_root.join("VERSION")) {
-                println!("{v}");
-            } else {
-                println!("{}", env!("CARGO_PKG_VERSION"));
+            let binary = env!("CARGO_PKG_VERSION");
+            match read_trimmed_file(&install_root.join("VERSION")) {
+                Some(installed) => {
+                    println!("{installed}");
+                    if !installed_version_matches_binary(&installed, binary) {
+                        eprintln!(
+                            "Warning: this oore binary is {binary}, but the installation records {installed}, so an update may have been interrupted. Run `oore update` to recover it, or rerun the installer for your channel."
+                        );
+                    }
+                }
+                None => println!("{binary}"),
             }
         }
         Commands::Update(args) => {
@@ -12985,6 +13340,121 @@ mod tests {
         );
     }
 
+    /// Serves one canned HTTP response per connection and counts connections.
+    async fn serve_release_responses(
+        responses: Vec<&'static str>,
+    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/asset", listener.local_addr().unwrap());
+        let connections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = connections.clone();
+        tokio::spawn(async move {
+            for response in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut request = [0_u8; 1024];
+                let _ = stream.read(&mut request).await;
+                stream.write_all(response.as_bytes()).await.unwrap();
+                stream.shutdown().await.unwrap();
+            }
+        });
+        (url, connections)
+    }
+
+    #[tokio::test]
+    async fn release_downloads_retry_a_transient_server_error() {
+        let (url, connections) = serve_release_responses(vec![
+            "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+            "HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+        ])
+        .await;
+
+        let bytes = download_release_bytes(&release_http_client().unwrap(), &url, "asset", 64)
+            .await
+            .unwrap();
+
+        assert_eq!(bytes, b"hello");
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn release_downloads_do_not_retry_a_missing_asset() {
+        let (url, connections) = serve_release_responses(vec![
+            "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+            "HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+        ])
+        .await;
+
+        let error = download_release_bytes(&release_http_client().unwrap(), &url, "asset", 64)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("HTTP 404"), "{error:#}");
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn release_downloads_do_not_retry_an_oversized_asset() {
+        let (url, connections) = serve_release_responses(vec![
+            "HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+        ])
+        .await;
+
+        let error = download_release_bytes(&release_http_client().unwrap(), &url, "asset", 4)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "asset exceeds the size limit");
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn dropping_the_sudo_keepalive_stops_it_without_waiting_for_a_refresh() {
+        let started = Instant::now();
+        drop(SudoKeepalive::start());
+        assert!(started.elapsed() < SUDO_KEEPALIVE_INTERVAL / 2);
+    }
+
+    #[test]
+    fn launchd_unload_waits_until_the_job_leaves_or_the_timeout_passes() {
+        let mut polls = 0;
+        assert!(
+            wait_for_launchd_service_unloaded(Duration::from_secs(5), || {
+                polls += 1;
+                Ok(polls < 3)
+            })
+            .unwrap()
+        );
+        assert_eq!(polls, 3);
+        assert!(
+            !wait_for_launchd_service_unloaded(Duration::from_millis(250), || Ok(true)).unwrap()
+        );
+    }
+
+    #[test]
+    fn the_interrupt_shield_ignores_ctrl_c_until_dropped() {
+        let shield = InterruptShield::engage().unwrap();
+        // SAFETY: SIGINT is ignored while the shield is engaged.
+        assert_eq!(unsafe { libc::raise(libc::SIGINT) }, 0);
+        drop(shield);
+        // SAFETY: Reads the current action without changing it.
+        let restored = unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(libc::SIGINT, std::ptr::null(), &mut action);
+            action.sa_sigaction
+        };
+        assert_ne!(restored, libc::SIG_IGN);
+    }
+
+    #[test]
+    fn prerelease_installs_match_their_base_binary_version() {
+        assert!(installed_version_matches_binary("0.1.48-alpha.3", "0.1.48"));
+        assert!(installed_version_matches_binary("0.1.48", "0.1.48"));
+        assert!(!installed_version_matches_binary("0.1.49", "0.1.48"));
+    }
+
     #[derive(Default)]
     struct ScriptedServiceControl {
         calls: Vec<String>,
@@ -13138,6 +13608,7 @@ mod tests {
                 None,
                 None,
                 &Self::services(),
+                None,
                 None,
                 control,
             )
