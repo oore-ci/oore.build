@@ -348,6 +348,7 @@ export default function TriggerBuildDrawer({
   const canRunEveryProject =
     instanceRole === 'owner' || instanceRole === 'admin'
   const [projectSearch, setProjectSearch] = useState('')
+  const [resolvingHead, setResolvingHead] = useState(false)
   const [pipelineSearch, setPipelineSearch] = useState('')
   const updateProjectSearch = useDebouncedCallback(
     (value: string) => setProjectSearch(value.trim()),
@@ -497,13 +498,13 @@ export default function TriggerBuildDrawer({
     projectId ?? '',
     {
       pipeline_id: selectedPipelineId ?? '',
-      branch: branch?.trim(),
-      commit_sha: commitSha?.trim(),
+      branch: branch?.trim() || undefined,
+      commit_sha: commitSha?.trim() || undefined,
     },
     { enabled: open },
   )
 
-  function onSubmit(data: TriggerBuildForm) {
+  async function onSubmit(data: TriggerBuildForm) {
     const resolvedProjectId = fixedProjectId ?? data.project_id?.trim() ?? ''
     if (!resolvedProjectId) {
       form.setError('project_id', { message: 'Project is required' })
@@ -522,13 +523,21 @@ export default function TriggerBuildDrawer({
       return
     }
     const branch = data.branch?.trim() || undefined
-    const commitSha =
-      data.commit_sha?.trim() ||
-      changelogPreviewQuery.data?.target_commit ||
-      undefined
+    const typedCommit = data.commit_sha?.trim() || undefined
+    // The drafted changelog and its commit can be minutes old. Read the
+    // branch head again so the build and its changelog match what is pushed
+    // now; if that fails, let the daemon resolve the head itself.
+    let preview = changelogPreviewQuery.data
+    if (!typedCommit && branch) {
+      setResolvingHead(true)
+      const refreshed = await changelogPreviewQuery.refetch()
+      setResolvingHead(false)
+      preview = refreshed.isSuccess ? refreshed.data : undefined
+    }
+    const commitSha = typedCommit ?? preview?.target_commit
     const changelog =
       (data.changelog === undefined
-        ? changelogPreviewQuery.data?.markdown
+        ? preview?.markdown
         : data.changelog
       )?.trim() || undefined
 
@@ -865,7 +874,9 @@ export default function TriggerBuildDrawer({
                         ? 'Drafting from commits since the previous successful build…'
                         : changelogPreviewQuery.error
                           ? 'Could not generate a draft. You can still write one.'
-                          : 'Drafted from commit titles and authors. Edit or clear it before running. Markdown supported.'}
+                          : changelogPreviewQuery.data?.target_commit
+                            ? `Drafted from commits up to ${changelogPreviewQuery.data.target_commit.slice(0, 7)}. The build uses the latest commit on the branch when it starts. Markdown supported.`
+                            : 'Drafted from commit titles and authors. Edit or clear it before running. Markdown supported.'}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -946,7 +957,7 @@ export default function TriggerBuildDrawer({
                 (!fixedProjectId && !projectId)
               }
               onSubmit={() => void form.handleSubmit(onSubmit)()}
-              pending={createBuildMutation.isPending}
+              pending={resolvingHead || createBuildMutation.isPending}
             />
           </form>
         </Form>

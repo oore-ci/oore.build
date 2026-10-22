@@ -83,6 +83,8 @@ export function AppStoreConnectKeyDialog({
   })
 
   function handleOpenChange(next: boolean) {
+    // Closing mid-save would hide the result, including a save error.
+    if (!next && mutation.isPending) return
     if (!next) {
       form.reset()
       mutation.reset()
@@ -250,6 +252,7 @@ export function AppStoreConnectKeyDialog({
                 type="button"
                 variant="outline"
                 onClick={() => handleOpenChange(false)}
+                disabled={mutation.isPending}
               >
                 Cancel
               </Button>

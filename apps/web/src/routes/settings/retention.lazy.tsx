@@ -380,6 +380,9 @@ function RetentionPage() {
         keep_statuses: values.keep_statuses,
         dry_run: values.dry_run,
         cleanup_interval_secs: Number(values.cleanup_interval_secs),
+        // The daemon replaces the whole policy, so keep settings this form
+        // does not show.
+        artifact_ttl_days: policy?.artifact_ttl_days,
       },
       {
         onSuccess: () => {
