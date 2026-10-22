@@ -137,7 +137,9 @@ function ReleaseCard({
             {current.package_name ? ` · ${current.package_name}` : ''}
           </p>
         </div>
-        <ReleaseActions release={current} />
+        <div className="-mt-0.5">
+          <ReleaseActions release={current} />
+        </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
@@ -197,27 +199,34 @@ function ReleaseHistory({ history }: { history: Array<ReleaseHistoryEntry> }) {
   }
 
   return (
-    <ol className="flex flex-col gap-3">
+    <ol className="flex flex-col gap-2">
       {history.map((entry) => (
-        <li key={entry.id} className="flex flex-col gap-0.5">
-          <div className="flex items-baseline justify-between gap-2">
-            <p className="text-xs font-medium">
-              <ReleaseStateBadge
-                release={{ state: entry.to_state, awaiting_approval: false }}
-              />{' '}
-              {releaseTransitionLabel(entry)}
-            </p>
-            <span
-              className="shrink-0 text-xs text-muted-foreground"
-              title={new Date(entry.at * 1000).toLocaleString()}
-            >
-              {relativeTime(entry.at)}
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {entry.actor_email ?? 'Oore'}
+        <li
+          key={entry.id}
+          className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 text-xs sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_auto]"
+        >
+          <p className="flex min-w-0 items-center gap-1.5 font-medium">
+            {entry.from_state ? (
+              <>
+                <ReleaseStateBadge
+                  release={{ state: entry.to_state, awaiting_approval: false }}
+                />
+                {releaseTransitionLabel(entry)}
+              </>
+            ) : (
+              'Release created'
+            )}
+          </p>
+          <p className="min-w-0 truncate text-muted-foreground max-sm:order-last max-sm:col-span-2">
+            {entry.actor_email ?? 'Oore (automatic)'}
             {entry.reason ? ` · ${entry.reason}` : ''}
           </p>
+          <span
+            className="text-right text-muted-foreground tabular-nums"
+            title={new Date(entry.at * 1000).toLocaleString()}
+          >
+            {relativeTime(entry.at)}
+          </span>
         </li>
       ))}
     </ol>

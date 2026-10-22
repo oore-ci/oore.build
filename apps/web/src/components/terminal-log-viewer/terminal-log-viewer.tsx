@@ -37,6 +37,10 @@ export default function TerminalLogViewer({
   logsUnavailable = false,
   onRetryLogs,
   isTerminal = false,
+  buildStatus,
+  buildNumber,
+  isPolling = false,
+  onReconnect,
   focusRequest = null,
 }: TerminalLogViewerProps) {
   'use no memo' // TanStack Virtual updates its instance in place.
@@ -156,9 +160,10 @@ export default function TerminalLogViewer({
     stepGroups.length > 0 &&
     (allVisibleLogs.length === 0 ||
       stepGroups.some((group) => group.logs.length > 0))
+  // Download is always the whole log; Copy and Search follow the selected view.
   function downloadRawLogs() {
     const blob = new Blob(
-      [selectedLogs.map((chunk) => chunk.content).join('\n')],
+      [allVisibleLogs.map((chunk) => chunk.content).join('\n')],
       {
         type: 'text/plain',
       },
@@ -166,7 +171,7 @@ export default function TerminalLogViewer({
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = 'build-logs.txt'
+    anchor.download = buildNumber ? `build-${buildNumber}.log` : 'build.log'
     anchor.click()
     URL.revokeObjectURL(url)
   }
@@ -174,8 +179,13 @@ export default function TerminalLogViewer({
   function copyLogs() {
     const rawLogs = selectedLogs.map((chunk) => chunk.content).join('\n')
     void navigator.clipboard.writeText(rawLogs).then(
-      () => toast.success('Build logs copied'),
-      () => toast.error('Could not copy build logs'),
+      () =>
+        toast.success(
+          selectedStep === 'all'
+            ? 'Build log copied'
+            : `Copied ${selectedStep}`,
+        ),
+      () => toast.error('Could not copy the log'),
     )
   }
 
@@ -263,7 +273,10 @@ export default function TerminalLogViewer({
             }
             wrapLines={wrapLines}
             followLive={autoScroll}
-            isStreaming={isStreaming}
+            isLive={!isTerminal}
+            scope={selectedStep === 'all' ? 'log' : 'step'}
+            hasLines={selectedLogs.length > 0}
+            hasAnyLines={allVisibleLogs.length > 0}
             onSearchQueryChange={handleSearchQueryChange}
             onSearchClear={handleSearchClear}
             onPreviousMatch={() => navigateMatch(-1)}
@@ -288,13 +301,20 @@ export default function TerminalLogViewer({
             </Button>
           ) : null}
         </div>
-      ) : !isTerminal && !isStreaming ? (
-        <p
-          className="shrink-0 border-b px-3 py-2 text-sm text-muted-foreground"
+      ) : buildStatus === 'running' && isPolling && !isStreaming ? (
+        <div
+          className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5"
           role="status"
         >
-          Live logs disconnected. Checking for updates periodically.
-        </p>
+          <p className="text-sm text-muted-foreground">
+            Live logs disconnected. New lines load every few seconds.
+          </p>
+          {onReconnect ? (
+            <Button variant="outline" size="sm" onClick={onReconnect}>
+              Reconnect
+            </Button>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -336,6 +356,7 @@ export default function TerminalLogViewer({
             isLoading={isLoading}
             logsUnavailable={logsUnavailable}
             isTerminal={isTerminal}
+            buildStatus={buildStatus}
             wrapLines={wrapLines}
             lineNumbers={lineNumbers}
             matchingIndexes={matchingIndexSet}

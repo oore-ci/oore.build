@@ -10,7 +10,12 @@ const NO_STEP_RESULTS: Array<StepResult> = []
 
 export default function QaBuildLogs({ build }: { build: Build }) {
   const isTerminal = isTerminalStatus(build.status)
-  const { logs: streamLogs, isStreaming } = useLogStream(build.id, !isTerminal)
+  const {
+    logs: streamLogs,
+    isStreaming,
+    isPolling,
+    reconnect,
+  } = useLogStream(build.id, !isTerminal)
   const fullLogsQuery = useBuildLogs(build.id, { enabled: isTerminal })
   const logs: Array<BuildLogChunk> = useMemo(
     () => mergeBuildLogSnapshots(streamLogs, fullLogsQuery.data?.logs ?? []),
@@ -26,6 +31,10 @@ export default function QaBuildLogs({ build }: { build: Build }) {
       logsUnavailable={fullLogsQuery.isError}
       onRetryLogs={() => void fullLogsQuery.refetch()}
       isTerminal={isTerminal}
+      buildStatus={build.status}
+      buildNumber={build.build_number}
+      isPolling={isPolling}
+      onReconnect={reconnect}
     />
   )
 }

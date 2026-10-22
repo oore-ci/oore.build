@@ -15,7 +15,7 @@ import { BuildStateAlert } from './build-state-alert'
 import { buildStateSummary } from '@/lib/build-state-description'
 import { artifactInstallReadiness } from '@/lib/artifact-install'
 import { retryStepLabel } from '@/lib/build-steps'
-import { BuildSummary } from './build-summary'
+import { BuildSummary, buildSourceRef } from './build-summary'
 import { EventTimeline } from './event-timeline'
 import { TestsPanel } from './tests-panel'
 import type { BuildLogChunk, StepResult } from '@oore/client/models'
@@ -46,17 +46,18 @@ import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
 import { isOoreApiError } from '@oore/client/client'
 import { PageMeta } from '@/lib/seo'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
+import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
 import { StatusBadge } from '@/components/status-badge'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import TerminalLogViewer from '@/components/terminal-log-viewer'
 import {
+  currentStepName,
   findFailureLine,
   groupLogs,
 } from '@/components/terminal-log-viewer/log-model'
 import type { LogFocusRequest } from '@/components/terminal-log-viewer/types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -66,6 +67,12 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTime } from '@/hooks/use-time'
@@ -214,16 +221,17 @@ export function BuildDetailPage({
   const notifications = useNotificationPermission()
 
   const streamEnabled = !isTerminal
-  const { logs: streamLogs, isStreaming } = useLogStream(
-    buildId,
-    streamEnabled,
-    {
-      onDone: () => {
-        void refetchBuild()
-        void refetchArtifacts()
-      },
+  const {
+    logs: streamLogs,
+    isStreaming,
+    isPolling,
+    reconnect,
+  } = useLogStream(buildId, streamEnabled, {
+    onDone: () => {
+      void refetchBuild()
+      void refetchArtifacts()
     },
-  )
+  })
   const fullLogsQuery = useBuildLogs(buildId, { enabled: isTerminal })
   const { data: fullLogsData } = fullLogsQuery
 
@@ -239,6 +247,10 @@ export function BuildDetailPage({
     )
     return findFailureLine(stepGroups, allVisibleLogs)
   }, [buildStatus, mergedLogs, stepResults])
+  const runningStep = useMemo(
+    () => (buildStatus === 'running' ? currentStepName(mergedLogs) : null),
+    [buildStatus, mergedLogs],
+  )
 
   function handleApprove() {
     approveMutation.mutate(
@@ -266,11 +278,11 @@ export function BuildDetailPage({
   function handleCancel() {
     cancelMutation.mutate(buildId, {
       onSuccess: () => {
-        toast.success('Build canceled')
+        toast.success('Build stopped')
         setCancelOpen(false)
       },
       onError: (err) => {
-        toast.error(`Failed to cancel: ${err.message}`)
+        toast.error(`Could not stop the build: ${err.message}`)
       },
     })
   }
@@ -340,6 +352,44 @@ export function BuildDetailPage({
   const stateSummary = buildStateSummary(build, events, {
     canApprove: canDecideApproval,
   })
+  const sourceRef = buildSourceRef(build)
+  const approvalDetails = awaitingApproval
+    ? [
+        {
+          label: 'Trigger',
+          value: `${TRIGGER_TYPE_LABELS[build.trigger_type]}${build.trigger_event ? ` · ${formatEnumLabel(build.trigger_event).toLowerCase()}` : ''}`,
+        },
+        ...(build.trigger_actor
+          ? [{ label: 'Requested by', value: build.trigger_actor }]
+          : []),
+        ...(sourceRef
+          ? [
+              {
+                label: build.branch ? 'Branch' : 'Ref',
+                value: <span className="font-mono text-xs">{sourceRef}</span>,
+              },
+            ]
+          : []),
+        ...(build.commit_sha
+          ? [
+              {
+                label: 'Commit',
+                value: (
+                  <span className="font-mono text-xs">
+                    {build.commit_sha.slice(0, 7)}
+                  </span>
+                ),
+              },
+            ]
+          : []),
+        {
+          label: 'Waiting since',
+          value: relativeTime(build.approval?.requested_at ?? build.queued_at),
+        },
+      ]
+    : undefined
+  // A build no runner has started has no log yet; skip the empty workbench.
+  const showLogWorkbench = !!build.started_at || mergedLogs.length > 0
   const installableApps =
     build.status === 'succeeded'
       ? artifacts.filter((artifact) => artifactInstallReadiness(artifact).ready)
@@ -383,14 +433,27 @@ export function BuildDetailPage({
         }
         meta={
           <>
-            <StatusBadge kind="build" value={build.status} />
-            <Badge variant="outline">
-              {TRIGGER_TYPE_LABELS[build.trigger_type]}
-            </Badge>
-            {build.approval ? (
-              <StatusBadge kind="approval" value={build.approval.state} />
-            ) : null}
-            <span aria-hidden className="h-3 w-px bg-border" />
+            <div className="mr-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <StatusBadge
+                kind="build"
+                value={build.status}
+                className="h-6 px-2.5 text-[13px]"
+              />
+              {build.approval ? (
+                <StatusBadge kind="approval" value={build.approval.state} />
+              ) : null}
+              {runningStep ? (
+                <span className="min-w-0 truncate text-sm text-foreground">
+                  {runningStep}
+                </span>
+              ) : null}
+              <span>
+                {TRIGGER_TYPE_LABELS[build.trigger_type]}
+                {build.trigger_event
+                  ? ` · ${formatEnumLabel(build.trigger_event).toLowerCase()}`
+                  : ''}
+              </span>
+            </div>
             <BuildSummary build={build} duration={duration} />
           </>
         }
@@ -536,12 +599,12 @@ export function BuildDetailPage({
             ) : null}
             {canCancel ? (
               <Button
-                variant="destructive"
+                variant="outline"
                 size="sm"
                 onClick={() => setCancelOpen(true)}
                 disabled={cancelMutation.isPending}
               >
-                {cancelMutation.isPending ? 'Canceling...' : 'Cancel build'}
+                {cancelMutation.isPending ? 'Stopping...' : 'Stop build'}
               </Button>
             ) : null}
           </div>
@@ -595,6 +658,7 @@ export function BuildDetailPage({
           summary={stateSummary}
           failureLine={failureLine}
           nextStep={nextStep}
+          details={approvalDetails}
           onShowFailureLine={() => {
             if (!failureLine) return
             setActiveTab('logs')
@@ -642,17 +706,38 @@ export function BuildDetailPage({
           </p>
         ) : null}
         <TabsContent value="logs" keepMounted className="flex min-h-0 flex-col">
-          <TerminalLogViewer
-            logs={mergedLogs}
-            stepResults={build.step_results ?? NO_STEP_RESULTS}
-            isStreaming={isStreaming && !isTerminal}
-            fillAvailableHeight
-            isLoading={isTerminal && fullLogsQuery.isLoading}
-            logsUnavailable={fullLogsQuery.isError}
-            onRetryLogs={() => void fullLogsQuery.refetch()}
-            isTerminal={isTerminal}
-            focusRequest={logFocus}
-          />
+          {showLogWorkbench ? (
+            <TerminalLogViewer
+              logs={mergedLogs}
+              stepResults={build.step_results ?? NO_STEP_RESULTS}
+              isStreaming={isStreaming && !isTerminal}
+              fillAvailableHeight
+              isLoading={isTerminal && fullLogsQuery.isLoading}
+              logsUnavailable={fullLogsQuery.isError}
+              onRetryLogs={() => void fullLogsQuery.refetch()}
+              isTerminal={isTerminal}
+              buildStatus={build.status}
+              buildNumber={build.build_number}
+              isPolling={isPolling}
+              onReconnect={reconnect}
+              focusRequest={logFocus}
+            />
+          ) : (
+            <Empty className="flex-none border">
+              <EmptyHeader>
+                <EmptyTitle>No logs yet</EmptyTitle>
+                <EmptyDescription>
+                  {build.status === 'expired'
+                    ? 'This build expired before a runner started it, so it has no logs.'
+                    : build.status === 'canceled'
+                      ? 'This build was canceled before a runner started it, so it has no logs.'
+                      : awaitingApproval
+                        ? 'Logs appear here once the build is approved and a runner starts it.'
+                        : 'Logs appear here once a runner starts the build.'}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
         </TabsContent>
         {hasTestsTab ? (
           <TabsContent value="tests">

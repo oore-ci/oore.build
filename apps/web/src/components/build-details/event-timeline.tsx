@@ -1,13 +1,45 @@
 import type { BuildEvent } from '@oore/client/models'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { relativeTime } from '@/lib/format-utils'
+import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
+import { getStatusPresentation } from '@/lib/status-variants'
+import { cn } from '@/lib/utils'
+
+// Dot colour follows the status the event moved the build into.
+function dotTone(status: string) {
+  switch (getStatusPresentation('build', status).variant) {
+    case 'success':
+      return 'border-success bg-success'
+    case 'destructive':
+      return 'border-destructive bg-destructive'
+    case 'info':
+      return 'border-info bg-background'
+    case 'secondary':
+      return 'border-muted-foreground bg-muted-foreground'
+    default:
+      return 'border-muted-foreground bg-background'
+  }
+}
+
+function sentence(text: string) {
+  const trimmed = text.trim()
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
+}
+
+function formatClock(epochSecs: number) {
+  return new Date(epochSecs * 1000).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
 
 function EventReason({ reason }: { reason: string }) {
   const marker = ' Repair: '
   const markerIndex = reason.indexOf(marker)
-  if (markerIndex < 0) return reason
+  if (markerIndex < 0) return sentence(reason)
 
-  const label = reason.slice(0, markerIndex)
+  const label = sentence(reason.slice(0, markerIndex))
   const repairUrl = reason.slice(markerIndex + marker.length)
   return (
     <>
@@ -38,21 +70,33 @@ export function EventTimeline({ events }: { events: Array<BuildEvent> }) {
                 {i < events.length - 1 ? (
                   <div className="absolute top-3 bottom-0 left-1.25 w-px bg-border" />
                 ) : null}
-                <div className="relative mt-1 size-2.75 shrink-0 rounded-full border-2 border-primary bg-background" />
+                <div
+                  className={cn(
+                    'relative mt-1 size-2.75 shrink-0 rounded-full border-2',
+                    dotTone(event.to_status),
+                  )}
+                />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline justify-between gap-2">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-2">
                     <p className="text-xs font-medium">
                       {event.from_status ? (
                         <span className="text-muted-foreground">
-                          {event.from_status} →{' '}
+                          {formatEnumLabel(event.from_status)} →{' '}
                         </span>
                       ) : null}
-                      {event.to_status}
+                      {formatEnumLabel(event.to_status)}
+                      {event.actor ? (
+                        <span className="font-normal text-muted-foreground">
+                          {' '}
+                          by {event.actor}
+                        </span>
+                      ) : null}
                     </p>
                     <span
-                      className="shrink-0 text-xs text-muted-foreground"
+                      className="shrink-0 text-xs text-muted-foreground tabular-nums"
                       title={new Date(event.created_at * 1000).toLocaleString()}
                     >
+                      {formatClock(event.created_at)} ·{' '}
                       {relativeTime(event.created_at)}
                     </span>
                   </div>

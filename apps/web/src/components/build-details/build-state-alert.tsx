@@ -13,11 +13,14 @@ export function BuildStateAlert({
   summary,
   failureLine,
   nextStep,
+  details,
   onShowFailureLine,
 }: {
   summary: BuildStateSummary
   failureLine: FailureLine | null
   nextStep?: React.ReactNode
+  /** Facts the reader needs to act, such as who asked for an approval. */
+  details?: Array<{ label: string; value: React.ReactNode }>
   onShowFailureLine: () => void
 }) {
   const destructive = summary.tone === 'destructive'
@@ -51,6 +54,18 @@ export function BuildStateAlert({
           <div>
             {summary.description} {nextStep}
           </div>
+        ) : null}
+        {details?.length ? (
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm sm:grid-cols-[repeat(2,auto_minmax(0,1fr))]">
+            {details.map((detail) => (
+              <div key={detail.label} className="contents">
+                <dt className="text-muted-foreground">{detail.label}</dt>
+                <dd className="min-w-0 truncate text-foreground">
+                  {detail.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
         ) : null}
       </AlertDescription>
     </Alert>

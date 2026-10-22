@@ -104,6 +104,15 @@ export function groupLogs(
   }
 }
 
+/** Name of the step still running, read from the last step marker. */
+export function currentStepName(logs: Array<BuildLogChunk>): string | null {
+  for (let index = logs.length - 1; index >= 0; index--) {
+    const marker = parseStepMarker(logs[index].content)
+    if (marker) return marker.event === 'start' ? marker.name : null
+  }
+  return null
+}
+
 // oxlint-disable-next-line no-control-regex
 const ANSI_PATTERN = /\u001b\[[0-9;?]*[ -/]*[@-~]/g
 const OORE_PREFIX_PATTERN = /^\[oore-[a-z-]+\]\s*/

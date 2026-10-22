@@ -484,14 +484,19 @@ function PipelineDetailPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete pipeline?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete "{pipeline.name}". This action cannot
-              be undone.
+              This permanently deletes "{pipeline.name}" with its build history,
+              schedules, signing files, secrets and publishing settings. It
+              cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>
-              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+            <AlertDialogAction
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? 'Deleting...' : 'Delete pipeline'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

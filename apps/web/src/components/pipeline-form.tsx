@@ -265,6 +265,7 @@ export default function PipelineForm({
               Stay
             </AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               onClick={() => {
                 if (blocker.status === 'blocked') blocker.proceed()
               }}

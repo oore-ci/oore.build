@@ -5,7 +5,7 @@ import { ArrowDownToLineIcon } from '@hugeicons/core-free-icons'
 import type { RefObject } from 'react'
 import type { Virtualizer } from '@tanstack/react-virtual'
 
-import type { BuildLogChunk } from '@oore/client/models'
+import type { BuildLogChunk, BuildStatus } from '@oore/client/models'
 import type { SelectedStepMeta } from './types'
 import { Button } from '@/components/ui/button'
 import {
@@ -25,6 +25,7 @@ interface LogOutputProps {
   isLoading: boolean
   logsUnavailable: boolean
   isTerminal: boolean
+  buildStatus?: BuildStatus
   wrapLines: boolean
   lineNumbers: ReadonlyMap<BuildLogChunk, number>
   matchingIndexes: ReadonlySet<number>
@@ -43,6 +44,7 @@ export function LogOutput({
   isLoading,
   logsUnavailable,
   isTerminal,
+  buildStatus,
   wrapLines,
   lineNumbers,
   matchingIndexes,
@@ -85,10 +87,26 @@ export function LogOutput({
           <Empty className="h-full min-h-48 rounded-none border-0 p-6">
             <EmptyHeader>
               <EmptyTitle>
-                {emptyState(isLoading, logsUnavailable, isTerminal).title}
+                {
+                  emptyState(
+                    isLoading,
+                    logsUnavailable,
+                    isTerminal,
+                    buildStatus,
+                    selectedStep,
+                  ).title
+                }
               </EmptyTitle>
               <EmptyDescription>
-                {emptyState(isLoading, logsUnavailable, isTerminal).description}
+                {
+                  emptyState(
+                    isLoading,
+                    logsUnavailable,
+                    isTerminal,
+                    buildStatus,
+                    selectedStep,
+                  ).description
+                }
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -173,6 +191,8 @@ function emptyState(
   isLoading: boolean,
   logsUnavailable: boolean,
   isTerminal: boolean,
+  buildStatus?: BuildStatus,
+  selectedStep = 'all',
 ) {
   if (isLoading) {
     return {
@@ -186,10 +206,39 @@ function emptyState(
       description: 'Oore could not retrieve the logs for this build.',
     }
   }
+  if (selectedStep !== 'all') {
+    return isTerminal
+      ? {
+          title: 'No output from this step',
+          description: 'This step finished without printing any lines.',
+        }
+      : {
+          title: 'Waiting for output',
+          description: 'This step has not printed anything yet.',
+        }
+  }
+  if (buildStatus === 'expired') {
+    return {
+      title: 'No logs',
+      description: 'This build expired before a runner started it.',
+    }
+  }
+  if (buildStatus === 'canceled') {
+    return {
+      title: 'No log output',
+      description: 'The build was canceled before it printed any lines.',
+    }
+  }
   if (isTerminal) {
     return {
       title: 'No log output',
-      description: 'This build completed without recording any log lines.',
+      description: 'This build finished without recording any log lines.',
+    }
+  }
+  if (buildStatus && buildStatus !== 'running') {
+    return {
+      title: 'Not started yet',
+      description: 'Logs appear here once a runner starts the build.',
     }
   }
   return {
