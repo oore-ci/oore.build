@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use oore_contract::{BuildStatus, RetentionCleanupTarget, RetentionPolicy};
+use oore_contract::{ApprovalPolicy, BuildStatus, RetentionCleanupTarget, RetentionPolicy};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
@@ -212,7 +212,70 @@ async fn build_timeout_monitor(pool: SqlitePool, scheduler: Arc<Scheduler>) {
         if let Err(e) = time_out_overdue_builds(&pool, &scheduler, now_unix()).await {
             error!(error = %e, "build_timeout_monitor: failed to query running builds");
         }
+        if let Err(e) = expire_pending_approvals(&pool, &scheduler, now_unix()).await {
+            error!(error = %e, "build_timeout_monitor: failed to query pending approvals");
+        }
     }
+}
+
+/// Cancel builds whose approval request was never decided within the
+/// pipeline's `approval.expires_after_hours`. Returns the IDs it canceled.
+pub(crate) async fn expire_pending_approvals(
+    pool: &SqlitePool,
+    scheduler: &Scheduler,
+    now: i64,
+) -> Result<Vec<String>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT b.id, COALESCE(json_extract(p.approval_policy, '$.expires_after_hours'), ?1) * 3600 AS ttl \
+         FROM builds b LEFT JOIN pipelines p ON p.id = b.pipeline_id \
+         WHERE b.status = 'queued' AND b.approval_state = 'pending' \
+           AND b.approval_requested_at \
+               + COALESCE(json_extract(p.approval_policy, '$.expires_after_hours'), ?1) * 3600 <= ?2 \
+         ORDER BY b.approval_requested_at LIMIT ?3",
+    )
+    .bind(i64::from(ApprovalPolicy::DEFAULT_EXPIRES_AFTER_HOURS))
+    .bind(now)
+    .bind(MONITOR_BATCH_SIZE)
+    .fetch_all(pool)
+    .await?;
+
+    let mut expired = Vec::new();
+    for row in rows {
+        let build_id: String = row.get("id");
+        let ttl: i64 = row.get("ttl");
+        let hours = ttl / 3600;
+        let reason = if hours % 24 == 0 {
+            format!("approval request expired after {} days", hours / 24)
+        } else {
+            format!("approval request expired after {hours} hours")
+        };
+        match crate::builds::transition_build(
+            pool,
+            &build_id,
+            BuildStatus::Canceled,
+            None,
+            Some(&reason),
+        )
+        .await
+        {
+            Ok(_build) => {
+                info!(build_id = %build_id, "build_timeout_monitor: approval request expired");
+                scheduler.publish_event(BuildStateEvent {
+                    build_id: build_id.clone(),
+                    from_status: Some("queued".to_string()),
+                    to_status: "canceled".to_string(),
+                    actor: None,
+                    reason: Some(reason),
+                    timestamp: now,
+                });
+                expired.push(build_id);
+            }
+            Err(e) => {
+                warn!(build_id = %build_id, error = ?e, "build_timeout_monitor: failed to expire approval request");
+            }
+        }
+    }
+    Ok(expired)
 }
 
 /// Mark running builds past their timeout as `timed_out`. Returns the IDs

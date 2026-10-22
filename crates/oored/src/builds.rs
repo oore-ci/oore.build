@@ -1812,7 +1812,7 @@ pub(crate) async fn queue_rerun(
     // Fetch source build
     let source_row = sqlx::query(
         "SELECT id, project_id, pipeline_id, build_number, status, \
-         trigger_ref, commit_sha, branch, changelog, config_snapshot, approval_state \
+         trigger_ref, commit_sha, branch, changelog, config_snapshot, approval_requested_at \
          FROM builds WHERE id = ?1",
     )
     .bind(&build_id)
@@ -1981,10 +1981,12 @@ pub(crate) async fn queue_rerun(
                 )
             })?;
     let (timeout_minutes, approval_policy) = pipeline_gates(&pipeline_row);
+    // `approval_requested_at` outlives the approval state, which is cleared
+    // when a pending build ends without a decision.
     let approval_required = approval_policy.applies_to("manual")
         || (approval_policy.required
             && source_row
-                .get::<Option<String>, _>("approval_state")
+                .get::<Option<i64>, _>("approval_requested_at")
                 .is_some());
     if let Some(snapshot) = config_snapshot.as_object_mut() {
         snapshot.insert(
@@ -2919,5 +2921,124 @@ mod tests {
         require_google_play_secret(&pool, "p1", "pl1")
             .await
             .expect("secret is set");
+    }
+
+    async fn load_build(pool: &sqlx::SqlitePool, build_id: &str) -> Build {
+        let row = sqlx::query("SELECT * FROM builds WHERE id = ?1")
+            .bind(build_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        row_to_build(&row)
+    }
+
+    #[tokio::test]
+    async fn a_pending_build_that_ends_is_no_longer_waiting_for_approval() {
+        let pool = pool("{}", r#"{"required":true,"events":[]}"#, 60).await;
+        sqlx::query("UPDATE pipelines SET concurrency = '{\"cancel_previous\":true}'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // User cancel.
+        let canceled = deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await;
+        transition_build(&pool, &canceled[0].id, BuildStatus::Canceled, None, None)
+            .await
+            .unwrap();
+        let build = load_build(&pool, &canceled[0].id).await;
+        assert_eq!(build.status, "canceled");
+        assert!(build.approval.is_none());
+
+        // Superseded by a newer push to the same branch.
+        let first = deliver(&pool, "d2", Some("main"), None, ChangeSet::Unknown).await;
+        let second = deliver(&pool, "d3", Some("main"), None, ChangeSet::Unknown).await;
+        let superseded = load_build(&pool, &first[0].id).await;
+        assert_eq!(superseded.status, "canceled");
+        assert!(superseded.approval.is_none());
+        assert_eq!(
+            second[0].approval.as_ref().map(|approval| approval.state),
+            Some(BuildApprovalState::Pending)
+        );
+
+        // Failed outside the build lifecycle, as the credential preflight does.
+        sqlx::query("UPDATE builds SET status = 'failed' WHERE id = ?1")
+            .bind(&second[0].id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(load_build(&pool, &second[0].id).await.approval.is_none());
+        // The request time stays, so a rerun of a gated build stays gated.
+        let requested_at: Option<i64> =
+            sqlx::query_scalar("SELECT approval_requested_at FROM builds WHERE id = ?1")
+                .bind(&second[0].id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(requested_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn approval_requests_expire_after_the_policy_window() {
+        let pool = pool("{}", r#"{"required":true,"events":[]}"#, 60).await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let mut events = scheduler.subscribe_events();
+        let builds = deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await;
+        let build_id = &builds[0].id;
+        let requested_at = builds[0].approval.as_ref().unwrap().requested_at;
+        let week = 7 * 24 * 3600;
+
+        let early =
+            crate::background::expire_pending_approvals(&pool, &scheduler, requested_at + week - 1)
+                .await
+                .unwrap();
+        assert!(early.is_empty());
+        let late =
+            crate::background::expire_pending_approvals(&pool, &scheduler, requested_at + week)
+                .await
+                .unwrap();
+        assert_eq!(late, vec![build_id.clone()]);
+        let build = load_build(&pool, build_id).await;
+        assert_eq!(build.status, "canceled");
+        assert!(build.approval.is_none());
+        let reason: Option<String> = sqlx::query_scalar(
+            "SELECT reason FROM build_events WHERE build_id = ?1 AND to_status = 'canceled'",
+        )
+        .bind(build_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            reason.as_deref(),
+            Some("approval request expired after 7 days")
+        );
+        let event = events.recv().await.unwrap();
+        assert_eq!(event.build_id, *build_id);
+        assert_eq!(event.to_status, "canceled");
+
+        // A pipeline can shorten the window.
+        sqlx::query(
+            "UPDATE pipelines SET approval_policy = '{\"required\":true,\"expires_after_hours\":2}'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let builds = deliver(&pool, "d2", Some("main"), None, ChangeSet::Unknown).await;
+        let requested_at = builds[0].approval.as_ref().unwrap().requested_at;
+        let expired =
+            crate::background::expire_pending_approvals(&pool, &scheduler, requested_at + 7200)
+                .await
+                .unwrap();
+        assert_eq!(expired, vec![builds[0].id.clone()]);
+        let reason: Option<String> = sqlx::query_scalar(
+            "SELECT reason FROM build_events WHERE build_id = ?1 AND to_status = 'canceled'",
+        )
+        .bind(&builds[0].id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            reason.as_deref(),
+            Some("approval request expired after 2 hours")
+        );
     }
 }
