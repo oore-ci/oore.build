@@ -97,7 +97,7 @@ function parseSearch(search: SearchInput): IntegrationDetailSearch {
 export const Route = createFileRoute('/settings/integrations/$integrationId')({
   staticData: {
     breadcrumb: {
-      title: 'Details',
+      title: 'Source',
     },
   },
   validateSearch: parseSearch,

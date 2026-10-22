@@ -69,6 +69,8 @@ declare module '@tanstack/react-router' {
   interface StaticDataRouteOption {
     breadcrumb?: {
       title: string
+      /** False when the route only redirects, so its crumb is plain text. */
+      link?: boolean
     }
   }
 }

@@ -67,7 +67,7 @@ function getOidcErrorMessage(error: Error | null): string | null {
         if (
           error.message.includes('origin is not in the allowed origins list')
         ) {
-          return 'This frontend origin is not allowed by the backend. Update allowed frontend origins in Preferences and try again.'
+          return 'This frontend origin is not allowed by the backend. Update allowed frontend origins in Settings → General and try again.'
         }
         return 'OIDC callback URL is invalid. Ensure the callback path is /auth/callback.'
       default:
@@ -329,11 +329,12 @@ function OwnerStep() {
       )}
 
       <Button
-        variant="outline"
+        variant="ghost"
+        size="sm"
         onClick={handleRestartFromToken}
-        className="w-full"
+        className="mx-auto flex text-muted-foreground"
       >
-        Restart from token step
+        Start over with a new token
       </Button>
     </div>
   )

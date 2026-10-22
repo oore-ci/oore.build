@@ -41,7 +41,7 @@ const ROLE_OPTIONS = {
 
 const ROLE_DESCRIPTIONS = {
   admin:
-    'Can manage users, integrations, and all projects. Cannot delete the instance.',
+    'Can manage users, sources, and all projects. Cannot delete the instance.',
   developer:
     'Can work on assigned projects according to their project role. Cannot create projects or manage instance settings.',
   qa_viewer:

@@ -15,20 +15,13 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
   Item,
-  ItemActions,
   ItemContent,
   ItemDescription,
-  ItemGroup,
+  ItemMedia,
   ItemTitle,
 } from '@/components/ui/item'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { useSetupPreferences, useSetupStatus } from '@/hooks/use-setup'
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import { PageMeta } from '@/lib/seo'
@@ -66,7 +59,7 @@ const MODE_COMPARISON: Array<{
     label: 'Use an existing trusted access proxy',
     description:
       'For Cloudflare Access, oauth2-proxy, or a similar proxy. Continue setup in the terminal.',
-    technicalDetail: 'Terminal handoff · advanced proxy setup',
+    technicalDetail: 'Advanced proxy setup · finished in the terminal',
     terminalOnly: true,
   },
 ]
@@ -189,71 +182,48 @@ function SetupModeStep() {
             name="mode"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Access choice</FormLabel>
+                <FormLabel className="sr-only">Access choice</FormLabel>
                 <FormControl>
-                  <Select
+                  <RadioGroup
                     value={field.value}
                     onValueChange={(value) => field.onChange(value)}
                     disabled={setupModeMutation.isPending}
+                    aria-label="Access choice"
+                    className="gap-2"
                   >
-                    <SelectTrigger className="w-full">
-                      <SelectValue>
-                        {MODE_COMPARISON.find(
-                          (mode) => mode.value === selectedMode,
-                        )?.label ?? 'Choose how people access Oore'}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="local">
-                        Use Oore on this Mac
-                      </SelectItem>
-                      <SelectItem value="remote_oidc">
-                        Let people sign in with an identity provider
-                      </SelectItem>
-                      <SelectItem value="remote_trusted">
-                        Existing trusted access proxy (terminal only)
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
+                    {MODE_COMPARISON.map((mode) => (
+                      <Item
+                        key={mode.value}
+                        render={<label />}
+                        variant="outline"
+                        size="sm"
+                        className="cursor-pointer items-start has-data-checked:border-primary has-data-checked:bg-accent"
+                      >
+                        <ItemMedia className="pt-0.5">
+                          <RadioGroupItem value={mode.value} />
+                        </ItemMedia>
+                        <ItemContent>
+                          <ItemTitle>
+                            {mode.label}
+                            {mode.terminalOnly ? (
+                              <Badge variant="outline">Terminal handoff</Badge>
+                            ) : null}
+                          </ItemTitle>
+                          <ItemDescription className="line-clamp-none">
+                            {mode.description}
+                          </ItemDescription>
+                          <ItemDescription className="line-clamp-none text-xs">
+                            {mode.technicalDetail}
+                          </ItemDescription>
+                        </ItemContent>
+                      </Item>
+                    ))}
+                  </RadioGroup>
                 </FormControl>
                 <FormMessage />
               </FormItem>
             )}
           />
-
-          <ItemGroup aria-label="Access choice details">
-            {MODE_COMPARISON.map((mode) => {
-              const selected = selectedMode === mode.value
-              return (
-                <Item
-                  key={mode.value}
-                  variant={selected ? 'muted' : 'outline'}
-                  size="sm"
-                >
-                  <ItemContent>
-                    <ItemTitle>{mode.label}</ItemTitle>
-                    <ItemDescription>
-                      {mode.description}{' '}
-                      {mode.terminalOnly ? (
-                        <code className="font-mono text-xs">
-                          {mode.technicalDetail}
-                        </code>
-                      ) : (
-                        mode.technicalDetail
-                      )}
-                    </ItemDescription>
-                  </ItemContent>
-                  {selected || mode.terminalOnly ? (
-                    <ItemActions>
-                      <Badge variant="secondary">
-                        {mode.terminalOnly ? 'Terminal only' : 'Selected'}
-                      </Badge>
-                    </ItemActions>
-                  ) : null}
-                </Item>
-              )
-            })}
-          </ItemGroup>
 
           {selectedMode === 'remote_trusted' ? (
             <Alert>
