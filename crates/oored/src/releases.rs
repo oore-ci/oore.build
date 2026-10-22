@@ -234,6 +234,9 @@ pub struct ReleaseChange {
     /// refused if the release has moved since, so a stale step never resumes
     /// a release someone halted in the meantime.
     pub expect: Option<(ReleaseState, f64)>,
+    /// The store already made this change and Oore only records it: nothing
+    /// is sent to the store, and an approval gate does not block it.
+    pub from_store: bool,
 }
 
 /// One lock per release, held from the read through the store call to the
@@ -660,7 +663,8 @@ pub async fn transition_release(
             "rollout fraction can only increase".into(),
         ));
     }
-    if awaiting_approval(&current)
+    if !change.from_store
+        && awaiting_approval(&current)
         && matches!(
             from,
             ReleaseState::Rolling | ReleaseState::Paused | ReleaseState::Halted
@@ -673,7 +677,9 @@ pub async fn transition_release(
     }
     let reason = clean_reason(reason);
 
-    if let Some(store_change) = store_change(from, to, to_fraction) {
+    if !change.from_store
+        && let Some(store_change) = store_change(from, to, to_fraction)
+    {
         deps.store
             .apply(&current, store_change)
             .await
@@ -829,12 +835,6 @@ pub async fn approve_release(
     Ok(release)
 }
 
-/// Whether the runner may upload for this release (`before_upload` gate).
-pub async fn upload_approved(pool: &SqlitePool, release_id: &str) -> Result<bool, ReleaseError> {
-    let release = load_release(pool, release_id).await?;
-    Ok(!release.awaiting_approval)
-}
-
 // ── Store sync ──────────────────────────────────────────────────
 
 /// The changes that bring a release in line with what the store reports.
@@ -893,23 +893,20 @@ pub(crate) async fn sync_release_with_store(
     if changes.is_empty() {
         return Ok(release.clone());
     }
-    // The store already holds this state; record it without calling back.
-    let record = ReleaseDeps {
-        store: &NoopReleaseStoreClient,
-        ..deps
-    };
     let reason = store_sync_reason(release, observed);
     // Only record what was observed against the state it was compared with.
     let mut expect = Some((release.state, release.rollout_fraction));
     for (to_state, to_fraction) in changes {
         transition_release(
-            record,
+            deps,
             &release.id,
             ReleaseChange {
                 to_state,
                 to_fraction,
                 audit_action: "release_synced_from_store",
                 expect: expect.take(),
+                // The store already holds this state; record it without calling back.
+                from_store: true,
             },
             &ReleaseActor::System,
             Some(&reason),
@@ -1048,6 +1045,7 @@ pub(crate) async fn run_rollout_tick(
                                     to_fraction: None,
                                     audit_action: "release_halted",
                                     expect: None,
+                                    from_store: false,
                                 },
                                 &ReleaseActor::System,
                                 Some(&reason),
@@ -1112,6 +1110,7 @@ pub(crate) async fn run_rollout_tick(
                 to_fraction: Some(fraction),
                 audit_action: "release_advanced",
                 expect: Some((ReleaseState::Rolling, release.rollout_fraction)),
+                from_store: false,
             },
             &ReleaseActor::System,
             Some("scheduled rollout step"),
@@ -1372,6 +1371,9 @@ pub async fn create_release_handler(
         ));
     }
     let policy = request.policy.unwrap_or_default();
+    policy
+        .validate_gate()
+        .map_err(|message| api_err(StatusCode::BAD_REQUEST, "invalid_input", message))?;
     let initial_state = request.state.unwrap_or(ReleaseState::Rolling);
     let rollout_fraction = request.rollout_fraction.unwrap_or_else(|| {
         if initial_state == ReleaseState::Rolling {
@@ -1504,6 +1506,7 @@ pub async fn release_action(
                 to_fraction: Some(fraction),
                 audit_action: "release_raised",
                 expect: Some(seen),
+                from_store: false,
             }
         }
         // Stopping a rollout must not fail because a step landed meanwhile.
@@ -1512,6 +1515,7 @@ pub async fn release_action(
             to_fraction: None,
             audit_action: "release_paused",
             expect: None,
+            from_store: false,
         },
         // A draft (0%) resumes at the first policy step.
         ReleaseAction::Resume => ReleaseChange {
@@ -1521,18 +1525,21 @@ pub async fn release_action(
                 .flatten(),
             audit_action: "release_resumed",
             expect: Some(seen),
+            from_store: false,
         },
         ReleaseAction::Halt => ReleaseChange {
             to_state: ReleaseState::Halted,
             to_fraction: None,
             audit_action: "release_halted",
             expect: None,
+            from_store: false,
         },
         ReleaseAction::Complete => ReleaseChange {
             to_state: ReleaseState::Complete,
             to_fraction: Some(1.0),
             audit_action: "release_completed",
             expect: Some(seen),
+            from_store: false,
         },
     };
     let mut release = transition_release(deps, &release_id, change, &actor, reason)
@@ -1704,6 +1711,7 @@ pub(crate) mod tests {
             to_fraction: None,
             audit_action,
             expect: None,
+            from_store: false,
         }
     }
 
@@ -1973,6 +1981,7 @@ pub(crate) mod tests {
                 to_fraction: Some(0.5),
                 audit_action: "release_raised",
                 expect: None,
+                from_store: false,
             },
             &user(),
             None,
@@ -2016,6 +2025,7 @@ pub(crate) mod tests {
                 to_fraction: Some(0.005),
                 audit_action: "release_raised",
                 expect: None,
+                from_store: false,
             },
             &user(),
             None,
@@ -2033,6 +2043,56 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(complete.rollout_fraction, 1.0);
         assert!(complete.allowed_actions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn store_sync_records_play_console_changes_on_a_release_awaiting_approval() {
+        let pool = pool().await;
+        let scheduler = Scheduler::new(16);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let policy = ReleasePolicy {
+            approval: ReleaseApprovalGate::BeforeProduction,
+            ..ReleasePolicy::default()
+        };
+        let mut input = new_release("production", policy);
+        input.rollout_fraction = 0.05;
+        let release = create_release(deps, input, &user(), None).await.unwrap();
+        assert!(release.awaiting_approval);
+
+        // Raised in Play Console, then completed there.
+        *store.observed.lock().unwrap() = Some(StoreObservation::Rolling { fraction: 0.2 });
+        let raised = sync_release_with_store(deps, &release, 10).await.unwrap();
+        assert_eq!(raised.rollout_fraction, 0.2);
+        *store.observed.lock().unwrap() = Some(StoreObservation::Completed);
+        let done = sync_release_with_store(deps, &raised, 20).await.unwrap();
+        assert_eq!(done.state, ReleaseState::Complete);
+        // Recorded only: nothing was sent back to Play.
+        assert!(store.changes.lock().unwrap().is_empty());
+
+        // Oore's own changes still wait for the approval.
+        let mut input = new_release(
+            "production",
+            ReleasePolicy {
+                approval: ReleaseApprovalGate::BeforeProduction,
+                ..ReleasePolicy::default()
+            },
+        );
+        input.rollout_fraction = 0.05;
+        let gated = create_release(deps, input, &user(), None).await.unwrap();
+        let blocked = transition_release(
+            deps,
+            &gated.id,
+            change(ReleaseState::Complete, "release_completed"),
+            &user(),
+            None,
+        )
+        .await;
+        assert!(matches!(blocked, Err(ReleaseError::Conflict(_))));
     }
 
     #[tokio::test]
@@ -2082,6 +2142,7 @@ pub(crate) mod tests {
                 to_fraction: Some(0.05),
                 audit_action: "release_raised",
                 expect: None,
+                from_store: false,
             },
             &user(),
             None,
@@ -2210,6 +2271,7 @@ pub(crate) mod tests {
                 to_fraction: Some(0.2),
                 audit_action: "release_advanced",
                 expect: Some((ReleaseState::Rolling, 0.05)),
+                from_store: false,
             },
             &ReleaseActor::System,
             Some("scheduled rollout step"),
