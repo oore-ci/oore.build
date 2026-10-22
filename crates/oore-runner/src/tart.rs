@@ -1844,21 +1844,30 @@ mod tests {
     fn stopping_daemons_waits_for_them_to_exit() {
         // A name no other process has, so the test stops only its own.
         let name = format!("OoreTestDaemon{}", std::process::id());
-        let script = stop_processes_script(&format!("[{}]{}", &name[..1], &name[1..]));
-        let dir = std::env::temp_dir().join(&name);
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let daemon = dir.join(&name);
-        fs::copy("/bin/sleep", &daemon).unwrap();
-        let mut child = Command::new(&daemon).arg("600").spawn().unwrap();
+        let pattern = format!("[{}]{}", &name[..1], &name[1..]);
+        let script = stop_processes_script(&pattern);
+        // A shell whose `$0`, and so its command line, carries the name. A
+        // copied system binary would not do: macOS kills a platform binary
+        // run from outside its install path.
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "sleep 60; :", &name])
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !run_sh(&format!("pgrep -f {}", shell_quote(&pattern)))
+            .status
+            .success()
+        {
+            assert!(Instant::now() < deadline, "the test daemon never showed up");
+            std::thread::sleep(Duration::from_millis(50));
+        }
         let stopped = run_sh(&script);
         assert!(stopped.status.success());
         assert_eq!(String::from_utf8_lossy(&stopped.stdout).trim(), "1");
-        assert!(child.wait().is_ok());
+        assert!(!child.wait().unwrap().success());
         let none = run_sh(&script);
         assert!(none.status.success());
         assert_eq!(String::from_utf8_lossy(&none.stdout).trim(), "0");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
