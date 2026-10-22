@@ -942,20 +942,30 @@ async fn registered_target_repository_matches(
     Ok(matches)
 }
 
+/// GitHub marks a deleted branch or tag with `deleted`. GitLab sends an
+/// all-zero `after` and no `checkout_sha`.
+fn is_ref_deletion(payload: &serde_json::Value) -> bool {
+    payload.get("deleted").and_then(serde_json::Value::as_bool) == Some(true)
+        || payload
+            .get("after")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|after| !after.is_empty() && after.bytes().all(|byte| byte == b'0'))
+}
+
 async fn webhook_trigger_decision(
     pool: &sqlx::SqlitePool,
     event: &NormalizedWebhookEvent,
 ) -> anyhow::Result<WebhookTriggerDecision> {
     match event.event_type.as_str() {
         "push" | "Push Hook" | "Tag Push Hook" => {
-            if event
-                .payload
-                .get("deleted")
-                .and_then(serde_json::Value::as_bool)
-                == Some(true)
-            {
+            if is_ref_deletion(&event.payload) {
                 return Ok(WebhookTriggerDecision::Ignore(
                     "ref deletion does not introduce a revision",
+                ));
+            }
+            if event.commit_sha.as_deref().is_none_or(str::is_empty) {
+                return Ok(WebhookTriggerDecision::Ignore(
+                    "push has no revision to build",
                 ));
             }
             // Preserve existing push behavior when an immutable provider ID is absent,
@@ -1298,6 +1308,11 @@ async fn process_webhook_event(
                     "webhook triggered builds"
                 );
             }
+            // Store errors are usually contention. Retrying is safe because
+            // each pipeline builds a delivery at most once.
+            Err((status, body)) if status.is_server_error() => {
+                anyhow::bail!("failed to trigger builds: {}", body.0.error);
+            }
             Err(e) => {
                 error!(error = ?e, webhook_id = %webhook_id, "failed to trigger builds from webhook");
                 let now = now_unix();
@@ -1411,5 +1426,145 @@ mod tests {
         );
         assert_eq!(merge_request.compare_base.as_deref(), Some("main"));
         assert_eq!(merge_request.tag, None);
+    }
+
+    async fn pool(provider: &str) -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        for statement in [
+            "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+             VALUES ('u1', 'lead@example.com', 'sub', 'owner', 0, 0)"
+                .to_string(),
+            format!(
+                "INSERT INTO integrations (id, provider, auth_mode, created_by, created_at, updated_at) \
+                 VALUES ('i1', '{provider}', 'github_app', 'u1', 0, 0)"
+            ),
+            "INSERT INTO integration_installations (id, integration_id, external_id, account_name, created_at, updated_at) \
+             VALUES ('inst1', 'i1', '42', 'acme', 0, 0)"
+                .to_string(),
+            "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, created_at, updated_at) \
+             VALUES ('r1', 'inst1', '7', 'acme/app', 0, 0)"
+                .to_string(),
+            "INSERT INTO projects (id, name, repository_id, created_by, created_at, updated_at) \
+             VALUES ('p1', 'App', 'r1', 'u1', 0, 0)"
+                .to_string(),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(statement))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        for pipeline in ["pl1", "pl2"] {
+            sqlx::query(
+                "INSERT INTO pipelines (id, project_id, name, trigger_config, created_at, updated_at) \
+                 VALUES (?1, 'p1', ?1, '{\"events\":[\"push\",\"tag_push\"],\"branches\":[\"*\"],\"tags\":[\"*\"]}', 0, 0)",
+            )
+            .bind(pipeline)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        pool
+    }
+
+    async fn receive(pool: &sqlx::SqlitePool, webhook_id: &str) {
+        sqlx::query(
+            "INSERT INTO integration_webhooks (id, integration_id, provider_delivery_id, event_type, payload, status, received_at, processing_started_at, processing_attempts) \
+             VALUES (?1, 'i1', ?1, 'push', '{}', 'received', 0, 0, 1)",
+        )
+        .bind(webhook_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn webhook_status(pool: &sqlx::SqlitePool, webhook_id: &str) -> String {
+        sqlx::query_scalar("SELECT status FROM integration_webhooks WHERE id = ?1")
+            .bind(webhook_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn builds_per_pipeline(pool: &sqlx::SqlitePool) -> Vec<(String, i64)> {
+        sqlx::query_as(
+            "SELECT pipeline_id, COUNT(*) FROM builds GROUP BY pipeline_id ORDER BY pipeline_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn gitlab_branch_and_tag_deletions_start_no_builds() {
+        let pool = pool("gitlab").await;
+        let zeros = "0000000000000000000000000000000000000000";
+        for (webhook_id, event_type, git_ref) in [
+            ("branch", "Push Hook", "refs/heads/feature"),
+            ("tag", "Tag Push Hook", "refs/tags/v1.0.0"),
+        ] {
+            receive(&pool, webhook_id).await;
+            let payload = serde_json::json!({
+                "ref": git_ref,
+                "before": "abc123",
+                "after": zeros,
+                "checkout_sha": null,
+                "project": { "id": 7 },
+                "commits": [],
+                "total_commits_count": 0,
+            });
+            let event = normalize_gitlab_event(event_type, webhook_id, "i1", "acme/app", &payload);
+            process_webhook_event(&pool, &[0; 32], webhook_id, &event)
+                .await
+                .unwrap();
+            assert_eq!(webhook_status(&pool, webhook_id).await, "ignored");
+        }
+        assert_eq!(builds_per_pipeline(&pool).await, []);
+    }
+
+    #[tokio::test]
+    async fn a_failed_build_insert_is_retried_without_duplicating_builds() {
+        let pool = pool("github").await;
+        receive(&pool, "wh1").await;
+        let payload = serde_json::json!({
+            "ref": "refs/heads/main",
+            "after": "abc123",
+            "repository": { "full_name": "acme/app", "id": 7 },
+            "commits": [],
+        });
+        let event = normalize_github_event("push", "wh1", "i1", &payload);
+        sqlx::query(
+            "CREATE TRIGGER fail_pl2 BEFORE INSERT ON builds WHEN NEW.pipeline_id = 'pl2' \
+             BEGIN SELECT RAISE(ABORT, 'database is locked'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let error = process_webhook_event(&pool, &[0; 32], "wh1", &event)
+            .await
+            .unwrap_err();
+        record_webhook_processing_error(&pool, "wh1", &error)
+            .await
+            .unwrap();
+        assert_eq!(webhook_status(&pool, "wh1").await, "received");
+        assert_eq!(builds_per_pipeline(&pool).await, [("pl1".to_string(), 1)]);
+
+        sqlx::query("DROP TRIGGER fail_pl2")
+            .execute(&pool)
+            .await
+            .unwrap();
+        process_webhook_event(&pool, &[0; 32], "wh1", &event)
+            .await
+            .unwrap();
+        assert_eq!(webhook_status(&pool, "wh1").await, "processed");
+        assert_eq!(
+            builds_per_pipeline(&pool).await,
+            [("pl1".to_string(), 1), ("pl2".to_string(), 1)]
+        );
     }
 }
