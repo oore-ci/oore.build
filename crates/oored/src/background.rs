@@ -26,6 +26,11 @@ const BUILD_TIMEOUT_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Runner heartbeat staleness threshold (2 minutes).
 const HEARTBEAT_STALE_SECS: i64 = 120;
+/// How long a runner may miss heartbeats before its running build fails.
+const RUNNER_LOST_SECS: i64 = 300;
+/// A claim leaves a build in scheduled only while its transaction runs, so
+/// one older than this was interrupted.
+const SCHEDULED_TIMEOUT_SECS: i64 = 60;
 const SQLITE_BIND_LIMIT_HEADROOM: usize = 900;
 const MONITOR_BATCH_SIZE: i64 = 100;
 const RETENTION_BATCH_SIZE: usize = 100;
@@ -135,54 +140,66 @@ async fn stale_pending_artifact_monitor(pool: SqlitePool, storage: Arc<RwLock<St
 
 /// Monitor assigned builds whose lease has expired.
 ///
-/// Runs every 30 seconds. Finds builds with status 'assigned' whose updated_at
-/// is older than LEASE_TIMEOUT_SECS, transitions them back to 'queued', and
-/// clears the stale runner_id. Runners claim directly from SQLite so no
-/// in-memory re-enqueue is needed.
+/// Runs every 30 seconds. See [`requeue_expired_claims`].
 async fn lease_timeout_monitor(pool: SqlitePool) {
     loop {
         tokio::time::sleep(Duration::from_secs(30)).await;
+        if let Err(e) = requeue_expired_claims(&pool, now_unix()).await {
+            error!(error = %e, "lease_timeout_monitor: failed to query claimed builds");
+        }
+    }
+}
 
-        let now = now_unix();
-        let cutoff = now - LEASE_TIMEOUT_SECS;
+/// Moves builds a runner claimed but never started back to 'queued', which
+/// clears the stale runner_id: 'assigned' builds older than
+/// LEASE_TIMEOUT_SECS and 'scheduled' builds older than
+/// SCHEDULED_TIMEOUT_SECS. Runners claim directly from SQLite so no
+/// in-memory re-enqueue is needed. Returns the IDs it requeued.
+pub(crate) async fn requeue_expired_claims(
+    pool: &SqlitePool,
+    now: i64,
+) -> Result<Vec<String>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, status FROM builds \
+         WHERE (status = 'assigned' AND updated_at < ?1) \
+            OR (status = 'scheduled' AND updated_at < ?2) \
+         ORDER BY updated_at LIMIT ?3",
+    )
+    .bind(now - LEASE_TIMEOUT_SECS)
+    .bind(now - SCHEDULED_TIMEOUT_SECS)
+    .bind(MONITOR_BATCH_SIZE)
+    .fetch_all(pool)
+    .await?;
 
-        let rows = match sqlx::query(
-            "SELECT id FROM builds WHERE status = 'assigned' AND updated_at < ?1 \
-             ORDER BY updated_at LIMIT ?2",
-        )
-        .bind(cutoff)
-        .bind(MONITOR_BATCH_SIZE)
-        .fetch_all(&pool)
-        .await
-        {
-            Ok(rows) => rows,
-            Err(e) => {
-                error!(error = %e, "lease_timeout_monitor: failed to query assigned builds");
-                continue;
-            }
+    let mut requeued = Vec::new();
+    for row in rows {
+        let build_id: String = row.get("id");
+        let status: String = row.get("status");
+        let reason = if status == "scheduled" {
+            "runner claim was interrupted"
+        } else {
+            "lease timeout"
         };
 
-        for row in rows {
-            let build_id: String = row.get("id");
-
-            match crate::builds::transition_build(
-                &pool,
-                &build_id,
-                BuildStatus::Queued,
-                None,
-                Some("lease timeout"),
-            )
-            .await
-            {
-                Ok(_build) => {
-                    info!(build_id = %build_id, "lease_timeout_monitor: requeued build after lease timeout");
-                }
-                Err(e) => {
-                    warn!(build_id = %build_id, error = ?e, "lease_timeout_monitor: failed to transition build to queued");
-                }
+        match crate::builds::transition_build(
+            pool,
+            &build_id,
+            BuildStatus::Queued,
+            None,
+            Some(reason),
+        )
+        .await
+        {
+            Ok(_build) => {
+                info!(build_id = %build_id, from = %status, "lease_timeout_monitor: requeued build");
+                requeued.push(build_id);
+            }
+            Err(e) => {
+                warn!(build_id = %build_id, error = ?e, "lease_timeout_monitor: failed to transition build to queued");
             }
         }
     }
+    Ok(requeued)
 }
 
 /// Monitor running builds that have exceeded their pipeline's timeout.
@@ -259,10 +276,18 @@ pub(crate) async fn time_out_overdue_builds(
 /// 'draining' whose last_heartbeat_at is older than HEARTBEAT_STALE_SECS
 /// and updates their status to 'offline'.
 async fn runner_heartbeat_monitor(pool: SqlitePool, scheduler: Arc<Scheduler>) {
+    let started = Instant::now();
     loop {
         tokio::time::sleep(Duration::from_secs(60)).await;
 
         let now = now_unix();
+        // Heartbeats stop arriving while this daemon is down, so only judge
+        // runners lost once they have had a full window to reach it again.
+        if started.elapsed() >= Duration::from_secs(RUNNER_LOST_SECS as u64)
+            && let Err(e) = fail_builds_of_lost_runners(&pool, &scheduler, now).await
+        {
+            error!(error = %e, "runner_heartbeat_monitor: failed to release builds of lost runners");
+        }
         let cutoff = now - HEARTBEAT_STALE_SECS;
 
         let rows = match sqlx::query(
@@ -323,6 +348,40 @@ async fn runner_heartbeat_monitor(pool: SqlitePool, scheduler: Arc<Scheduler>) {
             }
         }
     }
+}
+
+/// Ends the builds held by runners that have missed heartbeats for
+/// RUNNER_LOST_SECS: running builds fail, assigned ones go back to the
+/// queue. Returns the IDs of the builds it failed.
+pub(crate) async fn fail_builds_of_lost_runners(
+    pool: &SqlitePool,
+    scheduler: &Scheduler,
+    now: i64,
+) -> Result<Vec<String>, sqlx::Error> {
+    let runner_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT r.id FROM runners r JOIN builds b ON b.runner_id = r.id \
+         WHERE b.status IN ('assigned', 'running') \
+           AND COALESCE(r.last_heartbeat_at, 0) < ?1 \
+         LIMIT ?2",
+    )
+    .bind(now - RUNNER_LOST_SECS)
+    .bind(MONITOR_BATCH_SIZE)
+    .fetch_all(pool)
+    .await?;
+
+    let mut failed = Vec::new();
+    for runner_id in runner_ids {
+        failed.extend(
+            crate::runners::release_runner_builds(
+                pool,
+                scheduler,
+                &runner_id,
+                "Lost contact with the runner: it stopped sending heartbeats",
+            )
+            .await?,
+        );
+    }
+    Ok(failed)
 }
 
 /// Retention cleanup monitor.

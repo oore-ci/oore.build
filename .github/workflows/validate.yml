@@ -27,9 +27,11 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       docs: ${{ steps.filter.outputs.docs }}
       rust: ${{ steps.filter.outputs.rust }}
+      tooling: ${{ steps.filter.outputs.tooling }}
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           # PRs always compare against the PR base: a newer push cancels the
@@ -41,10 +43,13 @@ jobs:
           filters: |
             frontend:
               - 'apps/web/**'
+              - 'apps/docs/public/openapi.json'
               - 'shared/brand/**'
+              - 'tools/check-client-openapi.ts'
               - 'tools/validate-standalone-web.sh'
               - 'bun.lock'
               - 'package.json'
+              - 'Makefile'
               - '.github/workflows/validate.yml'
             docs:
               - 'apps/docs/**'
@@ -56,26 +61,39 @@ jobs:
               - 'bun.lock'
               - 'package.json'
               - '.oxfmtrc.json'
+              - 'Makefile'
               - '.github/workflows/validate.yml'
             rust:
               - 'crates/**'
               - 'apps/docs/public/openapi.json'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'scripts/**'
+              - 'tools/install-smoke.sh'
+              - 'tools/release-smoke.sh'
+              - 'Makefile'
               - '.github/workflows/validate.yml'
+            tooling:
+              - 'scripts/**'
+              - 'tools/**'
+              - 'Makefile'
+              - 'rust-toolchain.toml'
+              - '.github/**'
 
   frontend:
     name: Frontend
     needs: changes
     if: needs.changes.result == 'success' && needs.changes.outputs.frontend == 'true'
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || vars.RUNNER_LINUX || 'oore-linux' }}
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       # Self-hosted runners keep Bun's install cache on disk, so skip the
       # upload to the Actions cache.
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
           no-cache: ${{ runner.environment == 'self-hosted' }}
@@ -89,6 +107,12 @@ jobs:
       - name: Lint
         run: make lint-web
 
+      - name: Test
+        run: make test-web
+
+      - name: Check @oore/client against the OpenAPI spec
+        run: make check-client-openapi
+
       - name: Build and validate standalone server
         run: make validate-web-launcher
 
@@ -97,13 +121,14 @@ jobs:
     needs: changes
     if: needs.changes.result == 'success' && needs.changes.outputs.docs == 'true'
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || vars.RUNNER_LINUX || 'oore-linux' }}
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       # Self-hosted runners keep Bun's install cache on disk, so skip the
       # upload to the Actions cache.
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
           no-cache: ${{ runner.environment == 'self-hosted' }}
@@ -116,7 +141,10 @@ jobs:
         run: make format-check
 
       - name: Lint
-        run: make lint-docs
+        run: make lint-docs lint-site
+
+      - name: Test
+        run: make test-site
 
       - name: Type check
         run: make check-docs-types
@@ -129,12 +157,19 @@ jobs:
     needs: changes
     if: needs.changes.result == 'success' && needs.changes.outputs.rust == 'true'
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'macos-latest' || vars.RUNNER_MACOS || 'oore-mac' }}
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      # Self-hosted hosts have no preinstalled toolchain guarantee.
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      # Self-hosted hosts have no preinstalled toolchain guarantee. Cargo
+      # still reads rust-toolchain.toml, so this only makes sure it exists.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt, clippy
 
       # Self-hosted runners reuse a per-runner target directory outside the
@@ -152,7 +187,7 @@ jobs:
           fi
           echo "CARGO_TARGET_DIR=$target_dir" >> "$GITHUB_ENV"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         if: runner.environment == 'github-hosted'
         with:
           cache-bin: false
@@ -171,16 +206,94 @@ jobs:
       - name: Check generated OpenAPI
         run: make check-openapi
 
+      # Runs on macOS so the macOS-gated code paths are tested too.
+      - name: Test
+        run: make test-rust
+
+  installer:
+    name: Installer
+    needs: changes
+    if: needs.changes.result == 'success' && needs.changes.outputs.rust == 'true'
+    # The self-hosted Macs run real Oore services, which the bootstrap guard
+    # rightly refuses to install over, so this needs a clean GitHub-hosted Mac.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-bin: false
+          cache-on-failure: true
+
+      - name: Install, update and uninstall through the bootstrap scripts
+        run: make smoke-install
+
+  tooling:
+    name: Scripts and workflows
+    needs: changes
+    if: needs.changes.result == 'success' && needs.changes.outputs.tooling == 'true'
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || vars.RUNNER_LINUX || 'oore-linux' }}
+    timeout-minutes: 15
+    env:
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      SHELLCHECK_VERSION: 0.11.0
+      SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      # Self-hosted runners keep Bun's install cache on disk, so skip the
+      # upload to the Actions cache.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.0
+          no-cache: ${{ runner.environment == 'self-hosted' }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install actionlint and ShellCheck
+        run: |
+          tools_dir="$RUNNER_TEMP/ci-linters"
+          mkdir -p "$tools_dir"
+          cd "$tools_dir"
+          curl -fsSL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o shellcheck.tar.xz \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          printf '%s  %s\n' \
+            "$ACTIONLINT_SHA256" actionlint.tar.gz \
+            "$SHELLCHECK_SHA256" shellcheck.tar.xz | sha256sum --check --strict
+          tar -xzf actionlint.tar.gz actionlint
+          tar -xJf shellcheck.tar.xz --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          echo "$tools_dir" >> "$GITHUB_PATH"
+
+      - name: Lint workflows and shell scripts, run tool tests
+        run: make validate-ci
+
   required:
     name: Required validation
     if: ${{ always() && !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
-    needs: [changes, frontend, docs, rust]
+    needs: [changes, frontend, docs, rust, installer, tooling]
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'ubuntu-latest' || vars.RUNNER_LINUX || 'oore-linux' }}
+    timeout-minutes: 5
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
       FRONTEND_RESULT: ${{ needs.frontend.result }}
       DOCS_RESULT: ${{ needs.docs.result }}
       RUST_RESULT: ${{ needs.rust.result }}
+      INSTALLER_RESULT: ${{ needs.installer.result }}
+      TOOLING_RESULT: ${{ needs.tooling.result }}
     steps:
       - name: Evaluate path-aware validation
         run: |
@@ -188,3 +301,5 @@ jobs:
           case "$FRONTEND_RESULT" in success|skipped) ;; *) exit 1 ;; esac
           case "$DOCS_RESULT" in success|skipped) ;; *) exit 1 ;; esac
           case "$RUST_RESULT" in success|skipped) ;; *) exit 1 ;; esac
+          case "$INSTALLER_RESULT" in success|skipped) ;; *) exit 1 ;; esac
+          case "$TOOLING_RESULT" in success|skipped) ;; *) exit 1 ;; esac
