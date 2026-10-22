@@ -144,6 +144,7 @@ use utoipa::{
         // ── Pipeline Publishing ──
         operations::get_pipeline_google_play_publish,
         operations::update_pipeline_google_play_publish,
+        operations::test_pipeline_google_play_credentials,
         // ── Store Credentials ──
         operations::list_app_store_connect_keys,
         operations::create_app_store_connect_key,
@@ -386,6 +387,8 @@ use utoipa::{
         oore_contract::GooglePlayReleaseNotesSource,
         oore_contract::GooglePlayPublishConfig,
         oore_contract::PipelineGooglePlayPublishResponse,
+        oore_contract::GooglePlayCredentialsTestRequest,
+        oore_contract::GooglePlayCredentialsTestResponse,
         oore_contract::RunnerPublishPlan,
         oore_contract::RunnerRetryArtifact,
         oore_contract::RunnerRetryArtifactsResponse,
@@ -1928,6 +1931,25 @@ mod operations {
         )
     )]
     pub(super) fn update_pipeline_google_play_publish() {}
+
+    /// Test Google Play credentials
+    ///
+    /// Requires the manage pipelines project permission. Exchanges the named
+    /// service account key for a token, then opens and discards a Play edit
+    /// for the app, so nothing changes in Play Console. A rejected key or
+    /// missing Play Console access is reported with `ok: false`.
+    #[utoipa::path(post, path = "/v1/pipelines/{pipeline_id}/publish/google-play/test-credentials", tag = "Pipeline Publishing",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        request_body = GooglePlayCredentialsTestRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Check result", body = GooglePlayCredentialsTestResponse),
+            (status = 400, description = "Invalid request", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn test_pipeline_google_play_credentials() {}
 
     // ── Store Credentials ──
 

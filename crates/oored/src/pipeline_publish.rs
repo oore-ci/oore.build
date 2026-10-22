@@ -4,7 +4,8 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
-    ApiError, GooglePlayPublishConfig, OkResponse, PipelineGooglePlayPublishResponse, PublishStore,
+    ApiError, GooglePlayCredentialsTestRequest, GooglePlayCredentialsTestResponse,
+    GooglePlayPublishConfig, OkResponse, PipelineGooglePlayPublishResponse, PublishStore,
     ReleaseState, ReleaseStore, RunnerPublishPlan, RunnerPublishResult,
     validate_google_play_publish_config,
 };
@@ -19,7 +20,7 @@ use crate::releases::{
     NewRelease, ReleaseActor, ReleaseDeps, find_build_release, finish_create, insert_release,
 };
 use crate::runners::{RunnerAuth, require_active_job_signing_grant};
-use crate::secrets::secret_name_visible;
+use crate::secrets::{resolve_secret_value, secret_name_visible};
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
@@ -27,6 +28,9 @@ type ApiFailure = (StatusCode, Json<ApiError>);
 type ApiResult<T> = Result<Json<T>, ApiFailure>;
 
 const GOOGLE_PLAY: &str = "google_play";
+const PLAY_API_BASE: &str =
+    "https://androidpublisher.googleapis.com/androidpublisher/v3/applications";
+const PLAY_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 fn store_error(context: &str, e: impl std::fmt::Display) -> ApiFailure {
     error!(error = %e, "{context}");
@@ -171,6 +175,205 @@ pub async fn update_pipeline_google_play_publish(
     info!(pipeline_id = %pipeline_id, actor = %auth.0.email, "updated Google Play publish settings");
 
     google_play_response(&state, &project_id, pipeline_id).await
+}
+
+/// `POST /v1/pipelines/{pipeline_id}/publish/google-play/test-credentials`
+/// — check a service account key against Google Play without a build.
+///
+/// Opens a Play edit for the app and discards it, which needs the same
+/// Play Console access as an upload and changes nothing.
+pub async fn test_pipeline_google_play_credentials(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(pipeline_id): Path<String>,
+    Json(request): Json<GooglePlayCredentialsTestRequest>,
+) -> ApiResult<GooglePlayCredentialsTestResponse> {
+    let project_id = require_pipeline_project_permission(
+        &state.db,
+        &auth.0.user_id,
+        &auth.0.role,
+        &auth.0.auth_source,
+        &pipeline_id,
+        ProjectPermission::ManagePipelines,
+    )
+    .await?;
+
+    let secret_name = request.service_account_secret.trim();
+    if let Err(error) = oore_contract::validate_secret_name(secret_name) {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_secret_name",
+            format!("service_account_secret {error}"),
+        ));
+    }
+    let requested_package = request
+        .package_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|package| !package.is_empty());
+    let package_name = match requested_package {
+        Some(package) => Some(package.to_string()),
+        None => default_play_package(&state.db, &pipeline_id)
+            .await
+            .map_err(|e| store_error("Failed to load Google Play settings", e))?,
+    };
+    let service_account = resolve_secret_value(
+        &state.db,
+        &state.encryption_key,
+        &project_id,
+        Some(&pipeline_id),
+        secret_name,
+    )
+    .await
+    .map_err(|e| store_error("Failed to read the service account secret", e))?
+    .map(zeroize::Zeroizing::new);
+
+    let http = reqwest::Client::builder()
+        .timeout(PLAY_CHECK_TIMEOUT)
+        .build()
+        .map_err(|e| store_error("Failed to start the Google Play check", e))?;
+    let outcome = check_play_credentials(
+        &http,
+        PLAY_API_BASE,
+        secret_name,
+        service_account.as_ref().map(|value| value.as_str()),
+        package_name.as_deref(),
+    )
+    .await;
+    let response = GooglePlayCredentialsTestResponse {
+        ok: outcome.ok,
+        message: outcome.message,
+        package_name,
+        service_account_email: outcome.service_account_email,
+        checked_at: now_unix(),
+    };
+
+    let details = serde_json::json!({
+        "pipeline_id": &pipeline_id,
+        "checked_by": &auth.0.email,
+        "service_account_secret": secret_name,
+        "package_name": &response.package_name,
+        "ok": response.ok,
+    })
+    .to_string();
+    let _ = write_audit_log(
+        &state.db,
+        Some(&auth.0.user_id),
+        "pipeline_google_play_credentials_tested",
+        "pipeline",
+        Some(&pipeline_id),
+        Some(&details),
+    )
+    .await;
+    info!(
+        pipeline_id = %pipeline_id,
+        actor = %auth.0.email,
+        ok = response.ok,
+        "tested Google Play credentials"
+    );
+    Ok(Json(response))
+}
+
+/// The app to check when the form names none: the saved expected package,
+/// then the package of the pipeline's latest Google Play release.
+async fn default_play_package(
+    pool: &SqlitePool,
+    pipeline_id: &str,
+) -> anyhow::Result<Option<String>> {
+    if let Some(package) = load_google_play(pool, pipeline_id)
+        .await?
+        .and_then(|(config, _)| config.package_name)
+    {
+        return Ok(Some(package));
+    }
+    Ok(sqlx::query_scalar(
+        "SELECT r.package_name FROM releases r JOIN builds b ON b.id = r.build_id \
+         WHERE b.pipeline_id = ?1 AND r.store = 'google_play' AND r.package_name IS NOT NULL \
+         ORDER BY r.created_at DESC LIMIT 1",
+    )
+    .bind(pipeline_id)
+    .fetch_optional(pool)
+    .await?)
+}
+
+#[derive(Debug)]
+struct PlayCheck {
+    ok: bool,
+    message: String,
+    service_account_email: Option<String>,
+}
+
+impl PlayCheck {
+    fn failed(message: impl Into<String>, service_account_email: Option<String>) -> Self {
+        Self {
+            ok: false,
+            message: message.into(),
+            service_account_email,
+        }
+    }
+}
+
+/// Each step an upload depends on, stopping at the first that fails: the
+/// secret exists, holds a service account key, Google accepts the key, and
+/// the account can open an edit for the app.
+async fn check_play_credentials(
+    http: &reqwest::Client,
+    api_base: &str,
+    secret_name: &str,
+    service_account: Option<&str>,
+    package_name: Option<&str>,
+) -> PlayCheck {
+    let Some(service_account) = service_account else {
+        return PlayCheck::failed(
+            format!(
+                "No secret named {secret_name} is visible to this pipeline. Add it to the pipeline, its project or the instance."
+            ),
+            None,
+        );
+    };
+    let Ok(email) = oore_google_play::service_account_email(service_account) else {
+        return PlayCheck::failed(
+            format!(
+                "{secret_name} does not hold a Google service account JSON key. Store the whole key file downloaded from Google Cloud."
+            ),
+            None,
+        );
+    };
+    let token = match oore_google_play::access_token(http, service_account).await {
+        Ok(token) => token,
+        Err(error) => return PlayCheck::failed(format!("{error:#}"), Some(email)),
+    };
+    let Some(package_name) = package_name else {
+        return PlayCheck::failed(
+            "Google accepted the key, but Oore does not know which app to check yet. Set the expected package under Advanced, then test again.",
+            Some(email),
+        );
+    };
+    match open_and_discard_edit(http, api_base, &token, package_name).await {
+        Ok(()) => PlayCheck {
+            ok: true,
+            message: format!("{email} can publish {package_name} on Google Play."),
+            service_account_email: Some(email),
+        },
+        Err(error) => PlayCheck::failed(format!("{error:#}"), Some(email)),
+    }
+}
+
+async fn open_and_discard_edit(
+    http: &reqwest::Client,
+    api_base: &str,
+    token: &str,
+    package_name: &str,
+) -> anyhow::Result<()> {
+    let edits =
+        oore_google_play::PlayEdits::insert_at(http, api_base, api_base, token, package_name)
+            .await?;
+    // An uncommitted edit also expires on its own, so a failed delete does
+    // not fail the check.
+    if let Err(error) = edits.delete().await {
+        warn!(%error, "failed to discard the Google Play check edit");
+    }
+    Ok(())
 }
 
 fn require_runner(runner_auth: &RunnerAuth, runner_id: &str) -> Result<(), ApiFailure> {
@@ -408,5 +611,130 @@ mod tests {
         .unwrap();
         assert_eq!(count, 1);
         assert!(next_step_at.is_some(), "the rollout is scheduled");
+    }
+
+    #[tokio::test]
+    async fn the_check_falls_back_to_the_latest_play_release_package() {
+        let pool = pool().await;
+        assert_eq!(default_play_package(&pool, "pl1").await.unwrap(), None);
+
+        sqlx::query(
+            "INSERT INTO releases (id, project_id, build_id, store, track, package_name, state, created_at, updated_at) \
+             VALUES ('r1', 'p1', 'b1', 'google_play', 'internal', 'com.example.app', 'complete', 1, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            default_play_package(&pool, "pl1").await.unwrap().as_deref(),
+            Some("com.example.app")
+        );
+
+        sqlx::query(
+            "INSERT INTO pipeline_publish_targets (id, pipeline_id, store, enabled, config, created_at, updated_at) \
+             VALUES ('t1', 'pl1', 'google_play', 1, \
+             '{\"service_account_secret\":\"PLAY\",\"track\":\"internal\",\"package_name\":\"com.example.expected\"}', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            default_play_package(&pool, "pl1").await.unwrap().as_deref(),
+            Some("com.example.expected")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_or_malformed_secret_fails_before_calling_google() {
+        let http = reqwest::Client::new();
+        let missing =
+            check_play_credentials(&http, "http://unused", "PLAY", None, Some("com.example")).await;
+        assert!(!missing.ok);
+        assert!(
+            missing.message.contains("No secret named PLAY"),
+            "{missing:?}"
+        );
+
+        let malformed = check_play_credentials(
+            &http,
+            "http://unused",
+            "PLAY",
+            Some("not json"),
+            Some("com.example"),
+        )
+        .await;
+        assert!(!malformed.ok);
+        assert!(
+            malformed.message.contains("service account JSON key"),
+            "{malformed:?}"
+        );
+        assert_eq!(malformed.service_account_email, None);
+    }
+
+    /// Serves `replies` (status, body) in turn, one per connection, and
+    /// returns the request lines.
+    async fn mock_play(
+        replies: Vec<(u16, &'static str)>,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            for (status, body) in replies {
+                let Ok(Ok((mut socket, _))) =
+                    tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
+                        .await
+                else {
+                    break;
+                };
+                let mut buf = vec![0u8; 16 * 1024];
+                let read = socket.read(&mut buf).await.unwrap();
+                let head = String::from_utf8_lossy(&buf[..read]).to_string();
+                seen.push(head.lines().next().unwrap_or_default().to_string());
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            seen
+        });
+        (base, server)
+    }
+
+    #[tokio::test]
+    async fn the_check_opens_and_discards_an_edit() {
+        let (base, server) = mock_play(vec![(200, r#"{"id":"e1"}"#), (204, "")]).await;
+        let http = reqwest::Client::new();
+        open_and_discard_edit(&http, &base, "token", "com.example")
+            .await
+            .unwrap();
+        let seen = server.await.unwrap();
+        assert!(seen[0].starts_with("POST /com.example/edits "), "{seen:?}");
+        assert!(
+            seen[1].starts_with("DELETE /com.example/edits/e1 "),
+            "{seen:?}"
+        );
+        assert!(!seen.iter().any(|line| line.contains(":commit")));
+    }
+
+    #[tokio::test]
+    async fn missing_play_console_access_explains_the_fix() {
+        let (base, _server) = mock_play(vec![(
+            403,
+            r#"{"error":{"message":"The caller does not have permission"}}"#,
+        )])
+        .await;
+        let http = reqwest::Client::new();
+        let error = open_and_discard_edit(&http, &base, "token", "com.example")
+            .await
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("The caller does not have permission"),
+            "{message}"
+        );
+        assert!(message.contains("Users and permissions"), "{message}");
     }
 }

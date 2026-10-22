@@ -4913,6 +4913,84 @@
         ]
       }
     },
+    "/v1/pipelines/{pipeline_id}/publish/google-play/test-credentials": {
+      "post": {
+        "tags": [
+          "Pipeline Publishing"
+        ],
+        "summary": "Test Google Play credentials",
+        "description": "Requires the manage pipelines project permission. Exchanges the named\nservice account key for a token, then opens and discards a Play edit\nfor the app, so nothing changes in Play Console. A rejected key or\nmissing Play Console access is reported with `ok: false`.",
+        "operationId": "test_pipeline_google_play_credentials",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GooglePlayCredentialsTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Check result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GooglePlayCredentialsTestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/pipelines/{pipeline_id}/secrets": {
       "get": {
         "tags": [
@@ -14782,6 +14860,62 @@
           },
           "host_url": {
             "type": "string"
+          }
+        }
+      },
+      "GooglePlayCredentialsTestRequest": {
+        "type": "object",
+        "description": "Which service account key to check against Google Play. The values come\nfrom the form, so a key can be checked before the settings are saved.",
+        "required": [
+          "service_account_secret"
+        ],
+        "properties": {
+          "package_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The app to open. When omitted, the saved expected package is used,\nthen the package of the pipeline's latest Google Play release."
+          },
+          "service_account_secret": {
+            "type": "string",
+            "description": "Name of the secret holding the service account JSON key."
+          }
+        }
+      },
+      "GooglePlayCredentialsTestResponse": {
+        "type": "object",
+        "description": "Outcome of a Google Play credentials check. A failed check is a normal\nanswer, with Google's reason in `message`, not an HTTP error.",
+        "required": [
+          "ok",
+          "message",
+          "checked_at"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "message": {
+            "type": "string",
+            "description": "What passed, or the exact failure."
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "package_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The app the check opened, when one was known."
+          },
+          "service_account_email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The key's `client_email`, when the secret is a service account key."
           }
         }
       },

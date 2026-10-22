@@ -50,6 +50,13 @@ struct JwtClaims<'a> {
     exp: u64,
 }
 
+/// The `client_email` of a service account JSON key.
+pub fn service_account_email(service_account_json: &str) -> anyhow::Result<String> {
+    let key: ServiceAccountKey = serde_json::from_str(service_account_json)
+        .context("the service account secret is not a Google service account JSON key")?;
+    Ok(key.client_email)
+}
+
 /// Exchange a service account JSON key for an androidpublisher access token.
 pub async fn access_token(
     http: &reqwest::Client,

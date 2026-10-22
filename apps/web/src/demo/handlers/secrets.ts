@@ -203,21 +203,81 @@ function secretHandlers(base: string) {
   ]
 }
 
-function playResponse(pipelineId: string): GooglePlayPublishResponse {
+function secretVisible(name: string | undefined, pipelineId: string) {
   const projectId = pipelineProjectId(pipelineId)
+  return demoSecrets.some(
+    (secret) =>
+      secret.name === name &&
+      (secret.scope === 'instance' ||
+        (secret.scope === 'project' && secret.project_id === projectId) ||
+        secret.pipeline_id === pipelineId),
+  )
+}
+
+function playResponse(pipelineId: string): GooglePlayPublishResponse {
   const saved = demoPlayConfigs.get(pipelineId)
-  const secretName = saved?.config.service_account_secret
   return {
     pipeline_id: pipelineId,
     config: saved?.config,
     updated_at: saved?.updated_at,
-    service_account_secret_present: demoSecrets.some(
-      (secret) =>
-        secret.name === secretName &&
-        (secret.scope === 'instance' ||
-          (secret.scope === 'project' && secret.project_id === projectId) ||
-          secret.pipeline_id === pipelineId),
+    service_account_secret_present: secretVisible(
+      saved?.config.service_account_secret,
+      pipelineId,
     ),
+  }
+}
+
+const playCredentialsTestSchema = z.object({
+  service_account_secret: z.string(),
+  package_name: z.string().nullish(),
+})
+
+/** Mirrors the daemon's checks against the demo secrets. */
+function playCredentialsTest(
+  pipelineId: string,
+  body: z.infer<typeof playCredentialsTestSchema>,
+) {
+  const secret = body.service_account_secret.trim()
+  const packageName =
+    body.package_name?.trim() ||
+    demoPlayConfigs.get(pipelineId)?.config.package_name ||
+    (pipelineId === PIPELINE_IDS.shopAndroid
+      ? 'build.oore.demo.shop'
+      : undefined)
+  const email = 'oore-publisher@oore-demo.iam.gserviceaccount.com'
+  const checked_at = Math.floor(Date.now() / 1000)
+  if (!secretVisible(secret, pipelineId)) {
+    return {
+      ok: false,
+      message: `No secret named ${secret} is visible to this pipeline. Add it to the pipeline, its project or the instance.`,
+      package_name: packageName,
+      checked_at,
+    }
+  }
+  // Only this demo secret holds a service account key.
+  if (secret !== 'PLAY_SERVICE_ACCOUNT') {
+    return {
+      ok: false,
+      message: `${secret} does not hold a Google service account JSON key. Store the whole key file downloaded from Google Cloud.`,
+      package_name: packageName,
+      checked_at,
+    }
+  }
+  if (!packageName) {
+    return {
+      ok: false,
+      message:
+        'Google accepted the key, but Oore does not know which app to check yet. Set the expected package under Advanced, then test again.',
+      service_account_email: email,
+      checked_at,
+    }
+  }
+  return {
+    ok: true,
+    message: `${email} can publish ${packageName} on Google Play.`,
+    package_name: packageName,
+    service_account_email: email,
+    checked_at,
   }
 }
 
@@ -276,6 +336,23 @@ export const secretHandlersList = [
         updated_at: Math.floor(Date.now() / 1000),
       })
       return HttpResponse.json(playResponse(pipelineId))
+    },
+  ),
+  http.post(
+    '*/v1/pipelines/:pipelineId/publish/google-play/test-credentials',
+    async ({ params, request }) => {
+      await delay(600)
+      const pipelineId = z.string().parse(params.pipelineId)
+      const projectId = pipelineProjectId(pipelineId)
+      if (!projectId) return notFound('Pipeline not found')
+      const denied = requireDemoProjectPermission(
+        request,
+        projectId,
+        'pipelines:write',
+      )
+      if (denied) return denied
+      const body = playCredentialsTestSchema.parse(await request.json())
+      return HttpResponse.json(playCredentialsTest(pipelineId, body))
     },
   ),
 ]

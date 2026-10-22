@@ -9,7 +9,12 @@ import {
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Add01Icon, InformationCircleIcon } from '@hugeicons/core-free-icons'
+import {
+  Add01Icon,
+  AlertCircleIcon,
+  CheckmarkCircle02Icon,
+  InformationCircleIcon,
+} from '@hugeicons/core-free-icons'
 import type { PipelineAndroidSigningResponse } from '@oore/client/models'
 
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
@@ -17,7 +22,9 @@ import { buildsAppBundle } from '@/lib/pipeline-form-utils'
 import { toast } from '@/lib/toast'
 import {
   usePipelineGooglePlayPublish,
+  useTestGooglePlayCredentials,
   useUpdatePipelineGooglePlayPublish,
+  type GooglePlayCredentialsTest,
   type GooglePlayPublishConfig,
   type GooglePlayPublishResponse,
 } from '@/hooks/use-pipeline-publish'
@@ -196,6 +203,14 @@ const formSchema = z
   })
 
 type FormValues = z.infer<typeof formSchema>
+
+/** The latest credentials check result for each secret tested. */
+interface CredentialsCheckState {
+  results: ReadonlyMap<string, GooglePlayCredentialsTest>
+  error: Error | null
+  pending: boolean
+  onTest: (secret: string, packageName: string | null) => void
+}
 
 function isTrackChoice(track: string): track is Exclude<TrackChoice, 'custom'> {
   return track in TRACKS && track !== 'custom'
@@ -407,7 +422,7 @@ function ServiceAccountField({
             {!value
               ? 'Store the whole service account JSON key file as a secret, then choose it here.'
               : scope
-                ? `Uses the ${SCOPE_LABEL[scope]} secret ${value}. A pipeline secret overrides a project secret, which overrides an instance secret. The key stays on the runner that builds the app.`
+                ? `Uses the ${SCOPE_LABEL[scope]} secret ${value}. A pipeline secret overrides a project secret, which overrides an instance secret. Uploads read it on the runner that builds the app.`
                 : savedPresent
                   ? `Uses ${value} from a scope you can’t list.`
                   : `No secret named ${value} is visible to this pipeline. The upload step will fail until you add it.`}
@@ -416,6 +431,67 @@ function ServiceAccountField({
         </FormItem>
       )}
     />
+  )
+}
+
+function CredentialsCheck({
+  credentials,
+  form,
+}: {
+  credentials: CredentialsCheckState
+  form: UseFormReturn<FormValues>
+}) {
+  const [secret, packageName] = useWatch({
+    control: form.control,
+    name: ['service_account_secret', 'package_name'],
+  })
+  const result = credentials.results.get(secret)
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-muted-foreground">
+          Check the key against Google Play without running a build. Nothing
+          changes in Play Console.
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="self-start sm:self-auto"
+          disabled={!secret || credentials.pending}
+          onClick={() => credentials.onTest(secret, packageName || null)}
+        >
+          {credentials.pending ? <Spinner data-icon="inline-start" /> : null}
+          Test credentials
+        </Button>
+      </div>
+      {result ? (
+        <Alert
+          variant={result.ok ? 'default' : 'destructive'}
+          aria-live="polite"
+        >
+          <HugeiconsIcon
+            icon={result.ok ? CheckmarkCircle02Icon : AlertCircleIcon}
+            className={result.ok ? 'text-success' : undefined}
+          />
+          <AlertTitle>
+            {result.ok
+              ? 'Google Play accepted the key'
+              : 'Google Play check failed'}
+          </AlertTitle>
+          <AlertDescription>{result.message}</AlertDescription>
+        </Alert>
+      ) : credentials.error ? (
+        <Alert variant="destructive" aria-live="polite">
+          <HugeiconsIcon icon={InformationCircleIcon} />
+          <AlertTitle>The check did not run</AlertTitle>
+          <AlertDescription>
+            {getApiErrorMessage(credentials.error, {})}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+    </div>
   )
 }
 
@@ -707,6 +783,7 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
 function GooglePlayPublishForm({
   canShareSecrets,
   canWrite,
+  credentials,
   pipelineId,
   projectId,
   saved,
@@ -714,6 +791,7 @@ function GooglePlayPublishForm({
 }: {
   canShareSecrets: boolean
   canWrite: boolean
+  credentials: CredentialsCheckState
   pipelineId: string
   projectId: string
   saved: GooglePlayPublishResponse
@@ -764,6 +842,7 @@ function GooglePlayPublishForm({
                 secretScopes={secretScopes}
                 onAddSecret={() => setAddSecretOpen(true)}
               />
+              <CredentialsCheck form={form} credentials={credentials} />
             </SettingsSection>
 
             <SettingsSurfaceSeparator />
@@ -852,6 +931,24 @@ export function GooglePlayPublishSection({
   projectId: string
 }) {
   const publishQuery = usePipelineGooglePlayPublish(pipelineId)
+  const testMutation = useTestGooglePlayCredentials(pipelineId)
+  const [checkResults, setCheckResults] = useState<
+    ReadonlyMap<string, GooglePlayCredentialsTest>
+  >(new Map())
+  const credentials: CredentialsCheckState = {
+    results: checkResults,
+    error: testMutation.error,
+    pending: testMutation.isPending,
+    onTest: (secret, packageName) => {
+      testMutation.mutate(
+        { service_account_secret: secret, package_name: packageName },
+        {
+          onSuccess: (result) =>
+            setCheckResults((current) => new Map(current).set(secret, result)),
+        },
+      )
+    },
+  }
   const [canShareSecrets] = useHasPermissions(['instance_settings:write'])
   const secretTargets: Array<SecretTarget> = [
     { scope: 'pipeline', pipelineId },
@@ -923,6 +1020,33 @@ export function GooglePlayPublishSection({
         : 'Store the service account JSON key as a secret and choose it under Credentials below.',
     })
   }
+  if (saved && secretReady) {
+    const savedCheck = checkResults.get(secretName)
+    checks.push({
+      key: 'access',
+      label: 'Google Play access',
+      ready: savedCheck ? savedCheck.ok : null,
+      detail:
+        savedCheck?.message ??
+        'Not checked yet. Test the key to confirm the service account can publish this app.',
+      action:
+        canWrite && !savedCheck?.ok ? (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={testMutation.isPending}
+            onClick={() =>
+              credentials.onTest(secretName, saved.config?.package_name ?? null)
+            }
+          >
+            {testMutation.isPending ? (
+              <Spinner data-icon="inline-start" />
+            ) : null}
+            Test credentials
+          </Button>
+        ) : undefined,
+    })
+  }
   checks.push({
     key: 'bundle',
     label: 'App Bundle build',
@@ -939,7 +1063,7 @@ export function GooglePlayPublishSection({
     <SettingsSection
       id="google-play"
       title="Google Play"
-      description="Upload the signed App Bundle from each successful build. Every Google Play call runs on the runner, so the service account key never leaves it."
+      description="Upload the signed App Bundle from each successful build. The runner that built it uploads it with your service account key."
     >
       <PublishReadiness checks={checks} />
 
@@ -953,6 +1077,7 @@ export function GooglePlayPublishSection({
         <GooglePlayPublishForm
           canShareSecrets={canShareSecrets}
           canWrite={canWrite}
+          credentials={credentials}
           pipelineId={pipelineId}
           projectId={projectId}
           saved={saved}

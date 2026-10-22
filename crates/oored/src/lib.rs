@@ -2782,6 +2782,10 @@ pub async fn build_router_with_recovery(
             get(pipeline_publish::get_pipeline_google_play_publish)
                 .put(pipeline_publish::update_pipeline_google_play_publish),
         )
+        .route(
+            "/v1/pipelines/{pipeline_id}/publish/google-play/test-credentials",
+            post(pipeline_publish::test_pipeline_google_play_credentials),
+        )
         // Shared App Store Connect API keys (private keys are never returned)
         .route(
             "/v1/app-store-connect-keys",

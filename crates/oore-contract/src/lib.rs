@@ -3864,6 +3864,34 @@ pub struct PipelineGooglePlayPublishResponse {
     pub updated_at: Option<i64>,
 }
 
+/// Which service account key to check against Google Play. The values come
+/// from the form, so a key can be checked before the settings are saved.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GooglePlayCredentialsTestRequest {
+    /// Name of the secret holding the service account JSON key.
+    pub service_account_secret: String,
+    /// The app to open. When omitted, the saved expected package is used,
+    /// then the package of the pipeline's latest Google Play release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+}
+
+/// Outcome of a Google Play credentials check. A failed check is a normal
+/// answer, with Google's reason in `message`, not an HTTP error.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GooglePlayCredentialsTestResponse {
+    pub ok: bool,
+    /// What passed, or the exact failure.
+    pub message: String,
+    /// The app the check opened, when one was known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+    /// The key's `client_email`, when the secret is a service account key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_account_email: Option<String>,
+    pub checked_at: i64,
+}
+
 /// Publish work for the runner, fetched with the job-scoped grant.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RunnerPublishPlan {
