@@ -113,26 +113,46 @@ async fn record_report(
     report: &RunnerTestReport,
 ) -> Result<(), sqlx::Error> {
     let now = now_unix();
+    let step = truncate(&report.step, MAX_NAME_BYTES);
     let mut tx = pool.begin().await?;
+    // A step's latest report replaces its earlier one, so a report sent
+    // twice is counted once.
     sqlx::query(
-        "INSERT INTO build_test_summaries \
-         (build_id, pipeline_id, total, passed, failed, skipped, duration_ms, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
-         ON CONFLICT(build_id) DO UPDATE SET \
-         total = total + excluded.total, passed = passed + excluded.passed, \
-         failed = failed + excluded.failed, skipped = skipped + excluded.skipped, \
-         duration_ms = duration_ms + excluded.duration_ms, updated_at = excluded.updated_at",
+        "INSERT INTO build_test_step_summaries \
+         (build_id, step, total, passed, failed, skipped, duration_ms) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+         ON CONFLICT(build_id, step) DO UPDATE SET \
+         total = excluded.total, passed = excluded.passed, failed = excluded.failed, \
+         skipped = excluded.skipped, duration_ms = excluded.duration_ms",
     )
     .bind(build_id)
-    .bind(pipeline_id)
+    .bind(&step)
     .bind(report.total.max(0))
     .bind(report.passed.max(0))
     .bind(report.failed.max(0))
     .bind(report.skipped.max(0))
     .bind(report.duration_ms.max(0))
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO build_test_summaries \
+         (build_id, pipeline_id, total, passed, failed, skipped, duration_ms, created_at, updated_at) \
+         SELECT ?1, ?2, SUM(total), SUM(passed), SUM(failed), SUM(skipped), SUM(duration_ms), ?3, ?3 \
+         FROM build_test_step_summaries WHERE build_id = ?1 \
+         ON CONFLICT(build_id) DO UPDATE SET \
+         total = excluded.total, passed = excluded.passed, failed = excluded.failed, \
+         skipped = excluded.skipped, duration_ms = excluded.duration_ms, updated_at = excluded.updated_at",
+    )
+    .bind(build_id)
+    .bind(pipeline_id)
     .bind(now)
     .execute(&mut *tx)
     .await?;
+    sqlx::query("DELETE FROM build_test_failures WHERE build_id = ?1 AND step = ?2")
+        .bind(build_id)
+        .bind(&step)
+        .execute(&mut *tx)
+        .await?;
 
     let stored: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM build_test_failures WHERE build_id = ?1")
@@ -152,7 +172,7 @@ async fn record_report(
         .bind(test_key(&suite, &name))
         .bind(&suite)
         .bind(&name)
-        .bind(truncate(&report.step, MAX_NAME_BYTES))
+        .bind(&step)
         .bind(
             failure
                 .message
@@ -310,6 +330,7 @@ mod tests {
         for statement in [
             "CREATE TABLE builds (id TEXT PRIMARY KEY, pipeline_id TEXT, build_number INTEGER)",
             include_str!("../migrations/053_build_test_results.sql"),
+            include_str!("../migrations/062_build_test_step_summaries.sql"),
         ] {
             sqlx::raw_sql(statement).execute(&pool).await.unwrap();
         }
@@ -383,6 +404,32 @@ mod tests {
         assert_eq!(names, ["a", "b"]);
         assert_eq!(results.failures[1].step, "build-2");
         assert_eq!(results.failures[0].message.as_deref(), Some("a broke"));
+    }
+
+    #[tokio::test]
+    async fn a_step_reported_twice_counts_once() {
+        let pool = pool().await;
+        build(&pool, 1, "pl", Some(&["a"])).await;
+        record_report(&pool, "b1", "pl", &report("build-1", 10, &["a"]))
+            .await
+            .unwrap();
+        record_report(&pool, "b1", "pl", &report("build-2", 5, &[]))
+            .await
+            .unwrap();
+        let results = load_build_test_results(&pool, "b1").await.unwrap();
+        let summary = results.summary.unwrap();
+        assert_eq!((summary.total, summary.failed, summary.passed), (15, 1, 14));
+        assert_eq!(results.failures.len(), 1);
+        assert_eq!(results.failures[0].step, "build-1");
+
+        // A later report from the same step replaces its earlier one.
+        record_report(&pool, "b1", "pl", &report("build-1", 10, &["c"]))
+            .await
+            .unwrap();
+        let results = load_build_test_results(&pool, "b1").await.unwrap();
+        let names: Vec<_> = results.failures.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["c"]);
+        assert_eq!(results.summary.unwrap().total, 15);
     }
 
     #[tokio::test]

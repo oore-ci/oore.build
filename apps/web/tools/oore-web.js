@@ -80,7 +80,7 @@ Usage:
   oore-web [serve] [--listen <host:port>] [--backend-url <url>] [--dist-dir <path>]
   oore-web status [--url <frontend-url>] [--json]
   oore-web update [--channel stable|beta|alpha] [--repo owner/name] [--check] [--force]
-  oore-web recover-update
+  oore-web recover-update [--lifecycle-lock-held]
   oore-web version
 
 Options:
@@ -3093,11 +3093,23 @@ async function main() {
   }
 
   if (parsedCommand.command === 'recover-update') {
-    if (parsedCommand.args.length > 0) {
-      console.error('[oore-web] recover-update does not accept arguments')
+    // `oore` takes the lifecycle lock before it asks for recovery, so this
+    // process only takes the frontend update lock.
+    const lifecycleLockHeld =
+      parsedCommand.args.length === 1 &&
+      parsedCommand.args[0] === '--lifecycle-lock-held'
+    if (parsedCommand.args.length > 0 && !lifecycleLockHeld) {
+      console.error(
+        '[oore-web] recover-update accepts only --lifecycle-lock-held',
+      )
       process.exit(2)
     }
-    const recovered = await recoverUpdateWithLocks(resolveInstallRoot())
+    const installRoot = resolveInstallRoot()
+    const recovered = lifecycleLockHeld
+      ? await withUpdateLock(installRoot, () =>
+          recoverInterruptedUpdate(installRoot),
+        )
+      : await recoverUpdateWithLocks(installRoot)
     console.log(
       recovered
         ? 'Restored the previous frontend after an interrupted update.'

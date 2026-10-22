@@ -90,6 +90,12 @@ version. To rebuild one, delete it with `tart delete oore-flutter-3.47.7`. To
 free a base you no longer need, find it with `tart list --source oci` and
 delete it with `tart delete`.
 
+Between builds the Runner deletes the `oore-flutter-*` images it built that no
+build used for 30 days, so old Flutter versions and customised images do not
+fill the disk. Set `OORE_TART_IMAGE_MAX_AGE_DAYS` on the Runner to change the
+age, or to `0` to keep every image. Images it did not build, such as one
+`OORE_TART_IMAGE` names, are never deleted.
+
 ### Customise an app's image
 
 Add `oore.image.yaml` to the repository root when an app needs more than the
@@ -118,8 +124,8 @@ setup:
 The Flutter version still comes from `.fvmrc` or the pipeline. With this file
 the image belongs to that project alone: its name adds a hash of the project,
 base, Flutter version and file, such as `oore-flutter-3.47.7-1a2b3c4d5e6f`, so
-editing the file builds a fresh image on the next build. Old images stay until
-you delete them with `tart delete`.
+editing the file builds a fresh image on the next build. The old image is
+deleted once no build has used it for 30 days.
 
 ### Use a prebuilt image
 
@@ -156,7 +162,9 @@ Each image carries exactly one Flutter SDK.
      Runner's, with `org.gradle.caching=true` added unless that file sets
      `org.gradle.caching` itself.
    - Xcode's DerivedData is kept per project and copied to its default folder,
-     so resolved Swift packages and build products carry over.
+     so resolved Swift packages and build products carry over. The Runner
+     keeps the last complete copy while it saves a new one, so a save that is
+     cut off never leaves a half-written copy for the next build.
    - Android SDK packages a build installs that the image does not have, such
      as `platforms;android-34` or `cmake;3.22.1`, are saved and copied into
      later VMs. To put them in the image instead, list them under
@@ -173,8 +181,12 @@ Each image carries exactly one Flutter SDK.
    The keystore is written only to a private directory on the VM's disk.
    iOS signing and artifact upload run on the host against the shared
    workspace, using tools that ship with macOS.
-6. The VM is stopped and deleted. A Runner that restarts deletes any VM it
-   left behind.
+6. The Runner copies the caches back to the host and logs how long each took.
+   It stops the guest's Gradle and Kotlin daemons first, so the Gradle cache
+   is saved only once nothing writes to it. A canceled or timed-out build
+   saves no caches. Then the VM is stopped and deleted. Every copy and Tart
+   command has a time limit, so a VM that stops answering cannot hold the
+   Runner. Between builds the Runner deletes any VM it left behind.
 
 ## Limits
 
