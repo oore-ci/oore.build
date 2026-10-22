@@ -11,7 +11,7 @@ use oore_contract::{
 };
 use oore_google_play::{
     LocalizedText, MAX_RELEASE_NOTES_CHARS, PlayEdits, ReleaseStatus, TrackRelease, access_token,
-    play_track_name, read_aab_manifest,
+    is_play_rejection, play_track_name, read_aab_manifest,
 };
 
 use crate::store_version::{ensure_play_version_code, fetch_play_version_codes};
@@ -154,6 +154,60 @@ fn release_status(config: &GooglePlayPublishConfig) -> (ReleaseStatus, Option<f6
     }
 }
 
+/// Whether the build may still publish: `stopped` ends when it must stop,
+/// and `still_active` asks once more right before the release goes live.
+pub(crate) struct PublishGate<S, A> {
+    pub stopped: S,
+    pub still_active: A,
+}
+
+/// How a staged edit ended up committed.
+#[derive(Debug, PartialEq, Eq)]
+enum Committed {
+    Confirmed,
+    /// The commit's reply was lost, but the release is on the track.
+    ReplyLost,
+}
+
+/// Runs `stage` on the open edit and commits it unless the build stopped.
+/// Every edit that is not committed is deleted, so nothing is left half
+/// staged. When a commit's reply is lost, `landed` says whether the release
+/// reached the track anyway.
+async fn stage_and_commit<T>(
+    edits: &PlayEdits<'_>,
+    stage: impl Future<Output = anyhow::Result<T>>,
+    gate: PublishGate<
+        impl Future<Output = anyhow::Error>,
+        impl Future<Output = anyhow::Result<()>>,
+    >,
+    landed: impl Future<Output = anyhow::Result<bool>>,
+) -> anyhow::Result<(T, Committed)> {
+    let staged = tokio::select! {
+        staged = stage => staged,
+        error = gate.stopped => Err(error.context("The build stopped during the Google Play upload; nothing was published")),
+    };
+    let staged = match staged {
+        Ok(staged) => staged,
+        Err(error) => {
+            let _ = edits.delete().await;
+            return Err(error);
+        }
+    };
+    if let Err(error) = gate.still_active.await {
+        let _ = edits.delete().await;
+        return Err(error
+            .context("The build stopped before the release was committed; nothing was published"));
+    }
+    let Err(error) = edits.commit().await else {
+        return Ok((staged, Committed::Confirmed));
+    };
+    if !is_play_rejection(&error) && landed.await.unwrap_or(false) {
+        return Ok((staged, Committed::ReplyLost));
+    }
+    let _ = edits.delete().await;
+    Err(error)
+}
+
 /// Upload the build's signed App Bundle to Google Play and roll it out.
 /// Progress lines go to `log`; they pass through the build's secret masker.
 pub(crate) async fn publish_to_google_play(
@@ -163,6 +217,10 @@ pub(crate) async fn publish_to_google_play(
     changelog: Option<&str>,
     config: &GooglePlayPublishConfig,
     log: &mut Vec<String>,
+    gate: PublishGate<
+        impl Future<Output = anyhow::Error>,
+        impl Future<Output = anyhow::Result<()>>,
+    >,
 ) -> anyhow::Result<RunnerPublishResult> {
     let service_account = secrets
         .get(&config.service_account_secret)
@@ -207,19 +265,20 @@ pub(crate) async fn publish_to_google_play(
     }
     ensure_play_version_code(manifest.version_code, &store_codes, &track)?;
     let edits = PlayEdits::insert(http, &token, &manifest.package_name).await?;
-    let uploaded = async {
+    let mut staged_log = Vec::new();
+    let stage = async {
         let version_code = edits.upload_bundle(&bundle).await?;
-        log.push(format!(
+        staged_log.push(format!(
             "[oore-publish] Uploaded {} as versionCode {version_code}",
             bundle.strip_prefix(workspace).unwrap_or(&bundle).display()
         ));
         match &mapping {
             Some(path) => {
                 edits.upload_mapping(version_code, path).await?;
-                log.push("[oore-publish] Uploaded mapping.txt".to_string());
+                staged_log.push("[oore-publish] Uploaded mapping.txt".to_string());
             }
             None if config.upload_mapping => {
-                log.push(
+                staged_log.push(
                     "[oore-publish] No mapping.txt found; skipped deobfuscation upload".to_string(),
                 );
             }
@@ -239,17 +298,24 @@ pub(crate) async fn publish_to_google_play(
             )
             .await?;
         anyhow::Ok(version_code)
-    }
-    .await;
-    let version_code = match uploaded {
-        Ok(version_code) => version_code,
-        Err(error) => {
-            // Leave nothing half-staged in Play Console.
-            let _ = edits.delete().await;
-            return Err(error);
-        }
     };
-    edits.commit().await?;
+    let landed = async {
+        let codes = fetch_play_version_codes(http, &token, &manifest.package_name, &track).await?;
+        anyhow::Ok(
+            codes
+                .track_highest
+                .is_some_and(|highest| highest >= manifest.version_code),
+        )
+    };
+    let committed = stage_and_commit(&edits, stage, gate, landed).await;
+    log.append(&mut staged_log);
+    let (version_code, committed) = committed?;
+    if committed == Committed::ReplyLost {
+        log.push(
+            "[oore-publish] Google Play's reply to the commit was lost, but the release is on the track"
+                .to_string(),
+        );
+    }
 
     log.push(match (status, user_fraction) {
         (ReleaseStatus::Draft, _) => format!("[oore-publish] Created a draft release on {track}"),
@@ -379,6 +445,131 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
+    /// Serves `replies` (status, body) in turn, one per connection; status 0
+    /// closes the connection without replying. Returns the request lines.
+    async fn mock_play(
+        replies: Vec<(u16, &'static str)>,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            for (status, body) in replies {
+                let Ok(Ok((mut socket, _))) =
+                    tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
+                        .await
+                else {
+                    break;
+                };
+                let mut buf = vec![0u8; 16 * 1024];
+                let read = socket.read(&mut buf).await.unwrap();
+                let head = String::from_utf8_lossy(&buf[..read]).to_string();
+                seen.push(head.lines().next().unwrap_or_default().to_string());
+                if status == 0 {
+                    continue;
+                }
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            seen
+        });
+        (base, server)
+    }
+
+    async fn run_stage_and_commit(
+        replies: Vec<(u16, &'static str)>,
+        stage: impl Future<Output = anyhow::Result<i64>>,
+        stopped: impl Future<Output = anyhow::Error>,
+        still_active: anyhow::Result<()>,
+        landed: bool,
+    ) -> (anyhow::Result<(i64, Committed)>, Vec<String>) {
+        let (base, server) = mock_play(replies).await;
+        let http = reqwest::Client::new();
+        let edits = PlayEdits::insert_at(&http, &base, &base, "token", "com.example")
+            .await
+            .unwrap();
+        let result = stage_and_commit(
+            &edits,
+            stage,
+            PublishGate {
+                stopped,
+                still_active: async { still_active },
+            },
+            async move { anyhow::Ok(landed) },
+        )
+        .await;
+        (result, server.await.unwrap())
+    }
+
+    const OPEN_EDIT: (u16, &str) = (200, r#"{"id":"e1"}"#);
+    const COMMIT: &str = "POST /com.example/edits/e1:commit ";
+    const DELETE: &str = "DELETE /com.example/edits/e1 ";
+
+    #[tokio::test]
+    async fn a_build_stopped_mid_upload_discards_the_edit() {
+        let (result, seen) = run_stage_and_commit(
+            vec![OPEN_EDIT, (204, "")],
+            std::future::pending(),
+            async { anyhow::anyhow!("canceled") },
+            Ok(()),
+            false,
+        )
+        .await;
+        let error = format!("{:#}", result.unwrap_err());
+        assert!(error.contains("nothing was published"), "{error}");
+        assert!(seen[1].starts_with(DELETE), "{seen:?}");
+        assert!(!seen.iter().any(|line| line.starts_with(COMMIT)));
+    }
+
+    #[tokio::test]
+    async fn a_build_that_stopped_before_the_commit_is_not_committed() {
+        let (result, seen) = run_stage_and_commit(
+            vec![OPEN_EDIT, (204, "")],
+            async { anyhow::Ok(42) },
+            std::future::pending(),
+            Err(anyhow::anyhow!("canceled")),
+            false,
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert!(seen[1].starts_with(DELETE), "{seen:?}");
+    }
+
+    #[tokio::test]
+    async fn a_rejected_commit_discards_the_edit() {
+        let (result, seen) = run_stage_and_commit(
+            vec![OPEN_EDIT, (400, r#"{"error":{"message":"no"}}"#), (204, "")],
+            async { anyhow::Ok(42) },
+            std::future::pending(),
+            Ok(()),
+            true,
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(seen[1].starts_with(COMMIT), "{seen:?}");
+        assert!(seen[2].starts_with(DELETE), "{seen:?}");
+    }
+
+    #[tokio::test]
+    async fn a_lost_commit_reply_with_the_release_on_the_track_is_a_success() {
+        let (result, seen) = run_stage_and_commit(
+            vec![OPEN_EDIT, (0, "")],
+            async { anyhow::Ok(42) },
+            std::future::pending(),
+            Ok(()),
+            true,
+        )
+        .await;
+        assert_eq!(result.unwrap(), (42, Committed::ReplyLost));
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert!(seen[1].starts_with(COMMIT), "{seen:?}");
+    }
+
     #[tokio::test]
     async fn missing_service_account_secret_fails_before_any_upload() {
         let root = workspace("secret");
@@ -389,6 +580,10 @@ mod tests {
             None,
             &config(),
             &mut Vec::new(),
+            PublishGate {
+                stopped: std::future::pending(),
+                still_active: async { Ok(()) },
+            },
         )
         .await
         .unwrap_err()

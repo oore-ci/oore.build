@@ -9,7 +9,6 @@ import type {
   BuildTestResultsResponse,
   ExternalAccessNetworkSettings,
   InstancePreferences,
-  Integration,
   IntegrationInstallation,
   IntegrationRepository,
   NotificationDelivery,
@@ -25,6 +24,7 @@ import type {
   User,
   UserRole,
 } from '@oore/client/models'
+import type { IntegrationWithStatus } from '@/lib/integration-status'
 import type { NotificationChannel } from '@/lib/notification-channels'
 import type { JsonObject } from '@/lib/types'
 import type { Project, ProjectRole } from '@oore/client/models'
@@ -113,7 +113,7 @@ interface DemoState {
   releases: Array<DemoRelease>
   releaseHistory: Partial<Record<string, Array<ReleaseHistoryEntry>>>
   runners: Array<Runner>
-  integrations: Array<Integration>
+  integrations: Array<IntegrationWithStatus>
   installations: Partial<Record<string, Array<IntegrationInstallation>>>
   repositories: Partial<Record<string, Array<IntegrationRepository>>>
   notificationChannels: Array<NotificationChannel>
@@ -737,7 +737,11 @@ export function createDemoState(
     const gitlab = state.integrations.find(
       (integration) => integration.id === INTEGRATION_IDS.gitlab,
     )
-    if (gitlab) gitlab.status = 'error'
+    if (gitlab) {
+      gitlab.status = 'error'
+      gitlab.status_reason = 'rejected'
+      gitlab.status_checked_at = Math.floor(Date.now() / 1000) - 600
+    }
     for (const runner of state.runners) {
       runner.status =
         runner.id === RUNNER_IDS.macStudio ? 'draining' : 'offline'

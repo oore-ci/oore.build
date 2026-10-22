@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -7,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::{Output, Stdio};
 use std::time::{Duration, Instant};
-use std::{ffi::OsStr, fs};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
@@ -130,16 +130,29 @@ async fn run_server(args: RunArgs) -> anyhow::Result<()> {
         .await
         .context("failed to ensure owner user")?;
 
-    // Load or generate the AES-256 encryption key for secrets at rest.
+    // Load the AES-256 encryption key for secrets at rest.
     // Key storage mode is persisted in instance preferences and applied on restart.
     let key_storage_mode = oored::instance_settings::load_key_storage_mode(store.pool())
         .await
         .context("failed to load key storage mode preference")?;
-    let runtime_key = crypto::load_runtime_key_with_mode(key_storage_mode)
-        .context("failed to load runtime encryption key")?;
+    // A key is generated only when the database holds no ciphertext, and an
+    // existing key must decrypt the database's key check value.
+    let (runtime_key, key_check) = oored::key_check::load_verified_runtime_key(
+        store.pool(),
+        key_storage_mode,
+        crypto::resolve_key_path()?,
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "failed to load the runtime encryption key for database {}",
+            db_path.display()
+        )
+    })?;
     info!(
         mode = %key_storage_mode,
         source = runtime_key.source.as_str(),
+        check = ?key_check,
         legacy_file_path = %runtime_key.legacy_file_path.display(),
         "encryption key ready"
     );
@@ -257,12 +270,8 @@ fn resolve_install_root() -> anyhow::Result<PathBuf> {
         }
     }
 
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(bin_dir) = exe.parent()
-        && bin_dir.file_name() == Some(OsStr::new("bin"))
-        && let Some(root) = bin_dir.parent()
-    {
-        return Ok(root.to_path_buf());
+    if let Some(root) = oore_contract::install_root::install_root_for_current_executable() {
+        return Ok(root);
     }
 
     let home = dirs::home_dir().context("could not determine home directory")?;
@@ -273,14 +282,8 @@ fn refuse_manifest_managed_service_command(
     command: &str,
     supported_command: &str,
 ) -> anyhow::Result<()> {
-    let executable = std::env::current_exe().context("failed to resolve current executable")?;
-    let Some(bin_dir) = executable.parent() else {
-        return Ok(());
-    };
-    if bin_dir.file_name() != Some(OsStr::new("bin")) {
-        return Ok(());
-    }
-    let Some(install_root) = bin_dir.parent() else {
+    let Some(install_root) = oore_contract::install_root::install_root_for_current_executable()
+    else {
         return Ok(());
     };
     let manifest = install_root.join("install-manifest.json");

@@ -50,7 +50,9 @@ impl Scope<'_> {
             query.push(")");
         }
         if let Some(project_id) = self.project_id {
-            query.push(" AND builds.project_id = ");
+            // `+` keeps the time range, not a project's whole history, as the
+            // index SQLite searches.
+            query.push(" AND +builds.project_id = ");
             query.push_bind(project_id.to_string());
         }
     }
@@ -143,19 +145,7 @@ async fn load_build_insights(
     let since = local_day_start(now, offset_minutes) - (days - 1) * DAY;
     let previous_since = since - days * DAY;
 
-    let mut query: QueryBuilder<Sqlite> = QueryBuilder::new(
-        "SELECT builds.id, builds.status, builds.project_id, builds.pipeline_id, builds.build_number, \
-         builds.started_at, builds.finished_at, projects.name AS project_name, pipelines.name AS pipeline_name \
-         FROM builds \
-         LEFT JOIN projects ON projects.id = builds.project_id \
-         LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
-         WHERE builds.status IN ('succeeded', 'failed', 'timed_out', 'canceled', 'expired') \
-         AND builds.finished_at IS NOT NULL AND builds.finished_at >= ",
-    );
-    query.push_bind(previous_since);
-    scope.push_conditions(&mut query);
-    query.push(" ORDER BY builds.finished_at ASC, builds.build_number ASC");
-    let finished: Vec<FinishedBuild> = query
+    let finished: Vec<FinishedBuild> = finished_query(scope, previous_since)
         .build()
         .fetch_all(pool)
         .await?
@@ -185,14 +175,7 @@ async fn load_build_insights(
     let (previous, current): (Vec<&FinishedBuild>, Vec<&FinishedBuild>) =
         finished.iter().partition(|build| build.finished_at < since);
 
-    // Approval time is a maintainer's wait, not the queue's.
-    let mut query: QueryBuilder<Sqlite> = QueryBuilder::new(
-        "SELECT builds.started_at - COALESCE(builds.approval_decided_at, builds.queued_at) AS wait \
-         FROM builds WHERE builds.started_at IS NOT NULL AND builds.started_at >= ",
-    );
-    query.push_bind(since);
-    scope.push_conditions(&mut query);
-    let waits: Vec<i64> = query
+    let waits: Vec<i64> = wait_query(scope, since)
         .build()
         .fetch_all(pool)
         .await?
@@ -242,6 +225,38 @@ async fn load_build_insights(
         projects: projects(&current),
         failing_pipelines: failing_pipelines(&current),
     })
+}
+
+/// Builds that finished in the current or previous window.
+fn finished_query(scope: &Scope<'_>, previous_since: i64) -> QueryBuilder<Sqlite> {
+    let mut query = QueryBuilder::new(
+        "SELECT builds.id, COALESCE(builds.expired_from, builds.status) AS status, builds.project_id, builds.pipeline_id, builds.build_number, \
+         builds.started_at, builds.finished_at, projects.name AS project_name, pipelines.name AS pipeline_name \
+         FROM builds \
+         LEFT JOIN projects ON projects.id = builds.project_id \
+         LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
+         WHERE builds.finished_at >= ",
+    );
+    query.push_bind(previous_since);
+    // The unary `+` keeps SQLite from using the status index: nearly every
+    // build is terminal, so the finished_at range is what narrows the scan.
+    query
+        .push(" AND +builds.status IN ('succeeded', 'failed', 'timed_out', 'canceled', 'expired')");
+    scope.push_conditions(&mut query);
+    query.push(" ORDER BY builds.finished_at ASC, builds.build_number ASC");
+    query
+}
+
+/// How long builds that started in the window waited for a runner.
+fn wait_query(scope: &Scope<'_>, since: i64) -> QueryBuilder<Sqlite> {
+    // Approval time is a maintainer's wait, not the queue's.
+    let mut query = QueryBuilder::new(
+        "SELECT builds.started_at - COALESCE(builds.approval_decided_at, builds.queued_at) AS wait \
+         FROM builds WHERE builds.started_at >= ",
+    );
+    query.push_bind(since);
+    scope.push_conditions(&mut query);
+    query
 }
 
 fn totals(builds: &[&FinishedBuild]) -> BuildOutcomeTotals {
@@ -520,6 +535,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn builds_retention_expired_keep_their_outcome() {
+        let pool = pool().await;
+        finished(&pool, SHOP, 1, "succeeded", 3_600, 600).await;
+        finished(&pool, SHOP, 2, "failed", 7_200, 120).await;
+        finished(&pool, SHOP, 3, "expired", 7_300, 0).await;
+        let before = load_build_insights(&pool, &OWNER, 7, 0, NOW).await.unwrap();
+        sqlx::query(
+            "UPDATE builds SET expired_from = status, status = 'expired' \
+             WHERE build_number IN (1, 2)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let after = load_build_insights(&pool, &OWNER, 7, 0, NOW).await.unwrap();
+
+        assert_eq!(
+            (
+                after.totals.succeeded,
+                after.totals.failed,
+                after.totals.expired
+            ),
+            (1, 1, 1)
+        );
+        assert_eq!(after.totals.success_rate, before.totals.success_rate);
+        assert_eq!(after.duration.p50_seconds, before.duration.p50_seconds);
+    }
+
+    #[tokio::test]
     async fn ranks_failing_pipelines_by_current_streak() {
         let pool = pool().await;
         finished(&pool, SHOP, 1, "failed", 5 * DAY, 60).await;
@@ -608,5 +652,40 @@ mod tests {
         assert_eq!(insights.totals.finished, 1);
         assert_eq!(insights.totals.succeeded, 1);
         assert!(insights.failing_pipelines.is_empty());
+    }
+
+    async fn query_plan(pool: &SqlitePool, query: QueryBuilder<Sqlite>) -> String {
+        let sql = format!("EXPLAIN QUERY PLAN {}", query.sql().as_str());
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_all(pool)
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[tokio::test]
+    async fn window_queries_search_by_time_instead_of_scanning_history() {
+        let pool = pool().await;
+
+        let project = Scope {
+            member_user_id: Some("u2"),
+            project_id: Some("p1"),
+        };
+        for scope in [&OWNER, &project] {
+            let finished = query_plan(&pool, finished_query(scope, NOW)).await;
+            assert!(
+                finished
+                    .contains("SEARCH builds USING INDEX idx_builds_finished_at (finished_at>?)"),
+                "{finished}"
+            );
+        }
+        let waits = query_plan(&pool, wait_query(&OWNER, NOW)).await;
+        assert!(
+            waits.contains("SEARCH builds USING INDEX idx_builds_started_at (started_at>?)"),
+            "{waits}"
+        );
     }
 }

@@ -27,7 +27,7 @@ const demoLoginSchema = z.object({
 
 type DemoLoginValues = z.infer<typeof demoLoginSchema>
 
-export default function DemoLoginForm() {
+export default function DemoLoginForm({ redirectTo }: { redirectTo: string }) {
   const navigate = useNavigate()
   const setAuth = useAuthStore((state) => state.setAuth)
   const form = useForm<DemoLoginValues>({
@@ -62,7 +62,7 @@ export default function DemoLoginForm() {
       },
       'local',
     )
-    void navigate({ to: '/', replace: true })
+    void navigate({ href: redirectTo, replace: true })
   }
 
   return (

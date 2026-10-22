@@ -60,7 +60,7 @@ export function ArtifactObjectStorageFields({
               }}
             >
               <FormControl>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select a service" />
                 </SelectTrigger>
               </FormControl>

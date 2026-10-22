@@ -26,7 +26,7 @@ use crate::crypto;
 use crate::extractors::AuthUser;
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
-use crate::util::{api_err, now_unix};
+use crate::util::{api_err, is_foreign_key_violation, is_unique_violation, now_unix};
 
 type ApiFailure = (StatusCode, Json<ApiError>);
 type ApiResult<T> = Result<Json<T>, ApiFailure>;
@@ -35,13 +35,27 @@ const MAX_NAME_LEN: usize = 64;
 const MAX_ID_LEN: usize = 128;
 const MAX_P8_BYTES: usize = 16 * 1024;
 
+/// Pipelines `s` that use the shared key `k`: iOS signing is on and either
+/// signs through App Store Connect or uploads builds there. Other pipelines
+/// keep the choice for later but do not hold the key.
+macro_rules! uses_key {
+    () => {
+        concat!(
+            "s.shared_api_key_id = k.id AND s.enabled = 1 AND (s.mode IN ('api', 'hybrid') ",
+            "OR EXISTS (SELECT 1 FROM pipeline_publish_targets t ",
+            "WHERE t.pipeline_id = s.pipeline_id AND t.store = 'app_store' AND t.enabled = 1))"
+        )
+    };
+}
+
 /// A summary query over `app_store_connect_keys k` followed by `$tail`.
 macro_rules! summary_query {
     ($tail:literal) => {
         concat!(
             "SELECT k.id, k.name, k.key_id, k.issuer_id, k.created_at, k.updated_at, ",
-            "(SELECT COUNT(*) FROM pipeline_ios_signing_settings s ",
-            "WHERE s.shared_api_key_id = k.id) AS pipeline_count ",
+            "(SELECT COUNT(*) FROM pipeline_ios_signing_settings s WHERE ",
+            uses_key!(),
+            ") AS pipeline_count ",
             "FROM app_store_connect_keys k ",
             $tail
         )
@@ -80,6 +94,37 @@ fn store_error(context: &'static str, e: impl std::fmt::Display) -> ApiFailure {
 
 fn invalid(message: impl Into<String>) -> ApiFailure {
     api_err(StatusCode::BAD_REQUEST, "invalid_input", message)
+}
+
+fn name_taken(name: &str) -> ApiFailure {
+    api_err(
+        StatusCode::CONFLICT,
+        "key_exists",
+        format!("A shared key named '{name}' already exists"),
+    )
+}
+
+fn key_in_use(pipeline_count: i64) -> ApiFailure {
+    let pipelines = match pipeline_count {
+        // A pipeline started using the key while it was being deleted.
+        0 | 1 => "A pipeline uses".to_string(),
+        count => format!("{count} pipelines use"),
+    };
+    api_err(
+        StatusCode::CONFLICT,
+        "key_in_use",
+        format!(
+            "{pipelines} this key. Switch their iOS signing to another key before deleting it."
+        ),
+    )
+}
+
+/// A failed write, as a conflict when a concurrent request took the name.
+fn save_error(name: &str, e: sqlx::Error) -> ApiFailure {
+    if is_unique_violation(&e) {
+        return name_taken(name);
+    }
+    store_error("Failed to save the App Store Connect key", e)
 }
 
 pub(crate) async fn load_summary(
@@ -169,11 +214,7 @@ async fn ensure_name_free(
     .await
     .map_err(|e| store_error("Failed to check the key name", e))?;
     if taken.is_some() {
-        return Err(api_err(
-            StatusCode::CONFLICT,
-            "key_exists",
-            format!("A shared key named '{name}' already exists"),
-        ));
+        return Err(name_taken(name));
     }
     Ok(())
 }
@@ -245,7 +286,7 @@ pub async fn create_app_store_connect_key(
     .bind(now)
     .execute(&state.db)
     .await
-    .map_err(|e| store_error("Failed to save the App Store Connect key", e))?;
+    .map_err(|e| save_error(&name, e))?;
 
     audit(
         &state.db,
@@ -338,7 +379,7 @@ pub async fn update_app_store_connect_key(
     .bind(now_unix())
     .execute(&state.db)
     .await
-    .map_err(|e| store_error("Failed to save the App Store Connect key", e))?;
+    .map_err(|e| save_error(&name, e))?;
 
     audit(
         &state.db,
@@ -370,24 +411,9 @@ pub async fn delete_app_store_connect_key(
         .map_err(|e| store_error("Failed to load the App Store Connect key", e))?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Shared key not found"))?;
     if existing.pipeline_count > 0 {
-        let pipelines = if existing.pipeline_count == 1 {
-            "1 pipeline uses".to_string()
-        } else {
-            format!("{} pipelines use", existing.pipeline_count)
-        };
-        return Err(api_err(
-            StatusCode::CONFLICT,
-            "key_in_use",
-            format!(
-                "{pipelines} this key. Switch their iOS signing to another key before deleting it."
-            ),
-        ));
+        return Err(key_in_use(existing.pipeline_count));
     }
-    sqlx::query("DELETE FROM app_store_connect_keys WHERE id = ?1")
-        .bind(&id)
-        .execute(&state.db)
-        .await
-        .map_err(|e| store_error("Failed to delete the App Store Connect key", e))?;
+    delete_unused_key(&state.db, &id).await?;
 
     audit(
         &state.db,
@@ -399,6 +425,36 @@ pub async fn delete_app_store_connect_key(
     .await;
     info!(name = %existing.name, actor = %auth.0.email, "deleted shared App Store Connect key");
     Ok(Json(OkResponse { ok: true }))
+}
+
+/// Deletes a key no pipeline uses, first clearing it from pipelines that only
+/// keep it as their choice for later.
+async fn delete_unused_key(pool: &SqlitePool, id: &str) -> Result<(), ApiFailure> {
+    let delete_error = |e| store_error("Failed to delete the App Store Connect key", e);
+    let mut transaction = pool.begin().await.map_err(delete_error)?;
+    sqlx::query(concat!(
+        "UPDATE pipeline_ios_signing_settings AS s SET shared_api_key_id = NULL ",
+        "WHERE s.shared_api_key_id = ?1 AND NOT EXISTS ",
+        "(SELECT 1 FROM app_store_connect_keys k WHERE k.id = ?1 AND ",
+        uses_key!(),
+        ")"
+    ))
+    .bind(id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(delete_error)?;
+    sqlx::query("DELETE FROM app_store_connect_keys WHERE id = ?1")
+        .bind(id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|e| {
+            if is_foreign_key_violation(&e) {
+                key_in_use(0)
+            } else {
+                delete_error(e)
+            }
+        })?;
+    transaction.commit().await.map_err(delete_error)
 }
 
 #[cfg(test)]
@@ -423,6 +479,7 @@ u7FtNIKhMcPaYJ6YVeHr1zsO6PJMj5yCh1gv5ufc+cP0Yj4BubQIax4E
             "CREATE TABLE users (id TEXT PRIMARY KEY)",
             "CREATE TABLE pipelines (id TEXT PRIMARY KEY)",
             include_str!("../migrations/014_pipeline_ios_signing.sql"),
+            include_str!("../migrations/043_pipeline_publish.sql"),
             include_str!("../migrations/055_app_store_connect_keys.sql"),
             "INSERT INTO pipelines VALUES ('pl1'), ('pl2')",
         ] {
@@ -514,5 +571,85 @@ u7FtNIKhMcPaYJ6YVeHr1zsO6PJMj5yCh1gv5ufc+cP0Yj4BubQIax4E
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn only_pipelines_that_use_a_shared_key_keep_it_from_being_deleted() {
+        let pool = signing_pool().await;
+        let encryption_key = vec![7u8; 32];
+        insert_shared_key(&pool, &encryption_key, "team").await;
+        insert_signing(&pool, &encryption_key, "pl1", Some("team")).await;
+        insert_signing(&pool, &encryption_key, "pl2", Some("team")).await;
+        let set = |sql: &'static str| sqlx::query(sql).execute(&pool);
+        let count = || async {
+            load_summary(&pool, "team")
+                .await
+                .unwrap()
+                .unwrap()
+                .pipeline_count
+        };
+
+        // Manual signing and disabled signing leave the key unused.
+        set("UPDATE pipeline_ios_signing_settings SET mode = 'manual' WHERE pipeline_id = 'pl1'")
+            .await
+            .unwrap();
+        set("UPDATE pipeline_ios_signing_settings SET enabled = 0 WHERE pipeline_id = 'pl2'")
+            .await
+            .unwrap();
+        assert_eq!(count().await, 0);
+
+        // A manual-signing pipeline that uploads to App Store Connect uses it.
+        set("INSERT INTO pipeline_publish_targets
+                (id, pipeline_id, store, enabled, config, created_at, updated_at)
+             VALUES ('t1', 'pl1', 'app_store', 1, '{}', 0, 0)")
+        .await
+        .unwrap();
+        assert_eq!(count().await, 1);
+        set("UPDATE pipeline_publish_targets SET enabled = 0")
+            .await
+            .unwrap();
+
+        delete_unused_key(&pool, "team").await.unwrap();
+        assert!(load_summary(&pool, "team").await.unwrap().is_none());
+        let remaining: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pipeline_ios_signing_settings WHERE shared_api_key_id IS NOT NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(remaining, 0);
+    }
+
+    #[tokio::test]
+    async fn a_pipeline_attaching_during_delete_is_a_conflict() {
+        let pool = signing_pool().await;
+        let encryption_key = vec![7u8; 32];
+        insert_shared_key(&pool, &encryption_key, "team").await;
+        // Attached after the handler's count found no pipelines.
+        insert_signing(&pool, &encryption_key, "pl1", Some("team")).await;
+
+        let (status, Json(error)) = delete_unused_key(&pool, "team").await.unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error.code, "key_in_use");
+        assert!(load_summary(&pool, "team").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn a_lost_name_race_is_a_conflict() {
+        let pool = signing_pool().await;
+        let encryption_key = vec![7u8; 32];
+        insert_shared_key(&pool, &encryption_key, "team").await;
+        let duplicate = sqlx::query(
+            "INSERT INTO app_store_connect_keys
+                (id, name, key_id, issuer_id, private_key_encrypted, created_at, updated_at)
+             VALUES ('other', 'team', 'K', 'I', 'x', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap_err();
+
+        let (status, Json(error)) = save_error("team", duplicate);
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error.code, "key_exists");
     }
 }

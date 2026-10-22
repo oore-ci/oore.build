@@ -9,7 +9,12 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { toast } from '@/lib/toast'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { InformationCircleIcon, Search01Icon } from '@hugeicons/core-free-icons'
+import {
+  Alert02Icon,
+  InformationCircleIcon,
+  Search01Icon,
+  ServerStack01Icon,
+} from '@hugeicons/core-free-icons'
 
 import type { Runner, UpdateRunnerRequest } from '@oore/client/models'
 import { useHasPermission } from '@/hooks/use-permissions'
@@ -215,7 +220,7 @@ function EditRunnerDialog({ runner, onClose }: EditRunnerDialogProps) {
                     Saving...
                   </>
                 ) : (
-                  'Save'
+                  'Save changes'
                 )}
               </Button>
             </DialogFooter>
@@ -248,6 +253,9 @@ function RunnersSettingsPage() {
   const total = runnersQuery.data?.total ?? 0
   const queuedTotal = runnersQuery.data?.queued_total ?? 0
   const unmatchedTotal = runnersQuery.data?.unmatched_queued_total ?? 0
+  const onlineTotal = runnersQuery.data?.online_total ?? 0
+  const noRunnerOnline =
+    runnersQuery.data !== undefined && !search.q && onlineTotal === 0
   const lowDiskRunners = (runnersQuery.data?.runners ?? []).filter(
     (runner) => runner.disk_pressure && runner.status !== 'offline',
   )
@@ -302,7 +310,19 @@ function RunnersSettingsPage() {
         </Alert>
       ) : null}
 
-      {runnersQuery.data ? (
+      {noRunnerOnline && queuedTotal > 0 && total > 0 ? (
+        <Alert>
+          <HugeiconsIcon icon={Alert02Icon} className="text-warning!" />
+          <AlertTitle>No runner is online</AlertTitle>
+          <AlertDescription>
+            {queuedTotal} {queuedTotal === 1 ? 'build is' : 'builds are'}{' '}
+            waiting and none can start until a runner reconnects. Check that the
+            runner service is running on each Mac, then run{' '}
+            <code className="font-mono">oore doctor</code> there if it stays
+            offline.
+          </AlertDescription>
+        </Alert>
+      ) : runnersQuery.data && total > 0 ? (
         <p className="text-sm text-muted-foreground">
           {queuedTotal === 0
             ? 'No builds are waiting for a runner.'
@@ -335,11 +355,37 @@ function RunnersSettingsPage() {
       !search.q ? (
         <Empty className="border bg-card">
           <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <HugeiconsIcon icon={ServerStack01Icon} />
+            </EmptyMedia>
             <EmptyTitle>No runners connected</EmptyTitle>
             <EmptyDescription>
-              Runners appear here after they connect to this instance.
+              {queuedTotal > 0
+                ? `${queuedTotal} ${queuedTotal === 1 ? 'build is' : 'builds are'} waiting. `
+                : ''}
+              Builds start once a Mac with the Runner profile connects. On the
+              build Mac, run:
             </EmptyDescription>
           </EmptyHeader>
+          <EmptyContent>
+            <code className="w-full max-w-md rounded-md border bg-muted px-3 py-2 text-left font-mono text-xs break-all">
+              ~/.oore/bin/oore install --profile runner
+            </code>
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={
+                <a
+                  href="https://docs.oore.build/operate/runners/direct"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                />
+              }
+            >
+              Runner setup guide
+              <span className="sr-only">(opens in a new tab)</span>
+            </Button>
+          </EmptyContent>
         </Empty>
       ) : null}
 
