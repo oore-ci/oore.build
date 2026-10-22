@@ -11535,10 +11535,8 @@ async fn prepare_update_release(
     println!("Checksum verified (SHA-256).");
 
     let temporary = tempfile::tempdir().context("failed to create temporary directory")?;
-    let decoder = flate2::read::GzDecoder::new(&archive_bytes[..]);
-    tar::Archive::new(decoder)
-        .unpack(temporary.path())
-        .context("failed to extract archive")?;
+    installer::unpack_full_release(&archive_bytes[..], temporary.path(), &release.version)
+        .context("the release archive failed validation")?;
     validate_prepared_release(temporary.path())?;
     let package_version = compiled_daemon_package_version(&temporary.path().join("bin/oored"))?;
     Ok(PreparedUpdateRelease {
