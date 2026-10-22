@@ -19,23 +19,13 @@ pub fn now_unix() -> i64 {
 
 /// Resolve the daemon data root directory.
 ///
-/// Resolution order:
+/// Resolution order, shared with the `oore` CLI:
 /// 1. `OORED_DATA_DIR`
 /// 2. `OORE_DATA_DIR`
 /// 3. Platform default: `dirs::data_dir()/oore`
 pub fn resolve_oored_data_dir() -> anyhow::Result<PathBuf> {
-    for key in ["OORED_DATA_DIR", "OORE_DATA_DIR"] {
-        if let Ok(raw) = std::env::var(key) {
-            let trimmed = raw.trim();
-            if !trimmed.is_empty() {
-                return Ok(PathBuf::from(trimmed));
-            }
-        }
-    }
-
-    let data_dir =
-        dirs::data_dir().context("could not determine platform data directory (dirs::data_dir)")?;
-    Ok(data_dir.join("oore"))
+    oore_contract::data_paths::resolve_data_dir(|key| std::env::var(key).ok(), dirs::data_dir())
+        .context("could not determine platform data directory (dirs::data_dir)")
 }
 
 /// Extract a Bearer token from the Authorization header.

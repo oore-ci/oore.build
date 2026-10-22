@@ -19,6 +19,7 @@ pub mod frontend_pairing;
 pub mod incidents;
 pub mod instance_settings;
 pub mod integrations;
+pub mod key_check;
 pub mod local_recovery;
 pub mod logs;
 pub mod notification_channels;
@@ -787,7 +788,11 @@ async fn healthz() -> Json<HealthResponse> {
 /// accept requests remains observable while a dependency is being repaired.
 async fn readyz(State(state): State<Arc<AppState>>) -> (StatusCode, Json<serde_json::Value>) {
     let db_ready = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
-    let encryption_ready = state.encryption_key.len() == 32;
+    let encryption_ready = state.encryption_key.len() == 32
+        && db_ready
+        && key_check::key_matches_database(&state.db, &state.encryption_key)
+            .await
+            .unwrap_or(false);
     let ready = db_ready && encryption_ready;
     let runtime = installed_runtime_metadata();
     (

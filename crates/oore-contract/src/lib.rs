@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 
+pub mod data_paths;
 pub mod runtime_update_preflight;
 
 // ── Setup state machine ─────────────────────────────────────────
