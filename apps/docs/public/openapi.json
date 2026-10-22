@@ -541,6 +541,262 @@
         ]
       }
     },
+    "/v1/app-store-connect-keys": {
+      "get": {
+        "tags": [
+          "Store Credentials"
+        ],
+        "summary": "List shared App Store Connect keys",
+        "description": "Returns key names, IDs and how many pipelines use each. Private keys are never returned. Requires pipeline read access.",
+        "operationId": "list_app_store_connect_keys",
+        "responses": {
+          "200": {
+            "description": "Shared keys",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListAppStoreConnectKeysResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Store Credentials"
+        ],
+        "summary": "Create shared App Store Connect key",
+        "description": "Stores the `.p8` private key encrypted. Requires instance settings write access.",
+        "operationId": "create_app_store_connect_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAppStoreConnectKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Key created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppStoreConnectKeyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name, ID or private key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A key with this name already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/app-store-connect-keys/{id}": {
+      "put": {
+        "tags": [
+          "Store Credentials"
+        ],
+        "summary": "Update shared App Store Connect key",
+        "description": "Renames or replaces the key. Pipelines using it pick up the change on their next build. Requires instance settings write access.",
+        "operationId": "update_app_store_connect_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Shared key ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAppStoreConnectKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Key updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppStoreConnectKeyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name, ID or private key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Key not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A key with this name already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Store Credentials"
+        ],
+        "summary": "Delete shared App Store Connect key",
+        "description": "Refused while any pipeline uses the key. Requires instance settings write access.",
+        "operationId": "delete_app_store_connect_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Shared key ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Key not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Pipelines still use this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/artifact-tokens/{token_id}": {
       "delete": {
         "tags": [
@@ -11756,6 +12012,57 @@
           }
         }
       },
+      "AppStoreConnectKeyResponse": {
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/AppStoreConnectKeySummary"
+          }
+        }
+      },
+      "AppStoreConnectKeySummary": {
+        "type": "object",
+        "description": "An App Store Connect API key stored once for the instance. Pipelines that\nsign or publish for the same Apple team can use it instead of their own key.",
+        "required": [
+          "id",
+          "name",
+          "key_id",
+          "issuer_id",
+          "pipeline_count",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "issuer_id": {
+            "type": "string"
+          },
+          "key_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pipeline_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pipelines whose iOS signing uses this key."
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "AppStoreDestination": {
         "type": "string",
         "description": "Where an App Store Connect upload goes once Apple finishes processing it.",
@@ -13327,6 +13634,31 @@
           }
         }
       },
+      "CreateAppStoreConnectKeyRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "key_id",
+          "issuer_id",
+          "private_key_base64"
+        ],
+        "properties": {
+          "issuer_id": {
+            "type": "string"
+          },
+          "key_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "private_key_base64": {
+            "type": "string",
+            "description": "Base64 of the `.p8` file downloaded from App Store Connect."
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateArtifactRequest": {
         "type": "object",
         "required": [
@@ -14866,6 +15198,20 @@
           }
         }
       },
+      "ListAppStoreConnectKeysResponse": {
+        "type": "object",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppStoreConnectKeySummary"
+            }
+          }
+        }
+      },
       "ListArtifactDownloadTokensResponse": {
         "type": "object",
         "required": [
@@ -15777,7 +16123,7 @@
           },
           "has_api_key": {
             "type": "boolean",
-            "description": "Whether the pipeline's iOS signing has an App Store Connect API key."
+            "description": "Whether the pipeline's iOS signing has an App Store Connect API key,\nits own or a shared one."
           },
           "pipeline_id": {
             "type": "string"
@@ -15983,7 +16329,8 @@
             "$ref": "#/components/schemas/IosExportMethod"
           },
           "has_api_key": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the pipeline stores its own App Store Connect API key."
           },
           "has_p12": {
             "type": "boolean"
@@ -16021,6 +16368,17 @@
             "items": {
               "$ref": "#/components/schemas/IosProvisioningProfileSummary"
             }
+          },
+          "shared_api_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AppStoreConnectKeySummary",
+                "description": "The shared App Store Connect key in use. When set it takes the place of\nthe pipeline's own key, which stays stored for switching back."
+              }
+            ]
           },
           "team_id": {
             "type": [
@@ -18841,6 +19199,37 @@
           }
         }
       },
+      "UpdateAppStoreConnectKeyRequest": {
+        "type": "object",
+        "description": "Rename a shared key or replace it. Omitted fields keep their stored value;\na new `key_id` requires a new private key.",
+        "properties": {
+          "issuer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "private_key_base64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "UpdateArtifactStorageSettingsRequest": {
         "type": "object",
         "required": [
@@ -19118,6 +19507,13 @@
             "items": {
               "$ref": "#/components/schemas/IosProvisioningProfileInput"
             }
+          },
+          "shared_api_key_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Use a shared App Store Connect key instead of the pipeline's own.\nOmit to keep the current choice; an empty string switches back to the\npipeline's own key."
           },
           "team_id": {
             "type": [
@@ -19752,6 +20148,10 @@
     {
       "name": "Pipeline Publishing",
       "description": "Store publishing settings. The runner uploads from its own host after a successful build."
+    },
+    {
+      "name": "Store Credentials",
+      "description": "App Store Connect API keys shared by every pipeline of the instance. Private keys are encrypted at rest and never returned."
     },
     {
       "name": "Secrets",

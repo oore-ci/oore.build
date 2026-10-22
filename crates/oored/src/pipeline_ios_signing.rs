@@ -26,6 +26,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::AppState;
+use crate::app_store_connect_keys;
 use crate::apple_api::{self, AppleApiCredentials};
 use crate::crypto;
 use crate::extractors::AuthUser;
@@ -62,6 +63,7 @@ struct IosSigningSettingsRow {
     api_key_id: Option<String>,
     api_issuer_id: Option<String>,
     api_private_key_encrypted: Option<String>,
+    shared_api_key_id: Option<String>,
     updated_at: i64,
 }
 
@@ -1291,7 +1293,8 @@ async fn load_ios_settings(
     let row = sqlx::query_as::<_, IosSigningSettingsRow>(
         "SELECT id, enabled, mode, team_id, export_method, bundle_ids_json,
                 p12_filename, p12_encrypted, p12_password_encrypted, p12_fingerprint, p12_expires_at,
-                api_key_id, api_issuer_id, api_private_key_encrypted, updated_at
+                api_key_id, api_issuer_id, api_private_key_encrypted, shared_api_key_id,
+                updated_at
          FROM pipeline_ios_signing_settings WHERE pipeline_id = ?1",
     )
     .bind(pipeline_id)
@@ -1393,6 +1396,7 @@ fn default_ios_signing_response(pipeline_id: String) -> PipelineIosSigningRespon
         has_api_key: false,
         api_key_id: None,
         api_issuer_id: None,
+        shared_api_key: None,
         provisioning_profiles: Vec::new(),
         updated_at: None,
     }
@@ -1406,6 +1410,10 @@ async fn build_public_response(
     let profiles = load_ios_profiles(pool, pipeline_id).await?;
     let Some(settings) = settings else {
         return Ok(default_ios_signing_response(pipeline_id.to_string()));
+    };
+    let shared_api_key = match settings.shared_api_key_id.as_deref() {
+        Some(id) => app_store_connect_keys::load_summary(pool, id).await?,
+        None => None,
     };
 
     Ok(PipelineIosSigningResponse {
@@ -1423,6 +1431,7 @@ async fn build_public_response(
         has_api_key: settings.api_private_key_encrypted.is_some(),
         api_key_id: settings.api_key_id,
         api_issuer_id: settings.api_issuer_id,
+        shared_api_key,
         provisioning_profiles: profiles.iter().map(profile_row_to_summary).collect(),
         updated_at: Some(settings.updated_at),
     })
@@ -1448,10 +1457,16 @@ fn device_cache_store_error(
     )
 }
 
-fn load_api_credentials(
+/// The API key the pipeline uses: the shared key when one is selected,
+/// otherwise its own.
+async fn load_api_credentials(
+    pool: &SqlitePool,
     settings: &IosSigningSettingsRow,
     encryption_key: &[u8],
 ) -> anyhow::Result<Option<AppleApiCredentials>> {
+    if let Some(id) = settings.shared_api_key_id.as_deref() {
+        return app_store_connect_keys::load_credentials(pool, encryption_key, id).await;
+    }
     let (Some(key_id), Some(issuer_id), Some(private_key_encrypted)) = (
         settings.api_key_id.clone(),
         settings.api_issuer_id.clone(),
@@ -2317,6 +2332,9 @@ pub async fn update_pipeline_ios_signing(
     let mut api_private_key_encrypted = settings_existing
         .as_ref()
         .and_then(|r| r.api_private_key_encrypted.clone());
+    let mut shared_api_key_id = settings_existing
+        .as_ref()
+        .and_then(|r| r.shared_api_key_id.clone());
     let mut uploaded_p12_bytes: Option<Vec<u8>> = None;
     let mut uploaded_p12_password: Option<String> = None;
 
@@ -2439,6 +2457,34 @@ pub async fn update_pipeline_ios_signing(
         }
     }
 
+    if let Some(requested) = req.shared_api_key_id.as_deref().map(str::trim) {
+        if requested.is_empty() {
+            shared_api_key_id = None;
+        } else {
+            let exists = app_store_connect_keys::load_summary(&pool, requested)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "failed to load shared App Store Connect key");
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "store_error",
+                        "Failed to save iOS signing settings",
+                    )
+                })?
+                .is_some();
+            if !exists {
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_api_key",
+                    "The selected shared App Store Connect key no longer exists",
+                ));
+            }
+            shared_api_key_id = Some(requested.to_string());
+        }
+    }
+    let has_api_credentials = shared_api_key_id.is_some()
+        || (api_key_id.is_some() && api_issuer_id.is_some() && api_private_key_encrypted.is_some());
+
     if req.enabled {
         if bundle_ids.is_empty() {
             return Err(api_err(
@@ -2461,10 +2507,7 @@ pub async fn update_pipeline_ios_signing(
                 }
             }
             IosSigningMode::Api => {
-                if api_key_id.is_none()
-                    || api_issuer_id.is_none()
-                    || api_private_key_encrypted.is_none()
-                {
+                if !has_api_credentials {
                     return Err(api_err(
                         StatusCode::BAD_REQUEST,
                         "incomplete_signing_profile",
@@ -2483,10 +2526,7 @@ pub async fn update_pipeline_ios_signing(
                         "Hybrid iOS signing mode requires manual p12 certificate material",
                     ));
                 }
-                if api_key_id.is_none()
-                    || api_issuer_id.is_none()
-                    || api_private_key_encrypted.is_none()
-                {
+                if !has_api_credentials {
                     return Err(api_err(
                         StatusCode::BAD_REQUEST,
                         "incomplete_signing_profile",
@@ -2518,6 +2558,7 @@ pub async fn update_pipeline_ios_signing(
                  api_key_id = ?10,
                  api_issuer_id = ?11,
                  api_private_key_encrypted = ?12,
+                 shared_api_key_id = ?17,
                  updated_by = ?13,
                  updated_at = ?14
              WHERE id = ?15",
@@ -2538,6 +2579,7 @@ pub async fn update_pipeline_ios_signing(
         .bind(now)
         .bind(&settings_id)
         .bind(export_method.as_str())
+        .bind(shared_api_key_id.clone())
         .execute(&pool)
         .await
         .map_err(|e| {
@@ -2553,12 +2595,12 @@ pub async fn update_pipeline_ios_signing(
             "INSERT INTO pipeline_ios_signing_settings (
                 id, pipeline_id, enabled, mode, team_id, export_method, bundle_ids_json,
                 p12_filename, p12_encrypted, p12_password_encrypted, p12_fingerprint, p12_expires_at,
-                api_key_id, api_issuer_id, api_private_key_encrypted,
+                api_key_id, api_issuer_id, api_private_key_encrypted, shared_api_key_id,
                 created_by, updated_by, created_at, updated_at
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?17, ?6,
                 ?7, ?8, ?9, ?10, ?11,
-                ?12, ?13, ?14,
+                ?12, ?13, ?14, ?18,
                 ?15, ?15, ?16, ?16
              )",
         )
@@ -2579,6 +2621,7 @@ pub async fn update_pipeline_ios_signing(
         .bind(&auth.0.user_id)
         .bind(now)
         .bind(export_method.as_str())
+        .bind(shared_api_key_id.clone())
         .execute(&pool)
         .await
         .map_err(|e| {
@@ -2675,6 +2718,7 @@ pub async fn update_pipeline_ios_signing(
         "mode": mode_str(req.mode),
         "export_method": export_method.as_str(),
         "bundle_ids": bundle_ids,
+        "shared_api_key_id": shared_api_key_id,
     })
     .to_string();
     let _ = write_audit_log(
@@ -3007,14 +3051,16 @@ pub async fn register_pipeline_ios_device(
             "iOS signing is not configured for this pipeline",
         ));
     };
-    let creds = load_api_credentials(&settings, &state.encryption_key).map_err(|e| {
-        error!(error = %e, "failed to decode App Store Connect API credentials");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "decryption_error",
-            "Failed to decrypt App Store Connect credentials",
-        )
-    })?;
+    let creds = load_api_credentials(&pool, &settings, &state.encryption_key)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to decode App Store Connect API credentials");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "decryption_error",
+                "Failed to decrypt App Store Connect credentials",
+            )
+        })?;
     let Some(creds) = creds else {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
@@ -3231,14 +3277,16 @@ pub async fn sync_pipeline_ios_signing(
             "iOS signing is not configured for this pipeline",
         ));
     };
-    let creds = load_api_credentials(&settings, &state.encryption_key).map_err(|e| {
-        error!(error = %e, "failed to decode App Store Connect credentials");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "decryption_error",
-            "Failed to decrypt App Store Connect credentials",
-        )
-    })?;
+    let creds = load_api_credentials(&pool, &settings, &state.encryption_key)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to decode App Store Connect credentials");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "decryption_error",
+                "Failed to decrypt App Store Connect credentials",
+            )
+        })?;
     let Some(creds) = creds else {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
