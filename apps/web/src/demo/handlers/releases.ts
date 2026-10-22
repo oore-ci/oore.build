@@ -9,6 +9,7 @@ import type {
 } from '@oore/client/models'
 import { ago } from '../seed'
 import type { DemoRelease } from '../data/releases'
+import { demoStoreVitals } from '../data/store-vitals'
 import type { DemoPersona } from '../personas'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { demoState } from '../state'
@@ -166,6 +167,18 @@ function releaseActionHandler(action: ReleaseAction) {
 }
 
 export const releaseHandlers = [
+  demoApi.getStoreVitals(async ({ request }) => {
+    await delay(150)
+    const persona = getDemoPersonaFromRequest(request)
+    return HttpResponse.json(
+      demoStoreVitals(
+        demoState.projects.filter((project) =>
+          getDemoProjectRole(persona, project.id),
+        ),
+      ),
+    )
+  }),
+
   demoApi.listReleases(async ({ request }) => {
     await delay(150)
     const url = new URL(request.url)

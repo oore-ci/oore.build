@@ -496,6 +496,232 @@ fn latest_crash_rate(response: &serde_json::Value, version_code: i64) -> Option<
         .map(|(_, rate)| rate)
 }
 
+/// One day of app-wide vitals, dated in Pacific time like Play Console.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlayVitalsDay {
+    /// `YYYY-MM-DD`.
+    pub date: String,
+    pub rate: Option<f64>,
+}
+
+/// An app-wide Android vitals rate over the last 28 days.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PlayVitalsRate {
+    /// Latest 28-day user-weighted rate (0..1), the figure Play Console shows.
+    pub rate_28d: Option<f64>,
+    /// Daily rates, oldest first.
+    pub days: Vec<PlayVitalsDay>,
+}
+
+/// A grouped crash or ANR from Android vitals.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlayErrorIssue {
+    /// `CRASH` or `ANR`.
+    pub kind: String,
+    pub cause: String,
+    pub location: String,
+    pub reports: i64,
+    pub users: i64,
+    /// RFC 3339 start of the hour of the latest report.
+    pub last_report_time: Option<String>,
+    pub url: Option<String>,
+}
+
+const VITALS_LOOKBACK_DAYS: i64 = 27;
+
+async fn latest_daily_date(
+    http: &reqwest::Client,
+    reporting_token: &str,
+    package_name: &str,
+    metric_set: &str,
+) -> anyhow::Result<Option<ReportingDate>> {
+    let response: serde_json::Value = play_json(
+        http.get(format!("{REPORTING_BASE}/{package_name}/{metric_set}"))
+            .bearer_auth(reporting_token),
+        "read vitals freshness",
+    )
+    .await?;
+    Ok(response
+        .pointer("/freshnessInfo/freshnesses")
+        .and_then(|value| value.as_array())
+        .and_then(|freshnesses| {
+            freshnesses
+                .iter()
+                .find(|entry| entry["aggregationPeriod"] == "DAILY")
+        })
+        .and_then(|entry| {
+            serde_json::from_value::<ReportingDate>(entry["latestEndTime"].clone()).ok()
+        }))
+}
+
+/// App-wide user-perceived crash rate (`crashRateMetricSet`) or ANR rate
+/// (`anrRateMetricSet`) for the last 28 days with data.
+pub async fn app_vitals_rate(
+    http: &reqwest::Client,
+    reporting_token: &str,
+    package_name: &str,
+    kind: PlayVitalsKind,
+) -> anyhow::Result<PlayVitalsRate> {
+    let (metric_set, daily, rolling) = kind.metrics();
+    let Some(end) = latest_daily_date(http, reporting_token, package_name, metric_set).await?
+    else {
+        return Ok(PlayVitalsRate::default());
+    };
+    let start = end.days_before(VITALS_LOOKBACK_DAYS)?;
+    let response: serde_json::Value = play_json(
+        http.post(format!(
+            "{REPORTING_BASE}/{package_name}/{metric_set}:query"
+        ))
+        .bearer_auth(reporting_token)
+        .json(&serde_json::json!({
+            "timelineSpec": {
+                "aggregationPeriod": "DAILY",
+                "startTime": start.to_wire(),
+                "endTime": end.to_wire(),
+            },
+            "metrics": [daily, rolling],
+            "pageSize": 100,
+        })),
+        "query vitals",
+    )
+    .await?;
+    Ok(parse_vitals_rate(&response, daily, rolling))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayVitalsKind {
+    CrashRate,
+    AnrRate,
+}
+
+impl PlayVitalsKind {
+    fn metrics(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::CrashRate => (
+                "crashRateMetricSet",
+                "userPerceivedCrashRate",
+                "userPerceivedCrashRate28dUserWeighted",
+            ),
+            Self::AnrRate => (
+                "anrRateMetricSet",
+                "userPerceivedAnrRate",
+                "userPerceivedAnrRate28dUserWeighted",
+            ),
+        }
+    }
+}
+
+fn metric_value(row: &serde_json::Value, metric: &str) -> Option<f64> {
+    row["metrics"]
+        .as_array()?
+        .iter()
+        .find(|entry| entry["metric"] == metric)?
+        .pointer("/decimalValue/value")?
+        .as_str()?
+        .parse::<f64>()
+        .ok()
+}
+
+fn parse_vitals_rate(response: &serde_json::Value, daily: &str, rolling: &str) -> PlayVitalsRate {
+    let mut rows: Vec<(ReportingDate, Option<f64>, Option<f64>)> = response["rows"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| {
+                    let date: ReportingDate =
+                        serde_json::from_value(row["startTime"].clone()).ok()?;
+                    Some((date, metric_value(row, daily), metric_value(row, rolling)))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    rows.sort_by_key(|(date, _, _)| (date.year, date.month, date.day));
+    PlayVitalsRate {
+        rate_28d: rows.iter().rev().find_map(|(_, _, rolling)| *rolling),
+        days: rows
+            .into_iter()
+            .map(|(date, rate, _)| PlayVitalsDay {
+                date: format!("{:04}-{:02}-{:02}", date.year, date.month, date.day),
+                rate,
+            })
+            .collect(),
+    }
+}
+
+/// The most-reported user-perceived crashes and ANRs of the last 28 days.
+pub async fn top_error_issues(
+    http: &reqwest::Client,
+    reporting_token: &str,
+    package_name: &str,
+    limit: u32,
+) -> anyhow::Result<Vec<PlayErrorIssue>> {
+    use chrono::{Duration, Timelike, Utc};
+    let end = Utc::now()
+        .with_minute(0)
+        .and_then(|time| time.with_second(0))
+        .and_then(|time| time.with_nanosecond(0))
+        .context("invalid time")?;
+    let start = end - Duration::days(28);
+    let mut query: Vec<(String, String)> = vec![
+        ("pageSize".into(), limit.to_string()),
+        ("orderBy".into(), "errorReportCount desc".into()),
+        (
+            "filter".into(),
+            "(errorIssueType = CRASH OR errorIssueType = ANR) AND isUserPerceived".into(),
+        ),
+    ];
+    for (name, time) in [("startTime", start), ("endTime", end)] {
+        use chrono::Datelike;
+        for (field, value) in [
+            ("year", time.year().to_string()),
+            ("month", time.month().to_string()),
+            ("day", time.day().to_string()),
+            ("hours", time.hour().to_string()),
+            ("timeZone.id", "UTC".to_string()),
+        ] {
+            query.push((format!("interval.{name}.{field}"), value));
+        }
+    }
+    let response: serde_json::Value = play_json(
+        http.get(format!(
+            "{REPORTING_BASE}/{package_name}/errorIssues:search"
+        ))
+        .query(&query)
+        .bearer_auth(reporting_token),
+        "search crash and ANR issues",
+    )
+    .await?;
+    Ok(parse_error_issues(&response))
+}
+
+fn parse_error_issues(response: &serde_json::Value) -> Vec<PlayErrorIssue> {
+    let count = |value: &serde_json::Value| {
+        value
+            .as_str()
+            .and_then(|raw| raw.parse::<i64>().ok())
+            .or_else(|| value.as_i64())
+            .unwrap_or(0)
+    };
+    let text = |value: &serde_json::Value| value.as_str().unwrap_or_default().to_string();
+    response["errorIssues"]
+        .as_array()
+        .map(|issues| {
+            issues
+                .iter()
+                .map(|issue| PlayErrorIssue {
+                    kind: text(&issue["type"]),
+                    cause: text(&issue["cause"]),
+                    location: text(&issue["location"]),
+                    reports: count(&issue["errorReportCount"]),
+                    users: count(&issue["distinctUsers"]),
+                    last_report_time: issue["lastErrorReportTime"].as_str().map(str::to_string),
+                    url: issue["issueUri"].as_str().map(str::to_string),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 async fn tokio_read(path: &Path) -> anyhow::Result<Vec<u8>> {
     tokio::fs::read(path)
         .await
@@ -565,6 +791,72 @@ mod tests {
         );
         let back: TrackRelease = serde_json::from_value(json).unwrap();
         assert_eq!(back, release);
+    }
+
+    #[test]
+    fn vitals_rate_keeps_days_in_order_and_the_latest_rolling_rate() {
+        let day = |d: u32, daily: &str, rolling: Option<&str>| {
+            let mut metrics = vec![serde_json::json!({
+                "metric": "userPerceivedCrashRate",
+                "decimalValue": {"value": daily}
+            })];
+            if let Some(rolling) = rolling {
+                metrics.push(serde_json::json!({
+                    "metric": "userPerceivedCrashRate28dUserWeighted",
+                    "decimalValue": {"value": rolling}
+                }));
+            }
+            serde_json::json!({
+                "startTime": {"year": 2026, "month": 10, "day": d},
+                "metrics": metrics
+            })
+        };
+        let response = serde_json::json!({"rows": [
+            day(19, "0.02", Some("0.011")),
+            day(17, "0.01", Some("0.009")),
+            day(20, "0.015", None),
+        ]});
+
+        let rate = parse_vitals_rate(
+            &response,
+            "userPerceivedCrashRate",
+            "userPerceivedCrashRate28dUserWeighted",
+        );
+
+        assert_eq!(rate.rate_28d, Some(0.011));
+        let days: Vec<_> = rate
+            .days
+            .iter()
+            .map(|d| (d.date.as_str(), d.rate))
+            .collect();
+        assert_eq!(
+            days,
+            [
+                ("2026-10-17", Some(0.01)),
+                ("2026-10-19", Some(0.02)),
+                ("2026-10-20", Some(0.015))
+            ]
+        );
+    }
+
+    #[test]
+    fn error_issues_read_int64_strings() {
+        let response = serde_json::json!({"errorIssues": [{
+            "type": "CRASH",
+            "cause": "java.lang.NullPointerException",
+            "location": "com.example.CheckoutActivity",
+            "errorReportCount": "412",
+            "distinctUsers": "97",
+            "lastErrorReportTime": "2026-10-21T08:00:00Z",
+            "issueUri": "https://play.google.com/console/issue"
+        }]});
+
+        let issues = parse_error_issues(&response);
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].reports, 412);
+        assert_eq!(issues[0].users, 97);
+        assert_eq!(issues[0].kind, "CRASH");
     }
 
     #[test]
