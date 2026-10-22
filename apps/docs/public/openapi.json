@@ -5119,6 +5119,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "description": "Delete even when Google Play publishing uses the secret",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -5144,6 +5153,16 @@
           },
           "404": {
             "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A pipeline uses the secret as its Google Play service account",
             "content": {
               "application/json": {
                 "schema": {
@@ -5573,7 +5592,7 @@
             }
           },
           "409": {
-            "description": "Project source is not configured or resolvable",
+            "description": "Project source is not configured or resolvable, or the Google Play service account secret is missing",
             "content": {
               "application/json": {
                 "schema": {
@@ -6559,6 +6578,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "description": "Delete even when Google Play publishing uses the secret",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -6584,6 +6612,16 @@
           },
           "404": {
             "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A pipeline uses the secret as its Google Play service account",
             "content": {
               "application/json": {
                 "schema": {
@@ -9303,6 +9341,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "description": "Delete even when Google Play publishing uses the secret",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -9328,6 +9375,16 @@
           },
           "404": {
             "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A pipeline uses the secret as its Google Play service account",
             "content": {
               "application/json": {
                 "schema": {
@@ -11095,7 +11152,7 @@
           "Releases"
         ],
         "summary": "Refresh store vitals",
-        "description": "Reads the stores now for the caller's apps, for example right after\ngranting a missing permission, and returns the fresh copy. One refresh\nruns at a time, at most every 30 seconds.",
+        "description": "Asks the daemon to read the stores now for the caller's apps, for\nexample right after granting a missing permission. Waits up to 20\nseconds for the reads and returns what has been read by then. Apps read\nin the last 30 seconds are not read again.",
         "operationId": "refresh_store_vitals",
         "responses": {
           "200": {
@@ -11104,16 +11161,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StoreVitalsResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "A refresh is running or just ran",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -12233,6 +12280,15 @@
               "type": "string"
             },
             "description": "Trigger events that need approval: `push`, `pull_request`,\n`tag_push`, `manual` or `schedule`. Empty means every build."
+          },
+          "expires_after_hours": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Hours a build waits for a decision before it is canceled. Defaults\nto 168 (7 days).",
+            "minimum": 0
           },
           "required": {
             "type": "boolean"
@@ -14928,6 +14984,21 @@
           "status": {
             "type": "string"
           },
+          "status_checked_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When Oore last checked the source's credentials."
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the source has its current status: `expired`, `rejected` or\n`refresh_failed` when credentials stopped working."
+          },
           "updated_at": {
             "type": "integer",
             "format": "int64"
@@ -15815,9 +15886,27 @@
             ],
             "description": "Project this channel is scoped to. Absent means the channel receives\nevents from every project, plus instance-wide events such as runner\noffline."
           },
+          "smtp_summary": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SmtpConfigSummary",
+                "description": "SMTP settings without the password (email only). Returned when\nreading one channel."
+              }
+            ]
+          },
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          },
+          "url_host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Host of the configured URL, so operators can tell which endpoint\nreceives alerts. The full URL can carry a token and is never exposed.\nReturned when reading one channel."
           }
         }
       },
@@ -18893,6 +18982,43 @@
             "type": "string"
           },
           "password": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tls_mode": {
+            "$ref": "#/components/schemas/SmtpTlsMode"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "SmtpConfigSummary": {
+        "type": "object",
+        "description": "The SMTP settings an operator can read back. The password is never\nreturned.",
+        "required": [
+          "host",
+          "port",
+          "username",
+          "tls_mode",
+          "from_address",
+          "recipients"
+        ],
+        "properties": {
+          "from_address": {
+            "type": "string"
+          },
+          "host": {
             "type": "string"
           },
           "port": {

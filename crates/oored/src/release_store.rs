@@ -114,18 +114,30 @@ impl PlayReleaseStoreClient {
                     target.version_code
                 );
             };
+            // Play is the source of truth. A change planned against an older
+            // view, such as a scheduled step racing a halt, must not
+            // overwrite what Play holds now.
+            if !play_allows(change, track_release.status) {
+                bail!(
+                    "Play Console shows this release as {} now, so it was not changed; reload and try again",
+                    play_status_label(track_release.status)
+                );
+            }
             track_release.status = status;
             track_release.user_fraction = fraction;
             edits.update_track(&track, &track_release).await
         }
         .await;
-        match result {
+        let result = match result {
             Ok(()) => edits.commit().await,
-            Err(error) => {
-                let _ = edits.delete().await;
-                Err(error)
-            }
+            Err(error) => Err(error),
+        };
+        // A failed commit leaves the edit open, and an open edit would get
+        // in the way of the next one.
+        if result.is_err() {
+            let _ = edits.delete().await;
         }
+        result
     }
 
     async fn observe_play(&self, release: &Release) -> anyhow::Result<StoreObservation> {
@@ -156,6 +168,28 @@ impl PlayReleaseStoreClient {
             target.version_code,
         )
         .await
+    }
+}
+
+/// Whether `change` makes sense for a release Play currently shows as `current`.
+fn play_allows(change: StoreChange, current: ReleaseStatus) -> bool {
+    use ReleaseStatus::{Completed, Draft, Halted, InProgress};
+    match change {
+        // A step only raises a rollout that is still in progress in Play.
+        StoreChange::Rollout { .. } => current == InProgress,
+        StoreChange::Resume { .. } => matches!(current, InProgress | Halted | Draft),
+        StoreChange::Halt => matches!(current, InProgress | Halted),
+        StoreChange::Complete => matches!(current, InProgress | Draft),
+        StoreChange::Pause => current != Completed,
+    }
+}
+
+fn play_status_label(status: ReleaseStatus) -> &'static str {
+    match status {
+        ReleaseStatus::Completed => "completed",
+        ReleaseStatus::Halted => "halted",
+        ReleaseStatus::InProgress => "rolling out",
+        ReleaseStatus::Draft => "a draft",
     }
 }
 
@@ -230,6 +264,22 @@ mod tests {
             release_notes: Vec::new(),
             in_app_update_priority: None,
         }
+    }
+
+    #[test]
+    fn play_changes_never_overwrite_a_newer_play_state() {
+        let step = StoreChange::Rollout { fraction: 0.2 };
+        assert!(play_allows(step, ReleaseStatus::InProgress));
+        // A scheduled step that lost a race with a halt must not resume it.
+        assert!(!play_allows(step, ReleaseStatus::Halted));
+        assert!(!play_allows(step, ReleaseStatus::Completed));
+        assert!(play_allows(
+            StoreChange::Resume { fraction: 0.05 },
+            ReleaseStatus::Halted
+        ));
+        assert!(play_allows(StoreChange::Halt, ReleaseStatus::InProgress));
+        assert!(!play_allows(StoreChange::Halt, ReleaseStatus::Completed));
+        assert!(!play_allows(StoreChange::Complete, ReleaseStatus::Halted));
     }
 
     #[test]

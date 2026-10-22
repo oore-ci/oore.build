@@ -342,10 +342,15 @@ impl InstallManifest {
             "installation manifest changed while it was opened"
         );
 
-        let manifest: Self = serde_json::from_reader(BufReader::new(file))
-            .with_context(|| format!("failed to parse installation manifest {}", path.display()))?;
-        manifest.validate()?;
-        Ok(manifest)
+        serde_json::from_reader(BufReader::new(file))
+            .with_context(|| format!("failed to parse installation manifest {}", path.display()))
+            .and_then(|manifest: Self| manifest.validate().map(|()| manifest))
+            .with_context(|| {
+                format!(
+                    "installation manifest {} is invalid. To recover, run `oore uninstall --ignore-invalid-manifest`, which keeps Oore data, then rerun the CLI bootstrap and `oore install` with the same role",
+                    path.display()
+                )
+            })
     }
 }
 
@@ -457,6 +462,14 @@ fn validate_parent_directory(parent: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Checks that `path` is a private regular file owned by the current user,
+/// without reading or validating its contents.
+pub(crate) fn ensure_private_manifest_file(path: &Path) -> anyhow::Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to inspect installation manifest {}", path.display()))?;
+    validate_manifest_metadata(&metadata, current_effective_uid())
+}
+
 fn validate_manifest_metadata(metadata: &fs::Metadata, expected_uid: u32) -> anyhow::Result<()> {
     anyhow::ensure!(
         metadata.file_type().is_file(),
@@ -483,4 +496,242 @@ fn all_unique(values: &[String]) -> bool {
 fn current_effective_uid() -> u32 {
     // SAFETY: `geteuid` has no arguments, pointer requirements, or failure state.
     unsafe { libc::geteuid() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_manifest_names_the_recovery_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("install-manifest.json");
+        fs::write(&path, b"{ not json").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let error = InstallManifest::load(&path).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("oore uninstall --ignore-invalid-manifest"),
+            "{error:#}"
+        );
+        ensure_private_manifest_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_shared_manifest_cannot_be_set_aside() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("install-manifest.json");
+        fs::write(&path, b"{}").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(ensure_private_manifest_file(&path).is_err());
+    }
+
+    const SHA256: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn release() -> InstallRelease {
+        InstallRelease::new(
+            "0.1.48".to_string(),
+            "stable".to_string(),
+            "oore-ci/oore.build".to_string(),
+            "oore_0.1.48_darwin_arm64.tar.gz".to_string(),
+            SHA256.to_string(),
+        )
+        .unwrap()
+    }
+
+    fn manifest(profile: InstallProfile) -> InstallManifest {
+        InstallManifest::new(profile, release(), vec![".zshrc".to_string()]).unwrap()
+    }
+
+    fn private_root() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        root
+    }
+
+    fn write_private(path: &Path, contents: &[u8]) {
+        fs::write(path, contents).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    fn load_error(contents: &[u8]) -> String {
+        let root = private_root();
+        let path = root.path().join("install-manifest.json");
+        write_private(&path, contents);
+        format!("{:#}", InstallManifest::load(&path).unwrap_err())
+    }
+
+    fn manifest_json(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
+        let mut value = serde_json::to_value(manifest(InstallProfile::Complete)).unwrap();
+        edit(&mut value);
+        serde_json::to_vec(&value).unwrap()
+    }
+
+    #[test]
+    fn written_manifests_load_back_unchanged() {
+        let root = private_root();
+        let path = root.path().join("install-manifest.json");
+        let mut written = manifest(InstallProfile::Complete);
+        written.record_service(InstallService::Daemon).unwrap();
+        written.write_atomic(&path).unwrap();
+
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(InstallManifest::load(&path).unwrap(), written);
+    }
+
+    #[test]
+    fn corrupt_manifests_fail_to_load() {
+        assert!(load_error(b"{\"schema_version\": 1, \"profile\":").contains("failed to parse"));
+        assert!(load_error(b"").contains("failed to parse"));
+        assert!(
+            load_error(&manifest_json(|value| value["unexpected"] = true.into()))
+                .contains("unknown field")
+        );
+    }
+
+    #[test]
+    fn manifests_with_invalid_contents_fail_to_load() {
+        assert!(
+            load_error(&manifest_json(|value| value["schema_version"] = 2.into()))
+                .contains("unsupported installation manifest schema version 2")
+        );
+        assert!(
+            load_error(&manifest_json(|value| {
+                value["components"] = serde_json::json!(["cli"]);
+            }))
+            .contains("components do not match")
+        );
+        assert!(
+            load_error(&manifest_json(|value| {
+                value["release"]["sha256"] = SHA256.to_uppercase().into();
+            }))
+            .contains("64 lowercase hexadecimal characters")
+        );
+        assert!(
+            load_error(&manifest_json(|value| {
+                value["release"]["channel"] = "nightly".into();
+            }))
+            .contains("unsupported release channel nightly")
+        );
+        assert!(
+            load_error(&manifest_json(|value| {
+                value["release"]["archive"] = "../oore.tar.gz".into();
+            }))
+            .contains("must be a file name")
+        );
+        assert!(
+            load_error(&manifest_json(|value| {
+                value["shell_path_files"] = serde_json::json!([".zshrc", ".zshrc"]);
+            }))
+            .contains("duplicate shell PATH files")
+        );
+        assert!(
+            load_error(&manifest_json(|value| {
+                value["shell_path_files"] = serde_json::json!([".profile"]);
+            }))
+            .contains("unsupported shell PATH file .profile")
+        );
+    }
+
+    #[test]
+    fn manifests_older_than_the_lifecycle_section_load_with_defaults() {
+        let root = private_root();
+        let path = root.path().join("install-manifest.json");
+        write_private(
+            &path,
+            &manifest_json(|value| {
+                value.as_object_mut().unwrap().remove("lifecycle");
+            }),
+        );
+        let loaded = InstallManifest::load(&path).unwrap();
+        assert_eq!(loaded.lifecycle, InstallLifecycle::default());
+    }
+
+    #[test]
+    fn manifests_readable_by_others_or_behind_links_are_refused() {
+        let root = private_root();
+        let path = root.path().join("install-manifest.json");
+        manifest(InstallProfile::Runner)
+            .write_atomic(&path)
+            .unwrap();
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(
+            format!("{:#}", InstallManifest::load(&path).unwrap_err())
+                .contains("must not grant group or other access")
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let link = root.path().join("linked-manifest.json");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert!(
+            format!("{:#}", InstallManifest::load(&link).unwrap_err())
+                .contains("not a regular file")
+        );
+
+        assert!(
+            format!(
+                "{:#}",
+                InstallManifest::load_for_uid(&path, current_effective_uid() + 1).unwrap_err()
+            )
+            .contains("unexpected owner")
+        );
+        assert!(InstallManifest::load(&root.path().join("missing.json")).is_err());
+    }
+
+    #[test]
+    fn manifests_are_not_written_into_shared_directories() {
+        let root = private_root();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o777)).unwrap();
+        let error = manifest(InstallProfile::CliOnly)
+            .write_atomic(&root.path().join("install-manifest.json"))
+            .unwrap_err();
+        assert!(error.to_string().contains("writable by another user"));
+        assert!(!root.path().join("install-manifest.json").exists());
+    }
+
+    #[test]
+    fn lifecycle_changes_stay_within_the_profile() {
+        let mut runner = manifest(InstallProfile::Runner);
+        assert!(runner.record_service(InstallService::Daemon).is_err());
+        assert!(runner.mark_ready().is_err());
+
+        runner.record_service(InstallService::Runner).unwrap();
+        runner.record_service(InstallService::Runner).unwrap();
+        assert_eq!(runner.lifecycle.services.len(), 1);
+        assert_eq!(runner.lifecycle.state, InstallState::Configuring);
+        runner.mark_ready().unwrap();
+        assert_eq!(runner.lifecycle.state, InstallState::Ready);
+
+        let mut tampered = runner.clone();
+        tampered.lifecycle.services[0].definition = "/tmp/build.oore.oore-runner.plist".into();
+        assert!(tampered.validate().is_err());
+
+        let mut relative_state = runner;
+        relative_state.lifecycle.state_file = Some("oore.db".to_string());
+        assert!(relative_state.validate().is_err());
+    }
+
+    #[test]
+    fn release_details_are_validated() {
+        let new = |version: &str, repository: &str| {
+            InstallRelease::new(
+                version.to_string(),
+                "stable".to_string(),
+                repository.to_string(),
+                "oore.tar.gz".to_string(),
+                SHA256.to_string(),
+            )
+        };
+        assert!(new("0.1.48", "oore-ci/oore.build").is_ok());
+        assert!(new(" 0.1.48", "oore-ci/oore.build").is_err());
+        assert!(new("latest", "oore-ci/oore.build").is_err());
+        assert!(new("0.1.48", "oore-ci").is_err());
+        assert!(new("0.1.48", "oore-ci/oore.build/extra").is_err());
+        assert!(new("0.1.48", "oore ci/oore.build").is_err());
+    }
 }

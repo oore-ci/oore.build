@@ -4,7 +4,7 @@
 //! upload a bundle and its deobfuscation file, set a track release, commit.
 
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,11 @@ const REPORTING_BASE: &str = "https://playdeveloperreporting.googleapis.com/v1be
 const REPORTING_TIME_ZONE: &str = "America/Los_Angeles";
 const CRASH_RATE_LOOKBACK_DAYS: i64 = 7;
 const DEFAULT_TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
+
+/// Attempts for a Play call that fails with 429 or a 5xx, which Google
+/// documents as retryable.
+const PLAY_ATTEMPTS: u32 = 3;
+const PLAY_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 /// Play limits release notes to 500 characters per language.
 pub const MAX_RELEASE_NOTES_CHARS: usize = 500;
@@ -209,29 +214,161 @@ pub struct PlayEdits<'a> {
     token: String,
     package_name: String,
     edit_id: String,
+    api_base: String,
+    upload_base: String,
+}
+
+/// Google Play answered with an error status. Anything else that fails a
+/// call, such as a dropped connection, leaves its outcome unknown.
+#[derive(Debug)]
+pub struct PlayApiError {
+    pub action: String,
+    pub status: reqwest::StatusCode,
+    pub message: String,
+}
+
+impl std::fmt::Display for PlayApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Google Play could not {} ({}): {}{}",
+            self.action,
+            self.status,
+            self.message,
+            play_access_hint(self.status)
+        )
+    }
+}
+
+impl std::error::Error for PlayApiError {}
+
+/// True when Google Play answered `error` itself, so the call surely did not
+/// take effect, rather than the request or its reply getting lost.
+pub fn is_play_rejection(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<PlayApiError>().is_some()
+}
+
+fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+/// Sends the request `build` makes, up to `attempts` times: again after a
+/// 429 or 5xx, and after a lost connection too when `idempotent`. Returns
+/// the reply body.
+async fn play_send(
+    build: impl Fn() -> anyhow::Result<reqwest::RequestBuilder>,
+    action: &str,
+    idempotent: bool,
+    attempts: u32,
+) -> anyhow::Result<String> {
+    let mut attempt = 1;
+    loop {
+        let last = attempt >= attempts;
+        match build()?.send().await {
+            Ok(response) => {
+                let status = response.status();
+                match response.text().await {
+                    Ok(body) if status.is_success() => return Ok(body),
+                    Ok(body) if last || !is_retryable_status(status) => {
+                        return Err(PlayApiError {
+                            action: action.to_string(),
+                            status,
+                            message: google_error_message(&body),
+                        }
+                        .into());
+                    }
+                    Ok(_) => {}
+                    Err(error) if last || !idempotent => {
+                        return Err(anyhow::Error::new(error)
+                            .context(format!("lost Google Play's reply to {action}")));
+                    }
+                    Err(_) => {}
+                }
+            }
+            Err(error) if last || !idempotent => {
+                return Err(anyhow::Error::new(error)
+                    .context(format!("failed to reach Google Play to {action}")));
+            }
+            Err(_) => {}
+        }
+        tokio::time::sleep(PLAY_RETRY_DELAY * 2u32.pow(attempt - 1)).await;
+        attempt += 1;
+    }
 }
 
 /// Send `request` and parse its JSON reply. A failure names `action`, the
 /// HTTP status and Google's own error message, plus a hint on 401 and 403.
+/// A 429 or 5xx is retried; so is a lost connection on a GET, PUT or DELETE.
 pub async fn play_json<T: serde::de::DeserializeOwned>(
     request: reqwest::RequestBuilder,
     action: &str,
 ) -> anyhow::Result<T> {
-    let response = request
-        .send()
-        .await
-        .with_context(|| format!("failed to reach Google Play to {action}"))?;
-    let status = response.status();
-    let body = response.text().await?;
-    if !status.is_success() {
-        bail!(
-            "Google Play could not {action} ({status}): {}{}",
-            google_error_message(&body),
-            play_access_hint(status)
-        );
-    }
-    serde_json::from_str(if body.is_empty() { "null" } else { &body })
+    let body = match request.try_clone().and_then(|clone| clone.build().ok()) {
+        Some(built) => {
+            let idempotent = matches!(
+                *built.method(),
+                reqwest::Method::GET | reqwest::Method::PUT | reqwest::Method::DELETE
+            );
+            play_send(
+                || {
+                    request
+                        .try_clone()
+                        .context("Google Play request could not be repeated")
+                },
+                action,
+                idempotent,
+                PLAY_ATTEMPTS,
+            )
+            .await?
+        }
+        // A streamed body can only be sent once.
+        None => {
+            let once = std::sync::Mutex::new(Some(request));
+            play_send(
+                || {
+                    once.lock()
+                        .ok()
+                        .and_then(|mut request| request.take())
+                        .context("Google Play request could not be repeated")
+                },
+                action,
+                false,
+                1,
+            )
+            .await?
+        }
+    };
+    parse_play_reply(&body, action)
+}
+
+fn parse_play_reply<T: serde::de::DeserializeOwned>(body: &str, action: &str) -> anyhow::Result<T> {
+    serde_json::from_str(if body.is_empty() { "null" } else { body })
         .with_context(|| format!("unexpected Google Play response to {action}"))
+}
+
+/// Streams the file at `path` as a request body, so a large bundle is never
+/// held in memory. Returns the body and its length.
+async fn file_body(path: &Path) -> anyhow::Result<(reqwest::Body, u64)> {
+    use tokio::io::AsyncReadExt;
+
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let length = file.metadata().await?.len();
+    let chunks = async_stream::stream! {
+        let mut buffer = vec![0u8; 256 * 1024];
+        loop {
+            match file.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(read) => yield Ok::<_, std::io::Error>(buffer[..read].to_vec()),
+                Err(error) => {
+                    yield Err(error);
+                    break;
+                }
+            }
+        }
+    };
+    Ok((reqwest::Body::wrap_stream(chunks), length))
 }
 
 impl<'a> PlayEdits<'a> {
@@ -240,12 +377,23 @@ impl<'a> PlayEdits<'a> {
         token: &str,
         package_name: &str,
     ) -> anyhow::Result<Self> {
+        Self::insert_at(http, API_BASE, UPLOAD_BASE, token, package_name).await
+    }
+
+    /// [`PlayEdits::insert`] against other API hosts, for tests.
+    pub async fn insert_at(
+        http: &'a reqwest::Client,
+        api_base: &str,
+        upload_base: &str,
+        token: &str,
+        package_name: &str,
+    ) -> anyhow::Result<Self> {
         #[derive(Deserialize)]
         struct Edit {
             id: String,
         }
         let edit: Edit = play_json(
-            http.post(format!("{API_BASE}/{package_name}/edits"))
+            http.post(format!("{api_base}/{package_name}/edits"))
                 .bearer_auth(token)
                 .json(&serde_json::json!({})),
             "open an edit",
@@ -256,6 +404,8 @@ impl<'a> PlayEdits<'a> {
             token: token.to_string(),
             package_name: package_name.to_string(),
             edit_id: edit.id,
+            api_base: api_base.to_string(),
+            upload_base: upload_base.to_string(),
         })
     }
 
@@ -265,50 +415,72 @@ impl<'a> PlayEdits<'a> {
 
     fn api(&self, path: &str) -> String {
         format!(
-            "{API_BASE}/{}/edits/{}{path}",
-            self.package_name, self.edit_id
+            "{}/{}/edits/{}{path}",
+            self.api_base, self.package_name, self.edit_id
         )
     }
 
     fn upload(&self, path: &str) -> String {
         format!(
-            "{UPLOAD_BASE}/{}/edits/{}{path}?uploadType=media",
-            self.package_name, self.edit_id
+            "{}/{}/edits/{}{path}?uploadType=media",
+            self.upload_base, self.package_name, self.edit_id
         )
+    }
+
+    /// Streams the file at `path` to `url`, again after a 429 or 5xx.
+    async fn upload_file<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        path: &Path,
+        action: &str,
+    ) -> anyhow::Result<T> {
+        let mut attempt = 1;
+        loop {
+            let (body, length) = file_body(path).await?;
+            let request = self
+                .http
+                .post(url)
+                .bearer_auth(&self.token)
+                .header("content-type", "application/octet-stream")
+                .header("content-length", length)
+                .body(body);
+            match play_json(request, action).await {
+                Err(error)
+                    if attempt < PLAY_ATTEMPTS
+                        && error
+                            .downcast_ref::<PlayApiError>()
+                            .is_some_and(|error| is_retryable_status(error.status)) =>
+                {
+                    tokio::time::sleep(PLAY_RETRY_DELAY * 2u32.pow(attempt - 1)).await;
+                    attempt += 1;
+                }
+                result => return result,
+            }
+        }
     }
 
     /// Upload an AAB and return the version code Play assigned to it.
     pub async fn upload_bundle(&self, path: &Path) -> anyhow::Result<i64> {
-        let bytes = tokio_read(path).await?;
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Bundle {
             version_code: i64,
         }
-        let bundle: Bundle = play_json(
-            self.http
-                .post(self.upload("/bundles"))
-                .bearer_auth(&self.token)
-                .header("content-type", "application/octet-stream")
-                .body(bytes),
-            "upload the bundle",
-        )
-        .await?;
+        let bundle: Bundle = self
+            .upload_file(&self.upload("/bundles"), path, "upload the bundle")
+            .await?;
         Ok(bundle.version_code)
     }
 
     /// Upload R8/ProGuard `mapping.txt` for a version code.
     pub async fn upload_mapping(&self, version_code: i64, path: &Path) -> anyhow::Result<()> {
-        let bytes = tokio_read(path).await?;
-        let _: serde_json::Value = play_json(
-            self.http
-                .post(self.upload(&format!("/apks/{version_code}/deobfuscationFiles/proguard")))
-                .bearer_auth(&self.token)
-                .header("content-type", "application/octet-stream")
-                .body(bytes),
-            "upload mapping.txt",
-        )
-        .await?;
+        let _: serde_json::Value = self
+            .upload_file(
+                &self.upload(&format!("/apks/{version_code}/deobfuscationFiles/proguard")),
+                path,
+                "upload mapping.txt",
+            )
+            .await?;
         Ok(())
     }
 
@@ -342,7 +514,11 @@ impl<'a> PlayEdits<'a> {
     /// publishing, or some transferred apps) refuse a plain commit and ask for
     /// `changesNotSentForReview=true`; that commit is retried once, as
     /// fastlane does.
-    pub async fn commit(self) -> anyhow::Result<()> {
+    ///
+    /// On an error the edit stays open for the caller to delete. An error
+    /// for which [`is_play_rejection`] is false may hide a commit that went
+    /// through.
+    pub async fn commit(&self) -> anyhow::Result<()> {
         match play_json::<serde_json::Value>(self.commit_request(false), "commit the edit").await {
             Ok(_) => Ok(()),
             Err(error) if wants_changes_not_sent_for_review(&error.to_string()) => {
@@ -367,7 +543,7 @@ impl<'a> PlayEdits<'a> {
     }
 
     /// Discard the edit. Best effort: an uncommitted edit also expires on its own.
-    pub async fn delete(self) -> anyhow::Result<()> {
+    pub async fn delete(&self) -> anyhow::Result<()> {
         let response = self
             .http
             .delete(self.api(""))
@@ -722,12 +898,6 @@ fn parse_error_issues(response: &serde_json::Value) -> Vec<PlayErrorIssue> {
         .unwrap_or_default()
 }
 
-async fn tokio_read(path: &Path) -> anyhow::Result<Vec<u8>> {
-    tokio::fs::read(path)
-        .await
-        .with_context(|| format!("failed to read {}", path.display()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -740,6 +910,8 @@ mod tests {
             token: "token".to_string(),
             package_name: "com.example".to_string(),
             edit_id: "e1".to_string(),
+            api_base: API_BASE.to_string(),
+            upload_base: UPLOAD_BASE.to_string(),
         };
         let request = edits.commit_request(false).build().unwrap();
         assert_eq!(
@@ -918,5 +1090,147 @@ mod tests {
             ),
             "Invalid JWT Signature."
         );
+    }
+
+    /// One HTTP request as the mock server saw it.
+    #[derive(Debug)]
+    struct SeenRequest {
+        line: String,
+        head: String,
+        body_len: usize,
+    }
+
+    /// Serves `replies` (status, body) in turn, one per connection; status 0
+    /// closes the connection without replying.
+    async fn mock_play(
+        replies: Vec<(u16, &'static str)>,
+    ) -> (String, tokio::task::JoinHandle<Vec<SeenRequest>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            for (status, body) in replies {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut data = Vec::new();
+                let mut buf = vec![0u8; 64 * 1024];
+                let (head, body_len) = loop {
+                    let read = socket.read(&mut buf).await.unwrap();
+                    data.extend_from_slice(&buf[..read]);
+                    let text = String::from_utf8_lossy(&data).to_string();
+                    if let Some(end) = text.find("\r\n\r\n") {
+                        let head = text[..end].to_string();
+                        let length: usize = head
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .map(|value| value.trim().parse().unwrap())
+                            })
+                            .unwrap_or(0);
+                        while data.len() < end + 4 + length {
+                            let read = socket.read(&mut buf).await.unwrap();
+                            data.extend_from_slice(&buf[..read]);
+                        }
+                        break (head, data.len() - end - 4);
+                    }
+                };
+                seen.push(SeenRequest {
+                    line: head.lines().next().unwrap().to_string(),
+                    head,
+                    body_len,
+                });
+                if status == 0 {
+                    continue;
+                }
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            seen
+        });
+        (base, server)
+    }
+
+    #[tokio::test]
+    async fn a_brief_play_outage_is_retried() {
+        let (base, server) = mock_play(vec![(503, "{}"), (200, r#"{"track":"internal"}"#)]).await;
+        let http = reqwest::Client::new();
+        let track: TrackState = play_json(http.get(format!("{base}/tracks/internal")), "read")
+            .await
+            .unwrap();
+        assert_eq!(track.track, "internal");
+        assert_eq!(server.await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_rejected_play_call_is_not_retried() {
+        let (base, server) = mock_play(vec![(400, r#"{"error":{"message":"bad"}}"#)]).await;
+        let http = reqwest::Client::new();
+        let error = play_json::<serde_json::Value>(http.get(format!("{base}/x")), "read")
+            .await
+            .unwrap_err();
+        assert!(is_play_rejection(&error));
+        assert!(
+            error.to_string().contains("(400 Bad Request): bad"),
+            "{error}"
+        );
+        assert_eq!(server.await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_lost_commit_reply_is_not_a_rejection_and_is_not_resent() {
+        let (base, server) = mock_play(vec![(200, r#"{"id":"e1"}"#), (0, "")]).await;
+        let http = reqwest::Client::new();
+        let edits = PlayEdits::insert_at(&http, &base, &base, "token", "com.example")
+            .await
+            .unwrap();
+        let error = edits.commit().await.unwrap_err();
+        assert!(!is_play_rejection(&error), "{error:#}");
+        let seen = server.await.unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(
+            seen[1]
+                .line
+                .starts_with("POST /com.example/edits/e1:commit ")
+        );
+    }
+
+    #[tokio::test]
+    async fn bundles_stream_from_disk_and_retry_after_a_503() {
+        let path =
+            std::env::temp_dir().join(format!("oore-play-upload-{}.aab", std::process::id()));
+        let size = 3 * 1024 * 1024 + 17;
+        tokio::fs::write(&path, vec![7u8; size]).await.unwrap();
+        let (base, server) = mock_play(vec![
+            (200, r#"{"id":"e1"}"#),
+            (503, "{}"),
+            (200, r#"{"versionCode":42}"#),
+        ])
+        .await;
+        let http = reqwest::Client::new();
+        let edits = PlayEdits::insert_at(&http, &base, &base, "token", "com.example")
+            .await
+            .unwrap();
+        assert_eq!(edits.upload_bundle(&path).await.unwrap(), 42);
+        let seen = server.await.unwrap();
+        for upload in &seen[1..] {
+            assert!(
+                upload
+                    .line
+                    .starts_with("POST /com.example/edits/e1/bundles?uploadType=media "),
+                "{}",
+                upload.line
+            );
+            assert!(
+                upload.head.contains(&format!("content-length: {size}")),
+                "{}",
+                upload.head
+            );
+            assert_eq!(upload.body_len, size);
+        }
+        let _ = tokio::fs::remove_file(&path).await;
     }
 }

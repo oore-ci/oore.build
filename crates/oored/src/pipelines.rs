@@ -15,7 +15,7 @@ use oore_contract::{
 };
 use serde::Deserialize;
 use sqlx::Row;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::AppState;
@@ -307,7 +307,7 @@ fn validate_timeout_minutes(minutes: u32) -> Vec<String> {
 }
 
 fn validate_approval_policy(policy: &ApprovalPolicy) -> Vec<String> {
-    policy
+    let mut errors: Vec<String> = policy
         .events
         .iter()
         .filter(|event| !ApprovalPolicy::EVENTS.contains(&event.as_str()))
@@ -317,7 +317,17 @@ fn validate_approval_policy(policy: &ApprovalPolicy) -> Vec<String> {
                 ApprovalPolicy::EVENTS.join(", ")
             )
         })
-        .collect()
+        .collect();
+    if policy
+        .expires_after_hours
+        .is_some_and(|hours| !(1..=ApprovalPolicy::MAX_EXPIRES_AFTER_HOURS).contains(&hours))
+    {
+        errors.push(format!(
+            "approval.expires_after_hours must be between 1 and {}",
+            ApprovalPolicy::MAX_EXPIRES_AFTER_HOURS
+        ));
+    }
+    errors
 }
 
 fn validate_manual_only_trigger_config(tc: &TriggerConfig) -> Vec<String> {
@@ -1077,10 +1087,49 @@ pub async fn delete_pipeline(
     check_permission(&state.enforcer, &auth.0.role, "pipelines", "delete").await?;
 
     let pool = &state.db;
+    let artifact_paths = delete_pipeline_rows(pool, &pipeline_id).await?;
 
+    let storage = state.storage.read().await.clone();
+    let mut artifacts_left = 0;
+    for file_path in &artifact_paths {
+        if let Err(error) = storage.delete_object(file_path).await {
+            warn!(pipeline_id = %pipeline_id, %file_path, %error, "failed to delete a deleted pipeline's artifact");
+            artifacts_left += 1;
+        }
+    }
+
+    let details = serde_json::json!({
+        "deleted_by": auth.0.email,
+        "artifacts_deleted": artifact_paths.len() - artifacts_left,
+        "artifacts_left": artifacts_left,
+    })
+    .to_string();
+    let _ = write_audit_log(
+        pool,
+        Some(&auth.0.user_id),
+        "pipeline_deleted",
+        "pipeline",
+        Some(&pipeline_id),
+        Some(&details),
+    )
+    .await;
+
+    info!(pipeline_id = %pipeline_id, "pipeline deleted");
+
+    Ok(Json(OkResponse { ok: true }))
+}
+
+/// Delete a pipeline and its finished builds. Returns the storage paths of the
+/// deleted builds' artifacts, which the caller removes after the commit.
+async fn delete_pipeline_rows(
+    pool: &sqlx::SqlitePool,
+    pipeline_id: &str,
+) -> Result<Vec<String>, (StatusCode, Json<ApiError>)> {
     // Use a transaction so the active-build check, terminal-build cleanup,
     // and pipeline delete are atomic (prevents race with concurrent build creation).
-    let mut tx = pool.begin().await.map_err(|e| {
+    // IMMEDIATE takes the write lock up front, so a concurrent write cannot
+    // make the later upgrade fail with SQLITE_BUSY.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.map_err(|e| {
         error!(error = %e, "failed to begin transaction");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1091,7 +1140,7 @@ pub async fn delete_pipeline(
 
     // Verify pipeline exists
     let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM pipelines WHERE id = ?1")
-        .bind(&pipeline_id)
+        .bind(pipeline_id)
         .fetch_one(&mut *tx)
         .await
         .unwrap_or(false);
@@ -1109,7 +1158,7 @@ pub async fn delete_pipeline(
         "SELECT COUNT(*) FROM builds WHERE pipeline_id = ?1 \
          AND status NOT IN ('succeeded', 'failed', 'canceled', 'timed_out', 'expired')",
     )
-    .bind(&pipeline_id)
+    .bind(pipeline_id)
     .fetch_one(&mut *tx)
     .await
     .unwrap_or(0);
@@ -1122,12 +1171,56 @@ pub async fn delete_pipeline(
         ));
     }
 
+    // Deleting the builds deletes their releases. Keep one the daemon is still
+    // driving; a halted release only moves when someone resumes it.
+    let releases_in_progress: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM releases r JOIN builds b ON b.id = r.build_id \
+         WHERE b.pipeline_id = ?1 AND r.state NOT IN ('complete', 'failed', 'halted')",
+    )
+    .bind(pipeline_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to check releases for pipeline");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to delete pipeline",
+        )
+    })?;
+    if releases_in_progress > 0 {
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "releases_in_progress",
+            "Cannot delete a pipeline while one of its releases is in progress. \
+             Halt or complete the release, or wait for the store to finish, first.",
+        ));
+    }
+
+    // The artifact rows go with their builds, so collect the stored files to
+    // delete once the transaction commits.
+    let artifact_paths: Vec<String> = sqlx::query_scalar(
+        "SELECT a.file_path FROM artifacts a JOIN builds b ON b.id = a.build_id \
+         WHERE b.pipeline_id = ?1",
+    )
+    .bind(pipeline_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to list artifacts for pipeline");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to delete pipeline",
+        )
+    })?;
+
     // Delete terminal builds first (non-cascading FK on builds.pipeline_id)
     sqlx::query(
         "DELETE FROM builds WHERE pipeline_id = ?1 \
          AND status IN ('succeeded', 'failed', 'canceled', 'timed_out', 'expired')",
     )
-    .bind(&pipeline_id)
+    .bind(pipeline_id)
     .execute(&mut *tx)
     .await
     .map_err(|e| {
@@ -1140,7 +1233,7 @@ pub async fn delete_pipeline(
     })?;
 
     sqlx::query("DELETE FROM pipeline_schedule_runs WHERE pipeline_id = ?1")
-        .bind(&pipeline_id)
+        .bind(pipeline_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| {
@@ -1153,7 +1246,7 @@ pub async fn delete_pipeline(
         })?;
 
     sqlx::query("DELETE FROM pipelines WHERE id = ?1")
-        .bind(&pipeline_id)
+        .bind(pipeline_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| {
@@ -1173,24 +1266,7 @@ pub async fn delete_pipeline(
             "Failed to delete pipeline",
         )
     })?;
-
-    let details = serde_json::json!({
-        "deleted_by": auth.0.email,
-    })
-    .to_string();
-    let _ = write_audit_log(
-        pool,
-        Some(&auth.0.user_id),
-        "pipeline_deleted",
-        "pipeline",
-        Some(&pipeline_id),
-        Some(&details),
-    )
-    .await;
-
-    info!(pipeline_id = %pipeline_id, "pipeline deleted");
-
-    Ok(Json(OkResponse { ok: true }))
+    Ok(artifact_paths)
 }
 
 /// `POST /v1/pipelines/validate` — dry-run validation of pipeline config.
@@ -1238,4 +1314,54 @@ pub async fn validate_pipeline(
     let valid = errors.is_empty();
 
     Ok(Json(ValidatePipelineResponse { valid, errors }))
+}
+
+#[cfg(test)]
+mod delete_tests {
+    use super::*;
+
+    async fn pool() -> sqlx::SqlitePool {
+        let pool = crate::releases::tests::pool().await;
+        for statement in [
+            "INSERT INTO artifacts (id, build_id, name, file_path, created_at) \
+             VALUES ('a1', 'b1', 'app.aab', 'artifacts/b1/app.aab', 0)",
+            "INSERT INTO releases (id, project_id, build_id, store, track, state, created_at, updated_at) \
+             VALUES ('r1', 'p1', 'b1', 'google_play', 'production', 'rolling', 0, 0)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+        pool
+    }
+
+    #[tokio::test]
+    async fn a_release_in_progress_blocks_deleting_its_pipeline() {
+        let pool = pool().await;
+
+        let (status, _) = delete_pipeline_rows(&pool, "pl1").await.unwrap_err();
+
+        assert_eq!(status, StatusCode::CONFLICT);
+        let builds: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM builds")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(builds, 1);
+    }
+
+    #[tokio::test]
+    async fn deleting_a_pipeline_returns_its_artifact_files() {
+        let pool = pool().await;
+        sqlx::query("UPDATE releases SET state = 'halted'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let paths = delete_pipeline_rows(&pool, "pl1").await.unwrap();
+
+        assert_eq!(paths, ["artifacts/b1/app.aab"]);
+        let pipelines: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pipelines")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(pipelines, 0);
+    }
 }

@@ -39,16 +39,7 @@ import {
   type DataTableColumnDef,
 } from '@/components/data-table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -142,9 +133,13 @@ export const Route = createFileRoute(
   '/projects/$projectId/pipelines/$pipelineId/',
 )({
   validateSearch: validatePipelineSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
+    requireInstanceRoleOrRedirect(
+      instance.id,
+      ['owner', 'admin', 'developer'],
+      context,
+    )
   },
   component: PipelineDetailPage,
 })
@@ -479,23 +474,17 @@ function PipelineDetailPage() {
         </TabsContent>
       </Tabs>
 
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete pipeline?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete "{pipeline.name}". This action cannot
-              be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>
-              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete pipeline?"
+        description={`This will permanently delete "${pipeline.name}". This action cannot be undone.`}
+        confirmLabel="Delete pipeline"
+        confirmVariant="destructive"
+        isPending={deleteMutation.isPending}
+        pendingLabel="Deleting..."
+        onConfirm={handleDelete}
+      />
     </PageLayout>
   )
 }

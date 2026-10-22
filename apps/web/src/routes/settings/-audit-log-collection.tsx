@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge'
 import { formatEnumLabel } from '@/lib/format-utils'
 import { relativeTime } from '@/lib/format-utils'
 import type { AuditLogEntry } from '@oore/client/models'
+import { ROLE_LABELS } from './-user-role-labels'
 
 export type AuditSort =
   | 'created_at'
@@ -30,8 +31,38 @@ const AUDIT_SORTS = [
   'resource_type',
 ] satisfies ReadonlyArray<AuditSort>
 
+const PROPER_WORDS = new Map([
+  ['api', 'API'],
+  ['github', 'GitHub'],
+  ['gitlab', 'GitLab'],
+  ['oidc', 'OIDC'],
+  ['qa', 'QA'],
+  ['smtp', 'SMTP'],
+  ['url', 'URL'],
+])
+
 function auditActionLabel(action: string) {
   return formatEnumLabel(action.replace(/[.-]+/g, '_'))
+    .split(' ')
+    .map((word) => PROPER_WORDS.get(word.toLowerCase()) ?? word)
+    .join(' ')
+}
+
+// Details are free text from the daemon and can carry raw role values.
+function auditDetails(details: string) {
+  return details.replace(
+    /\b(owner|admin|developer|qa_viewer)\b/g,
+    (role) => ROLE_LABELS[role] ?? role,
+  )
+}
+
+function NotRecorded() {
+  return (
+    <span className="text-muted-foreground">
+      <span aria-hidden>—</span>
+      <span className="sr-only">Not recorded</span>
+    </span>
+  )
 }
 
 function AuditTime({ entry }: { entry: AuditLogEntry }) {
@@ -89,13 +120,27 @@ const auditColumns: Array<DataTableColumnDef<AuditLogEntry>> = [
   {
     accessorKey: 'resource_id',
     header: 'Resource ID',
-    cell: ({ row }) => row.original.resource_id?.slice(0, 8) ?? 'Not available',
+    cell: ({ row }) =>
+      row.original.resource_id ? (
+        <span className="font-mono text-xs" title={row.original.resource_id}>
+          {row.original.resource_id.slice(0, 8)}
+        </span>
+      ) : (
+        <NotRecorded />
+      ),
     enableSorting: false,
   },
   {
     accessorKey: 'details',
     header: 'Details',
-    cell: ({ row }) => row.original.details ?? 'Not available',
+    cell: ({ row }) =>
+      row.original.details ? (
+        <span className="block max-w-md min-w-48 break-words whitespace-normal">
+          {auditDetails(row.original.details)}
+        </span>
+      ) : (
+        <NotRecorded />
+      ),
     enableSorting: false,
   },
 ]

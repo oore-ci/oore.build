@@ -97,7 +97,7 @@ export function DashboardGettingStarted({
       action: canCreateProject ? (
         <Button
           size="sm"
-          render={<Link to="/projects" search={{ openCreate: '1' }} />}
+          render={<Link to="/projects" search={{ openCreate: 1 }} />}
           nativeButton={false}
         >
           <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" />

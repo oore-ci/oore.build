@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
 import { PageMeta } from '@/lib/seo'
 import { resolveRequiredInstanceApiBaseUrl } from '@/lib/instance-url'
+import { takeOidcRedirect } from '@/lib/auth-redirect'
 import { createWebOoreClient } from '@/lib/api-client/client'
 
 export const Route = createFileRoute('/auth/callback')({
@@ -136,7 +137,7 @@ function AuthCallbackPage() {
         })
 
         cleanupOidcSessionStorage()
-        void navigate({ to: '/' })
+        void navigate({ href: takeOidcRedirect() ?? '/', replace: true })
       })
       .catch((cause: unknown) => {
         failAuth(

@@ -5,12 +5,17 @@
     "oore-install",
     "oore-setup",
     "oore-uninstall",
+    "oore-update",
+    "oore-backup",
+    "oore-runner",
+    "oore-frontend",
     "oore-config",
     "oore-recovery",
     "oore-doctor",
     "oore-status",
     "oore-login",
-    "oore-pipeline-validate"
+    "oore-pipeline-validate",
+    "oore-version"
   ],
   "pagesIndex": "index"
 }

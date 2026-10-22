@@ -39,7 +39,13 @@ of uploading it to every pipeline. This needs instance admin or owner access.
 4. Select **Add key**.
 
 Replacing a shared key updates every pipeline that uses it on its next build.
-Oore refuses to delete a key while a pipeline uses it.
+Oore refuses to delete a key while a pipeline uses it: iOS signing is on, and
+the pipeline signs in API or Hybrid mode or uploads builds to App Store
+Connect.
+
+API-mode pipelines on the same Apple team share one distribution certificate.
+The first sync creates it, and later syncs reuse it, because Apple allows only
+a few distribution certificates per team.
 
 ## 3. Add the API credentials
 

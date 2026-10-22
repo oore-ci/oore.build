@@ -7,7 +7,7 @@ description: 'Remove owned Oore components while preserving data, or explicitly 
 Use `oore uninstall` to review and remove this installation.
 
 ```text
-oore uninstall [--purge | --legacy-v0-1-41] [--yes]
+oore uninstall [--purge | --legacy-v0-1-41] [--ignore-invalid-manifest] [--yes]
 ```
 
 The command always prints its removal plan first.
@@ -44,7 +44,7 @@ Oore leaves an updater unchanged when it cannot link it to the installed profile
 oore uninstall --purge
 ```
 
-Purge requires a valid installation manifest and explicit confirmation.
+Purge requires an installation manifest and explicit confirmation. If the manifest cannot be read, add `--ignore-invalid-manifest`.
 
 It removes the strictly validated installation root and the canonical Oore data directory.
 
@@ -73,6 +73,35 @@ Oore stops without changes for partial or legacy bootstrap state.
 If you also want canonical data removed, use `--purge` during profile uninstall.
 
 After normal removal, bootstrap-only state cannot prove ownership of that preserved data.
+
+## Recover from an invalid manifest
+
+Install, update, setup, and uninstall stop when `install-manifest.json` cannot be parsed or fails validation. This can follow a hand edit or a disk problem.
+
+Remove the installation without the manifest:
+
+```bash
+oore uninstall --ignore-invalid-manifest
+```
+
+Oore then treats the installation as every profile at once. The plan lists:
+
+- Every Oore component path that exists in the install root.
+- Every Oore service whose launchd definition points at this install root. Oore leaves other services unchanged.
+- The exact Oore shell path block in `.zshrc`, `.bashrc`, or `.bash_profile`.
+
+Oore data is preserved unless you also pass `--purge`.
+
+The flag refuses a manifest that is a symbolic link, belongs to another user, or grants group or other access. Only unreadable contents can be set aside.
+
+Then reinstall the same role:
+
+```bash
+curl -fsSL https://oore.build/install | bash
+~/.oore/bin/oore install --profile complete
+```
+
+Replace `complete` with the role this Mac had. The new installation uses the preserved data.
 
 ## Upgrade an exact v0.1.41 installation
 
@@ -125,12 +154,13 @@ The command also refuses an active update or another lifecycle operation.
 
 ## Options
 
-| Option             | Purpose                                                              |
-| ------------------ | -------------------------------------------------------------------- |
-| `--purge`          | Also remove the validated installation root and canonical Oore data. |
-| `--legacy-v0-1-41` | Remove an exact v0.1.41 service installation while preserving data.  |
-| `--yes`            | Apply the displayed plan without an interactive confirmation prompt. |
-| `--help`           | Print command help.                                                  |
+| Option                      | Purpose                                                                |
+| --------------------------- | ---------------------------------------------------------------------- |
+| `--purge`                   | Also remove the validated installation root and canonical Oore data.   |
+| `--legacy-v0-1-41`          | Remove an exact v0.1.41 service installation while preserving data.    |
+| `--ignore-invalid-manifest` | Remove owned components and services when the manifest cannot be read. |
+| `--yes`                     | Apply the displayed plan without an interactive confirmation prompt.   |
+| `--help`                    | Print command help.                                                    |
 
 ## Recover a missing CLI
 
