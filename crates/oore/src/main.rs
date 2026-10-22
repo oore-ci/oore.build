@@ -9221,7 +9221,7 @@ async fn handle_runner_install_service_inner(
         })
         .transpose()?;
 
-    authorize_system_service_restart()?;
+    let sudo_keepalive = authorize_system_service_restart()?;
     let system_was_loaded = system_launchd_service_loaded(&system_service)?;
     if system_was_loaded && previous_system_contents.is_none() {
         anyhow::bail!(
@@ -9252,7 +9252,12 @@ async fn handle_runner_install_service_inner(
         let barrier =
             acquire_runner_claim_barrier(&active_runner.daemon_url, args.state_file.as_deref())
                 .await?;
-        if let Err(error) = barrier.wait_for_runner(&active_runner.runner_id).await {
+        if let Err(error) = async {
+            barrier.wait_for_runner(&active_runner.runner_id).await?;
+            sudo_keepalive.ensure_active()
+        }
+        .await
+        {
             barrier
                 .release()
                 .await
@@ -9462,7 +9467,7 @@ fn handle_runner_uninstall_service() -> anyhow::Result<()> {
     let system_service_present =
         system_plist.exists() || user_launchd_service_loaded(&system_service);
     if system_service_present {
-        authorize_system_service_restart()?;
+        let _sudo_keepalive = authorize_system_service_restart()?;
         stop_system_launchd_service(&system_service)?;
         if let Some(path) = &system_acknowledgement {
             clear_runner_service_acknowledgement(path)?;
@@ -9841,7 +9846,71 @@ fn run_command_with_timeout(
     }
 }
 
-fn authorize_system_service_restart() -> anyhow::Result<()> {
+/// How long the interactive sudo password prompt may wait for an answer. It
+/// runs before anything is stopped, so a timeout leaves every service as it was.
+const SUDO_PROMPT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// How often a held sudo ticket is refreshed. macOS expires an idle ticket
+/// after five minutes by default, while a runner drain can wait 30 minutes.
+const SUDO_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Keeps the sudo ticket granted by `authorize_system_service_restart` fresh
+/// until it is dropped, so privileged `sudo -n` steps that follow a long
+/// runner drain, and their rollback, still run.
+#[must_use = "dropping the keepalive stops refreshing administrator access"]
+struct SudoKeepalive {
+    stop: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SudoKeepalive {
+    fn start() -> Self {
+        let (stop, stopped) = std::sync::mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || {
+            while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                stopped.recv_timeout(SUDO_KEEPALIVE_INTERVAL)
+            {
+                let mut refresh = std::process::Command::new("/usr/bin/sudo");
+                refresh
+                    .args(["-n", "-v"])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                // A failed refresh is reported by the privileged step that
+                // needs the ticket, which checks it before changing anything.
+                let _ = run_command_with_timeout(
+                    &mut refresh,
+                    "refreshing administrator access",
+                    Duration::from_secs(15),
+                );
+            }
+        });
+        Self {
+            stop: Some(stop),
+            thread: Some(thread),
+        }
+    }
+
+    /// Confirms that privileged steps can still run without a prompt.
+    fn ensure_active(&self) -> anyhow::Result<()> {
+        let output = sudo_tool_output("/usr/bin/true", &[])?;
+        anyhow::ensure!(
+            output.status.success(),
+            "administrator access expired before Oore could restart its services; nothing was stopped. Run `sudo -v`, then retry"
+        );
+        Ok(())
+    }
+}
+
+impl Drop for SudoKeepalive {
+    fn drop(&mut self) {
+        self.stop.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn authorize_system_service_restart() -> anyhow::Result<SudoKeepalive> {
     use std::io::IsTerminal;
 
     let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
@@ -9851,7 +9920,7 @@ fn authorize_system_service_restart() -> anyhow::Result<()> {
             output.status.success(),
             "administrator access is required; run `sudo -v` in an interactive terminal, then retry"
         );
-        return Ok(());
+        return Ok(SudoKeepalive::start());
     }
 
     eprintln!("\nAdministrator access is required to manage Oore's macOS system services.");
@@ -9861,12 +9930,18 @@ fn authorize_system_service_restart() -> anyhow::Result<()> {
     let status = run_command_with_timeout(
         &mut command,
         "requesting administrator access",
-        Duration::from_secs(60),
-    )?;
+        SUDO_PROMPT_TIMEOUT,
+    )
+    .with_context(|| {
+        format!(
+            "the administrator password prompt was not answered within {} minutes; no service changes were made",
+            SUDO_PROMPT_TIMEOUT.as_secs() / 60
+        )
+    })?;
     if !status.success() {
         anyhow::bail!("administrator access was not granted; no service changes were made");
     }
-    Ok(())
+    Ok(SudoKeepalive::start())
 }
 
 async fn endpoint_is_healthy(client: &reqwest::Client, url: &str) -> bool {
@@ -12091,20 +12166,6 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     )?;
     fs::create_dir_all(&install_root)
         .with_context(|| format!("failed to create install root {}", install_root.display()))?;
-    let update_stage = tempfile::Builder::new()
-        .prefix(".update-")
-        .tempdir_in(&install_root)
-        .context("failed to create update staging directory")?;
-    let staged_release = update_stage.path().join("release");
-    copy_dir_recursive(
-        prepared
-            .path
-            .as_deref()
-            .context("verified update release was not prepared")?,
-        &staged_release,
-    )?;
-    let previous_release = update_stage.path().join("previous");
-    copy_release_snapshot(&install_root, &previous_release)?;
 
     let (daemon_service_plist, daemon_service_is_system) =
         managed_service_plist(DAEMON_SERVICE_LABEL)?;
@@ -12137,13 +12198,30 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
             );
         }
     }
-    if (daemon_service_is_installed && daemon_service_is_system)
+    let sudo_keepalive = if (daemon_service_is_installed && daemon_service_is_system)
         || (runner_plist.is_file() && runner_is_system)
         || (web_is_managed && web_is_system)
         || args.ensure_managed_runner
     {
-        authorize_system_service_restart()?;
-    }
+        Some(authorize_system_service_restart()?)
+    } else {
+        None
+    };
+    // Stage only after the sudo prompt, so cancelling it leaves nothing behind.
+    let update_stage = tempfile::Builder::new()
+        .prefix(".update-")
+        .tempdir_in(&install_root)
+        .context("failed to create update staging directory")?;
+    let staged_release = update_stage.path().join("release");
+    copy_dir_recursive(
+        prepared
+            .path
+            .as_deref()
+            .context("verified update release was not prepared")?,
+        &staged_release,
+    )?;
+    let previous_release = update_stage.path().join("previous");
+    copy_release_snapshot(&install_root, &previous_release)?;
 
     let daemon_document = daemon_service_is_installed
         .then(|| plist_json(&daemon_service_plist))
@@ -12312,7 +12390,17 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
             "The backend was stopped before this update. It will remain running because stopping it after the maintenance barrier opens can interrupt a remote runner claim."
         );
     }
-    if let Err(error) = barrier.wait_for_all_work().await {
+    if let Err(error) = async {
+        barrier.wait_for_all_work().await?;
+        // The drain can outlast the sudo ticket. Check it before the first
+        // privileged step so an expired ticket fails before anything stops.
+        match sudo_keepalive.as_ref() {
+            Some(keepalive) => keepalive.ensure_active(),
+            None => Ok(()),
+        }
+    }
+    .await
+    {
         barrier.release().await?;
         return Err(error);
     }
@@ -13007,5 +13095,12 @@ mod tests {
 
         assert_eq!(error.to_string(), "asset exceeds the size limit");
         assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn dropping_the_sudo_keepalive_stops_it_without_waiting_for_a_refresh() {
+        let started = Instant::now();
+        drop(SudoKeepalive::start());
+        assert!(started.elapsed() < SUDO_KEEPALIVE_INTERVAL / 2);
     }
 }

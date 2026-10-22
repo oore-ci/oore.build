@@ -116,6 +116,7 @@ pub(crate) fn handle(args: UninstallArgs, terminal: Terminal) -> anyhow::Result<
 
     refuse_update_state(&install_root)?;
     let manifest_path = install_root.join("install-manifest.json");
+    let mut sudo_keepalive = None;
     let (installation, recorded_services, shell_path_files, component_targets, legacy_updater) =
         match fs::symlink_metadata(&manifest_path) {
             Ok(_) => {
@@ -165,7 +166,7 @@ pub(crate) fn handle(args: UninstallArgs, terminal: Terminal) -> anyhow::Result<
                             "Administrator access",
                             "Oore must inspect the protected v0.1.41 launchd definitions before it can show a safe removal plan. Your password is requested by sudo and is not stored by Oore.",
                         )?;
-                        crate::authorize_system_service_restart()?;
+                        sudo_keepalive = Some(crate::authorize_system_service_restart()?);
                     }
                     let legacy = preflight_legacy_v0141(&install_root)?;
                     (
@@ -222,8 +223,9 @@ pub(crate) fn handle(args: UninstallArgs, terminal: Terminal) -> anyhow::Result<
         return Ok(());
     }
     if (!plan.services.is_empty() || plan.legacy_updater) && !args.legacy_v0_1_41 {
-        crate::authorize_system_service_restart()?;
+        sudo_keepalive = Some(crate::authorize_system_service_restart()?);
     }
+    let _sudo_keepalive = sudo_keepalive;
 
     apply_path_edits(&mut plan.path_edits)?;
     if plan.legacy_updater
