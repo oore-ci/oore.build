@@ -143,3 +143,96 @@ fn current_effective_uid() -> u32 {
     // SAFETY: `geteuid` has no arguments, pointer requirements, or failure state.
     unsafe { libc::geteuid() }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn private_parent() -> tempfile::TempDir {
+        let parent = tempfile::tempdir().unwrap();
+        fs::set_permissions(parent.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        parent
+    }
+
+    fn lock_error(install_root: &Path) -> String {
+        match InstallLock::acquire(install_root) {
+            Ok(_) => panic!("the installation lock was acquired"),
+            Err(error) => format!("{error:#}"),
+        }
+    }
+
+    #[test]
+    fn only_one_lifecycle_operation_holds_the_lock() {
+        let parent = private_parent();
+        let install_root = parent.path().join(".oore");
+
+        let held = InstallLock::acquire(&install_root).unwrap();
+        let lock_path = parent.path().join("..oore.oore-lifecycle.lock");
+        assert_eq!(
+            fs::metadata(&lock_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(lock_error(&install_root).contains("operation is active"));
+
+        drop(held);
+        drop(InstallLock::acquire(&install_root).unwrap());
+    }
+
+    #[test]
+    fn a_lock_file_left_by_an_exited_process_is_reused() {
+        let parent = private_parent();
+        let install_root = parent.path().join("oore");
+        let lock_path = parent.path().join(".oore.oore-lifecycle.lock");
+        fs::write(&lock_path, b"stale").unwrap();
+        fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let _lock = InstallLock::acquire(&install_root).unwrap();
+        assert_eq!(
+            fs::metadata(&lock_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn unsafe_lock_locations_are_refused() {
+        let parent = private_parent();
+        let install_root = parent.path().join("oore");
+
+        fs::set_permissions(parent.path(), fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(lock_error(&install_root).contains("unsafe ownership, type, or permissions"));
+        fs::set_permissions(parent.path(), fs::Permissions::from_mode(0o700)).unwrap();
+
+        let target = parent.path().join("elsewhere");
+        fs::write(&target, b"").unwrap();
+        std::os::unix::fs::symlink(&target, parent.path().join(".oore.oore-lifecycle.lock"))
+            .unwrap();
+        assert!(lock_error(&install_root).contains("failed to open installation lock"));
+
+        assert!(lock_error(Path::new("/")).contains("no parent directory"));
+    }
+
+    #[test]
+    fn an_interrupted_frontend_update_needs_its_launcher_to_recover() {
+        let parent = private_parent();
+        let install_root = parent.path().join("oore");
+        fs::create_dir(&install_root).unwrap();
+        fs::set_permissions(&install_root, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(install_root.join(".oore-web-update-transaction"), b"{}").unwrap();
+
+        assert!(lock_error(&install_root).contains("requires the installed launcher"));
+
+        let launcher = install_root.join("bin/oore-web");
+        fs::create_dir(launcher.parent().unwrap()).unwrap();
+        fs::write(&launcher, "#!/bin/sh\nexit 3\n").unwrap();
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(lock_error(&install_root).contains("frontend update recovery failed"));
+
+        fs::write(
+            &launcher,
+            "#!/bin/sh\n[ \"$1\" = recover-update ] || exit 4\nrm \"$OORE_INSTALL_ROOT/.oore-web-update-transaction\"\n",
+        )
+        .unwrap();
+        let _lock = InstallLock::acquire(&install_root).unwrap();
+        assert!(!install_root.join(".oore-web-update-transaction").exists());
+    }
+}

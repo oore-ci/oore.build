@@ -2077,3 +2077,167 @@ fn current_effective_uid() -> u32 {
     // SAFETY: `geteuid` has no arguments, pointer requirements, or failure state.
     unsafe { libc::geteuid() }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn install_root() -> (tempfile::TempDir, PathBuf) {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap().join("oore");
+        fs::create_dir_all(root.join("bin")).unwrap();
+        for directory in [root.parent().unwrap(), &root, &root.join("bin")] {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let cli = root.join("bin/oore");
+        fs::write(&cli, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+        (temporary, root)
+    }
+
+    fn error_text(result: anyhow::Result<impl std::fmt::Debug>) -> String {
+        format!("{:#}", result.unwrap_err())
+    }
+
+    #[test]
+    fn install_root_text_must_be_a_plain_absolute_path() {
+        assert_eq!(
+            validate_install_root_text("/opt/oore").unwrap(),
+            "/opt/oore"
+        );
+        assert!(error_text(validate_install_root_text("")).contains("cannot be empty"));
+        assert!(error_text(validate_install_root_text("oore")).contains("absolute path"));
+        assert!(error_text(validate_install_root_text("/opt/a:b")).contains("colon"));
+        assert!(error_text(validate_install_root_text("/opt/a\nb")).contains("newline"));
+    }
+
+    #[test]
+    fn uninstall_refuses_unsafe_install_roots() {
+        let (_temporary, root) = install_root();
+        validate_install_root(&root, true).unwrap();
+
+        assert!(error_text(validate_install_root(Path::new("/"), false)).contains("refusing"));
+        let home = dirs::home_dir().unwrap();
+        assert!(error_text(validate_install_root(&home, false)).contains("home directory"));
+        assert!(
+            error_text(validate_install_root(&root.join("bin/../bin"), false))
+                .contains("unsupported path component")
+        );
+
+        let link = root.parent().unwrap().join("linked");
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        assert!(error_text(validate_install_root(&link, false)).contains("not a real directory"));
+
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(error_text(validate_install_root(&root, false)).contains("writable by another"));
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+
+        fs::set_permissions(root.join("bin/oore"), fs::Permissions::from_mode(0o644)).unwrap();
+        validate_install_root(&root, false).unwrap();
+        assert!(error_text(validate_install_root(&root, true)).contains("not executable"));
+        fs::remove_file(root.join("bin/oore")).unwrap();
+        assert!(validate_install_root(&root, true).is_err());
+    }
+
+    #[test]
+    fn uninstall_waits_for_pending_or_running_updates() {
+        let (_temporary, root) = install_root();
+        refuse_update_state(&root).unwrap();
+
+        let write_status = |phase| {
+            let status = RuntimeUpdateStatus {
+                phase,
+                error: None,
+                managed_service: true,
+            };
+            let path = root.join(".runtime-update-status.json");
+            fs::write(&path, serde_json::to_vec(&status).unwrap()).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        };
+        write_status(RuntimeUpdatePhase::Idle);
+        refuse_update_state(&root).unwrap();
+        write_status(RuntimeUpdatePhase::Failed);
+        refuse_update_state(&root).unwrap();
+        write_status(RuntimeUpdatePhase::Updating);
+        assert!(error_text(refuse_update_state(&root)).contains("runtime update is active"));
+        write_status(RuntimeUpdatePhase::Restarting);
+        assert!(error_text(refuse_update_state(&root)).contains("runtime update is active"));
+        fs::write(root.join(".runtime-update-status.json"), b"{").unwrap();
+        assert!(error_text(refuse_update_state(&root)).contains("invalid runtime update status"));
+        fs::remove_file(root.join(".runtime-update-status.json")).unwrap();
+
+        let request = root.join("run/runtime-update-queue/request.json");
+        fs::create_dir_all(request.parent().unwrap()).unwrap();
+        fs::write(&request, b"{}").unwrap();
+        assert!(error_text(refuse_update_state(&root)).contains("runtime update state exists"));
+        fs::remove_file(&request).unwrap();
+
+        for transaction in [
+            root.join(".update-1234"),
+            root.join(".supervised-update-1234"),
+            root.join("run/runtime-update-active-1234"),
+        ] {
+            fs::create_dir(&transaction).unwrap();
+            assert!(
+                error_text(refuse_update_state(&root)).contains("update transaction state exists")
+            );
+            fs::remove_dir(&transaction).unwrap();
+        }
+        refuse_update_state(&root).unwrap();
+    }
+
+    #[test]
+    fn only_the_exact_managed_path_block_is_removed() {
+        let path = Path::new("/home/user/.zshrc");
+        let export = "export PATH=\"/home/user/.oore/bin:$PATH\"";
+        let block = format!("{PATH_BLOCK_START}\n{export}\n{PATH_BLOCK_END}\n");
+
+        assert_eq!(
+            remove_exact_path_block("alias ll='ls -l'\n", export, path).unwrap(),
+            None
+        );
+        assert_eq!(
+            remove_exact_path_block(&format!("before\n{block}after\n"), export, path).unwrap(),
+            Some("before\nafter\n".to_string())
+        );
+        assert_eq!(
+            remove_exact_path_block(block.trim_end(), export, path).unwrap(),
+            Some(String::new())
+        );
+
+        for contents in [
+            format!("{block}{block}"),
+            format!("{PATH_BLOCK_START}\n{export}\n"),
+            format!("{PATH_BLOCK_START}\nexport PATH=\"/elsewhere:$PATH\"\n{PATH_BLOCK_END}\n"),
+            format!("{PATH_BLOCK_START}\n{export}\necho extra\n{PATH_BLOCK_END}\n"),
+            format!("# {PATH_BLOCK_START}\n{export}\n{PATH_BLOCK_END}\n"),
+        ] {
+            assert!(
+                remove_exact_path_block(&contents, export, path).is_err(),
+                "{contents:?} was edited"
+            );
+        }
+    }
+
+    #[test]
+    fn shell_paths_are_escaped_for_double_quotes() {
+        assert_eq!(
+            escape_double_quoted(r#"/Users/a "b"/$HOME/`x`\y"#),
+            r#"/Users/a \"b\"/\$HOME/\`x\`\\y"#
+        );
+    }
+
+    #[test]
+    fn purge_refuses_roots_it_must_never_delete() {
+        assert!(error_text(validate_purge_root(Path::new("relative"))).contains("absolute"));
+        assert!(error_text(validate_purge_root(Path::new("/"))).contains("refusing to purge /"));
+        let home = dirs::home_dir().unwrap();
+        assert!(error_text(validate_purge_root(&home)).contains("home directory"));
+
+        let (_temporary, root) = install_root();
+        let link = root.parent().unwrap().join("linked");
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        assert!(error_text(validate_purge_root(&link)).contains("symbolic link"));
+        validate_purge_root(&root).unwrap();
+    }
+}

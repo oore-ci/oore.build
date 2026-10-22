@@ -5,10 +5,10 @@ use std::net::IpAddr;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{
-    Arc,
-    atomic::{AtomicU8, Ordering},
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
 };
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub mod store_version;
 
@@ -69,8 +69,29 @@ pub const RUNNER_SERVICE_ACK_PATH_ENV: &str = "OORE_RUNNER_SERVICE_ACK_PATH";
 pub const RUNNER_SERVICE_ACK_MAX_AGE_SECS: u64 = 75;
 const RUNNER_SERVICE_ACK_SCHEMA_VERSION: u32 = 1;
 const MANAGED_RUNNER_SERVICE_LABEL: &str = "build.oore.oore-runner";
-// ponytail: fixed three-check grace; move it into the runner protocol if deployments need tuning.
-const MAX_CONSECUTIVE_AUTHORITY_FAILURES: u8 = 3;
+/// How long a build keeps running while the backend cannot confirm it, for
+/// example through a backend restart.
+const CONTROLLER_GRACE: Duration = Duration::from_secs(300);
+/// `BuildTerminated` status for a build stopped after `CONTROLLER_GRACE`.
+const CONTROLLER_UNAVAILABLE: &str = "controller_unavailable";
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Longest wait for the next bytes of any response, so a half-open
+/// connection fails instead of hanging the runner.
+const READ_TIMEOUT: Duration = Duration::from_secs(120);
+/// Whole-request bound for the small JSON calls to the backend.
+const CONTROL_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long the runner keeps trying to deliver a build's final status.
+const FINAL_REPORT_WINDOW: Duration = Duration::from_secs(600);
+/// How long it keeps trying to say a claimed build started. Shorter than the
+/// backend's 5 minute lease, after which the build is queued again.
+const RUNNING_REPORT_WINDOW: Duration = Duration::from_secs(120);
+/// How long a canceled step's processes get to exit after SIGTERM.
+const STEP_TERM_GRACE: Duration = Duration::from_secs(5);
+/// How long a step's output may stay quiet after the step exits before the
+/// runner stops reading it, in case a background process it left behind
+/// still holds the pipes. `STEP_OUTPUT_LIMIT` bounds the whole wait.
+const STEP_OUTPUT_GRACE: Duration = Duration::from_secs(5);
+const STEP_OUTPUT_LIMIT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RunnerConfig {
@@ -252,8 +273,35 @@ fn repository_shell_command(script: &str, workspace: &Path) -> tokio::process::C
         .arg("-c")
         .arg(script)
         .current_dir(workspace)
-        .env_remove(RUNNER_SERVICE_ACK_PATH_ENV);
+        .env_remove(RUNNER_SERVICE_ACK_PATH_ENV)
+        // Its own process group, so canceling the step reaches everything
+        // the script started, not just the shell.
+        .process_group(0);
     command
+}
+
+/// Stops a step: SIGTERM to its process group, then SIGKILL to whatever is
+/// left once `STEP_TERM_GRACE` passes. A child that leads no group of its
+/// own is killed directly.
+async fn stop_process_group(child: &mut tokio::process::Child) {
+    let group = child.id().and_then(|pid| libc::pid_t::try_from(pid).ok());
+    // SAFETY: killpg only sends a signal. The child leads its group when it
+    // was spawned with process_group(0); otherwise no group has its id and
+    // the call fails harmlessly.
+    let signal_group =
+        |signal| group.is_some_and(|pgid| unsafe { libc::killpg(pgid, signal) } == 0);
+    if signal_group(libc::SIGTERM) {
+        let _ = tokio::time::timeout(STEP_TERM_GRACE, child.wait()).await;
+        signal_group(libc::SIGKILL);
+    }
+    child.kill().await.ok();
+}
+
+/// Waits for every task in `handles`.
+async fn join_all(handles: Vec<tokio::task::JoinHandle<()>>) {
+    for handle in handles {
+        let _ = handle.await;
+    }
 }
 
 fn write_private_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
@@ -3071,6 +3119,17 @@ fn heartbeat_capabilities(
     capabilities
 }
 
+/// The runner's HTTP client. Uploads can take long, so it bounds connecting
+/// and each wait for response bytes rather than whole requests; small JSON
+/// calls add `CONTROL_REQUEST_TIMEOUT`.
+fn runner_http_client() -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(READ_TIMEOUT)
+        .build()
+        .context("failed to build the runner HTTP client")
+}
+
 async fn send_runner_heartbeat(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -3168,7 +3227,7 @@ pub async fn run_runner_forever(
 ) -> anyhow::Result<()> {
     let daemon_url = daemon_url_override.unwrap_or(config.daemon_url.clone());
     require_safe_daemon_url(&daemon_url)?;
-    let client = reqwest::Client::new();
+    let client = runner_http_client()?;
     let mut release_watch = RunnerReleaseWatch::for_current_executable()?;
     let executable = std::env::current_exe().context("failed to locate the runner executable")?;
     let service_ack_path = runner_service_ack_path_from_env()?;
@@ -3491,6 +3550,7 @@ async fn claim_and_execute(
         .json(&ClaimJobRequest {
             protocol_version: RUNNER_PROTOCOL_VERSION,
         })
+        .timeout(CONTROL_REQUEST_TIMEOUT)
         .send()
         .await?;
 
@@ -3516,17 +3576,18 @@ async fn claim_and_execute(
         job.build_id, job.build_number, job.project_id
     );
 
-    report_status(
+    report_status_with_retry(
         client,
         daemon_url,
         config,
-        StatusReport {
+        &StatusReport {
             build_id: job.build_id.as_str(),
             status: "running",
             exit_code: None,
             error_message: None,
             steps: &[],
         },
+        RetryPolicy::within(RUNNING_REPORT_WINDOW),
     )
     .await?;
 
@@ -3542,52 +3603,72 @@ async fn claim_and_execute(
     .await;
     let finished_build = cache_observation.map(|observation| (observation, result.is_ok()));
 
-    match result {
-        Ok(()) => {
-            report_status(
-                client,
-                daemon_url,
-                config,
-                StatusReport {
-                    build_id: job.build_id.as_str(),
-                    status: "succeeded",
-                    exit_code: Some(0),
-                    error_message: None,
-                    steps: &steps,
-                },
-            )
-            .await?;
-            println!("Build {} succeeded", job.build_id);
-        }
-        Err(e) => {
-            if e.downcast_ref::<BuildTerminated>().is_some() {
+    let final_report = match &result {
+        Ok(()) => Some(StatusReport {
+            build_id: job.build_id.as_str(),
+            status: "succeeded",
+            exit_code: Some(0),
+            error_message: None,
+            steps: &steps,
+        }),
+        Err(e) => match e.downcast_ref::<BuildTerminated>() {
+            Some(terminated) if terminated.status == CONTROLLER_UNAVAILABLE => Some(StatusReport {
+                build_id: job.build_id.as_str(),
+                status: "failed",
+                exit_code: Some(1),
+                error_message: Some(format!(
+                    "The runner lost contact with the backend for more than {} minutes and stopped the build",
+                    CONTROLLER_GRACE.as_secs() / 60
+                )),
+                steps: &steps,
+            }),
+            Some(_) => {
                 println!(
                     "Build {} was externally terminated, skipping status report",
                     job.build_id
                 );
-            } else {
-                report_status(
-                    client,
-                    daemon_url,
-                    config,
-                    StatusReport {
-                        build_id: job.build_id.as_str(),
-                        status: "failed",
-                        exit_code: Some(1),
-                        error_message: Some(e.to_string()),
-                        steps: &steps,
-                    },
-                )
-                .await?;
-                eprintln!("Build {} failed: {}", job.build_id, e);
+                None
             }
+            None => Some(StatusReport {
+                build_id: job.build_id.as_str(),
+                status: "failed",
+                exit_code: Some(1),
+                error_message: Some(e.to_string()),
+                steps: &steps,
+            }),
+        },
+    };
+    let reported = match &final_report {
+        Some(report) => {
+            report_status_with_retry(
+                client,
+                daemon_url,
+                config,
+                report,
+                RetryPolicy::within(FINAL_REPORT_WINDOW),
+            )
+            .await
         }
+        None => Ok(()),
+    };
+    match (&final_report, &reported) {
+        (Some(report), Ok(())) if report.status == "succeeded" => {
+            println!("Build {} succeeded", job.build_id)
+        }
+        (Some(report), Ok(())) => eprintln!(
+            "Build {} failed: {}",
+            job.build_id,
+            report.error_message.as_deref().unwrap_or_default()
+        ),
+        _ => {}
     }
 
-    // After the status report, so measuring the caches never delays it.
+    // After the status report, so measuring the caches never delays it, and
+    // whatever its outcome.
     if let Some(caches) = caches {
         run_cache_maintenance(caches.clone(), cache_report.clone(), finished_build).await;
     }
+    reported?;
 
     Ok(true)
 }
@@ -4227,34 +4308,70 @@ fn resolve_execution_plan(
     })
 }
 
-#[derive(Default)]
+/// What the runner last heard from the backend about the build it runs.
 struct BuildAuthorityState {
-    consecutive_failures: AtomicU8,
+    last_confirmed: Mutex<Instant>,
+    grace: Duration,
+    /// Why the build must stop, once the runner knows.
+    terminated: Mutex<Option<String>>,
+}
+
+impl Default for BuildAuthorityState {
+    fn default() -> Self {
+        Self::with_grace(CONTROLLER_GRACE)
+    }
 }
 
 impl BuildAuthorityState {
-    fn confirmed_active(&self) {
-        self.consecutive_failures.store(0, Ordering::Relaxed);
+    fn with_grace(grace: Duration) -> Self {
+        Self {
+            last_confirmed: Mutex::new(Instant::now()),
+            grace,
+            terminated: Mutex::new(None),
+        }
     }
 
+    fn confirmed_active(&self) {
+        if let Ok(mut last) = self.last_confirmed.lock() {
+            *last = Instant::now();
+        }
+    }
+
+    /// The backend could not answer. The build carries on until the backend
+    /// has been unreachable for the whole grace window.
     fn transient_failure(&self) -> anyhow::Result<()> {
-        // `fetch_update` is deprecated in favor of `try_update` from Rust 1.99; keep the old
-        // name until local toolchains catch up with CI's stable.
-        #[allow(deprecated)]
-        let failures = self
-            .consecutive_failures
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-                Some(value.saturating_add(1))
-            })
-            .unwrap_or(u8::MAX)
-            .saturating_add(1);
-        if failures >= MAX_CONSECUTIVE_AUTHORITY_FAILURES {
+        let elapsed = self
+            .last_confirmed
+            .lock()
+            .map(|last| last.elapsed())
+            .unwrap_or(Duration::MAX);
+        if elapsed >= self.grace {
             return Err(BuildTerminated {
-                status: "controller_unavailable".to_string(),
+                status: CONTROLLER_UNAVAILABLE.to_string(),
             }
             .into());
         }
         Ok(())
+    }
+
+    fn record(&self, result: &anyhow::Result<()>) {
+        if let Err(error) = result
+            && let Some(terminated) = error.downcast_ref::<BuildTerminated>()
+            && let Ok(mut reason) = self.terminated.lock()
+        {
+            reason.get_or_insert_with(|| terminated.status.clone());
+        }
+    }
+
+    /// The error for a step stopped by `poll_cancellation`.
+    fn terminated(&self) -> anyhow::Error {
+        let status = self
+            .terminated
+            .lock()
+            .ok()
+            .and_then(|reason| reason.clone())
+            .unwrap_or_else(|| "canceled".to_string());
+        BuildTerminated { status }.into()
     }
 }
 
@@ -4292,32 +4409,38 @@ async fn check_build_active(
         .json(&ClaimJobRequest {
             protocol_version: RUNNER_PROTOCOL_VERSION,
         })
+        .timeout(CONTROL_REQUEST_TIMEOUT)
         .send()
         .await;
 
-    match resp {
-        Ok(r) if r.status().is_success() => {
-            let status_resp: JobStatusResponse = r.json().await?;
-            let status: BuildStatus = status_resp
-                .status
-                .parse()
-                .map_err(|e: String| anyhow::anyhow!(e))?;
-
-            if status.is_terminal() {
-                return Err(BuildTerminated {
-                    status: status_resp.status,
+    let result = match resp {
+        Ok(r) if r.status().is_success() => match r.json::<JobStatusResponse>().await {
+            Ok(status_resp) => {
+                let status: BuildStatus = status_resp
+                    .status
+                    .parse()
+                    .map_err(|e: String| anyhow::anyhow!(e))?;
+                if status.is_terminal() {
+                    Err(BuildTerminated {
+                        status: status_resp.status,
+                    }
+                    .into())
+                } else {
+                    authority.confirmed_active();
+                    Ok(())
                 }
-                .into());
             }
-            authority.confirmed_active();
-            Ok(())
-        }
+            // A body cut off mid-read is the connection's fault, not the build's.
+            Err(_) => authority.transient_failure(),
+        },
         Ok(response) if is_transient_authority_status(response.status()) => {
             authority.transient_failure()
         }
         Ok(response) => Err(authority_loss(response.status())),
         Err(_) => authority.transient_failure(),
-    }
+    };
+    authority.record(&result);
+    result
 }
 
 async fn poll_cancellation(
@@ -4678,7 +4801,7 @@ async fn execute_step_retry(
     )
     .await;
     let mut ipa: Option<(PathBuf, serde_json::Value)> = None;
-    let restore: anyhow::Result<()> = async {
+    let restore = async {
         let listing = fetch_job_retry_artifacts(
             client,
             daemon_url,
@@ -4731,8 +4854,13 @@ async fn execute_step_retry(
             ipa.as_ref().map(|(_, metadata)| metadata),
         )
         .await
-    }
-    .await;
+    };
+    let restore: anyhow::Result<()> = tokio::select! {
+        result = restore => result,
+        _ = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
+            Err(authority.terminated())
+        }
+    };
     let finished = now_unix();
     let succeeded = restore.is_ok();
     steps.push(StepResult {
@@ -4899,10 +5027,7 @@ async fn run_checkout(
                 &step_end_marker("checkout", "canceled", None),
             )
             .await;
-            return Err(BuildTerminated {
-                status: "canceled".to_string(),
-            }
-            .into());
+            return Err(authority.terminated());
         }
         Some(status) => {
             let exit_code = status.code();
@@ -5575,13 +5700,7 @@ async fn execute_build_steps(
                         &step_end_marker(&format!("{stage_name}-{}", index + 1), "canceled", None),
                     )
                     .await;
-                    return (
-                        steps,
-                        Err(BuildTerminated {
-                            status: "canceled".to_string(),
-                        }
-                        .into()),
-                    );
+                    return (steps, Err(authority.terminated()));
                 }
                 Some(status) => {
                     let exit_code = status.code().unwrap_or(-1);
@@ -6478,10 +6597,7 @@ async fn start_build_vm(
     let vm = tokio::select! {
         vm = tart::TartVm::start(tart_bin, &plan.name, name, Some(workspace), shares) => vm?,
         () = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
-            return Err(BuildTerminated {
-                status: "canceled".to_string(),
-            }
-            .into());
+            return Err(authority.terminated());
         }
     };
     let _ = append_runner_log_line(
@@ -6552,10 +6668,7 @@ async fn pull_registry_image(
     )
     .await;
     match status {
-        None => Err(BuildTerminated {
-            status: "canceled".to_string(),
-        }
-        .into()),
+        None => Err(authority.terminated()),
         Some(status) if !status.success() => {
             anyhow::bail!("Downloading {reference} failed with {status}; see the log above")
         }
@@ -6638,10 +6751,7 @@ async fn ensure_vm_image(
             &[],
         ) => builder.with_context(|| format!("failed to start base image {}", plan.base))?,
         () = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
-            return Err(BuildTerminated {
-                status: "canceled".to_string(),
-            }
-            .into());
+            return Err(authority.terminated());
         }
     };
     let provisioned = async {
@@ -6658,10 +6768,7 @@ async fn ensure_vm_image(
         .await;
         match status {
             None => {
-                return Err(BuildTerminated {
-                    status: "canceled".to_string(),
-                }
-                .into());
+                return Err(authority.terminated());
             }
             Some(status) if !status.success() => {
                 anyhow::bail!(
@@ -7013,6 +7120,7 @@ async fn append_runner_log_line(
         ))
         .bearer_auth(&config.runner_token)
         .json(&body)
+        .timeout(CONTROL_REQUEST_TIMEOUT)
         .send()
         .await?;
 
@@ -7327,38 +7435,101 @@ async fn report_status(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
-    report: StatusReport<'_>,
+    report: &StatusReport<'_>,
 ) -> anyhow::Result<()> {
-    let StatusReport {
-        build_id,
-        status,
-        exit_code,
-        error_message,
-        steps,
-    } = report;
-
     let body = serde_json::json!({
-        "status": status,
-        "exit_code": exit_code,
-        "error_message": error_message,
-        "steps": steps,
+        "status": report.status,
+        "exit_code": report.exit_code,
+        "error_message": report.error_message,
+        "steps": report.steps,
     });
 
     let resp = client
         .post(format!(
             "{}/v1/runners/{}/jobs/{}/status",
-            daemon_url, config.runner_id, build_id
+            daemon_url, config.runner_id, report.build_id
         ))
         .bearer_auth(&config.runner_token)
         .json(&body)
+        .timeout(CONTROL_REQUEST_TIMEOUT)
         .send()
         .await?;
 
-    if !resp.status().is_success() {
-        anyhow::bail!("Status update failed: {}", resp.status());
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(());
     }
+    if is_transient_authority_status(status) {
+        anyhow::bail!("Status update failed: {status}");
+    }
+    Err(StatusReportRejected(status).into())
+}
 
-    Ok(())
+/// The backend refused a status report, for example because the build
+/// already ended or moved to another runner. Retrying cannot help.
+#[derive(Debug)]
+struct StatusReportRejected(reqwest::StatusCode);
+
+impl std::fmt::Display for StatusReportRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Status update was rejected: {}", self.0)
+    }
+}
+
+impl std::error::Error for StatusReportRejected {}
+
+#[derive(Debug, Clone, Copy)]
+struct RetryPolicy {
+    first_delay: Duration,
+    max_delay: Duration,
+    window: Duration,
+}
+
+impl RetryPolicy {
+    fn within(window: Duration) -> Self {
+        Self {
+            first_delay: Duration::from_secs(1),
+            max_delay: Duration::from_secs(30),
+            window,
+        }
+    }
+}
+
+/// Sends a status report until the backend takes it, the backend refuses
+/// it, or `policy.window` runs out. A lost final report would leave the build
+/// running until it timed out.
+async fn report_status_with_retry(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    report: &StatusReport<'_>,
+    policy: RetryPolicy,
+) -> anyhow::Result<()> {
+    let started = Instant::now();
+    let mut delay = policy.first_delay;
+    loop {
+        let error = match report_status(client, daemon_url, config, report).await {
+            Ok(()) => return Ok(()),
+            Err(error) if error.downcast_ref::<StatusReportRejected>().is_some() => {
+                return Err(error);
+            }
+            Err(error) => error,
+        };
+        if started.elapsed() + delay > policy.window {
+            return Err(error.context(format!(
+                "gave up reporting build {} as {}",
+                report.build_id, report.status
+            )));
+        }
+        eprintln!(
+            "Could not report build {} as {} ({error:#}); retrying in {}s",
+            report.build_id,
+            report.status,
+            delay.as_secs_f32()
+        );
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(policy.max_delay);
+    }
 }
 
 async fn run_and_stream(
@@ -7381,30 +7552,38 @@ async fn run_and_stream(
 
     let (line_tx, mut line_rx) = tokio::sync::mpsc::channel::<(String, String)>(256);
 
+    let mut readers = Vec::new();
+    // When each reader last saw a line, in milliseconds since `opened`.
+    let opened = Instant::now();
+    let last_line_ms = Arc::new(AtomicU64::new(0));
     if let Some(stdout) = stdout {
         let tx = line_tx.clone();
-        tokio::spawn(async move {
+        let last_line_ms = last_line_ms.clone();
+        readers.push(tokio::spawn(async move {
             let reader = tokio::io::BufReader::new(stdout);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
+                last_line_ms.fetch_max(opened.elapsed().as_millis() as u64, Ordering::Relaxed);
                 if tx.send((line, "stdout".to_string())).await.is_err() {
                     break;
                 }
             }
-        });
+        }));
     }
 
     if let Some(stderr) = stderr {
         let tx = line_tx.clone();
-        tokio::spawn(async move {
+        let last_line_ms = last_line_ms.clone();
+        readers.push(tokio::spawn(async move {
             let reader = tokio::io::BufReader::new(stderr);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
+                last_line_ms.fetch_max(opened.elapsed().as_millis() as u64, Ordering::Relaxed);
                 if tx.send((line, "stderr".to_string())).await.is_err() {
                     break;
                 }
             }
-        });
+        }));
     }
 
     drop(line_tx);
@@ -7442,6 +7621,7 @@ async fn run_and_stream(
                                     ))
                                     .bearer_auth(&upload_config_token)
                                     .json(&body)
+                                    .timeout(CONTROL_REQUEST_TIMEOUT)
                                     .send()
                                     .await;
                                 batch = Vec::new();
@@ -7457,6 +7637,7 @@ async fn run_and_stream(
                                     ))
                                     .bearer_auth(&upload_config_token)
                                     .json(&body)
+                                    .timeout(CONTROL_REQUEST_TIMEOUT)
                                     .send()
                                     .await;
                             }
@@ -7474,6 +7655,7 @@ async fn run_and_stream(
                             ))
                             .bearer_auth(&upload_config_token)
                             .json(&body)
+                            .timeout(CONTROL_REQUEST_TIMEOUT)
                             .send()
                             .await;
                         batch = Vec::new();
@@ -7488,10 +7670,34 @@ async fn run_and_stream(
             result.ok()
         },
         _ = cancel_fut => {
-            child.kill().await.ok();
+            stop_process_group(&mut child).await;
             None
         }
     };
+
+    // A background process the step started can keep the pipes open after
+    // the step exits. Keep reading while output still arrives, then stop.
+    let exited = Instant::now();
+    let abort_readers: Vec<_> = readers.iter().map(|reader| reader.abort_handle()).collect();
+    let readers_done = join_all(readers);
+    tokio::pin!(readers_done);
+    loop {
+        if tokio::time::timeout(Duration::from_millis(250), &mut readers_done)
+            .await
+            .is_ok()
+        {
+            break;
+        }
+        let last_line = opened + Duration::from_millis(last_line_ms.load(Ordering::Relaxed));
+        if last_line.max(exited).elapsed() >= STEP_OUTPUT_GRACE
+            || exited.elapsed() >= STEP_OUTPUT_LIMIT
+        {
+            for reader in &abort_readers {
+                reader.abort();
+            }
+            break;
+        }
+    }
 
     if let Ok(final_seq) = upload_handle.await {
         cursor.seq = final_seq;
@@ -7853,6 +8059,15 @@ mod secret_tests {
             eprintln!("skipping: jarsigner or zip is not installed");
             return;
         }
+        // macOS ships /usr/bin/keytool as a stub that fails without a JDK.
+        if !Command::new(&keytool)
+            .arg("-help")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            eprintln!("skipping: keytool has no Java runtime");
+            return;
+        }
 
         let root = std::env::temp_dir().join(format!(
             "oore-aab-signing-test-{}-{}",
@@ -7925,5 +8140,295 @@ mod secret_tests {
         assert!(output.status.success(), "{stdout}");
         assert!(stdout.contains("self-signed"), "{stdout}");
         fs::remove_dir_all(&root).ok();
+    }
+}
+
+#[cfg(test)]
+mod build_lifecycle_tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    fn test_config(daemon_url: &str) -> RunnerConfig {
+        RunnerConfig {
+            runner_id: "r1".to_string(),
+            runner_token: "token".to_string(),
+            daemon_url: daemon_url.to_string(),
+            name: "test".to_string(),
+        }
+    }
+
+    /// Answers one request per connection with each status in turn and
+    /// returns how many requests it answered.
+    async fn backend(statuses: Vec<u16>) -> (String, tokio::task::JoinHandle<usize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for (served, status) in statuses.iter().enumerate() {
+                let Ok(Ok((mut socket, _))) =
+                    tokio::time::timeout(Duration::from_secs(5), listener.accept()).await
+                else {
+                    return served;
+                };
+                let mut buf = vec![0u8; 16 * 1024];
+                let _ = socket.read(&mut buf).await.unwrap();
+                let body = r#"{"status":"running"}"#;
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            statuses.len()
+        });
+        (url, server)
+    }
+
+    fn quick_retries() -> RetryPolicy {
+        RetryPolicy {
+            first_delay: Duration::from_millis(10),
+            max_delay: Duration::from_millis(20),
+            window: Duration::from_secs(5),
+        }
+    }
+
+    fn succeeded(build_id: &str) -> StatusReport<'_> {
+        StatusReport {
+            build_id,
+            status: "succeeded",
+            exit_code: Some(0),
+            error_message: None,
+            steps: &[],
+        }
+    }
+
+    #[tokio::test]
+    async fn the_final_status_survives_two_backend_errors() {
+        let (url, server) = backend(vec![503, 503, 200]).await;
+        let config = test_config(&url);
+        report_status_with_retry(
+            &runner_http_client().unwrap(),
+            &url,
+            &config,
+            &succeeded("b1"),
+            quick_retries(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(server.await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_rejected_status_report_is_not_retried() {
+        let (url, server) = backend(vec![409, 200]).await;
+        let config = test_config(&url);
+        let error = report_status_with_retry(
+            &runner_http_client().unwrap(),
+            &url,
+            &config,
+            &succeeded("b1"),
+            quick_retries(),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.downcast_ref::<StatusReportRejected>().is_some());
+        // The server waits for a second request that never comes.
+        assert_eq!(server.await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_short_backend_outage_does_not_stop_the_build() {
+        let (url, _server) = backend(vec![503, 503, 200, 503]).await;
+        let config = test_config(&url);
+        let client = runner_http_client().unwrap();
+        let authority = BuildAuthorityState::with_grace(Duration::from_millis(300));
+
+        for _ in 0..3 {
+            check_build_active(&client, &url, &config, "b1", &authority)
+                .await
+                .unwrap();
+        }
+        // Past the grace window without word from the backend, the build stops
+        // and says why.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        let error = check_build_active(&client, &url, &config, "b1", &authority)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<BuildTerminated>().unwrap().status,
+            CONTROLLER_UNAVAILABLE
+        );
+        assert_eq!(
+            authority
+                .terminated()
+                .downcast_ref::<BuildTerminated>()
+                .unwrap()
+                .status,
+            CONTROLLER_UNAVAILABLE
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_connection_counts_toward_the_grace_window() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let config = test_config(&url);
+        let client = runner_http_client().unwrap();
+        let authority = BuildAuthorityState::with_grace(Duration::from_secs(60));
+        check_build_active(&client, &url, &config, "b1", &authority)
+            .await
+            .unwrap();
+        assert_eq!(
+            authority
+                .terminated()
+                .downcast_ref::<BuildTerminated>()
+                .unwrap()
+                .status,
+            "canceled"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_lost_assignment_stops_the_build_at_once() {
+        let (url, _server) = backend(vec![403]).await;
+        let config = test_config(&url);
+        let authority = BuildAuthorityState::default();
+        check_build_active(
+            &runner_http_client().unwrap(),
+            &url,
+            &config,
+            "b1",
+            &authority,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            authority
+                .terminated()
+                .downcast_ref::<BuildTerminated>()
+                .unwrap()
+                .status,
+            "assignment_lost"
+        );
+    }
+
+    fn process_is_gone(pid: &str) -> bool {
+        // Reparented children may linger as zombies until init reaps them.
+        let output = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", pid])
+            .output()
+            .unwrap();
+        let stat = String::from_utf8_lossy(&output.stdout);
+        stat.trim().is_empty() || stat.trim().starts_with('Z')
+    }
+
+    async fn read_pid(path: &Path) -> String {
+        for _ in 0..100 {
+            if let Ok(pid) = std::fs::read_to_string(path)
+                && !pid.trim().is_empty()
+            {
+                return pid.trim().to_string();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the step never wrote its background pid");
+    }
+
+    fn spawn_step(script: &str, workspace: &Path) -> tokio::process::Child {
+        let mut command = repository_shell_command(script, workspace);
+        command
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        command.spawn().unwrap()
+    }
+
+    fn unreachable_daemon() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        url
+    }
+
+    #[tokio::test]
+    async fn canceling_a_step_stops_everything_it_started() {
+        let workspace = tempfile_dir("cancel");
+        let child = spawn_step(
+            "sleep 600 & echo $! > bg.pid; echo started; sleep 600",
+            &workspace,
+        );
+        let url = unreachable_daemon();
+        let config = test_config(&url);
+        let mut cursor = BuildLogCursor::default();
+        let started = Instant::now();
+        let status = run_and_stream(
+            child,
+            &runner_http_client().unwrap(),
+            &url,
+            &config,
+            "b1",
+            &mut cursor,
+            async {
+                read_pid(&workspace.join("bg.pid")).await;
+            },
+        )
+        .await;
+        assert!(status.is_none());
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        let pid = read_pid(&workspace.join("bg.pid")).await;
+        let mut gone = false;
+        for _ in 0..50 {
+            if process_is_gone(&pid) {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(gone, "background process {pid} survived the cancel");
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn a_background_process_holding_the_output_does_not_block_the_runner() {
+        let workspace = tempfile_dir("orphan");
+        let child = spawn_step("sleep 600 & echo $! > bg.pid; echo done", &workspace);
+        let url = unreachable_daemon();
+        let config = test_config(&url);
+        let mut cursor = BuildLogCursor::default();
+        let started = Instant::now();
+        let status = run_and_stream(
+            child,
+            &runner_http_client().unwrap(),
+            &url,
+            &config,
+            "b1",
+            &mut cursor,
+            std::future::pending(),
+        )
+        .await;
+        assert!(status.unwrap().success());
+        assert!(
+            started.elapsed() < STEP_OUTPUT_GRACE + Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+        let pid = read_pid(&workspace.join("bg.pid")).await;
+        // SAFETY: kill only sends a signal to the test's own background process.
+        unsafe { libc::kill(pid.parse().unwrap(), libc::SIGKILL) };
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    fn tempfile_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "oore-runner-test-{name}-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 }

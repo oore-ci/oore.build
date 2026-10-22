@@ -16,6 +16,7 @@ jobs:
   autotag:
     name: Cut release tag
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 15
     # Only run after validate completes — but since validate is a separate workflow,
     # we rely on branch protection rules to enforce this ordering.
     steps:
