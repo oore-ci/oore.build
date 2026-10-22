@@ -199,19 +199,38 @@ pub async fn transition_build(
     actor: Option<&str>,
     reason: Option<&str>,
 ) -> Result<Build, (StatusCode, Json<ApiError>)> {
+    transition_build_with_results(pool, build_id, target_status, actor, reason, None).await
+}
+
+/// Step results and exit code a runner reports with a status change.
+pub(crate) struct RunnerResults<'a> {
+    pub step_results: Option<&'a str>,
+    pub exit_code: Option<i32>,
+}
+
+/// [`transition_build`], also storing the runner's results. The status
+/// change, its build event and the results commit together or not at all.
+pub(crate) async fn transition_build_with_results(
+    pool: &sqlx::SqlitePool,
+    build_id: &str,
+    target_status: BuildStatus,
+    actor: Option<&str>,
+    reason: Option<&str>,
+    results: Option<RunnerResults<'_>>,
+) -> Result<Build, (StatusCode, Json<ApiError>)> {
+    let store_error = |message: &'static str| {
+        move |e: sqlx::Error| {
+            error!(error = %e, build_id = %build_id, "{message}");
+            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", message)
+        }
+    };
+
     // Load current build
     let row = sqlx::query("SELECT * FROM builds WHERE id = ?1")
         .bind(build_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| {
-            error!(error = %e, "failed to fetch build");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to fetch build",
-            )
-        })?
+        .map_err(store_error("Failed to fetch build"))?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
 
     let current_status_str: String = row.get("status");
@@ -262,21 +281,20 @@ pub async fn transition_build(
          WHERE id = ?2 AND status = ?3"
     );
 
+    // The UPDATE is the transaction's first statement, so SQLite takes the
+    // write lock against the latest snapshot.
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(store_error("Failed to update build"))?;
     let result = sqlx::query(sqlx::AssertSqlSafe(query))
         .bind(&target_str)
         .bind(build_id)
         .bind(&current_status_str)
         .bind(now)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
-        .map_err(|e| {
-            error!(error = %e, "failed to update build status");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to update build",
-            )
-        })?;
+        .map_err(store_error("Failed to update build"))?;
 
     if result.rows_affected() == 0 {
         return Err(api_err(
@@ -284,6 +302,16 @@ pub async fn transition_build(
             "concurrent_modification",
             "Build status was modified concurrently",
         ));
+    }
+
+    if let Some(results) = results {
+        sqlx::query("UPDATE builds SET step_results = ?1, exit_code = ?2 WHERE id = ?3")
+            .bind(results.step_results)
+            .bind(results.exit_code)
+            .bind(build_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(store_error("Failed to persist step results"))?;
     }
 
     // Insert build event
@@ -299,26 +327,20 @@ pub async fn transition_build(
     .bind(actor)
     .bind(reason)
     .bind(now)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
-    .map_err(|e| {
-        error!(error = %e, "failed to insert build event");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to record build event")
-    })?;
+    .map_err(store_error("Failed to record build event"))?;
 
     // Reload build
     let updated_row = sqlx::query("SELECT * FROM builds WHERE id = ?1")
         .bind(build_id)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await
-        .map_err(|e| {
-            error!(error = %e, "failed to reload build");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to reload build",
-            )
-        })?;
+        .map_err(store_error("Failed to reload build"))?;
+
+    tx.commit()
+        .await
+        .map_err(store_error("Failed to update build"))?;
 
     Ok(row_to_build(&updated_row))
 }
@@ -2631,11 +2653,12 @@ mod tests {
         );
 
         assert!(
-            !crate::runners::schedule_eligible_direct_runner_build(
+            !crate::runners::claim_eligible_direct_runner_build(
                 &pool,
                 &build.id,
                 "run1",
-                "runner:run1"
+                "runner:run1",
+                "hash"
             )
             .await
             .unwrap(),
@@ -2655,11 +2678,12 @@ mod tests {
         assert_eq!(status, "queued");
         assert_eq!(reason, "approved by lead@example.com: ship it");
         assert!(
-            crate::runners::schedule_eligible_direct_runner_build(
+            crate::runners::claim_eligible_direct_runner_build(
                 &pool,
                 &build.id,
                 "run1",
-                "runner:run1"
+                "runner:run1",
+                "hash"
             )
             .await
             .unwrap()

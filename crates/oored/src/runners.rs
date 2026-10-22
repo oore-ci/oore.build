@@ -18,7 +18,9 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::AppState;
-use crate::builds::{fetch_build_events, transition_build};
+use crate::builds::{
+    RunnerResults, fetch_build_events, transition_build, transition_build_with_results,
+};
 use crate::extractors::AuthUser;
 use crate::incidents::{self, IncidentInput};
 use crate::rbac::check_permission;
@@ -513,12 +515,15 @@ async fn record_disk_pressure(
 ///
 /// The initial queue lookup chooses the oldest eligible build. Rechecking the
 /// pause and source identity in the queued -> scheduled update closes races
-/// with an operator change while a claim request is in flight.
-pub(crate) async fn schedule_eligible_direct_runner_build(
+/// with an operator change while a claim request is in flight. The build
+/// moves on to assigned, bound to the runner and its signing grant, in the
+/// same transaction, so an interrupted claim never strands it in scheduled.
+pub(crate) async fn claim_eligible_direct_runner_build(
     pool: &sqlx::SqlitePool,
     build_id: &str,
     runner_id: &str,
     actor: &str,
+    signing_token_hash: &str,
 ) -> Result<bool, (StatusCode, Json<ApiError>)> {
     let mut tx = pool.begin().await.map_err(|e| {
         error!(error = %e, "failed to start runner claim transaction");
@@ -589,6 +594,48 @@ pub(crate) async fn schedule_eligible_direct_runner_build(
     .await
     .map_err(|e| {
         error!(error = %e, build_id = %build_id, "failed to record runner claim event");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to claim build",
+        )
+    })?;
+
+    let assigned = sqlx::query(
+        "UPDATE builds SET status = 'assigned', runner_id = ?1, signing_token_hash = ?2, updated_at = ?3 \
+         WHERE id = ?4 AND status = 'scheduled' AND runner_id IS NULL",
+    )
+    .bind(runner_id)
+    .bind(signing_token_hash)
+    .bind(now)
+    .bind(build_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, build_id = %build_id, "failed to assign claimed build");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to claim build",
+        )
+    })?;
+    if assigned.rows_affected() != 1 {
+        tx.rollback().await.ok();
+        return Ok(false);
+    }
+    sqlx::query(
+        "INSERT INTO build_events \
+         (id, build_id, from_status, to_status, actor, reason, created_at) \
+         VALUES (?1, ?2, 'scheduled', 'assigned', ?3, 'assigned to runner', ?4)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(build_id)
+    .bind(actor)
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, build_id = %build_id, "failed to record runner assignment event");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "store_error",
@@ -736,6 +783,56 @@ async fn next_eligible_build(
     .await
 }
 
+/// Ends the builds a runner still holds once it can no longer be running
+/// them: an assigned build goes back to the queue, a running one fails with
+/// `reason`. Returns the IDs of the builds it failed.
+pub(crate) async fn release_runner_builds(
+    pool: &sqlx::SqlitePool,
+    scheduler: &crate::scheduler::Scheduler,
+    runner_id: &str,
+    reason: &str,
+) -> sqlx::Result<Vec<String>> {
+    let rows = sqlx::query(
+        "SELECT id, status FROM builds \
+         WHERE runner_id = ?1 AND status IN ('assigned', 'running')",
+    )
+    .bind(runner_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut failed = Vec::new();
+    for row in rows {
+        let build_id: String = row.get("id");
+        let from_status: String = row.get("status");
+        let target = if from_status == "running" {
+            BuildStatus::Failed
+        } else {
+            BuildStatus::Queued
+        };
+        match transition_build(pool, &build_id, target, Some("system"), Some(reason)).await {
+            Ok(_) => {
+                info!(build_id = %build_id, runner_id = %runner_id, to = %target, reason, "released build held by runner");
+                if target == BuildStatus::Failed {
+                    scheduler.publish_event(crate::scheduler::BuildStateEvent {
+                        build_id: build_id.clone(),
+                        from_status: Some(from_status),
+                        to_status: target.to_string(),
+                        actor: Some("system".to_string()),
+                        reason: Some(reason.to_string()),
+                        timestamp: now_unix(),
+                    });
+                    failed.push(build_id);
+                }
+            }
+            // The runner reported, or someone canceled, in the meantime.
+            Err(e) => {
+                warn!(build_id = %build_id, runner_id = %runner_id, error = ?e, "could not release build held by runner");
+            }
+        }
+    }
+    Ok(failed)
+}
+
 /// `POST /v1/runners/{runner_id}/claim` — runner claims next available build.
 pub async fn claim_job(
     State(state): State<Arc<AppState>>,
@@ -762,6 +859,26 @@ pub async fn claim_job(
     }
 
     let pool = &state.db;
+
+    // A runner runs one build at a time and reports its result before it
+    // claims again, so a build still bound to it was lost, for example to a
+    // crash or restart.
+    release_runner_builds(
+        pool,
+        &state.scheduler,
+        &runner_id,
+        "The runner restarted or moved on without reporting this build's result",
+    )
+    .await
+    .map_err(|e| {
+        error!(error = %e, runner_id = %runner_id, "failed to release builds held by runner");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to claim build",
+        )
+    })?;
+
     fail_credential_blocked_builds(pool).await?;
 
     let build_row = next_eligible_build(pool, &runner_id).await.map_err(|e| {
@@ -849,54 +966,24 @@ pub async fn claim_job(
     let retry_steps = crate::step_retry::retry_steps_from_snapshot(&config_snapshot);
     let actor_str = format!("runner:{runner_id}");
 
-    // Atomically transition queued -> scheduled while rechecking the policy
-    // gates. A successful update is the linearization point for drain behavior.
-    if !schedule_eligible_direct_runner_build(pool, &build_id, &runner_id, &actor_str).await? {
-        return Ok(Json(ClaimJobResponse { job: None }));
-    }
-
-    // Complete the valid queued -> scheduled -> assigned sequence.
-    let assigned = transition_build(
-        pool,
-        &build_id,
-        BuildStatus::Assigned,
-        Some(&actor_str),
-        Some("assigned to runner"),
-    )
-    .await;
-
-    match assigned {
-        Ok(_) => {}
-        Err(e) => {
-            warn!(build_id = %build_id, error = ?e, "failed to transition build to assigned");
-            return Ok(Json(ClaimJobResponse { job: None }));
-        }
-    }
-
     // Bind an unguessable signing grant to this active assignment. The raw
     // capability is returned once to the trusted runner parent and never
     // persisted or exposed to repository-controlled child processes.
     let signing_token = generate_token();
     let signing_token_hash = hash_token(&signing_token);
-    let result = sqlx::query(
-        "UPDATE builds SET runner_id = ?1, signing_token_hash = ?2 \
-         WHERE id = ?3 AND status = 'assigned' AND runner_id IS NULL",
+
+    // Atomically take the build from queued to assigned while rechecking the
+    // policy gates. A successful update is the linearization point for drain
+    // behavior.
+    if !claim_eligible_direct_runner_build(
+        pool,
+        &build_id,
+        &runner_id,
+        &actor_str,
+        &signing_token_hash,
     )
-    .bind(&runner_id)
-    .bind(&signing_token_hash)
-    .bind(&build_id)
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, build_id = %build_id, "failed to set runner_id on build");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to assign runner to build",
-        )
-    })?;
-    if result.rows_affected() != 1 {
-        warn!(build_id = %build_id, "build assignment changed before signing grant was bound");
+    .await?
+    {
         return Ok(Json(ClaimJobResponse { job: None }));
     }
 
@@ -997,37 +1084,23 @@ pub async fn update_job_status(
         .as_deref()
         .unwrap_or("status update from runner");
 
-    // Use transition_build for state transition
-    let mut build =
-        transition_build(pool, &job_id, target_status, Some(&actor_str), Some(reason)).await?;
-
-    // Persist step results and exit code
-    if !req.steps.is_empty() || req.exit_code.is_some() {
-        let steps_json = serde_json::to_string(&req.steps).unwrap_or_else(|_| "[]".to_string());
-        sqlx::query("UPDATE builds SET step_results = ?1, exit_code = ?2 WHERE id = ?3")
-            .bind(if req.steps.is_empty() {
-                None
-            } else {
-                Some(&steps_json)
-            })
-            .bind(req.exit_code)
-            .bind(&job_id)
-            .execute(pool)
-            .await
-            .map_err(|e| {
-                error!(error = %e, build_id = %job_id, "failed to persist step results");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "store_error",
-                    "Failed to persist step results",
-                )
-            })?;
-
-        if !req.steps.is_empty() {
-            build.step_results = Some(req.steps.clone());
-        }
-        build.exit_code = req.exit_code;
-    }
+    // The status change and the runner's results commit together, so a
+    // failed write never leaves a terminal build without its step results.
+    let steps_json = (!req.steps.is_empty())
+        .then(|| serde_json::to_string(&req.steps).unwrap_or_else(|_| "[]".to_string()));
+    let results = (!req.steps.is_empty() || req.exit_code.is_some()).then_some(RunnerResults {
+        step_results: steps_json.as_deref(),
+        exit_code: req.exit_code,
+    });
+    let build = transition_build_with_results(
+        pool,
+        &job_id,
+        target_status,
+        Some(&actor_str),
+        Some(reason),
+        results,
+    )
+    .await?;
 
     // Fetch events for the response
     let events = fetch_build_events(pool, &job_id).await?;
@@ -1644,12 +1717,12 @@ mod tests {
             Some("linux-build")
         );
         assert!(
-            !schedule_eligible_direct_runner_build(&pool, "linux-build", "mac", "runner:mac")
+            !claim_eligible_direct_runner_build(&pool, "linux-build", "mac", "runner:mac", "h")
                 .await
                 .unwrap()
         );
         assert!(
-            schedule_eligible_direct_runner_build(&pool, "linux-build", "linux", "runner:linux")
+            claim_eligible_direct_runner_build(&pool, "linux-build", "linux", "runner:linux", "h")
                 .await
                 .unwrap()
         );
@@ -1794,5 +1867,290 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    async fn build_status(pool: &sqlx::SqlitePool, id: &str) -> (String, Option<String>) {
+        let row = sqlx::query("SELECT status, runner_id FROM builds WHERE id = ?1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        (row.get("status"), row.get("runner_id"))
+    }
+
+    async fn last_event(pool: &sqlx::SqlitePool, id: &str) -> (String, String, Option<String>) {
+        let row = sqlx::query(
+            "SELECT from_status, to_status, reason FROM build_events \
+             WHERE build_id = ?1 ORDER BY rowid DESC LIMIT 1",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (
+            row.get("from_status"),
+            row.get("to_status"),
+            row.get("reason"),
+        )
+    }
+
+    async fn set_build(pool: &sqlx::SqlitePool, id: &str, status: &str, runner: Option<&str>) {
+        sqlx::query("UPDATE builds SET status = ?1, runner_id = ?2, updated_at = 0 WHERE id = ?3")
+            .bind(status)
+            .bind(runner)
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_claim_assigns_the_build_in_one_step() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        queue_build(&pool, "b1", 1, &[]).await;
+
+        assert!(
+            claim_eligible_direct_runner_build(&pool, "b1", "mac", "runner:mac", "hash")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            build_status(&pool, "b1").await,
+            ("assigned".to_string(), Some("mac".to_string()))
+        );
+        let hash: Option<String> =
+            sqlx::query_scalar("SELECT signing_token_hash FROM builds WHERE id = 'b1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(hash.as_deref(), Some("hash"));
+        let transitions: Vec<(String, String)> = sqlx::query_as(
+            "SELECT from_status, to_status FROM build_events WHERE build_id = 'b1' ORDER BY rowid",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            transitions,
+            [
+                ("queued".to_string(), "scheduled".to_string()),
+                ("scheduled".to_string(), "assigned".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_assignment_leaves_the_build_queued() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        sqlx::query(
+            "CREATE TRIGGER fail_assign BEFORE UPDATE OF status ON builds \
+             WHEN NEW.status = 'assigned' BEGIN SELECT RAISE(ABORT, 'busy'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            claim_eligible_direct_runner_build(&pool, "b1", "mac", "runner:mac", "hash")
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            build_status(&pool, "b1").await,
+            ("queued".to_string(), None)
+        );
+        let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM build_events")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(events, 0);
+
+        sqlx::query("DROP TRIGGER fail_assign")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            claim_eligible_direct_runner_build(&pool, "b1", "mac", "runner:mac", "hash")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_scheduled_build_left_by_an_interrupted_claim_is_requeued() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        set_build(&pool, "b1", "scheduled", None).await;
+
+        assert!(
+            crate::background::requeue_expired_claims(&pool, 59)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            crate::background::requeue_expired_claims(&pool, 61)
+                .await
+                .unwrap(),
+            ["b1"]
+        );
+        assert_eq!(build_status(&pool, "b1").await.0, "queued");
+        assert_eq!(
+            last_event(&pool, "b1").await,
+            (
+                "scheduled".to_string(),
+                "queued".to_string(),
+                Some("runner claim was interrupted".to_string())
+            )
+        );
+        assert_eq!(next_build_id(&pool, "mac").await.as_deref(), Some("b1"));
+    }
+
+    #[tokio::test]
+    async fn a_restarted_runner_releases_the_builds_it_held() {
+        let pool = pool().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let mut events = scheduler.subscribe_events();
+        insert_runner(&pool, "mac", "macos").await;
+        insert_runner(&pool, "other", "macos").await;
+        queue_build(&pool, "running", 1, &[]).await;
+        queue_build(&pool, "assigned", 2, &[]).await;
+        queue_build(&pool, "elsewhere", 3, &[]).await;
+        set_build(&pool, "running", "running", Some("mac")).await;
+        set_build(&pool, "assigned", "assigned", Some("mac")).await;
+        set_build(&pool, "elsewhere", "running", Some("other")).await;
+
+        let failed = release_runner_builds(&pool, &scheduler, "mac", "runner restarted")
+            .await
+            .unwrap();
+        assert_eq!(failed, ["running"]);
+        assert_eq!(
+            build_status(&pool, "running").await,
+            ("failed".to_string(), None)
+        );
+        assert_eq!(
+            last_event(&pool, "running").await,
+            (
+                "running".to_string(),
+                "failed".to_string(),
+                Some("runner restarted".to_string())
+            )
+        );
+        assert_eq!(
+            build_status(&pool, "assigned").await,
+            ("queued".to_string(), None)
+        );
+        assert_eq!(build_status(&pool, "elsewhere").await.0, "running");
+
+        let event = events.try_recv().unwrap();
+        assert_eq!(event.build_id, "running");
+        assert_eq!(event.to_status, "failed");
+        assert!(events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_build_fails_once_its_runner_stops_heart_beating() {
+        let pool = pool().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        insert_runner(&pool, "gone", "macos").await;
+        insert_runner(&pool, "alive", "macos").await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        set_build(&pool, "b1", "running", Some("gone")).await;
+        set_build(&pool, "b2", "running", Some("alive")).await;
+        sqlx::query("UPDATE runners SET last_heartbeat_at = 1000 WHERE id = 'gone'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE runners SET last_heartbeat_at = 1290 WHERE id = 'alive'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(
+            crate::background::fail_builds_of_lost_runners(&pool, &scheduler, 1299)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            crate::background::fail_builds_of_lost_runners(&pool, &scheduler, 1301)
+                .await
+                .unwrap(),
+            ["b1"]
+        );
+        assert_eq!(build_status(&pool, "b1").await.0, "failed");
+        assert_eq!(
+            last_event(&pool, "b1").await.2.as_deref(),
+            Some("Lost contact with the runner: it stopped sending heartbeats")
+        );
+        assert_eq!(build_status(&pool, "b2").await.0, "running");
+    }
+
+    #[tokio::test]
+    async fn a_status_change_rolls_back_when_its_event_cannot_be_recorded() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        set_build(&pool, "b1", "running", Some("mac")).await;
+        sqlx::query(
+            "CREATE TRIGGER fail_events BEFORE INSERT ON build_events \
+             BEGIN SELECT RAISE(ABORT, 'busy'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let results = RunnerResults {
+            step_results: Some("[]"),
+            exit_code: Some(0),
+        };
+        let (status, _) = transition_build_with_results(
+            &pool,
+            "b1",
+            BuildStatus::Succeeded,
+            Some("runner:mac"),
+            None,
+            Some(results),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            build_status(&pool, "b1").await,
+            ("running".to_string(), Some("mac".to_string()))
+        );
+        let exit_code: Option<i64> =
+            sqlx::query_scalar("SELECT exit_code FROM builds WHERE id = 'b1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(exit_code, None);
+
+        // Once the event can be written, the status and results land together.
+        sqlx::query("DROP TRIGGER fail_events")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let results = RunnerResults {
+            step_results: Some("[]"),
+            exit_code: Some(0),
+        };
+        let build = transition_build_with_results(
+            &pool,
+            "b1",
+            BuildStatus::Succeeded,
+            Some("runner:mac"),
+            None,
+            Some(results),
+        )
+        .await
+        .unwrap();
+        assert_eq!(build.status, "succeeded");
+        assert_eq!(build.exit_code, Some(0));
     }
 }
