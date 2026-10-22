@@ -42,6 +42,7 @@ mod managed_services;
 mod setup_journey;
 mod uninstaller;
 mod update_supervisor;
+mod update_transaction;
 
 const FAVICON_DATA_URI: &str = "data:image/svg+xml;base64,PHN2ZwogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB2aWV3Qm94PSIxMDAgMTAwIDMyMCAzMjAiCiAgcm9sZT0iaW1nIgogIGFyaWEtbGFiZWxsZWRieT0idGl0bGUgZGVzY3JpcHRpb24iCj4KICA8dGl0bGUgaWQ9InRpdGxlIj5Pb3JlPC90aXRsZT4KICA8ZGVzYyBpZD0iZGVzY3JpcHRpb24iPgogICAgQSBjaXJjdWxhciBidWlsZCBzd2VlcCBjb25uZWN0aW5nIGEgc291cmNlIGNvbW1pdCB0byBhbiBhcnRpZmFjdC4KICA8L2Rlc2M+CiAgPGRlZnM+CiAgICA8bWFzawogICAgICBpZD0iY3V0b3V0cyIKICAgICAgeD0iMCIKICAgICAgeT0iMCIKICAgICAgd2lkdGg9IjUxMiIKICAgICAgaGVpZ2h0PSI1MTIiCiAgICAgIG1hc2tVbml0cz0idXNlclNwYWNlT25Vc2UiCiAgICA+CiAgICAgIDxyZWN0IHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiBmaWxsPSJ3aGl0ZSIgLz4KICAgICAgPGNpcmNsZSBjeD0iMTczIiBjeT0iMzQ5IiByPSIxNiIgZmlsbD0iYmxhY2siIC8+CiAgICAgIDxyZWN0IHg9IjMyOSIgeT0iMTk3IiB3aWR0aD0iNjYiIGhlaWdodD0iMTEiIGZpbGw9ImJsYWNrIiAvPgogICAgPC9tYXNrPgogIDwvZGVmcz4KICA8ZyBmaWxsPSIjYmI0ZDAwIiBtYXNrPSJ1cmwoI2N1dG91dHMpIj4KICAgIDxjaXJjbGUKICAgICAgY3g9IjI1NCIKICAgICAgY3k9IjI2MCIKICAgICAgcj0iMTE5IgogICAgICBmaWxsPSJub25lIgogICAgICBzdHJva2U9IiNiYjRkMDAiCiAgICAgIHN0cm9rZS13aWR0aD0iMjIiCiAgICAvPgogICAgPGNpcmNsZSBjeD0iMTczIiBjeT0iMzQ5IiByPSIzNSIgLz4KICAgIDxyZWN0IHg9IjMxNSIgeT0iMTcwIiB3aWR0aD0iNzkiIGhlaWdodD0iOTAiIHJ4PSIxNSIgLz4KICA8L2c+Cjwvc3ZnPgo=";
 const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:8787";
@@ -11249,6 +11250,7 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
     claim_barrier: Option<&RunnerClaimBarrier>,
     services: &UpdateServicePlan,
     rollback_state: Option<&UpdateRollbackState>,
+    mut transaction: Option<&mut update_transaction::UpdateTransaction>,
     control: &mut C,
 ) -> anyhow::Result<()> {
     if let Some(barrier) = claim_barrier {
@@ -11256,6 +11258,9 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
     }
     ensure_runner_release_marker(install_root)?;
     let update_result: anyhow::Result<()> = async {
+        if let Some(transaction) = transaction.as_deref_mut() {
+            transaction.record(update_transaction::UpdatePhase::Installing)?;
+        }
         install_staged_release(
             staged_release,
             install_root,
@@ -11271,6 +11276,9 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
         }
         if let Some(migration) = daemon_migration {
             migration.apply()?;
+        }
+        if let Some(transaction) = transaction.as_deref_mut() {
+            transaction.record(update_transaction::UpdatePhase::Installed)?;
         }
         services
             .activate_dependencies(control, ReleaseActivation::Installed)
@@ -11307,9 +11315,21 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
                 }
                 services.stop_daemon_for_database_restore(control).await?;
                 if let Some(state) = rollback_state {
+                    if let Some(transaction) = transaction.as_deref_mut() {
+                        transaction.record_rollback(Some(update_transaction::DatabaseRestore {
+                            backup: state.backup.clone(),
+                            database: state.database.clone(),
+                            key: state.key.clone(),
+                        }))?;
+                    }
                     restore_bounded_update_backup(&state.backup, &state.database, &state.key)
                         .await?;
                 }
+            }
+            if let Some(transaction) = transaction.as_deref_mut()
+                && transaction.phase() != update_transaction::UpdatePhase::RollingBack
+            {
+                transaction.record_rollback(None)?;
             }
             if let Some(migration) = daemon_migration {
                 migration.rollback()?;
@@ -11341,6 +11361,13 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
         }
         .await;
         if let Err(rollback_error) = rollback {
+            let rollback_error = match transaction.as_deref() {
+                Some(transaction) => rollback_error.context(format!(
+                    "the update record stays in {}, and the next Oore install, setup, update or uninstall command finishes the recovery",
+                    transaction.path().display()
+                )),
+                None => rollback_error,
+            };
             let recovery = match claim_barrier {
                 Some(barrier) => {
                     resume_daemon_for_planned_barrier(install_root, barrier, services, control)
@@ -11349,13 +11376,19 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
                 None => Ok(()),
             };
             return match recovery {
-                Ok(()) => Err(error.context(format!("rollback also failed: {rollback_error}"))),
+                Ok(()) => Err(error.context(format!("rollback also failed: {rollback_error:#}"))),
                 Err(recovery_error) => Err(error.context(format!(
-                    "rollback also failed: {rollback_error}; restarting the daemon for the runner claim barrier also failed: {recovery_error}"
+                    "rollback also failed: {rollback_error:#}; restarting the daemon for the runner claim barrier also failed: {recovery_error}"
                 ))),
             };
         }
+        if let Some(transaction) = transaction {
+            transaction.finish();
+        }
         return Err(error);
+    }
+    if let Some(transaction) = transaction {
+        transaction.finish();
     }
     let barrier_release = match claim_barrier {
         Some(barrier) => barrier.release().await,
@@ -11974,6 +12007,7 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
         Some(&barrier),
         &services,
         Some(&rollback),
+        None,
         &mut control,
     )
     .await;
@@ -12104,6 +12138,81 @@ fn read_claimed_update_request(
     Ok(request)
 }
 
+/// Keeps Ctrl-C and a closed terminal from killing `oore update` while it has
+/// services stopped or files half replaced. SIGINT is ignored. SIGHUP points
+/// standard output and error at /dev/null, so writes after an SSH drop neither
+/// fail nor stop the update. Dropping the shield restores both handlers.
+struct InterruptShield {
+    previous: Vec<(libc::c_int, libc::sigaction)>,
+}
+
+extern "C" fn detach_output_from_closed_terminal(_signal: libc::c_int) {
+    // SAFETY: `open`, `dup2` and `close` are async-signal-safe, and the path
+    // is a NUL-terminated static string.
+    unsafe {
+        let null = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
+        if null >= 0 {
+            libc::dup2(null, libc::STDOUT_FILENO);
+            libc::dup2(null, libc::STDERR_FILENO);
+            if null > libc::STDERR_FILENO {
+                libc::close(null);
+            }
+        }
+    }
+}
+
+impl InterruptShield {
+    fn engage() -> anyhow::Result<Self> {
+        let mut shield = Self {
+            previous: Vec::new(),
+        };
+        let hangup: extern "C" fn(libc::c_int) = detach_output_from_closed_terminal;
+        for (signal, handler) in [
+            (libc::SIGINT, libc::SIG_IGN),
+            (libc::SIGHUP, hangup as libc::sighandler_t),
+        ] {
+            // SAFETY: Both structures are zero-initialised plain C data that
+            // `sigaction` reads and writes for the duration of the call.
+            unsafe {
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = handler;
+                libc::sigemptyset(&mut action.sa_mask);
+                let mut previous: libc::sigaction = std::mem::zeroed();
+                if libc::sigaction(signal, &action, &mut previous) != 0 {
+                    return Err(std::io::Error::last_os_error())
+                        .context("failed to protect the update from interruption");
+                }
+                shield.previous.push((signal, previous));
+            }
+        }
+        println!("Ctrl-C is disabled until the update finishes or rolls back.");
+        Ok(shield)
+    }
+}
+
+impl Drop for InterruptShield {
+    fn drop(&mut self) {
+        for (signal, previous) in self.previous.drain(..).rev() {
+            // SAFETY: `previous` is the action `sigaction` returned for `signal`.
+            unsafe {
+                libc::sigaction(signal, &previous, std::ptr::null_mut());
+            }
+        }
+    }
+}
+
+/// Whether the installed `VERSION` belongs to this binary's release. Release
+/// binaries carry only the base version, so `0.1.48-alpha.3` matches `0.1.48`.
+fn installed_version_matches_binary(installed: &str, binary: &str) -> bool {
+    match (parse_semver_loose(installed), parse_semver_loose(binary)) {
+        (Ok(installed), Ok(binary)) => {
+            (installed.major, installed.minor, installed.patch)
+                == (binary.major, binary.minor, binary.patch)
+        }
+        _ => true,
+    }
+}
+
 /// The installed release metadata an update decision is based on. `oore
 /// update` reads it before downloading and again under the lifecycle lock, and
 /// refuses to continue when another command changed it in between.
@@ -12146,6 +12255,16 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         args.check,
     )
     .await?;
+    let _lifecycle_lock = if args.check {
+        None
+    } else {
+        let lock = install_lock::InstallLock::acquire(&install_root)?;
+        anyhow::ensure!(
+            installed_release_identity(&install_root) == release_identity,
+            "the installation changed while the update was downloading; run `oore update` again"
+        );
+        Some(lock)
+    };
     let latest = &prepared.version;
     println!("Channel:         {}", channel.as_str());
     println!("GitHub repo:     {repo}");
@@ -12179,11 +12298,6 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     if args.check {
         return Ok(());
     }
-    let _lifecycle_lock = install_lock::InstallLock::acquire(&install_root)?;
-    anyhow::ensure!(
-        installed_release_identity(&install_root) == release_identity,
-        "the installation changed while the update was downloading; run `oore update` again"
-    );
     let profile_manifest = load_backend_update_manifest(&install_root)?;
     let client = http_client()?;
     let profile_update = prepare_profile_update_plan(
@@ -12238,11 +12352,24 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         None
     };
     // Stage only after the sudo prompt, so cancelling it leaves nothing behind.
-    let update_stage = tempfile::Builder::new()
-        .prefix(".update-")
-        .tempdir_in(&install_root)
-        .context("failed to create update staging directory")?;
-    let staged_release = update_stage.path().join("release");
+    let managed_runner_service = managed_runner_update_service(&install_root)?;
+    let recovery_services = [
+        daemon_service_is_installed.then_some(DAEMON_SERVICE_LABEL),
+        web_is_managed.then_some(WEB_SERVICE_LABEL),
+        managed_runner_service,
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::to_string)
+    .collect();
+    let mut transaction = update_transaction::UpdateTransaction::begin(
+        &install_root,
+        &current.to_string(),
+        &latest.to_string(),
+        recovery_services,
+        args.ensure_managed_runner,
+    )?;
+    let staged_release = transaction.path().join("release");
     copy_dir_recursive(
         prepared
             .path
@@ -12250,7 +12377,7 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
             .context("verified update release was not prepared")?,
         &staged_release,
     )?;
-    let previous_release = update_stage.path().join("previous");
+    let previous_release = transaction.path().join("previous");
     copy_release_snapshot(&install_root, &previous_release)?;
 
     let daemon_document = daemon_service_is_installed
@@ -12326,12 +12453,11 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
                 daemon_document
                     .as_ref()
                     .context("managed daemon migration is missing its plist")?,
-                update_stage.path(),
+                transaction.path(),
             )
         })
         .transpose()?;
 
-    let managed_runner_service = managed_runner_update_service(&install_root)?;
     let install_managed_runner = args.ensure_managed_runner;
     let managed_runner_service_existed = managed_runner_service.is_some();
     let runner_migration = install_managed_runner
@@ -12435,6 +12561,9 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         return Err(error);
     }
 
+    // From here until the update finishes or rolls back, an interrupted
+    // process would leave services stopped or files half replaced.
+    let interrupt_shield = InterruptShield::engage()?;
     if daemon_service_is_installed {
         barrier.begin_planned_daemon_outage().await?;
         if let Err(error) = stop_launchd_service(DAEMON_SERVICE_LABEL) {
@@ -12530,9 +12659,11 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         Some(&barrier),
         &services,
         Some(&rollback_state),
+        Some(&mut transaction),
         &mut control,
     )
     .await;
+    drop(interrupt_shield);
     if let Err(error) = update_result {
         return match barrier.release().await {
             Ok(()) => Err(error),
@@ -12767,10 +12898,17 @@ fn main() -> anyhow::Result<()> {
         },
         Commands::Version => {
             let install_root = resolve_install_root()?;
-            if let Some(v) = read_trimmed_file(&install_root.join("VERSION")) {
-                println!("{v}");
-            } else {
-                println!("{}", env!("CARGO_PKG_VERSION"));
+            let binary = env!("CARGO_PKG_VERSION");
+            match read_trimmed_file(&install_root.join("VERSION")) {
+                Some(installed) => {
+                    println!("{installed}");
+                    if !installed_version_matches_binary(&installed, binary) {
+                        eprintln!(
+                            "Warning: this oore binary is {binary}, but the installation records {installed}, so an update may have been interrupted. Run `oore update` to recover it, or rerun the installer for your channel."
+                        );
+                    }
+                }
+                None => println!("{binary}"),
             }
         }
         Commands::Update(args) => {
@@ -13148,5 +13286,27 @@ mod tests {
         assert!(
             !wait_for_launchd_service_unloaded(Duration::from_millis(250), || Ok(true)).unwrap()
         );
+    }
+
+    #[test]
+    fn the_interrupt_shield_ignores_ctrl_c_until_dropped() {
+        let shield = InterruptShield::engage().unwrap();
+        // SAFETY: SIGINT is ignored while the shield is engaged.
+        assert_eq!(unsafe { libc::raise(libc::SIGINT) }, 0);
+        drop(shield);
+        // SAFETY: Reads the current action without changing it.
+        let restored = unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(libc::SIGINT, std::ptr::null(), &mut action);
+            action.sa_sigaction
+        };
+        assert_ne!(restored, libc::SIG_IGN);
+    }
+
+    #[test]
+    fn prerelease_installs_match_their_base_binary_version() {
+        assert!(installed_version_matches_binary("0.1.48-alpha.3", "0.1.48"));
+        assert!(installed_version_matches_binary("0.1.48", "0.1.48"));
+        assert!(!installed_version_matches_binary("0.1.49", "0.1.48"));
     }
 }

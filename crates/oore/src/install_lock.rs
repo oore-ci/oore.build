@@ -49,18 +49,21 @@ impl InstallLock {
 
         // Take the lock before any recovery, so a command that races another
         // lifecycle operation reports it as busy instead of failing recovery.
-        let lock = Self::lock(&path)?;
-        if !frontend_update_needs_recovery(install_root)? {
-            return Ok(lock);
+        let mut lock = Self::lock(&path)?;
+        if frontend_update_needs_recovery(install_root)?
+            && !recover_interrupted_frontend_update(
+                install_root,
+                FrontendRecoveryLock::HeldByCaller,
+            )?
+        {
+            // An older launcher takes the lifecycle lock itself. Hand it over
+            // for the recovery, then take it back.
+            drop(lock);
+            recover_interrupted_frontend_update(install_root, FrontendRecoveryLock::TakenByChild)?;
+            lock = Self::lock(&path)?;
         }
-        if recover_interrupted_frontend_update(install_root, FrontendRecoveryLock::HeldByCaller)? {
-            return Ok(lock);
-        }
-        // An older launcher takes the lifecycle lock itself. Hand it over for
-        // the recovery, then take it back.
-        drop(lock);
-        recover_interrupted_frontend_update(install_root, FrontendRecoveryLock::TakenByChild)?;
-        Self::lock(&path)
+        crate::update_transaction::recover_interrupted_updates(install_root)?;
+        Ok(lock)
     }
 
     fn lock(path: &Path) -> anyhow::Result<Self> {
