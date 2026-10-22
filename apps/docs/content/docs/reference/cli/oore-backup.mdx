@@ -1,0 +1,62 @@
+---
+title: '`oore backup`'
+status: implemented
+description: 'Create, verify, and restore an encrypted-state backup of the default managed layout.'
+---
+
+Use `oore backup` on the control-plane Mac to protect the Oore database and its encryption key.
+
+```text
+oore backup create --output <FILE> [--state-file <PATH>]
+oore backup verify --input <FILE>
+oore backup restore --input <FILE> [--state-file <PATH>]
+```
+
+The archive is an owner-readable `.tar.gz` file. It holds a consistent SQLite snapshot, the encryption key, and a checksum manifest.
+
+For a Complete installation, it also holds the matching `managed-runner.json`.
+
+Backups do not contain artifact payloads. Back those up separately.
+
+## `oore backup create`
+
+| Option         | Purpose                                                |
+| -------------- | ------------------------------------------------------ |
+| `--output`     | Destination `.tar.gz` file.                            |
+| `--state-file` | SQLite state file. Also reads `OORE_SETUP_STATE_FILE`. |
+
+Creation can run while `oored` is live. It prints `Created backup`.
+
+Use only the default managed data layout. `--state-file` selects another database, but not its matching key.
+
+## `oore backup verify`
+
+| Option    | Purpose                |
+| --------- | ---------------------- |
+| `--input` | Backup `.tar.gz` file. |
+
+Verification checks the expected files, SHA-256 digests, key length, and SQLite integrity. It prints `Backup verified`.
+
+## `oore backup restore`
+
+| Option         | Purpose                                                           |
+| -------------- | ----------------------------------------------------------------- |
+| `--input`      | Backup `.tar.gz` file.                                            |
+| `--state-file` | SQLite state file to restore. Also reads `OORE_SETUP_STATE_FILE`. |
+
+Stop `oored` and the runner first. Restore refuses to run while the daemon or database is open.
+
+Restore verifies the archive again. It then replaces the database and key with rollback protection.
+
+A later `create` or `restore` finishes or rolls back an interrupted restore.
+
+## Archive versions
+
+Backups without a managed runner config use `oore-backup-v1`. Backups with one use `oore-backup-v2`.
+
+Use Oore v0.1.42 or newer to verify or restore a v2 backup.
+
+## Procedures
+
+- [Create and verify a backup](/operate/maintain/backups/create)
+- [Restore a backup](/operate/maintain/backups/restore)

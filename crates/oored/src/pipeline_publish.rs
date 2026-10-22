@@ -9,15 +9,17 @@ use oore_contract::{
     validate_google_play_publish_config,
 };
 use sqlx::{Row, SqlitePool};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{ProjectPermission, require_pipeline_project_permission};
-use crate::releases::{NewRelease, ReleaseActor, ReleaseDeps, create_release};
+use crate::releases::{
+    NewRelease, ReleaseActor, ReleaseDeps, find_build_release, finish_create, insert_release,
+};
 use crate::runners::{RunnerAuth, require_active_job_signing_grant};
-use crate::secrets::resolve_secrets;
+use crate::secrets::secret_name_visible;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
@@ -58,16 +60,14 @@ async fn google_play_response(
         .await
         .map_err(|e| store_error("Failed to load Google Play settings", e))?;
     let service_account_secret_present = match &loaded {
-        Some((config, _)) => resolve_secrets(
+        Some((config, _)) => secret_name_visible(
             &state.db,
-            &state.encryption_key,
             project_id,
             Some(&pipeline_id),
+            &config.service_account_secret,
         )
         .await
-        .map_err(|e| store_error("Failed to check the service account secret", e))?
-        .iter()
-        .any(|secret| secret.name == config.service_account_secret),
+        .map_err(|e| store_error("Failed to check the service account secret", e))?,
         None => false,
     };
     let (config, updated_at) = loaded.unzip();
@@ -223,6 +223,9 @@ pub async fn get_job_publish_plan(
 
 /// `POST /v1/runners/{runner_id}/jobs/{job_id}/publish-results` — record a
 /// completed store upload.
+///
+/// The runner retries until this succeeds, so a failure to record the release
+/// is an error, and a repeated report finds the release it already created.
 pub async fn report_job_publish_result(
     State(state): State<Arc<AppState>>,
     Path((runner_id, job_id)): Path<(String, String)>,
@@ -233,15 +236,64 @@ pub async fn report_job_publish_result(
     require_runner(&runner_auth, &runner_id)?;
     let pipeline_id =
         require_active_job_signing_grant(&state.db, &job_id, &runner_id, &headers).await?;
+    info!(
+        build_id = %job_id,
+        store = ?result.store,
+        track = %result.track,
+        version_code = result.version_code,
+        "runner reported a store upload"
+    );
+
+    let recorded = match result.store {
+        PublishStore::GooglePlay => {
+            record_play_release(ReleaseDeps::from(&*state), &job_id, &pipeline_id, &result).await
+        }
+        PublishStore::AppStore => {
+            crate::app_store_publish::record_upload(ReleaseDeps::from(&*state), &job_id).await
+        }
+    };
+    let release_id = match recorded {
+        Ok(Some(release_id)) => release_id,
+        Ok(None) => {
+            info!(build_id = %job_id, "store upload already recorded");
+            return Ok(Json(OkResponse { ok: true }));
+        }
+        Err(error) => {
+            error!(build_id = %job_id, error = ?error, "failed to record the store release");
+            let details = serde_json::json!({
+                "build_id": &job_id,
+                "pipeline_id": &pipeline_id,
+                "runner_id": &runner_id,
+                "result": &result,
+                "error": format!("{error:#}"),
+            })
+            .to_string();
+            let _ = write_audit_log(
+                &state.db,
+                None,
+                "store_upload_record_failed",
+                "build",
+                Some(&job_id),
+                Some(&details),
+            )
+            .await;
+            return Err(api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "release_record_failed",
+                format!("The store upload finished, but the release was not recorded: {error:#}"),
+            ));
+        }
+    };
 
     let details = serde_json::json!({
         "build_id": &job_id,
         "pipeline_id": &pipeline_id,
         "runner_id": &runner_id,
+        "release_id": &release_id,
         "result": &result,
     })
     .to_string();
-    write_audit_log(
+    if let Err(error) = write_audit_log(
         &state.db,
         None,
         "store_upload_completed",
@@ -250,41 +302,26 @@ pub async fn report_job_publish_result(
         Some(&details),
     )
     .await
-    .map_err(|e| store_error("Failed to record the store upload", e))?;
-    info!(
-        build_id = %job_id,
-        store = ?result.store,
-        track = %result.track,
-        version_code = result.version_code,
-        "runner reported a store upload"
-    );
-    if result.store == PublishStore::GooglePlay {
-        // The upload already happened; a failure to record it must not fail the job.
-        if let Err(error) = record_play_release(&state, &job_id, &pipeline_id, &result).await {
-            error!(build_id = %job_id, error = ?error, "failed to record the Google Play release");
-        }
-    }
-    if result.store == PublishStore::AppStore
-        && let Err(error) = crate::app_store_publish::record_upload(&state, &job_id).await
     {
-        error!(build_id = %job_id, error = ?error, "failed to record the App Store release");
+        warn!(build_id = %job_id, %error, "failed to audit the store upload");
     }
     Ok(Json(OkResponse { ok: true }))
 }
 
-/// Create the release record for a finished Play upload. A draft is recorded
-/// as paused at 0% so nothing rolls out until a maintainer resumes it.
+/// Create the release record for a finished Play upload, unless this build
+/// already has one. A draft is recorded as paused at 0% so nothing rolls out
+/// until a maintainer resumes it. Returns the new release's id.
 async fn record_play_release(
-    state: &AppState,
+    deps: ReleaseDeps<'_>,
     build_id: &str,
     pipeline_id: &str,
     result: &RunnerPublishResult,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<String>> {
     let project_id: String = sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
         .bind(build_id)
-        .fetch_one(&state.db)
+        .fetch_one(deps.pool)
         .await?;
-    let policy = load_google_play(&state.db, pipeline_id)
+    let policy = load_google_play(deps.pool, pipeline_id)
         .await?
         .and_then(|(config, _)| config.rollout_policy)
         .unwrap_or_default();
@@ -296,8 +333,15 @@ async fn record_play_release(
             result.rollout_fraction.unwrap_or(1.0),
         ),
     };
-    create_release(
-        ReleaseDeps::from(state),
+    let mut tx = deps.pool.begin_with("BEGIN IMMEDIATE").await?;
+    if find_build_release(&mut tx, build_id, ReleaseStore::GooglePlay)
+        .await?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    let created = insert_release(
+        &mut tx,
         NewRelease {
             project_id,
             build_id: build_id.to_string(),
@@ -316,5 +360,53 @@ async fn record_play_release(
     )
     .await
     .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-    Ok(())
+    tx.commit().await?;
+    let release = finish_create(deps, created, &ReleaseActor::System).await;
+    Ok(Some(release.id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::releases::tests::{FakeStore, pool};
+    use crate::scheduler::Scheduler;
+
+    #[tokio::test]
+    async fn a_repeated_play_report_records_one_release() {
+        let pool = pool().await;
+        let scheduler = Scheduler::new(16);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let result = RunnerPublishResult {
+            store: PublishStore::GooglePlay,
+            track: "production".into(),
+            package_name: "com.example.app".into(),
+            version_code: 7,
+            version_name: Some("1.0.0".into()),
+            rollout_fraction: Some(0.05),
+            status: "in_progress".into(),
+        };
+
+        let first = record_play_release(deps, "b1", "pl1", &result)
+            .await
+            .unwrap();
+        let second = record_play_release(deps, "b1", "pl1", &result)
+            .await
+            .unwrap();
+
+        assert!(first.is_some());
+        assert_eq!(second, None);
+        let (count, next_step_at): (i64, Option<i64>) = sqlx::query_as(
+            "SELECT COUNT(*), MAX(next_step_at) FROM releases WHERE build_id = 'b1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+        assert!(next_step_at.is_some(), "the rollout is scheduled");
+    }
 }

@@ -485,16 +485,18 @@ struct ProjectAccess {
 }
 
 impl ProjectAccess {
+    /// `None` when the role lookup failed. Failures are not cached, so the
+    /// next event for the project checks again.
     async fn can_read(
         &mut self,
         pool: &SqlitePool,
         session: &SessionInfo,
         project_id: &str,
-    ) -> bool {
+    ) -> Option<bool> {
         if let Some(readable) = self.readable.get(project_id) {
-            return *readable;
+            return Some(*readable);
         }
-        let readable = match resolve_effective_project_role(
+        let effective = resolve_effective_project_role(
             pool,
             &session.user_id,
             &session.role,
@@ -502,14 +504,38 @@ impl ProjectAccess {
             &session.auth_source,
         )
         .await
-        {
-            Ok(effective) => {
-                require_project_permission(&effective, ProjectPermission::Read).is_ok()
-            }
-            Err(_) => false,
-        };
+        .ok()?;
+        let readable = require_project_permission(&effective, ProjectPermission::Read).is_ok();
         self.readable.insert(project_id.to_string(), readable);
-        readable
+        Some(readable)
+    }
+
+    /// The frame to send for a project-scoped change: the event itself, or a
+    /// resync when access could not be checked, so the client refetches
+    /// instead of silently missing the change.
+    async fn project_event(
+        &mut self,
+        pool: &SqlitePool,
+        session: &SessionInfo,
+        project_id: &str,
+        event: impl FnOnce() -> Event,
+    ) -> Option<Event> {
+        match self.can_read(pool, session, project_id).await {
+            Some(true) => Some(event()),
+            Some(false) => None,
+            None => {
+                warn!(
+                    project_id,
+                    "project access check failed; asking client to resync"
+                );
+                Some(json_event(
+                    "resync",
+                    &EventStreamResync {
+                        reason: "access_check_failed".to_string(),
+                    },
+                ))
+            }
+        }
     }
 }
 
@@ -559,8 +585,10 @@ fn event_stream(
                     };
                     session = current;
                     access.readable.clear();
+                    // A failed lookup keeps the stream open; events stay
+                    // gated by the per-event check until it succeeds.
                     if let Some(project_id) = &project_filter
-                        && !access.can_read(&pool, &session, project_id).await
+                        && access.can_read(&pool, &session, project_id).await == Some(false)
                     {
                         yield Ok(Event::default().event("done").data("authorization_ended"));
                         break;
@@ -570,16 +598,20 @@ fn event_stream(
                 received = receiver.recv() => match received {
                     Ok(LiveEvent::Build(event)) => {
                         if project_filter.as_ref().is_none_or(|id| *id == event.project_id)
-                            && access.can_read(&pool, &session, &event.project_id).await
+                            && let Some(frame) = access
+                                .project_event(&pool, &session, &event.project_id, || json_event("build", &event))
+                                .await
                         {
-                            yield Ok(json_event("build", &event));
+                            yield Ok(frame);
                         }
                     }
                     Ok(LiveEvent::Release(event)) => {
                         if project_filter.as_ref().is_none_or(|id| *id == event.project_id)
-                            && access.can_read(&pool, &session, &event.project_id).await
+                            && let Some(frame) = access
+                                .project_event(&pool, &session, &event.project_id, || json_event("release", &event))
+                                .await
                         {
-                            yield Ok(json_event("release", &event));
+                            yield Ok(frame);
                         }
                     }
                     Ok(LiveEvent::Runner(event)) => {
@@ -701,6 +733,35 @@ mod tests {
             }
             other => panic!("unexpected event {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn failed_access_check_asks_for_resync_and_is_not_cached() {
+        let pool = pool().await;
+        let session = SessionInfo {
+            user_id: "u1".to_string(),
+            email: "dev@example.com".to_string(),
+            oidc_subject: "sub".to_string(),
+            role: "developer".to_string(),
+            expires_at: i64::MAX,
+            auth_source: crate::session::AuthSource::Session,
+        };
+        let mut access = ProjectAccess {
+            readable: HashMap::new(),
+        };
+        let build = || Event::default().event("build").data("{}");
+        sqlx::query("DROP TABLE project_members")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let frame = access
+            .project_event(&pool, &session, "p1", build)
+            .await
+            .expect("a frame");
+
+        assert!(format!("{frame:?}").contains("event: resync"), "{frame:?}");
+        assert!(access.readable.is_empty());
     }
 
     #[test]

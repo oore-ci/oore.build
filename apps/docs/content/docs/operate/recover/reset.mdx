@@ -96,6 +96,8 @@ Keep the backup until the replacement instance passes all acceptance checks.
 
 If purge reports a foreign service or unsafe path, stop. Preserve the output and [report the problem](/operate/support/report-an-issue).
 
+If every lifecycle command reports that the installation manifest is invalid, you do not need a reset. Run `oore uninstall --ignore-invalid-manifest`, which keeps Oore data, then reinstall the same profile. See [recover from an invalid manifest](/reference/cli/oore-uninstall#recover-from-an-invalid-manifest).
+
 If setup stops, correct the reported input. Then run `oore setup` again to resume the recorded profile.
 
 ## Next step
