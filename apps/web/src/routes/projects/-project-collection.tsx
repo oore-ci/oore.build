@@ -56,17 +56,19 @@ function ProjectIdentity({ project }: { project: Project }) {
 /** Newest finished build in the insights window, with its success rate. */
 function ProjectLastBuild({
   insights,
+  isError,
   isLoading,
   projectId,
 }: {
   insights: ProjectBuildInsights | undefined
+  isError: boolean
   isLoading: boolean
   projectId: string
 }) {
   if (!insights) {
     return (
       <span className="text-muted-foreground">
-        {isLoading ? '…' : 'No recent builds'}
+        {isLoading ? '…' : isError ? 'Unavailable' : 'No recent builds'}
       </span>
     )
   }
@@ -118,6 +120,7 @@ function getProjectColumns(
   canManageProject: (project: Project) => boolean,
   insightsByProject: ReadonlyMap<string, ProjectBuildInsights>,
   insightsLoading: boolean,
+  insightsError: boolean,
 ): Array<DataTableColumnDef<Project>> {
   return [
     {
@@ -134,6 +137,7 @@ function getProjectColumns(
       cell: ({ row }) => (
         <ProjectLastBuild
           insights={insightsByProject.get(row.original.id)}
+          isError={insightsError}
           isLoading={insightsLoading}
           projectId={row.original.id}
         />
@@ -199,6 +203,7 @@ export function ProjectCollection({
   emptyState,
   error,
   insights,
+  insightsError,
   insightsLoading,
   isLoading,
   isRefreshing,
@@ -219,6 +224,7 @@ export function ProjectCollection({
   error: Error | null
   /** Build health per project for the insights window. */
   insights: ReadonlyArray<ProjectBuildInsights> | undefined
+  insightsError: boolean
   insightsLoading: boolean
   isLoading: boolean
   isRefreshing: boolean
@@ -240,8 +246,13 @@ export function ProjectCollection({
   )
   const columns = useMemo(
     () =>
-      getProjectColumns(canManageProject, insightsByProject, insightsLoading),
-    [canManageProject, insightsByProject, insightsLoading],
+      getProjectColumns(
+        canManageProject,
+        insightsByProject,
+        insightsLoading,
+        insightsError,
+      ),
+    [canManageProject, insightsByProject, insightsLoading, insightsError],
   )
   const sorting = useMemo(
     () => dataTableSortingState(sort, direction),

@@ -208,6 +208,7 @@ function ProjectsListPage() {
         canManageProject={canManageProject}
         direction={direction}
         insights={insightsQuery.data?.projects}
+        insightsError={insightsQuery.isError}
         insightsLoading={insightsQuery.isLoading}
         emptyState={
           showTrueEmpty ? (

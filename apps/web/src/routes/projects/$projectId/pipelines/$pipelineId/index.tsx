@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -64,7 +65,10 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { searchChoice } from '@/lib/search-input'
 import type { SearchInput } from '@/lib/search-input'
-import { PipelineConfigurationCard } from '../-pipeline-configuration-card'
+import {
+  PipelineConfigurationCard,
+  SettingUnavailable,
+} from '../-pipeline-configuration-card'
 
 const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
@@ -283,25 +287,49 @@ function PipelineDetailPage() {
   const manualOnlyTriggers =
     projectData?.project.repository_provider === 'local_git'
 
-  const publishingSummary: Array<{ label: string; value: string }> = []
-  if (buildsAndroid && googlePlayQuery.data) {
-    const config = googlePlayQuery.data.config
+  const publishingSummary: Array<{ label: string; value: ReactNode }> = []
+  if (buildsAndroid) {
+    const config = googlePlayQuery.data?.config
     publishingSummary.push({
       label: 'Google Play',
-      value: config?.enabled
-        ? `Uploads to the ${config.track} track after each build`
-        : 'Off',
+      value: googlePlayQuery.data ? (
+        config?.enabled ? (
+          `Uploads to the ${config.track} track after each build`
+        ) : (
+          'Off'
+        )
+      ) : googlePlayQuery.isError ? (
+        <SettingUnavailable
+          what="Google Play publishing"
+          onRetry={googlePlayQuery.refetch}
+        />
+      ) : (
+        <Skeleton className="h-5 w-48" />
+      ),
     })
   }
-  if (buildsIos && appStoreQuery.data) {
-    const config = appStoreQuery.data.config
+  if (buildsIos) {
+    const config = appStoreQuery.data?.config
     publishingSummary.push({
       label: 'App Store Connect',
-      value: config.enabled
-        ? config.destination === 'app_store'
-          ? 'Uploads to the App Store after each build'
-          : 'Uploads to TestFlight after each build'
-        : 'Off',
+      value: config ? (
+        config.enabled ? (
+          config.destination === 'app_store' ? (
+            'Uploads to the App Store after each build'
+          ) : (
+            'Uploads to TestFlight after each build'
+          )
+        ) : (
+          'Off'
+        )
+      ) : appStoreQuery.isError ? (
+        <SettingUnavailable
+          what="App Store publishing"
+          onRetry={appStoreQuery.refetch}
+        />
+      ) : (
+        <Skeleton className="h-5 w-48" />
+      ),
     })
   }
 
@@ -468,8 +496,8 @@ function PipelineDetailPage() {
 
         <TabsContent value="overview" className="flex flex-col gap-4 pt-2">
           <PipelineConfigurationCard
-            androidSigning={signingQuery.data}
-            iosSigning={iosSigningQuery.data}
+            androidSigning={canWrite ? signingQuery : null}
+            iosSigning={canWrite ? iosSigningQuery : null}
             manualOnlyTriggers={manualOnlyTriggers}
             pipeline={pipeline}
             publishing={publishingSummary}

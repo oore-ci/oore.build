@@ -13,6 +13,7 @@ import { useHasPermissions } from '@/hooks/use-permissions'
 import { PipelineFormSubsection } from '@/components/pipeline-form-section'
 import { FileField } from '@/components/file-field'
 import SetupHint from '@/components/setup-hint'
+import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   FormControl,
@@ -473,7 +474,20 @@ function IosApiKeyFields({
               </SelectContent>
             </Select>
             <FormDescription>
-              {sharedKey ? (
+              {keysQuery.isError ? (
+                <span className="text-destructive">
+                  Could not load the shared keys in {manageLink}.{' '}
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="xs"
+                    className="h-auto px-0 align-baseline text-sm text-destructive underline"
+                    onClick={() => void keysQuery.refetch()}
+                  >
+                    Retry
+                  </Button>
+                </span>
+              ) : sharedKey ? (
                 <>
                   Shared with every pipeline that picks it. Issuer{' '}
                   <span className="font-mono">{sharedKey.issuer_id}</span>.

@@ -3,6 +3,8 @@ import type { ReactNode } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { RelativeTime } from '@/components/relative-time'
 import { formatEnumLabel } from '@/lib/format-utils'
 import { Card, CardContent } from '@/components/ui/card'
@@ -44,6 +46,58 @@ function Section({
 
 const NONE = <span className="text-muted-foreground">—</span>
 
+/** A setting the overview loads on its own, so it can be pending or fail. */
+export type LoadedSetting<T> = {
+  data: T | undefined
+  isLoading: boolean
+  isError: boolean
+  refetch: () => void
+}
+
+export function SettingUnavailable({
+  onRetry,
+  what,
+}: {
+  onRetry: () => void
+  what: string
+}) {
+  return (
+    <span className="text-destructive">
+      Could not load {what}.{' '}
+      <Button
+        variant="link"
+        size="xs"
+        className="h-auto px-0 align-baseline text-sm text-destructive underline"
+        onClick={() => onRetry()}
+      >
+        Retry
+      </Button>
+    </span>
+  )
+}
+
+/** Skeleton while loading and Retry on failure, never a false "Not set up". */
+function SettingBody<T>({
+  children,
+  setting,
+  what,
+}: {
+  children: (data: T) => ReactNode
+  setting: LoadedSetting<T>
+  what: string
+}) {
+  if (setting.data !== undefined) return children(setting.data)
+  if (setting.isError) {
+    return (
+      <p className="py-1 text-sm">
+        <SettingUnavailable what={what} onRetry={setting.refetch} />
+      </p>
+    )
+  }
+  if (setting.isLoading) return <Skeleton className="my-1 h-5 w-48" />
+  return <p className="py-1 text-sm text-muted-foreground">Not set up</p>
+}
+
 function KV({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex gap-4 py-1 text-sm max-sm:flex-col max-sm:gap-0.5">
@@ -60,12 +114,13 @@ export function PipelineConfigurationCard({
   pipeline,
   publishing = [],
 }: {
-  androidSigning: PipelineAndroidSigningResponse | undefined
-  iosSigning: PipelineIosSigningResponse | undefined
+  /** Null when the viewer cannot read signing, so the section is hidden. */
+  androidSigning: LoadedSetting<PipelineAndroidSigningResponse> | null
+  iosSigning: LoadedSetting<PipelineIosSigningResponse> | null
   manualOnlyTriggers: boolean
   pipeline: Pipeline
   /** One line per store the pipeline can publish to. */
-  publishing?: Array<{ label: string; value: string }>
+  publishing?: Array<{ label: string; value: ReactNode }>
 }) {
   return (
     <Card>
@@ -235,92 +290,95 @@ export function PipelineConfigurationCard({
           </KV>
         </Section>
 
-        {pipeline.execution_config.platforms.includes('android') ? (
+        {androidSigning &&
+        pipeline.execution_config.platforms.includes('android') ? (
           <Section title="Android signing">
-            {androidSigning ? (
-              <>
-                <KV label="Release">
-                  {androidSigning.release.enabled
-                    ? `On · ${androidSigning.release.keystore_filename ?? 'keystore stored'}`
-                    : 'Off'}
-                </KV>
-                <KV label="Debug">
-                  {androidSigning.debug.enabled
-                    ? `On · ${androidSigning.debug.keystore_filename ?? 'keystore stored'}`
-                    : 'Off'}
-                </KV>
-              </>
-            ) : (
-              <p className="py-1 text-sm text-muted-foreground">Not set up</p>
-            )}
+            <SettingBody setting={androidSigning} what="Android signing">
+              {(androidSigning) => (
+                <>
+                  <KV label="Release">
+                    {androidSigning.release.enabled
+                      ? `On · ${androidSigning.release.keystore_filename ?? 'keystore stored'}`
+                      : 'Off'}
+                  </KV>
+                  <KV label="Debug">
+                    {androidSigning.debug.enabled
+                      ? `On · ${androidSigning.debug.keystore_filename ?? 'keystore stored'}`
+                      : 'Off'}
+                  </KV>
+                </>
+              )}
+            </SettingBody>
           </Section>
         ) : null}
 
-        {pipeline.execution_config.platforms.includes('ios') ? (
+        {iosSigning && pipeline.execution_config.platforms.includes('ios') ? (
           <Section title="iOS signing">
-            {iosSigning ? (
-              <>
-                <KV label="Status">{iosSigning.enabled ? 'On' : 'Off'}</KV>
-                {iosSigning.enabled ? (
-                  <>
-                    <KV label="Mode">
-                      {iosSigning.mode === 'manual'
-                        ? 'Manual (.p12 + provisioning profiles)'
-                        : iosSigning.mode === 'api'
-                          ? 'API (App Store Connect)'
-                          : 'Hybrid (manual cert + API automation)'}
-                    </KV>
-                    {iosSigning.team_id ? (
-                      <KV label="Team ID">
-                        <span className="font-mono">{iosSigning.team_id}</span>
+            <SettingBody setting={iosSigning} what="iOS signing">
+              {(iosSigning) => (
+                <>
+                  <KV label="Status">{iosSigning.enabled ? 'On' : 'Off'}</KV>
+                  {iosSigning.enabled ? (
+                    <>
+                      <KV label="Mode">
+                        {iosSigning.mode === 'manual'
+                          ? 'Manual (.p12 + provisioning profiles)'
+                          : iosSigning.mode === 'api'
+                            ? 'API (App Store Connect)'
+                            : 'Hybrid (manual cert + API automation)'}
                       </KV>
-                    ) : null}
-                    {iosSigning.bundle_ids.length > 0 ? (
-                      <KV label="Bundle IDs">
-                        <div className="flex flex-wrap gap-1">
-                          {iosSigning.bundle_ids.map((id) => (
-                            <Badge
-                              key={id}
-                              variant="outline"
-                              className="font-mono text-[11px]"
-                            >
-                              {id}
-                            </Badge>
-                          ))}
-                        </div>
-                      </KV>
-                    ) : null}
-                    {iosSigning.mode === 'manual' ||
-                    iosSigning.mode === 'hybrid' ? (
-                      <KV label="Certificate">
-                        {iosSigning.has_p12
-                          ? (iosSigning.p12_filename ?? 'Stored')
-                          : 'Not uploaded'}
-                      </KV>
-                    ) : null}
-                    {iosSigning.mode === 'api' ||
-                    iosSigning.mode === 'hybrid' ? (
-                      <KV label="API key">
-                        {iosSigning.has_api_key
-                          ? `Key ${iosSigning.api_key_id ?? 'stored'}`
-                          : 'Not set up'}
-                      </KV>
-                    ) : null}
-                    {iosSigning.provisioning_profiles.length > 0 ? (
-                      <KV label="Profiles">
-                        {iosSigning.provisioning_profiles.length} provisioning
-                        profile
-                        {iosSigning.provisioning_profiles.length === 1
-                          ? ''
-                          : 's'}
-                      </KV>
-                    ) : null}
-                  </>
-                ) : null}
-              </>
-            ) : (
-              <p className="py-1 text-sm text-muted-foreground">Not set up</p>
-            )}
+                      {iosSigning.team_id ? (
+                        <KV label="Team ID">
+                          <span className="font-mono">
+                            {iosSigning.team_id}
+                          </span>
+                        </KV>
+                      ) : null}
+                      {iosSigning.bundle_ids.length > 0 ? (
+                        <KV label="Bundle IDs">
+                          <div className="flex flex-wrap gap-1">
+                            {iosSigning.bundle_ids.map((id) => (
+                              <Badge
+                                key={id}
+                                variant="outline"
+                                className="font-mono text-[11px]"
+                              >
+                                {id}
+                              </Badge>
+                            ))}
+                          </div>
+                        </KV>
+                      ) : null}
+                      {iosSigning.mode === 'manual' ||
+                      iosSigning.mode === 'hybrid' ? (
+                        <KV label="Certificate">
+                          {iosSigning.has_p12
+                            ? (iosSigning.p12_filename ?? 'Stored')
+                            : 'Not uploaded'}
+                        </KV>
+                      ) : null}
+                      {iosSigning.mode === 'api' ||
+                      iosSigning.mode === 'hybrid' ? (
+                        <KV label="API key">
+                          {iosSigning.has_api_key
+                            ? `Key ${iosSigning.api_key_id ?? 'stored'}`
+                            : 'Not set up'}
+                        </KV>
+                      ) : null}
+                      {iosSigning.provisioning_profiles.length > 0 ? (
+                        <KV label="Profiles">
+                          {iosSigning.provisioning_profiles.length} provisioning
+                          profile
+                          {iosSigning.provisioning_profiles.length === 1
+                            ? ''
+                            : 's'}
+                        </KV>
+                      ) : null}
+                    </>
+                  ) : null}
+                </>
+              )}
+            </SettingBody>
           </Section>
         ) : null}
       </CardContent>

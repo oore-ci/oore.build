@@ -2,6 +2,7 @@ import type { UseFormReturn } from 'react-hook-form'
 import { useWatch } from 'react-hook-form'
 import * as z from 'zod'
 import type { SmtpConfig, UpdateSmtpConfig } from '@oore/client/models'
+import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
@@ -363,6 +364,20 @@ function ProjectScopeField({
               ? 'Receives events from every project, plus runner alerts.'
               : 'Receives build and release events for this project only.'}
           </FormDescription>
+          {projectsQuery.isError ? (
+            <p className="text-sm text-destructive">
+              Could not load projects.{' '}
+              <Button
+                type="button"
+                variant="link"
+                size="xs"
+                className="h-auto px-0 align-baseline text-sm text-destructive underline"
+                onClick={() => void projectsQuery.refetch()}
+              >
+                Retry
+              </Button>
+            </p>
+          ) : null}
           <FormMessage />
         </FormItem>
       )}
