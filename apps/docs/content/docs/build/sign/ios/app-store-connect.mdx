@@ -1,7 +1,7 @@
 ---
-title: 'Configure App Store Connect signing'
+title: "Configure App Store Connect signing"
 status: implemented
-description: 'Add App Store Connect API credentials and synchronize iOS signing profiles.'
+description: "Add App Store Connect API credentials and synchronize iOS signing profiles."
 ---
 
 Use App Store Connect API credentials when Oore should synchronize signing
@@ -39,7 +39,13 @@ of uploading it to every pipeline. This needs instance admin or owner access.
 4. Select **Add key**.
 
 Replacing a shared key updates every pipeline that uses it on its next build.
-Oore refuses to delete a key while a pipeline uses it.
+Oore refuses to delete a key while a pipeline uses it: iOS signing is on, and
+the pipeline signs in API or Hybrid mode or uploads builds to App Store
+Connect.
+
+API-mode pipelines on the same Apple team share one distribution certificate.
+The first sync creates it, and later syncs reuse it, because Apple allows only
+a few distribution certificates per team.
 
 ## 3. Add the API credentials
 
