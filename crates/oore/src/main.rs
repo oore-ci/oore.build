@@ -5467,6 +5467,10 @@ fn run_update_doctor(json: bool) -> anyhow::Result<()> {
     use oore_contract::RuntimeUpdateCheckStatus;
 
     let install_root = resolve_install_root()?;
+    // Taking the lifecycle lock puts back a daemon an interrupted update held.
+    if let Err(error) = install_lock::InstallLock::acquire(&install_root) {
+        eprintln!("Skipped interrupted update recovery: {error:#}");
+    }
     let preflight = oore_contract::runtime_update_preflight::run(&install_root);
     if json {
         println!("{}", serde_json::to_string_pretty(&preflight)?);
@@ -11661,7 +11665,7 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
 
     fs::create_dir_all(&install_root)?;
     let update_stage = tempfile::Builder::new()
-        .prefix(".supervised-update-")
+        .prefix(update_supervisor::TRANSACTION_PREFIX)
         .tempdir_in(&install_root)
         .context("failed to create supervised update transaction")?;
     let staged_release = update_stage.path().join("release");

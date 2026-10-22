@@ -30,6 +30,10 @@ const PREFLIGHT_TTL: Duration = Duration::from_secs(30);
 /// How long an update may go without progress before a stopped supervisor counts as gone.
 const ABANDONED_UPDATE_GRACE: Duration = Duration::from_secs(120);
 const ABANDONED_UPDATE_ERROR: &str = "The update supervisor stopped without reporting a result. Check logs/update-supervisor.log on the backend host, then try again.";
+/// How long an update may go without progress when launchd cannot say whether
+/// the supervisor runs. It outlasts the 30 minute runner drain plus the backup.
+const UNCONFIRMED_UPDATE_TIMEOUT: Duration = Duration::from_secs(45 * 60);
+const UNCONFIRMED_UPDATE_ERROR: &str = "The update made no progress for 45 minutes, and Oore could not confirm that the update supervisor is still running. Check logs/update-supervisor.log on the backend host, then try again.";
 
 pub type RuntimeUpdateState = Arc<RwLock<RuntimeUpdateStatus>>;
 
@@ -214,8 +218,18 @@ fn time_since_modified(path: &Path) -> Option<Duration> {
     )
 }
 
-fn update_is_abandoned(quiet_for: Option<Duration>, supervisor_running: Option<bool>) -> bool {
-    supervisor_running == Some(false) && quiet_for.is_some_and(|age| age >= ABANDONED_UPDATE_GRACE)
+/// The failure to report when an update looks abandoned, or `None` while it may
+/// still be running.
+fn abandoned_update_error(
+    quiet_for: Option<Duration>,
+    supervisor_running: Option<bool>,
+) -> Option<&'static str> {
+    let quiet_for = quiet_for?;
+    match supervisor_running {
+        Some(false) if quiet_for >= ABANDONED_UPDATE_GRACE => Some(ABANDONED_UPDATE_ERROR),
+        None if quiet_for >= UNCONFIRMED_UPDATE_TIMEOUT => Some(UNCONFIRMED_UPDATE_ERROR),
+        _ => None,
+    }
 }
 
 /// Fail an update whose supervisor exited without reporting, and drop its queued request,
@@ -242,9 +256,9 @@ fn reconcile_abandoned_update(
         .into_iter()
         .filter_map(|path| time_since_modified(path))
         .min();
-    if !update_is_abandoned(quiet_for, supervisor_running()) {
+    let Some(error) = abandoned_update_error(quiet_for, supervisor_running()) else {
         return Ok(());
-    }
+    };
     match fs::remove_file(&request_path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -259,7 +273,7 @@ fn reconcile_abandoned_update(
     }
     if let Some(mut status) = in_flight {
         status.phase = RuntimeUpdatePhase::Failed;
-        status.error = Some(ABANDONED_UPDATE_ERROR.to_string());
+        status.error = Some(error.to_string());
         write_persisted_status(&status_path, &status)?;
     }
     Ok(())
@@ -649,10 +663,33 @@ mod tests {
     }
 
     #[test]
+    fn an_hour_old_update_fails_when_the_supervisor_state_is_unknown() {
+        let root = tempfile::tempdir().unwrap();
+        let (status_path, request_path) = write_update_fixture(
+            root.path(),
+            RuntimeUpdatePhase::Updating,
+            true,
+            Duration::from_secs(60 * 60),
+        );
+
+        reconcile_abandoned_update(root.path(), || None).unwrap();
+
+        assert_eq!(
+            persisted_phase(&status_path),
+            (
+                RuntimeUpdatePhase::Failed,
+                Some(UNCONFIRMED_UPDATE_ERROR.to_string())
+            )
+        );
+        assert!(!request_path.exists());
+    }
+
+    #[test]
     fn running_recent_or_unknown_updates_are_left_alone() {
         for (age, supervisor_running) in [
-            (Duration::from_secs(600), Some(true)),
+            (Duration::from_secs(60 * 60), Some(true)),
             (Duration::from_secs(600), None),
+            (Duration::from_secs(40 * 60), None),
             (Duration::from_secs(5), Some(false)),
         ] {
             let root = tempfile::tempdir().unwrap();
