@@ -42,10 +42,11 @@ import { Spinner } from '@/components/ui/spinner'
 import { TabsContent } from '@/components/ui/tabs'
 import { useUpdatePipeline } from '@/hooks/use-pipelines'
 import { relativeTime } from '@/lib/format-utils'
-import { enabledStatus, getStatusPresentation } from '@/lib/status-variants'
+import { enabledStatus } from '@/lib/status-variants'
 import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
 import { StatusBadge } from '@/components/status-badge'
 import { toast } from '@/lib/toast'
+import type { LastPipelineBuild } from './-project-build-summary'
 
 const PIPELINE_SORTS = ['created_at', 'name'] as const
 
@@ -161,7 +162,7 @@ export function ProjectPipelinesTab({
   error?: string
   hasValidRepositoryWorkflow: boolean
   isLoading: boolean
-  lastBuildByPipeline: Map<string, { status: string; time: number }>
+  lastBuildByPipeline: ReadonlyMap<string, LastPipelineBuild>
   onPageChange: (page: number) => void
   onQueryChange: (query: string) => void
   onRetry: () => void
@@ -189,6 +190,7 @@ export function ProjectPipelinesTab({
           <Link
             to="/projects/$projectId/pipelines/$pipelineId"
             params={{ projectId, pipelineId: row.original.id }}
+            className="font-medium underline-offset-4 hover:underline"
           >
             {row.original.name}
           </Link>
@@ -219,8 +221,24 @@ export function ProjectPipelinesTab({
         header: 'Last build',
         cell: ({ row }) => {
           const build = lastBuildByPipeline.get(row.original.id)
-          if (!build) return 'No builds'
-          return `${getStatusPresentation('build', build.status).label} · ${relativeTime(build.time)}`
+          if (!build) {
+            return (
+              <span className="text-muted-foreground">No recent builds</span>
+            )
+          }
+          return (
+            <Link
+              to="/builds/$buildId"
+              params={{ buildId: build.buildId }}
+              className="inline-flex items-center gap-2"
+            >
+              <StatusBadge kind="build" value={build.status} />
+              <span className="text-muted-foreground">
+                <span className="font-mono">#{build.buildNumber}</span> ·{' '}
+                {relativeTime(build.time)}
+              </span>
+            </Link>
+          )
         },
         enableSorting: false,
       },
@@ -274,6 +292,25 @@ export function ProjectPipelinesTab({
   return (
     <TabsContent value="pipelines">
       <div className="space-y-4 pt-2">
+        {canWritePipelines && total > 0 ? (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              Each pipeline builds one or more platforms from this repository.
+            </p>
+            <Button
+              nativeButton={false}
+              render={
+                <Link
+                  to="/projects/$projectId/pipelines/new"
+                  params={{ projectId }}
+                />
+              }
+            >
+              <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" />
+              Add pipeline
+            </Button>
+          </div>
+        ) : null}
         {error ? (
           <Alert variant="destructive">
             <HugeiconsIcon icon={InformationCircleIcon} />
@@ -354,23 +391,11 @@ export function ProjectPipelinesTab({
               onChange: onQueryChange,
               placeholder: 'Search pipelines',
             }}
-            filters={
-              canWritePipelines ? (
-                <Button
-                  nativeButton={false}
-                  render={
-                    <Link
-                      to="/projects/$projectId/pipelines/new"
-                      params={{ projectId }}
-                    />
-                  }
-                >
-                  <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" />
-                  Add pipeline
-                </Button>
-              ) : undefined
+            pagination={
+              page > 1 || total > pageSize
+                ? { onPageChange, page, pageSize, total }
+                : undefined
             }
-            pagination={{ onPageChange, page, pageSize, total }}
             emptyMessage={isLoading ? 'Loading pipelines…' : undefined}
           />
         )}

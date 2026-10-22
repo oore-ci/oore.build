@@ -15,7 +15,8 @@ import {
 import type { SortDirection } from '@/components/data-table-features'
 import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/status-badge'
-import { relativeTime } from '@/lib/format-utils'
+import { commitUrl } from '@/lib/commit-url'
+import { formatDuration, relativeTime } from '@/lib/format-utils'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import type { ProjectBuildSort } from './-project-build-sort'
 
@@ -26,15 +27,48 @@ const PROJECT_BUILD_SORTS = [
   'created_at',
 ] satisfies ReadonlyArray<ProjectBuildSort>
 
+function BuildCommit({ build }: { build: Build }) {
+  const sha = build.commit_sha
+  if (!sha) return <span className="text-muted-foreground">No commit</span>
+  const label = sha.slice(0, 8)
+  const href = commitUrl(build.context, sha)
+  return href ? (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="font-mono text-xs underline-offset-4 hover:underline"
+      title={sha}
+    >
+      {label}
+      <span className="sr-only"> (opens in a new tab)</span>
+    </a>
+  ) : (
+    <span className="font-mono text-xs" title={sha}>
+      {label}
+    </span>
+  )
+}
+
+function buildDuration(build: Build): string | undefined {
+  if (!build.started_at || !build.finished_at) return undefined
+  return formatDuration(build.finished_at - build.started_at)
+}
+
 const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
     accessorKey: 'build_number',
     header: 'Build',
     cell: ({ row }) => (
-      <Link to="/builds/$buildId" params={{ buildId: row.original.id }}>
+      <Link
+        to="/builds/$buildId"
+        params={{ buildId: row.original.id }}
+        className="font-mono font-medium underline-offset-4 hover:underline"
+      >
         #{row.original.build_number}
       </Link>
     ),
+    enableHiding: false,
     enableSorting: false,
   },
   {
@@ -68,12 +102,28 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Branch" />
     ),
-    cell: ({ row }) => row.original.branch ?? 'n/a',
+    cell: ({ row }) =>
+      row.original.branch ?? (
+        <span className="text-muted-foreground">No branch</span>
+      ),
   },
   {
     accessorKey: 'commit_sha',
     header: 'Commit',
-    cell: ({ row }) => row.original.commit_sha?.slice(0, 10) ?? 'n/a',
+    cell: ({ row }) => <BuildCommit build={row.original} />,
+    enableSorting: false,
+  },
+  {
+    id: 'duration',
+    header: 'Duration',
+    cell: ({ row }) => {
+      const duration = buildDuration(row.original)
+      return duration ? (
+        <span className="font-mono text-xs tabular-nums">{duration}</span>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      )
+    },
     enableSorting: false,
   },
   {

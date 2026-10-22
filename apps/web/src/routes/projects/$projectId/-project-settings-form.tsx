@@ -71,6 +71,8 @@ export function ProjectSettingsForm({
     mode: 'onBlur',
   })
 
+  const { isDirty } = form.formState
+
   function onSubmit(data: EditProjectForm) {
     updateMutation.mutate(
       {
@@ -101,7 +103,7 @@ export function ProjectSettingsForm({
       >
         <SettingsSection
           title="General"
-          description="How this project appears across Oore."
+          description="How this project appears across Oore and the repository it builds from."
         >
           <SettingsSurface className="flex flex-col gap-4">
             <FormField
@@ -148,14 +150,7 @@ export function ProjectSettingsForm({
                 </FormItem>
               )}
             />
-          </SettingsSurface>
-        </SettingsSection>
-
-        <SettingsSection
-          title="Repository"
-          description="The source this project builds from."
-        >
-          <SettingsSurface className="flex flex-col gap-4">
+            <SettingsSurfaceSeparator />
             {canChangeSource ? (
               <FormField
                 control={form.control}
@@ -194,7 +189,7 @@ export function ProjectSettingsForm({
                         items={repositoryItems}
                       >
                         <FormControl>
-                          <SelectTrigger>
+                          <SelectTrigger className="w-full">
                             <SelectValue placeholder="Choose a repository" />
                           </SelectTrigger>
                         </FormControl>
@@ -268,26 +263,33 @@ export function ProjectSettingsForm({
                 )}
               />
             ) : (
-              <p className="text-sm">
-                {currentValues.repository_full_name ? (
-                  <span className="font-medium">
-                    {currentValues.repository_full_name}
+              <div className="flex flex-col gap-1.5 text-sm">
+                <p className="font-medium">Source repository</p>
+                <p>
+                  {currentValues.repository_full_name ? (
+                    <span className="font-medium">
+                      {currentValues.repository_full_name}
+                    </span>
+                  ) : (
+                    'No repository connected.'
+                  )}{' '}
+                  <span className="text-muted-foreground">
+                    Only an owner or admin can change the source.
                   </span>
-                ) : (
-                  'No repository connected.'
-                )}{' '}
-                <span className="text-muted-foreground">
-                  Only an owner or admin can change the source.
-                </span>
-              </p>
+                </p>
+              </div>
             )}
+            <SettingsSurfaceSeparator />
+            <FormActions
+              isPending={updateMutation.isPending}
+              disabled={!isDirty}
+              disabledReason="No changes to save"
+              onCancel={isDirty ? () => form.reset() : undefined}
+              cancelLabel="Discard"
+              submitLabel="Save changes"
+            />
           </SettingsSurface>
         </SettingsSection>
-
-        <FormActions
-          isPending={updateMutation.isPending}
-          submitLabel="Save changes"
-        />
       </form>
     </Form>
   )

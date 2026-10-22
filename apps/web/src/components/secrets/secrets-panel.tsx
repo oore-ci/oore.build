@@ -187,6 +187,14 @@ export function SecretsPanel({
     }
   }
   const visibleInherited = [...inheritedByName.values()]
+  const inheritedScopes = new Set(
+    visibleInherited.map((secret) => secret.scope),
+  )
+  const [onlyInheritedScope] = inheritedScopes
+  const inheritedHeading =
+    inheritedScopes.size === 1 && onlyInheritedScope
+      ? `Inherited from ${SCOPE_LABEL[onlyInheritedScope].toLowerCase()}`
+      : 'Inherited from broader scopes'
 
   function handleDelete() {
     if (!deleteName) return
@@ -273,7 +281,7 @@ export function SecretsPanel({
       {visibleInherited.length > 0 ? (
         <div className="flex flex-col gap-2">
           <h3 className="text-xs font-medium text-muted-foreground">
-            Also available here
+            {inheritedHeading}
           </h3>
           <RowList>
             {visibleInherited.map((secret) => (
