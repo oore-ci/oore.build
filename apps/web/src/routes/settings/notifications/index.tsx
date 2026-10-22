@@ -81,9 +81,9 @@ function parseSearch(search: SearchInput): NotificationsSearch {
 
 export const Route = createFileRoute('/settings/notifications/')({
   validateSearch: parseSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'], context)
   },
   component: NotificationsPage,
 })

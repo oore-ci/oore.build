@@ -199,19 +199,38 @@ pub async fn transition_build(
     actor: Option<&str>,
     reason: Option<&str>,
 ) -> Result<Build, (StatusCode, Json<ApiError>)> {
+    transition_build_with_results(pool, build_id, target_status, actor, reason, None).await
+}
+
+/// Step results and exit code a runner reports with a status change.
+pub(crate) struct RunnerResults<'a> {
+    pub step_results: Option<&'a str>,
+    pub exit_code: Option<i32>,
+}
+
+/// [`transition_build`], also storing the runner's results. The status
+/// change, its build event and the results commit together or not at all.
+pub(crate) async fn transition_build_with_results(
+    pool: &sqlx::SqlitePool,
+    build_id: &str,
+    target_status: BuildStatus,
+    actor: Option<&str>,
+    reason: Option<&str>,
+    results: Option<RunnerResults<'_>>,
+) -> Result<Build, (StatusCode, Json<ApiError>)> {
+    let store_error = |message: &'static str| {
+        move |e: sqlx::Error| {
+            error!(error = %e, build_id = %build_id, "{message}");
+            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", message)
+        }
+    };
+
     // Load current build
     let row = sqlx::query("SELECT * FROM builds WHERE id = ?1")
         .bind(build_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| {
-            error!(error = %e, "failed to fetch build");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to fetch build",
-            )
-        })?
+        .map_err(store_error("Failed to fetch build"))?
         .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
 
     let current_status_str: String = row.get("status");
@@ -262,21 +281,20 @@ pub async fn transition_build(
          WHERE id = ?2 AND status = ?3"
     );
 
+    // The UPDATE is the transaction's first statement, so SQLite takes the
+    // write lock against the latest snapshot.
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(store_error("Failed to update build"))?;
     let result = sqlx::query(sqlx::AssertSqlSafe(query))
         .bind(&target_str)
         .bind(build_id)
         .bind(&current_status_str)
         .bind(now)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
-        .map_err(|e| {
-            error!(error = %e, "failed to update build status");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to update build",
-            )
-        })?;
+        .map_err(store_error("Failed to update build"))?;
 
     if result.rows_affected() == 0 {
         return Err(api_err(
@@ -284,6 +302,16 @@ pub async fn transition_build(
             "concurrent_modification",
             "Build status was modified concurrently",
         ));
+    }
+
+    if let Some(results) = results {
+        sqlx::query("UPDATE builds SET step_results = ?1, exit_code = ?2 WHERE id = ?3")
+            .bind(results.step_results)
+            .bind(results.exit_code)
+            .bind(build_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(store_error("Failed to persist step results"))?;
     }
 
     // Insert build event
@@ -299,26 +327,20 @@ pub async fn transition_build(
     .bind(actor)
     .bind(reason)
     .bind(now)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
-    .map_err(|e| {
-        error!(error = %e, "failed to insert build event");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to record build event")
-    })?;
+    .map_err(store_error("Failed to record build event"))?;
 
     // Reload build
     let updated_row = sqlx::query("SELECT * FROM builds WHERE id = ?1")
         .bind(build_id)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await
-        .map_err(|e| {
-            error!(error = %e, "failed to reload build");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to reload build",
-            )
-        })?;
+        .map_err(store_error("Failed to reload build"))?;
+
+    tx.commit()
+        .await
+        .map_err(store_error("Failed to update build"))?;
 
     Ok(row_to_build(&updated_row))
 }
@@ -622,6 +644,12 @@ async fn execute_build_insert(
            JOIN integration_repositories r ON r.id = p.repository_id \
            WHERE p.id = ?2 \
              AND p.repository_id = json_extract(?11, '$.repository_id') \
+         ) \
+         AND NOT EXISTS ( \
+           SELECT 1 FROM builds other, json_each(other.config_snapshot, '$.retry_steps') step \
+           WHERE other.source_build_id = ?13 \
+             AND other.status NOT IN ('succeeded', 'failed', 'canceled', 'timed_out', 'expired') \
+             AND step.value IN (SELECT value FROM json_each(?11, '$.retry_steps')) \
          )",
     )
     .bind(b.build_id)
@@ -927,6 +955,50 @@ pub async fn preview_build_changelog(
     }))
 }
 
+/// Reject a build whose Google Play publish step would fail because its
+/// service account secret is missing, instead of failing after the build.
+async fn require_google_play_secret(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    pipeline_id: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let store_error = |e: anyhow::Error| {
+        error!(error = %e, "failed to check Google Play publishing");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to check Google Play publishing",
+        )
+    };
+    let Some((config, _)) = crate::pipeline_publish::load_google_play(pool, pipeline_id)
+        .await
+        .map_err(store_error)?
+    else {
+        return Ok(());
+    };
+    if !config.enabled
+        || crate::secrets::secret_name_visible(
+            pool,
+            project_id,
+            Some(pipeline_id),
+            &config.service_account_secret,
+        )
+        .await
+        .map_err(store_error)?
+    {
+        return Ok(());
+    }
+    Err(api_err(
+        StatusCode::CONFLICT,
+        "publish_secret_missing",
+        format!(
+            "Google Play publishing needs the secret {}, which is not set. Add it or turn off \
+             Google Play publishing before running this build.",
+            config.service_account_secret
+        ),
+    ))
+}
+
 /// `POST /v1/projects/{project_id}/builds` — create a new build (manual/API trigger).
 pub async fn create_build(
     State(state): State<Arc<AppState>>,
@@ -1039,6 +1111,14 @@ pub async fn create_build(
         serde_json::from_str(&concurrency_json).unwrap_or_default();
     let (timeout_minutes, approval_policy) = pipeline_gates(&pipeline_row);
     let approval_required = approval_policy.applies_to("manual");
+
+    let builds_android = selected_platforms
+        .as_deref()
+        .unwrap_or(&execution_config.platforms)
+        .contains(&BuildPlatform::Android);
+    if builds_android {
+        require_google_play_secret(&pool, &project_id, &req.pipeline_id).await?;
+    }
 
     if commit_sha.is_none() {
         commit_sha = Some(
@@ -1738,7 +1818,7 @@ pub(crate) async fn queue_rerun(
     // Fetch source build
     let source_row = sqlx::query(
         "SELECT id, project_id, pipeline_id, build_number, status, \
-         trigger_ref, commit_sha, branch, changelog, config_snapshot, approval_state \
+         trigger_ref, commit_sha, branch, changelog, config_snapshot, approval_requested_at \
          FROM builds WHERE id = ?1",
     )
     .bind(&build_id)
@@ -1907,10 +1987,12 @@ pub(crate) async fn queue_rerun(
                 )
             })?;
     let (timeout_minutes, approval_policy) = pipeline_gates(&pipeline_row);
+    // `approval_requested_at` outlives the approval state, which is cleared
+    // when a pending build ends without a decision.
     let approval_required = approval_policy.applies_to("manual")
         || (approval_policy.required
             && source_row
-                .get::<Option<String>, _>("approval_state")
+                .get::<Option<i64>, _>("approval_requested_at")
                 .is_some());
     if let Some(snapshot) = config_snapshot.as_object_mut() {
         snapshot.insert(
@@ -1962,6 +2044,16 @@ pub(crate) async fn queue_rerun(
     )
     .await?;
     if !inserted {
+        // Another retry of the same upload may have been created meanwhile.
+        if let Some(steps) = &retry_steps
+            && let Ok(Some((_, build_number))) =
+                crate::step_retry::active_retry(pool, &build_id, steps).await
+        {
+            return Err(crate::step_retry::retry_in_progress(
+                steps.join(", ").as_str(),
+                build_number,
+            ));
+        }
         return Err(api_err(
             StatusCode::CONFLICT,
             "source_changed",
@@ -2231,11 +2323,13 @@ pub async fn trigger_build_from_webhook(
                 );
                 continue;
             }
-            if commit_sha.is_none() && branch.is_none() {
+            // A build without a commit cannot check out anything, for example
+            // a deleted branch.
+            if commit_sha.is_none_or(str::is_empty) {
                 warn!(
                     pipeline_id = %pipeline_id,
                     event_type = %event_type,
-                    "webhook payload missing branch and commit_sha; skipping build creation"
+                    "webhook payload has no commit_sha; skipping build creation"
                 );
                 continue;
             }
@@ -2631,11 +2725,12 @@ mod tests {
         );
 
         assert!(
-            !crate::runners::schedule_eligible_direct_runner_build(
+            !crate::runners::claim_eligible_direct_runner_build(
                 &pool,
                 &build.id,
                 "run1",
-                "runner:run1"
+                "runner:run1",
+                "hash"
             )
             .await
             .unwrap(),
@@ -2655,11 +2750,12 @@ mod tests {
         assert_eq!(status, "queued");
         assert_eq!(reason, "approved by lead@example.com: ship it");
         assert!(
-            crate::runners::schedule_eligible_direct_runner_build(
+            crate::runners::claim_eligible_direct_runner_build(
                 &pool,
                 &build.id,
                 "run1",
-                "runner:run1"
+                "runner:run1",
+                "hash"
             )
             .await
             .unwrap()
@@ -2738,6 +2834,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_superseded_build_is_notified() {
+        let pool = pool("{}", "{}", 60).await;
+        sqlx::query(
+            "UPDATE pipelines SET concurrency = '{\"cancel_previous\":true}'; \
+             INSERT INTO notification_channels (id, name, channel_type, enabled, created_at, updated_at) \
+             VALUES ('hook', 'hook', 'webhook', 1, 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let first = deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await;
+        deliver(&pool, "d2", Some("main"), None, ChangeSet::Unknown).await;
+
+        crate::notification_dispatch::notify_due_builds(&pool)
+            .await
+            .unwrap();
+        let notified: Vec<(Option<String>, String)> =
+            sqlx::query_as("SELECT build_id, event_type FROM notification_deliveries")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            notified,
+            [(Some(first[0].id.clone()), "canceled".to_string())]
+        );
+    }
+
+    #[tokio::test]
     async fn a_20_minute_pipeline_times_out_at_20_minutes() {
         let pool = pool("{}", "{}", 20).await;
         let builds = deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await;
@@ -2764,5 +2888,232 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(status, "timed_out");
+    }
+
+    #[tokio::test]
+    async fn a_second_retry_of_the_same_upload_is_not_created() {
+        let pool = pool("{}", "{}", 60).await;
+        let source = &deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await[0];
+        let snapshot = serde_json::json!({
+            "repository_id": "r1",
+            "retry_steps": ["publish-play", "publish-app-store"],
+        })
+        .to_string();
+        let insert = |build_id: &'static str| BuildInsertBinds {
+            build_id,
+            project_id: "p1",
+            pipeline_id: "pl1",
+            actor: Some("lead@example.com"),
+            event_type: Some("retry"),
+            trigger_ref: None,
+            commit_sha: None,
+            branch: None,
+            changelog: None,
+            config_snapshot: &snapshot,
+            webhook_id: None,
+            now: 10,
+            trigger_type: "manual",
+            source_build_id: Some(&source.id),
+            cancel_previous: false,
+            approval_required: false,
+        };
+
+        assert!(
+            execute_build_insert(&pool, "", &insert("retry1"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !execute_build_insert(&pool, "", &insert("retry2"))
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            crate::step_retry::active_retry(&pool, &source.id, &["publish-app-store".to_string()])
+                .await
+                .unwrap()
+                .map(|(id, _)| id)
+                .as_deref(),
+            Some("retry1")
+        );
+
+        // Once the first retry has finished, the upload can be retried again.
+        sqlx::query("UPDATE builds SET status = 'failed' WHERE id = 'retry1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            execute_build_insert(&pool, "", &insert("retry2"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_build_is_rejected_when_the_play_secret_is_missing() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        for statement in [
+            "CREATE TABLE users (id TEXT PRIMARY KEY)",
+            "CREATE TABLE projects (id TEXT PRIMARY KEY)",
+            "CREATE TABLE pipelines (id TEXT PRIMARY KEY, project_id TEXT)",
+            include_str!("../migrations/042_secrets.sql"),
+            include_str!("../migrations/043_pipeline_publish.sql"),
+            "INSERT INTO projects VALUES ('p1')",
+            "INSERT INTO pipelines VALUES ('pl1', 'p1')",
+        ] {
+            sqlx::raw_sql(statement).execute(&pool).await.unwrap();
+        }
+        require_google_play_secret(&pool, "p1", "pl1")
+            .await
+            .expect("no Google Play settings");
+
+        sqlx::query(
+            "INSERT INTO pipeline_publish_targets (id, pipeline_id, store, enabled, config, created_at, updated_at) \
+             VALUES ('t1', 'pl1', 'google_play', 1, \
+             '{\"enabled\":true,\"service_account_secret\":\"PLAY\",\"track\":\"internal\"}', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, Json(error)) = require_google_play_secret(&pool, "p1", "pl1")
+            .await
+            .unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error.code, "publish_secret_missing");
+        assert!(error.error.contains("PLAY"));
+
+        sqlx::query(
+            "INSERT INTO secrets (id, scope, name, value_encrypted, created_at, updated_at) \
+             VALUES ('s1', 'instance', 'PLAY', 'ciphertext', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        require_google_play_secret(&pool, "p1", "pl1")
+            .await
+            .expect("secret is set");
+    }
+
+    async fn load_build(pool: &sqlx::SqlitePool, build_id: &str) -> Build {
+        let row = sqlx::query("SELECT * FROM builds WHERE id = ?1")
+            .bind(build_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        row_to_build(&row)
+    }
+
+    #[tokio::test]
+    async fn a_pending_build_that_ends_is_no_longer_waiting_for_approval() {
+        let pool = pool("{}", r#"{"required":true,"events":[]}"#, 60).await;
+        sqlx::query("UPDATE pipelines SET concurrency = '{\"cancel_previous\":true}'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // User cancel.
+        let canceled = deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await;
+        transition_build(&pool, &canceled[0].id, BuildStatus::Canceled, None, None)
+            .await
+            .unwrap();
+        let build = load_build(&pool, &canceled[0].id).await;
+        assert_eq!(build.status, "canceled");
+        assert!(build.approval.is_none());
+
+        // Superseded by a newer push to the same branch.
+        let first = deliver(&pool, "d2", Some("main"), None, ChangeSet::Unknown).await;
+        let second = deliver(&pool, "d3", Some("main"), None, ChangeSet::Unknown).await;
+        let superseded = load_build(&pool, &first[0].id).await;
+        assert_eq!(superseded.status, "canceled");
+        assert!(superseded.approval.is_none());
+        assert_eq!(
+            second[0].approval.as_ref().map(|approval| approval.state),
+            Some(BuildApprovalState::Pending)
+        );
+
+        // Failed outside the build lifecycle, as the credential preflight does.
+        sqlx::query("UPDATE builds SET status = 'failed' WHERE id = ?1")
+            .bind(&second[0].id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(load_build(&pool, &second[0].id).await.approval.is_none());
+        // The request time stays, so a rerun of a gated build stays gated.
+        let requested_at: Option<i64> =
+            sqlx::query_scalar("SELECT approval_requested_at FROM builds WHERE id = ?1")
+                .bind(&second[0].id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(requested_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn approval_requests_expire_after_the_policy_window() {
+        let pool = pool("{}", r#"{"required":true,"events":[]}"#, 60).await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let mut events = scheduler.subscribe_events();
+        let builds = deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await;
+        let build_id = &builds[0].id;
+        let requested_at = builds[0].approval.as_ref().unwrap().requested_at;
+        let week = 7 * 24 * 3600;
+
+        let early =
+            crate::background::expire_pending_approvals(&pool, &scheduler, requested_at + week - 1)
+                .await
+                .unwrap();
+        assert!(early.is_empty());
+        let late =
+            crate::background::expire_pending_approvals(&pool, &scheduler, requested_at + week)
+                .await
+                .unwrap();
+        assert_eq!(late, vec![build_id.clone()]);
+        let build = load_build(&pool, build_id).await;
+        assert_eq!(build.status, "canceled");
+        assert!(build.approval.is_none());
+        let reason: Option<String> = sqlx::query_scalar(
+            "SELECT reason FROM build_events WHERE build_id = ?1 AND to_status = 'canceled'",
+        )
+        .bind(build_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            reason.as_deref(),
+            Some("approval request expired after 7 days")
+        );
+        let event = events.recv().await.unwrap();
+        assert_eq!(event.build_id, *build_id);
+        assert_eq!(event.to_status, "canceled");
+
+        // A pipeline can shorten the window.
+        sqlx::query(
+            "UPDATE pipelines SET approval_policy = '{\"required\":true,\"expires_after_hours\":2}'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let builds = deliver(&pool, "d2", Some("main"), None, ChangeSet::Unknown).await;
+        let requested_at = builds[0].approval.as_ref().unwrap().requested_at;
+        let expired =
+            crate::background::expire_pending_approvals(&pool, &scheduler, requested_at + 7200)
+                .await
+                .unwrap();
+        assert_eq!(expired, vec![builds[0].id.clone()]);
+        let reason: Option<String> = sqlx::query_scalar(
+            "SELECT reason FROM build_events WHERE build_id = ?1 AND to_status = 'canceled'",
+        )
+        .bind(&builds[0].id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            reason.as_deref(),
+            Some("approval request expired after 2 hours")
+        );
     }
 }

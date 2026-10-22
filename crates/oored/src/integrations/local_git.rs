@@ -592,6 +592,8 @@ pub async fn create_local_git_integration(
         host_url: "local://filesystem".to_string(),
         auth_mode: "local_path".to_string(),
         status: "active".to_string(),
+        status_reason: None,
+        status_checked_at: None,
         display_name: Some(display_name),
         app_id: None,
         app_slug: None,

@@ -1,4 +1,4 @@
-import { createLazyFileRoute, useNavigate } from '@tanstack/react-router'
+import { createLazyFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -12,6 +12,7 @@ import {
   useUpdateNotificationChannel,
 } from '@/hooks/use-notification-channels'
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
+import { fromClientChannel } from '@/lib/notification-channels'
 import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
@@ -31,7 +32,6 @@ import { DangerZone } from '@/components/danger-zone'
 import { FormActions } from '@/components/form-actions'
 import { RelativeTime } from '@/components/relative-time'
 import { StatusBadge } from '@/components/status-badge'
-import { formatEnumLabel } from '@/lib/format-utils'
 import { Button } from '@/components/ui/button'
 import {
   SettingsSection,
@@ -51,14 +51,16 @@ import {
   ItemContent,
   ItemDescription,
   ItemGroup,
+  ItemSeparator,
   ItemTitle,
 } from '@/components/ui/item'
 import {
   channelTypeLabel,
+  editNotificationChannelSchema,
   NotificationChannelFormFields,
   notificationChannelDefaults,
   notificationChannelEditValues,
-  notificationChannelSchema,
+  notificationEventLabel,
   type NotificationChannelFormValues,
   updateNotificationChannelRequest,
 } from './-notification-form'
@@ -86,9 +88,13 @@ function NotificationChannelDetailPage() {
   const deleteMutation = useDeleteNotificationChannel()
   const testMutation = useTestNotificationChannel()
   const channel = channelData?.channel
+    ? fromClientChannel(channelData.channel)
+    : undefined
   const deliveries = deliveriesData?.deliveries ?? []
   const form = useForm<NotificationChannelFormValues>({
-    resolver: zodResolver(notificationChannelSchema),
+    resolver: zodResolver(
+      editNotificationChannelSchema(Boolean(channel?.smtp_summary)),
+    ),
     defaultValues: notificationChannelDefaults,
     values: channel ? notificationChannelEditValues(channel) : undefined,
     mode: 'onBlur',
@@ -98,7 +104,10 @@ function NotificationChannelDetailPage() {
     updateMutation.mutate(
       { id: channelId, data: updateNotificationChannelRequest(values) },
       {
-        onSuccess: () => toast.success('Channel updated'),
+        onSuccess: () => {
+          toast.success('Channel updated')
+          form.reset(values)
+        },
         onError: (error) => toast.error(getApiErrorMessage(error, {})),
       },
     )
@@ -204,6 +213,8 @@ function NotificationChannelDetailPage() {
             </SettingsSurface>
           </SettingsSection>
           <FormActions
+            disabled={!form.formState.isDirty}
+            disabledReason="No changes to save"
             isPending={updateMutation.isPending}
             submitLabel="Save changes"
           />
@@ -214,59 +225,82 @@ function NotificationChannelDetailPage() {
         title="Delivery history"
         description="The most recent attempts to reach this channel."
       >
-        <SettingsSurface>
+        <SettingsSurface inset={false}>
           {deliveriesLoading ? (
-            <div className="space-y-2" aria-label="Loading delivery history">
+            <div
+              className="space-y-2 p-4 sm:p-5"
+              aria-label="Loading delivery history"
+            >
               <Skeleton className="h-12 w-full" />
               <Skeleton className="h-12 w-full" />
             </div>
           ) : deliveriesError ? (
-            <Alert variant="destructive">
-              <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <span>
-                  Failed to load delivery history: {deliveriesError.message}
-                </span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void refetchDeliveries()}
-                >
-                  Retry
-                </Button>
-              </AlertDescription>
-            </Alert>
+            <div className="p-4 sm:p-5">
+              <Alert variant="destructive">
+                <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span>
+                    Failed to load delivery history: {deliveriesError.message}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void refetchDeliveries()}
+                  >
+                    Retry
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            </div>
           ) : deliveries.length === 0 ? (
-            <Empty className="py-4">
+            <Empty className="py-8">
               <EmptyHeader>
                 <EmptyTitle>No deliveries yet</EmptyTitle>
                 <EmptyDescription>
                   Delivery attempts will appear here after this channel is
-                  triggered.
+                  triggered. Use Test to send one now.
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : (
             <ItemGroup>
-              {deliveries.map((delivery) => (
-                <Item key={delivery.id} variant="outline" size="sm">
-                  <ItemContent>
-                    <ItemTitle>
-                      <StatusBadge kind="delivery" value={delivery.status} />
-                      <span className="text-muted-foreground">
-                        {formatEnumLabel(delivery.event_type)}
-                      </span>
-                    </ItemTitle>
-                    {delivery.last_error ? (
-                      <ItemDescription className="text-destructive">
-                        {delivery.last_error}
+              {deliveries.map((delivery, index) => (
+                <div key={delivery.id}>
+                  {index > 0 ? <ItemSeparator /> : null}
+                  <Item size="sm">
+                    <ItemContent className="min-w-0">
+                      <ItemTitle>
+                        {notificationEventLabel(delivery.event_type)}
+                      </ItemTitle>
+                      <ItemDescription>
+                        <RelativeTime at={delivery.created_at} />
+                        {delivery.attempt_count > 1
+                          ? ` · ${delivery.attempt_count} attempts`
+                          : ''}
+                        {delivery.build_id ? (
+                          <>
+                            {' · '}
+                            <Link
+                              to="/builds/$buildId"
+                              params={{ buildId: delivery.build_id }}
+                              className="underline underline-offset-4"
+                            >
+                              View build
+                            </Link>
+                          </>
+                        ) : null}
                       </ItemDescription>
-                    ) : null}
-                  </ItemContent>
-                  <ItemActions className="text-xs text-muted-foreground">
-                    <RelativeTime at={delivery.created_at} />
-                  </ItemActions>
-                </Item>
+                      {delivery.last_error ? (
+                        <ItemDescription className="font-mono text-xs break-words">
+                          {delivery.last_error}
+                        </ItemDescription>
+                      ) : null}
+                    </ItemContent>
+                    <ItemActions>
+                      <StatusBadge kind="delivery" value={delivery.status} />
+                    </ItemActions>
+                  </Item>
+                </div>
               ))}
             </ItemGroup>
           )}

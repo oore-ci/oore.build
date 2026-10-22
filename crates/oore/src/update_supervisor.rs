@@ -10,6 +10,11 @@ use anyhow::Context;
 use oore_contract::{RuntimeUpdatePhase, RuntimeUpdateStatus};
 
 const DAEMON_SERVICE: &str = "system/build.oore.oored";
+pub(crate) const TRANSACTION_PREFIX: &str = ".supervised-update-";
+const HELD_DAEMON: &str = "oored.held";
+const FAILED_CANDIDATE: &str = "oored.failed-candidate";
+const ACTIVE_REQUEST_PREFIX: &str = "runtime-update-active-";
+const STATUS_FILE: &str = ".runtime-update-status.json";
 
 pub(crate) fn write_status(
     path: &Path,
@@ -160,18 +165,22 @@ impl HeldDaemonExecutable {
             running.display(),
             installed.display()
         );
-        let held = transaction_dir.join("oored.held");
-        fs::rename(&installed, &held).context("failed to hold the current daemon executable")?;
-        let mut guard = Self {
-            installed,
-            held,
-            restore_on_drop: true,
-        };
+        let mut guard = Self::hold(installed, transaction_dir)?;
         if let Err(error) = stop_pid(parent_pid) {
             guard.restore()?;
             return Err(error);
         }
         Ok(guard)
+    }
+
+    fn hold(installed: PathBuf, transaction_dir: &Path) -> anyhow::Result<Self> {
+        let held = transaction_dir.join(HELD_DAEMON);
+        fs::rename(&installed, &held).context("failed to hold the current daemon executable")?;
+        Ok(Self {
+            installed,
+            held,
+            restore_on_drop: true,
+        })
     }
 
     pub(crate) fn release_to_transaction(&mut self) {
@@ -238,7 +247,7 @@ pub(crate) fn quiesce_candidate_daemon(
     transaction_dir: &Path,
 ) -> anyhow::Result<QuiescedCandidateDaemon> {
     let installed = install_root.join("bin/oored");
-    let held = transaction_dir.join("oored.failed-candidate");
+    let held = transaction_dir.join(FAILED_CANDIDATE);
     if installed.is_file() {
         fs::rename(&installed, &held)
             .context("failed to hold the failed candidate daemon executable")?;
@@ -255,10 +264,382 @@ pub(crate) fn quiesce_candidate_daemon(
     Ok(guard)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum RecoveredDaemon {
+    /// The supervisor stopped before it installed the new release, so the
+    /// previous release is back in place and its transaction is gone.
+    Previous,
+    /// The supervisor stopped while it rolled back a failed release. The
+    /// candidate is back in place, and the transaction keeps the previous
+    /// release snapshot.
+    Candidate { transaction: PathBuf },
+}
+
+/// Put `bin/oored` back when a supervised update stopped while it held the
+/// daemon executable in its transaction directory, for example because the
+/// supervisor was killed or the Mac lost power. Without this, launchd has
+/// nothing to start and the web UI stays down.
+///
+/// The caller must hold the lifecycle lock. A live supervisor holds that lock
+/// for its whole transaction, so every transaction directory found here
+/// belongs to a supervisor that no longer runs.
+pub(crate) fn recover_interrupted_update(
+    install_root: &Path,
+) -> anyhow::Result<Option<RecoveredDaemon>> {
+    clear_abandoned_claims(install_root)?;
+    let Some(recovered) = restore_held_daemon(install_root)? else {
+        return Ok(None);
+    };
+    let error = match &recovered {
+        RecoveredDaemon::Previous => {
+            "The update stopped before it installed the new release. Oore restored the previous backend, so you can try the update again."
+        }
+        RecoveredDaemon::Candidate { .. } => {
+            "The update stopped while it rolled back a failed release. Oore restored the new backend so that the service can start. Check logs/update-supervisor.log before you try again."
+        }
+    };
+    fail_in_flight_status(&install_root.join(STATUS_FILE), error)?;
+    Ok(Some(recovered))
+}
+
+/// Run [`recover_interrupted_update`] and restart the daemon when it put the
+/// executable back.
+pub(crate) fn recover_interrupted_update_and_restart(install_root: &Path) -> anyhow::Result<()> {
+    let Some(recovered) = recover_interrupted_update(install_root)? else {
+        return Ok(());
+    };
+    let installed = install_root.join("bin/oored");
+    match recovered {
+        RecoveredDaemon::Previous => eprintln!(
+            "Restored {} from an interrupted backend update.",
+            installed.display()
+        ),
+        RecoveredDaemon::Candidate { transaction } => eprintln!(
+            "Restored the candidate daemon at {} after an interrupted rollback. The previous release snapshot is kept in {}.",
+            installed.display(),
+            transaction.display()
+        ),
+    }
+    if let Err(error) = kickstart_daemon() {
+        eprintln!(
+            "Could not restart the daemon ({error:#}). Run `sudo launchctl kickstart -k {DAEMON_SERVICE}`."
+        );
+    }
+    Ok(())
+}
+
+fn restore_held_daemon(install_root: &Path) -> anyhow::Result<Option<RecoveredDaemon>> {
+    let installed = install_root.join("bin/oored");
+    if fs::symlink_metadata(&installed).is_ok() {
+        return Ok(None);
+    }
+    let mut transactions = Vec::new();
+    let entries = match fs::read_dir(install_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to inspect {}", install_root.display()));
+        }
+    };
+    for entry in entries {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        if metadata.is_dir()
+            && entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(TRANSACTION_PREFIX)
+        {
+            transactions.push((metadata.modified()?, entry.path()));
+        }
+    }
+    // Newest first: an older directory can only hold an executable that a
+    // later update already replaced.
+    transactions.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    for (_, transaction) in transactions {
+        let candidate = transaction.join(FAILED_CANDIDATE);
+        if candidate.is_file() {
+            fs::rename(&candidate, &installed).with_context(|| {
+                format!(
+                    "failed to restore the candidate daemon from {}",
+                    candidate.display()
+                )
+            })?;
+            return Ok(Some(RecoveredDaemon::Candidate { transaction }));
+        }
+        let held = transaction.join(HELD_DAEMON);
+        if held.is_file() {
+            // `install_staged_release` replaces `bin/oore` just before
+            // `bin/oored`, so put the previous CLI back as well.
+            let previous_cli = transaction.join("previous/bin/oore");
+            if previous_cli.is_file() {
+                replace_from_snapshot(&previous_cli, &install_root.join("bin/oore"))?;
+            }
+            fs::rename(&held, &installed).with_context(|| {
+                format!("failed to restore the held daemon from {}", held.display())
+            })?;
+            if let Err(error) = fs::remove_dir_all(&transaction) {
+                eprintln!(
+                    "Could not remove the interrupted update files in {}: {error}",
+                    transaction.display()
+                );
+            }
+            return Ok(Some(RecoveredDaemon::Previous));
+        }
+    }
+    Ok(None)
+}
+
+fn replace_from_snapshot(snapshot: &Path, destination: &Path) -> anyhow::Result<()> {
+    let parent = destination
+        .parent()
+        .context("restored file has no parent directory")?;
+    let staged = parent.join(format!(
+        ".{}.restore-{}",
+        destination
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
+        std::process::id()
+    ));
+    fs::copy(snapshot, &staged)
+        .with_context(|| format!("failed to stage {}", destination.display()))?;
+    fs::rename(&staged, destination)
+        .with_context(|| format!("failed to restore {}", destination.display()))
+}
+
+/// Remove request claims whose supervisor process is gone. A supervisor claims
+/// its request before it takes the lifecycle lock, so a live owner is skipped.
+fn clear_abandoned_claims(install_root: &Path) -> anyhow::Result<()> {
+    let run = install_root.join("run");
+    let entries = match fs::read_dir(&run) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to inspect {}", run.display()));
+        }
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(pid) = name
+            .to_string_lossy()
+            .strip_prefix(ACTIVE_REQUEST_PREFIX)
+            .and_then(|rest| rest.strip_suffix(".json"))
+            .and_then(|pid| pid.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid != std::process::id() && !process_is_alive(pid) {
+            match fs::remove_file(entry.path()) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "failed to clear abandoned update claim {}",
+                            entry.path().display()
+                        )
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn fail_in_flight_status(status_path: &Path, error: &str) -> anyhow::Result<()> {
+    let status: RuntimeUpdateStatus = match fs::read(status_path) {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(status) => status,
+            // An unreadable status cannot report an update that is still running.
+            Err(_) => {
+                return write_status(
+                    status_path,
+                    RuntimeUpdatePhase::Failed,
+                    Some(error.to_string()),
+                );
+            }
+        },
+        Err(read_error) if read_error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(read_error) => {
+            return Err(read_error)
+                .with_context(|| format!("failed to read {}", status_path.display()));
+        }
+    };
+    if matches!(
+        status.phase,
+        RuntimeUpdatePhase::Updating | RuntimeUpdatePhase::Restarting
+    ) {
+        write_status(
+            status_path,
+            RuntimeUpdatePhase::Failed,
+            Some(error.to_string()),
+        )?;
+    }
+    Ok(())
+}
+
+fn kickstart_daemon() -> anyhow::Result<()> {
+    anyhow::ensure!(
+        cfg!(target_os = "macos"),
+        "managed service restart is supported on macOS only"
+    );
+    // SAFETY: `geteuid` has no preconditions.
+    let mut command = if unsafe { libc::geteuid() } == 0 {
+        std::process::Command::new("/bin/launchctl")
+    } else {
+        // The setup recovery rule allows exactly this command without a password.
+        let mut command = std::process::Command::new("/usr/bin/sudo");
+        command.args(["-n", "/bin/launchctl"]);
+        command
+    };
+    command.args(["kickstart", "-k", DAEMON_SERVICE]);
+    let status = crate::run_command_with_timeout(
+        &mut command,
+        "launchd kickstart",
+        Duration::from_secs(15),
+    )?;
+    anyhow::ensure!(status.success(), "launchctl kickstart exited with {status}");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::QuiescedCandidateDaemon;
+    use super::{
+        HeldDaemonExecutable, QuiescedCandidateDaemon, RecoveredDaemon, recover_interrupted_update,
+        write_status,
+    };
+    use oore_contract::{RuntimeUpdatePhase, RuntimeUpdateStatus};
     use std::fs;
+    use std::path::Path;
+
+    fn install_with_daemon(root: &Path) {
+        fs::create_dir_all(root.join("bin")).unwrap();
+        fs::write(root.join("bin/oored"), b"previous daemon").unwrap();
+        fs::write(root.join("bin/oore"), b"previous cli").unwrap();
+    }
+
+    /// Hold the daemon the way a supervisor does, then stop as if SIGKILLed:
+    /// neither the guard nor the transaction directory runs its destructor.
+    fn interrupt_after_hold(root: &Path) -> std::path::PathBuf {
+        let transaction = tempfile::Builder::new()
+            .prefix(super::TRANSACTION_PREFIX)
+            .tempdir_in(root)
+            .unwrap();
+        let previous = transaction.path().join("previous/bin");
+        fs::create_dir_all(&previous).unwrap();
+        fs::copy(root.join("bin/oore"), previous.join("oore")).unwrap();
+        fs::copy(root.join("bin/oored"), previous.join("oored")).unwrap();
+        let guard = HeldDaemonExecutable::hold(root.join("bin/oored"), transaction.path()).unwrap();
+        std::mem::forget(guard);
+        transaction.keep()
+    }
+
+    fn status(root: &Path) -> RuntimeUpdateStatus {
+        serde_json::from_slice(&fs::read(root.join(".runtime-update-status.json")).unwrap())
+            .unwrap()
+    }
+
+    #[test]
+    fn an_update_killed_after_holding_the_daemon_is_restored() {
+        let root = tempfile::tempdir().unwrap();
+        install_with_daemon(root.path());
+        let status_path = root.path().join(".runtime-update-status.json");
+        write_status(&status_path, RuntimeUpdatePhase::Restarting, None).unwrap();
+        let transaction = interrupt_after_hold(root.path());
+        // The supervisor had already replaced the CLI when it stopped.
+        fs::write(root.path().join("bin/oore"), b"candidate cli").unwrap();
+        assert!(!root.path().join("bin/oored").exists());
+
+        assert_eq!(
+            recover_interrupted_update(root.path()).unwrap(),
+            Some(RecoveredDaemon::Previous)
+        );
+
+        assert_eq!(
+            fs::read(root.path().join("bin/oored")).unwrap(),
+            b"previous daemon"
+        );
+        assert_eq!(
+            fs::read(root.path().join("bin/oore")).unwrap(),
+            b"previous cli"
+        );
+        assert!(!transaction.exists());
+        let status = status(root.path());
+        assert_eq!(status.phase, RuntimeUpdatePhase::Failed);
+        assert!(
+            status
+                .error
+                .unwrap()
+                .contains("restored the previous backend")
+        );
+    }
+
+    #[test]
+    fn an_interrupted_rollback_restores_the_candidate_and_keeps_the_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        install_with_daemon(root.path());
+        let transaction = interrupt_after_hold(root.path());
+        fs::write(root.path().join("bin/oored"), b"candidate daemon").unwrap();
+        fs::rename(
+            root.path().join("bin/oored"),
+            transaction.join("oored.failed-candidate"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            recover_interrupted_update(root.path()).unwrap(),
+            Some(RecoveredDaemon::Candidate {
+                transaction: transaction.clone()
+            })
+        );
+
+        assert_eq!(
+            fs::read(root.path().join("bin/oored")).unwrap(),
+            b"candidate daemon"
+        );
+        assert!(transaction.join("previous/bin/oored").is_file());
+    }
+
+    #[test]
+    fn a_present_daemon_and_a_finished_status_are_left_alone() {
+        let root = tempfile::tempdir().unwrap();
+        install_with_daemon(root.path());
+        let transaction = interrupt_after_hold(root.path());
+        fs::write(root.path().join("bin/oored"), b"candidate daemon").unwrap();
+        let status_path = root.path().join(".runtime-update-status.json");
+        write_status(&status_path, RuntimeUpdatePhase::Idle, None).unwrap();
+
+        assert_eq!(recover_interrupted_update(root.path()).unwrap(), None);
+
+        assert_eq!(
+            fs::read(root.path().join("bin/oored")).unwrap(),
+            b"candidate daemon"
+        );
+        assert!(transaction.join("oored.held").is_file());
+        assert_eq!(status(root.path()).phase, RuntimeUpdatePhase::Idle);
+    }
+
+    #[test]
+    fn claims_from_stopped_supervisors_are_cleared() {
+        let root = tempfile::tempdir().unwrap();
+        let run = root.path().join("run");
+        fs::create_dir_all(&run).unwrap();
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let stopped = child.id();
+        child.wait().unwrap();
+        let stale = run.join(format!("runtime-update-active-{stopped}.json"));
+        let live = run.join(format!("runtime-update-active-{}.json", std::process::id()));
+        fs::write(&stale, b"{}").unwrap();
+        fs::write(&live, b"{}").unwrap();
+
+        recover_interrupted_update(root.path()).unwrap();
+
+        assert!(!stale.exists());
+        assert!(live.exists());
+    }
 
     #[test]
     fn dropping_a_quiesced_candidate_restores_the_missing_daemon() {

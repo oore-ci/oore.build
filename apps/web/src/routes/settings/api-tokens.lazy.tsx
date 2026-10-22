@@ -72,7 +72,7 @@ import TokenCreatedDialog from '@/components/token-created-dialog'
 import type { SortDirection } from '@/components/data-table-features'
 import type { ApiTokenSort, ApiTokensSearch } from './api-tokens'
 import { ApiTokenInventory } from './-api-token-inventory'
-import { ROLE_LABELS } from './-user-role-labels'
+import { ROLE_DESCRIPTIONS, ROLE_LABELS } from './-user-role-labels'
 
 export const Route = createLazyFileRoute('/settings/api-tokens')({
   component: ApiTokensPage,
@@ -120,12 +120,17 @@ function CreateTokenDialog({
 
   const userRoleIndex = ROLE_HIERARCHY.indexOf(authUser?.role ?? 'qa_viewer')
   const availableRoles = ROLE_HIERARCHY.slice(userRoleIndex)
+  // Developer is the least privileged role that can trigger builds, which is
+  // what most tokens are for. Users below it can only mint their own role.
+  const defaultRole = availableRoles.includes('developer')
+    ? 'developer'
+    : (authUser?.role ?? 'qa_viewer')
 
   const form = useForm<CreateTokenFormValues>({
     resolver: zodResolver(createTokenSchema),
     defaultValues: {
       name: '',
-      role: authUser?.role ?? 'developer',
+      role: defaultRole,
       expiry: '90',
     },
     mode: 'onBlur',
@@ -215,7 +220,7 @@ function CreateTokenDialog({
                     items={ROLE_LABELS}
                   >
                     <FormControl>
-                      <SelectTrigger>
+                      <SelectTrigger className="w-full">
                         <SelectValue placeholder="Select role" />
                       </SelectTrigger>
                     </FormControl>
@@ -228,7 +233,8 @@ function CreateTokenDialog({
                     </SelectContent>
                   </Select>
                   <FormDescription>
-                    The token will have the permissions of this role.
+                    {ROLE_DESCRIPTIONS[field.value] ??
+                      'The token will have the permissions of this role.'}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -247,7 +253,7 @@ function CreateTokenDialog({
                     items={EXPIRY_OPTIONS}
                   >
                     <FormControl>
-                      <SelectTrigger>
+                      <SelectTrigger className="w-full">
                         <SelectValue placeholder="Select expiry" />
                       </SelectTrigger>
                     </FormControl>
