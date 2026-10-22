@@ -5417,7 +5417,8 @@ async fn execute_build_steps(
     *build_vm = vm;
     let vm = build_vm.as_ref();
 
-    // Inside the workspace so a VM build sees it through the workspace share.
+    // A VM build's steps write reports in the guest workspace; the copy back
+    // after each step brings them here.
     let test_reports_dir = workspace.join(test_reports::TEST_REPORTS_SUBDIR);
     if let Err(error) = fs::create_dir_all(&test_reports_dir) {
         return (
@@ -5432,6 +5433,18 @@ async fn execute_build_steps(
         .as_deref()
         .unwrap_or(&workspace)
         .join(test_reports::TEST_REPORTS_SUBDIR);
+    // The guest workspace was copied in before the host directory existed.
+    if let Some(vm) = vm
+        && let Err(error) = vm
+            .vm
+            .reset_guest_dir(&step_test_reports_dir.display().to_string())
+            .await
+    {
+        return (
+            steps,
+            Err(error.context("Failed to create the test reports directory in the VM")),
+        );
+    }
     step_env.push((
         test_reports::TEST_REPORTS_DIR_ENV.to_string(),
         step_test_reports_dir.display().to_string(),
@@ -5590,6 +5603,27 @@ async fn execute_build_steps(
                         &step_name,
                     )
                     .await;
+                    // The host removed the reports it read; remove the guest's
+                    // too, or the next step's copy back reports them again.
+                    if let Some(vm) = vm
+                        && let Err(error) = vm
+                            .vm
+                            .reset_guest_dir(&step_test_reports_dir.display().to_string())
+                            .await
+                    {
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            log_seq,
+                            "stderr",
+                            &format!(
+                                "[oore-tests] Could not clear the VM's test reports: {error:#}"
+                            ),
+                        )
+                        .await;
+                    }
                     steps.push(StepResult {
                         name: step_name,
                         status: if exit_code == 0 {
@@ -6734,17 +6768,14 @@ async fn report_step_tests(
     workspaces: &[PathBuf],
     step_name: &str,
 ) {
-    let Some(mut report) = test_reports::collect_test_reports(reports_dir, workspaces, step_name)
+    let masker = &log_seq.masker;
+    let Some(report) =
+        test_reports::collect_test_reports(reports_dir, workspaces, step_name, |text| {
+            masker.mask(text)
+        })
     else {
         return;
     };
-    for failure in &mut report.failures {
-        failure.message = failure.message.as_deref().map(|m| log_seq.masker.mask(m));
-        failure.stack_trace = failure
-            .stack_trace
-            .as_deref()
-            .map(|s| log_seq.masker.mask(s));
-    }
     let _ = append_runner_log_line(
         client,
         daemon_url,

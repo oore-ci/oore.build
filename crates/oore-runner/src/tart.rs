@@ -1106,6 +1106,14 @@ impl TartVm {
         Ok(())
     }
 
+    /// Empties `dir` in the guest, creating it if needed.
+    pub(crate) async fn reset_guest_dir(&self, dir: &str) -> anyhow::Result<()> {
+        let dir = shell_quote(dir);
+        self.exec_capture(&format!("rm -rf {dir} && mkdir -p {dir}"), VM_EXEC_TIMEOUT)
+            .await?;
+        Ok(())
+    }
+
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
