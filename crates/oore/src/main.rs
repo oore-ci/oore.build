@@ -126,14 +126,21 @@ enum Commands {
     Uninstall(uninstaller::UninstallArgs),
     /// Configure this device and finish first-run setup
     Setup(Box<SetupArgs>),
+    /// Create a short-lived frontend pairing invitation
     Frontend(FrontendArgs),
+    /// Create a Local Only session or import an existing session
     Login(LoginArgs),
     /// Mint a single-use browser recovery link over the local management socket.
     Recovery(RecoveryArgs),
+    /// Show public setup status and authenticated runtime details
     Status(StatusArgs),
+    /// Register, start, install, or remove a Direct macOS runner
     Runner(RunnerArgs),
+    /// Read or write persistent CLI defaults
     Config(ConfigArgs),
+    /// Check the host and selected build-platform toolchains
     Doctor(DoctorArgs),
+    /// Validate repository pipeline configuration
     Pipeline(PipelineArgs),
     /// Print the installed oore version
     Version,
