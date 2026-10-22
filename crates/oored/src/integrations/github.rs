@@ -902,6 +902,8 @@ async fn exchange_and_store(
         host_url: "https://github.com".to_string(),
         auth_mode: "github_app".to_string(),
         status: "active".to_string(),
+        status_reason: None,
+        status_checked_at: None,
         display_name: Some(display_name),
         app_id: Some(conversion.id.to_string()),
         app_slug: conversion.slug.clone(),

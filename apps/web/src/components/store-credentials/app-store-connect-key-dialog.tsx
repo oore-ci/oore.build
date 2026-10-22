@@ -260,7 +260,7 @@ export function AppStoreConnectKeyDialog({
                 {mutation.isPending ? (
                   <Spinner data-icon="inline-start" />
                 ) : null}
-                {existing ? 'Save' : 'Add key'}
+                {existing ? 'Save changes' : 'Add key'}
               </Button>
             </DialogFooter>
           </form>

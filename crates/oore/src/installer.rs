@@ -555,7 +555,27 @@ async fn extract_archive(archive: &Path, kind: ArtifactKind) -> anyhow::Result<t
 fn unpack_archive(archive: &Path, destination: &Path, kind: ArtifactKind) -> anyhow::Result<()> {
     let file = File::open(archive)
         .with_context(|| format!("failed to open release archive {}", archive.display()))?;
-    let decoder = flate2::read::GzDecoder::new(file);
+    unpack_archive_from(file, destination, kind)
+}
+
+/// Unpacks a verified full release archive with the installer's entry, path
+/// and size checks, then confirms its layout and that its `VERSION` is
+/// `version`. `oore update` uses this for the archive it downloaded.
+pub(crate) fn unpack_full_release(
+    archive: impl std::io::Read,
+    destination: &Path,
+    version: &str,
+) -> anyhow::Result<()> {
+    unpack_archive_from(archive, destination, ArtifactKind::Full)?;
+    validate_stage(destination, ArtifactKind::Full, version)
+}
+
+fn unpack_archive_from(
+    archive: impl std::io::Read,
+    destination: &Path,
+    kind: ArtifactKind,
+) -> anyhow::Result<()> {
+    let decoder = flate2::read::GzDecoder::new(archive);
     let mut archive = tar::Archive::new(decoder);
     archive.set_preserve_permissions(false);
     archive.set_preserve_ownerships(false);
@@ -629,9 +649,11 @@ fn normalized_archive_path(path: &Path) -> anyhow::Result<PathBuf> {
 
 fn validate_stage(stage: &Path, kind: ArtifactKind, version: &str) -> anyhow::Result<()> {
     require_owned_regular_file(&stage.join("VERSION"), false)?;
+    let archived = fs::read_to_string(stage.join("VERSION"))?;
     anyhow::ensure!(
-        fs::read_to_string(stage.join("VERSION"))?.trim() == version,
-        "release archive VERSION does not match the installed Oore CLI"
+        archived.trim() == version,
+        "release archive VERSION {} does not match the expected release {version}",
+        archived.trim()
     );
     require_owned_regular_file(&stage.join("LICENSE"), false)?;
     match kind {
@@ -920,7 +942,7 @@ fn validate_sha256(value: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn validate_release_base_url(value: &str) -> anyhow::Result<()> {
+pub(crate) fn validate_release_base_url(value: &str) -> anyhow::Result<()> {
     let url = url::Url::parse(value).context("OORE_RELEASE_BASE_URL is not a valid URL")?;
     anyhow::ensure!(
         url.username().is_empty()
@@ -944,4 +966,88 @@ fn validate_release_base_url(value: &str) -> anyhow::Result<()> {
 fn current_effective_uid() -> u32 {
     // SAFETY: `geteuid` has no arguments, pointer requirements, or failure state.
     unsafe { libc::geteuid() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unpack_full_release;
+
+    fn release_archive(version: &str, extra: impl FnOnce(&mut tar::Builder<Vec<u8>>)) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut add = |path: &str, contents: &[u8], mode: u32| {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(contents.len() as u64);
+            header.set_mode(mode);
+            header.set_cksum();
+            builder.append_data(&mut header, path, contents).unwrap();
+        };
+        add("VERSION", format!("{version}\n").as_bytes(), 0o644);
+        add("LICENSE", b"license", 0o644);
+        for binary in ["bin/oore", "bin/oored", "bin/oore-web"] {
+            add(binary, b"#!/bin/sh\n", 0o755);
+        }
+        add("web-dist/index.html", b"<!doctype html>", 0o644);
+        extra(&mut builder);
+        let tar = builder.into_inner().unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut encoder, &tar).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[test]
+    fn a_full_release_archive_unpacks_when_its_version_matches() {
+        let stage = tempfile::tempdir().unwrap();
+        unpack_full_release(&release_archive("1.2.3", |_| {})[..], stage.path(), "1.2.3").unwrap();
+        assert!(stage.path().join("bin/oored").is_file());
+    }
+
+    #[test]
+    fn a_full_release_archive_with_another_version_is_rejected() {
+        let stage = tempfile::tempdir().unwrap();
+        let error =
+            unpack_full_release(&release_archive("1.2.2", |_| {})[..], stage.path(), "1.2.3")
+                .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "release archive VERSION 1.2.2 does not match the expected release 1.2.3"
+        );
+    }
+
+    #[test]
+    fn a_full_release_archive_with_a_symlink_is_rejected() {
+        let stage = tempfile::tempdir().unwrap();
+        let archive = release_archive("1.2.3", |builder| {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            header.set_cksum();
+            builder
+                .append_link(&mut header, "web-dist/escape", "/etc")
+                .unwrap();
+        });
+        let error = unpack_full_release(&archive[..], stage.path(), "1.2.3").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "unsupported release archive entry type: web-dist/escape"
+        );
+    }
+
+    #[test]
+    fn a_full_release_archive_with_an_unexpected_path_is_rejected() {
+        let stage = tempfile::tempdir().unwrap();
+        let archive = release_archive("1.2.3", |builder| {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(1);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "bin/extra", &b"x"[..])
+                .unwrap();
+        });
+        let error = unpack_full_release(&archive[..], stage.path(), "1.2.3").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "unexpected release archive path: bin/extra"
+        );
+    }
 }

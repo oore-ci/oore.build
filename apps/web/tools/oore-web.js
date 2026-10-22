@@ -80,7 +80,7 @@ Usage:
   oore-web [serve] [--listen <host:port>] [--backend-url <url>] [--dist-dir <path>]
   oore-web status [--url <frontend-url>] [--json]
   oore-web update [--channel stable|beta|alpha] [--repo owner/name] [--check] [--force]
-  oore-web recover-update
+  oore-web recover-update [--lifecycle-lock-held]
   oore-web version
 
 Options:
@@ -1389,9 +1389,20 @@ function openPrivateLockFile(lockPath) {
 
 async function acquireFileLock(lockPath, busyMessage) {
   const { descriptor } = openPrivateLockFile(lockPath)
-  let acquireCommand
+  const ready = `printf '%s\\n' '${WEB_UPDATE_LOCK_READY}'
+IFS= read -r _`
+  let holdScript
   if (process.platform === 'darwin') {
-    acquireCommand = '/usr/bin/lockf -s -t 0 3'
+    // lockf before macOS 15 cannot lock a descriptor and exits with EX_USAGE.
+    // It can still hold a flock(2) lock on the path for a command's lifetime.
+    holdScript = `/usr/bin/lockf -s -t 0 3 2>/dev/null
+status=$?
+if [ "$status" -eq 64 ]; then
+  exec 3>&-
+  exec /usr/bin/lockf -k -s -t 0 "$1" /bin/sh -c "$2"
+fi
+[ "$status" -eq 0 ] || exit 75
+${ready}`
   } else if (process.platform === 'linux') {
     const flock = fs.existsSync('/usr/bin/flock')
       ? '/usr/bin/flock'
@@ -1400,21 +1411,23 @@ async function acquireFileLock(lockPath, busyMessage) {
       fs.closeSync(descriptor)
       throw new Error('frontend updates require flock on Linux')
     }
-    acquireCommand = `${flock} -n 3`
+    holdScript = `${flock} -n 3 || exit 75
+${ready}`
   } else {
     fs.closeSync(descriptor)
     throw new Error(`frontend updates are not supported on ${process.platform}`)
   }
-  const holdScript = `${acquireCommand} || exit 75
-printf '%s\\n' '${WEB_UPDATE_LOCK_READY}'
-IFS= read -r _`
 
   let child
   try {
-    child = spawn('/bin/sh', ['-c', holdScript], {
-      stdio: ['pipe', 'pipe', 'pipe', descriptor],
-      env: { ...process.env, LC_ALL: 'C' },
-    })
+    child = spawn(
+      '/bin/sh',
+      ['-c', holdScript, 'oore-web-lock', lockPath, ready],
+      {
+        stdio: ['pipe', 'pipe', 'pipe', descriptor],
+        env: { ...process.env, LC_ALL: 'C' },
+      },
+    )
   } finally {
     fs.closeSync(descriptor)
   }
@@ -3093,11 +3106,23 @@ async function main() {
   }
 
   if (parsedCommand.command === 'recover-update') {
-    if (parsedCommand.args.length > 0) {
-      console.error('[oore-web] recover-update does not accept arguments')
+    // `oore` takes the lifecycle lock before it asks for recovery, so this
+    // process only takes the frontend update lock.
+    const lifecycleLockHeld =
+      parsedCommand.args.length === 1 &&
+      parsedCommand.args[0] === '--lifecycle-lock-held'
+    if (parsedCommand.args.length > 0 && !lifecycleLockHeld) {
+      console.error(
+        '[oore-web] recover-update accepts only --lifecycle-lock-held',
+      )
       process.exit(2)
     }
-    const recovered = await recoverUpdateWithLocks(resolveInstallRoot())
+    const installRoot = resolveInstallRoot()
+    const recovered = lifecycleLockHeld
+      ? await withUpdateLock(installRoot, () =>
+          recoverInterruptedUpdate(installRoot),
+        )
+      : await recoverUpdateWithLocks(installRoot)
     console.log(
       recovered
         ? 'Restored the previous frontend after an interrupted update.'

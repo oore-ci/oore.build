@@ -55,18 +55,27 @@ read_workspace_version() {
   ' Cargo.toml
 }
 
-maybe_configure_github_token_remote() {
-  local token
-  token="$(printenv GITHUB_TOKEN || true)"
-  if [[ -n "$token" ]]; then
-    git config url."https://x-access-token:$token@github.com/".insteadOf "https://github.com/"
+summary() {
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    printf '%s\n' "$*" >>"$GITHUB_STEP_SUMMARY"
   fi
+  echo "$*"
 }
 
 emit_tag() {
   if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     printf 'tag=%s\n' "$1" >>"$GITHUB_OUTPUT"
   fi
+}
+
+# Annotated tags need an identity; hosted Linux runners have none.
+tag_release() {
+  git -c user.name='github-actions[bot]' \
+    -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+    tag -a "$1" -m "$2" "$TARGET_SHA"
+  git push origin "$1"
+  summary "[autotag:$CHANNEL] cut $1 at ${TARGET_SHA:0:12}."
+  emit_tag "$1"
 }
 
 existing_tag_for_commit() {
@@ -102,11 +111,9 @@ latest_prod_version() {
 
 message="$(git log -1 --pretty=%B || true)"
 if echo "$message" | grep -q "\\[CI SKIP\\]"; then
-  echo "[autotag:$CHANNEL] skipping CI-generated commit."
+  summary "[autotag:$CHANNEL] skipped a CI-generated commit. No tag."
   exit 0
 fi
-
-maybe_configure_github_token_remote
 
 git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" "+refs/tags/*:refs/tags/*"
 if [[ -n "$SHA" ]]; then
@@ -132,14 +139,16 @@ else
   replay_tag="$(existing_tag_for_commit "v$cargo_ver-$CHANNEL.*")"
 fi
 if [[ -n "$replay_tag" ]]; then
-  echo "[autotag:$CHANNEL] resuming release for $replay_tag."
+  summary "[autotag:$CHANNEL] $replay_tag already tags ${TARGET_SHA:0:12}. Starting its release again."
   emit_tag "$replay_tag"
   exit 0
 fi
 
 if ! semver_gt "$cargo_ver" "$latest_prod_ver"; then
-  echo "[autotag:$CHANNEL] workspace version $cargo_ver has not advanced beyond stable $latest_prod_ver."
-  exit 0
+  # A release branch push that cuts no tag is a release that silently did
+  # not happen. Fail so it shows up.
+  summary "[autotag:$CHANNEL] no tag: workspace version $cargo_ver has not advanced beyond stable $latest_prod_ver. Bump master with \`make bump-version\` (the Release train does this) and merge again."
+  exit 1
 fi
 
 if [[ "$CHANNEL" == "stable" ]]; then
@@ -148,10 +157,7 @@ if [[ "$CHANNEL" == "stable" ]]; then
     echo "[autotag:stable] $tag exists on a different commit." >&2
     exit 1
   fi
-  echo "[autotag:stable] cutting $tag"
-  git tag -a "$tag" -m "Release $tag" "$TARGET_SHA"
-  git push origin "$tag"
-  emit_tag "$tag"
+  tag_release "$tag" "Release $tag"
   exit 0
 fi
 
@@ -179,7 +185,4 @@ if [[ "$CHANNEL" == "alpha" ]]; then
 else
   label="Beta"
 fi
-echo "[autotag:$CHANNEL] cutting $tag"
-git tag -a "$tag" -m "$label $tag" "$TARGET_SHA"
-git push origin "$tag"
-emit_tag "$tag"
+tag_release "$tag" "$label $tag"

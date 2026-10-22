@@ -33,7 +33,6 @@ import {
   SettingsSection,
   SettingsSurface,
 } from '@/components/settings/settings-section'
-import SetupHint from '@/components/setup-hint'
 
 function EndpointRow({ label, value }: { label: string; value: string }) {
   return (
@@ -140,14 +139,18 @@ function GitHubSetupPage() {
         }
       >
         <SettingsSurface>
-          <SetupHint
-            title="Requested access"
-            items={[
-              'Repository contents, metadata, and pull requests are read-only.',
-              'Statuses and checks are writable so builds can report CI feedback.',
-              'Webhook events are push, pull_request, check_run, and check_suite.',
-            ]}
-          />
+          <ul className="flex list-disc flex-col gap-1.5 pl-5 text-sm text-muted-foreground">
+            <li>
+              Repository contents, metadata, and pull requests are read-only.
+            </li>
+            <li>
+              Statuses and checks are writable so builds can report CI feedback.
+            </li>
+            <li>
+              Webhook events are <code>push</code>, <code>pull_request</code>,{' '}
+              <code>check_run</code>, and <code>check_suite</code>.
+            </li>
+          </ul>
         </SettingsSurface>
       </SettingsSection>
 
@@ -156,9 +159,9 @@ function GitHubSetupPage() {
         description="Filled into the app manifest for you. Copy them if you register the app by hand."
       >
         <SettingsSurface inset={false}>
-          <ItemGroup>
+          <ItemGroup className="gap-0">
             <EndpointRow label="Webhook URL" value={webhookUrl} />
-            <ItemSeparator />
+            <ItemSeparator className="my-0" />
             <EndpointRow label="Redirect URL" value={redirectUrl} />
           </ItemGroup>
         </SettingsSurface>

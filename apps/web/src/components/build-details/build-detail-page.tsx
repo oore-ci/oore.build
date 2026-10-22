@@ -43,6 +43,7 @@ import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import { StatusBadge } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
 import PageHeader from '@/components/page-header'
+import { ResumeRunnersButton } from '@/components/settings/direct-runner-policy-panel'
 import PageLayout from '@/components/page-layout'
 import TerminalLogViewer from '@/components/terminal-log-viewer'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -393,21 +394,23 @@ export function BuildDetailPage({
           <AlertDescription>
             {build.runner_policy_block_reason === 'instance_paused' ? (
               canWriteInstanceSettings ? (
-                <>
-                  This build is waiting because the Direct macOS runner is
-                  paused. Resume it in{' '}
-                  <Link
-                    to="/settings/preferences"
-                    className="font-medium underline underline-offset-4"
-                  >
-                    Preferences
-                  </Link>
-                  .
-                </>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span>
+                    This build is waiting because runners are paused on{' '}
+                    <Link
+                      to="/settings/runners"
+                      className="font-medium underline underline-offset-4"
+                    >
+                      Runners
+                    </Link>
+                    .
+                  </span>
+                  <ResumeRunnersButton />
+                </div>
               ) : (
                 <>
-                  This build is waiting because the Direct macOS runner is
-                  paused. Ask an owner or admin to resume it.
+                  This build is waiting because runners are paused. Ask an owner
+                  or admin to resume them.
                 </>
               )
             ) : (
