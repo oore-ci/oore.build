@@ -35,6 +35,22 @@ oore status
 
 This touches only the daemon binary. The database, configuration, and runner registration stay as they were.
 
+## When a web UI update is interrupted
+
+An update started from the web UI moves `bin/oored` aside while it backs up the database. If the Mac restarts or the update supervisor is killed during that window, launchd has no daemon to start and the web UI stays down.
+
+Run any lifecycle command from Terminal on the backend Mac to recover, for example:
+
+```bash
+oore doctor --update
+```
+
+Oore puts the held daemon back, restores the previous CLI when the update had already replaced it, marks the update as failed, and restarts the daemon. If the restart needs administrator access that `oore setup` did not grant, Oore prints the `sudo launchctl kickstart` command to run. `oore update` and the next web UI update run the same recovery first.
+
+If the update was interrupted while it rolled back a failed release, Oore restores the new daemon so that the service can start, and keeps the previous release in the `.supervised-update-*` directory it names. Check `logs/update-supervisor.log` before you try again.
+
+When Oore cannot ask launchd whether the update supervisor still runs, the web UI marks an update with no progress for 45 minutes as failed, so you can start a new attempt.
+
 ## Switch the release channel
 
 To move a Ready Complete or Control plane installation to another channel in place, name the channel and confirm the switch:

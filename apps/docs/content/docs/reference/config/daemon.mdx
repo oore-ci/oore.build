@@ -39,6 +39,13 @@ the data root. The public backup workflow supports the default managed layout.
 Do not use manual `oore backup create --state-file` for a custom database/key
 layout: that option selects the database but does not select its matching key.
 
+`oored` generates `encryption.key` only when the database holds no encrypted
+data. If the key is missing, or the key on disk does not match the database,
+the daemon refuses to start and names the path it expected. A new key would
+make every stored credential unreadable. Restore the original key with
+`oore backup restore`, or point `OORED_DATA_DIR` at the directory that holds
+it. `oore` resolves the key from the same data root.
+
 ## Network settings
 
 External Access network settings are primarily stored in the database and
