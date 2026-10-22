@@ -491,13 +491,17 @@ function IntegrationDetailPage() {
           <TabsTrigger value="repositories">
             Repositories
             <span className="font-mono text-xs text-muted-foreground">
-              {repositoryTotal ?? '…'}
+              {repositoryTotal ?? (repositoryTotalQuery.isError ? '—' : '…')}
             </span>
           </TabsTrigger>
           <TabsTrigger value="accounts">
             {accountsTabLabel}
             <span className="font-mono text-xs text-muted-foreground">
-              {installationsQuery.isLoading ? '…' : installations.length}
+              {installationsQuery.isLoading
+                ? '…'
+                : installationsQuery.isError
+                  ? '—'
+                  : installations.length}
             </span>
           </TabsTrigger>
           <TabsTrigger value="connection">Connection</TabsTrigger>

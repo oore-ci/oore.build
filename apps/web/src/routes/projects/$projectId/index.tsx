@@ -92,6 +92,7 @@ interface ProjectDetailSearch {
   direction?: SortDirection
   page?: number
   pageSize?: 20 | 50 | 100
+  pipeline?: string
   q?: string
   sort?: ProjectBuildSort
   status?: string
@@ -115,6 +116,7 @@ function validateProjectSearch(search: SearchInput): ProjectDetailSearch {
   const page = searchNumber(search, 'page')
   const pageSize = searchNumber(search, 'pageSize')
   const q = searchString(search, 'q')?.trim() ?? ''
+  const pipeline = searchString(search, 'pipeline')?.trim() ?? ''
   const statusValue = searchString(search, 'status')
   const status =
     statusValue && statusValue in BUILD_STATUS_FILTER_OPTIONS ? statusValue : ''
@@ -129,6 +131,7 @@ function validateProjectSearch(search: SearchInput): ProjectDetailSearch {
     run: searchNumber(search, 'run') === 1 ? '1' : undefined,
     runPipeline: searchString(search, 'runPipeline'),
     q: q || undefined,
+    pipeline: pipeline || undefined,
     status: status && status !== 'all' ? status : undefined,
     sort,
     direction: searchString(search, 'direction') === 'asc' ? 'asc' : undefined,
