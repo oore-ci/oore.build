@@ -11504,6 +11504,27 @@ struct PreparedUpdateProvenance {
     manifest_sha256: String,
 }
 
+/// A signed release index stays valid forever, so a stale mirror, a cache, or a
+/// rerun of an old release job can serve an older one. Updates only install what
+/// an index listed, so the installed release on the same channel is a version
+/// this machine has already seen, and that channel's latest can never be older.
+fn reject_stale_release_index(
+    channel: ReleaseChannel,
+    installed: &semver::Version,
+    prepared: &PreparedUpdateRelease,
+) -> anyhow::Result<()> {
+    if prepared.provenance.is_none() || infer_channel_from_version(installed) != channel {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        prepared.version >= *installed,
+        "the signed {} release index lists {}, older than the installed {installed}; refusing a stale or rolled-back release index, try again later",
+        channel.as_str(),
+        prepared.version
+    );
+    Ok(())
+}
+
 fn require_unsigned_staged_update_acceptance(version: &str) -> anyhow::Result<()> {
     let accepted = version.ends_with("-dev")
         && std::env::var("OORE_ALLOW_UNSIGNED_LOCAL_RELEASE").as_deref() == Ok("true")
@@ -11924,6 +11945,7 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
         false,
     )
     .await?;
+    reject_stale_release_index(channel, &current, &prepared)?;
     if current >= prepared.version && !args.force {
         return Ok(());
     }
@@ -12390,6 +12412,7 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         );
     }
 
+    reject_stale_release_index(channel, &current, &prepared)?;
     if current >= *latest && !args.force {
         println!("Already up to date.");
         return Ok(());
@@ -13354,6 +13377,38 @@ mod tests {
             switch_channel,
         )
         .map(Option::unwrap)
+    }
+
+    #[test]
+    fn updates_reject_a_signed_index_older_than_the_installed_release() {
+        let version = |raw| semver::Version::parse(raw).unwrap();
+        let installed = version("0.9.0-alpha.4");
+        let error = reject_stale_release_index(
+            ReleaseChannel::Alpha,
+            &installed,
+            &signed_update_release("0.9.0-alpha.3"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("older than the installed"));
+        for latest in ["0.9.0-alpha.4", "0.9.0-alpha.5"] {
+            reject_stale_release_index(
+                ReleaseChannel::Alpha,
+                &installed,
+                &signed_update_release(latest),
+            )
+            .unwrap();
+        }
+        // Another channel's index can trail the installed release; the channel
+        // switch check decides that case.
+        reject_stale_release_index(
+            ReleaseChannel::Stable,
+            &installed,
+            &signed_update_release("0.8.0"),
+        )
+        .unwrap();
+        let mut staged = signed_update_release("0.9.0-alpha.1");
+        staged.provenance = None;
+        reject_stale_release_index(ReleaseChannel::Alpha, &installed, &staged).unwrap();
     }
 
     #[test]
