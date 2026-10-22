@@ -949,6 +949,50 @@ pub async fn preview_build_changelog(
     }))
 }
 
+/// Reject a build whose Google Play publish step would fail because its
+/// service account secret is missing, instead of failing after the build.
+async fn require_google_play_secret(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    pipeline_id: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let store_error = |e: anyhow::Error| {
+        error!(error = %e, "failed to check Google Play publishing");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to check Google Play publishing",
+        )
+    };
+    let Some((config, _)) = crate::pipeline_publish::load_google_play(pool, pipeline_id)
+        .await
+        .map_err(store_error)?
+    else {
+        return Ok(());
+    };
+    if !config.enabled
+        || crate::secrets::secret_name_visible(
+            pool,
+            project_id,
+            Some(pipeline_id),
+            &config.service_account_secret,
+        )
+        .await
+        .map_err(store_error)?
+    {
+        return Ok(());
+    }
+    Err(api_err(
+        StatusCode::CONFLICT,
+        "publish_secret_missing",
+        format!(
+            "Google Play publishing needs the secret {}, which is not set. Add it or turn off \
+             Google Play publishing before running this build.",
+            config.service_account_secret
+        ),
+    ))
+}
+
 /// `POST /v1/projects/{project_id}/builds` — create a new build (manual/API trigger).
 pub async fn create_build(
     State(state): State<Arc<AppState>>,
@@ -1061,6 +1105,14 @@ pub async fn create_build(
         serde_json::from_str(&concurrency_json).unwrap_or_default();
     let (timeout_minutes, approval_policy) = pipeline_gates(&pipeline_row);
     let approval_required = approval_policy.applies_to("manual");
+
+    let builds_android = selected_platforms
+        .as_deref()
+        .unwrap_or(&execution_config.platforms)
+        .contains(&BuildPlatform::Android);
+    if builds_android {
+        require_google_play_secret(&pool, &project_id, &req.pipeline_id).await?;
+    }
 
     if commit_sha.is_none() {
         commit_sha = Some(
@@ -2253,11 +2305,13 @@ pub async fn trigger_build_from_webhook(
                 );
                 continue;
             }
-            if commit_sha.is_none() && branch.is_none() {
+            // A build without a commit cannot check out anything, for example
+            // a deleted branch.
+            if commit_sha.is_none_or(str::is_empty) {
                 warn!(
                     pipeline_id = %pipeline_id,
                     event_type = %event_type,
-                    "webhook payload missing branch and commit_sha; skipping build creation"
+                    "webhook payload has no commit_sha; skipping build creation"
                 );
                 continue;
             }
@@ -2762,6 +2816,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_superseded_build_is_notified() {
+        let pool = pool("{}", "{}", 60).await;
+        sqlx::query(
+            "UPDATE pipelines SET concurrency = '{\"cancel_previous\":true}'; \
+             INSERT INTO notification_channels (id, name, channel_type, enabled, created_at, updated_at) \
+             VALUES ('hook', 'hook', 'webhook', 1, 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let first = deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await;
+        deliver(&pool, "d2", Some("main"), None, ChangeSet::Unknown).await;
+
+        crate::notification_dispatch::notify_due_builds(&pool)
+            .await
+            .unwrap();
+        let notified: Vec<(Option<String>, String)> =
+            sqlx::query_as("SELECT build_id, event_type FROM notification_deliveries")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            notified,
+            [(Some(first[0].id.clone()), "canceled".to_string())]
+        );
+    }
+
+    #[tokio::test]
     async fn a_20_minute_pipeline_times_out_at_20_minutes() {
         let pool = pool("{}", "{}", 20).await;
         let builds = deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await;
@@ -2788,5 +2870,54 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(status, "timed_out");
+    }
+
+    #[tokio::test]
+    async fn manual_build_is_rejected_when_the_play_secret_is_missing() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        for statement in [
+            "CREATE TABLE users (id TEXT PRIMARY KEY)",
+            "CREATE TABLE projects (id TEXT PRIMARY KEY)",
+            "CREATE TABLE pipelines (id TEXT PRIMARY KEY, project_id TEXT)",
+            include_str!("../migrations/042_secrets.sql"),
+            include_str!("../migrations/043_pipeline_publish.sql"),
+            "INSERT INTO projects VALUES ('p1')",
+            "INSERT INTO pipelines VALUES ('pl1', 'p1')",
+        ] {
+            sqlx::raw_sql(statement).execute(&pool).await.unwrap();
+        }
+        require_google_play_secret(&pool, "p1", "pl1")
+            .await
+            .expect("no Google Play settings");
+
+        sqlx::query(
+            "INSERT INTO pipeline_publish_targets (id, pipeline_id, store, enabled, config, created_at, updated_at) \
+             VALUES ('t1', 'pl1', 'google_play', 1, \
+             '{\"enabled\":true,\"service_account_secret\":\"PLAY\",\"track\":\"internal\"}', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, Json(error)) = require_google_play_secret(&pool, "p1", "pl1")
+            .await
+            .unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error.code, "publish_secret_missing");
+        assert!(error.error.contains("PLAY"));
+
+        sqlx::query(
+            "INSERT INTO secrets (id, scope, name, value_encrypted, created_at, updated_at) \
+             VALUES ('s1', 'instance', 'PLAY', 'ciphertext', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        require_google_play_secret(&pool, "p1", "pl1")
+            .await
+            .expect("secret is set");
     }
 }
