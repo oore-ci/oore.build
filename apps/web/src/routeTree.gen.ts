@@ -31,6 +31,7 @@ import { Route as SettingsPreferencesRouteImport } from './routes/settings/prefe
 import { Route as SettingsRetentionRouteImport } from './routes/settings/retention'
 import { Route as SettingsRunnersRouteImport } from './routes/settings/runners'
 import { Route as SettingsSecretsRouteImport } from './routes/settings/secrets'
+import { Route as SettingsStoreCredentialsRouteImport } from './routes/settings/store-credentials'
 import { Route as SettingsUsersRouteImport } from './routes/settings/users'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as SetupCompleteRouteImport } from './routes/setup/complete'
@@ -174,6 +175,14 @@ const SettingsSecretsRoute = SettingsSecretsRouteImport.update({
 } as any).lazy(() =>
   import('./routes/settings/secrets.lazy').then((d) => d.Route),
 )
+const SettingsStoreCredentialsRoute =
+  SettingsStoreCredentialsRouteImport.update({
+    id: '/store-credentials',
+    path: '/store-credentials',
+    getParentRoute: () => SettingsRouteRoute,
+  } as any).lazy(() =>
+    import('./routes/settings/store-credentials.lazy').then((d) => d.Route),
+  )
 const SettingsUsersRoute = SettingsUsersRouteImport.update({
   id: '/users',
   path: '/users',
@@ -315,6 +324,7 @@ export interface FileRoutesByFullPath {
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/secrets': typeof SettingsSecretsRoute
+  '/settings/store-credentials': typeof SettingsStoreCredentialsRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -352,6 +362,7 @@ export interface FileRoutesByTo {
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/secrets': typeof SettingsSecretsRoute
+  '/settings/store-credentials': typeof SettingsStoreCredentialsRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -396,6 +407,7 @@ export interface FileRoutesById {
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/secrets': typeof SettingsSecretsRoute
+  '/settings/store-credentials': typeof SettingsStoreCredentialsRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -442,6 +454,7 @@ export interface FileRouteTypes {
     | '/settings/retention'
     | '/settings/runners'
     | '/settings/secrets'
+    | '/settings/store-credentials'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -479,6 +492,7 @@ export interface FileRouteTypes {
     | '/settings/retention'
     | '/settings/runners'
     | '/settings/secrets'
+    | '/settings/store-credentials'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -522,6 +536,7 @@ export interface FileRouteTypes {
     | '/settings/retention'
     | '/settings/runners'
     | '/settings/secrets'
+    | '/settings/store-credentials'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -712,6 +727,13 @@ declare module '@tanstack/react-router' {
       path: '/secrets'
       fullPath: '/settings/secrets'
       preLoaderRoute: typeof SettingsSecretsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/store-credentials': {
+      id: '/settings/store-credentials'
+      path: '/store-credentials'
+      fullPath: '/settings/store-credentials'
+      preLoaderRoute: typeof SettingsStoreCredentialsRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/users': {
@@ -973,6 +995,7 @@ interface SettingsRouteRouteChildren {
   SettingsRetentionRoute: typeof SettingsRetentionRoute
   SettingsRunnersRoute: typeof SettingsRunnersRoute
   SettingsSecretsRoute: typeof SettingsSecretsRoute
+  SettingsStoreCredentialsRoute: typeof SettingsStoreCredentialsRoute
   SettingsUsersRoute: typeof SettingsUsersRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
 }
@@ -987,6 +1010,7 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsRetentionRoute: SettingsRetentionRoute,
   SettingsRunnersRoute: SettingsRunnersRoute,
   SettingsSecretsRoute: SettingsSecretsRoute,
+  SettingsStoreCredentialsRoute: SettingsStoreCredentialsRoute,
   SettingsUsersRoute: SettingsUsersRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 }

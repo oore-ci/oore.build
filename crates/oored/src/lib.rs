@@ -9,6 +9,7 @@ pub mod artifacts;
 pub mod audit_logs;
 pub mod auth;
 pub mod background;
+pub mod build_insights;
 pub mod builds;
 pub mod commit_checks;
 pub mod crypto;
@@ -2823,6 +2824,10 @@ pub async fn build_router_with_recovery(
             get(builds::preview_build_changelog),
         )
         .route("/v1/builds", get(builds::list_builds))
+        .route(
+            "/v1/builds/insights",
+            get(build_insights::get_build_insights),
+        )
         .route("/v1/builds/{build_id}", get(builds::get_build))
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
         .route("/v1/builds/{build_id}/approve", post(builds::approve_build))

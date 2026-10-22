@@ -166,6 +166,7 @@ use utoipa::{
         operations::create_build,
         operations::preview_build_changelog,
         operations::list_builds,
+        operations::get_build_insights,
         operations::get_build,
         operations::cancel_build,
         operations::approve_build,
@@ -440,6 +441,13 @@ use utoipa::{
         oore_contract::BuildChangelogPreviewResponse,
         oore_contract::BuildDetailResponse,
         oore_contract::ListBuildsResponse,
+        oore_contract::BuildOutcomeTotals,
+        oore_contract::DurationPercentiles,
+        oore_contract::BuildInsightsDay,
+        oore_contract::BuildQueueSnapshot,
+        oore_contract::ProjectBuildInsights,
+        oore_contract::FailingPipelineInsights,
+        oore_contract::BuildInsightsResponse,
         oore_contract::CancelBuildResponse,
         oore_contract::BuildApprovalState,
         oore_contract::BuildApproval,
@@ -2314,6 +2322,24 @@ mod operations {
         )
     )]
     pub(super) fn list_builds() {}
+
+    /// Get build insights
+    ///
+    /// Success rate, run time, queue wait, a daily trend, per-project health
+    /// and the most-failing pipelines for builds the caller can see.
+    #[utoipa::path(get, path = "/v1/builds/insights", tag = "Builds",
+        params(
+            ("days" = Option<i64>, Query, description = "Window length in days: 7 (default), 14, 30 or 90"),
+            ("project_id" = Option<String>, Query, description = "Limit to one project"),
+            ("utc_offset_minutes" = Option<i64>, Query, description = "Caller's UTC offset for daily buckets, -720 to 840 (default 0)"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Build insights", body = BuildInsightsResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_insights() {}
 
     /// Get build detail
     #[utoipa::path(get, path = "/v1/builds/{build_id}", tag = "Builds",

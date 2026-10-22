@@ -13,9 +13,12 @@ import { useIndexAuthGuard } from '@/hooks/use-index-auth-guard'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import {
-  DashboardBuildOverview,
+  DashboardBuildActivity,
   DashboardGettingStarted,
 } from '@/components/dashboard-sections'
+import DashboardBuildIncident from '@/components/dashboard-build-incident'
+import { DashboardBuildHealth } from '@/components/dashboard-build-health'
+import { DashboardProjectHealth } from '@/components/dashboard-project-health'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -23,7 +26,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Spinner } from '@/components/ui/spinner'
-import { useBuilds } from '@/hooks/use-builds'
+import { useBuilds, type BuildInsightsWindow } from '@/hooks/use-builds'
 import { useIntegrations } from '@/hooks/use-integrations'
 import {
   useMarkOperatorIncidentRead,
@@ -90,15 +93,8 @@ function selectDashboardBuilds({ builds }: ListBuildsResponse) {
   return {
     builds,
     active: builds.filter((build) => ACTIVE_BUILD_STATUSES.has(build.status)),
-    completedCount: completed.length,
     recentCompleted: completed.slice(0, 6),
-    successfulCount: completed.filter((build) => build.status === 'succeeded')
-      .length,
   }
-}
-
-function selectBuildTotal({ total }: ListBuildsResponse): number {
-  return total
 }
 
 function selectHasActiveIntegration({
@@ -371,18 +367,9 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
     { limit: 50 },
     { select: selectDashboardBuilds },
   )
-  const runningBuildsQuery = useBuilds(
-    { status: 'running', limit: 1 },
-    { select: selectBuildTotal },
-  )
-  const waitingBuildsQuery = useBuilds(
-    { status: 'queued,scheduled,assigned', limit: 1 },
-    { select: selectBuildTotal },
-  )
+  const [insightsDays, setInsightsDays] = useState<BuildInsightsWindow>(7)
   const activeBuilds = recentBuildsQuery.data?.active ?? []
   const recentCompletedBuilds = recentBuildsQuery.data?.recentCompleted ?? []
-  const completedBuilds = recentBuildsQuery.data?.completedCount ?? 0
-  const successfulBuilds = recentBuildsQuery.data?.successfulCount ?? 0
   const hasProjects = projects.length > 0
   const integrationsResolved =
     !integrationsQuery.isLoading && !integrationsQuery.error
@@ -390,8 +377,6 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
     runtimeMode === 'remote' &&
     integrationsResolved &&
     integrationsQuery.data === false
-  const onlineRunners = runnersQuery.data?.online ?? 0
-  const totalRunners = runnersQuery.data?.total ?? 0
   const noOnlineRunners = !!runnersQuery.data && runnersQuery.data.online === 0
   const canShowRunBuild = hasProjects && !noOnlineRunners && canWriteBuilds
   const blockedBuilds = activeBuilds.filter(
@@ -485,37 +470,46 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
           </Alert>
         ) : null}
 
+        {hasProjects && !recentBuildsQuery.isLoading ? (
+          <DashboardBuildIncident
+            builds={[
+              ...blockedBuilds,
+              ...recentCompletedBuilds.filter(
+                (build) =>
+                  build.status === 'failed' || build.status === 'timed_out',
+              ),
+            ]}
+            noOnlineRunners={noOnlineRunners}
+          />
+        ) : null}
+
+        {hasProjects ? (
+          <DashboardBuildHealth
+            days={insightsDays}
+            onDaysChange={setInsightsDays}
+            onlineRunners={runnersQuery.data?.online}
+            totalRunners={runnersQuery.data?.total}
+          />
+        ) : null}
+
         {hasProjects ? (
           <Suspense fallback={null}>
             <ReleaseBoard />
           </Suspense>
         ) : null}
 
-        {hasProjects || projectsQuery.isLoading || projectsQuery.error ? (
-          <DashboardBuildOverview
+        {hasProjects || projectsQuery.error ? (
+          <DashboardBuildActivity
             activeBuilds={activeBuilds}
             blockedBuilds={blockedBuilds}
-            completedBuilds={completedBuilds}
             error={recentBuildsQuery.error}
             isLoading={recentBuildsQuery.isLoading}
-            noOnlineRunners={hasProjects && noOnlineRunners}
-            onlineRunners={onlineRunners}
             onRetry={() => void recentBuildsQuery.refetch()}
             recentBuilds={recentCompletedBuilds}
-            runnersError={!!runnersQuery.error}
-            runnersLoading={runnersQuery.isLoading}
-            runningBuilds={runningBuildsQuery.data ?? 0}
-            statusCountsError={
-              !!runningBuildsQuery.error || !!waitingBuildsQuery.error
-            }
-            statusCountsLoading={
-              runningBuildsQuery.isLoading || waitingBuildsQuery.isLoading
-            }
-            successfulBuilds={successfulBuilds}
-            totalRunners={totalRunners}
-            waitingBuilds={waitingBuildsQuery.data ?? 0}
           />
         ) : null}
+
+        {hasProjects ? <DashboardProjectHealth days={insightsDays} /> : null}
 
         {hasProjects ? (
           <Suspense fallback={null}>

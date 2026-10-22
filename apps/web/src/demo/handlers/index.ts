@@ -18,6 +18,7 @@ import { retentionHandlers } from './retention'
 import { auditLogHandlers } from './audit-logs'
 import { apiTokenHandlers } from './api-tokens'
 import { secretHandlersList } from './secrets'
+import { storeCredentialHandlers } from './store-credentials'
 
 export const allHandlers = [
   ...demoReadOnlyGuardHandlers,
@@ -38,4 +39,5 @@ export const allHandlers = [
   ...auditLogHandlers,
   ...apiTokenHandlers,
   ...secretHandlersList,
+  ...storeCredentialHandlers,
 ]

@@ -67,6 +67,8 @@ export const pipelineFormSchema = z
     ios_signing_p12_password: z.string().optional(),
     ios_signing_api_key_id: z.string().optional(),
     ios_signing_api_issuer_id: z.string().optional(),
+    /** A shared App Store Connect key id, `own`, or empty until chosen. */
+    ios_signing_api_key_source: z.string().optional(),
     flutter_version: z
       .string()
       .optional()
@@ -162,8 +164,9 @@ export const pipelineFormSchema = z
         })
       }
       if (
-        data.ios_signing_mode === 'api' ||
-        data.ios_signing_mode === 'hybrid'
+        (data.ios_signing_mode === 'api' ||
+          data.ios_signing_mode === 'hybrid') &&
+        usesOwnApiKey(data.ios_signing_api_key_source)
       ) {
         if (!data.ios_signing_api_key_id?.trim()) {
           ctx.addIssue({
@@ -184,3 +187,8 @@ export const pipelineFormSchema = z
   })
 
 export type PipelineFormValues = z.infer<typeof pipelineFormSchema>
+
+/** Whether iOS signing uses the pipeline's own key rather than a shared one. */
+export function usesOwnApiKey(source: string | undefined) {
+  return !source || source === 'own'
+}

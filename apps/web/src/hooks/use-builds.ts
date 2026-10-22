@@ -30,6 +30,7 @@ import {
   getBuildLogs,
 } from '@oore/client/operations'
 import {
+  getBuildInsightsOptions,
   getBuildOptions,
   getBuildLogsQueryKey,
   getBuildQueryKey,
@@ -494,5 +495,33 @@ export function useCreateScopedDownloadToken() {
         path: { artifact_id: artifactId },
       })
     },
+  })
+}
+
+export type BuildInsightsWindow = 7 | 14 | 30 | 90
+
+/** Build health for Home, bucketed by day in the viewer's time zone. */
+export function useBuildInsights(params: {
+  days: BuildInsightsWindow
+  project_id?: string
+}) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    getBuildInsightsOptions({
+      client,
+      query: {
+        ...params,
+        utc_offset_minutes: -new Date().getTimezoneOffset(),
+      },
+    }),
+  )
+
+  return useQuery({
+    ...query,
+    enabled: !!baseUrl && !!token,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    placeholderData: keepPreviousData,
   })
 }
