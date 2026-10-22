@@ -18,6 +18,7 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { TabsContent } from '@/components/ui/tabs'
+import { PipelineFilter } from '@/routes/builds/-build-filter-controls'
 import type { ProjectBuildSort } from './-project-build-sort'
 import { ProjectBuildInventory } from './-project-build-inventory'
 
@@ -25,6 +26,7 @@ type ProjectBuildSearchUpdates = Partial<{
   direction: SortDirection
   page: number
   pageSize: 20 | 50 | 100
+  pipeline: string
   q: string
   sort: ProjectBuildSort
   status: string
@@ -52,7 +54,8 @@ export function ProjectBuildsTab({
   const buildsQuery = useBuilds(
     {
       project_id: projectId,
-      branch: search.q,
+      pipeline_id: search.pipeline,
+      q: search.q,
       status: search.status,
       sort: search.sort,
       direction: search.direction,
@@ -63,7 +66,7 @@ export function ProjectBuildsTab({
   )
   const builds = buildsQuery.data?.builds ?? []
   const total = buildsQuery.data?.total ?? 0
-  const hasFilters = !!search.q || !!search.status
+  const hasFilters = !!search.q || !!search.pipeline || !!search.status
 
   function updateSearch(updates: ProjectBuildSearchUpdates) {
     void navigate({
@@ -90,7 +93,12 @@ export function ProjectBuildsTab({
   }
 
   function clearFilters() {
-    updateSearch({ q: undefined, status: undefined, page: undefined })
+    updateSearch({
+      q: undefined,
+      pipeline: undefined,
+      status: undefined,
+      page: undefined,
+    })
   }
 
   const showFilteredEmpty =
@@ -148,11 +156,14 @@ export function ProjectBuildsTab({
             direction={direction}
             filters={
               <>
-                {hasFilters ? (
-                  <Button variant="ghost" size="sm" onClick={clearFilters}>
-                    Clear filters
-                  </Button>
-                ) : null}
+                <PipelineFilter
+                  className="w-44"
+                  filters={search}
+                  onChange={({ pipeline }) =>
+                    updateSearch({ pipeline, page: undefined })
+                  }
+                  projectId={projectId}
+                />
                 <DataTableSelectFilter
                   value={search.status ?? 'all'}
                   options={BUILD_STATUS_FILTER_OPTIONS}
@@ -165,6 +176,10 @@ export function ProjectBuildsTab({
                 />
               </>
             }
+            activeFilterCount={
+              Number(!!search.pipeline) + Number(!!search.status)
+            }
+            onClearFilters={hasFilters ? clearFilters : undefined}
             isLoading={buildsQuery.isLoading}
             onPageChange={(nextPage) =>
               updateSearch({ page: nextPage > 1 ? nextPage : undefined })

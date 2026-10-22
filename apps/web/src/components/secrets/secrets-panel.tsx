@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Add01Icon,
@@ -156,25 +157,58 @@ function RowList({ children }: { children: Array<React.ReactNode> }) {
   )
 }
 
+/** Where an inherited secret is managed. */
+function OwnerScopeLink({ target }: { target: SecretTarget }) {
+  if (target.scope === 'pipeline') return null
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      nativeButton={false}
+      render={
+        target.scope === 'instance' ? (
+          <Link to="/settings/secrets" />
+        ) : (
+          <Link
+            to="/projects/$projectId"
+            params={{ projectId: target.projectId }}
+            search={{ tab: 'settings' }}
+          />
+        )
+      }
+    >
+      Manage
+    </Button>
+  )
+}
+
 /**
  * Write-only secrets for one scope. `inheritedFrom` names the broader scopes
  * (narrowest first) this scope also sees, so the effect of a name clash shows.
  */
 export function SecretsPanel({
   canWrite,
+  createOpen: controlledCreateOpen,
   inheritedFrom = [],
+  onCreateOpenChange,
   target,
   title = 'Secrets',
 }: {
   canWrite: boolean
+  /** Pass with `onCreateOpenChange` when the page header owns Add secret. */
+  createOpen?: boolean
   inheritedFrom?: Array<SecretTarget>
+  onCreateOpenChange?: (open: boolean) => void
   target: SecretTarget
   title?: string
 }) {
   const secretsQuery = useSecrets(target)
   const inherited = useInheritedSecrets(inheritedFrom)
   const deleteMutation = useDeleteSecret(target)
-  const [createOpen, setCreateOpen] = useState(false)
+  const [ownCreateOpen, setOwnCreateOpen] = useState(false)
+  const headerOwnsCreate = onCreateOpenChange !== undefined
+  const createOpen = controlledCreateOpen ?? ownCreateOpen
+  const setCreateOpen = onCreateOpenChange ?? setOwnCreateOpen
   const [rotateName, setRotateName] = useState<string>()
   const [deleteName, setDeleteName] = useState<string>()
   const secrets = secretsQuery.data ?? []
@@ -187,6 +221,14 @@ export function SecretsPanel({
     }
   }
   const visibleInherited = [...inheritedByName.values()]
+  const inheritedScopes = new Set(
+    visibleInherited.map((secret) => secret.scope),
+  )
+  const [onlyInheritedScope] = inheritedScopes
+  const inheritedHeading =
+    inheritedScopes.size === 1 && onlyInheritedScope
+      ? `Inherited from ${SCOPE_LABEL[onlyInheritedScope].toLowerCase()}`
+      : 'Inherited from broader scopes'
 
   function handleDelete() {
     if (!deleteName) return
@@ -206,7 +248,7 @@ export function SecretsPanel({
       title={title}
       description={SCOPE_DESCRIPTION[target.scope]}
       actions={
-        canWrite ? (
+        canWrite && !headerOwnsCreate ? (
           <Button size="sm" onClick={() => setCreateOpen(true)}>
             <HugeiconsIcon icon={Add01Icon} />
             Add secret
@@ -240,7 +282,11 @@ export function SecretsPanel({
           </EmptyHeader>
           {canWrite ? (
             <EmptyContent>
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Button
+                size="sm"
+                variant={headerOwnsCreate ? 'outline' : 'default'}
+                onClick={() => setCreateOpen(true)}
+              >
                 Add secret
               </Button>
             </EmptyContent>
@@ -271,27 +317,35 @@ export function SecretsPanel({
       )}
 
       {visibleInherited.length > 0 ? (
-        <div className="flex flex-col gap-2">
-          <h3 className="text-xs font-medium text-muted-foreground">
-            Also available here
-          </h3>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <h3 className="text-sm font-medium">{inheritedHeading}</h3>
+            <p className="text-sm text-muted-foreground">
+              Builds here can use these too. Manage them where they are stored;
+              a secret above with the same name overrides them.
+            </p>
+          </div>
           <RowList>
-            {visibleInherited.map((secret) => (
-              <SecretRow
-                key={`${secret.scope}-${secret.name}`}
-                canWrite={false}
-                name={secret.name}
-                updatedAt={secret.updated_at}
-              >
-                <Badge
-                  variant={ownNames.has(secret.name) ? 'outline' : 'secondary'}
+            {visibleInherited.map((secret) => {
+              const overridden = ownNames.has(secret.name)
+              const owner = inheritedFrom.find(
+                (candidate) => candidate.scope === secret.scope,
+              )
+              return (
+                <SecretRow
+                  key={`${secret.scope}-${secret.name}`}
+                  canWrite={false}
+                  name={secret.name}
+                  updatedAt={secret.updated_at}
                 >
-                  {ownNames.has(secret.name)
-                    ? 'Overridden'
-                    : SCOPE_LABEL[secret.scope]}
-                </Badge>
-              </SecretRow>
-            ))}
+                  <Badge variant={overridden ? 'outline' : 'secondary'}>
+                    {SCOPE_LABEL[secret.scope]}
+                    {overridden ? ' · overridden' : ''}
+                  </Badge>
+                  {owner ? <OwnerScopeLink target={owner} /> : null}
+                </SecretRow>
+              )
+            })}
           </RowList>
         </div>
       ) : null}

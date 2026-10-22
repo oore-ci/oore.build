@@ -47,11 +47,19 @@ BIN_DIR_EXISTED=0
 BIN_DIR_ORIGINAL_MODE=""
 GUIDED_INSTALL_SUPPORTED=0
 LIFECYCLE_LOCK_PATH=""
+LIFECYCLE_LOCK_HOLDER_PID=""
 GUARD_FILE_IDENTITY=""
 CLI_PUBLICATION_SKIPPED=0
 CLI_CANDIDATE=""
 BOOTSTRAP_ACTION=""
 PRESERVED_PROFILE=""
+
+# macOS ships BSD stat, lockf and shasum. Homebrew coreutils can put GNU tools
+# with incompatible flags first in PATH, so call the system copies directly.
+BSD_STAT=/usr/bin/stat
+BSD_LOCKF=/usr/bin/lockf
+BSD_SHASUM=/usr/bin/shasum
+FILE_IDENTITY_FORMAT='%d:%i:%u:%Lp:%l:%z:%m:%c'
 
 PATH_BLOCK_START="# >>> oore PATH >>>"
 PATH_BLOCK_END="# <<< oore PATH <<<"
@@ -113,6 +121,9 @@ cleanup() {
     if ! rollback_install; then
       printf 'Oore install failed: the previous bootstrap state could not be fully restored.\n' >&2
     fi
+  fi
+  if [[ -n "$LIFECYCLE_LOCK_HOLDER_PID" ]]; then
+    kill "$LIFECYCLE_LOCK_HOLDER_PID" 2>/dev/null
   fi
   if [[ -n "$TMP_DIR" && -d "$TMP_DIR" ]]; then
     rm -rf "$TMP_DIR"
@@ -237,12 +248,16 @@ validate_config() {
 
 require_dependencies() {
   local dependency=""
-  for dependency in curl tar awk sed grep head mktemp mkdir install mv rm rmdir tr dirname chmod cp stat lockf ssh-keygen; do
+  for dependency in curl tar awk sed grep head mktemp mkdir install mv rm rmdir tr dirname chmod cp sleep ssh-keygen; do
     have_command "$dependency" || die "$dependency is required."
   done
 
-  if ! have_command shasum && ! have_command sha256sum; then
-    die 'shasum or sha256sum is required.'
+  for dependency in "$BSD_STAT" "$BSD_LOCKF"; do
+    [[ -x "$dependency" ]] || die "$dependency is required."
+  done
+
+  if [[ ! -x "$BSD_SHASUM" ]] && ! have_command sha256sum; then
+    die "$BSD_SHASUM or sha256sum is required."
   fi
 }
 
@@ -353,6 +368,42 @@ infer_channel() {
   esac
 }
 
+# Prints "major minor patch prerelease" for a release version, with stable
+# releases ordered after every prerelease of the same version.
+release_version_key() {
+  [[ "$1" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)(-(alpha|beta)\.([0-9]+))?$ ]] || return 1
+  printf '%s %s %s %s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+    "${BASH_REMATCH[6]:-999999999}"
+}
+
+# Succeeds when release version $1 is older than release version $2.
+release_version_older() {
+  local left=() right=() index=0
+  read -r -a left <<< "$(release_version_key "$1")" || return 1
+  read -r -a right <<< "$(release_version_key "$2")" || return 1
+  [[ "${#left[@]}" -eq 4 && "${#right[@]}" -eq 4 ]] || return 1
+  for index in 0 1 2 3; do
+    ((10#${left[index]} == 10#${right[index]})) && continue
+    ((10#${left[index]} < 10#${right[index]}))
+    return
+  done
+  return 1
+}
+
+# A signed index stays valid forever, so a stale mirror, a cache, or a rerun of
+# an old release job can serve an older one. Every client only installs what an
+# index listed, so the installed release on this channel is a version this
+# machine has already seen, and the channel's latest can never be older.
+reject_stale_release_index() {
+  local installed=""
+  [[ -f "$OORE_INSTALL_ROOT/VERSION" && ! -L "$OORE_INSTALL_ROOT/VERSION" ]] || return 0
+  installed="$(head -n 1 "$OORE_INSTALL_ROOT/VERSION" 2>/dev/null | tr -d '[:space:]')" || return 0
+  [[ -n "$installed" && "$(infer_channel "$installed")" == "$OORE_CHANNEL" ]] || return 0
+  if release_version_older "$1" "$installed"; then
+    die "The signed $OORE_CHANNEL release index lists $1, older than the installed $installed. Refusing a stale or rolled-back index; retry later, or pass --version to install a specific release."
+  fi
+}
+
 resolve_release() {
   local manifest_channel=""
   local manifest_schema=""
@@ -380,6 +431,7 @@ resolve_release() {
       || die "The signed release index does not match the $OORE_CHANNEL channel."
     [[ "$(infer_channel "$tag")" == "$OORE_CHANNEL" ]] \
       || die "The signed release tag does not match the $OORE_CHANNEL channel."
+    reject_stale_release_index "${tag#v}"
     RESOLVED_CHANNEL="$OORE_CHANNEL"
   else
     tag="$OORE_VERSION"
@@ -435,8 +487,8 @@ download_release() {
 }
 
 compute_sha256() {
-  if have_command shasum; then
-    shasum -a 256 "$1" | awk '{ print $1 }'
+  if [[ -x "$BSD_SHASUM" ]]; then
+    "$BSD_SHASUM" -a 256 "$1" | awk '{ print $1 }'
   else
     sha256sum "$1" | awk '{ print $1 }'
   fi
@@ -547,7 +599,7 @@ validate_file_target() {
 
 directory_permissions_are_safe() {
   local mode=""
-  mode="$(stat -f '%Lp' "$1")" || return 1
+  mode="$("$BSD_STAT" -f '%Lp' "$1")" || return 1
   [[ "$mode" =~ ^[0-7]+$ ]] || return 1
   (( (8#$mode & 0022) == 0 ))
 }
@@ -622,7 +674,7 @@ validate_guard_file() {
   [[ ! -L "$path" ]] || die "$description cannot be a symbolic link: $path"
   [[ -f "$path" ]] || die "$description is not a regular file: $path"
   [[ -O "$path" ]] || die "$description is not owned by the current user: $path"
-  metadata="$(stat -f '%d:%i:%u:%Lp:%l:%z:%m:%c' "$path")" \
+  metadata="$("$BSD_STAT" -f "$FILE_IDENTITY_FORMAT" "$path")" \
     || die "Could not inspect $description: $path"
   IFS=: read -r device inode owner mode links size modified changed <<< "$metadata"
   [[ "$device" =~ ^[0-9]+$ && "$inode" =~ ^[0-9]+$ && "$owner" =~ ^[0-9]+$ \
@@ -679,9 +731,9 @@ inspect_bootstrap_boundary() {
   esac
 
   if [[ -n "$manifest_identity" ]]; then
-    [[ "$(stat -f '%d:%i:%u:%Lp:%l:%z:%m:%c' "$manifest")" == "$manifest_identity" ]] \
+    [[ "$("$BSD_STAT" -f "$FILE_IDENTITY_FORMAT" "$manifest")" == "$manifest_identity" ]] \
       || die "The installation profile manifest changed while it was inspected: $manifest"
-    [[ "$(stat -f '%d:%i:%u:%Lp:%l:%z:%m:%c' "$cli")" == "$cli_identity" ]] \
+    [[ "$("$BSD_STAT" -f "$FILE_IDENTITY_FORMAT" "$cli")" == "$cli_identity" ]] \
       || die "The installed Oore CLI changed while it was inspected: $cli"
   fi
   BOOTSTRAP_ACTION="$action"
@@ -720,7 +772,34 @@ acquire_lifecycle_lock() {
   validate_file_target "$LIFECYCLE_LOCK_PATH"
   chmod 0600 "$LIFECYCLE_LOCK_PATH"
   exec 9<> "$LIFECYCLE_LOCK_PATH"
-  lockf -s -t 0 9 \
+  local status=0
+  "$BSD_LOCKF" -s -t 0 9 2>/dev/null || status=$?
+  case "$status" in
+    0) ;;
+    # EX_USAGE: lockf before macOS 15 cannot lock a descriptor.
+    64)
+      exec 9>&-
+      hold_lifecycle_lock_by_path
+      ;;
+    75) die 'Another Oore install, setup, update, or uninstall operation is active.' ;;
+    *) die "Could not lock the installation: $LIFECYCLE_LOCK_PATH" ;;
+  esac
+}
+
+# Older lockf can only lock a path for the lifetime of a command, so a helper
+# holds the lock until this script exits. Both forms take a flock(2) lock, the
+# same lock the Oore CLI takes.
+hold_lifecycle_lock_by_path() {
+  local ready="$TMP_DIR/lifecycle-lock.ready"
+  # shellcheck disable=SC2016 # The helper shell expands its own arguments.
+  "$BSD_LOCKF" -k -s -t 0 "$LIFECYCLE_LOCK_PATH" /bin/sh -c \
+    ': > "$1"; while kill -0 "$2" 2>/dev/null; do sleep 1; done' \
+    oore-lifecycle-lock "$ready" "$$" < /dev/null > /dev/null 2>&1 &
+  LIFECYCLE_LOCK_HOLDER_PID=$!
+  while [[ ! -e "$ready" ]] && kill -0 "$LIFECYCLE_LOCK_HOLDER_PID" 2>/dev/null; do
+    sleep 0.1
+  done
+  [[ -e "$ready" ]] \
     || die 'Another Oore install, setup, update, or uninstall operation is active.'
 }
 
@@ -728,11 +807,11 @@ snapshot_directory_state() {
   local bin_dir="$OORE_INSTALL_ROOT/bin"
   if [[ -d "$OORE_INSTALL_ROOT" && ! -L "$OORE_INSTALL_ROOT" ]]; then
     INSTALL_ROOT_EXISTED=1
-    INSTALL_ROOT_ORIGINAL_MODE="$(stat -f '%Lp' "$OORE_INSTALL_ROOT")"
+    INSTALL_ROOT_ORIGINAL_MODE="$("$BSD_STAT" -f '%Lp' "$OORE_INSTALL_ROOT")"
   fi
   if [[ -d "$bin_dir" && ! -L "$bin_dir" ]]; then
     BIN_DIR_EXISTED=1
-    BIN_DIR_ORIGINAL_MODE="$(stat -f '%Lp' "$bin_dir")"
+    BIN_DIR_ORIGINAL_MODE="$("$BSD_STAT" -f '%Lp' "$bin_dir")"
   fi
 }
 

@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
+import { ROLE_LABELS } from '@/routes/settings/-user-role-labels'
 
 const demoLoginSchema = z.object({
   email: z.email('Enter one of the demo email addresses.'),
@@ -27,7 +28,7 @@ const demoLoginSchema = z.object({
 
 type DemoLoginValues = z.infer<typeof demoLoginSchema>
 
-export default function DemoLoginForm() {
+export default function DemoLoginForm({ redirectTo }: { redirectTo: string }) {
   const navigate = useNavigate()
   const setAuth = useAuthStore((state) => state.setAuth)
   const form = useForm<DemoLoginValues>({
@@ -62,7 +63,7 @@ export default function DemoLoginForm() {
       },
       'local',
     )
-    void navigate({ to: '/', replace: true })
+    void navigate({ href: redirectTo, replace: true })
   }
 
   return (
@@ -106,7 +107,7 @@ export default function DemoLoginForm() {
               </Alert>
             ) : null}
             <Button type="submit" className="w-full">
-              Sign in as {watchedEmail.split('+')[1]?.split('@')[0] ?? 'user'}
+              Sign in
             </Button>
           </form>
         </Form>
@@ -122,7 +123,8 @@ export default function DemoLoginForm() {
                 key={persona.role}
                 type="button"
                 variant="outline"
-                className="h-auto justify-start px-3 py-2 text-left"
+                aria-pressed={watchedEmail === persona.email}
+                className="h-auto justify-start px-3 py-2 text-left aria-pressed:border-primary aria-pressed:bg-accent"
                 onClick={() => {
                   form.setValue('email', persona.email, {
                     shouldValidate: true,
@@ -132,9 +134,7 @@ export default function DemoLoginForm() {
                 }}
               >
                 <span>
-                  <span className="block capitalize">
-                    {persona.role.replace('_', ' ')}
-                  </span>
+                  <span className="block">{ROLE_LABELS[persona.role]}</span>
                   <span className="block text-xs font-normal text-muted-foreground">
                     {persona.displayName}
                   </span>

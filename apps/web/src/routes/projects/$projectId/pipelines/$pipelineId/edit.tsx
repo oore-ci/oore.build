@@ -25,7 +25,10 @@ import {
   useUpdatePipelineAndroidSigning,
   useUpdatePipelineIosSigning,
 } from '@/hooks/use-pipelines'
-import { usePipelineAppStorePublish } from '@/hooks/use-pipeline-publish'
+import {
+  usePipelineAppStorePublish,
+  usePipelineGooglePlayPublish,
+} from '@/hooks/use-pipeline-publish'
 import { useProject } from '@/hooks/use-projects'
 import {
   buildNumberOffsetField,
@@ -47,6 +50,7 @@ import {
   type DataTableColumnDef,
 } from '@/components/data-table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { CollectionError } from '@/components/collection'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import PageLayout from '@/components/page-layout'
@@ -100,9 +104,9 @@ export const Route = createFileRoute(
     },
   },
   validateSearch: parseEditPipelineSearch,
-  beforeLoad: async ({ params }) => {
+  beforeLoad: async ({ params, ...context }) => {
     const instance = getActiveInstanceOrRedirect()
-    const token = requireAuthOrRedirect(instance.id)
+    const token = requireAuthOrRedirect(instance.id, context)
     await requireProjectPermissionOrRedirect({
       action: 'write',
       instance,
@@ -131,6 +135,7 @@ function EditPipelinePage() {
   const iosSigningQuery = usePipelineIosSigning(pipelineId)
   const iosDevicesQuery = usePipelineIosDevices(pipelineId)
   const appStorePublishQuery = usePipelineAppStorePublish(pipelineId)
+  const googlePlayPublishQuery = usePipelineGooglePlayPublish(pipelineId)
   const updateMutation = useUpdatePipeline()
   const updateSigningMutation = useUpdatePipelineAndroidSigning()
   const updateIosSigningMutation = useUpdatePipelineIosSigning()
@@ -150,6 +155,26 @@ function EditPipelinePage() {
         <PageMeta title={label} noindex />
         <Skeleton className="h-8 w-56" />
         <Skeleton className="h-96 w-full" />
+      </PageLayout>
+    )
+  }
+
+  // Saving builds the signing payload from these, so editing on top of a
+  // failed read would turn stored signing off.
+  const signingLoadError = signingQuery.error ?? iosSigningQuery.error
+  if (data && signingLoadError) {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={label} noindex />
+        <PageHeader title={label} />
+        <CollectionError
+          title="Could not load signing settings"
+          description={`Editing waits for them so saving can't turn signing off. ${signingLoadError.message}`}
+          onRetry={() => {
+            if (signingQuery.isError) void signingQuery.refetch()
+            if (iosSigningQuery.isError) void iosSigningQuery.refetch()
+          }}
+        />
       </PageLayout>
     )
   }
@@ -455,6 +480,7 @@ function EditPipelinePage() {
         iosSigningData={iosSigningQuery.data}
         iosSigningActions={iosSigningActions}
         iosAppStorePublishing={iosAppStorePublishing}
+        googlePlayUpload={!!googlePlayPublishQuery.data?.config?.enabled}
       >
         {iosProfileSyncAvailable &&
           storedIosSigning.export_method === 'ad_hoc' && (
@@ -492,6 +518,12 @@ function EditPipelinePage() {
                 <p className="text-sm text-muted-foreground">
                   Loading devices...
                 </p>
+              ) : iosDevicesQuery.isError ? (
+                <CollectionError
+                  title="Failed to load registered devices"
+                  description={iosDevicesQuery.error.message}
+                  onRetry={() => void iosDevicesQuery.refetch()}
+                />
               ) : iosDevicesQuery.data?.devices.length ? (
                 <IosDeviceTable devices={iosDevicesQuery.data.devices} />
               ) : (

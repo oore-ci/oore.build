@@ -71,20 +71,31 @@ export function applyArgs(base: string, args: Array<string>): string {
   return `${base} ${args.join(' ')}`
 }
 
+/**
+ * The platform build commands a run executes, mirroring the runner. With
+ * `playBundle` (Google Play upload on), the default Android build also makes
+ * an App Bundle, because Play does not accept APKs.
+ */
 export function previewPlatformCommands(
   data: PipelineFormValues,
+  { playBundle = false }: { playBundle?: boolean } = {},
 ): Array<string> {
   const platforms = selectedPlatforms(data)
   const commands: Array<string> = []
   for (const platform of platforms) {
     if (platform === 'android') {
-      commands.push(
-        data.android_command_override?.trim() ||
+      const override = data.android_command_override?.trim()
+      const args = parseMultiline(data.android_build_args)
+      commands.push(override || applyArgs('flutter build apk --release', args))
+      if (playBundle && !override) {
+        commands.push(
           applyArgs(
-            'flutter build apk --release',
-            parseMultiline(data.android_build_args),
+            'flutter build appbundle --release',
+            // `--split-per-abi` is APK-only; the runner drops it too.
+            args.filter((arg) => arg !== '--split-per-abi'),
           ),
-      )
+        )
+      }
     }
     if (platform === 'ios') {
       commands.push(
@@ -106,6 +117,11 @@ export function previewPlatformCommands(
     }
   }
   return commands.filter(Boolean)
+}
+
+/** Whether an Android build command produces an App Bundle. */
+export function buildsAppBundle(command: string): boolean {
+  return /\bflutter\s+build\s+appbundle\b/.test(command)
 }
 
 export function defaultArtifactPatterns(

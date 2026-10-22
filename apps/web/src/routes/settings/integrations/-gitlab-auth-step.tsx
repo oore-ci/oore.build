@@ -18,7 +18,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
 
 type GitLabAuthStepProps = {
   form: UseFormReturn<GitLabSetupForm>
@@ -35,7 +34,6 @@ export function GitLabAuthStep({
 }: GitLabAuthStepProps) {
   return (
     <section className="space-y-4">
-      <Separator />
       <div>
         <p className="text-sm font-medium">2. Authenticate</p>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -57,7 +55,7 @@ export function GitLabAuthStep({
               }}
             >
               <FormControl>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
               </FormControl>
@@ -100,10 +98,16 @@ export function GitLabAuthStep({
                     <code>api</code> instead of <code>read_api</code>.
                   </span>,
                   <span key={2}>
-                    Create it at{' '}
-                    <code>
-                      {hostUrl}/-/user_settings/personal_access_tokens
-                    </code>
+                    Create it in{' '}
+                    <a
+                      href={`${hostUrl}/-/user_settings/personal_access_tokens`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium underline underline-offset-4"
+                    >
+                      GitLab access token settings
+                      <span className="sr-only"> (opens in a new tab)</span>
+                    </a>
                     .
                   </span>,
                 ]}

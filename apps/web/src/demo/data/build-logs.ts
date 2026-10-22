@@ -161,11 +161,16 @@ function withStepMarkers(
       stream: 'stdout',
     },
     ...step.logs.map((log) => ({ ...log, sequence: sequence++ })),
-    {
-      sequence: sequence++,
-      content: `[oore-step] ${JSON.stringify({ event: 'end', name: step.name, status: step.status })}`,
-      stream: 'stdout',
-    },
+    // A running step has no end marker yet.
+    ...(step.status === 'running'
+      ? []
+      : [
+          {
+            sequence: sequence++,
+            content: `[oore-step] ${JSON.stringify({ event: 'end', name: step.name, status: step.status })}`,
+            stream: 'stdout' as const,
+          },
+        ]),
   ])
 }
 
@@ -193,6 +198,27 @@ const succeededBuildLogsWithSteps = withStepMarkers([
     command: 'flutter test --coverage',
     status: 'succeeded',
     logs: flutterBuildLogs.slice(27),
+  },
+])
+
+const runningBuildLogsWithSteps = withStepMarkers([
+  {
+    name: 'flutter pub get',
+    command: 'flutter pub get',
+    status: 'succeeded',
+    logs: flutterBuildLogs.slice(0, 9),
+  },
+  {
+    name: 'flutter analyze',
+    command: 'flutter analyze --no-fatal-infos',
+    status: 'succeeded',
+    logs: flutterBuildLogs.slice(9, 16),
+  },
+  {
+    name: 'flutter build apk --release',
+    command: 'flutter build apk --release --split-per-abi',
+    status: 'running',
+    logs: flutterBuildLogs.slice(16, 20),
   },
 ])
 
@@ -267,7 +293,7 @@ const failedPublishLogs = withStepMarkers([
 
 export const demoBuildLogs = {
   [BUILD_IDS.failedPublish1]: failedPublishLogs,
-  [BUILD_IDS.running1]: flutterBuildLogs.slice(0, 20), // in-progress
+  [BUILD_IDS.running1]: runningBuildLogsWithSteps,
   [BUILD_IDS.running2]: flutterBuildLogs.slice(0, 8),
   [BUILD_IDS.succeeded1]: succeededBuildLogsWithSteps,
   [BUILD_IDS.succeeded2]: flutterBuildLogs.slice(0, 8).concat([

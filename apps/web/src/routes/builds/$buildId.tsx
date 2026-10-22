@@ -18,12 +18,12 @@ interface BuildDetailSearch {
 export const Route = createFileRoute('/builds/$buildId')({
   staticData: {
     breadcrumb: {
-      title: 'Details',
+      title: 'Build',
     },
   },
-  beforeLoad: ({ search }) => {
+  beforeLoad: ({ search, ...context }) => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireAuthOrRedirect(instance.id, context)
     const isQaViewer = useAuthStore.getState().user?.role === 'qa_viewer'
     if (search.install || isQaViewer) {
       void import('@/components/build-details/artifact-install-page')

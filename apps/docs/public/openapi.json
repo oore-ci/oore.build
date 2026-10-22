@@ -1844,7 +1844,7 @@
           "Builds"
         ],
         "summary": "List builds",
-        "description": "Returns builds, optionally filtered by project, pipeline, or status.",
+        "description": "Returns builds, optionally filtered by project, pipeline, status, or branch, or searched with `q`.",
         "operationId": "list_builds",
         "parameters": [
           {
@@ -1889,6 +1889,24 @@
             "name": "status",
             "in": "query",
             "description": "Filter by one status or up to 9 comma-separated statuses",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "branch",
+            "in": "query",
+            "description": "Filter by exact branch name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search builds, case-insensitively, by build number (with or without #), part of the branch, the start of the commit SHA, or part of the pipeline or project name. At most 200 characters.",
             "required": false,
             "schema": {
               "type": "string"
@@ -4895,6 +4913,84 @@
         ]
       }
     },
+    "/v1/pipelines/{pipeline_id}/publish/google-play/test-credentials": {
+      "post": {
+        "tags": [
+          "Pipeline Publishing"
+        ],
+        "summary": "Test Google Play credentials",
+        "description": "Requires the manage pipelines project permission. Exchanges the named\nservice account key for a token, then opens and discards a Play edit\nfor the app, so nothing changes in Play Console. A rejected key or\nmissing Play Console access is reported with `ok: false`.",
+        "operationId": "test_pipeline_google_play_credentials",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GooglePlayCredentialsTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Check result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GooglePlayCredentialsTestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/pipelines/{pipeline_id}/secrets": {
       "get": {
         "tags": [
@@ -5119,6 +5215,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "description": "Delete even when Google Play publishing uses the secret",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -5144,6 +5249,16 @@
           },
           "404": {
             "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A pipeline uses the secret as its Google Play service account",
             "content": {
               "application/json": {
                 "schema": {
@@ -5573,7 +5688,7 @@
             }
           },
           "409": {
-            "description": "Project source is not configured or resolvable",
+            "description": "Project source is not configured or resolvable, or the Google Play service account secret is missing",
             "content": {
               "application/json": {
                 "schema": {
@@ -6559,6 +6674,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "description": "Delete even when Google Play publishing uses the secret",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -6584,6 +6708,16 @@
           },
           "404": {
             "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A pipeline uses the secret as its Google Play service account",
             "content": {
               "application/json": {
                 "schema": {
@@ -9303,6 +9437,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "description": "Delete even when Google Play publishing uses the secret",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -9328,6 +9471,16 @@
           },
           "404": {
             "description": "Secret not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A pipeline uses the secret as its Google Play service account",
             "content": {
               "application/json": {
                 "schema": {
@@ -11095,7 +11248,7 @@
           "Releases"
         ],
         "summary": "Refresh store vitals",
-        "description": "Reads the stores now for the caller's apps, for example right after\ngranting a missing permission, and returns the fresh copy. One refresh\nruns at a time, at most every 30 seconds.",
+        "description": "Asks the daemon to read the stores now for the caller's apps, for\nexample right after granting a missing permission. Waits up to 20\nseconds for the reads and returns what has been read by then. Apps read\nin the last 30 seconds are not read again.",
         "operationId": "refresh_store_vitals",
         "responses": {
           "200": {
@@ -11104,16 +11257,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StoreVitalsResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "A refresh is running or just ran",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -12233,6 +12376,15 @@
               "type": "string"
             },
             "description": "Trigger events that need approval: `push`, `pull_request`,\n`tag_push`, `manual` or `schedule`. Empty means every build."
+          },
+          "expires_after_hours": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Hours a build waits for a decision before it is canceled. Defaults\nto 168 (7 days).",
+            "minimum": 0
           },
           "required": {
             "type": "boolean"
@@ -14711,6 +14863,62 @@
           }
         }
       },
+      "GooglePlayCredentialsTestRequest": {
+        "type": "object",
+        "description": "Which service account key to check against Google Play. The values come\nfrom the form, so a key can be checked before the settings are saved.",
+        "required": [
+          "service_account_secret"
+        ],
+        "properties": {
+          "package_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The app to open. When omitted, the saved expected package is used,\nthen the package of the pipeline's latest Google Play release."
+          },
+          "service_account_secret": {
+            "type": "string",
+            "description": "Name of the secret holding the service account JSON key."
+          }
+        }
+      },
+      "GooglePlayCredentialsTestResponse": {
+        "type": "object",
+        "description": "Outcome of a Google Play credentials check. A failed check is a normal\nanswer, with Google's reason in `message`, not an HTTP error.",
+        "required": [
+          "ok",
+          "message",
+          "checked_at"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "message": {
+            "type": "string",
+            "description": "What passed, or the exact failure."
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "package_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The app the check opened, when one was known."
+          },
+          "service_account_email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The key's `client_email`, when the secret is a service account key."
+          }
+        }
+      },
       "GooglePlayPublishConfig": {
         "type": "object",
         "description": "Per-pipeline Google Play upload settings. Credentials are referenced by\nsecret name and never stored here.",
@@ -14927,6 +15135,21 @@
           },
           "status": {
             "type": "string"
+          },
+          "status_checked_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When Oore last checked the source's credentials."
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the source has its current status: `expired`, `rejected` or\n`refresh_failed` when credentials stopped working."
           },
           "updated_at": {
             "type": "integer",
@@ -15815,9 +16038,27 @@
             ],
             "description": "Project this channel is scoped to. Absent means the channel receives\nevents from every project, plus instance-wide events such as runner\noffline."
           },
+          "smtp_summary": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SmtpConfigSummary",
+                "description": "SMTP settings without the password (email only). Returned when\nreading one channel."
+              }
+            ]
+          },
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          },
+          "url_host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Host of the configured URL, so operators can tell which endpoint\nreceives alerts. The full URL can carry a token and is never exposed.\nReturned when reading one channel."
           }
         }
       },
@@ -18893,6 +19134,43 @@
             "type": "string"
           },
           "password": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tls_mode": {
+            "$ref": "#/components/schemas/SmtpTlsMode"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "SmtpConfigSummary": {
+        "type": "object",
+        "description": "The SMTP settings an operator can read back. The password is never\nreturned.",
+        "required": [
+          "host",
+          "port",
+          "username",
+          "tls_mode",
+          "from_address",
+          "recipients"
+        ],
+        "properties": {
+          "from_address": {
+            "type": "string"
+          },
+          "host": {
             "type": "string"
           },
           "port": {

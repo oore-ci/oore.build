@@ -5,9 +5,9 @@ description: 'Upload a signed App Bundle to a Google Play track with a staged ro
 ---
 
 Turn on Google Play publishing for a pipeline so a successful Android build
-uploads its signed App Bundle to the track you choose. The runner makes every
-Google Play call from its own host, so the service account key never leaves
-the machine that built the app.
+uploads its signed App Bundle to the track you choose. The runner that built
+the app uploads it from its own host, so the bundle never passes through the
+daemon.
 
 ## What you need
 
@@ -20,7 +20,8 @@ the machine that built the app.
 - A Google Cloud service account with a JSON key, invited in Play Console
   under **Users and permissions** with release permissions for the app.
 - Outbound HTTPS from the runner host to `oauth2.googleapis.com` and
-  `androidpublisher.googleapis.com`.
+  `androidpublisher.googleapis.com`. The daemon host needs the same for
+  credential checks and rollout controls.
 
 ## 1. Store the service account key as a secret
 
@@ -83,7 +84,32 @@ the named secret exists in a scope this pipeline can see.
 
 Release notes longer than Play's 500-character limit are shortened.
 
-## 3. Run a build
+## 3. Test the credentials
+
+On the pipeline's **Publishing** tab, select **Test credentials** under
+**Credentials** to check the key without running a build. The daemon
+exchanges the key for a token, then opens a Play edit for the app and discards
+it, which needs the same Play Console access as an upload and changes
+nothing. A failure shows Google's reason, such as a rejected key or a service
+account that is not invited for the app.
+
+The check opens the app named in the **Expected package** field. When that is
+empty, it uses the saved `package_name`, then the package of the pipeline's
+latest Google Play release. From the API, use the
+[Test Google Play credentials](/openapi/operations/test_pipeline_google_play_credentials)
+operation:
+
+```bash
+curl -X POST "$OORE_URL/v1/pipelines/$PIPELINE_ID/publish/google-play/test-credentials" \
+  -H "Authorization: Bearer $OORE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"service_account_secret": "PLAY_SERVICE_ACCOUNT", "package_name": "com.example.app"}'
+```
+
+The response has `ok`, a `message` with what passed or the exact failure, and
+the key's `service_account_email`.
+
+## 4. Run a build
 
 After the build, signing and artifact steps succeed, the runner adds a
 `publish-play` step that:

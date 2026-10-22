@@ -157,6 +157,27 @@ export const buildHandlers = [
     const branch = url.searchParams.get('branch')
     if (branch) builds = builds.filter((b) => b.branch === branch)
 
+    // Mirrors the daemon's `q`: build number, branch, commit prefix, pipeline
+    // or project name.
+    const q = url.searchParams.get('q')?.trim().toLowerCase()
+    if (q) {
+      const number = /^#?\d+$/.test(q) ? Number(q.replace('#', '')) : null
+      builds = builds.filter(
+        (build) =>
+          build.build_number === number ||
+          build.branch?.toLowerCase().includes(q) ||
+          build.commit_sha?.toLowerCase().startsWith(q) ||
+          demoState.pipelines
+            .find((pipeline) => pipeline.id === build.pipeline_id)
+            ?.name.toLowerCase()
+            .includes(q) ||
+          demoState.projects
+            .find((project) => project.id === build.project_id)
+            ?.name.toLowerCase()
+            .includes(q),
+      )
+    }
+
     const sort = url.searchParams.get('sort')
     const direction = url.searchParams.get('direction') === 'asc' ? 1 : -1
     builds.sort((left, right) => {

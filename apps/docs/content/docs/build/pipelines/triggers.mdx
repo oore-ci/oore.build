@@ -85,6 +85,22 @@ uses the pipeline's current timeout.
 `tag_push`, `manual` and `schedule`. An empty list gates every build. A re-run
 of a gated build is gated again.
 
+A build that nobody approves or rejects is canceled after 7 days with the
+reason "approval request expired". Set `expires_after_hours` (1 to 8760) to
+change the window:
+
+```json
+{
+  "approval": {
+    "required": true,
+    "events": ["schedule"],
+    "expires_after_hours": 24
+  }
+}
+```
+
+A waiting build that is canceled or superseded stops waiting for approval.
+
 Only project maintainers, instance admins and the instance owner can change
 the approval policy. To approve or reject a waiting build, see
 [Approve a build](/build/run/approve).

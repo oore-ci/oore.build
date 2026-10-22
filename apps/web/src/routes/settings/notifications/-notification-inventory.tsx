@@ -2,7 +2,8 @@ import { useMemo } from 'react'
 import { Link } from '@tanstack/react-router'
 
 import type { NotificationChannel } from '@oore/client/models'
-import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
+import { relativeTime } from '@/lib/format-utils'
+import { notificationEventLabel } from './-notification-form'
 import { enabledStatus } from '@/lib/status-variants'
 import { StatusBadge } from '@/components/status-badge'
 import {
@@ -45,9 +46,6 @@ function channelIdentity(channel: NotificationChannel) {
     >
       <span className="block truncate font-medium group-hover:underline">
         {channel.name}
-      </span>
-      <span className="block truncate font-mono text-[11px] text-muted-foreground">
-        {channel.id.slice(0, 8)}
       </span>
     </Link>
   )
@@ -100,7 +98,7 @@ function getNotificationColumns({
       header: 'Events',
       cell: ({ row }) =>
         row.original.events.length > 0
-          ? row.original.events.map(formatEnumLabel).join(', ')
+          ? row.original.events.map(notificationEventLabel).join(', ')
           : 'All events',
       enableSorting: false,
     },
@@ -116,6 +114,7 @@ function getNotificationColumns({
       header: () => <span className="sr-only">Actions</span>,
       cell: ({ row }) => (
         <ChannelActions
+          name={row.original.name}
           pending={pending}
           onDelete={() => onDelete(row.original)}
           onTest={() => onTest(row.original)}
@@ -190,6 +189,7 @@ export function NotificationInventory({
           placeholder: 'Search channels',
         }}
         pagination={{ onPageChange, page, pageSize, total }}
+        isLoading={isLoading}
         emptyMessage={isLoading ? 'Loading notification channels…' : undefined}
       />
     </section>

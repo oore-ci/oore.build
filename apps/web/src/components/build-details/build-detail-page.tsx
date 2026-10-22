@@ -2,21 +2,27 @@ import { lazy, Suspense, useMemo, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  ArrowDown01Icon,
+  Download04Icon,
   InformationCircleIcon,
+  Notification03Icon,
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from '@/lib/toast'
 
 import { ArtifactsPanel } from './artifacts-panel'
-import { AppOutputs } from './app-outputs'
-import { buildStateDescription } from '@/lib/build-state-description'
+import { BuildStateAlert } from './build-state-alert'
+import { buildStateSummary } from '@/lib/build-state-description'
+import { artifactInstallReadiness } from '@/lib/artifact-install'
 import { retryStepLabel } from '@/lib/build-steps'
-import { BuildSummary } from './build-summary'
+import { BuildSummary, buildSourceRef } from './build-summary'
 import { EventTimeline } from './event-timeline'
 import { TestsPanel } from './tests-panel'
-import type { BuildLogChunk } from '@oore/client/models'
-import { useBuildNotification } from '@/hooks/use-build-notification'
-import { useIsBelowBreakpoint } from '@/hooks/use-mobile'
+import type { BuildLogChunk, StepResult } from '@oore/client/models'
+import {
+  useBuildNotification,
+  useNotificationPermission,
+} from '@/hooks/use-build-notification'
 import {
   isTerminalStatus,
   useArtifacts,
@@ -40,14 +46,35 @@ import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
 import { isOoreApiError } from '@oore/client/client'
 import { PageMeta } from '@/lib/seo'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
+import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
 import { StatusBadge } from '@/components/status-badge'
-import { cn } from '@/lib/utils'
 import PageHeader from '@/components/page-header'
+import { ResumeRunnersButton } from '@/components/settings/direct-runner-policy-panel'
 import PageLayout from '@/components/page-layout'
+import { NotFoundState } from '@/components/root-route-boundaries'
 import TerminalLogViewer from '@/components/terminal-log-viewer'
+import {
+  currentStepName,
+  findFailureLine,
+  groupLogs,
+} from '@/components/terminal-log-viewer/log-model'
+import type { LogFocusRequest } from '@/components/terminal-log-viewer/types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTime } from '@/hooks/use-time'
@@ -59,6 +86,21 @@ const CancelBuildDialog = lazy(loadCancelBuildDialog)
 const loadRejectBuildDialog = () => import('./reject-build-dialog')
 const RejectBuildDialog = lazy(loadRejectBuildDialog)
 
+const NO_STEP_RESULTS: Array<StepResult> = []
+
+function missingTabMessage(
+  tab: string | number,
+  shownTab: string | number | null,
+) {
+  const reason =
+    tab === 'tests'
+      ? 'This build has no test results'
+      : tab === 'release'
+        ? 'This build has not been sent to a store'
+        : `This build has no “${tab}” view`
+  return `${reason}, so ${shownTab === 'tests' ? 'Tests' : 'Logs'} is shown instead.`
+}
+
 export function BuildDetailPage({
   buildId,
   initialTab,
@@ -68,9 +110,7 @@ export function BuildDetailPage({
   initialTab?: string
   selectedReleaseId?: string
 }) {
-  const time = useTime()
   const navigate = useNavigate()
-  const usesTabbedArtifacts = useIsBelowBreakpoint(1280)
   const [
     canTriggerBuildGlobally,
     canCancelBuildGlobally,
@@ -106,6 +146,11 @@ export function BuildDetailPage({
     hasProjectPermission(projectRole, 'artifacts:write')
   const buildStatus = data?.build.status
   const isTerminal = buildStatus ? isTerminalStatus(buildStatus) : false
+  // Unfinished builds tick every second for their duration; finished builds
+  // only refresh relative times once a minute.
+  const nowSeconds = useTime((now) =>
+    isTerminal ? Math.floor(now / 60_000) * 60 : Math.floor(now / 1000),
+  )
   const artifactsQuery = useArtifacts(buildId, {
     refetchInterval: isTerminal ? false : 3000,
   })
@@ -116,50 +161,98 @@ export function BuildDetailPage({
   const approveMutation = useBuildApprovalDecision('approve')
   const rejectMutation = useBuildApprovalDecision('reject')
   const [rejectOpen, setRejectOpen] = useState(false)
-  const [chosenTab, setActiveTab] = useState<string | number | null>(
-    initialTab ?? null,
-  )
+  const [chosenTab, setActiveTab] = useState<string | number | null>(null)
+  const [logFocus, setLogFocus] = useState<LogFocusRequest | null>(null)
   const testsQuery = useBuildTests(buildId, {
     refetchInterval: isTerminal ? false : 5000,
   })
   const testSummary = testsQuery.data?.summary
   const hasTestsTab =
-    !!testSummary || testsQuery.isError || initialTab === 'tests'
-  // A failed build with failing tests opens on Tests until the user picks a tab.
-  const activeTab =
-    chosenTab ??
-    (buildStatus === 'failed' && testSummary?.failed ? 'tests' : 'logs')
+    !!testSummary ||
+    testsQuery.isError ||
+    (initialTab === 'tests' && testsQuery.isLoading)
+  // The daemon records a release while the build is still running, so a build
+  // that failed after publishing still has a live rollout to watch or halt.
   const releasesQuery = useReleases(
     { build_id: buildId },
-    { enabled: buildStatus === 'succeeded' },
+    { enabled: !!buildStatus, pollWhenIdle: !!buildStatus && !isTerminal },
   )
   const releases = releasesQuery.data?.releases ?? []
   const hasReleaseTab =
-    releases.length > 0 || releasesQuery.isError || initialTab === 'release'
+    releases.length > 0 ||
+    releasesQuery.isError ||
+    (initialTab === 'release' && releasesQuery.isLoading)
+  const availableTabs = new Set<string | number>([
+    'logs',
+    'timeline',
+    'artifacts',
+  ])
+  if (hasTestsTab) availableTabs.add('tests')
+  if (hasReleaseTab) availableTabs.add('release')
+  const requestedTab = chosenTab ?? initialTab ?? null
+  // A finished build with failing tests opens on Tests until the user picks a tab.
+  // Decide once the build and its test results have loaded, then keep it, so
+  // the page never jumps from Logs to Tests under the user.
+  const settledDefaultTab = !buildStatus
+    ? null
+    : !isTerminal
+      ? 'logs'
+      : testsQuery.isPending
+        ? null
+        : testSummary?.failed
+          ? 'tests'
+          : 'logs'
+  const [defaultTab, setDefaultTab] = useState<string | null>(null)
+  if (defaultTab === null && settledDefaultTab !== null) {
+    setDefaultTab(settledDefaultTab)
+  }
+  const activeTab =
+    requestedTab !== null && availableTabs.has(requestedTab)
+      ? requestedTab
+      : (defaultTab ?? settledDefaultTab)
+  const missingTab =
+    chosenTab === null && initialTab && !availableTabs.has(initialTab)
+      ? initialTab
+      : null
 
   const label = data?.build.build_number
     ? `Build #${data.build.build_number}`
     : 'Build Details'
 
   useBuildNotification(data?.build, isTerminal)
+  const notifications = useNotificationPermission()
 
   const streamEnabled = !isTerminal
-  const { logs: streamLogs, isStreaming } = useLogStream(
-    buildId,
-    streamEnabled,
-    {
-      onDone: () => {
-        void refetchBuild()
-        void refetchArtifacts()
-      },
+  const {
+    logs: streamLogs,
+    isStreaming,
+    isPolling,
+    reconnect,
+  } = useLogStream(buildId, streamEnabled, {
+    onDone: () => {
+      void refetchBuild()
+      void refetchArtifacts()
     },
-  )
+  })
   const fullLogsQuery = useBuildLogs(buildId, { enabled: isTerminal })
   const { data: fullLogsData } = fullLogsQuery
 
   const mergedLogs: Array<BuildLogChunk> = useMemo(() => {
     return mergeBuildLogSnapshots(streamLogs, fullLogsData?.logs ?? [])
   }, [streamLogs, fullLogsData?.logs])
+  const stepResults = data?.build.step_results
+  const failureLine = useMemo(() => {
+    if (buildStatus !== 'failed' && buildStatus !== 'timed_out') return null
+    const { stepGroups, allVisibleLogs } = groupLogs(
+      mergedLogs,
+      stepResults ?? [],
+    )
+    return findFailureLine(stepGroups, allVisibleLogs)
+  }, [buildStatus, mergedLogs, stepResults])
+  const runningStep = useMemo(
+    () => (buildStatus === 'running' ? currentStepName(mergedLogs) : null),
+    [buildStatus, mergedLogs],
+  )
 
   function handleApprove() {
     approveMutation.mutate(
@@ -187,11 +280,11 @@ export function BuildDetailPage({
   function handleCancel() {
     cancelMutation.mutate(buildId, {
       onSuccess: () => {
-        toast.success('Build canceled')
+        toast.success('Build stopped')
         setCancelOpen(false)
       },
       onError: (err) => {
-        toast.error(`Failed to cancel: ${err.message}`)
+        toast.error(`Could not stop the build: ${err.message}`)
       },
     })
   }
@@ -208,35 +301,43 @@ export function BuildDetailPage({
   }
 
   if (error) {
-    const notFound = isOoreApiError(error) && error.status === 404
+    if (isOoreApiError(error) && error.status === 404) {
+      return (
+        <PageLayout width="full">
+          <PageMeta title="Build not found" noindex />
+          <NotFoundState
+            title="Build not found"
+            description="This build was deleted, expired, or the link is wrong."
+            backTo="/builds"
+            backLabel="Back to builds"
+          />
+        </PageLayout>
+      )
+    }
+
     return (
       <PageLayout width="full">
         <PageMeta title={label} noindex />
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              {notFound
-                ? 'This build was not found or is no longer available.'
-                : `Failed to load build: ${error.message}`}
-            </span>
+            <span>Failed to load build: {error.message}</span>
             <span className="flex gap-2">
               <Button
                 variant="outline"
                 size="sm"
                 render={<Link to="/builds" />}
+                nativeButton={false}
               >
                 Back to builds
               </Button>
-              {!notFound ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void refetchBuild()}
-                >
-                  Retry
-                </Button>
-              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void refetchBuild()}
+              >
+                Retry
+              </Button>
             </span>
           </AlertDescription>
         </Alert>
@@ -256,18 +357,82 @@ export function BuildDetailPage({
   // A maintainer rejects rather than cancels a build waiting for approval.
   const canCancel = !isTerminal && canCancelBuild && !canDecideApproval
   const duration = build.started_at
-    ? (build.finished_at ?? Math.floor(time / 1000)) - build.started_at
+    ? (build.finished_at ?? nowSeconds) - build.started_at
     : null
-  const stateDescription = buildStateDescription(build, events)
+  const stateSummary = buildStateSummary(build, events, {
+    canApprove: canDecideApproval,
+  })
+  const sourceRef = buildSourceRef(build)
+  const approvalDetails = awaitingApproval
+    ? [
+        {
+          label: 'Trigger',
+          value: `${TRIGGER_TYPE_LABELS[build.trigger_type]}${build.trigger_event ? ` · ${formatEnumLabel(build.trigger_event).toLowerCase()}` : ''}`,
+        },
+        ...(build.trigger_actor
+          ? [{ label: 'Requested by', value: build.trigger_actor }]
+          : []),
+        ...(sourceRef
+          ? [
+              {
+                label: build.branch ? 'Branch' : 'Ref',
+                value: <span className="font-mono text-xs">{sourceRef}</span>,
+              },
+            ]
+          : []),
+        ...(build.commit_sha
+          ? [
+              {
+                label: 'Commit',
+                value: (
+                  <span className="font-mono text-xs">
+                    {build.commit_sha.slice(0, 7)}
+                  </span>
+                ),
+              },
+            ]
+          : []),
+        {
+          label: 'Waiting since',
+          value: relativeTime(build.approval?.requested_at ?? build.queued_at),
+        },
+      ]
+    : undefined
+  // A build no runner has started has no log yet; skip the empty workbench.
+  const showLogWorkbench = !!build.started_at || mergedLogs.length > 0
+  const installableApps =
+    build.status === 'succeeded'
+      ? artifacts.filter((artifact) => artifactInstallReadiness(artifact).ready)
+      : []
+  const showTests = () => setActiveTab('tests')
+  const nextStep =
+    build.status === 'failed' || build.status === 'timed_out' ? (
+      firstRetryLabel ? (
+        `The build's artifacts are stored, so once the cause is fixed you can retry the ${firstRetryLabel} without rebuilding.`
+      ) : testSummary?.failed ? (
+        <>
+          {testSummary.failed === 1
+            ? '1 test failed.'
+            : `${testSummary.failed} tests failed.`}{' '}
+          <Button
+            variant="link"
+            size="xs"
+            className="h-auto px-0 align-baseline text-sm text-muted-foreground underline"
+            onClick={showTests}
+          >
+            Open Tests
+          </Button>
+        </>
+      ) : (
+        'Fix the cause, then re-run the build.'
+      )
+    ) : (build.status === 'canceled' || build.status === 'expired') &&
+      canTriggerBuild ? (
+      'Re-run it to start a new build.'
+    ) : null
 
   return (
-    <PageLayout
-      width="full"
-      className={cn(
-        usesTabbedArtifacts &&
-          'flex min-h-0 flex-1 flex-col gap-6 space-y-0 overflow-hidden pb-6',
-      )}
-    >
+    <PageLayout width="full" className="flex-1">
       <PageMeta title={label} noindex />
       <PageHeader
         title={`Build #${build.build_number}`}
@@ -278,19 +443,88 @@ export function BuildDetailPage({
         }
         meta={
           <>
-            <StatusBadge kind="build" value={build.status} />
-            <Badge variant="outline">
-              {TRIGGER_TYPE_LABELS[build.trigger_type]}
-            </Badge>
-            {build.approval ? (
-              <StatusBadge kind="approval" value={build.approval.state} />
-            ) : null}
-            <span aria-hidden className="h-3 w-px bg-border" />
+            <div className="mr-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <StatusBadge
+                kind="build"
+                value={build.status}
+                className="h-6 px-2.5 text-[13px]"
+              />
+              {build.approval ? (
+                <StatusBadge kind="approval" value={build.approval.state} />
+              ) : null}
+              {runningStep ? (
+                <span className="min-w-0 truncate text-sm text-foreground">
+                  {runningStep}
+                </span>
+              ) : null}
+              <span>
+                {TRIGGER_TYPE_LABELS[build.trigger_type]}
+                {build.trigger_event
+                  ? ` · ${formatEnumLabel(build.trigger_event).toLowerCase()}`
+                  : ''}
+              </span>
+            </div>
             <BuildSummary build={build} duration={duration} />
           </>
         }
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {!isTerminal && notifications.permission === 'default' ? (
+              <Button variant="ghost" size="sm" onClick={notifications.request}>
+                <HugeiconsIcon icon={Notification03Icon} size={14} />
+                Notify me when done
+              </Button>
+            ) : null}
+            {installableApps.length === 1 ? (
+              <Button
+                size="sm"
+                render={
+                  <Link
+                    to="/builds/$buildId"
+                    params={{ buildId: build.id }}
+                    search={{ install: installableApps[0].id }}
+                  />
+                }
+                nativeButton={false}
+              >
+                <HugeiconsIcon icon={Download04Icon} size={14} />
+                Install
+              </Button>
+            ) : installableApps.length > 1 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger render={<Button size="sm" />}>
+                  <HugeiconsIcon icon={Download04Icon} size={14} />
+                  Install
+                  <HugeiconsIcon
+                    icon={ArrowDown01Icon}
+                    size={14}
+                    data-icon="inline-end"
+                  />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-auto">
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>Apps to install</DropdownMenuLabel>
+                    {installableApps.map((artifact) => (
+                      <DropdownMenuItem
+                        key={artifact.id}
+                        render={
+                          <Link
+                            to="/builds/$buildId"
+                            params={{ buildId: build.id }}
+                            search={{ install: artifact.id }}
+                          />
+                        }
+                      >
+                        <span className="text-muted-foreground">
+                          {artifact.artifact_type === 'apk' ? 'Android' : 'iOS'}
+                        </span>
+                        {artifact.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
             {retryableSteps.map((step) => (
               <Button
                 key={step}
@@ -375,12 +609,12 @@ export function BuildDetailPage({
             ) : null}
             {canCancel ? (
               <Button
-                variant="destructive"
+                variant="outline"
                 size="sm"
                 onClick={() => setCancelOpen(true)}
                 disabled={cancelMutation.isPending}
               >
-                {cancelMutation.isPending ? 'Canceling...' : 'Cancel build'}
+                {cancelMutation.isPending ? 'Stopping...' : 'Stop build'}
               </Button>
             ) : null}
           </div>
@@ -393,21 +627,23 @@ export function BuildDetailPage({
           <AlertDescription>
             {build.runner_policy_block_reason === 'instance_paused' ? (
               canWriteInstanceSettings ? (
-                <>
-                  This build is waiting because the Direct macOS runner is
-                  paused. Resume it in{' '}
-                  <Link
-                    to="/settings/preferences"
-                    className="font-medium underline underline-offset-4"
-                  >
-                    Preferences
-                  </Link>
-                  .
-                </>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span>
+                    This build is waiting because runners are paused on{' '}
+                    <Link
+                      to="/settings/runners"
+                      className="font-medium underline underline-offset-4"
+                    >
+                      Runners
+                    </Link>
+                    .
+                  </span>
+                  <ResumeRunnersButton />
+                </div>
               ) : (
                 <>
-                  This build is waiting because the Direct macOS runner is
-                  paused. Ask an owner or admin to resume it.
+                  This build is waiting because runners are paused. Ask an owner
+                  or admin to resume them.
                 </>
               )
             ) : (
@@ -429,66 +665,31 @@ export function BuildDetailPage({
         </Alert>
       ) : null}
 
-      {stateDescription ? (
-        <Alert
-          variant={
-            isTerminal && build.status !== 'succeeded'
-              ? 'destructive'
-              : 'default'
-          }
-        >
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-2">
-            <p role="status">{stateDescription}</p>
-            {isTerminal && build.status !== 'succeeded' ? (
-              <p>
-                {firstRetryLabel
-                  ? `The build's artifacts are stored, so once the cause is fixed you can retry the ${firstRetryLabel} without rebuilding.`
-                  : testSummary?.failed
-                    ? `${testSummary.failed} tests failed. Check Tests and Logs before retrying.`
-                    : 'Check Logs and Timeline before retrying.'}
-              </p>
-            ) : null}
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {build.status === 'succeeded' ? (
-        artifactsQuery.error ? (
-          <Alert>
-            <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
-              Could not load apps.
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void refetchArtifacts()}
-              >
-                Retry
-              </Button>
-            </AlertDescription>
-          </Alert>
-        ) : artifactsQuery.isLoading ? (
-          <Skeleton className="h-32 w-full" />
-        ) : (
-          <AppOutputs
-            artifacts={artifacts}
-            projectName={build.context?.project_name}
-          />
-        )
+      {stateSummary ? (
+        <BuildStateAlert
+          summary={stateSummary}
+          failureLine={failureLine}
+          nextStep={nextStep}
+          details={approvalDetails}
+          onShowFailureLine={() => {
+            if (!failureLine) return
+            setActiveTab('logs')
+            setLogFocus({
+              step: failureLine.step,
+              sequence: failureLine.sequence,
+              key: Date.now(),
+            })
+          }}
+        />
       ) : null}
 
       <Tabs
-        value={
-          !usesTabbedArtifacts && activeTab === 'artifacts' ? 'logs' : activeTab
-        }
+        value={activeTab}
         onValueChange={setActiveTab}
-        className={cn('gap-3', usesTabbedArtifacts && 'min-h-0 flex-1')}
+        className="min-h-0 flex-1 gap-3"
       >
         <TabsList variant="line" aria-label="Build details">
           <TabsTrigger value="logs">Logs</TabsTrigger>
-          <TabsTrigger value="timeline">
-            Timeline{events.length > 0 ? ` (${events.length})` : ''}
-          </TabsTrigger>
           {hasTestsTab ? (
             <TabsTrigger value="tests">
               Tests
@@ -499,90 +700,92 @@ export function BuildDetailPage({
                   : ''}
             </TabsTrigger>
           ) : null}
-          {usesTabbedArtifacts ? (
-            <TabsTrigger value="artifacts">
-              Artifacts
-              {artifacts.length ? ` (${artifacts.length})` : ''}
-            </TabsTrigger>
-          ) : null}
+          <TabsTrigger value="artifacts">
+            Artifacts{artifacts.length ? ` (${artifacts.length})` : ''}
+          </TabsTrigger>
           {hasReleaseTab ? (
             <TabsTrigger value="release">
               Release{releases.length ? ` (${releases.length})` : ''}
             </TabsTrigger>
           ) : null}
+          <TabsTrigger value="timeline">
+            Timeline{events.length > 0 ? ` (${events.length})` : ''}
+          </TabsTrigger>
         </TabsList>
-        <div
-          className={cn(
-            'grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]',
-            usesTabbedArtifacts && 'min-h-0 flex-1',
+        {missingTab ? (
+          <p className="text-sm text-muted-foreground" role="status">
+            {missingTabMessage(missingTab, activeTab)}
+          </p>
+        ) : null}
+        <TabsContent value="logs" keepMounted className="flex min-h-0 flex-col">
+          {showLogWorkbench ? (
+            <TerminalLogViewer
+              logs={mergedLogs}
+              stepResults={build.step_results ?? NO_STEP_RESULTS}
+              isStreaming={isStreaming && !isTerminal}
+              fillAvailableHeight
+              isLoading={isTerminal && fullLogsQuery.isLoading}
+              logsUnavailable={fullLogsQuery.isError}
+              onRetryLogs={() => void fullLogsQuery.refetch()}
+              isTerminal={isTerminal}
+              buildStatus={build.status}
+              buildNumber={build.build_number}
+              isPolling={isPolling}
+              onReconnect={reconnect}
+              focusRequest={logFocus}
+            />
+          ) : (
+            <Empty className="flex-none border">
+              <EmptyHeader>
+                <EmptyTitle>No logs yet</EmptyTitle>
+                <EmptyDescription>
+                  {build.status === 'expired'
+                    ? 'This build expired before a runner started it, so it has no logs.'
+                    : build.status === 'canceled'
+                      ? 'This build was canceled before a runner started it, so it has no logs.'
+                      : awaitingApproval
+                        ? 'Logs appear here once the build is approved and a runner starts it.'
+                        : 'Logs appear here once a runner starts the build.'}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           )}
-        >
-          <div
-            className={cn('min-w-0', usesTabbedArtifacts && 'h-full min-h-0')}
-          >
-            <TabsContent
-              value="logs"
-              keepMounted
-              className={cn(usesTabbedArtifacts && 'h-full min-h-0')}
-            >
-              <TerminalLogViewer
-                logs={mergedLogs}
-                stepResults={build.step_results ?? []}
-                isStreaming={isStreaming && !isTerminal}
-                fillAvailableHeight={usesTabbedArtifacts}
-                isLoading={isTerminal && fullLogsQuery.isLoading}
-                logsUnavailable={fullLogsQuery.isError}
-                onRetryLogs={() => void fullLogsQuery.refetch()}
-                isTerminal={isTerminal}
-              />
-            </TabsContent>
-            <TabsContent value="timeline">
-              <EventTimeline events={events} />
-            </TabsContent>
-            {hasTestsTab ? (
-              <TabsContent value="tests">
-                <TestsPanel
-                  buildId={build.id}
-                  data={testsQuery.data}
-                  error={testsQuery.error}
-                  isLoading={testsQuery.isLoading}
-                  onRetry={() => void testsQuery.refetch()}
-                />
-              </TabsContent>
-            ) : null}
-            {hasReleaseTab ? (
-              <TabsContent value="release">
-                <ReleasePanel
-                  error={releasesQuery.error}
-                  isLoading={releasesQuery.isLoading}
-                  onRetry={() => void releasesQuery.refetch()}
-                  releases={releases}
-                  selectedReleaseId={selectedReleaseId}
-                />
-              </TabsContent>
-            ) : null}
-            {usesTabbedArtifacts ? (
-              <TabsContent value="artifacts">
-                <ArtifactsPanel
-                  artifacts={artifacts}
-                  isLoading={artifactsQuery.isLoading}
-                  buildStatus={build.status}
-                  canManageShareLinks={canManageShareLinks}
-                />
-              </TabsContent>
-            ) : null}
-          </div>
-          {!usesTabbedArtifacts ? (
-            <aside aria-label="Build output" className="sticky top-6">
-              <ArtifactsPanel
-                artifacts={artifacts}
-                isLoading={artifactsQuery.isLoading}
-                buildStatus={build.status}
-                canManageShareLinks={canManageShareLinks}
-              />
-            </aside>
-          ) : null}
-        </div>
+        </TabsContent>
+        {hasTestsTab ? (
+          <TabsContent value="tests">
+            <TestsPanel
+              buildId={build.id}
+              data={testsQuery.data}
+              error={testsQuery.error}
+              isLoading={testsQuery.isLoading}
+              onRetry={() => void testsQuery.refetch()}
+            />
+          </TabsContent>
+        ) : null}
+        <TabsContent value="artifacts">
+          <ArtifactsPanel
+            artifacts={artifacts}
+            error={artifactsQuery.error}
+            isLoading={artifactsQuery.isLoading}
+            onRetry={() => void refetchArtifacts()}
+            buildStatus={build.status}
+            canManageShareLinks={canManageShareLinks}
+          />
+        </TabsContent>
+        {hasReleaseTab ? (
+          <TabsContent value="release">
+            <ReleasePanel
+              error={releasesQuery.error}
+              isLoading={releasesQuery.isLoading}
+              onRetry={() => void releasesQuery.refetch()}
+              releases={releases}
+              selectedReleaseId={selectedReleaseId}
+            />
+          </TabsContent>
+        ) : null}
+        <TabsContent value="timeline">
+          <EventTimeline events={events} />
+        </TabsContent>
       </Tabs>
 
       {rejectOpen ? (

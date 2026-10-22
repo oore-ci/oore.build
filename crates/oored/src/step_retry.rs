@@ -106,9 +106,70 @@ fn is_terminal(status: &str) -> bool {
     )
 }
 
+/// The terminal statuses as an SQL list.
+const TERMINAL_STATUSES_SQL: &str = "('succeeded', 'failed', 'canceled', 'timed_out', 'expired')";
+
+/// An unfinished retry of `source_build_id` that runs any of `steps`, as its
+/// ID and build number.
+pub(crate) async fn active_retry(
+    pool: &SqlitePool,
+    source_build_id: &str,
+    steps: &[String],
+) -> sqlx::Result<Option<(String, i64)>> {
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT id, build_number FROM builds \
+         WHERE source_build_id = ?1 AND status NOT IN {TERMINAL_STATUSES_SQL} \
+           AND EXISTS ( \
+             SELECT 1 FROM json_each(config_snapshot, '$.retry_steps') step \
+             WHERE step.value IN (SELECT value FROM json_each(?2)) \
+           ) \
+         ORDER BY build_number LIMIT 1"
+    )))
+    .bind(source_build_id)
+    .bind(serde_json::to_string(steps).unwrap_or_else(|_| "[]".to_string()))
+    .fetch_optional(pool)
+    .await
+}
+
+/// Uploads of `source_build_id` that a retry of it has running, queued or
+/// already done, so they must not be retried again.
+async fn steps_taken_by_retries(
+    pool: &SqlitePool,
+    source_build_id: &str,
+) -> sqlx::Result<Vec<String>> {
+    let rows = sqlx::query(
+        "SELECT status, config_snapshot, step_results FROM builds WHERE source_build_id = ?1",
+    )
+    .bind(source_build_id)
+    .fetch_all(pool)
+    .await?;
+    let mut taken = Vec::new();
+    for row in rows {
+        let status: String = row.get("status");
+        if !is_terminal(&status) {
+            let snapshot: Value =
+                serde_json::from_str(&row.get::<String, _>("config_snapshot")).unwrap_or_default();
+            taken.extend(retry_steps_from_snapshot(&snapshot).unwrap_or_default());
+            continue;
+        }
+        let results: Vec<oore_contract::StepResult> = row
+            .get::<Option<String>, _>("step_results")
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default();
+        taken.extend(
+            results
+                .into_iter()
+                .filter(|step| step.status == "succeeded")
+                .map(|step| step.name),
+        );
+    }
+    Ok(taken)
+}
+
 /// Store uploads of `build` that can run again, in run order: the build has
-/// finished with its artifacts stored, the upload did not already succeed,
-/// publishing to that store is on, and the artifact it uploads is stored.
+/// finished with its artifacts stored, the upload did not already succeed
+/// here or in a retry, no retry of it is under way, publishing to that store
+/// is on, and the artifact it uploads is stored.
 pub(crate) async fn retryable_steps(
     pool: &SqlitePool,
     build: &Build,
@@ -126,10 +187,11 @@ pub(crate) async fn retryable_steps(
         return Ok(Vec::new());
     }
 
+    let taken = steps_taken_by_retries(pool, &build.id).await?;
     let mut steps = Vec::new();
     let mut artifacts = None;
     for step in RETRYABLE_BUILD_STEPS {
-        if succeeded(step) {
+        if succeeded(step) || taken.iter().any(|name| name == step) {
             continue;
         }
         let ready = match step {
@@ -159,6 +221,15 @@ pub(crate) async fn retryable_steps(
         }
     }
     Ok(steps)
+}
+
+/// The answer when another retry already runs `step`.
+pub(crate) fn retry_in_progress(step: &str, build_number: i64) -> ApiFailure {
+    api_err(
+        StatusCode::CONFLICT,
+        "retry_in_progress",
+        format!("{step} is already being retried in build #{build_number}"),
+    )
 }
 
 /// `POST /v1/builds/{build_id}/retry-step` — run one store upload of a
@@ -206,6 +277,12 @@ pub async fn retry_build_step(
             ),
         ));
     }
+    let in_progress = active_retry(pool, &build.id, &[step.to_string()])
+        .await
+        .map_err(|e| store_error("Failed to check for a retry in progress", e))?;
+    if let Some((_, build_number)) = in_progress {
+        return Err(retry_in_progress(step, build_number));
+    }
     let retryable = retryable_steps(pool, &build)
         .await
         .map_err(|e| store_error("Failed to check which steps can be retried", e))?;
@@ -214,7 +291,7 @@ pub async fn retry_build_step(
             StatusCode::CONFLICT,
             "step_not_retryable",
             format!(
-                "{step} cannot be retried for this build. It needs the build's stored artifacts, publishing turned on for that store, and an upload that has not already succeeded."
+                "{step} cannot be retried for this build. It needs the build's stored artifacts, publishing turned on for that store, and an upload that has not already succeeded, here or in an earlier retry."
             ),
         ));
     };
@@ -471,6 +548,72 @@ mod tests {
                 "{steps}"
             );
         }
+    }
+
+    async fn insert_retry(pool: &SqlitePool, id: &str, status: &str, step_results: &str) {
+        sqlx::query(
+            "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, \
+             config_snapshot, step_results, source_build_id, queued_at, created_at, updated_at) \
+             VALUES (?1, 'p1', 'pl1', 2, ?2, 'manual', '{\"retry_steps\":[\"publish-play\"]}', ?3, 'b1', 0, 0, 0)",
+        )
+        .bind(id)
+        .bind(status)
+        .bind(step_results)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_upload_is_not_offered_again_while_or_after_a_retry_runs_it() {
+        let steps = serde_json::json!([
+            step("artifacts", "succeeded"),
+            step("publish-play", "failed"),
+        ]);
+        let pool = pool_with_failed_publish(&steps.to_string()).await;
+        store_artifact(&pool, "app-release.aab").await;
+
+        insert_retry(&pool, "b2", "running", "[]").await;
+        assert!(
+            retryable_steps(&pool, &build(&pool).await)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a retry is running"
+        );
+        assert_eq!(
+            active_retry(&pool, "b1", &[PUBLISH_PLAY_STEP.to_string()])
+                .await
+                .unwrap(),
+            Some(("b2".to_string(), 2))
+        );
+
+        // A failed retry leaves the upload retryable.
+        let failed = serde_json::json!([step("publish-play", "failed")]).to_string();
+        sqlx::query("UPDATE builds SET status = 'failed', step_results = ?1 WHERE id = 'b2'")
+            .bind(&failed)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            retryable_steps(&pool, &build(&pool).await).await.unwrap(),
+            vec![PUBLISH_PLAY_STEP.to_string()]
+        );
+
+        // A successful one finishes it for good.
+        let succeeded = serde_json::json!([step("publish-play", "succeeded")]).to_string();
+        sqlx::query("UPDATE builds SET status = 'succeeded', step_results = ?1 WHERE id = 'b2'")
+            .bind(&succeeded)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            retryable_steps(&pool, &build(&pool).await)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a retry already uploaded it"
+        );
     }
 
     #[test]

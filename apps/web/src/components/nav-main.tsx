@@ -30,7 +30,7 @@ interface NavGroup {
   items: Array<NavItem>
 }
 
-const WORKSPACE_ITEMS: Array<NavItem> = [
+export const WORKSPACE_ITEMS: Array<NavItem> = [
   { title: 'Home', to: '/', icon: DashboardSquare02Icon },
   { title: 'Projects', to: '/projects', icon: Folder02Icon },
   { title: 'Builds', to: '/builds', icon: CommandLineIcon },
@@ -69,11 +69,14 @@ export function isSidebarItemActive(pathname: string, to: string): boolean {
   return normalizedPathname === to || normalizedPathname.startsWith(`${to}/`)
 }
 
+/** Builds a runner holds now, counted the way Home's Waiting now card does. */
 function ActiveBuildBadge() {
-  const { data } = useBuilds({ status: 'running', limit: 1 })
+  const { data } = useBuilds({ status: 'assigned,running', limit: 1 })
   const count = data?.total ?? 0
   if (count === 0) return null
-  return <SidebarMenuBadge>{count}</SidebarMenuBadge>
+  return (
+    <SidebarMenuBadge aria-label={`${count} running`}>{count}</SidebarMenuBadge>
+  )
 }
 
 export default function NavMain() {

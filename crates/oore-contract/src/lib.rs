@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 
+pub mod data_paths;
+pub mod install_root;
 pub mod runtime_update_preflight;
 
 // ── Setup state machine ─────────────────────────────────────────
@@ -903,6 +905,13 @@ pub struct Integration {
     pub host_url: String,
     pub auth_mode: String,
     pub status: String,
+    /// Why the source has its current status: `expired`, `rejected` or
+    /// `refresh_failed` when credentials stopped working.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_reason: Option<String>,
+    /// When Oore last checked the source's credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_checked_at: Option<i64>,
     pub display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
@@ -1349,11 +1358,17 @@ pub struct ApprovalPolicy {
     /// `tag_push`, `manual` or `schedule`. Empty means every build.
     #[serde(default)]
     pub events: Vec<String>,
+    /// Hours a build waits for a decision before it is canceled. Defaults
+    /// to 168 (7 days).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_after_hours: Option<u32>,
 }
 
 impl ApprovalPolicy {
     pub const EVENTS: &'static [&'static str] =
         &["push", "pull_request", "tag_push", "manual", "schedule"];
+    pub const DEFAULT_EXPIRES_AFTER_HOURS: u32 = 7 * 24;
+    pub const MAX_EXPIRES_AFTER_HOURS: u32 = 365 * 24;
 
     /// Whether a build started by `event` (a canonical trigger event, or
     /// `manual` / `schedule`) must wait for approval.
@@ -3806,10 +3821,13 @@ pub fn validate_google_play_publish_config(config: &GooglePlayPublishConfig) -> 
             errors.push("a draft release cannot have a staged rollout".to_string());
         }
     }
-    if let Some(policy) = &config.rollout_policy
-        && let Err(error) = policy.validate()
-    {
-        errors.push(error);
+    if let Some(policy) = &config.rollout_policy {
+        if let Err(error) = policy.validate() {
+            errors.push(error);
+        }
+        if let Err(error) = policy.validate_gate() {
+            errors.push(error);
+        }
     }
     if config.release_notes_locale.trim().is_empty() || config.release_notes_locale.len() > 16 {
         errors.push("release_notes_locale must be a Play language code such as en-US".to_string());
@@ -3844,6 +3862,34 @@ pub struct PipelineGooglePlayPublishResponse {
     pub service_account_secret_present: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
+}
+
+/// Which service account key to check against Google Play. The values come
+/// from the form, so a key can be checked before the settings are saved.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GooglePlayCredentialsTestRequest {
+    /// Name of the secret holding the service account JSON key.
+    pub service_account_secret: String,
+    /// The app to open. When omitted, the saved expected package is used,
+    /// then the package of the pipeline's latest Google Play release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+}
+
+/// Outcome of a Google Play credentials check. A failed check is a normal
+/// answer, with Google's reason in `message`, not an HTTP error.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct GooglePlayCredentialsTestResponse {
+    pub ok: bool,
+    /// What passed, or the exact failure.
+    pub message: String,
+    /// The app the check opened, when one was known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+    /// The key's `client_email`, when the secret is a service account key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_account_email: Option<String>,
+    pub checked_at: i64,
 }
 
 /// Publish work for the runner, fetched with the job-scoped grant.
@@ -4729,6 +4775,18 @@ pub struct SmtpConfig {
     pub recipients: Vec<String>,
 }
 
+/// The SMTP settings an operator can read back. The password is never
+/// returned.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SmtpConfigSummary {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub tls_mode: SmtpTlsMode,
+    pub from_address: String,
+    pub recipients: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateSmtpConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4787,6 +4845,15 @@ pub struct NotificationChannel {
     pub has_secret: bool,
     /// True if the channel has SMTP configuration (email only).
     pub has_smtp_config: bool,
+    /// Host of the configured URL, so operators can tell which endpoint
+    /// receives alerts. The full URL can carry a token and is never exposed.
+    /// Returned when reading one channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_host: Option<String>,
+    /// SMTP settings without the password (email only). Returned when
+    /// reading one channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smtp_summary: Option<SmtpConfigSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
     pub created_at: i64,
@@ -5169,7 +5236,8 @@ impl ReleaseHealth {
 pub enum ReleaseApprovalGate {
     #[default]
     None,
-    /// Approval before the runner uploads (release waits in `uploading`).
+    /// Not supported: rejected when a policy is saved. Use the pipeline's
+    /// build approval to hold a build before it uploads.
     BeforeUpload,
     /// Approval before a `production` track release starts rolling out.
     BeforeProduction,
@@ -5238,6 +5306,19 @@ impl ReleasePolicy {
             return Err("policy.crash_rate_threshold must be a fraction in (0, 1]".into());
         }
         Ok(())
+    }
+
+    /// Rejects approval gates Oore cannot enforce. The runner uploads before
+    /// a release exists, so nothing could hold a `before_upload` release;
+    /// gate the build with the pipeline's approval policy instead. Saved
+    /// policies that already use it still load.
+    pub fn validate_gate(&self) -> Result<(), String> {
+        match self.approval {
+            ReleaseApprovalGate::BeforeUpload => Err(
+                "policy.approval before_upload is not supported; require build approval on the pipeline or use before_production".into(),
+            ),
+            ReleaseApprovalGate::None | ReleaseApprovalGate::BeforeProduction => Ok(()),
+        }
     }
 
     /// First policy step above `fraction`.
@@ -5592,6 +5673,10 @@ mod tests {
             (
                 serde_json::json!({"in_app_update_priority": 6}),
                 "in_app_update_priority",
+            ),
+            (
+                serde_json::json!({"rollout_policy": {"approval": "before_upload"}}),
+                "before_upload is not supported",
             ),
         ] {
             let mut value = base.clone();

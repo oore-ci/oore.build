@@ -1,5 +1,10 @@
 import * as React from 'react'
-import { Controller, FormProvider, useFormContext } from 'react-hook-form'
+import {
+  Controller,
+  FormProvider,
+  useFormContext,
+  useFormState,
+} from 'react-hook-form'
 import type { ControllerProps, FieldPath, FieldValues } from 'react-hook-form'
 
 import { cn } from '@/lib/utils'
@@ -32,7 +37,11 @@ function FormField<
 function useFormField() {
   const fieldContext = React.useContext(FormFieldContext)
   const itemContext = React.useContext(FormItemContext)
-  const { getFieldState, formState } = useFormContext()
+  const { getFieldState } = useFormContext()
+  // Subscribe to this field's state directly. Reading `formState` from the
+  // context does not re-render memoised (React Compiler) sections when a
+  // submit adds errors, so the message would stay hidden until a later blur.
+  const formState = useFormState({ name: fieldContext?.name })
 
   if (!fieldContext || !itemContext) {
     throw new Error(

@@ -19,23 +19,13 @@ pub fn now_unix() -> i64 {
 
 /// Resolve the daemon data root directory.
 ///
-/// Resolution order:
+/// Resolution order, shared with the `oore` CLI:
 /// 1. `OORED_DATA_DIR`
 /// 2. `OORE_DATA_DIR`
 /// 3. Platform default: `dirs::data_dir()/oore`
 pub fn resolve_oored_data_dir() -> anyhow::Result<PathBuf> {
-    for key in ["OORED_DATA_DIR", "OORE_DATA_DIR"] {
-        if let Ok(raw) = std::env::var(key) {
-            let trimmed = raw.trim();
-            if !trimmed.is_empty() {
-                return Ok(PathBuf::from(trimmed));
-            }
-        }
-    }
-
-    let data_dir =
-        dirs::data_dir().context("could not determine platform data directory (dirs::data_dir)")?;
-    Ok(data_dir.join("oore"))
+    oore_contract::data_paths::resolve_data_dir(|key| std::env::var(key).ok(), dirs::data_dir())
+        .context("could not determine platform data directory (dirs::data_dir)")
 }
 
 /// Extract a Bearer token from the Authorization header.
@@ -53,6 +43,21 @@ pub fn api_err(
     message: impl Into<String>,
 ) -> (StatusCode, Json<ApiError>) {
     (status, Json(ApiError::new(code, message)))
+}
+
+/// Whether a write failed on a UNIQUE constraint, as when a concurrent request
+/// inserted the same name between a check and the insert.
+pub fn is_unique_violation(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Database(db) if db.is_unique_violation())
+}
+
+/// Whether a write failed on a FOREIGN KEY constraint, as when a concurrent
+/// request removed or attached the referenced row.
+pub fn is_foreign_key_violation(error: &sqlx::Error) -> bool {
+    // SQLite reports an `ON DELETE RESTRICT` refusal with the trigger
+    // constraint code, which sqlx does not classify as a foreign key error.
+    matches!(error, sqlx::Error::Database(db)
+        if db.is_foreign_key_violation() || db.message().contains("FOREIGN KEY constraint failed"))
 }
 
 /// Convert Axum's plain-text extractor rejections into the API error envelope.

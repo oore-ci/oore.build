@@ -2,9 +2,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import type {
   AppStorePublishConfig,
+  GooglePlayCredentialsTestRequest,
   GooglePlayPublishConfig,
 } from '@oore/client/models'
 import {
+  testPipelineGooglePlayCredentials,
   updatePipelineAppStorePublish,
   updatePipelineGooglePlayPublish,
 } from '@oore/client/operations'
@@ -22,6 +24,7 @@ import {
 
 export type {
   AppStorePublishConfig,
+  GooglePlayCredentialsTestResponse as GooglePlayCredentialsTest,
   GooglePlayPublishConfig,
   PipelineAppStorePublishResponse as AppStorePublishResponse,
   PipelineGooglePlayPublishResponse as GooglePlayPublishResponse,
@@ -69,6 +72,26 @@ export function useUpdatePipelineGooglePlayPublish(pipelineId: string) {
         ),
         response,
       )
+    },
+  })
+}
+
+/**
+ * Checks a service account key against Google Play by opening and discarding
+ * an edit for the app. A rejected key is a result with `ok: false`, not an
+ * error.
+ */
+export function useTestGooglePlayCredentials(pipelineId: string) {
+  const { baseUrl, client, token } = useApiContext()
+
+  return useMutation({
+    mutationFn: async (body: GooglePlayCredentialsTestRequest) => {
+      if (!baseUrl || !token) throw new Error('Not authenticated')
+      return testPipelineGooglePlayCredentials({
+        body,
+        client,
+        path: { pipeline_id: pipelineId },
+      })
     },
   })
 }

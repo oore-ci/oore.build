@@ -25,9 +25,19 @@ jobs:
   source:
     name: Resolve immutable release source
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       commit: ${{ steps.source.outputs.commit }}
     steps:
+      - name: Check out the trusted release tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: tools/require-current-release.sh
+          sparse-checkout-cone-mode: false
+          path: trusted
+
       - name: Resolve release tag commit
         id: source
         env:
@@ -45,36 +55,7 @@ jobs:
             exit 1
           }
 
-          case "$REQUESTED_RELEASE_TAG" in
-            *-alpha.*) release_channel=alpha ;;
-            *-beta.*) release_channel=beta ;;
-            *) release_channel=stable ;;
-          esac
-          tag_matches_channel() {
-            case "$release_channel" in
-              stable) [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ;;
-              alpha) [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]] ;;
-              beta) [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]] ;;
-            esac
-          }
-          latest_published_tag="$(
-            while IFS= read -r published_tag; do
-              if tag_matches_channel "$published_tag"; then
-                printf '%s\n' "$published_tag"
-              fi
-            done < <(
-              gh api --paginate \
-                "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-                --jq '.[] | select(.draft == false) | .tag_name'
-            ) | sort -V | tail -n1
-          )"
-          if [[ -n "$latest_published_tag" && "$REQUESTED_RELEASE_TAG" != "$latest_published_tag" ]]; then
-            newest_tag="$(printf '%s\n%s\n' "$latest_published_tag" "$REQUESTED_RELEASE_TAG" | sort -V | tail -n1)"
-            [[ "$newest_tag" == "$REQUESTED_RELEASE_TAG" ]] || {
-              echo "$REQUESTED_RELEASE_TAG is older than published $latest_published_tag for $release_channel." >&2
-              exit 1
-            }
-          fi
+          bash trusted/tools/require-current-release.sh "$REQUESTED_RELEASE_TAG"
 
           read -r object_type object_sha < <(
             gh api \
@@ -111,8 +92,9 @@ jobs:
     name: Hermetic release acceptance
     needs: source
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ needs.source.outputs.commit }}
@@ -120,10 +102,17 @@ jobs:
       - name: Validate release version
         run: bash tools/validate-release-tag.sh "$RELEASE_TAG"
 
+      # Tags cut before rust-toolchain.toml existed build with the image's rustc.
+      - name: Install pinned Rust toolchain
+        run: |
+          if [[ -f rust-toolchain.toml ]]; then
+            rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          fi
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.4
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
@@ -137,21 +126,31 @@ jobs:
     name: Deploy Pages
     needs: [source, acceptance, release, deploy-installer, deploy-release-index]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ needs.source.outputs.commit }}
 
+      - name: Check out the trusted release tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: tools/require-current-release.sh
+          sparse-checkout-cone-mode: false
+          path: trusted
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.4
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-web-dist-${{ needs.source.outputs.commit }}
           path: apps/web/dist
@@ -196,6 +195,8 @@ jobs:
             echo 'The release tag moved after source resolution.' >&2
             exit 1
           }
+          # A rerun of an older run must not deploy older Pages over newer ones.
+          bash trusted/tools/require-current-release.sh "$tag"
           pages_branch="stable"
           if echo "$tag" | grep -q -- '-alpha\.'; then
             pages_branch="alpha"
@@ -260,6 +261,7 @@ jobs:
     name: Build Rust (${{ matrix.arch }})
     needs: [source, acceptance]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -269,9 +271,16 @@ jobs:
           - arch: x86_64
             target: x86_64-apple-darwin
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.source.outputs.commit }}
+
+      # Tags cut before rust-toolchain.toml existed build with the image's rustc.
+      - name: Install pinned Rust toolchain
+        run: |
+          if [[ -f rust-toolchain.toml ]]; then
+            rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          fi
 
       - name: Setup Rust target
         run: rustup target add "${{ matrix.target }}"
@@ -290,7 +299,7 @@ jobs:
           cp "target/${{ matrix.target }}/release/oored" dist/rust/oored
           cp "target/${{ matrix.target }}/release/oore" dist/rust/oore
 
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rust-${{ matrix.arch }}-${{ needs.source.outputs.commit }}
           path: dist/rust
@@ -300,11 +309,12 @@ jobs:
     name: Build release assets
     needs: [source, rust]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 45
     permissions:
       actions: read
       contents: read
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ needs.source.outputs.commit }}
@@ -312,14 +322,14 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.4
 
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rust-arm64-${{ needs.source.outputs.commit }}
           path: dist/rust/arm64
 
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rust-x86_64-${{ needs.source.outputs.commit }}
           path: dist/rust/x86_64
@@ -330,7 +340,7 @@ jobs:
       - name: Build web
         run: make build-web
 
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-web-dist-${{ needs.source.outputs.commit }}
           path: apps/web/dist
@@ -506,7 +516,7 @@ jobs:
           printf '%s\n' "$RELEASE_COMMIT" > "$source_file"
 
       - name: Upload unsigned release assets
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned-release-assets-${{ needs.source.outputs.commit }}
           path: dist/releases/${{ env.RELEASE_TAG }}
@@ -517,12 +527,13 @@ jobs:
     name: Sign release assets
     needs: [source, release]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: release-signing
     permissions:
       actions: read
       contents: read
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -540,13 +551,14 @@ jobs:
     name: Publish GitHub Release
     needs: [source, sign-release-assets]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: release-publication
     permissions:
       actions: read
       contents: write
     steps:
       - name: Download signed release assets
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: signed-release-assets-${{ needs.source.outputs.commit }}
           path: dist/releases/${{ env.RELEASE_TAG }}
@@ -678,21 +690,44 @@ jobs:
               }
             jq -r '.assets[] | [.name, .digest, (.size | tostring), .state] | @tsv' \
               "$comparison/release.json" | LC_ALL=C sort > "$comparison/actual-assets.tsv"
-            cmp "$comparison/expected-assets.tsv" "$comparison/actual-assets.tsv" || {
-              echo "Release $tag exists with different or incomplete assets. Refusing to replace them." >&2
-              exit 1
-            }
-            if [[ "$(jq -r '.draft' "$comparison/release.json")" == true ]]; then
+            if [[ "$(jq -r '.draft' "$comparison/release.json")" == false ]]; then
+              # Rebuilt tarballs are not byte-identical to the published ones,
+              # so a re-dispatch keeps the published, immutable assets. It
+              # only checks that every expected asset is there and uploaded.
+              jq -e '.immutable == true' "$comparison/release.json" >/dev/null || {
+                echo "Published release $tag is not immutable. Refusing to continue." >&2
+                exit 1
+              }
+              cmp \
+                <(cut -f1,4 "$comparison/expected-assets.tsv") \
+                <(cut -f1,4 "$comparison/actual-assets.tsv") || {
+                  echo "Published release $tag has a different asset set. Repair it by hand." >&2
+                  exit 1
+                }
+              if cmp -s "$comparison/expected-assets.tsv" "$comparison/actual-assets.tsv"; then
+                echo "Release $tag already contains the exact signed assets; continuing."
+              else
+                echo "Release $tag is already published; keeping its signed assets."
+              fi
+              require_published_release_is_immutable
+              exit 0
+            fi
+            if ! cmp -s "$comparison/expected-assets.tsv" "$comparison/actual-assets.tsv"; then
+              # A draft is never public and is still mutable. Replace an
+              # interrupted or outdated draft instead of failing every rerun.
+              echo "Replacing draft release $tag, whose assets differ from this run."
+              GH_TOKEN="$RELEASE_PUBLICATION_TOKEN" gh release delete "$tag" --yes
+              release_count=0
+            else
               require_immutable_release_policy
               GH_TOKEN="$RELEASE_PUBLICATION_TOKEN" gh release edit "$tag" \
                 --draft=false \
                 --title "$tag" \
                 "${release_flags[@]}" \
                 --notes-file "$notes"
-            else
-              echo "Release $tag already contains the exact signed assets; continuing."
             fi
-          else
+          fi
+          if [[ "$release_count" == 0 ]]; then
             # Create the release as a draft. Publish it only after every
             # immutable asset is attached successfully.
             GH_TOKEN="$RELEASE_PUBLICATION_TOKEN" gh release create "$tag" \
@@ -715,11 +750,12 @@ jobs:
     name: Build release index
     needs: [source, publish-release]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 15
     permissions:
       actions: read
       contents: read
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ needs.source.outputs.commit }}
@@ -727,7 +763,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.4
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -765,7 +801,7 @@ jobs:
           printf '%s\n' "$RELEASE_COMMIT" > "$source_file"
 
       - name: Upload unsigned release index
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned-release-index-${{ needs.source.outputs.commit }}
           path: dist/release-index
@@ -776,12 +812,13 @@ jobs:
     name: Sign release index
     needs: [source, release-index]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: release-signing
     permissions:
       actions: read
       contents: read
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -799,19 +836,41 @@ jobs:
     name: Deploy signed installer
     needs: [source, sign-release-index]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 20
     permissions:
       actions: read
       contents: read
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Resolve the published stable site source
+        id: site-source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Build the site from the newest published stable release, not the
+        # moving stable branch, so an alpha release never ships stable
+        # content that has not been released.
+        run: |
+          set -euo pipefail
+          stable_tag="$(
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' |
+              { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n1
+          )"
+          if [[ -n "$stable_tag" ]]; then
+            printf 'ref=refs/tags/%s\n' "$stable_tag" >> "$GITHUB_OUTPUT"
+          else
+            echo '::warning::No stable release is published yet. Building the site from the stable branch.'
+            printf 'ref=refs/heads/stable\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: refs/heads/stable
+          ref: ${{ steps.site-source.outputs.ref }}
           path: site-source
 
       - name: Check out the trusted installer source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -821,7 +880,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.4
 
       - name: Install dependencies
         working-directory: site-source
@@ -881,6 +940,9 @@ jobs:
             echo 'The release tag moved after source resolution.' >&2
             exit 1
           }
+          # Every channel shares the installer, so only the most recently
+          # published release may deploy it.
+          bash trusted/tools/require-current-release.sh "$RELEASE_TAG" --most-recent
 
           PAGES_COMMIT_HASH="$(git -C site-source rev-parse HEAD)"
           "$GITHUB_WORKSPACE/trusted/node_modules/.bin/wrangler" pages deploy \
@@ -894,25 +956,35 @@ jobs:
     name: Deploy release index
     needs: [source, sign-release-index, deploy-installer]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 20
     permissions:
       actions: read
       contents: read
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ needs.source.outputs.commit }}
 
+      - name: Check out the trusted release tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: tools/require-current-release.sh
+          sparse-checkout-cone-mode: false
+          path: trusted
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.4
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
       - name: Download signed release index
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: signed-release-index-${{ needs.source.outputs.commit }}
           path: dist/release-index
@@ -961,6 +1033,9 @@ jobs:
             echo 'The internal release source marker was not removed.' >&2
             exit 1
           }
+          # The index carries every channel. Deploy it only while each
+          # channel's latest entry is still the newest published release.
+          bash trusted/tools/require-current-release.sh "$RELEASE_TAG" --index dist/release-index
 
           PAGES_COMMIT_HASH="$RELEASE_COMMIT"
           export PAGES_COMMIT_HASH

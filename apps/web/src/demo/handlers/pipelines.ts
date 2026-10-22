@@ -66,6 +66,7 @@ const triggerConfigSchema = z.object({
 const approvalPolicySchema = z.object({
   required: z.boolean(),
   events: stringListSchema.optional(),
+  expires_after_hours: z.number().int().min(0).nullish(),
 })
 const concurrencySchema = z.object({
   cancel_previous: z.boolean(),

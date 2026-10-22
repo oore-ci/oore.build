@@ -83,6 +83,16 @@ const triggerBuildSchema = z
 
 type TriggerBuildForm = z.infer<typeof triggerBuildSchema>
 
+/** The same optional marker as the New project drawer. */
+function OptionalLabel({ children }: { children: string }) {
+  return (
+    <FormLabel>
+      {children}{' '}
+      <span className="font-normal text-muted-foreground">(optional)</span>
+    </FormLabel>
+  )
+}
+
 function PlatformSelectionField({
   form,
   platforms,
@@ -299,7 +309,8 @@ interface TriggerBuildDrawerProps {
   onBuildCreated?: (buildId: string) => void
   open?: boolean
   onOpenChange?: (open: boolean) => void
-  children: ReactElement
+  /** Omit when something else (such as Quick open) controls `open`. */
+  children?: ReactElement
 }
 
 function defaults(
@@ -348,6 +359,7 @@ export default function TriggerBuildDrawer({
   const canRunEveryProject =
     instanceRole === 'owner' || instanceRole === 'admin'
   const [projectSearch, setProjectSearch] = useState('')
+  const [resolvingHead, setResolvingHead] = useState(false)
   const [pipelineSearch, setPipelineSearch] = useState('')
   const updateProjectSearch = useDebouncedCallback(
     (value: string) => setProjectSearch(value.trim()),
@@ -497,13 +509,13 @@ export default function TriggerBuildDrawer({
     projectId ?? '',
     {
       pipeline_id: selectedPipelineId ?? '',
-      branch: branch?.trim(),
-      commit_sha: commitSha?.trim(),
+      branch: branch?.trim() || undefined,
+      commit_sha: commitSha?.trim() || undefined,
     },
     { enabled: open },
   )
 
-  function onSubmit(data: TriggerBuildForm) {
+  async function onSubmit(data: TriggerBuildForm) {
     const resolvedProjectId = fixedProjectId ?? data.project_id?.trim() ?? ''
     if (!resolvedProjectId) {
       form.setError('project_id', { message: 'Project is required' })
@@ -522,13 +534,21 @@ export default function TriggerBuildDrawer({
       return
     }
     const branch = data.branch?.trim() || undefined
-    const commitSha =
-      data.commit_sha?.trim() ||
-      changelogPreviewQuery.data?.target_commit ||
-      undefined
+    const typedCommit = data.commit_sha?.trim() || undefined
+    // The drafted changelog and its commit can be minutes old. Read the
+    // branch head again so the build and its changelog match what is pushed
+    // now; if that fails, let the daemon resolve the head itself.
+    let preview = changelogPreviewQuery.data
+    if (!typedCommit && branch) {
+      setResolvingHead(true)
+      const refreshed = await changelogPreviewQuery.refetch()
+      setResolvingHead(false)
+      preview = refreshed.isSuccess ? refreshed.data : undefined
+    }
+    const commitSha = typedCommit ?? preview?.target_commit
     const changelog =
       (data.changelog === undefined
-        ? changelogPreviewQuery.data?.markdown
+        ? preview?.markdown
         : data.changelog
       )?.trim() || undefined
 
@@ -587,7 +607,7 @@ export default function TriggerBuildDrawer({
       showSwipeHandle={isMobile}
       swipeDirection={isMobile ? 'down' : 'right'}
     >
-      <DrawerTrigger render={children} />
+      {children ? <DrawerTrigger render={children} /> : null}
       <DrawerContent>
         <DrawerHeader>
           <DrawerTitle>{title}</DrawerTitle>
@@ -795,7 +815,14 @@ export default function TriggerBuildDrawer({
                       <FormControl>
                         <ComboboxInput
                           className="w-full"
-                          placeholder={defaultBranch ?? 'main'}
+                          disabled={!projectId}
+                          placeholder={
+                            projectId
+                              ? (activeProject?.default_branch ??
+                                defaultBranch ??
+                                'Enter a branch')
+                              : 'Select a project first'
+                          }
                           autoComplete="off"
                         />
                       </FormControl>
@@ -825,18 +852,19 @@ export default function TriggerBuildDrawer({
                 name="commit_sha"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Commit SHA (optional)</FormLabel>
+                    <OptionalLabel>Commit SHA</OptionalLabel>
                     <FormControl>
                       <Input
                         placeholder="e.g. a1b2c3d4..."
                         autoComplete="off"
                         className="font-mono"
+                        disabled={!projectId}
                         {...field}
                       />
                     </FormControl>
-                    <p className="text-xs text-muted-foreground">
+                    <FormDescription>
                       If set, the runner checks out this exact commit.
-                    </p>
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -846,8 +874,8 @@ export default function TriggerBuildDrawer({
                 control={form.control}
                 name="changelog"
                 render={({ field }) => (
-                  <FormItem className="pb-4">
-                    <FormLabel>What changed? (optional)</FormLabel>
+                  <FormItem>
+                    <OptionalLabel>What changed?</OptionalLabel>
                     <FormControl>
                       <Textarea
                         {...field}
@@ -856,22 +884,33 @@ export default function TriggerBuildDrawer({
                           changelogPreviewQuery.data?.markdown ??
                           ''
                         }
-                        placeholder="No changes found since the previous build."
+                        disabled={!selectedPipelineId}
+                        placeholder={
+                          selectedPipelineId
+                            ? 'No changes found since the previous build.'
+                            : 'Choose a pipeline to draft release notes from its commits.'
+                        }
                         rows={5}
                       />
                     </FormControl>
                     <FormDescription>
-                      {changelogPreviewQuery.isFetching
-                        ? 'Drafting from commits since the previous successful build…'
-                        : changelogPreviewQuery.error
-                          ? 'Could not generate a draft. You can still write one.'
-                          : 'Drafted from commit titles and authors. Edit or clear it before running. Markdown supported.'}
+                      {!selectedPipelineId
+                        ? 'Drafted from commit titles and authors once a pipeline is chosen. Markdown supported.'
+                        : changelogPreviewQuery.isFetching
+                          ? 'Drafting from commits since the previous successful build…'
+                          : changelogPreviewQuery.error
+                            ? 'Could not generate a draft. You can still write one.'
+                            : changelogPreviewQuery.data?.target_commit
+                              ? `Drafted from commits up to ${changelogPreviewQuery.data.target_commit.slice(0, 7)}. The build uses the latest commit on the branch when it starts. Markdown supported.`
+                              : 'Drafted from commit titles and authors. Edit or clear it before running. Markdown supported.'}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-
+            </div>
+            {/* Outside the scroll area so the footer never covers them. */}
+            <div className="flex shrink-0 flex-col gap-2 px-4 pb-4">
               <TriggerBuildBlockingAlerts
                 projectId={projectId}
                 canConfigure={
@@ -899,7 +938,7 @@ export default function TriggerBuildDrawer({
                     : runnersQuery.isLoading
                       ? 'Checking runner availability…'
                       : preferencesQuery.data?.direct_macos_runner_paused
-                        ? 'Mac builds are paused. This build will wait until an admin resumes them.'
+                        ? 'Runners are paused. This build will wait until an owner or admin resumes them.'
                         : runnersQuery.data?.online_total === 0
                           ? 'No runner is online. This build will wait for one to connect.'
                           : 'A runner is online. Toolchain, repository access and signing are checked when the build runs.'}{' '}
@@ -909,26 +948,10 @@ export default function TriggerBuildDrawer({
                     rel="noopener noreferrer"
                     className="underline underline-offset-4"
                   >
-                    Runners{' '}
-                    <span className="sr-only">(opens in a new tab)</span>
+                    View runners
+                    <span className="sr-only"> (opens in a new tab)</span>
                   </Link>
                   .
-                  {canReadSettings &&
-                  preferencesQuery.data?.direct_macos_runner_paused ? (
-                    <>
-                      {' '}
-                      <Link
-                        to="/settings/preferences"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline underline-offset-4"
-                      >
-                        Execution settings{' '}
-                        <span className="sr-only">(opens in a new tab)</span>
-                      </Link>
-                      .
-                    </>
-                  ) : null}
                 </AlertDescription>
               </Alert>
             </div>
@@ -946,7 +969,7 @@ export default function TriggerBuildDrawer({
                 (!fixedProjectId && !projectId)
               }
               onSubmit={() => void form.handleSubmit(onSubmit)()}
-              pending={createBuildMutation.isPending}
+              pending={resolvingHead || createBuildMutation.isPending}
             />
           </form>
         </Form>

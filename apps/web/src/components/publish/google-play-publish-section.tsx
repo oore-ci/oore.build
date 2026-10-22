@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import {
   useForm,
   useFormState,
@@ -8,14 +9,22 @@ import {
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Add01Icon, InformationCircleIcon } from '@hugeicons/core-free-icons'
+import {
+  Add01Icon,
+  AlertCircleIcon,
+  CheckmarkCircle02Icon,
+  InformationCircleIcon,
+} from '@hugeicons/core-free-icons'
 import type { PipelineAndroidSigningResponse } from '@oore/client/models'
 
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
+import { buildsAppBundle } from '@/lib/pipeline-form-utils'
 import { toast } from '@/lib/toast'
 import {
   usePipelineGooglePlayPublish,
+  useTestGooglePlayCredentials,
   useUpdatePipelineGooglePlayPublish,
+  type GooglePlayCredentialsTest,
   type GooglePlayPublishConfig,
   type GooglePlayPublishResponse,
 } from '@/hooks/use-pipeline-publish'
@@ -26,6 +35,11 @@ import {
 } from '@/hooks/use-secrets'
 import { useHasPermissions } from '@/hooks/use-permissions'
 import { CollectionError } from '@/components/collection'
+import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard'
+import {
+  PublishReadiness,
+  type ReadinessCheck,
+} from '@/components/publish/publish-readiness'
 import { SecretValueDialog } from '@/components/secrets/secret-value-dialog'
 import { PLAY_SERVICE_ACCOUNT_SECRET } from '@/components/store-credentials/google-play-service-account-panel'
 import {
@@ -189,6 +203,14 @@ const formSchema = z
   })
 
 type FormValues = z.infer<typeof formSchema>
+
+/** The latest credentials check result for each secret tested. */
+interface CredentialsCheckState {
+  results: ReadonlyMap<string, GooglePlayCredentialsTest>
+  error: Error | null
+  pending: boolean
+  onTest: (secret: string, packageName: string | null) => void
+}
 
 function isTrackChoice(track: string): track is Exclude<TrackChoice, 'custom'> {
   return track in TRACKS && track !== 'custom'
@@ -400,7 +422,7 @@ function ServiceAccountField({
             {!value
               ? 'Store the whole service account JSON key file as a secret, then choose it here.'
               : scope
-                ? `Uses the ${SCOPE_LABEL[scope]} secret ${value}. The key stays on the runner that builds the app.`
+                ? `Uses the ${SCOPE_LABEL[scope]} secret ${value}. A pipeline secret overrides a project secret, which overrides an instance secret. Uploads read it on the runner that builds the app.`
                 : savedPresent
                   ? `Uses ${value} from a scope you can’t list.`
                   : `No secret named ${value} is visible to this pipeline. The upload step will fail until you add it.`}
@@ -412,6 +434,67 @@ function ServiceAccountField({
   )
 }
 
+function CredentialsCheck({
+  credentials,
+  form,
+}: {
+  credentials: CredentialsCheckState
+  form: UseFormReturn<FormValues>
+}) {
+  const [secret, packageName] = useWatch({
+    control: form.control,
+    name: ['service_account_secret', 'package_name'],
+  })
+  const result = credentials.results.get(secret)
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-muted-foreground">
+          Check the key against Google Play without running a build. Nothing
+          changes in Play Console.
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="self-start sm:self-auto"
+          disabled={!secret || credentials.pending}
+          onClick={() => credentials.onTest(secret, packageName || null)}
+        >
+          {credentials.pending ? <Spinner data-icon="inline-start" /> : null}
+          Test credentials
+        </Button>
+      </div>
+      {result ? (
+        <Alert
+          variant={result.ok ? 'default' : 'destructive'}
+          aria-live="polite"
+        >
+          <HugeiconsIcon
+            icon={result.ok ? CheckmarkCircle02Icon : AlertCircleIcon}
+            className={result.ok ? 'text-success' : undefined}
+          />
+          <AlertTitle>
+            {result.ok
+              ? 'Google Play accepted the key'
+              : 'Google Play check failed'}
+          </AlertTitle>
+          <AlertDescription>{result.message}</AlertDescription>
+        </Alert>
+      ) : credentials.error ? (
+        <Alert variant="destructive" aria-live="polite">
+          <HugeiconsIcon icon={InformationCircleIcon} />
+          <AlertTitle>The check did not run</AlertTitle>
+          <AlertDescription>
+            {getApiErrorMessage(credentials.error, {})}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+    </div>
+  )
+}
+
 function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
   const [track, releaseType, releaseNotes] = useWatch({
     control: form.control,
@@ -420,7 +503,7 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
 
   return (
     <>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="flex flex-col gap-4">
         <FormField
           control={form.control}
           name="track"
@@ -485,7 +568,7 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
         name="release_type"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Release</FormLabel>
+            <FormLabel>Rollout</FormLabel>
             <FormControl>
               <RadioGroup
                 value={field.value}
@@ -531,8 +614,6 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
                 <Input
                   type="number"
                   inputMode="decimal"
-                  min={0.01}
-                  max={99.99}
                   step="any"
                   {...field}
                 />
@@ -543,7 +624,7 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
         />
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="flex flex-col gap-4">
         <FormField
           control={form.control}
           name="release_notes"
@@ -619,7 +700,7 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
 
 function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
+    <div className="flex flex-col gap-4">
       <FormField
         control={form.control}
         name="package_name"
@@ -677,14 +758,7 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
         control={form.control}
         name="upload_mapping"
         render={({ field }) => (
-          <FormItem className="flex flex-row items-start gap-3 sm:col-span-2">
-            <FormControl>
-              <Switch
-                checked={field.value}
-                onCheckedChange={field.onChange}
-                aria-label="Upload the R8 mapping file"
-              />
-            </FormControl>
+          <FormItem className="flex flex-row items-start justify-between gap-4">
             <div className="flex flex-col gap-1">
               <FormLabel>Upload mapping.txt</FormLabel>
               <FormDescription>
@@ -692,6 +766,13 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
                 the build produced none.
               </FormDescription>
             </div>
+            <FormControl>
+              <Switch
+                checked={field.value}
+                onCheckedChange={field.onChange}
+                aria-label="Upload the R8 mapping file"
+              />
+            </FormControl>
           </FormItem>
         )}
       />
@@ -702,6 +783,7 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
 function GooglePlayPublishForm({
   canShareSecrets,
   canWrite,
+  credentials,
   pipelineId,
   projectId,
   saved,
@@ -709,6 +791,7 @@ function GooglePlayPublishForm({
 }: {
   canShareSecrets: boolean
   canWrite: boolean
+  credentials: CredentialsCheckState
   pipelineId: string
   projectId: string
   saved: GooglePlayPublishResponse
@@ -725,7 +808,11 @@ function GooglePlayPublishForm({
     resetOptions: { keepDirtyValues: true },
   })
   const { isDirty } = useFormState({ control: form.control })
+  const enabled = useWatch({ control: form.control, name: 'enabled' })
   const isNew = !saved.config
+  // One rule for both stores: Save needs a change, except that a first
+  // setup with uploads on can be saved as it stands.
+  const canSave = isDirty || (isNew && enabled)
 
   function onSubmit(next: FormValues) {
     updateMutation.mutate(toConfig(next), {
@@ -738,7 +825,10 @@ function GooglePlayPublishForm({
 
   return (
     <Form {...form}>
-      <form onSubmit={(event) => void form.handleSubmit(onSubmit)(event)}>
+      <form
+        noValidate
+        onSubmit={(event) => void form.handleSubmit(onSubmit)(event)}
+      >
         <fieldset disabled={!canWrite} className="min-w-0">
           <SettingsSurface className="flex flex-col gap-6">
             <UploadToggle form={form} />
@@ -752,6 +842,7 @@ function GooglePlayPublishForm({
                 secretScopes={secretScopes}
                 onAddSecret={() => setAddSecretOpen(true)}
               />
+              <CredentialsCheck form={form} credentials={credentials} />
             </SettingsSection>
 
             <SettingsSurfaceSeparator />
@@ -791,12 +882,14 @@ function GooglePlayPublishForm({
                   ) : null}
                   <Button
                     type="submit"
-                    disabled={updateMutation.isPending || (!isNew && !isDirty)}
+                    disabled={updateMutation.isPending || !canSave}
                   >
                     {updateMutation.isPending ? (
                       <Spinner data-icon="inline-start" />
                     ) : null}
-                    {isNew ? 'Turn on Google Play publishing' : 'Save changes'}
+                    {isNew && enabled
+                      ? 'Turn on Google Play publishing'
+                      : 'Save changes'}
                   </Button>
                 </div>
               </>
@@ -804,6 +897,11 @@ function GooglePlayPublishForm({
           </SettingsSurface>
         </fieldset>
       </form>
+      <UnsavedChangesGuard
+        when={isDirty && !updateMutation.isPending}
+        title="Discard Google Play changes?"
+        description="Your changes to the Google Play settings have not been saved."
+      />
       <SecretValueDialog
         open={addSecretOpen}
         onOpenChange={(open) => {
@@ -818,12 +916,14 @@ function GooglePlayPublishForm({
 }
 
 export function GooglePlayPublishSection({
+  androidCommandOverride,
   androidSigning,
   canReadInstanceSecrets,
   canWrite,
   pipelineId,
   projectId,
 }: {
+  androidCommandOverride: string | null | undefined
   androidSigning: PipelineAndroidSigningResponse | undefined
   canReadInstanceSecrets: boolean
   canWrite: boolean
@@ -831,6 +931,24 @@ export function GooglePlayPublishSection({
   projectId: string
 }) {
   const publishQuery = usePipelineGooglePlayPublish(pipelineId)
+  const testMutation = useTestGooglePlayCredentials(pipelineId)
+  const [checkResults, setCheckResults] = useState<
+    ReadonlyMap<string, GooglePlayCredentialsTest>
+  >(new Map())
+  const credentials: CredentialsCheckState = {
+    results: checkResults,
+    error: testMutation.error,
+    pending: testMutation.isPending,
+    onTest: (secret, packageName) => {
+      testMutation.mutate(
+        { service_account_secret: secret, package_name: packageName },
+        {
+          onSuccess: (result) =>
+            setCheckResults((current) => new Map(current).set(secret, result)),
+        },
+      )
+    },
+  }
   const [canShareSecrets] = useHasPermissions(['instance_settings:write'])
   const secretTargets: Array<SecretTarget> = [
     { scope: 'pipeline', pipelineId },
@@ -845,23 +963,109 @@ export function GooglePlayPublishSection({
       secretScopes.set(secret.name, secret.scope)
     }
   }
-  const releaseSigned =
-    !!androidSigning?.release.enabled && androidSigning.release.has_keystore
+  const saved = publishQuery.data
+  const secretName =
+    saved?.config?.service_account_secret ??
+    (secretScopes.has(PLAY_SERVICE_ACCOUNT_SECRET)
+      ? PLAY_SERVICE_ACCOUNT_SECRET
+      : '')
+  const secretScope = secretScopes.get(secretName)
+  const secretReady =
+    !!secretScope ||
+    (!!saved?.service_account_secret_present &&
+      saved.config?.service_account_secret === secretName)
+  const override = androidCommandOverride?.trim() ?? ''
+  const bundleReady = !override || buildsAppBundle(override)
+  const editLink = (hash: string, label: string) =>
+    canWrite ? (
+      <Button
+        variant="outline"
+        size="sm"
+        nativeButton={false}
+        render={
+          <Link
+            to="/projects/$projectId/pipelines/$pipelineId/edit"
+            params={{ projectId, pipelineId }}
+            search={{}}
+            hash={hash}
+          />
+        }
+      >
+        {label}
+      </Button>
+    ) : undefined
+  const checks: Array<ReadinessCheck> = []
+  if (androidSigning) {
+    const releaseSigned =
+      androidSigning.release.enabled && androidSigning.release.has_keystore
+    checks.push({
+      key: 'signing',
+      label: 'Release signing',
+      ready: releaseSigned,
+      detail: releaseSigned
+        ? 'Bundles are signed with your upload key.'
+        : 'Google Play rejects bundles that are not signed with your upload key.',
+      action: releaseSigned
+        ? undefined
+        : editLink('android-signing', 'Set up signing'),
+    })
+  }
+  if (saved) {
+    checks.push({
+      key: 'key',
+      label: 'Service account key',
+      ready: secretReady,
+      detail: secretReady
+        ? `Uses ${secretName}${secretScope ? ` from the ${SCOPE_LABEL[secretScope]} secrets` : ''}.`
+        : 'Store the service account JSON key as a secret and choose it under Credentials below.',
+    })
+  }
+  if (saved && secretReady) {
+    const savedCheck = checkResults.get(secretName)
+    checks.push({
+      key: 'access',
+      label: 'Google Play access',
+      ready: savedCheck ? savedCheck.ok : null,
+      detail:
+        savedCheck?.message ??
+        'Not checked yet. Test the key to confirm the service account can publish this app.',
+      action:
+        canWrite && !savedCheck?.ok ? (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={testMutation.isPending}
+            onClick={() =>
+              credentials.onTest(secretName, saved.config?.package_name ?? null)
+            }
+          >
+            {testMutation.isPending ? (
+              <Spinner data-icon="inline-start" />
+            ) : null}
+            Test credentials
+          </Button>
+        ) : undefined,
+    })
+  }
+  checks.push({
+    key: 'bundle',
+    label: 'App Bundle build',
+    ready: bundleReady,
+    detail: !override
+      ? 'Oore builds an App Bundle alongside the APK while uploads are on.'
+      : bundleReady
+        ? 'Your Android command builds an App Bundle.'
+        : 'Your Android command override builds no App Bundle, so the upload fails. Use flutter build appbundle or clear the override.',
+    action: bundleReady ? undefined : editLink('build', 'Edit build'),
+  })
 
   return (
     <SettingsSection
+      id="google-play"
       title="Google Play"
-      description="Upload the signed App Bundle from each successful build. Every Google Play call runs on the runner, so the service account key never leaves it."
+      description="Upload the signed App Bundle from each successful build. The runner that built it uploads it with your service account key."
     >
-      {androidSigning && !releaseSigned ? (
-        <Alert>
-          <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertDescription>
-            Release signing is not set up for this pipeline. Google Play rejects
-            bundles that are not signed with your upload key.
-          </AlertDescription>
-        </Alert>
-      ) : null}
+      <PublishReadiness checks={checks} />
 
       {publishQuery.error ? (
         <CollectionError
@@ -869,13 +1073,14 @@ export function GooglePlayPublishSection({
           description={publishQuery.error.message}
           onRetry={() => void publishQuery.refetch()}
         />
-      ) : publishQuery.data ? (
+      ) : saved ? (
         <GooglePlayPublishForm
           canShareSecrets={canShareSecrets}
           canWrite={canWrite}
+          credentials={credentials}
           pipelineId={pipelineId}
           projectId={projectId}
-          saved={publishQuery.data}
+          saved={saved}
           secretScopes={secretScopes}
         />
       ) : (

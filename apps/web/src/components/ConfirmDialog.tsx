@@ -17,6 +17,8 @@ interface ConfirmDialogProps {
   confirmLabel: string
   confirmVariant?: 'default' | 'destructive'
   isPending: boolean
+  /** Shown on the confirm button while the action runs. */
+  pendingLabel?: string
   onConfirm: () => void
 }
 
@@ -28,10 +30,18 @@ export default function ConfirmDialog({
   confirmLabel,
   confirmVariant = 'default',
   isPending,
+  pendingLabel = 'Please wait...',
   onConfirm,
 }: ConfirmDialogProps) {
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        // Keep the dialog up until the action settles, so its result shows.
+        if (!next && isPending) return
+        onOpenChange(next)
+      }}
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
@@ -53,7 +63,7 @@ export default function ConfirmDialog({
             {isPending ? (
               <span className="flex items-center gap-1.5" role="status">
                 <Spinner data-icon="inline-start" />
-                Please wait...
+                {pendingLabel}
               </span>
             ) : (
               confirmLabel

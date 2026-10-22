@@ -1,7 +1,14 @@
 import type { IosSigningFiles } from '@/lib/pipeline-signing'
-import { useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import { useBlocker } from '@tanstack/react-router'
-import { useForm, useWatch } from 'react-hook-form'
+import { useForm, useFormState, useWatch } from 'react-hook-form'
+import type { FieldErrors } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { AlertCircleIcon } from '@hugeicons/core-free-icons'
@@ -11,6 +18,7 @@ import type {
   PipelineAndroidSigningResponse,
   PipelineIosSigningResponse,
 } from '@oore/client/models'
+import { Button } from '@/components/ui/button'
 import { Form } from '@/components/ui/form'
 import { FormActions } from '@/components/form-actions'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -23,6 +31,7 @@ import {
   previewPlatformCommands,
 } from '@/lib/pipeline-form-utils'
 import { PipelineBasicsSection } from '@/components/pipeline-form-basic-sections'
+import { PipelineSectionIndex } from '@/components/pipeline-form-section-index'
 import { PipelineBuildSection } from '@/components/pipeline-form-build-sections'
 import { PipelineTriggersSection } from '@/components/pipeline-form-triggers-section'
 import { PipelineSigningSection } from '@/components/pipeline-form-signing-section'
@@ -67,6 +76,28 @@ interface PipelineFormProps {
   /** Rendered beside the iOS signing heading, such as the profile sync button. */
   iosSigningActions?: ReactNode
   iosAppStorePublishing?: IosAppStorePublishing
+  /** Google Play upload is on for this pipeline (unknown on new pipelines). */
+  googlePlayUpload?: boolean
+}
+
+/** Fields with an error; an array field with several bad rows counts once. */
+function countFieldErrors(errors: FieldErrors) {
+  return Object.keys(errors).filter((name) => name !== 'root').length
+}
+
+/**
+ * Bring the first invalid field into view and focus it. `block: 'center'`
+ * keeps it clear of the sticky action bar at the bottom of the form.
+ */
+function revealFirstInvalidField(formRef: RefObject<HTMLFormElement | null>) {
+  requestAnimationFrame(() => {
+    const field = formRef.current?.querySelector<HTMLElement>(
+      '[aria-invalid="true"]',
+    )
+    if (!field) return
+    field.scrollIntoView({ block: 'center' })
+    field.focus({ preventScroll: true })
+  })
 }
 
 /** Open the per-platform disclosure when the saved pipeline already uses it. */
@@ -100,13 +131,20 @@ export default function PipelineForm({
   iosSigningData,
   iosSigningActions,
   iosAppStorePublishing,
+  googlePlayUpload = false,
 }: PipelineFormProps) {
   const form = useForm<PipelineFormValues>({
     resolver: zodResolver(pipelineFormSchema),
     defaultValues: initialValues,
     mode: 'onBlur',
     shouldUnregister: false,
+    // Focus is moved by `revealFirstInvalidField` so the field lands above
+    // the sticky action bar instead of under it.
+    shouldFocusError: false,
   })
+  const formRef = useRef<HTMLFormElement>(null)
+  const { errors, isSubmitted } = useFormState({ control: form.control })
+  const errorCount = isSubmitted ? countFieldErrors(errors) : 0
 
   const [releaseKeystoreFile, setReleaseKeystoreFile] = useState<File | null>(
     null,
@@ -150,7 +188,27 @@ export default function PipelineForm({
   })
 
   const configMode = values.config_mode
-  const previewDefaults = previewPlatformCommands(values)
+  const previewDefaults = previewPlatformCommands(values, {
+    playBundle: googlePlayUpload,
+  })
+  const sections = [
+    { id: 'basics', label: 'Basics' },
+    ...(repositoryWorkflow ? [] : [{ id: 'build', label: 'Build' }]),
+    ...(values.platform_android || values.platform_ios
+      ? [{ id: 'signing', label: 'Signing' }]
+      : []),
+    { id: 'triggers', label: 'Triggers' },
+  ]
+
+  // Deep links such as `edit#ios-signing` land on their section once the
+  // form has rendered.
+  useEffect(() => {
+    const id = window.location.hash.slice(1)
+    if (!id) return
+    requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ block: 'start' })
+    })
+  }, [])
 
   const envVarCount = parseEnvVars(values.env_vars).length
   const preBuildCount = parseMultiline(values.pre_build_commands).length
@@ -162,12 +220,18 @@ export default function PipelineForm({
   return (
     <Form {...form}>
       <form
-        onSubmit={form.handleSubmit(handleFormSubmit)}
+        ref={formRef}
+        noValidate
+        onSubmit={(event) =>
+          void form.handleSubmit(handleFormSubmit, () =>
+            revealFirstInvalidField(formRef),
+          )(event)
+        }
         className="flex flex-col gap-8"
       >
+        <PipelineSectionIndex sections={sections} />
         <PipelineBasicsSection
           configMode={configMode}
-          previewDefaults={previewDefaults}
           repositoryWorkflow={repositoryWorkflow}
         />
         {repositoryWorkflow ? null : (
@@ -175,6 +239,8 @@ export default function PipelineForm({
             advancedOpen={hasPlatformOverrides(initialValues)}
             commandCount={totalCmdCount}
             envVarCount={envVarCount}
+            playBundle={googlePlayUpload}
+            previewDefaults={previewDefaults}
           />
         )}
         <PipelineSigningSection
@@ -238,7 +304,19 @@ export default function PipelineForm({
           onCancel={onCancel}
           sticky={isDirty}
           submitLabel={readOnly ? 'Demo is read-only' : submitLabel}
-        />
+        >
+          {errorCount > 0 ? (
+            <Button
+              type="button"
+              variant="link"
+              className="mr-auto px-1 text-destructive"
+              onClick={() => revealFirstInvalidField(formRef)}
+            >
+              <HugeiconsIcon icon={AlertCircleIcon} data-icon="inline-start" />
+              Fix {errorCount} {errorCount === 1 ? 'field' : 'fields'} to save
+            </Button>
+          ) : null}
+        </FormActions>
       </form>
       <AlertDialog
         open={blocker.status === 'blocked'}
@@ -265,6 +343,7 @@ export default function PipelineForm({
               Stay
             </AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               onClick={() => {
                 if (blocker.status === 'blocked') blocker.proceed()
               }}

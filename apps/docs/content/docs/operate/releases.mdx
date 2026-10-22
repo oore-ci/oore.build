@@ -102,7 +102,7 @@ autotag created.
 
 The workspace version in `Cargo.toml` is the release base. Autotag never increments this version.
 
-Autotag creates no tag until the workspace version is newer than the latest stable release.
+Autotag creates no tag until the workspace version is newer than the latest stable release. A release branch push that creates no tag fails the autotag run and says why in its summary.
 
 For `alpha` and `beta`, autotag increments only the pre-release number for that workspace version.
 
@@ -229,25 +229,19 @@ The workflow signs release checksum manifests and published release indexes.
 
 It serializes all channel releases because they publish one shared index.
 
+Each deploy step refuses to run once a newer release has been published. Rerunning an older release run therefore cannot put its older index, installer, or Pages build back over a newer one. Dispatch the newest tag instead.
+
 Before index signing, the matching channel history and latest entry must both name the requested tag.
 
-The workflow publishes release assets once. It refuses to replace assets for an existing tag.
+The workflow publishes release assets once and never replaces the assets of a published release. Dispatching a published tag again keeps its published assets and finishes the remaining steps. An unpublished draft from an interrupted run is replaced.
 
 It creates the GitHub release as a draft and publishes it only after every signed asset uploads.
 
-Before the signed channel index changes, the workflow deploys the installer that verifies these signatures. It generates that installer from protected `master` over stable site content. A deployment failure therefore stops the release instead of leaving an unsigned installation window.
+Before the signed channel index changes, the workflow deploys the installer that verifies these signatures. It generates that installer from protected `master` over the site content of the newest published stable release. A deployment failure therefore stops the release instead of leaving an unsigned installation window.
 
-Run the non-publishing preflight before the first release and after each key change:
+Before index signing, every channel's history must be well formed, hold only that channel's releases newest first, and agree with its latest entry.
 
-```bash
-gh workflow run sign-release-metadata.yml --ref master
-```
-
-The preflight derives the public key and compares it with the trusted pin.
-
-The manual preflight does not create a release, sign metadata, or deploy files.
-
-The release workflow uses a local reusable workflow. [GitHub reusable workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows) resolve this form from the caller's exact commit.
+Signing runs in the local composite action `.github/actions/sign-release-metadata`, which `release.yml` loads from the protected `master` commit.
 
 For a local `vX.Y.Z-dev` package, set both acceptance flags:
 

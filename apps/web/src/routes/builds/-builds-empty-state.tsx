@@ -2,12 +2,11 @@ import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowRight01Icon,
-  Link04Icon,
+  Folder02Icon,
   PlayIcon,
 } from '@hugeicons/core-free-icons'
 
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Empty,
   EmptyContent,
@@ -16,7 +15,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import SetupHint from '@/components/setup-hint'
 
 export function BuildsEmptyState({
   capabilities,
@@ -26,7 +24,6 @@ export function BuildsEmptyState({
 }: {
   capabilities: {
     triggerBuild: boolean
-    writeIntegrations: boolean
     writeProjects: boolean
   }
   state: 'missing-projects' | 'no-builds'
@@ -35,50 +32,31 @@ export function BuildsEmptyState({
 }) {
   if (state === 'missing-projects') {
     return (
-      <Card size="sm">
-        <CardHeader>
-          <CardTitle>Create project first</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <p className="text-sm text-muted-foreground">
+      <Empty className="flex-none border bg-card">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <HugeiconsIcon icon={Folder02Icon} />
+          </EmptyMedia>
+          <EmptyTitle>No projects to build yet</EmptyTitle>
+          <EmptyDescription>
             {runtimeMode === 'local'
-              ? 'Builds run through project pipelines. Create your first project from a local Git repository.'
-              : 'Builds run through project pipelines. Create your first project before triggering builds.'}
-          </p>
-          <SetupHint
-            title="Fastest path to the first build"
-            items={[
-              runtimeMode === 'local'
-                ? 'Create a project from a local repository path on the runner host.'
-                : 'Connect GitHub or GitLab for repository discovery and webhook triggers.',
-              'Create a pipeline and choose the platforms Oore should build.',
-              'Trigger the first build from the pipeline page or a configured webhook.',
-            ]}
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            {capabilities.writeProjects ? (
-              <Button render={<Link to="/projects" />} nativeButton={false}>
-                Go to projects
-                <HugeiconsIcon icon={ArrowRight01Icon} />
-              </Button>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Ask an owner or admin to create the first project.
-              </p>
-            )}
-            {runtimeMode === 'remote' && capabilities.writeIntegrations ? (
-              <Button
-                variant="outline"
-                render={<Link to="/settings/integrations" />}
-                nativeButton={false}
-              >
-                <HugeiconsIcon icon={Link04Icon} />
-                Connect source
-              </Button>
-            ) : null}
-          </div>
-        </CardContent>
-      </Card>
+              ? 'Builds run from project pipelines. Create a project from a Git repository on this Mac, add a pipeline, and your builds will show up here.'
+              : 'Builds run from project pipelines. Create a project from a GitHub or GitLab repository, add a pipeline, and your builds will show up here.'}
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          {capabilities.writeProjects ? (
+            <Button render={<Link to="/projects" />} nativeButton={false}>
+              Set up a project
+              <HugeiconsIcon icon={ArrowRight01Icon} data-icon="inline-end" />
+            </Button>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Ask an owner or admin to create the first project.
+            </p>
+          )}
+        </EmptyContent>
+      </Empty>
     )
   }
 

@@ -1,4 +1,6 @@
 import { useNavigate, useRouter } from '@tanstack/react-router'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Tick02Icon } from '@hugeicons/core-free-icons'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -6,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { getConnectivityIssue, isHostedUiOrigin } from '@/lib/connectivity'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useInstanceStore } from '@/stores/instance-store'
+import { cn } from '@/lib/utils'
 
 function quotePosixShellArgument(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`
@@ -34,12 +37,7 @@ export function SetupStepIndicator({
           {activeLabel}
         </span>
       </div>
-      <ol
-        className="hidden gap-2 text-xs sm:grid"
-        style={{
-          gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))`,
-        }}
-      >
+      <ol className="hidden items-center gap-2 text-xs sm:flex">
         {steps.map((label, index) => {
           const isActive = index === currentStep
           const isCompleted = index < currentStep
@@ -47,19 +45,52 @@ export function SetupStepIndicator({
           return (
             <li
               key={label}
-              className={`truncate text-center ${
-                isActive
-                  ? 'font-medium text-foreground'
-                  : isCompleted
-                    ? 'text-muted-foreground'
-                    : 'text-muted-foreground/70'
-              }`}
+              className="flex min-w-0 flex-1 items-center gap-2 last:flex-none"
               aria-current={isActive ? 'step' : undefined}
             >
-              <span className="sr-only">
-                {isCompleted ? 'Completed: ' : isActive ? 'Current: ' : ''}
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'flex size-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-medium tabular-nums',
+                  isCompleted
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : isActive
+                      ? 'border-primary text-primary'
+                      : 'border-border text-muted-foreground',
+                )}
+              >
+                {isCompleted ? (
+                  <HugeiconsIcon
+                    icon={Tick02Icon}
+                    strokeWidth={2.5}
+                    className="size-3"
+                  />
+                ) : (
+                  index + 1
+                )}
               </span>
-              {label}
+              <span
+                className={cn(
+                  'truncate',
+                  isActive
+                    ? 'font-medium text-foreground'
+                    : 'text-muted-foreground',
+                )}
+              >
+                <span className="sr-only">
+                  {isCompleted ? 'Completed: ' : isActive ? 'Current: ' : ''}
+                </span>
+                {label}
+              </span>
+              {index < steps.length - 1 ? (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'h-px min-w-3 flex-1',
+                    isCompleted ? 'bg-primary' : 'bg-border',
+                  )}
+                />
+              ) : null}
             </li>
           )
         })}
@@ -70,7 +101,7 @@ export function SetupStepIndicator({
         aria-valuemin={0}
         aria-valuemax={steps.length}
         aria-valuenow={displayedStep}
-        className="h-1 overflow-hidden rounded-full bg-muted"
+        className="h-1 overflow-hidden rounded-full bg-muted sm:sr-only"
       >
         <div
           className="h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none"

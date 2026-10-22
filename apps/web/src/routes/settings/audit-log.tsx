@@ -55,7 +55,7 @@ const RESOURCE_TYPE_OPTIONS = {
   build: 'Build',
   project: 'Project',
   pipeline: 'Pipeline',
-  integration: 'Integration',
+  integration: 'Source',
   instance_settings: 'Settings',
   runner: 'Runner',
   artifact: 'Artifact',
@@ -113,9 +113,9 @@ export const Route = createFileRoute('/settings/audit-log')({
     },
   },
   validateSearch: parseSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'], context)
   },
   component: AuditLogPage,
 })
@@ -265,13 +265,12 @@ function AuditLogPage() {
         }
         entries={entries}
         error={auditQuery.error}
+        activeFilterCount={
+          Number(!!search.resource) + Number(!!(search.from || search.to))
+        }
+        onClearFilters={clearFilters}
         filters={
           <>
-            {hasFilters ? (
-              <Button variant="ghost" size="sm" onClick={clearFilters}>
-                Clear filters
-              </Button>
-            ) : null}
             <DataTableSelectFilter
               value={search.resource ?? 'all'}
               options={RESOURCE_TYPE_OPTIONS}

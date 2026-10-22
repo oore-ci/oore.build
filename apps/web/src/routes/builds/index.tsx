@@ -35,6 +35,7 @@ interface BuildsSearch {
   direction?: SortDirection
   page?: number
   pageSize?: 20 | 50 | 100
+  pipeline?: string
   project?: string
   q?: string
   sort?: BuildSort
@@ -54,6 +55,7 @@ function parseSearch(search: SearchInput): BuildsSearch {
   const pageSize = searchNumber(search, 'pageSize')
   const q = searchString(search, 'q')?.trim() ?? ''
   const project = searchString(search, 'project')?.trim() ?? ''
+  const pipeline = searchString(search, 'pipeline')?.trim() ?? ''
   const statusValue = searchString(search, 'status')
   const status =
     statusValue && statusValue in BUILD_STATUS_FILTER_OPTIONS ? statusValue : ''
@@ -62,6 +64,7 @@ function parseSearch(search: SearchInput): BuildsSearch {
   return {
     q: q || undefined,
     project: project || undefined,
+    pipeline: pipeline || undefined,
     status: status && status !== 'all' ? status : undefined,
     sort,
     direction: searchString(search, 'direction') === 'asc' ? 'asc' : undefined,
@@ -72,9 +75,9 @@ function parseSearch(search: SearchInput): BuildsSearch {
 
 export const Route = createFileRoute('/builds/')({
   validateSearch: parseSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireAuthOrRedirect(instance.id, context)
     if (useAuthStore.getState().user?.role === 'qa_viewer') {
       throw redirect({ to: '/' })
     }
@@ -91,8 +94,9 @@ function OperationsBuildsPage() {
   const sort = search.sort ?? 'created_at'
   const direction = search.direction ?? 'desc'
   const buildsQuery = useBuilds({
-    branch: search.q,
+    q: search.q,
     project_id: search.project,
+    pipeline_id: search.pipeline,
     status: search.status,
     sort,
     direction,
@@ -101,8 +105,10 @@ function OperationsBuildsPage() {
   })
   const projectsQuery = useProjects({ limit: 1 })
   const setupStatusQuery = useSetupStatus()
-  const [canTriggerBuildGlobally, canWriteProjects, canWriteIntegrations] =
-    useHasPermissions(['builds:write', 'projects:write', 'integrations:write'])
+  const [canTriggerBuildGlobally, canWriteProjects] = useHasPermissions([
+    'builds:write',
+    'projects:write',
+  ])
   const builds = buildsQuery.data?.builds ?? []
   const hasProjects = (projectsQuery.data?.total ?? 0) > 0
   const total = buildsQuery.data?.total ?? 0
@@ -110,10 +116,10 @@ function OperationsBuildsPage() {
   const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'local'
   const missingProjects =
     !projectsQuery.isLoading && !projectsQuery.error && !hasProjects
-  const hasFilters = !!search.q || !!search.project || !!search.status
+  const hasFilters =
+    !!search.q || !!search.project || !!search.pipeline || !!search.status
   const buildCapabilities = {
     triggerBuild: canTriggerBuild,
-    writeIntegrations: canWriteIntegrations,
     writeProjects: canWriteProjects,
   }
 
@@ -137,7 +143,7 @@ function OperationsBuildsPage() {
       <PageMeta title="Builds" noindex />
       <PageHeader
         title="Builds"
-        description="Queue, execution, and historical run inventory across projects."
+        description="Every build across your projects, newest first."
         actions={
           canTriggerBuild ? (
             <Suspense fallback={null}>
@@ -189,6 +195,11 @@ function OperationsBuildsPage() {
         />
       ) : (
         <BuildCollection
+          activeFilterCount={
+            Number(!!search.project) +
+            Number(!!search.pipeline) +
+            Number(!!search.status)
+          }
           builds={builds}
           direction={direction}
           emptyState={
@@ -204,6 +215,15 @@ function OperationsBuildsPage() {
           isFiltered={hasFilters}
           isLoading={buildsQuery.isLoading}
           isRefreshing={buildsQuery.isFetching && !buildsQuery.isLoading}
+          onClearFilters={() =>
+            updateSearch({
+              q: undefined,
+              project: undefined,
+              pipeline: undefined,
+              status: undefined,
+              page: undefined,
+            })
+          }
           onPageChange={(nextPage) =>
             updateSearch({ page: nextPage > 1 ? nextPage : undefined })
           }

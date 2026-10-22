@@ -1,5 +1,5 @@
-import { Button } from '@/components/ui/button'
 import {
+  PipelineFilter,
   ProjectFilter,
   StatusFilter,
   type BuildFilterValue,
@@ -11,23 +11,18 @@ interface BuildFiltersProps {
 }
 
 export function BuildFilters({ filters, onChange }: BuildFiltersProps) {
-  const hasFilters = !!filters.q || !!filters.project || !!filters.status
-  const clearFilters = () =>
-    onChange({
-      q: undefined,
-      project: undefined,
-      status: undefined,
-      page: undefined,
-    })
-
   return (
     <>
-      {hasFilters ? (
-        <Button variant="ghost" size="sm" onClick={clearFilters}>
-          Clear filters
-        </Button>
-      ) : null}
       <ProjectFilter className="w-44" filters={filters} onChange={onChange} />
+      {/* Pipelines are listed per project, so pick a project first. */}
+      {filters.project || filters.pipeline ? (
+        <PipelineFilter
+          className="w-44"
+          filters={filters}
+          onChange={onChange}
+          projectId={filters.project}
+        />
+      ) : null}
       <StatusFilter filters={filters} onChange={onChange} />
     </>
   )
