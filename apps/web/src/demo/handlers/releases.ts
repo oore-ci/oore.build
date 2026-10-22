@@ -179,6 +179,19 @@ export const releaseHandlers = [
     )
   }),
 
+  demoApi.refreshStoreVitals(async ({ request }) => {
+    // Reading the stores takes a moment on a real daemon.
+    await delay(1200)
+    const persona = getDemoPersonaFromRequest(request)
+    return HttpResponse.json(
+      demoStoreVitals(
+        demoState.projects.filter((project) =>
+          getDemoProjectRole(persona, project.id),
+        ),
+      ),
+    )
+  }),
+
   demoApi.listReleases(async ({ request }) => {
     await delay(150)
     const url = new URL(request.url)
