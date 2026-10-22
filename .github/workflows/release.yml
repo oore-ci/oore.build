@@ -25,6 +25,7 @@ jobs:
   source:
     name: Resolve immutable release source
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       commit: ${{ steps.source.outputs.commit }}
     steps:
@@ -111,6 +112,7 @@ jobs:
     name: Hermetic release acceptance
     needs: source
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -119,6 +121,13 @@ jobs:
 
       - name: Validate release version
         run: bash tools/validate-release-tag.sh "$RELEASE_TAG"
+
+      # Tags cut before rust-toolchain.toml existed build with the image's rustc.
+      - name: Install pinned Rust toolchain
+        run: |
+          if [[ -f rust-toolchain.toml ]]; then
+            rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          fi
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -137,6 +146,7 @@ jobs:
     name: Deploy Pages
     needs: [source, acceptance, release, deploy-installer, deploy-release-index]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -260,6 +270,7 @@ jobs:
     name: Build Rust (${{ matrix.arch }})
     needs: [source, acceptance]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -272,6 +283,13 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.source.outputs.commit }}
+
+      # Tags cut before rust-toolchain.toml existed build with the image's rustc.
+      - name: Install pinned Rust toolchain
+        run: |
+          if [[ -f rust-toolchain.toml ]]; then
+            rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          fi
 
       - name: Setup Rust target
         run: rustup target add "${{ matrix.target }}"
@@ -300,6 +318,7 @@ jobs:
     name: Build release assets
     needs: [source, rust]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 45
     permissions:
       actions: read
       contents: read
@@ -517,6 +536,7 @@ jobs:
     name: Sign release assets
     needs: [source, release]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: release-signing
     permissions:
       actions: read
@@ -540,6 +560,7 @@ jobs:
     name: Publish GitHub Release
     needs: [source, sign-release-assets]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: release-publication
     permissions:
       actions: read
@@ -715,6 +736,7 @@ jobs:
     name: Build release index
     needs: [source, publish-release]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 15
     permissions:
       actions: read
       contents: read
@@ -776,6 +798,7 @@ jobs:
     name: Sign release index
     needs: [source, release-index]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: release-signing
     permissions:
       actions: read
@@ -799,6 +822,7 @@ jobs:
     name: Deploy signed installer
     needs: [source, sign-release-index]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 20
     permissions:
       actions: read
       contents: read
@@ -894,6 +918,7 @@ jobs:
     name: Deploy release index
     needs: [source, sign-release-index, deploy-installer]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    timeout-minutes: 20
     permissions:
       actions: read
       contents: read
