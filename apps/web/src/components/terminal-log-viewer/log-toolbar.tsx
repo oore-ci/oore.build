@@ -13,6 +13,11 @@ import type { RefObject } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
@@ -27,7 +32,12 @@ interface LogToolbarProps {
   activeMatchPosition: number
   wrapLines: boolean
   followLive: boolean
-  isStreaming: boolean
+  /** The build is unfinished, so following new lines makes sense. */
+  isLive: boolean
+  /** Copy and Search cover the selected step or the whole log. */
+  scope: 'log' | 'step'
+  hasLines: boolean
+  hasAnyLines: boolean
   onSearchQueryChange: (query: string) => void
   onSearchClear: () => void
   onPreviousMatch: () => void
@@ -45,7 +55,10 @@ export function LogToolbar({
   activeMatchPosition,
   wrapLines,
   followLive,
-  isStreaming,
+  isLive,
+  scope,
+  hasLines,
+  hasAnyLines,
   onSearchQueryChange,
   onSearchClear,
   onPreviousMatch,
@@ -56,15 +69,20 @@ export function LogToolbar({
   onDownload,
 }: LogToolbarProps) {
   return (
-    <div className="flex w-full shrink-0 flex-wrap items-center gap-1.5 sm:justify-end">
-      <InputGroup className="order-first w-full flex-none bg-background sm:order-0 sm:mr-auto sm:w-72">
+    <div className="flex w-full min-w-0 shrink-0 items-center gap-1.5 max-sm:flex-wrap sm:justify-end">
+      <InputGroup className="w-full border-input bg-background sm:mr-auto sm:w-auto sm:max-w-72 sm:min-w-36 sm:flex-1">
         <InputGroupInput
           ref={searchInputRef}
           value={searchQuery}
           onChange={(event) => onSearchQueryChange(event.target.value)}
-          placeholder="Search logs"
-          aria-label="Search build logs"
-          className="font-mono text-xs"
+          placeholder={scope === 'step' ? 'Search this step' : 'Search log'}
+          aria-label={
+            scope === 'step'
+              ? 'Search the selected step'
+              : 'Search the build log'
+          }
+          className="text-xs"
+          disabled={!hasLines}
         />
         <InputGroupAddon align="inline-start">
           <HugeiconsIcon icon={Search01Icon} />
@@ -103,49 +121,76 @@ export function LogToolbar({
         ) : null}
       </InputGroup>
 
-      <Button
-        variant="outline"
-        size="sm"
-        aria-label="Wrap log lines"
-        aria-pressed={wrapLines}
+      <ToolbarAction
+        label="Wrap"
+        description="Wrap long lines"
+        icon={TextWrapIcon}
+        pressed={wrapLines}
+        disabled={!hasLines}
         onClick={onToggleWrap}
-      >
-        <HugeiconsIcon icon={TextWrapIcon} data-icon="inline-start" />
-        Wrap
-      </Button>
-
-      {isStreaming ? (
-        <Button
-          variant="outline"
-          size="sm"
-          aria-label="Follow live logs"
-          aria-pressed={followLive}
+      />
+      {isLive ? (
+        <ToolbarAction
+          label="Follow"
+          description="Follow new lines"
+          icon={Loading03Icon}
+          pressed={followLive}
           onClick={onToggleFollow}
-        >
-          <HugeiconsIcon icon={Loading03Icon} data-icon="inline-start" />
-          Follow
-        </Button>
+        />
       ) : null}
-
-      <Button
-        variant="outline"
-        size="sm"
-        aria-label="Copy logs"
+      <ToolbarAction
+        label="Copy"
+        description={scope === 'step' ? 'Copy this step' : 'Copy the log'}
+        icon={Copy01Icon}
+        disabled={!hasLines}
         onClick={onCopy}
-      >
-        <HugeiconsIcon icon={Copy01Icon} data-icon="inline-start" />
-        Copy
-      </Button>
-
-      <Button
-        variant="outline"
-        size="sm"
-        aria-label="Download raw logs"
+      />
+      <ToolbarAction
+        label="Download"
+        description="Download the full raw log"
+        icon={Download04Icon}
+        disabled={!hasAnyLines}
         onClick={onDownload}
-      >
-        <HugeiconsIcon icon={Download04Icon} data-icon="inline-start" />
-        Download
-      </Button>
+      />
     </div>
+  )
+}
+
+/** Labelled on wider screens; icon-only with a tooltip on phones. */
+function ToolbarAction({
+  label,
+  description,
+  icon,
+  pressed,
+  disabled,
+  onClick,
+}: {
+  label: string
+  description: string
+  icon: typeof Copy01Icon
+  pressed?: boolean
+  disabled?: boolean
+  onClick: () => void
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label={description}
+            aria-pressed={pressed}
+            disabled={disabled}
+            onClick={onClick}
+            className="aria-pressed:bg-muted max-sm:size-11 max-sm:px-0"
+          />
+        }
+      >
+        <HugeiconsIcon icon={icon} data-icon="inline-start" />
+        <span className="max-sm:sr-only">{label}</span>
+      </TooltipTrigger>
+      <TooltipContent>{description}</TooltipContent>
+    </Tooltip>
   )
 }

@@ -11,6 +11,7 @@ import type {
 import { useAppStoreConnectKeys } from '@/hooks/use-app-store-connect-keys'
 import { useHasPermissions } from '@/hooks/use-permissions'
 import { PipelineFormSubsection } from '@/components/pipeline-form-section'
+import { FileField } from '@/components/file-field'
 import SetupHint from '@/components/setup-hint'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -22,7 +23,6 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -95,6 +95,7 @@ export function PipelineIosSigningSection({
 
   return (
     <PipelineFormSubsection
+      id="ios-signing"
       title="iOS"
       description={
         enabled
@@ -168,14 +169,8 @@ function IosSigningToggle({
             Enable iOS signing
           </label>
           {signingData ? (
-            <p className="text-xs text-muted-foreground">
-              Stored: mode {signingData.mode}, p12{' '}
-              {signingData.has_p12 ? 'present' : 'missing'}, API key{' '}
-              {signingData.shared_api_key
-                ? `shared (${signingData.shared_api_key.name})`
-                : signingData.has_api_key
-                  ? 'present'
-                  : 'missing'}
+            <p className="text-sm text-muted-foreground">
+              {storedSigningSummary(signingData)}
             </p>
           ) : null}
           <FormMessage />
@@ -183,6 +178,33 @@ function IosSigningToggle({
       )}
     />
   )
+}
+
+const STORED_MODE_LABELS = {
+  manual: 'Manual',
+  api: 'API',
+  hybrid: 'Hybrid',
+} satisfies Record<keyof typeof SIGNING_MODES, string>
+
+/** What the server has stored, as one sentence. */
+function storedSigningSummary(signingData: PipelineIosSigningResponse) {
+  const mode = signingData.mode
+  const parts: Array<string> = []
+  if (mode !== 'api') {
+    parts.push(
+      signingData.has_p12 ? 'certificate stored' : 'no certificate yet',
+    )
+  }
+  if (mode !== 'manual') {
+    parts.push(
+      signingData.shared_api_key
+        ? `uses the shared key ${signingData.shared_api_key.name}`
+        : signingData.has_api_key
+          ? 'own API key stored'
+          : 'no API key yet',
+    )
+  }
+  return `Saved setup: ${STORED_MODE_LABELS[mode]} signing, ${parts.join(', ')}.`
 }
 
 /**
@@ -239,6 +261,12 @@ function IosSigningIdentityFields({
                 ? exportMethodChangeHint(mode)
                 : ''}
             </FormDescription>
+            {field.value === 'ad_hoc' && appStorePublishing?.configured ? (
+              <p className="text-sm text-warning">
+                TestFlight and App Store uploads need App Store distribution.
+                Uploads stay off until you switch. {appStorePublishing.link}
+              </p>
+            ) : null}
             {field.value === 'app_store' && appStorePublishing ? (
               <p className="text-sm text-muted-foreground">
                 {appStorePublishing.configured ? (
@@ -314,10 +342,10 @@ function IosSigningIdentityFields({
                 {...field}
               />
             </FormControl>
-            <p className="text-xs text-muted-foreground">
+            <FormDescription>
               Main bundle first, then optional extension bundle IDs (one per
               line or comma-separated).
-            </p>
+            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -338,24 +366,17 @@ function IosCertificateFields({
   const form = useFormContext<PipelineFormValues>()
   return (
     <div className="grid gap-3 rounded-[min(var(--radius-2xl),16px)] bg-muted/40 p-4">
-      <div className="space-y-2">
-        <Label htmlFor="ios-signing-certificate">
-          Distribution certificate (.p12)
-        </Label>
-        <Input
-          id="ios-signing-certificate"
-          type="file"
-          accept=".p12"
-          onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
-        />
-        <p className="text-xs text-muted-foreground">
-          {file
-            ? `Selected: ${file.name}`
-            : signingData?.has_p12
-              ? `Stored p12: ${signingData.p12_filename ?? 'present'}`
-              : 'Select a .p12 certificate file'}
-        </p>
-      </div>
+      <FileField
+        id="ios-signing-certificate"
+        label="Distribution certificate (.p12)"
+        accept=".p12"
+        file={file}
+        onFileChange={onFileChange}
+        storedName={
+          signingData?.has_p12 ? (signingData.p12_filename ?? true) : null
+        }
+        emptyLabel="No certificate stored yet"
+      />
       <FormField
         control={form.control}
         name="ios_signing_p12_password"
@@ -510,26 +531,17 @@ function IosApiKeyFields({
               </FormItem>
             )}
           />
-          <div className="space-y-2">
-            <Label htmlFor="ios-signing-api-key">
-              App Store Connect key (.p8)
-            </Label>
-            <Input
-              id="ios-signing-api-key"
-              type="file"
-              accept=".p8,text/plain"
-              onChange={(event) =>
-                onFileChange(event.target.files?.[0] ?? null)
-              }
-            />
-            <p className="text-xs text-muted-foreground">
-              {file
-                ? `Selected: ${file.name}`
-                : signingData?.has_api_key
-                  ? `Stored key: ${signingData.api_key_id ?? 'present'}`
-                  : 'Upload App Store Connect private key file (.p8)'}
-            </p>
-          </div>
+          <FileField
+            id="ios-signing-api-key"
+            label="App Store Connect key (.p8)"
+            accept=".p8,text/plain"
+            file={file}
+            onFileChange={onFileChange}
+            storedName={
+              signingData?.has_api_key ? (signingData.api_key_id ?? true) : null
+            }
+            emptyLabel="No key stored yet"
+          />
         </>
       ) : null}
     </div>
@@ -555,7 +567,7 @@ function IosProvisioningProfiles({
       <p className="text-sm font-medium">Provisioning profiles by bundle ID</p>
       <div>
         {bundleIds.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Add at least one bundle ID to attach provisioning profiles.
           </p>
         ) : (
@@ -564,29 +576,23 @@ function IosProvisioningProfiles({
               const existing = profilesByBundle.get(bundleId)
               const selectedFile = profileFiles[bundleId]
               return (
-                <div key={bundleId} className="space-y-2">
-                  <Label
-                    htmlFor={`ios-profile-${bundleId}`}
-                    className="font-mono text-xs"
-                  >
-                    {bundleId}
-                  </Label>
-                  <Input
-                    id={`ios-profile-${bundleId}`}
-                    type="file"
-                    accept=".mobileprovision"
-                    onChange={(event) =>
-                      onFileChange(bundleId, event.target.files?.[0] ?? null)
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {selectedFile
-                      ? `Selected: ${selectedFile.name}`
-                      : existing?.has_profile
-                        ? `Stored profile: ${existing.profile_filename ?? existing.profile_name ?? 'present'}`
-                        : 'Upload .mobileprovision for this bundle ID'}
-                  </p>
-                </div>
+                <FileField
+                  key={bundleId}
+                  id={`ios-profile-${bundleId}`}
+                  label={bundleId}
+                  labelClassName="font-mono"
+                  accept=".mobileprovision"
+                  file={selectedFile ?? null}
+                  onFileChange={(next) => onFileChange(bundleId, next)}
+                  storedName={
+                    existing?.has_profile
+                      ? (existing.profile_filename ??
+                        existing.profile_name ??
+                        true)
+                      : null
+                  }
+                  emptyLabel="No profile stored yet"
+                />
               )
             })}
           </div>

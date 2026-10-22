@@ -138,7 +138,7 @@ function OperationsBuildsPage() {
       <PageMeta title="Builds" noindex />
       <PageHeader
         title="Builds"
-        description="Queue, execution, and historical run inventory across projects."
+        description="Every build across your projects, newest first."
         actions={
           canTriggerBuild ? (
             <Suspense fallback={null}>

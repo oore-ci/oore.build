@@ -28,7 +28,6 @@ import { relativeTime } from '@/lib/format-utils'
 import { isOoreApiError } from '@oore/client/client'
 import { PageMeta } from '@/lib/seo'
 import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
-import type { ListBuildsResponse } from '@oore/client/models'
 import type { SortDirection } from '@/components/data-table-features'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import ConfirmDialog from '@/components/ConfirmDialog'
@@ -41,11 +40,16 @@ import {
 } from '@/components/settings/settings-section'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import { NotFoundState } from '@/components/root-route-boundaries'
 import { ResumeRunnersButton } from '@/components/settings/direct-runner-policy-panel'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ProjectPipelinesTab } from './-project-pipelines-tab'
+import {
+  EMPTY_LAST_BUILD_BY_PIPELINE,
+  selectProjectBuildSummary,
+} from './-project-build-summary'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 
 const ProjectOverview = lazy(() => import('./-project-overview'))
@@ -105,29 +109,6 @@ const PROJECT_BUILD_SORT_VALUES = new Set<ProjectBuildSort>([
   'pipeline_name',
   'branch',
 ])
-
-const EMPTY_LAST_BUILD_BY_PIPELINE = new Map<
-  string,
-  { status: string; time: number }
->()
-
-function selectProjectBuildSummary({ builds, total }: ListBuildsResponse) {
-  const lastBuildByPipeline = new Map<
-    string,
-    { status: string; time: number }
-  >()
-
-  for (const build of builds) {
-    if (build.pipeline_id && !lastBuildByPipeline.has(build.pipeline_id)) {
-      lastBuildByPipeline.set(build.pipeline_id, {
-        status: build.status,
-        time: build.queued_at,
-      })
-    }
-  }
-
-  return { buildCount: total, lastBuildByPipeline, builds }
-}
 
 function validateProjectSearch(search: SearchInput): ProjectDetailSearch {
   const tab = searchString(search, 'tab')
@@ -293,7 +274,19 @@ function ProjectDetailPage() {
   }
 
   if (error) {
-    const notFound = isOoreApiError(error) && error.status === 404
+    if (isOoreApiError(error) && error.status === 404) {
+      return (
+        <PageLayout width="wide">
+          <PageMeta title="Project not found" noindex />
+          <NotFoundState
+            title="Project not found"
+            description="This project was deleted, expired, or the link is wrong."
+            backTo="/projects"
+            backLabel="Back to projects"
+          />
+        </PageLayout>
+      )
+    }
 
     return (
       <PageLayout width="wide">
@@ -301,28 +294,23 @@ function ProjectDetailPage() {
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              {notFound
-                ? 'This project was not found or is no longer available.'
-                : `Failed to load project: ${error.message}`}
-            </span>
+            <span>Failed to load project: {error.message}</span>
             <span className="flex gap-2">
               <Button
                 variant="outline"
                 size="sm"
                 render={<Link to="/projects" />}
+                nativeButton={false}
               >
                 Back to projects
               </Button>
-              {!notFound ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void projectQuery.refetch()}
-                >
-                  Retry
-                </Button>
-              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void projectQuery.refetch()}
+              >
+                Retry
+              </Button>
             </span>
           </AlertDescription>
         </Alert>
@@ -566,6 +554,11 @@ function ProjectDetailPage() {
                 projectId={projectId}
                 projectName={project.name}
                 builds={buildSummary?.builds ?? []}
+                lastBuildByPipeline={lastBuildByPipeline}
+                // The Pipelines tab's search and page share this query.
+                pipelines={
+                  search.pipelineQ || pipelinePage > 1 ? [] : pipelines
+                }
                 loading={buildSummaryQuery.isLoading}
                 error={buildSummaryQuery.error}
                 onRetry={() => void buildSummaryQuery.refetch()}

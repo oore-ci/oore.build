@@ -37,6 +37,11 @@ export default function TerminalLogViewer({
   logsUnavailable = false,
   onRetryLogs,
   isTerminal = false,
+  buildStatus,
+  buildNumber,
+  isPolling = false,
+  onReconnect,
+  focusRequest = null,
 }: TerminalLogViewerProps) {
   'use no memo' // TanStack Virtual updates its instance in place.
 
@@ -45,7 +50,17 @@ export default function TerminalLogViewer({
   const [wrapLines, setWrapLines] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [activeMatchOrdinal, setActiveMatchOrdinal] = useState(0)
+  const [appliedFocusKey, setAppliedFocusKey] = useState<number | null>(null)
+  const [focusedSequence, setFocusedSequence] = useState<number | null>(null)
+  if (focusRequest && focusRequest.key !== appliedFocusKey) {
+    setAppliedFocusKey(focusRequest.key)
+    setUserSelectedStep(focusRequest.step)
+    setFocusedSequence(focusRequest.sequence)
+    setSearchQuery('')
+    setAutoScroll(false)
+  }
   const deferredSearchQuery = useDeferredValue(searchQuery)
+  const sectionRef = useRef<HTMLElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const isMobile = useIsMobile()
@@ -69,6 +84,18 @@ export default function TerminalLogViewer({
         ? allVisibleLogs
         : (stepGroupsByName.get(selectedStep)?.logs ?? []),
     [selectedStep, allVisibleLogs, stepGroupsByName],
+  )
+  // Number lines 1..n across the whole log so a step view keeps their numbers.
+  const lineNumbers = useMemo(
+    () => new Map(allVisibleLogs.map((chunk, index) => [chunk, index + 1])),
+    [allVisibleLogs],
+  )
+  const focusedIndex = useMemo(
+    () =>
+      focusedSequence === null
+        ? null
+        : selectedLogs.findIndex((chunk) => chunk.sequence === focusedSequence),
+    [selectedLogs, focusedSequence],
   )
   const matchingIndexes = useMemo(() => {
     const query = deferredSearchQuery.trim().toLocaleLowerCase()
@@ -120,11 +147,23 @@ export default function TerminalLogViewer({
     virtualizer.scrollToIndex(currentMatchIndex, { align: 'center' })
   }, [currentMatchIndex, virtualizer])
 
-  const logStepGroups = stepGroups.filter((group) => group.logs.length > 0)
-  const hasSteps = logStepGroups.length > 0
+  useEffect(() => {
+    if (appliedFocusKey === null || focusedIndex === null || focusedIndex < 0)
+      return
+    sectionRef.current?.scrollIntoView({ block: 'nearest' })
+    virtualizer.scrollToIndex(focusedIndex, { align: 'center' })
+  }, [appliedFocusKey, focusedIndex, virtualizer])
+
+  // Steps show even before they print a line. Logs without step markers
+  // (older runners) only have a full log, so a step list would read as empty.
+  const hasSteps =
+    stepGroups.length > 0 &&
+    (allVisibleLogs.length === 0 ||
+      stepGroups.some((group) => group.logs.length > 0))
+  // Download is always the whole log; Copy and Search follow the selected view.
   function downloadRawLogs() {
     const blob = new Blob(
-      [selectedLogs.map((chunk) => chunk.content).join('\n')],
+      [allVisibleLogs.map((chunk) => chunk.content).join('\n')],
       {
         type: 'text/plain',
       },
@@ -132,7 +171,7 @@ export default function TerminalLogViewer({
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = 'build-logs.txt'
+    anchor.download = buildNumber ? `build-${buildNumber}.log` : 'build.log'
     anchor.click()
     URL.revokeObjectURL(url)
   }
@@ -140,8 +179,13 @@ export default function TerminalLogViewer({
   function copyLogs() {
     const rawLogs = selectedLogs.map((chunk) => chunk.content).join('\n')
     void navigator.clipboard.writeText(rawLogs).then(
-      () => toast.success('Build logs copied'),
-      () => toast.error('Could not copy build logs'),
+      () =>
+        toast.success(
+          selectedStep === 'all'
+            ? 'Build log copied'
+            : `Copied ${selectedStep}`,
+        ),
+      () => toast.error('Could not copy the log'),
     )
   }
 
@@ -170,6 +214,7 @@ export default function TerminalLogViewer({
 
   function handleSelectStep(step: string) {
     setUserSelectedStep(step)
+    setFocusedSequence(null)
     setActiveMatchOrdinal(0)
     setAutoScroll(true)
   }
@@ -191,11 +236,12 @@ export default function TerminalLogViewer({
 
   return (
     <section
+      ref={sectionRef}
       aria-labelledby="build-logs-heading"
       className={cn(
         'flex flex-col overflow-hidden rounded-xl border bg-card shadow-xs',
         fillAvailableHeight
-          ? 'h-full min-h-80'
+          ? 'min-h-[max(22rem,55dvh)] flex-1'
           : 'h-[clamp(28rem,62dvh,50rem)]',
       )}
     >
@@ -227,7 +273,10 @@ export default function TerminalLogViewer({
             }
             wrapLines={wrapLines}
             followLive={autoScroll}
-            isStreaming={isStreaming}
+            isLive={!isTerminal}
+            scope={selectedStep === 'all' ? 'log' : 'step'}
+            hasLines={selectedLogs.length > 0}
+            hasAnyLines={allVisibleLogs.length > 0}
             onSearchQueryChange={handleSearchQueryChange}
             onSearchClear={handleSearchClear}
             onPreviousMatch={() => navigateMatch(-1)}
@@ -252,13 +301,20 @@ export default function TerminalLogViewer({
             </Button>
           ) : null}
         </div>
-      ) : !isTerminal && !isStreaming ? (
-        <p
-          className="shrink-0 border-b px-3 py-2 text-sm text-muted-foreground"
+      ) : buildStatus === 'running' && isPolling && !isStreaming ? (
+        <div
+          className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5"
           role="status"
         >
-          Live logs disconnected. Checking for updates periodically.
-        </p>
+          <p className="text-sm text-muted-foreground">
+            Live logs disconnected. New lines load every few seconds.
+          </p>
+          {onReconnect ? (
+            <Button variant="outline" size="sm" onClick={onReconnect}>
+              Reconnect
+            </Button>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -272,7 +328,7 @@ export default function TerminalLogViewer({
               }
             >
               <StepSelect
-                groups={logStepGroups}
+                groups={stepGroups}
                 selectedStep={selectedStep}
                 allLogCount={allVisibleLogs.length}
                 onSelect={handleSelectStep}
@@ -280,7 +336,7 @@ export default function TerminalLogViewer({
             </Suspense>
           ) : (
             <StepNavigation
-              groups={logStepGroups}
+              groups={stepGroups}
               selectedStep={selectedStep}
               allLogCount={allVisibleLogs.length}
               onSelect={handleSelectStep}
@@ -300,9 +356,14 @@ export default function TerminalLogViewer({
             isLoading={isLoading}
             logsUnavailable={logsUnavailable}
             isTerminal={isTerminal}
+            buildStatus={buildStatus}
             wrapLines={wrapLines}
+            lineNumbers={lineNumbers}
             matchingIndexes={matchingIndexSet}
-            currentMatchIndex={currentMatchIndex}
+            currentMatchIndex={
+              currentMatchIndex ??
+              (focusedIndex !== null && focusedIndex >= 0 ? focusedIndex : null)
+            }
             showJumpToLatest={!autoScroll}
             onJumpToLatest={jumpToLatest}
             scrollContainerRef={scrollContainerRef}

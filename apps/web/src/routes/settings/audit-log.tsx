@@ -55,7 +55,7 @@ const RESOURCE_TYPE_OPTIONS = {
   build: 'Build',
   project: 'Project',
   pipeline: 'Pipeline',
-  integration: 'Integration',
+  integration: 'Source',
   instance_settings: 'Settings',
   runner: 'Runner',
   artifact: 'Artifact',

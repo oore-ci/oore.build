@@ -8,7 +8,7 @@ import {
   PlayIcon,
 } from '@hugeicons/core-free-icons'
 import { toast } from '@/lib/toast'
-import type { Build } from '@oore/client/models'
+import type { Build, Pipeline } from '@oore/client/models'
 
 import {
   getActiveInstanceOrRedirect,
@@ -27,8 +27,14 @@ import {
   useUpdatePipeline,
 } from '@/hooks/use-pipelines'
 import { useProject } from '@/hooks/use-projects'
+import {
+  usePipelineAppStorePublish,
+  usePipelineGooglePlayPublish,
+} from '@/hooks/use-pipeline-publish'
+import { CollectionError } from '@/components/collection'
 import { enabledStatus } from '@/lib/status-variants'
 import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
+import { formatEnumLabel } from '@/lib/format-utils'
 import { DangerZone } from '@/components/danger-zone'
 import { RelativeTime } from '@/components/relative-time'
 import { StatusBadge } from '@/components/status-badge'
@@ -100,6 +106,38 @@ const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
     enableSorting: false,
   },
 ]
+
+const RECENT_BUILD_LIMIT = 20
+
+const EVENT_PHRASES = new Map([
+  ['push', 'pushes'],
+  ['pull_request', 'pull requests'],
+  ['tag_push', 'tags'],
+  ['merge_request', 'merge requests'],
+])
+
+function joinPhrases(items: Array<string>) {
+  if (items.length <= 1) return items.join('')
+  return `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`
+}
+
+/** "Builds Android and iOS on pushes to main." as the page subtitle. */
+function describePipeline(pipeline: Pipeline, manualOnlyTriggers: boolean) {
+  const platforms = joinPhrases(
+    pipeline.execution_config.platforms.map((p) => BUILD_PLATFORM_LABELS[p]),
+  )
+  const subject = platforms
+    ? `Builds ${platforms}`
+    : 'Runs its configured build'
+  const { branches, events } = pipeline.trigger_config
+  if (manualOnlyTriggers) return `${subject} when you run it.`
+  const when =
+    events.length === 0
+      ? 'on every repository event'
+      : `on ${joinPhrases(events.map((event) => EVENT_PHRASES.get(event) ?? formatEnumLabel(event).toLowerCase()))}`
+  const where = branches.length > 0 ? ` to ${branches.join(', ')}` : ''
+  return `${subject} ${when}${where}.`
+}
 
 function RecentBuildsTable({ builds }: { builds: Array<Build> }) {
   const table = useDataTable({
@@ -183,14 +221,25 @@ function PipelineDetailPage() {
   const iosSigningQuery = usePipelineIosSigning(pipelineId, {
     enabled: canWrite,
   })
-  const { data: buildsData } = useBuilds({
+  const buildsQuery = useBuilds({
     pipeline_id: pipelineId,
-    limit: 20,
+    limit: RECENT_BUILD_LIMIT,
+  })
+  const buildsAndroidForQueries =
+    data?.pipeline.execution_config.platforms.includes('android') ?? false
+  const buildsIosForQueries =
+    data?.pipeline.execution_config.platforms.includes('ios') ?? false
+  const googlePlayQuery = usePipelineGooglePlayPublish(pipelineId, {
+    enabled: buildsAndroidForQueries,
+  })
+  const appStoreQuery = usePipelineAppStorePublish(pipelineId, {
+    enabled: buildsIosForQueries,
   })
   const updateMutation = useUpdatePipeline()
   const deleteMutation = useDeletePipeline()
 
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [disableOpen, setDisableOpen] = useState(false)
   const [buildDrawerOpen, setBuildDrawerOpen] = useState(false)
 
   const label = data?.pipeline.name ?? 'Pipeline Details'
@@ -225,15 +274,42 @@ function PipelineDetailPage() {
   const { pipeline } = data
   const buildsAndroid = pipeline.execution_config.platforms.includes('android')
   const buildsIos = pipeline.execution_config.platforms.includes('ios')
-  const builds = buildsData?.builds ?? []
+  const builds = buildsQuery.data?.builds ?? []
+  // Unknown until the project loads; only a loaded project without a
+  // repository blocks builds.
+  const projectMissingSource =
+    !!projectData && !projectData.project.repository_id
   const projectHasSource = !!projectData?.project.repository_id
   const manualOnlyTriggers =
     projectData?.project.repository_provider === 'local_git'
+
+  const publishingSummary: Array<{ label: string; value: string }> = []
+  if (buildsAndroid && googlePlayQuery.data) {
+    const config = googlePlayQuery.data.config
+    publishingSummary.push({
+      label: 'Google Play',
+      value: config?.enabled
+        ? `Uploads to the ${config.track} track after each build`
+        : 'Off',
+    })
+  }
+  if (buildsIos && appStoreQuery.data) {
+    const config = appStoreQuery.data.config
+    publishingSummary.push({
+      label: 'App Store Connect',
+      value: config.enabled
+        ? config.destination === 'app_store'
+          ? 'Uploads to the App Store after each build'
+          : 'Uploads to TestFlight after each build'
+        : 'Off',
+    })
+  }
 
   function handleToggleEnabled() {
     updateMutation.mutate(
       { pipelineId: pipeline.id, data: { enabled: !pipeline.enabled } },
       {
+        onSettled: () => setDisableOpen(false),
         onSuccess: () =>
           toast.success(
             pipeline.enabled ? 'Pipeline disabled' : 'Pipeline enabled',
@@ -263,7 +339,7 @@ function PipelineDetailPage() {
       <PageMeta title={label} noindex />
       <PageHeader
         title={pipeline.name}
-        description="Pipeline overview and configuration."
+        description={describePipeline(pipeline, manualOnlyTriggers)}
         meta={
           <>
             <StatusBadge
@@ -309,7 +385,10 @@ function PipelineDetailPage() {
                       })
                     }}
                   >
-                    <Button disabled={!projectHasSource}>
+                    <Button
+                      variant={pipeline.enabled ? 'default' : 'outline'}
+                      disabled={projectMissingSource}
+                    >
                       <HugeiconsIcon icon={PlayIcon} />
                       Run build
                     </Button>
@@ -318,8 +397,12 @@ function PipelineDetailPage() {
               ) : null}
               {canWrite ? (
                 <Button
-                  variant="outline"
-                  onClick={handleToggleEnabled}
+                  variant={pipeline.enabled ? 'outline' : 'default'}
+                  onClick={() =>
+                    pipeline.enabled
+                      ? setDisableOpen(true)
+                      : handleToggleEnabled()
+                  }
                   disabled={updateMutation.isPending}
                 >
                   {pipeline.enabled ? 'Disable' : 'Enable'}
@@ -345,7 +428,16 @@ function PipelineDetailPage() {
           ) : undefined
         }
       />
-      {!projectHasSource ? (
+      {!pipeline.enabled ? (
+        <Alert role="status">
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            This pipeline is disabled. Pushes, pull requests and schedules do
+            not start builds until you enable it.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {projectMissingSource ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
@@ -380,12 +472,21 @@ function PipelineDetailPage() {
             iosSigning={iosSigningQuery.data}
             manualOnlyTriggers={manualOnlyTriggers}
             pipeline={pipeline}
+            publishing={publishingSummary}
           />
           {/* Recent builds */}
           <Card>
             <CardContent>
               <h3 className="pb-3 text-sm font-medium">Recent builds</h3>
-              {builds.length === 0 ? (
+              {buildsQuery.error ? (
+                <CollectionError
+                  title="Failed to load recent builds"
+                  description={buildsQuery.error.message}
+                  onRetry={() => void buildsQuery.refetch()}
+                />
+              ) : buildsQuery.isLoading ? (
+                <Skeleton className="h-40 w-full" />
+              ) : builds.length === 0 ? (
                 <Empty className="p-8">
                   <EmptyHeader>
                     <EmptyMedia variant="icon">
@@ -410,7 +511,31 @@ function PipelineDetailPage() {
                   ) : null}
                 </Empty>
               ) : (
-                <RecentBuildsTable builds={builds} />
+                <div className="flex flex-col gap-3">
+                  <RecentBuildsTable builds={builds} />
+                  {(buildsQuery.data?.total ?? builds.length) >
+                  builds.length ? (
+                    <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                      <span>
+                        Showing the {builds.length} most recent builds.
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        nativeButton={false}
+                        render={
+                          <Link
+                            to="/projects/$projectId"
+                            params={{ projectId }}
+                            search={{ tab: 'builds' }}
+                          />
+                        }
+                      >
+                        View all builds
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
               )}
             </CardContent>
           </Card>
@@ -437,6 +562,9 @@ function PipelineDetailPage() {
               <div className="flex flex-col gap-8">
                 {buildsAndroid ? (
                   <GooglePlayPublishSection
+                    androidCommandOverride={
+                      pipeline.execution_config.platform_commands?.android
+                    }
                     androidSigning={signingQuery.data}
                     canReadInstanceSecrets={canReadInstanceSettings}
                     canWrite={canWrite}
@@ -486,10 +614,21 @@ function PipelineDetailPage() {
       </Tabs>
 
       <ConfirmDialog
+        open={disableOpen}
+        onOpenChange={setDisableOpen}
+        title={`Disable ${pipeline.name}?`}
+        description="Pushes, pull requests and schedules stop starting builds for this pipeline. Builds already running finish. You can enable it again at any time."
+        confirmLabel="Disable pipeline"
+        isPending={updateMutation.isPending}
+        pendingLabel="Disabling..."
+        onConfirm={handleToggleEnabled}
+      />
+
+      <ConfirmDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         title="Delete pipeline?"
-        description={`This will permanently delete "${pipeline.name}". This action cannot be undone.`}
+        description={`This permanently deletes "${pipeline.name}" with its build history, schedules, signing files, secrets and publishing settings. It cannot be undone.`}
         confirmLabel="Delete pipeline"
         confirmVariant="destructive"
         isPending={deleteMutation.isPending}

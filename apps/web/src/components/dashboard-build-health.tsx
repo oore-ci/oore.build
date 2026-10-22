@@ -12,6 +12,7 @@ import type {
   BuildInsightsResponse,
   FailingPipelineInsights,
 } from '@oore/client/models'
+import { DashboardSection } from '@/components/dashboard-section'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -69,31 +70,39 @@ function Delta({
   previous,
   format,
   goodWhen,
-  label,
+  days,
 }: {
   current?: number | null
   previous?: number | null
   format: (difference: number) => string
-  goodWhen: 'up' | 'down'
-  label: string
+  /** `null` when more or less is neither good nor bad, like build volume. */
+  goodWhen: 'up' | 'down' | null
+  days: number
 }) {
+  const prior = `vs prior ${days} days`
   if (current == null || previous == null) {
-    return <Badge variant="outline">No earlier data</Badge>
+    return <Badge variant="outline">New</Badge>
   }
   const difference = current - previous
   const text = format(Math.abs(difference))
   if (text === format(0)) return <Badge variant="outline">No change</Badge>
   const up = difference > 0
-  const good = up === (goodWhen === 'up')
+  const variant =
+    goodWhen == null
+      ? 'outline'
+      : up === (goodWhen === 'up')
+        ? 'success'
+        : 'destructive'
   return (
     <Badge
-      variant={good ? 'success' : 'destructive'}
-      aria-label={`${up ? 'Up' : 'Down'} ${text} ${label}`}
+      variant={variant}
+      aria-label={`${up ? 'Up' : 'Down'} ${text} ${prior}`}
     >
       <HugeiconsIcon
         icon={up ? ArrowUp01Icon : ArrowDown01Icon}
         data-icon="inline-start"
       />
+      {up ? '+' : '−'}
       {text}
     </Badge>
   )
@@ -110,7 +119,7 @@ function MetricCard({
 }: {
   title: string
   value: string
-  badge: React.ReactNode
+  badge?: React.ReactNode
   footer: string
   to: '/builds' | '/settings/runners'
   search?: { status: string }
@@ -126,13 +135,15 @@ function MetricCard({
       <Card size="sm" className="@container/card h-full">
         <CardHeader>
           <CardDescription>{title}</CardDescription>
-          <CardTitle className="font-mono text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
+          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
             {value}
           </CardTitle>
-          <CardAction>{badge}</CardAction>
+          {badge ? <CardAction>{badge}</CardAction> : null}
         </CardHeader>
         <CardFooter className="justify-between gap-2 text-muted-foreground">
-          <span className="line-clamp-2">{footer}</span>
+          <span className="truncate" title={footer}>
+            {footer}
+          </span>
           <HugeiconsIcon icon={ChevronRightIcon} className="shrink-0" />
         </CardFooter>
       </Card>
@@ -141,28 +152,29 @@ function MetricCard({
 }
 
 function BuildMetrics({
+  canApprove,
   insights,
   onlineRunners,
-  totalRunners,
 }: {
+  canApprove: boolean
   insights: BuildInsightsResponse
   onlineRunners?: number
-  totalRunners?: number
 }) {
   const { totals, previous_totals: previous, queue } = insights
+  const days = insights.window_days
   const failures = totals.failed + totals.timed_out
   const verdicts = totals.succeeded + failures
-  const window = `${insights.window_days} days`
-  const runners =
-    onlineRunners === undefined || totalRunners === undefined
-      ? null
-      : `${onlineRunners} of ${totalRunners} runners online`
+  const unsettled = totals.canceled + totals.expired
+  const window = `${days} days`
   const waitText =
     queue.oldest_waiting_since != null
-      ? `Oldest queued ${relativeTime(queue.oldest_waiting_since)}`
+      ? `oldest ${relativeTime(queue.oldest_waiting_since)}`
       : insights.queue_wait.p50_seconds != null
-        ? `Median wait ${formatDuration(insights.queue_wait.p50_seconds)}`
-        : 'No builds waited'
+        ? `median wait ${formatDuration(insights.queue_wait.p50_seconds)}`
+        : null
+  const queueFooter = [`${queue.running} running`, waitText]
+    .filter(Boolean)
+    .join(' · ')
 
   return (
     <div className="grid grid-cols-1 gap-3 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
@@ -175,13 +187,13 @@ function BuildMetrics({
             previous={previous.success_rate}
             format={(difference) => `${Math.round(difference * 100)} pts`}
             goodWhen="up"
-            label="against the previous period"
+            days={days}
           />
         }
         footer={
           verdicts === 0
-            ? `No finished builds in ${window}`
-            : `${totals.succeeded} of ${verdicts} builds passed`
+            ? `No passed or failed builds in ${window}`
+            : `${totals.succeeded} of ${verdicts} passed`
         }
         to="/builds"
         search={failures > 0 ? { status: 'failed' } : undefined}
@@ -195,20 +207,14 @@ function BuildMetrics({
             current={totals.finished}
             previous={previous.finished}
             format={(difference) => String(difference)}
-            goodWhen="up"
-            label="builds against the previous period"
+            goodWhen={null}
+            days={days}
           />
         }
         footer={
-          failures + totals.canceled + totals.expired === 0
-            ? `Over the last ${window}`
-            : [
-                failures > 0 ? `${failures} failed` : null,
-                totals.canceled > 0 ? `${totals.canceled} canceled` : null,
-                totals.expired > 0 ? `${totals.expired} expired` : null,
-              ]
-                .filter(Boolean)
-                .join(' · ')
+          unsettled === 0
+            ? `${failures} failed`
+            : `${failures} failed · ${unsettled} canceled`
         }
         to="/builds"
         label={`${totals.finished} builds finished over ${window}. Open builds`}
@@ -222,13 +228,13 @@ function BuildMetrics({
             previous={insights.previous_duration.p50_seconds}
             format={(difference) => formatDuration(difference)}
             goodWhen="down"
-            label="median build time against the previous period"
+            days={days}
           />
         }
         footer={
           insights.duration.p90_seconds == null
-            ? 'From succeeded builds'
-            : `p90 ${formatDuration(insights.duration.p90_seconds)} · succeeded builds`
+            ? 'Passed builds'
+            : `p90 ${formatDuration(insights.duration.p90_seconds)} · passed builds`
         }
         to="/builds"
         search={{ status: 'succeeded' }}
@@ -237,16 +243,14 @@ function BuildMetrics({
       <MetricCard
         title="Waiting now"
         value={String(queue.waiting)}
-        badge={<Badge variant="outline">{queue.running} running</Badge>}
-        footer={[
-          waitText,
-          queue.awaiting_approval > 0
-            ? `${queue.awaiting_approval} to approve`
-            : null,
-          runners,
-        ]
-          .filter(Boolean)
-          .join(' · ')}
+        badge={
+          canApprove && queue.awaiting_approval > 0 ? (
+            <Badge variant="outline">
+              {queue.awaiting_approval} to approve
+            </Badge>
+          ) : undefined
+        }
+        footer={queueFooter}
         to={
           queue.waiting > 0 && onlineRunners === 0
             ? '/settings/runners'
@@ -257,7 +261,7 @@ function BuildMetrics({
             ? { status: 'queued' }
             : undefined
         }
-        label={`${queue.waiting} builds waiting and ${queue.running} running. ${waitText}`}
+        label={`${queue.waiting} builds waiting, ${queueFooter}`}
       />
     </div>
   )
@@ -282,24 +286,41 @@ function daySummary(day: BuildInsightsDay): string {
 }
 
 const SERIES = [
-  { key: 'succeeded', label: 'Passed', className: 'bg-success' },
-  { key: 'failed', label: 'Failed', className: 'bg-destructive' },
-  { key: 'other', label: 'Canceled', className: 'bg-muted-foreground/40' },
+  { key: 'succeeded', label: 'Passed', className: 'bg-success/70' },
+  { key: 'failed', label: 'Failed', className: 'bg-destructive/70' },
+  { key: 'other', label: 'Canceled', className: 'bg-muted-foreground/30' },
 ] as const
+
+/** A round axis top and step so ticks land on readable numbers. */
+type AxisScale = { top: number; step: number }
+
+function axisScale(max: number): AxisScale {
+  const rough = Math.max(1, max) / 3
+  const magnitude = 10 ** Math.floor(Math.log10(rough))
+  const step =
+    [1, 2, 5, 10].map((factor) => factor * magnitude).find((v) => v >= rough) ??
+    10 * magnitude
+  return { top: Math.ceil(Math.max(1, max) / step) * step, step }
+}
 
 /** Finished builds per day, stacked by outcome. */
 function BuildTrend({ insights }: { insights: BuildInsightsResponse }) {
   const days = insights.daily
-  const max = Math.max(
-    1,
-    ...days.map((day) => day.succeeded + day.failed + day.other),
+  const { top: max, step } = axisScale(
+    Math.max(0, ...days.map((day) => day.succeeded + day.failed + day.other)),
+  )
+  const ticks = Array.from(
+    { length: max / step + 1 },
+    (_, index) => max - index * step,
   )
   const middle = days[Math.floor(days.length / 2)]
 
   return (
     <Card size="sm" className="h-full">
       <CardHeader>
-        <CardTitle>Builds per day</CardTitle>
+        <CardTitle>
+          <h3>Builds per day</h3>
+        </CardTitle>
         <CardDescription>
           <ul className="flex flex-wrap gap-x-3 gap-y-1">
             {SERIES.map((series) => (
@@ -317,15 +338,26 @@ function BuildTrend({ insights }: { insights: BuildInsightsResponse }) {
       <CardContent className="flex flex-1 flex-col gap-2">
         <div className="relative flex min-h-40 flex-1 gap-2">
           <div
-            className="flex flex-col justify-between font-mono text-xs text-muted-foreground tabular-nums"
+            className="-my-2 flex w-6 flex-col justify-between text-right text-xs text-muted-foreground tabular-nums"
             aria-hidden
           >
-            <span>{max}</span>
-            <span>0</span>
+            {ticks.map((tick) => (
+              <span key={tick} className="leading-4">
+                {tick}
+              </span>
+            ))}
+          </div>
+          <div
+            className="pointer-events-none absolute inset-y-0 right-0 left-8 flex flex-col justify-between"
+            aria-hidden
+          >
+            {ticks.map((tick) => (
+              <span key={tick} className="h-px w-full bg-border/70" />
+            ))}
           </div>
           <div
             className={cn(
-              'flex flex-1 items-end border-b border-border',
+              'relative flex flex-1 items-end',
               days.length > 31 ? 'gap-px' : 'gap-1',
             )}
             role="list"
@@ -379,7 +411,7 @@ function BuildTrend({ insights }: { insights: BuildInsightsResponse }) {
           </div>
         </div>
         <div
-          className="flex justify-between pl-6 text-xs text-muted-foreground"
+          className="flex justify-between pl-8 text-xs text-muted-foreground"
           aria-hidden
         >
           <span>{days[0] ? dayLabel(days[0]) : null}</span>
@@ -392,15 +424,20 @@ function BuildTrend({ insights }: { insights: BuildInsightsResponse }) {
 }
 
 function failingDescription(pipeline: FailingPipelineInsights): string {
-  const streak =
+  const now =
     pipeline.current_streak > 1
       ? `Failed ${pipeline.current_streak} in a row`
       : pipeline.current_streak === 1
         ? 'Last build failed'
-        : 'Passing again'
-  return `${streak} · ${pipeline.failures} of ${pipeline.finished} failed · ${relativeTime(pipeline.last_failed_at)}`
+        : `Last failed ${relativeTime(pipeline.last_failed_at)}`
+  return `${now} · ${pipeline.failures} of ${pipeline.finished} failed`
 }
 
+/**
+ * Pipelines with any failure in the period, failing ones first. Each says
+ * whether it is failing now or has recovered, so a passing pipeline never
+ * reads as broken.
+ */
 function FailingPipelines({
   pipelines,
 }: {
@@ -409,10 +446,9 @@ function FailingPipelines({
   return (
     <Card size="sm" className="h-full">
       <CardHeader>
-        <CardTitle>Failing pipelines</CardTitle>
-        <CardDescription>
-          Most failures first, broken ones on top
-        </CardDescription>
+        <CardTitle>
+          <h3>Pipelines with failures</h3>
+        </CardTitle>
       </CardHeader>
       <CardContent className="flex-1">
         {pipelines.length === 0 ? (
@@ -432,21 +468,23 @@ function FailingPipelines({
             {pipelines.map((pipeline) => (
               <Item
                 key={pipeline.pipeline_id}
-                size="sm"
-                className="-mx-3"
+                size="xs"
+                className="-mx-2.5"
                 render={
                   <Link
                     to="/builds/$buildId"
                     params={{ buildId: pipeline.last_failed_build_id }}
-                    aria-label={`Open ${pipeline.project_name} build #${pipeline.last_failed_build_number}, the last failure of ${pipeline.pipeline_name}`}
                   />
                 }
               >
                 <ItemContent className="min-w-0">
-                  <ItemTitle className="w-full">
-                    <span className="truncate">{pipeline.project_name}</span>
-                    <span className="truncate font-normal text-muted-foreground">
-                      {pipeline.pipeline_name}
+                  <ItemTitle className="w-full min-w-0">
+                    <span className="truncate">
+                      {pipeline.project_name}
+                      <span className="font-normal text-muted-foreground">
+                        {' '}
+                        · {pipeline.pipeline_name}
+                      </span>
                     </span>
                   </ItemTitle>
                   <ItemDescription className="line-clamp-1">
@@ -454,13 +492,11 @@ function FailingPipelines({
                   </ItemDescription>
                 </ItemContent>
                 <ItemActions>
-                  <Badge
-                    variant={
-                      pipeline.current_streak > 0 ? 'destructive' : 'outline'
-                    }
-                  >
-                    #{pipeline.last_failed_build_number}
-                  </Badge>
+                  {pipeline.current_streak > 0 ? (
+                    <Badge variant="destructive">Failing</Badge>
+                  ) : (
+                    <Badge variant="outline">Recovered</Badge>
+                  )}
                 </ItemActions>
               </Item>
             ))}
@@ -471,30 +507,26 @@ function FailingPipelines({
   )
 }
 
-/** Home's build health: headline metrics, the daily trend, and what keeps failing. */
+/** Home's build health over the chosen period: headline metrics, the daily trend, and what failed. */
 export function DashboardBuildHealth({
+  canApprove,
   days,
   onDaysChange,
   onlineRunners,
-  totalRunners,
 }: {
+  canApprove: boolean
   days: BuildInsightsWindow
   onDaysChange: (days: BuildInsightsWindow) => void
   onlineRunners?: number
-  totalRunners?: number
 }) {
   const insightsQuery = useBuildInsights({ days })
   const insights = insightsQuery.data
 
   return (
-    <section className="flex flex-col gap-3" aria-labelledby="build-health">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2
-          id="build-health"
-          className="text-sm font-medium text-muted-foreground"
-        >
-          Build health
-        </h2>
+    <DashboardSection
+      title="Build health"
+      scope={`Last ${days} days, changes vs the ${days} before`}
+      action={
         <ToggleGroup
           aria-label="Period"
           value={[String(days)]}
@@ -517,8 +549,8 @@ export function DashboardBuildHealth({
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-      </div>
-
+      }
+    >
       {insightsQuery.error && !insights ? (
         <Alert variant="destructive">
           <AlertDescription className="flex items-center justify-between gap-3">
@@ -553,9 +585,9 @@ export function DashboardBuildHealth({
           )}
         >
           <BuildMetrics
+            canApprove={canApprove}
             insights={insights}
             onlineRunners={onlineRunners}
-            totalRunners={totalRunners}
           />
           <div className="grid grid-cols-1 gap-3 @5xl/main:grid-cols-3">
             <div className="@5xl/main:col-span-2">
@@ -565,6 +597,6 @@ export function DashboardBuildHealth({
           </div>
         </div>
       )}
-    </section>
+    </DashboardSection>
   )
 }

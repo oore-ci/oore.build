@@ -21,7 +21,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
 import { RelativeTime } from '@/components/relative-time'
-import RunnerStatusDot from '@/components/runner-status-dot'
 import { StatusBadge } from '@/components/status-badge'
 import {
   runnerCachePurgeRequestedAt,
@@ -142,10 +141,7 @@ function getRunnerColumns({
         <DataTableColumnHeader column={column} title="Status" />
       ),
       cell: ({ row }) => (
-        <div className="flex items-center">
-          <RunnerStatusDot status={row.original.status} />
-          <StatusBadge kind="runner" value={row.original.status} />
-        </div>
+        <StatusBadge kind="runner" value={row.original.status} />
       ),
     },
     {

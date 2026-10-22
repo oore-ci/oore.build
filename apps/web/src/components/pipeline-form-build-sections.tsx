@@ -4,6 +4,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import { buildsAppBundle } from '@/lib/pipeline-form-utils'
 import { useRunners } from '@/hooks/use-runners'
 import {
   PipelineFormSection,
@@ -42,37 +43,38 @@ const ISOLATION_OPTIONS = {
   vm: "In a fresh macOS VM for the pipeline's Flutter version",
 } satisfies Record<PipelineFormValues['isolation'], string>
 
+const ISOLATION_EFFECTS = {
+  host: 'Builds share the runner’s Flutter, Xcode and caches, so they start fast. Keep the runner’s toolchains up to date.',
+  vm: 'A VM starts clean every build and needs a runner with Tart and the image for that Flutter version.',
+} satisfies Record<PipelineFormValues['isolation'], string>
+
+type PlatformFlag = 'platform_android' | 'platform_ios' | 'platform_macos'
+type PlatformFieldName =
+  | 'android_build_args'
+  | 'ios_build_args'
+  | 'macos_build_args'
+  | 'android_command_override'
+  | 'ios_command_override'
+  | 'macos_command_override'
+
+const ARGS_PLACEHOLDER = 'One argument per line, e.g. --flavor=prod'
+const OVERRIDE_PLACEHOLDER = 'Empty uses the default command'
+
 const PLATFORM_ARGUMENT_FIELDS = [
-  [
-    'android_build_args',
-    'Android build args',
-    '--dart-define-from-file=config/dev.json\n--obfuscate',
-  ],
-  [
-    'ios_build_args',
-    'iOS build args',
-    '--flavor=production\n--build-number=$OORE_VERSION_CODE',
-  ],
-  ['macos_build_args', 'macOS build args', '--build-number=$OORE_VERSION_CODE'],
-] as const
+  ['android_build_args', 'Android build args', 'platform_android'],
+  ['ios_build_args', 'iOS build args', 'platform_ios'],
+  ['macos_build_args', 'macOS build args', 'platform_macos'],
+] as const satisfies ReadonlyArray<
+  readonly [PlatformFieldName, string, PlatformFlag]
+>
 
 const PLATFORM_COMMAND_OVERRIDES = [
-  [
-    'android_command_override',
-    'Android command override',
-    'flutter build appbundle --release',
-  ],
-  [
-    'ios_command_override',
-    'iOS command override',
-    'flutter build ios --release --no-codesign',
-  ],
-  [
-    'macos_command_override',
-    'macOS command override',
-    'flutter build macos --release',
-  ],
-] as const
+  ['android_command_override', 'Android command override', 'platform_android'],
+  ['ios_command_override', 'iOS command override', 'platform_ios'],
+  ['macos_command_override', 'macOS command override', 'platform_macos'],
+] as const satisfies ReadonlyArray<
+  readonly [PlatformFieldName, string, PlatformFlag]
+>
 
 /**
  * Build: everything that runs on the runner, in one section. Commands,
@@ -84,18 +86,36 @@ export function PipelineBuildSection({
   advancedOpen,
   commandCount,
   envVarCount,
+  playBundle,
+  previewDefaults,
 }: {
   advancedOpen: boolean
   commandCount: number
   envVarCount: number
+  /** Google Play upload is on, so the runner adds an App Bundle build. */
+  playBundle: boolean
+  previewDefaults: Array<string>
 }) {
   const form = useFormContext<PipelineFormValues>()
   const customizationEnabled = form.watch('enable_customization')
+  const values = form.watch()
   const [platformOpen, setPlatformOpen] = useState(advancedOpen)
   const PlatformIcon = platformOpen ? ArrowDown01Icon : ArrowRight01Icon
+  // Show a platform's fields when it is selected, or when it still holds a
+  // value that would otherwise be invisible.
+  const showPlatformField = (name: PlatformFieldName, platform: PlatformFlag) =>
+    values[platform] || (values[name] ?? '').trim().length > 0
+  const argumentFields = PLATFORM_ARGUMENT_FIELDS.filter(([name, , platform]) =>
+    showPlatformField(name, platform),
+  )
+  const overrideFields = PLATFORM_COMMAND_OVERRIDES.filter(
+    ([name, , platform]) => showPlatformField(name, platform),
+  )
+  const androidOverride = (values.android_command_override ?? '').trim()
 
   return (
     <PipelineFormSection
+      id="build"
       title="Build"
       description="What runs on the runner. Defaults work for a standard Flutter app."
     >
@@ -107,6 +127,41 @@ export function PipelineBuildSection({
             : 'Platform defaults, with optional commands before and after.'
         }
       >
+        {previewDefaults.length > 0 ? (
+          <div
+            role="note"
+            aria-label="Platform build commands"
+            className="flex flex-col gap-1.5 rounded-2xl bg-muted/50 px-4 py-3 text-sm"
+          >
+            <p className="font-medium">Platform build commands</p>
+            <ul className="flex flex-col gap-0.5">
+              {previewDefaults.map((command) => (
+                <li
+                  key={command}
+                  className="font-mono text-[13px] wrap-break-word"
+                >
+                  {command}
+                </li>
+              ))}
+            </ul>
+            {playBundle && !androidOverride ? (
+              <p className="text-muted-foreground">
+                Google Play upload is on, so Android builds an App Bundle as
+                well as the APK.
+              </p>
+            ) : null}
+            {playBundle &&
+            androidOverride &&
+            !buildsAppBundle(androidOverride) ? (
+              <p className="text-warning">
+                Google Play upload is on, but the Android command override does
+                not build an App Bundle, so the upload will fail. Use{' '}
+                <span className="font-mono">flutter build appbundle</span> or
+                clear the override.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <FormField
           control={form.control}
           name="enable_customization"
@@ -160,11 +215,13 @@ export function PipelineBuildSection({
           </CollapsibleTrigger>
           <CollapsibleContent>
             <div className="flex flex-col gap-4 pt-3">
-              <p className="text-sm text-muted-foreground">
-                Each line is appended to the platform&apos;s default Flutter
-                build command.
-              </p>
-              {PLATFORM_ARGUMENT_FIELDS.map(([name, label, placeholder]) => (
+              {argumentFields.length > 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Each line is appended to the platform&apos;s default Flutter
+                  build command.
+                </p>
+              ) : null}
+              {argumentFields.map(([name, label]) => (
                 <FormField
                   key={name}
                   control={form.control}
@@ -174,7 +231,7 @@ export function PipelineBuildSection({
                       <FormLabel>{label}</FormLabel>
                       <FormControl>
                         <Textarea
-                          placeholder={placeholder}
+                          placeholder={ARGS_PLACEHOLDER}
                           className="font-mono"
                           {...field}
                         />
@@ -184,11 +241,13 @@ export function PipelineBuildSection({
                   )}
                 />
               ))}
-              <p className="text-sm text-muted-foreground">
-                A command override replaces the default platform command
-                entirely.
-              </p>
-              {PLATFORM_COMMAND_OVERRIDES.map(([name, label, placeholder]) => (
+              {overrideFields.length > 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  A command override replaces the default platform command
+                  entirely.
+                </p>
+              ) : null}
+              {overrideFields.map(([name, label]) => (
                 <FormField
                   key={name}
                   control={form.control}
@@ -198,7 +257,7 @@ export function PipelineBuildSection({
                       <FormLabel>{label}</FormLabel>
                       <FormControl>
                         <Input
-                          placeholder={placeholder}
+                          placeholder={OVERRIDE_PLACEHOLDER}
                           className="font-mono"
                           {...field}
                         />
@@ -208,6 +267,11 @@ export function PipelineBuildSection({
                   )}
                 />
               ))}
+              {argumentFields.length === 0 && overrideFields.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Choose a platform under Basics to add arguments or overrides.
+                </p>
+              ) : null}
             </div>
           </CollapsibleContent>
         </Collapsible>
@@ -340,10 +404,7 @@ function RunnerSubsection() {
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <FormDescription>
-              A VM starts clean every build and needs a runner with Tart and the
-              image for that Flutter version.
-            </FormDescription>
+            <FormDescription>{ISOLATION_EFFECTS[field.value]}</FormDescription>
             <FormMessage />
           </FormItem>
         )}

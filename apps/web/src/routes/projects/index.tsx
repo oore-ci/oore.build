@@ -12,6 +12,7 @@ import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
+import { useBuildInsights } from '@/hooks/use-builds'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { useProjects } from '@/hooks/use-projects'
 import {
@@ -117,6 +118,8 @@ function ProjectsListPage() {
       select: selectHasActiveIntegration,
     },
   )
+  // The widest window, so a project that builds monthly still shows status.
+  const insightsQuery = useBuildInsights({ days: 90 })
   const setupStatusQuery = useSetupStatus()
   const [canWriteProjects, canWriteIntegrations] = useHasPermissions([
     'projects:write',
@@ -204,6 +207,8 @@ function ProjectsListPage() {
       <ProjectCollection
         canManageProject={canManageProject}
         direction={direction}
+        insights={insightsQuery.data?.projects}
+        insightsLoading={insightsQuery.isLoading}
         emptyState={
           showTrueEmpty ? (
             <Empty className="border bg-card">

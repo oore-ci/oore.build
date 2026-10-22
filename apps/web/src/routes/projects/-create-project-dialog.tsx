@@ -47,7 +47,7 @@ import { useActiveInstance } from '@/stores/instance-store'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 
 const createProjectSchema = z.object({
-  name: z.string().min(1, 'Name is required'),
+  name: z.string().trim().min(1, 'Enter a project name.'),
   description: z.string().optional(),
   default_branch: z.string().optional(),
   local_repository_path: z.string().optional(),
@@ -55,6 +55,26 @@ const createProjectSchema = z.object({
 })
 
 type CreateProjectForm = z.infer<typeof createProjectSchema>
+
+/** A remote instance builds from a connected repository; a local one from a path. */
+function createProjectSchemaFor(isRemoteMode: boolean) {
+  return createProjectSchema.superRefine((data, ctx) => {
+    if (isRemoteMode && !data.repository_id?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Choose the repository this project builds from.',
+        path: ['repository_id'],
+      })
+    }
+    if (!isRemoteMode && !data.local_repository_path?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Enter the absolute path to a Git repository.',
+        path: ['local_repository_path'],
+      })
+    }
+  })
+}
 
 function sourceProviderLabel(provider: ScmProvider): string {
   if (provider === 'gitlab') return 'GitLab'
@@ -107,8 +127,12 @@ export default function CreateProjectDialog({
   )
   const hasRepos = (repos?.length ?? 0) > 0
 
+  const schema = useMemo(
+    () => createProjectSchemaFor(isRemoteMode),
+    [isRemoteMode],
+  )
   const form = useForm<CreateProjectForm>({
-    resolver: zodResolver(createProjectSchema),
+    resolver: zodResolver(schema),
     defaultValues: {
       name: draft?.name ?? '',
       description: draft?.description ?? '',
@@ -129,22 +153,11 @@ export default function CreateProjectDialog({
 
   function onSubmit(data: CreateProjectForm) {
     const name = data.name.trim()
-    if (!name) {
-      toast.error('Name is required')
-      return
-    }
-
-    const source = isRemoteMode
-      ? data.repository_id?.trim()
-      : data.local_repository_path?.trim()
-    if (!source) {
-      toast.error(
-        isRemoteMode
-          ? 'Select a source repository before creating a project.'
-          : 'Path is required.',
-      )
-      return
-    }
+    // The schema already requires the source for this mode.
+    const source =
+      (isRemoteMode
+        ? data.repository_id?.trim()
+        : data.local_repository_path?.trim()) ?? ''
 
     createMutation.mutate(
       {
@@ -278,7 +291,7 @@ export default function CreateProjectDialog({
                             items={repoItems}
                           >
                             <FormControl>
-                              <SelectTrigger>
+                              <SelectTrigger className="w-full">
                                 <SelectValue placeholder="Select a repository..." />
                               </SelectTrigger>
                             </FormControl>
@@ -330,21 +343,20 @@ export default function CreateProjectDialog({
                           </div>
                         )}
                         {hasRepos ? (
-                          <Button
-                            type="button"
-                            variant="link"
-                            size="sm"
-                            className="h-auto p-0"
-                            render={<Link to="/settings/integrations" />}
-                            nativeButton={false}
-                            onClick={() =>
-                              updateProgress(scope, {
-                                projectDraft: form.getValues(),
-                              })
-                            }
-                          >
-                            Connect another source
-                          </Button>
+                          <FormDescription>
+                            Not listed?{' '}
+                            <Link
+                              to="/settings/integrations"
+                              className="font-medium text-foreground underline underline-offset-4"
+                              onClick={() =>
+                                updateProgress(scope, {
+                                  projectDraft: form.getValues(),
+                                })
+                              }
+                            >
+                              Connect another source
+                            </Link>
+                          </FormDescription>
                         ) : null}
                         <FormMessage />
                       </FormItem>

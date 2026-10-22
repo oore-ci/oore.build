@@ -24,6 +24,11 @@ import {
   type AppStorePublishResponse,
 } from '@/hooks/use-pipeline-publish'
 import { CollectionError } from '@/components/collection'
+import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard'
+import {
+  PublishReadiness,
+  type ReadinessCheck,
+} from '@/components/publish/publish-readiness'
 import {
   SettingsSection,
   SettingsSurface,
@@ -258,7 +263,11 @@ function SwitchField({
       control={form.control}
       name={name}
       render={({ field }) => (
-        <FormItem className="flex flex-row items-start gap-3">
+        <FormItem className="flex flex-row items-start justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <FormLabel>{label}</FormLabel>
+            <FormDescription>{description}</FormDescription>
+          </div>
           <FormControl>
             <Switch
               checked={field.value}
@@ -267,10 +276,6 @@ function SwitchField({
               aria-label={label}
             />
           </FormControl>
-          <div className="flex flex-col gap-1">
-            <FormLabel>{label}</FormLabel>
-            <FormDescription>{description}</FormDescription>
-          </div>
         </FormItem>
       )}
     />
@@ -468,7 +473,11 @@ function AppStorePublishForm({
     resetOptions: { keepDirtyValues: true },
   })
   const { isDirty } = useFormState({ control: form.control })
+  const enabled = useWatch({ control: form.control, name: 'enabled' })
   const isNew = saved.updated_at == null
+  // Same rule as Google Play: Save needs a change, except that a first
+  // setup with uploads on can be saved as it stands.
+  const canSave = isDirty || (isNew && enabled)
 
   function onSubmit(next: FormValues) {
     updateMutation.mutate(toConfig(next), {
@@ -481,7 +490,10 @@ function AppStorePublishForm({
 
   return (
     <Form {...form}>
-      <form onSubmit={(event) => void form.handleSubmit(onSubmit)(event)}>
+      <form
+        noValidate
+        onSubmit={(event) => void form.handleSubmit(onSubmit)(event)}
+      >
         <fieldset disabled={!canWrite} className="min-w-0">
           <SettingsSurface className="flex flex-col gap-6">
             <UploadToggle form={form} />
@@ -534,12 +546,14 @@ function AppStorePublishForm({
                   ) : null}
                   <Button
                     type="submit"
-                    disabled={updateMutation.isPending || (!isNew && !isDirty)}
+                    disabled={updateMutation.isPending || !canSave}
                   >
                     {updateMutation.isPending ? (
                       <Spinner data-icon="inline-start" />
                     ) : null}
-                    {isNew ? 'Save App Store settings' : 'Save changes'}
+                    {isNew && enabled
+                      ? 'Turn on App Store publishing'
+                      : 'Save changes'}
                   </Button>
                 </div>
               </>
@@ -547,6 +561,11 @@ function AppStorePublishForm({
           </SettingsSurface>
         </fieldset>
       </form>
+      <UnsavedChangesGuard
+        when={isDirty && !updateMutation.isPending}
+        title="Discard App Store changes?"
+        description="Your changes to the App Store Connect settings have not been saved."
+      />
     </Form>
   )
 }
@@ -562,49 +581,65 @@ export function AppStorePublishSection({
 }) {
   const publishQuery = usePipelineAppStorePublish(pipelineId)
   const data = publishQuery.data
-  const missing = data
+  const editLink = (label: string) =>
+    canWrite ? (
+      <Button
+        variant="outline"
+        size="sm"
+        nativeButton={false}
+        render={
+          <Link
+            to="/projects/$projectId/pipelines/$pipelineId/edit"
+            params={{ projectId, pipelineId }}
+            search={{}}
+            hash="ios-signing"
+          />
+        }
+      >
+        {label}
+      </Button>
+    ) : undefined
+  const checks: Array<ReadinessCheck> = data
     ? [
-        data.app_store_export
-          ? null
-          : 'set Distribution to App Store in iOS signing',
-        data.has_api_key ? null : 'add an App Store Connect API key',
-      ].filter((item) => item !== null)
+        {
+          key: 'distribution',
+          label: 'App Store distribution',
+          ready: data.app_store_export,
+          detail: data.app_store_export
+            ? 'iOS signing uses an App Store distribution profile.'
+            : 'iOS signing must use App Store distribution. Ad hoc builds cannot go to TestFlight or the App Store.',
+          action: data.app_store_export
+            ? undefined
+            : editLink('Edit iOS signing'),
+        },
+        {
+          key: 'key',
+          label: 'App Store Connect API key',
+          ready: data.has_api_key,
+          detail: data.has_api_key
+            ? 'Uploads use the API key from this pipeline’s iOS signing.'
+            : 'Choose a shared key or add this pipeline’s own key in iOS signing.',
+          action: data.has_api_key ? undefined : editLink('Add API key'),
+        },
+      ]
     : []
+  const blocked = checks.some((check) => !check.ready)
 
   return (
     <SettingsSection
+      id="app-store"
       title="App Store Connect"
       description="Upload the signed IPA to TestFlight or the App Store. The upload runs on the Mac that built the app, using the API key from this pipeline’s iOS signing."
     >
-      {missing.length > 0 ? (
-        <Alert>
-          <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertTitle>
-            iOS signing is not ready for App Store uploads
-          </AlertTitle>
-          <AlertDescription className="flex flex-col items-start gap-2">
-            <span>
-              Before turning this on, {missing.join(' and ')}. Until then,
-              saving with uploads on is refused.
-            </span>
-            {canWrite ? (
-              <Button
-                variant="outline"
-                size="sm"
-                nativeButton={false}
-                render={
-                  <Link
-                    to="/projects/$projectId/pipelines/$pipelineId/edit"
-                    params={{ projectId, pipelineId }}
-                    search={{}}
-                  />
-                }
-              >
-                Edit iOS signing
-              </Button>
-            ) : null}
-          </AlertDescription>
-        </Alert>
+      {checks.length > 0 ? (
+        <PublishReadiness
+          checks={checks}
+          footnote={
+            blocked
+              ? 'Saving with uploads on is refused until the steps above are done.'
+              : undefined
+          }
+        />
       ) : null}
 
       {publishQuery.error ? (

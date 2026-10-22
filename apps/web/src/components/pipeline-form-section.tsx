@@ -17,12 +17,15 @@ export function PipelineFormSection({
   children,
   description,
   errorCount,
+  id,
   title,
 }: {
   actions?: ReactNode
   children: ReactNode
   description?: string
   errorCount?: number
+  /** Anchor used by the section index and by deep links into the editor. */
+  id?: string
   title: string
 }) {
   const errorBadge =
@@ -33,6 +36,7 @@ export function PipelineFormSection({
     ) : null
   return (
     <SettingsSection
+      id={id}
       description={description}
       title={title}
       actions={
@@ -59,19 +63,22 @@ export function PipelineFormSubsection({
   actions,
   children,
   description,
+  id,
   title,
 }: {
   actions?: ReactNode
   children: ReactNode
   description?: ReactNode
+  id?: string
   title: string
 }) {
   const headingId = useId()
   return (
     <div
+      id={id}
       role="group"
       aria-labelledby={headingId}
-      className="flex flex-col gap-4"
+      className="flex scroll-mt-[calc(var(--header-height)+4rem)] flex-col gap-4"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">

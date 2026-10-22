@@ -6,7 +6,6 @@ import {
   PipelineFormSubsection,
 } from '@/components/pipeline-form-section'
 import { SettingsSurfaceSeparator } from '@/components/settings/settings-section'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   FormControl,
@@ -44,16 +43,15 @@ const PLATFORM_FIELDS = [
  */
 export function PipelineBasicsSection({
   configMode,
-  previewDefaults,
   repositoryWorkflow,
 }: {
   configMode: PipelineFormValues['config_mode']
-  previewDefaults: Array<string>
   repositoryWorkflow?: React.ReactNode
 }) {
   const form = useFormContext<PipelineFormValues>()
   return (
     <PipelineFormSection
+      id="basics"
       title="Basics"
       description="Name the pipeline and choose what it builds."
     >
@@ -155,7 +153,7 @@ export function PipelineBasicsSection({
                     <FormLabel>Config path</FormLabel>
                     <FormControl>
                       <Input
-                        placeholder="ci/oore.yaml"
+                        placeholder="e.g. ci/oore.yaml"
                         className="font-mono"
                         {...field}
                       />
@@ -174,7 +172,7 @@ export function PipelineBasicsSection({
                   <FormLabel>Flutter version (optional)</FormLabel>
                   <FormControl>
                     <Input
-                      placeholder="3.24.0 (or stable)"
+                      placeholder="Empty uses .fvmrc or stable"
                       className="font-mono"
                       {...field}
                     />
@@ -218,21 +216,6 @@ export function PipelineBasicsSection({
                 </FormItem>
               )}
             />
-
-            {previewDefaults.length > 0 ? (
-              <Alert>
-                <AlertTitle>Default build commands</AlertTitle>
-                <AlertDescription>
-                  <ul className="list-disc space-y-0.5 pl-4">
-                    {previewDefaults.map((command) => (
-                      <li key={command} className="font-mono">
-                        {command}
-                      </li>
-                    ))}
-                  </ul>
-                </AlertDescription>
-              </Alert>
-            ) : null}
           </PipelineFormSubsection>
         </>
       )}

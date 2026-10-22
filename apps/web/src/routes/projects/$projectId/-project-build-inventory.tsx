@@ -15,8 +15,8 @@ import {
 import type { SortDirection } from '@/components/data-table-features'
 import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/status-badge'
-import { BuildSourceValue } from '@/components/table-values'
-import { relativeTime } from '@/lib/format-utils'
+import { BuildSourceValue, EmptyValue } from '@/components/table-values'
+import { formatDuration, relativeTime } from '@/lib/format-utils'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import type { ProjectBuildSort } from './-project-build-sort'
 
@@ -27,6 +27,11 @@ const PROJECT_BUILD_SORTS = [
   'created_at',
 ] satisfies ReadonlyArray<ProjectBuildSort>
 
+function buildDuration(build: Build): string | undefined {
+  if (!build.started_at || !build.finished_at) return undefined
+  return formatDuration(build.finished_at - build.started_at)
+}
+
 const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
     accessorKey: 'build_number',
@@ -35,11 +40,12 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
       <Link
         to="/builds/$buildId"
         params={{ buildId: row.original.id }}
-        className="font-mono font-medium"
+        className="font-mono font-medium underline-offset-4 hover:underline"
       >
         #{row.original.build_number}
       </Link>
     ),
+    enableHiding: false,
     enableSorting: false,
   },
   {
@@ -80,6 +86,19 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
         context={row.original.context}
       />
     ),
+  },
+  {
+    id: 'duration',
+    header: 'Duration',
+    cell: ({ row }) => {
+      const duration = buildDuration(row.original)
+      return duration ? (
+        <span className="font-mono text-xs tabular-nums">{duration}</span>
+      ) : (
+        <EmptyValue />
+      )
+    },
+    enableSorting: false,
   },
   {
     accessorKey: 'created_at',

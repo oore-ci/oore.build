@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useFormState } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 
@@ -29,8 +29,8 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
+import { FileField } from '@/components/file-field'
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+$/
 
@@ -55,6 +55,23 @@ const keyFormSchema = z.object({
 type KeyFormValues = z.infer<typeof keyFormSchema>
 
 /**
+ * Base64 of the `.p8` file's UTF-8 bytes. `btoa(text)` throws on any
+ * character outside Latin-1, which left the dialog silently doing nothing.
+ */
+async function encodePrivateKey(file: File) {
+  const text = await file.text()
+  if (!text.includes('-----BEGIN PRIVATE KEY-----')) {
+    throw new Error(
+      'This is not an App Store Connect private key. Choose the AuthKey_….p8 file you downloaded from Apple.',
+    )
+  }
+  const bytes = new TextEncoder().encode(text)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+/**
  * Add a shared App Store Connect key, or rename or replace `existing`. The
  * private key is write-only, so editing keeps the stored one unless a new
  * `.p8` is chosen.
@@ -73,6 +90,10 @@ export function AppStoreConnectKeyDialog({
   const mutation = existing ? updateMutation : createMutation
   const [file, setFile] = useState<File | null>(null)
   const [fileError, setFileError] = useState<string>()
+  // Keep the title of the key being edited while the dialog animates out,
+  // instead of flipping to "Add" when the parent clears `existing`.
+  const [titleKey, setTitleKey] = useState(existing)
+  if (open && existing !== titleKey) setTitleKey(existing)
   const form = useForm<KeyFormValues>({
     resolver: zodResolver(keyFormSchema),
     values: {
@@ -104,7 +125,17 @@ export function AppStoreConnectKeyDialog({
       )
       return
     }
-    const privateKey = file ? btoa(await file.text()) : undefined
+    let privateKey: string | undefined
+    if (file) {
+      try {
+        privateKey = await encodePrivateKey(file)
+      } catch (error) {
+        setFileError(
+          error instanceof Error ? error.message : 'Could not read this file.',
+        )
+        return
+      }
+    }
     const onSuccess = () => {
       toast.success(existing ? `Saved ${values.name}` : `Added ${values.name}`)
       handleOpenChange(false)
@@ -129,6 +160,8 @@ export function AppStoreConnectKeyDialog({
     }
   }
 
+  const { errors } = useFormState({ control: form.control })
+  const rootError = errors.root?.message
   const inUse = existing?.pipeline_count ?? 0
 
   return (
@@ -136,7 +169,7 @@ export function AppStoreConnectKeyDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {existing ? `Edit ${existing.name}` : 'Add App Store Connect key'}
+            {titleKey ? `Edit ${titleKey.name}` : 'Add App Store Connect key'}
           </DialogTitle>
           <DialogDescription>
             {existing
@@ -149,6 +182,7 @@ export function AppStoreConnectKeyDialog({
 
         <Form {...form}>
           <form
+            noValidate
             onSubmit={(event) => void form.handleSubmit(onSubmit)(event)}
             className="space-y-4"
           >
@@ -213,37 +247,28 @@ export function AppStoreConnectKeyDialog({
                 )}
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="asc-key-file">Private key (.p8)</Label>
-              <Input
-                id="asc-key-file"
-                type="file"
-                accept=".p8,text/plain"
-                aria-invalid={!!fileError}
-                onChange={(event) => {
-                  setFile(event.target.files?.[0] ?? null)
-                  setFileError(undefined)
-                }}
-              />
-              <p
-                className={
-                  fileError
-                    ? 'text-xs text-destructive'
-                    : 'text-xs text-muted-foreground'
-                }
-              >
-                {fileError ??
-                  (file
-                    ? `Selected: ${file.name}`
-                    : existing
-                      ? 'Leave empty to keep the stored key.'
-                      : 'Apple lets you download it once. Nobody can read it back from Oore.')}
-              </p>
-            </div>
+            <FileField
+              id="asc-key-file"
+              label="Private key (.p8)"
+              accept=".p8,text/plain"
+              file={file}
+              onFileChange={(next) => {
+                setFile(next)
+                setFileError(undefined)
+              }}
+              storedName={existing ? 'Current key' : null}
+              emptyLabel="No file chosen"
+              error={fileError}
+              description={
+                existing
+                  ? 'Keep the stored key, or replace it with a new file.'
+                  : 'Apple lets you download it once. Nobody can read it back from Oore.'
+              }
+            />
 
-            {form.formState.errors.root ? (
+            {rootError ? (
               <p role="alert" className="text-sm text-destructive">
-                {form.formState.errors.root.message}
+                {rootError}
               </p>
             ) : null}
 

@@ -24,6 +24,7 @@ import {
   SetupRouteError,
   SetupStepIndicator,
 } from '@/components/setup-route-components'
+import { FocusedFlowHeader } from '@/components/focused-flow-header'
 
 function normalizeHandoffBackend(value: string): string | null {
   try {
@@ -173,25 +174,16 @@ function SetupLayout() {
     <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
       <PageMeta title="Setup" />
       <div className="w-full max-w-lg space-y-5 sm:space-y-6">
-        <header className="flex items-center gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center">
-            <img src="/logo.svg" alt="Oore logo" className="size-full" />
-          </div>
-          <div className="min-w-0 space-y-0.5">
-            <h1 className="text-xl font-semibold tracking-tight">
-              Instance setup
-            </h1>
-            <p className="text-xs text-muted-foreground">
-              Configure your self-hosted CI instance
-            </p>
-          </div>
-        </header>
+        <FocusedFlowHeader
+          title="Set up Oore"
+          description="Configure your self-hosted CI instance."
+        />
 
         <div className="space-y-2">
           <SetupStepIndicator currentStep={currentStep} steps={steps} />
           {formatted && !isExpired ? (
             <p
-              className={`text-right font-mono text-xs ${isWarning ? 'text-destructive font-semibold' : 'text-muted-foreground'}`}
+              className={`text-center text-xs tabular-nums ${isWarning ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}
             >
               Session expires in {formatted}
             </p>

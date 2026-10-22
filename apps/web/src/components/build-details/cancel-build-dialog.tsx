@@ -26,18 +26,22 @@ export default function CancelBuildDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Cancel build #{buildNumber}?</AlertDialogTitle>
+          <AlertDialogTitle>Stop build #{buildNumber}?</AlertDialogTitle>
           <AlertDialogDescription>
-            Running work will be stopped. Any incomplete artifacts may be
-            unavailable.
+            The runner stops the current step and the build ends as canceled.
+            Artifacts it has not uploaded yet are lost. You can re-run it later.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isPending}>
             Keep running
           </AlertDialogCancel>
-          <AlertDialogAction disabled={isPending} onClick={onCancel}>
-            {isPending ? 'Canceling...' : 'Cancel build'}
+          <AlertDialogAction
+            variant="destructive"
+            disabled={isPending}
+            onClick={onCancel}
+          >
+            {isPending ? 'Stopping...' : 'Stop build'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

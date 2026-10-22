@@ -81,11 +81,12 @@ export function PipelineTriggersSection({
 
   return (
     <PipelineFormSection
+      id="triggers"
       title="Triggers"
       description="When this pipeline runs on its own, and the rules every build follows. You can always run it by hand."
     >
       {manualOnlyTriggers ? (
-        <Alert>
+        <Alert role="note">
           <HugeiconsIcon icon={AlertCircleIcon} size={16} />
           <AlertDescription>
             This repository uses local Git, so builds start from the UI, the API

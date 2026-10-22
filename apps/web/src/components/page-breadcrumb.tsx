@@ -1,7 +1,9 @@
 import { isMatch, Link, useMatches, useParams } from '@tanstack/react-router'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { ArrowLeft01Icon } from '@hugeicons/core-free-icons'
+import { isOoreApiError } from '@oore/client/client'
 import {
   Breadcrumb,
-  BreadcrumbEllipsis,
   BreadcrumbItem,
   BreadcrumbLink,
   BreadcrumbList,
@@ -13,6 +15,7 @@ import { useIntegration } from '@/hooks/use-integrations'
 import { useNotificationChannel } from '@/hooks/use-notification-channels'
 import { usePipeline } from '@/hooks/use-pipelines'
 import { useProject } from '@/hooks/use-projects'
+import { Separator } from '@/components/ui/separator'
 
 /**
  * Breadcrumb leaves name the entity, not its type: the project's name, the
@@ -20,7 +23,7 @@ import { useProject } from '@/hooks/use-projects'
  * while the entity loads. Every hook here reads the query the page itself
  * already populated, so this adds no requests.
  */
-function useEntityCrumbLabels(): Map<string, string> {
+function useEntityCrumbLabels() {
   const { buildId, channelId, integrationId, pipelineId, projectId } =
     useParams({ strict: false })
   const project = useProject(projectId ?? '')
@@ -55,14 +58,22 @@ function useEntityCrumbLabels(): Map<string, string> {
       source.display_name ?? source.provider,
     )
   }
-  return labels
+  const missing = [project, pipeline, build, channel, integration].some(
+    ({ error }) => isOoreApiError(error) && error.status === 404,
+  )
+  return { labels, missing }
 }
 
-/** Phones only get the parent and the current page; the rest collapses. */
-const PHONE_VISIBLE_CRUMBS = 2
-
+/**
+ * A trail is shown only when it adds hierarchy the page title lacks: one crumb
+ * repeats the H1, and a not-found page has no hierarchy to show. Phones get a
+ * single back link to the nearest parent so the header never wraps.
+ */
 export default function PageBreadcrumb() {
-  const entityLabels = useEntityCrumbLabels()
+  const { labels: entityLabels, missing } = useEntityCrumbLabels()
+  const routeNotFound = useMatches({
+    select: (matches) => matches.some((m) => m.status === 'notFound'),
+  })
   const breadcrumbs = useMatches({
     select: (matches) =>
       matches
@@ -70,48 +81,75 @@ export default function PageBreadcrumb() {
         .map((match) => ({
           href: match.pathname,
           label: match.staticData?.breadcrumb?.title,
+          linkable: match.staticData?.breadcrumb?.link !== false,
         })),
-  })
-  const collapsedCount = Math.max(0, breadcrumbs.length - PHONE_VISIBLE_CRUMBS)
+  }).map((item) => ({
+    ...item,
+    label: entityLabels.get(item.href.replace(/\/$/, '')) ?? item.label,
+  }))
+
+  if (breadcrumbs.length < 2 || routeNotFound || missing) return null
+
+  const parent = breadcrumbs
+    .slice(0, -1)
+    .reverse()
+    .find((item) => item.linkable)
 
   return (
-    <Breadcrumb>
-      <BreadcrumbList>
-        {collapsedCount > 0 ? (
-          <>
-            <BreadcrumbItem className="sm:hidden">
-              <BreadcrumbEllipsis />
-            </BreadcrumbItem>
-            <BreadcrumbSeparator className="sm:hidden" />
-          </>
-        ) : null}
-        {breadcrumbs.map((item, index) => {
-          const label =
-            entityLabels.get(item.href.replace(/\/$/, '')) ?? item.label
-          const isLeaf = index === breadcrumbs.length - 1
-          const phoneHidden = index < collapsedCount
-          return [
-            <BreadcrumbItem
-              key={item.href}
-              className={phoneHidden ? 'hidden sm:inline-flex' : undefined}
-            >
-              {isLeaf ? (
-                <BreadcrumbPage>{label}</BreadcrumbPage>
-              ) : (
-                <BreadcrumbLink render={<Link to={item.href} />}>
-                  {label}
-                </BreadcrumbLink>
-              )}
-            </BreadcrumbItem>,
-            isLeaf ? null : (
-              <BreadcrumbSeparator
-                key={item.href + '_separator'}
-                className={phoneHidden ? 'hidden sm:block' : undefined}
-              />
-            ),
-          ]
-        })}
-      </BreadcrumbList>
-    </Breadcrumb>
+    <>
+      <Separator
+        orientation="vertical"
+        className="mx-2 hidden h-4 self-center! sm:block"
+      />
+      {parent ? (
+        <Link
+          to={parent.href}
+          data-slot="breadcrumb-link"
+          className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground sm:hidden"
+        >
+          <HugeiconsIcon
+            icon={ArrowLeft01Icon}
+            strokeWidth={2}
+            className="size-4 shrink-0"
+          />
+          <span className="truncate">{parent.label}</span>
+        </Link>
+      ) : null}
+      <Breadcrumb className="hidden min-w-0 sm:block">
+        <BreadcrumbList className="flex-nowrap">
+          {breadcrumbs.map((item, index) => {
+            const isLeaf = index === breadcrumbs.length - 1
+            return [
+              <BreadcrumbItem
+                key={item.href}
+                className={isLeaf ? 'min-w-0' : 'shrink-0'}
+              >
+                {isLeaf ? (
+                  <BreadcrumbPage
+                    className="block max-w-[32ch] truncate"
+                    title={item.label}
+                  >
+                    {item.label}
+                  </BreadcrumbPage>
+                ) : item.linkable ? (
+                  <BreadcrumbLink
+                    render={<Link to={item.href} />}
+                    className="block max-w-[24ch] truncate"
+                    title={item.label}
+                  >
+                    {item.label}
+                  </BreadcrumbLink>
+                ) : (
+                  <span>{item.label}</span>
+                )}
+              </BreadcrumbItem>,
+              isLeaf ? null : (
+                <BreadcrumbSeparator key={item.href + '_separator'} />
+              ),
+            ]
+          })}
+        </BreadcrumbList>
+      </Breadcrumb>
+    </>
   )
 }

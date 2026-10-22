@@ -30,6 +30,8 @@ import { useReleaseAction } from '@/hooks/use-releases'
 import {
   RELEASE_ACTION_COPY,
   RELEASE_ACTION_ORDER,
+  RELEASE_STORE_LABEL,
+  releaseAppName,
   releaseVersionLabel,
 } from '@/lib/releases'
 import { toast } from '@/lib/toast'
@@ -48,7 +50,7 @@ export function ReleaseActions({
 }) {
   const [pending, setPending] = useState<ReleaseAction | null>(null)
   const allowed = new Set(release.allowed_actions)
-  const canHalt = allowed.has('halt')
+  const canHalt = allowed.has('halt') && release.state !== 'halted'
   const menuActions = RELEASE_ACTION_ORDER.filter(
     (action) => action !== 'halt' && allowed.has(action),
   )
@@ -59,7 +61,7 @@ export function ReleaseActions({
     <div className="flex items-center justify-end gap-1">
       {canHalt ? (
         <Button
-          variant="destructive"
+          variant="outline"
           size={size}
           onClick={() => setPending('halt')}
           aria-label={`Halt rollout of ${releaseVersionLabel(release)}`}
@@ -155,6 +157,10 @@ function ReleaseActionDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{copy.title}</AlertDialogTitle>
+          <p className="text-sm font-medium">
+            {releaseAppName(release)} · {RELEASE_STORE_LABEL[release.store]}{' '}
+            {release.track} · {releaseVersionLabel(release)}
+          </p>
           <AlertDialogDescription>
             {copy.description(release)}
           </AlertDialogDescription>

@@ -4,29 +4,41 @@ import type {
   StoreVital,
   StoreVitalKind,
 } from '@oore/client/models'
-import { Badge, type BadgeVariant } from '@/components/ui/badge'
+import { Link } from '@tanstack/react-router'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { ArrowDown01Icon, Refresh01Icon } from '@hugeicons/core-free-icons'
+
+import { isOoreApiError } from '@oore/client/client'
+import type { ReleaseHealth } from '@oore/client/models'
 import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+  DashboardList,
+  DashboardSection,
+  DashboardSectionError,
+} from '@/components/dashboard-section'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge, type BadgeVariant } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { Refresh01Icon } from '@hugeicons/core-free-icons'
-
-import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
 import { useRefreshStoreVitals, useStoreVitals } from '@/hooks/use-releases'
-import { toast } from '@/lib/toast'
 import { relativeTime } from '@/lib/format-utils'
+import {
+  getReleaseHealthVariant,
+  healthFromThreshold,
+  RELEASE_HEALTH_LABEL,
+  RELEASE_STORE_LABEL,
+} from '@/lib/releases'
+import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
 const VITAL_LABELS = {
@@ -36,22 +48,14 @@ const VITAL_LABELS = {
   launch_time: 'Launch time',
 } satisfies Record<StoreVitalKind, string>
 
-const STORE_LABELS = {
-  google_play: 'Google Play',
-  app_store: 'App Store',
-} as const
+const DOCS_PATH = {
+  google_play: 'build/distribute/google-play#store-health-on-home',
+  app_store: 'build/distribute/app-store#store-health-on-home',
+} satisfies Record<StoreAppVitals['store'], string>
 
-/** Above this share of the store's threshold a vital is worth watching. */
-const NEAR_THRESHOLD = 0.75
-
-type Level = 'good' | 'near' | 'over' | 'none'
-
-function vitalLevel(vital: StoreVital): Level {
-  if (vital.value == null) return 'none'
-  if (vital.threshold == null || vital.threshold <= 0) return 'none'
-  const share = vital.value / vital.threshold
-  if (share >= 1) return 'over'
-  return share >= NEAR_THRESHOLD ? 'near' : 'good'
+/** The anchor a release row links to for the same app and store. */
+export function storeHealthAnchor(projectId: string, store: string): string {
+  return `store-health-${projectId}-${store}`
 }
 
 function formatVital(value: number | null | undefined, unit: string): string {
@@ -63,34 +67,35 @@ function formatVital(value: number | null | undefined, unit: string): string {
 
 type AppStatus = { label: string; variant: BadgeVariant }
 
+/** The worst vital decides, in the same words the release board uses. */
 function appStatus(app: StoreAppVitals): AppStatus {
-  const levels = app.vitals.map(vitalLevel)
+  const levels = app.vitals.map((vital) =>
+    healthFromThreshold(vital.value, vital.threshold),
+  )
   const hasNumbers = app.vitals.some((vital) => vital.value != null)
   if (app.error && !hasNumbers)
     return { label: 'Not readable', variant: 'destructive' }
-  if (levels.includes('over'))
-    return { label: 'Over threshold', variant: 'destructive' }
-  if (levels.includes('near'))
-    return { label: 'Near threshold', variant: 'warning' }
-  if (!hasNumbers) return { label: 'Waiting for data', variant: 'outline' }
-  return { label: 'Healthy', variant: 'success' }
+  const worst: ReleaseHealth = levels.includes('breached')
+    ? 'breached'
+    : levels.includes('warning')
+      ? 'warning'
+      : hasNumbers
+        ? 'healthy'
+        : 'unknown'
+  return {
+    label: RELEASE_HEALTH_LABEL[worst],
+    variant: getReleaseHealthVariant(worst),
+  }
 }
 
-const LEVEL_TEXT = {
-  good: 'text-success',
-  near: 'text-warning',
-  over: 'text-destructive',
-  none: 'text-foreground',
-} satisfies Record<Level, string>
-
 /** A small line of the vital's history with the threshold drawn dashed. */
-function Sparkline({ vital, level }: { vital: StoreVital; level: Level }) {
+function Sparkline({ vital }: { vital: StoreVital }) {
   const values = vital.points.flatMap((point) =>
     point.value == null ? [] : [point.value],
   )
   if (values.length < 2) return null
-  const width = 120
-  const height = 32
+  const width = 64
+  const height = 20
   const top = Math.max(...values, vital.threshold ?? 0) * 1.1
   // Rates sit against their threshold from zero; per-version numbers show the change.
   const bottom = vital.threshold == null ? Math.min(...values) * 0.8 : 0
@@ -107,7 +112,7 @@ function Sparkline({ vital, level }: { vital: StoreVital; level: Level }) {
     <svg
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="none"
-      className={cn('h-8 w-full', LEVEL_TEXT[level])}
+      className="h-5 w-16 shrink-0 text-muted-foreground"
       aria-hidden
     >
       {vital.threshold == null ? null : (
@@ -116,7 +121,7 @@ function Sparkline({ vital, level }: { vital: StoreVital; level: Level }) {
           x2={width}
           y1={y(vital.threshold)}
           y2={y(vital.threshold)}
-          className="stroke-muted-foreground/50"
+          className="stroke-muted-foreground/40"
           strokeDasharray="3 3"
           vectorEffect="non-scaling-stroke"
         />
@@ -125,7 +130,7 @@ function Sparkline({ vital, level }: { vital: StoreVital; level: Level }) {
         points={path}
         fill="none"
         stroke="currentColor"
-        strokeWidth={1.5}
+        strokeWidth={1.25}
         strokeLinejoin="round"
         vectorEffect="non-scaling-stroke"
       />
@@ -133,64 +138,101 @@ function Sparkline({ vital, level }: { vital: StoreVital; level: Level }) {
   )
 }
 
-function VitalTile({ vital }: { vital: StoreVital }) {
-  const level = vitalLevel(vital)
+const LEVEL_DOT = {
+  healthy: 'bg-success',
+  warning: 'bg-warning',
+  breached: 'bg-destructive',
+  unknown: 'bg-muted-foreground/40',
+} satisfies Record<ReleaseHealth, string>
+
+function VitalStat({ vital }: { vital: StoreVital }) {
+  const level = healthFromThreshold(vital.value, vital.threshold)
   const first = vital.points[0]?.label
   const last = vital.points[vital.points.length - 1]?.label
   const perVersion = vital.unit !== 'ratio'
+  const context =
+    vital.threshold == null
+      ? perVersion && last
+        ? `Version ${last}, typical user`
+        : '28-day average'
+      : `Threshold ${formatVital(vital.threshold, vital.unit)}`
+  const history =
+    first && last
+      ? perVersion
+        ? `By app version, ${first} to ${last}`
+        : `Daily, ${first} to ${last}`
+      : null
+
   return (
-    <div className="flex min-w-0 flex-col gap-1 rounded-lg border p-3">
-      <span className="text-xs text-muted-foreground">
-        {VITAL_LABELS[vital.kind]}
-      </span>
-      <span
-        className={cn(
-          'font-mono text-lg font-semibold tabular-nums',
-          LEVEL_TEXT[level],
-        )}
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div
+            tabIndex={0}
+            className="flex min-w-0 items-center gap-3 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          />
+        }
       >
-        {formatVital(vital.value, vital.unit)}
-      </span>
-      <Tooltip>
-        <TooltipTrigger render={<div className="w-full" />}>
-          <Sparkline vital={vital} level={level} />
-        </TooltipTrigger>
-        <TooltipContent>
-          {perVersion
-            ? `By app version, ${first} to ${last}`
-            : `Daily, ${first} to ${last}`}
-        </TooltipContent>
-      </Tooltip>
-      <span className="text-xs text-muted-foreground">
-        {vital.threshold == null
-          ? perVersion && last
-            ? `Version ${last}, typical user`
-            : '28-day average'
-          : `Threshold ${formatVital(vital.threshold, vital.unit)}`}
-      </span>
-    </div>
+        <div className="flex min-w-0 flex-col">
+          <span className="truncate text-xs text-muted-foreground">
+            {VITAL_LABELS[vital.kind]}
+          </span>
+          <span className="flex items-center gap-1.5 text-sm font-medium tabular-nums">
+            {vital.threshold == null ? null : (
+              <span
+                className={cn(
+                  'size-1.5 shrink-0 rounded-full',
+                  LEVEL_DOT[level],
+                )}
+                aria-hidden
+              />
+            )}
+            {formatVital(vital.value, vital.unit)}
+            {vital.threshold == null ? null : (
+              <span className="font-normal text-muted-foreground">
+                / {formatVital(vital.threshold, vital.unit)}
+              </span>
+            )}
+          </span>
+        </div>
+        <Sparkline vital={vital} />
+      </TooltipTrigger>
+      <TooltipContent>
+        <span className="flex flex-col gap-0.5">
+          <span>
+            {RELEASE_HEALTH_LABEL[level]} · {context}
+          </span>
+          {history ? <span>{history}</span> : null}
+        </span>
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
 function IssueRow({ issue }: { issue: StoreErrorIssue }) {
+  const kind = issue.kind === 'anr' ? 'ANR' : 'Crash'
   const content = (
     <>
       <div className="flex min-w-0 flex-col">
-        <span className="truncate font-mono text-xs">{issue.cause}</span>
-        <span className="truncate text-xs text-muted-foreground">
-          {issue.kind === 'anr' ? 'ANR' : 'Crash'}
+        <span className="truncate font-mono text-xs" title={issue.cause}>
+          {issue.cause}
+        </span>
+        <span
+          className="truncate text-xs text-muted-foreground"
+          title={issue.location ?? undefined}
+        >
+          {kind}
           {issue.location ? ` · ${issue.location}` : ''}
         </span>
       </div>
-      <span className="shrink-0 text-right font-mono text-xs text-muted-foreground tabular-nums">
-        {issue.reports.toLocaleString()} reports
-        <br />
+      <span className="shrink-0 text-right text-xs text-muted-foreground tabular-nums">
+        {issue.reports.toLocaleString()} reports ·{' '}
         {issue.users.toLocaleString()} users
       </span>
     </>
   )
   const className =
-    '-mx-2 flex items-center justify-between gap-3 rounded-md px-2 py-1.5'
+    'flex items-center justify-between gap-3 rounded-md px-2 py-1.5'
   return issue.url ? (
     <a
       href={issue.url}
@@ -206,77 +248,136 @@ function IssueRow({ issue }: { issue: StoreErrorIssue }) {
   )
 }
 
-function AppCard({ app }: { app: StoreAppVitals }) {
+function AppRow({ app }: { app: StoreAppVitals }) {
   const status = appStatus(app)
   const issues = app.issues.slice(0, 3)
+  const storeLabel = RELEASE_STORE_LABEL[app.store]
   return (
-    <Card size="sm" className="h-full">
-      <CardHeader>
-        <CardTitle>{app.project_name}</CardTitle>
-        <CardDescription className="truncate">
-          {STORE_LABELS[app.store]} · {app.app_identifier}
-        </CardDescription>
-        <CardAction>
-          <Badge variant={status.variant}>{status.label}</Badge>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="flex flex-1 flex-col gap-3">
+    <div
+      id={storeHealthAnchor(app.project_id, app.store)}
+      className="flex scroll-mt-20 flex-col gap-3 p-4"
+    >
+      <div className="flex flex-col gap-3 @3xl/main:flex-row @3xl/main:items-center">
+        <div className="flex min-w-0 items-start justify-between gap-3 @3xl/main:w-64 @3xl/main:shrink-0">
+          <div className="flex min-w-0 flex-col">
+            <span className="truncate text-sm font-medium">
+              {app.project_name} · {storeLabel}
+            </span>
+            <span className="truncate text-xs text-muted-foreground">
+              {app.app_identifier}
+              {app.refreshed_at == null
+                ? ''
+                : ` · read ${relativeTime(app.refreshed_at)}`}
+            </span>
+          </div>
+          <Badge variant={status.variant} className="@3xl/main:hidden">
+            {status.label}
+          </Badge>
+        </div>
         {app.vitals.length > 0 ? (
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid min-w-0 flex-1 grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 @5xl/main:flex @5xl/main:flex-wrap">
             {app.vitals.map((vital) => (
-              <VitalTile key={vital.kind} vital={vital} />
+              <VitalStat key={vital.kind} vital={vital} />
             ))}
           </div>
-        ) : null}
-        {app.error ? (
-          <p className="text-xs text-destructive">{app.error}</p>
-        ) : null}
-        {app.vitals.length === 0 && !app.error ? (
-          <p className="text-xs text-muted-foreground">
+        ) : !app.error ? (
+          <p className="flex-1 text-xs text-muted-foreground">
             Oore reads this app's numbers within a few minutes of its first
             release.
           </p>
-        ) : null}
-        {issues.length > 0 ? (
-          <div className="flex flex-col">
-            <span className="text-xs font-medium text-muted-foreground">
-              Top issues, last 28 days
+        ) : (
+          <div className="flex-1" />
+        )}
+        <Badge
+          variant={status.variant}
+          className="hidden shrink-0 @3xl/main:inline-flex"
+        >
+          {status.label}
+        </Badge>
+      </div>
+      {app.error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-col gap-2 @3xl/main:flex-row @3xl/main:items-center @3xl/main:justify-between">
+            <span>{app.error}</span>
+            <span className="flex shrink-0 gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                nativeButton={false}
+                render={<Link to="/settings/store-credentials" />}
+              >
+                Fix in Store credentials
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                nativeButton={false}
+                render={
+                  <a
+                    href={`https://docs.oore.build/${DOCS_PATH[app.store]}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  />
+                }
+              >
+                Docs
+              </Button>
             </span>
-            {issues.map((issue) => (
-              <IssueRow key={`${issue.kind}-${issue.cause}`} issue={issue} />
-            ))}
-          </div>
-        ) : null}
-      </CardContent>
-      {app.refreshed_at == null ? null : (
-        <CardFooter className="text-xs text-muted-foreground">
-          Read from {STORE_LABELS[app.store]} {relativeTime(app.refreshed_at)}
-        </CardFooter>
-      )}
-    </Card>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {issues.length > 0 ? (
+        <Collapsible>
+          <CollapsibleTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="xs"
+                className="-ms-2.5 text-muted-foreground"
+              />
+            }
+          >
+            Top issues, last 28 days ({issues.length})
+            <HugeiconsIcon
+              icon={ArrowDown01Icon}
+              data-icon="inline-end"
+              className="transition-transform in-data-open:rotate-180"
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="-mx-2 flex flex-col pt-1">
+              {issues.map((issue) => (
+                <IssueRow key={`${issue.kind}-${issue.cause}`} issue={issue} />
+              ))}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : null}
+    </div>
   )
 }
 
-/** Crash, ANR, hang and launch numbers from the stores, one card per released app. */
+/** Crash, ANR, hang and launch numbers from the stores, one row per released app. */
 export function DashboardStoreHealth() {
   const vitalsQuery = useStoreVitals()
   const refresh = useRefreshStoreVitals()
   const apps = vitalsQuery.data?.apps ?? []
-  // Nothing released yet, or the daemon predates store vitals: stay out of the way.
-  if (apps.length === 0) return null
+  // Nothing released yet, or the daemon predates store vitals: stay out of
+  // the way, but only once the daemon has answered.
+  const unsupported =
+    isOoreApiError(vitalsQuery.error) && vitalsQuery.error.status === 404
+  if ((vitalsQuery.isSuccess && apps.length === 0) || unsupported) return null
 
   return (
-    <section className="flex flex-col gap-2" aria-labelledby="store-health">
-      <div className="flex items-center justify-between gap-3">
-        <h2
-          id="store-health"
-          className="text-sm font-medium text-muted-foreground"
-        >
-          Store health
-        </h2>
+    <DashboardSection
+      title="Store health"
+      scope="All versions"
+      collapsedOnMobile
+      action={
         <Button
           variant="ghost"
           size="sm"
+          className="-me-2"
           disabled={refresh.isPending}
           onClick={() =>
             refresh.mutate(undefined, {
@@ -292,15 +393,23 @@ export function DashboardStoreHealth() {
           )}
           {refresh.isPending ? 'Reading stores…' : 'Refresh'}
         </Button>
-      </div>
-      <div className="grid grid-cols-1 gap-3 @3xl:grid-cols-2 @6xl:grid-cols-3">
-        {apps.map((app) => (
-          <AppCard
-            key={`${app.project_id}-${app.store}-${app.app_identifier}`}
-            app={app}
-          />
-        ))}
-      </div>
-    </section>
+      }
+    >
+      {vitalsQuery.error ? (
+        <DashboardSectionError
+          label="Store health"
+          onRetry={() => void vitalsQuery.refetch()}
+        />
+      ) : !vitalsQuery.data ? (
+        <Skeleton className="h-36 w-full" />
+      ) : (
+        <DashboardList>
+          {apps.map((app) => ({
+            key: `${app.project_id}-${app.store}-${app.app_identifier}`,
+            node: <AppRow app={app} />,
+          }))}
+        </DashboardList>
+      )}
+    </DashboardSection>
   )
 }

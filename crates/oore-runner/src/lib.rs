@@ -4108,9 +4108,24 @@ fn default_platform_command(
     }
 }
 
+/// Google Play only accepts App Bundles. When the pipeline uploads to Play
+/// and keeps the default Android command, build a bundle after the APK so
+/// the upload has something to send and QA installs still get an APK.
+fn default_play_bundle_command(args: &PlatformBuildArgs) -> String {
+    // `--split-per-abi` is APK-only; `flutter build appbundle` rejects it.
+    let args = args
+        .android
+        .iter()
+        .filter(|arg| arg.as_str() != "--split-per-abi")
+        .cloned()
+        .collect::<Vec<_>>();
+    build_default_command_with_args("flutter build appbundle --release", &args)
+}
+
 fn materialize_stage_commands(
     config: &PipelineExecutionConfig,
     include_default_platform_commands: bool,
+    build_play_bundle: bool,
 ) -> PipelineCommandStages {
     let mut pre_build = Vec::new();
     if include_default_platform_commands && !config.platforms.is_empty() {
@@ -4118,21 +4133,22 @@ fn materialize_stage_commands(
     }
     pre_build.extend(config.commands.pre_build.clone());
 
-    let mut build = if include_default_platform_commands {
-        config
-            .platforms
-            .iter()
-            .map(|platform| {
-                default_platform_command(
-                    platform,
-                    &config.platform_commands,
-                    &config.platform_build_args,
-                )
-            })
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
+    let mut build = Vec::new();
+    if include_default_platform_commands {
+        for platform in &config.platforms {
+            build.push(default_platform_command(
+                platform,
+                &config.platform_commands,
+                &config.platform_build_args,
+            ));
+            if build_play_bundle
+                && *platform == BuildPlatform::Android
+                && config.platform_commands.android.is_none()
+            {
+                build.push(default_play_bundle_command(&config.platform_build_args));
+            }
+        }
+    }
     build.extend(config.commands.build.clone());
 
     PipelineCommandStages {
@@ -4219,6 +4235,7 @@ fn require_runner_labels(
 fn resolve_execution_plan(
     workspace: &Path,
     snapshot: &serde_json::Value,
+    build_play_bundle: bool,
 ) -> anyhow::Result<ResolvedExecutionPlan> {
     let config_path_explicit = snapshot
         .get("config_path_explicit")
@@ -4275,7 +4292,8 @@ fn resolve_execution_plan(
             .or_else(|| file_config.flutter_version.clone())
             .unwrap_or_else(|| DEFAULT_FLUTTER_VERSION.to_string());
         let include_defaults = file_config.commands.build.is_empty();
-        let stage_commands = materialize_stage_commands(&file_config, include_defaults);
+        let stage_commands =
+            materialize_stage_commands(&file_config, include_defaults, build_play_bundle);
 
         return Ok(ResolvedExecutionPlan {
             stage_commands,
@@ -4295,7 +4313,7 @@ fn resolve_execution_plan(
     let resolved_flutter_version = fvmrc_version
         .or_else(|| fallback.flutter_version.clone())
         .unwrap_or_else(|| DEFAULT_FLUTTER_VERSION.to_string());
-    let stage_commands = materialize_stage_commands(&fallback, true);
+    let stage_commands = materialize_stage_commands(&fallback, true, build_play_bundle);
     Ok(ResolvedExecutionPlan {
         stage_commands,
         artifact_patterns: fallback.artifact_patterns,
@@ -5221,7 +5239,18 @@ async fn execute_build_steps(
         *cache_observation = Some(observation);
     }
 
-    let execution_plan = match resolve_execution_plan(&workspace, snapshot)
+    // A failed lookup here is not fatal: the publish step reloads the plan
+    // and reports the error where the user looks for it.
+    let build_play_bundle = fetch_job_publish_plan(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &job.signing_token,
+    )
+    .await
+    .is_ok_and(|plan| plan.google_play.is_some());
+    let execution_plan = match resolve_execution_plan(&workspace, snapshot, build_play_bundle)
         .and_then(|plan| apply_secret_references(plan, &secrets))
     {
         Ok(plan) => plan,
@@ -7897,6 +7926,48 @@ mod tests {
     }
 
     #[test]
+    fn play_publishing_adds_an_app_bundle_to_the_default_android_build() {
+        let workspace =
+            std::env::temp_dir().join(format!("oore-play-bundle-test-{}", std::process::id()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let snapshot = json!({
+            "ui_execution_config": {
+                "platforms": ["android"],
+                "platform_build_args": { "android": ["--split-per-abi", "--flavor=prod"] }
+            }
+        });
+
+        let plan = resolve_execution_plan(&workspace, &snapshot, true).unwrap();
+        assert_eq!(
+            plan.stage_commands.build,
+            vec![
+                "flutter build apk --release --split-per-abi --flavor=prod",
+                "flutter build appbundle --release --flavor=prod",
+            ]
+        );
+
+        let plan = resolve_execution_plan(&workspace, &snapshot, false).unwrap();
+        assert_eq!(
+            plan.stage_commands.build,
+            vec!["flutter build apk --release --split-per-abi --flavor=prod"]
+        );
+
+        // An explicit Android command is the user's choice; leave it alone.
+        let snapshot = json!({
+            "ui_execution_config": {
+                "platforms": ["android"],
+                "platform_commands": { "android": "flutter build apk --release" }
+            }
+        });
+        let plan = resolve_execution_plan(&workspace, &snapshot, true).unwrap();
+        assert_eq!(
+            plan.stage_commands.build,
+            vec!["flutter build apk --release"]
+        );
+        std::fs::remove_dir_all(&workspace).ok();
+    }
+
+    #[test]
     fn flutter_commands_run_unwrapped_and_fvmrc_picks_the_version() {
         let workspace =
             std::env::temp_dir().join(format!("oore-vm-plan-test-{}", std::process::id()));
@@ -7908,7 +7979,7 @@ mod tests {
         )
         .unwrap();
 
-        let plan = resolve_execution_plan(&workspace, &json!({})).unwrap();
+        let plan = resolve_execution_plan(&workspace, &json!({}), false).unwrap();
         assert_eq!(plan.isolation, BuildIsolation::Vm);
         assert_eq!(plan.flutter_version, "3.47.7");
         assert_eq!(plan.stage_commands.pre_build, vec!["flutter pub get"]);
@@ -7922,7 +7993,7 @@ mod tests {
             "version: 1\nplatforms: [android]\n",
         )
         .unwrap();
-        let plan = resolve_execution_plan(&workspace, &json!({})).unwrap();
+        let plan = resolve_execution_plan(&workspace, &json!({}), false).unwrap();
         assert_eq!(plan.isolation, BuildIsolation::Host);
         assert_eq!(plan.flutter_version, "3.47.7");
         assert_eq!(plan.stage_commands.pre_build, vec!["flutter pub get"]);

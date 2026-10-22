@@ -3,7 +3,8 @@ import { useRef, useState } from 'react'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { oidcCallback, setupOidcVerify } from '@oore/client/operations'
 import { precheckOidcCallback } from '@/lib/oidc-callback'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { FocusedFlowHeader } from '@/components/focused-flow-header'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuthStore } from '@/stores/auth-store'
@@ -203,9 +204,9 @@ function AuthCallbackPage() {
     return (
       <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
         <PageMeta title="Signing In" />
-        <div className="w-full max-w-md space-y-4">
+        <div className="w-full max-w-md space-y-6">
+          <FocusedFlowHeader title={title} />
           <Alert variant="destructive">
-            <AlertTitle>{title}</AlertTitle>
             <AlertDescription>
               <p>{error}</p>
               {errorHint === 'setup_owner_verify_failed' ? (

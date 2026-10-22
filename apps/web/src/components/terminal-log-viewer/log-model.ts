@@ -104,6 +104,56 @@ export function groupLogs(
   }
 }
 
+/** Name of the step still running, read from the last step marker. */
+export function currentStepName(logs: Array<BuildLogChunk>): string | null {
+  for (let index = logs.length - 1; index >= 0; index--) {
+    const marker = parseStepMarker(logs[index].content)
+    if (marker) return marker.event === 'start' ? marker.name : null
+  }
+  return null
+}
+
+// oxlint-disable-next-line no-control-regex
+const ANSI_PATTERN = /\u001b\[[0-9;?]*[ -/]*[@-~]/g
+const OORE_PREFIX_PATTERN = /^\[oore-[a-z-]+\]\s*/
+
+export interface FailureLine {
+  step: string
+  sequence: number
+  lineNumber: number
+  text: string
+}
+
+/**
+ * The line that best explains why the build failed: the last error-looking
+ * line of the failed step, else that step's last non-blank line.
+ */
+export function findFailureLine(
+  stepGroups: Array<StepGroup>,
+  allVisibleLogs: Array<BuildLogChunk>,
+): FailureLine | null {
+  const group = stepGroups.find(
+    (candidate) =>
+      (candidate.status === 'failed' || candidate.status === 'timed_out') &&
+      candidate.logs.length > 0,
+  )
+  if (!group) return null
+  const lines = group.logs.filter((chunk) => chunk.content.trim())
+  const chunk =
+    [...lines].reverse().find((candidate) => isErrorLine(candidate.content)) ??
+    lines.at(-1)
+  if (!chunk) return null
+  return {
+    step: group.name,
+    sequence: chunk.sequence,
+    lineNumber: allVisibleLogs.indexOf(chunk) + 1,
+    text: chunk.content
+      .replace(ANSI_PATTERN, '')
+      .replace(OORE_PREFIX_PATTERN, '')
+      .trim(),
+  }
+}
+
 export function defaultSelectedStep(
   stepGroups: Array<StepGroup>,
   runningStepName: string | null,

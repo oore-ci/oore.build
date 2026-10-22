@@ -1,17 +1,27 @@
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  ChevronRightIcon,
   CheckmarkCircle02Icon as CheckCircleIcon,
   Link04Icon,
   Add01Icon,
 } from '@hugeicons/core-free-icons'
 
 import { BuildItem } from '@/components/build-item'
+import {
+  DashboardList,
+  DashboardSection,
+  DashboardViewAll,
+} from '@/components/dashboard-section'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import {
   Empty,
   EmptyDescription,
@@ -19,120 +29,151 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { ItemGroup } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { RuntimeMode } from '@oore/client/models'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 import type { Build } from '@oore/client/models'
 
+type GettingStartedStep = {
+  key: string
+  title: string
+  hint: string
+  action?: React.ReactNode
+}
+
 export function DashboardGettingStarted({
   canWriteIntegrations,
   canWriteProjects,
   noConnectedSources,
+  noOnlineRunners,
   runtimeMode,
 }: {
   canWriteIntegrations: boolean
   canWriteProjects: boolean
   noConnectedSources: boolean
+  noOnlineRunners: boolean
   runtimeMode: RuntimeMode
 }) {
   const scope = useFirstAppScope()
   const updateProgress = useFirstAppStore((state) => state.update)
   const hasSourceStep = runtimeMode === 'remote' && noConnectedSources
+  const canCreateProject = canWriteProjects && !noConnectedSources
+
+  const steps: Array<GettingStartedStep> = [
+    ...(hasSourceStep
+      ? [
+          {
+            key: 'source',
+            title: 'Connect a source',
+            hint: canWriteIntegrations
+              ? 'Link GitHub or GitLab to import repositories and build on every push.'
+              : 'Ask an admin to connect GitHub or GitLab.',
+            action: canWriteIntegrations ? (
+              <Button
+                size="sm"
+                onClick={() =>
+                  updateProgress(scope, { projectDraft: { name: '' } })
+                }
+                render={<Link to="/settings/integrations" />}
+                nativeButton={false}
+              >
+                <HugeiconsIcon icon={Link04Icon} data-icon="inline-start" />
+                Connect source
+              </Button>
+            ) : undefined,
+          },
+        ]
+      : []),
+    {
+      key: 'project',
+      title: 'Create a project',
+      hint: !canWriteProjects
+        ? 'Ask an owner or admin to create a project.'
+        : noConnectedSources
+          ? 'Connect a source first, then pick one of its repositories.'
+          : runtimeMode === 'local'
+            ? 'Point to a local Flutter repository.'
+            : 'Pick a repository from a connected source.',
+      action: canCreateProject ? (
+        <Button
+          size="sm"
+          render={<Link to="/projects" search={{ openCreate: 1 }} />}
+          nativeButton={false}
+        >
+          <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" />
+          Create project
+        </Button>
+      ) : undefined,
+    },
+    ...(noOnlineRunners
+      ? [
+          {
+            key: 'runner',
+            title: 'Connect a runner',
+            hint: 'Builds run on a Mac runner. Register this Mac or another one.',
+            action: (
+              <Button
+                size="sm"
+                variant="outline"
+                render={<Link to="/settings/runners" />}
+                nativeButton={false}
+              >
+                Open Runners
+              </Button>
+            ),
+          },
+        ]
+      : []),
+    {
+      key: 'pipeline',
+      title: 'Add a pipeline',
+      hint: 'Choose the platforms to build and how to sign them.',
+    },
+    {
+      key: 'run',
+      title: 'Run and install your app',
+      hint: 'Run a build, then install the app or share it with a tester.',
+    },
+  ]
 
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle>Build and share your first app</CardTitle>
+        <CardTitle>
+          <h2>Build and share your first app</h2>
+        </CardTitle>
+        <CardAction>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-me-2"
+            render={
+              <a
+                href="https://docs.oore.build/start/install"
+                target="_blank"
+                rel="noopener noreferrer"
+              />
+            }
+            nativeButton={false}
+          >
+            Setup guide
+          </Button>
+        </CardAction>
       </CardHeader>
       <CardContent>
-        <ol className="flex flex-col gap-3 text-sm">
-          {hasSourceStep ? (
-            <li className="flex items-start gap-3">
+        <ol className="flex flex-col gap-4 text-sm">
+          {steps.map((step, index) => (
+            <li key={step.key} className="flex items-start gap-3">
               <Badge variant="outline" className="mt-0.5 size-5 px-0">
-                1
+                {index + 1}
               </Badge>
-              <div className="flex flex-col gap-1.5">
-                <p className="font-medium">Connect a source</p>
-                <p className="text-xs text-muted-foreground">
-                  Link GitHub or GitLab to import repositories and enable
-                  webhook-triggered builds.
-                </p>
-                {canWriteIntegrations ? (
-                  <Button
-                    size="sm"
-                    onClick={() =>
-                      updateProgress(scope, { projectDraft: { name: '' } })
-                    }
-                    render={<Link to="/settings/integrations" />}
-                    nativeButton={false}
-                  >
-                    <HugeiconsIcon icon={Link04Icon} />
-                    Connect source
-                  </Button>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Ask an admin to connect a source.
-                  </p>
-                )}
+              <div className="flex min-w-0 flex-col items-start gap-1.5">
+                <p className="font-medium">{step.title}</p>
+                <p className="text-xs text-muted-foreground">{step.hint}</p>
+                {step.action}
               </div>
             </li>
-          ) : null}
-
-          <li className="flex items-start gap-3">
-            <Badge variant="outline" className="mt-0.5 size-5 px-0">
-              {hasSourceStep ? '2' : '1'}
-            </Badge>
-            <div className="flex flex-col gap-1.5">
-              <p className="font-medium">Create a project</p>
-              <p className="text-xs text-muted-foreground">
-                {runtimeMode === 'local'
-                  ? 'Point to a local Flutter repository to get started.'
-                  : 'Pick a repository from a connected source.'}
-              </p>
-              {canWriteProjects && !noConnectedSources ? (
-                <Button
-                  size="sm"
-                  render={<Link to="/projects" search={{ openCreate: 1 }} />}
-                  nativeButton={false}
-                >
-                  <HugeiconsIcon icon={Add01Icon} />
-                  Create project
-                </Button>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  {canWriteProjects
-                    ? 'Connect a source before you create a project.'
-                    : 'Ask an owner or admin to create a project.'}
-                </p>
-              )}
-            </div>
-          </li>
-
-          <li className="flex items-start gap-3">
-            <Badge variant="outline" className="mt-0.5 size-5 px-0">
-              {hasSourceStep ? '3' : '2'}
-            </Badge>
-            <div className="flex flex-col gap-1.5">
-              <p className="font-medium">Add a pipeline</p>
-              <p className="text-xs text-muted-foreground">
-                Configure which platforms to build (Android, iOS, macOS) and
-                signing settings.
-              </p>
-            </div>
-          </li>
-
-          <li className="flex items-start gap-3">
-            <Badge variant="outline" className="mt-0.5 size-5 px-0">
-              {hasSourceStep ? '4' : '3'}
-            </Badge>
-            <div className="flex flex-col gap-1.5">
-              <p className="font-medium">Run and install your app</p>
-              <p className="text-xs text-muted-foreground">
-                Run a build, then install the app or share it with a tester.
-              </p>
-            </div>
-          </li>
+          ))}
         </ol>
       </CardContent>
     </Card>
@@ -179,25 +220,10 @@ export function DashboardBuildActivity({
     ...recentBuilds,
   ].slice(0, 6)
   return (
-    <section className="flex flex-col gap-3" aria-labelledby="build-activity">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2
-          id="build-activity"
-          className="text-sm font-medium text-muted-foreground"
-        >
-          Build activity
-        </h2>
-        <Button
-          variant="ghost"
-          size="sm"
-          render={<Link to="/builds" />}
-          nativeButton={false}
-        >
-          View all
-          <HugeiconsIcon icon={ChevronRightIcon} data-icon="inline-end" />
-        </Button>
-      </div>
-
+    <DashboardSection
+      title="Build activity"
+      action={<DashboardViewAll to="/builds" />}
+    >
       {error ? (
         <Alert variant="destructive">
           <AlertDescription className="flex items-center justify-between gap-3">
@@ -208,11 +234,7 @@ export function DashboardBuildActivity({
           </AlertDescription>
         </Alert>
       ) : isLoading ? (
-        <div className="flex flex-col gap-2">
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
-        </div>
+        <Skeleton className="h-48 w-full" />
       ) : activityBuilds.length === 0 ? (
         <Empty className="border">
           <EmptyHeader>
@@ -226,12 +248,13 @@ export function DashboardBuildActivity({
           </EmptyHeader>
         </Empty>
       ) : (
-        <ItemGroup className="gap-2">
-          {activityBuilds.map((build) => (
-            <BuildItem key={build.id} build={build} />
-          ))}
-        </ItemGroup>
+        <DashboardList>
+          {activityBuilds.map((build) => ({
+            key: build.id,
+            node: <BuildItem build={build} inList />,
+          }))}
+        </DashboardList>
       )}
-    </section>
+    </DashboardSection>
   )
 }
