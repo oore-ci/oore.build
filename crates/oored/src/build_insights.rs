@@ -144,7 +144,7 @@ async fn load_build_insights(
     let previous_since = since - days * DAY;
 
     let mut query: QueryBuilder<Sqlite> = QueryBuilder::new(
-        "SELECT builds.id, builds.status, builds.project_id, builds.pipeline_id, builds.build_number, \
+        "SELECT builds.id, COALESCE(builds.expired_from, builds.status) AS status, builds.project_id, builds.pipeline_id, builds.build_number, \
          builds.started_at, builds.finished_at, projects.name AS project_name, pipelines.name AS pipeline_name \
          FROM builds \
          LEFT JOIN projects ON projects.id = builds.project_id \
@@ -517,6 +517,35 @@ mod tests {
         let today = &insights.daily[6];
         assert_eq!((today.succeeded, today.failed, today.other), (1, 1, 0));
         assert_eq!(today.p50_duration_seconds, Some(600));
+    }
+
+    #[tokio::test]
+    async fn builds_retention_expired_keep_their_outcome() {
+        let pool = pool().await;
+        finished(&pool, SHOP, 1, "succeeded", 3_600, 600).await;
+        finished(&pool, SHOP, 2, "failed", 7_200, 120).await;
+        finished(&pool, SHOP, 3, "expired", 7_300, 0).await;
+        let before = load_build_insights(&pool, &OWNER, 7, 0, NOW).await.unwrap();
+        sqlx::query(
+            "UPDATE builds SET expired_from = status, status = 'expired' \
+             WHERE build_number IN (1, 2)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let after = load_build_insights(&pool, &OWNER, 7, 0, NOW).await.unwrap();
+
+        assert_eq!(
+            (
+                after.totals.succeeded,
+                after.totals.failed,
+                after.totals.expired
+            ),
+            (1, 1, 1)
+        );
+        assert_eq!(after.totals.success_rate, before.totals.success_rate);
+        assert_eq!(after.duration.p50_seconds, before.duration.p50_seconds);
     }
 
     #[tokio::test]

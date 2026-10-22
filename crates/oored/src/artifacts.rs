@@ -11,7 +11,7 @@ use oore_contract::{
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::AppState;
@@ -28,7 +28,7 @@ use crate::util::{api_err, now_unix};
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
 /// Upload URL TTL: 30 minutes for uploads.
-const UPLOAD_URL_TTL_SECS: u64 = 30 * 60;
+pub(crate) const UPLOAD_URL_TTL_SECS: u64 = 30 * 60;
 
 /// Download URL TTL: 15 minutes for downloads.
 const DOWNLOAD_URL_TTL_SECS: u64 = 15 * 60;
@@ -364,6 +364,9 @@ async fn finish_artifact(
         )
     })?;
     if result.rows_affected() == 0 {
+        if available {
+            remove_abandoned_upload(&state, &job_id, &artifact_id).await;
+        }
         return Err(api_err(
             StatusCode::CONFLICT,
             "artifact_not_pending",
@@ -385,6 +388,33 @@ async fn finish_artifact(
     Ok(Json(CompleteArtifactResponse {
         artifact: row_to_artifact(&row),
     }))
+}
+
+/// An upload that finished after the stale-upload sweep gave up on it left a
+/// file no row will ever point to. Delete it.
+async fn remove_abandoned_upload(state: &AppState, job_id: &str, artifact_id: &str) {
+    let file_path: Option<String> = match sqlx::query_scalar(
+        "SELECT file_path FROM artifacts WHERE id = ?1 AND build_id = ?2 \
+         AND state = 'failed' AND error_message = 'upload reservation expired'",
+    )
+    .bind(artifact_id)
+    .bind(job_id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(file_path) => file_path,
+        Err(error) => {
+            warn!(%artifact_id, %error, "failed to look up an abandoned upload");
+            return;
+        }
+    };
+    let Some(file_path) = file_path else {
+        return;
+    };
+    let storage = state.storage.read().await.clone();
+    if let Err(error) = storage.delete_object(&file_path).await {
+        warn!(%artifact_id, %file_path, %error, "failed to delete an abandoned upload");
+    }
 }
 
 pub async fn complete_artifact(
