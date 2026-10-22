@@ -264,8 +264,7 @@ function IosSigningIdentityFields({
             {field.value === 'ad_hoc' && appStorePublishing?.configured ? (
               <p className="text-sm text-warning">
                 TestFlight and App Store uploads need App Store distribution.
-                Uploads stay off until you switch.{' '}
-                {appStorePublishing.link}
+                Uploads stay off until you switch. {appStorePublishing.link}
               </p>
             ) : null}
             {field.value === 'app_store' && appStorePublishing ? (
@@ -539,9 +538,7 @@ function IosApiKeyFields({
             file={file}
             onFileChange={onFileChange}
             storedName={
-              signingData?.has_api_key
-                ? (signingData.api_key_id ?? true)
-                : null
+              signingData?.has_api_key ? (signingData.api_key_id ?? true) : null
             }
             emptyLabel="No key stored yet"
           />

@@ -44,7 +44,7 @@ export function GooglePlayServiceAccountPanel({
   return (
     <SettingsSection
       title="Google Play service account"
-      description="One service account invited to your Play Console developer account can publish every app in it. Store its JSON key once and new pipelines use it on the Publishing tab. A project secret with the same name overrides it."
+      description="One service account invited to your Play Console developer account can publish every app in it. Store its JSON key once and new pipelines use it on the Publishing tab. A pipeline secret overrides a project secret, which overrides this one."
     >
       {secretsQuery.error ? (
         <CollectionError
@@ -70,7 +70,7 @@ export function GooglePlayServiceAccountPanel({
                     Instance secret · Updated {relativeTime(stored.updated_at)}
                   </>
                 ) : (
-                  'Not stored yet. Each pipeline needs its own secret until you add one here.'
+                  'Not stored yet. Until you add it here, each project or pipeline needs its own PLAY_SERVICE_ACCOUNT secret.'
                 )}
               </ItemDescription>
             </ItemContent>

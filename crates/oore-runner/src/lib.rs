@@ -4117,7 +4117,8 @@ fn resolve_execution_plan(
             .or_else(|| file_config.flutter_version.clone())
             .unwrap_or_else(|| DEFAULT_FLUTTER_VERSION.to_string());
         let include_defaults = file_config.commands.build.is_empty();
-        let stage_commands = materialize_stage_commands(&file_config, include_defaults, build_play_bundle);
+        let stage_commands =
+            materialize_stage_commands(&file_config, include_defaults, build_play_bundle);
 
         return Ok(ResolvedExecutionPlan {
             stage_commands,
@@ -7429,7 +7430,10 @@ mod tests {
             }
         });
         let plan = resolve_execution_plan(&workspace, &snapshot, true).unwrap();
-        assert_eq!(plan.stage_commands.build, vec!["flutter build apk --release"]);
+        assert_eq!(
+            plan.stage_commands.build,
+            vec!["flutter build apk --release"]
+        );
         std::fs::remove_dir_all(&workspace).ok();
     }
 

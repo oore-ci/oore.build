@@ -49,6 +49,13 @@ const ISOLATION_EFFECTS = {
 } satisfies Record<PipelineFormValues['isolation'], string>
 
 type PlatformFlag = 'platform_android' | 'platform_ios' | 'platform_macos'
+type PlatformFieldName =
+  | 'android_build_args'
+  | 'ios_build_args'
+  | 'macos_build_args'
+  | 'android_command_override'
+  | 'ios_command_override'
+  | 'macos_command_override'
 
 const ARGS_PLACEHOLDER = 'One argument per line, e.g. --flavor=prod'
 const OVERRIDE_PLACEHOLDER = 'Empty uses the default command'
@@ -58,7 +65,7 @@ const PLATFORM_ARGUMENT_FIELDS = [
   ['ios_build_args', 'iOS build args', 'platform_ios'],
   ['macos_build_args', 'macOS build args', 'platform_macos'],
 ] as const satisfies ReadonlyArray<
-  readonly [keyof PipelineFormValues, string, PlatformFlag]
+  readonly [PlatformFieldName, string, PlatformFlag]
 >
 
 const PLATFORM_COMMAND_OVERRIDES = [
@@ -66,7 +73,7 @@ const PLATFORM_COMMAND_OVERRIDES = [
   ['ios_command_override', 'iOS command override', 'platform_ios'],
   ['macos_command_override', 'macOS command override', 'platform_macos'],
 ] as const satisfies ReadonlyArray<
-  readonly [keyof PipelineFormValues, string, PlatformFlag]
+  readonly [PlatformFieldName, string, PlatformFlag]
 >
 
 /**
@@ -96,10 +103,8 @@ export function PipelineBuildSection({
   const PlatformIcon = platformOpen ? ArrowDown01Icon : ArrowRight01Icon
   // Show a platform's fields when it is selected, or when it still holds a
   // value that would otherwise be invisible.
-  const showPlatformField = (
-    name: keyof PipelineFormValues,
-    platform: PlatformFlag,
-  ) => values[platform] || String(values[name] ?? '').trim().length > 0
+  const showPlatformField = (name: PlatformFieldName, platform: PlatformFlag) =>
+    values[platform] || (values[name] ?? '').trim().length > 0
   const argumentFields = PLATFORM_ARGUMENT_FIELDS.filter(([name, , platform]) =>
     showPlatformField(name, platform),
   )
@@ -131,7 +136,10 @@ export function PipelineBuildSection({
             <p className="font-medium">Platform build commands</p>
             <ul className="flex flex-col gap-0.5">
               {previewDefaults.map((command) => (
-                <li key={command} className="font-mono text-[13px] break-all">
+                <li
+                  key={command}
+                  className="font-mono text-[13px] wrap-break-word"
+                >
                   {command}
                 </li>
               ))}
@@ -142,10 +150,12 @@ export function PipelineBuildSection({
                 well as the APK.
               </p>
             ) : null}
-            {playBundle && androidOverride && !buildsAppBundle(androidOverride) ? (
+            {playBundle &&
+            androidOverride &&
+            !buildsAppBundle(androidOverride) ? (
               <p className="text-warning">
-                Google Play upload is on, but the Android command override
-                does not build an App Bundle, so the upload will fail. Use{' '}
+                Google Play upload is on, but the Android command override does
+                not build an App Bundle, so the upload will fail. Use{' '}
                 <span className="font-mono">flutter build appbundle</span> or
                 clear the override.
               </p>

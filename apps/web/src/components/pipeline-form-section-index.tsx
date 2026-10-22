@@ -31,7 +31,7 @@ export function PipelineSectionIndex({
       },
       // A section counts once its top passes under the index and stays
       // active until the next one does.
-      { rootMargin: '-64px 0px -55% 0px' },
+      { rootMargin: '-120px 0px -55% 0px' },
     )
     for (const element of elements) observer.observe(element)
     return () => observer.disconnect()
@@ -40,7 +40,7 @@ export function PipelineSectionIndex({
   return (
     <nav
       aria-label="Pipeline sections"
-      className="sticky top-0 z-20 -mx-1 -mb-4 flex gap-1 overflow-x-auto bg-background/95 px-1 py-2 backdrop-blur supports-backdrop-filter:bg-background/80"
+      className="sticky top-(--header-height) z-20 -mx-1 -mb-4 flex gap-1 overflow-x-auto bg-background/95 px-1 py-2 backdrop-blur supports-backdrop-filter:bg-background/80"
     >
       {sections.map((section) => (
         <a
@@ -53,7 +53,11 @@ export function PipelineSectionIndex({
             document
               .getElementById(section.id)
               ?.scrollIntoView({ block: 'start' })
-            window.history.replaceState(window.history.state, '', `#${section.id}`)
+            window.history.replaceState(
+              window.history.state,
+              '',
+              `#${section.id}`,
+            )
             setActiveId(section.id)
           }}
           className={cn(

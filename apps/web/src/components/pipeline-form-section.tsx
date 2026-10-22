@@ -78,7 +78,7 @@ export function PipelineFormSubsection({
       id={id}
       role="group"
       aria-labelledby={headingId}
-      className="flex scroll-mt-16 flex-col gap-4"
+      className="flex scroll-mt-[calc(var(--header-height)+4rem)] flex-col gap-4"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">

@@ -11,8 +11,11 @@ export function SettingsSurface({
   return (
     <div
       data-slot="settings-surface"
+      // `overflow-clip`, not `hidden`: a hidden-overflow box is a scroll
+      // container, so anchor links inside it would scroll the box instead
+      // of the page.
       className={cn(
-        'overflow-hidden rounded-lg border bg-card text-card-foreground',
+        'overflow-clip rounded-lg border bg-card text-card-foreground',
         inset && 'p-4 sm:p-5',
         className,
       )}
@@ -48,7 +51,10 @@ export function SettingsSection({
     <section
       id={id}
       aria-labelledby={titleId}
-      className={cn('flex min-w-0 scroll-mt-16 flex-col gap-4', className)}
+      className={cn(
+        'flex min-w-0 scroll-mt-[calc(var(--header-height)+4rem)] flex-col gap-4',
+        className,
+      )}
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-1">

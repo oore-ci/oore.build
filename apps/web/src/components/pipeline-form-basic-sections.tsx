@@ -216,7 +216,6 @@ export function PipelineBasicsSection({
                 </FormItem>
               )}
             />
-
           </PipelineFormSubsection>
         </>
       )}

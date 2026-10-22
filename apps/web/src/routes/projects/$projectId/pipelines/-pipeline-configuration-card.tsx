@@ -42,9 +42,11 @@ function Section({
   )
 }
 
+const NONE = <span className="text-muted-foreground">—</span>
+
 function KV({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex gap-4 py-1 text-xs">
+    <div className="flex gap-4 py-1 text-sm max-sm:flex-col max-sm:gap-0.5">
       <span className="w-40 shrink-0 text-muted-foreground">{label}</span>
       <span className="min-w-0 break-all">{children}</span>
     </div>
@@ -56,15 +58,27 @@ export function PipelineConfigurationCard({
   iosSigning,
   manualOnlyTriggers,
   pipeline,
+  publishing = [],
 }: {
   androidSigning: PipelineAndroidSigningResponse | undefined
   iosSigning: PipelineIosSigningResponse | undefined
   manualOnlyTriggers: boolean
   pipeline: Pipeline
+  /** One line per store the pipeline can publish to. */
+  publishing?: Array<{ label: string; value: string }>
 }) {
   return (
     <Card>
       <CardContent className="divide-y">
+        {publishing.length > 0 ? (
+          <Section title="Publishing" defaultOpen>
+            {publishing.map((line) => (
+              <KV key={line.label} label={line.label}>
+                {line.value}
+              </KV>
+            ))}
+          </Section>
+        ) : null}
         <Section title="Configuration" defaultOpen>
           <KV label="Config path">
             <span className="font-mono">{pipeline.config_path}</span>
@@ -76,7 +90,9 @@ export function PipelineConfigurationCard({
           </KV>
           <KV label="Flutter version">
             <span className="font-mono">
-              {pipeline.execution_config.flutter_version || 'auto'}
+              {pipeline.execution_config.flutter_version || (
+                <span className="font-sans">From .fvmrc, or stable</span>
+              )}
             </span>
           </KV>
           <KV label="Created">
@@ -106,7 +122,7 @@ export function PipelineConfigurationCard({
                     ))}
                   </div>
                 ) : (
-                  'All events'
+                  'Every repository event'
                 )}
               </KV>
               <KV label="Branch patterns">
@@ -123,16 +139,16 @@ export function PipelineConfigurationCard({
                     ))}
                   </div>
                 ) : (
-                  'all branches'
+                  'All branches'
                 )}
               </KV>
             </>
           )}
           <KV label="Cancel previous">
-            {pipeline.concurrency.cancel_previous ? 'yes' : 'no'}
+            {pipeline.concurrency.cancel_previous ? 'Yes' : 'No'}
           </KV>
           <KV label="Max concurrent">
-            {pipeline.concurrency.max_concurrent ?? 'unlimited'}
+            {pipeline.concurrency.max_concurrent ?? 'No limit'}
           </KV>
         </Section>
 
@@ -141,21 +157,21 @@ export function PipelineConfigurationCard({
             <span className="font-mono">
               {pipeline.execution_config.commands.pre_build.length > 0
                 ? pipeline.execution_config.commands.pre_build.join(' && ')
-                : 'none'}
+                : NONE}
             </span>
           </KV>
           <KV label="Build">
             <span className="font-mono">
               {pipeline.execution_config.commands.build.length > 0
                 ? pipeline.execution_config.commands.build.join(' && ')
-                : 'none'}
+                : NONE}
             </span>
           </KV>
           <KV label="Post-build">
             <span className="font-mono">
               {pipeline.execution_config.commands.post_build.length > 0
                 ? pipeline.execution_config.commands.post_build.join(' && ')
-                : 'none'}
+                : NONE}
             </span>
           </KV>
           {(pipeline.execution_config.platform_build_args?.android.length ??
@@ -191,13 +207,13 @@ export function PipelineConfigurationCard({
               <span className="font-mono">
                 {[
                   pipeline.execution_config.platform_commands.android
-                    ? `android: ${pipeline.execution_config.platform_commands.android}`
+                    ? `Android: ${pipeline.execution_config.platform_commands.android}`
                     : '',
                   pipeline.execution_config.platform_commands.ios
-                    ? `ios: ${pipeline.execution_config.platform_commands.ios}`
+                    ? `iOS: ${pipeline.execution_config.platform_commands.ios}`
                     : '',
                   pipeline.execution_config.platform_commands.macos
-                    ? `macos: ${pipeline.execution_config.platform_commands.macos}`
+                    ? `macOS: ${pipeline.execution_config.platform_commands.macos}`
                     : '',
                 ]
                   .filter(Boolean)
@@ -208,13 +224,13 @@ export function PipelineConfigurationCard({
           <KV label="Env vars">
             {(pipeline.execution_config.env?.length ?? 0) > 0
               ? `${pipeline.execution_config.env!.length} configured`
-              : 'none'}
+              : NONE}
           </KV>
           <KV label="Artifact patterns">
             <span className="font-mono">
               {pipeline.execution_config.artifact_patterns.length > 0
                 ? pipeline.execution_config.artifact_patterns.join(', ')
-                : 'none'}
+                : NONE}
             </span>
           </KV>
         </Section>
@@ -225,19 +241,17 @@ export function PipelineConfigurationCard({
               <>
                 <KV label="Release">
                   {androidSigning.release.enabled
-                    ? `enabled (${androidSigning.release.keystore_filename ?? 'keystore configured'})`
-                    : 'disabled'}
+                    ? `On · ${androidSigning.release.keystore_filename ?? 'keystore stored'}`
+                    : 'Off'}
                 </KV>
                 <KV label="Debug">
                   {androidSigning.debug.enabled
-                    ? `enabled (${androidSigning.debug.keystore_filename ?? 'keystore configured'})`
-                    : 'disabled'}
+                    ? `On · ${androidSigning.debug.keystore_filename ?? 'keystore stored'}`
+                    : 'Off'}
                 </KV>
               </>
             ) : (
-              <p className="py-1 text-xs text-muted-foreground">
-                Not configured
-              </p>
+              <p className="py-1 text-sm text-muted-foreground">Not set up</p>
             )}
           </Section>
         ) : null}
@@ -246,9 +260,7 @@ export function PipelineConfigurationCard({
           <Section title="iOS signing">
             {iosSigning ? (
               <>
-                <KV label="Status">
-                  {iosSigning.enabled ? 'enabled' : 'disabled'}
-                </KV>
+                <KV label="Status">{iosSigning.enabled ? 'On' : 'Off'}</KV>
                 {iosSigning.enabled ? (
                   <>
                     <KV label="Mode">
@@ -282,16 +294,16 @@ export function PipelineConfigurationCard({
                     iosSigning.mode === 'hybrid' ? (
                       <KV label="Certificate">
                         {iosSigning.has_p12
-                          ? (iosSigning.p12_filename ?? 'configured')
-                          : 'not uploaded'}
+                          ? (iosSigning.p12_filename ?? 'Stored')
+                          : 'Not uploaded'}
                       </KV>
                     ) : null}
                     {iosSigning.mode === 'api' ||
                     iosSigning.mode === 'hybrid' ? (
                       <KV label="API key">
                         {iosSigning.has_api_key
-                          ? `Key ${iosSigning.api_key_id ?? 'configured'}`
-                          : 'not configured'}
+                          ? `Key ${iosSigning.api_key_id ?? 'stored'}`
+                          : 'Not set up'}
                       </KV>
                     ) : null}
                     {iosSigning.provisioning_profiles.length > 0 ? (
@@ -307,9 +319,7 @@ export function PipelineConfigurationCard({
                 ) : null}
               </>
             ) : (
-              <p className="py-1 text-xs text-muted-foreground">
-                Not configured
-              </p>
+              <p className="py-1 text-sm text-muted-foreground">Not set up</p>
             )}
           </Section>
         ) : null}

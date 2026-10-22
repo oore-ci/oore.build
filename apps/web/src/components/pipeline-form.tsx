@@ -1,5 +1,11 @@
 import type { IosSigningFiles } from '@/lib/pipeline-signing'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import { useBlocker } from '@tanstack/react-router'
 import { useForm, useFormState, useWatch } from 'react-hook-form'
 import type { FieldErrors } from 'react-hook-form'
@@ -74,27 +80,20 @@ interface PipelineFormProps {
   googlePlayUpload?: boolean
 }
 
-/** Count leaf field errors, including nested array and object fields. */
-function countFieldErrors(errors: FieldErrors): number {
-  let count = 0
-  for (const value of Object.values(errors)) {
-    if (!value || typeof value !== 'object') continue
-    if ('message' in value || 'type' in value) {
-      count += 1
-    } else {
-      count += countFieldErrors(value as FieldErrors)
-    }
-  }
-  return count
+/** Fields with an error; an array field with several bad rows counts once. */
+function countFieldErrors(errors: FieldErrors) {
+  return Object.keys(errors).filter((name) => name !== 'root').length
 }
 
 /**
  * Bring the first invalid field into view and focus it. `block: 'center'`
  * keeps it clear of the sticky action bar at the bottom of the form.
  */
-function revealFirstInvalidField(form: HTMLFormElement | null) {
+function revealFirstInvalidField(formRef: RefObject<HTMLFormElement | null>) {
   requestAnimationFrame(() => {
-    const field = form?.querySelector<HTMLElement>('[aria-invalid="true"]')
+    const field = formRef.current?.querySelector<HTMLElement>(
+      '[aria-invalid="true"]',
+    )
     if (!field) return
     field.scrollIntoView({ block: 'center' })
     field.focus({ preventScroll: true })
@@ -223,9 +222,11 @@ export default function PipelineForm({
       <form
         ref={formRef}
         noValidate
-        onSubmit={form.handleSubmit(handleFormSubmit, () =>
-          revealFirstInvalidField(formRef.current),
-        )}
+        onSubmit={(event) =>
+          void form.handleSubmit(handleFormSubmit, () =>
+            revealFirstInvalidField(formRef),
+          )(event)
+        }
         className="flex flex-col gap-8"
       >
         <PipelineSectionIndex sections={sections} />
@@ -309,7 +310,7 @@ export default function PipelineForm({
               type="button"
               variant="link"
               className="mr-auto px-1 text-destructive"
-              onClick={() => revealFirstInvalidField(formRef.current)}
+              onClick={() => revealFirstInvalidField(formRef)}
             >
               <HugeiconsIcon icon={AlertCircleIcon} data-icon="inline-start" />
               Fix {errorCount} {errorCount === 1 ? 'field' : 'fields'} to save
