@@ -90,7 +90,13 @@ reason "approval request expired". Set `expires_after_hours` (1 to 8760) to
 change the window:
 
 ```json
-{ "approval": { "required": true, "events": ["schedule"], "expires_after_hours": 24 } }
+{
+  "approval": {
+    "required": true,
+    "events": ["schedule"],
+    "expires_after_hours": 24
+  }
+}
 ```
 
 A waiting build that is canceled or superseded stops waiting for approval.
