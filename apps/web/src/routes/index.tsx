@@ -16,9 +16,7 @@ import {
   DashboardBuildActivity,
   DashboardGettingStarted,
 } from '@/components/dashboard-sections'
-import DashboardBuildIncident, {
-  failingProjects,
-} from '@/components/dashboard-build-incident'
+import DashboardBuildIncident from '@/components/dashboard-build-incident'
 import { DashboardBuildHealth } from '@/components/dashboard-build-health'
 import { DashboardProjectHealth } from '@/components/dashboard-project-health'
 import { DashboardStoreHealth } from '@/components/dashboard-store-health'
@@ -29,13 +27,18 @@ import { Skeleton } from '@/components/ui/skeleton'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { useAttention } from '@/hooks/use-attention'
 import { useBuilds, type BuildInsightsWindow } from '@/hooks/use-builds'
 import { useIntegrations } from '@/hooks/use-integrations'
 import {
-  useMarkOperatorIncidentRead,
-  useOperatorIncidents,
-} from '@/hooks/use-operator-incidents'
-import { useHasPermissions } from '@/hooks/use-permissions'
+  canChangeApprovalPolicy,
+  useHasPermissions,
+} from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
 import { useRunners } from '@/hooks/use-runners'
 import { useSetupStatus } from '@/hooks/use-setup'
@@ -45,7 +48,6 @@ import { PageMeta } from '@/lib/seo'
 import { isManagedFrontend } from '@/lib/managed-frontend'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
-import { OperatorIncidentAlert } from '@/components/operator-incident-alert'
 import { createWebOoreClient } from '@/lib/api-client/client'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 
@@ -97,7 +99,6 @@ function selectDashboardBuilds({ builds }: ListBuildsResponse) {
     builds,
     active: builds.filter((build) => ACTIVE_BUILD_STATUSES.has(build.status)),
     recentCompleted: completed.slice(0, 6),
-    failing: failingProjects(completed),
   }
 }
 
@@ -339,10 +340,11 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
   const navigate = useNavigate()
   const [canWriteIntegrations, canWriteProjects, canWriteBuilds] =
     useHasPermissions(['integrations:write', 'projects:write', 'builds:write'])
-  const incidentsQuery = useOperatorIncidents({
-    enabled: canWriteIntegrations,
-  })
-  const markIncidentRead = useMarkOperatorIncidentRead()
+  const attention = useAttention()
+  const canApprove = canChangeApprovalPolicy(
+    useAuthStore((s) => s.user?.role),
+    undefined,
+  )
 
   const scope = useFirstAppScope()
   const guidedProjectId = useFirstAppStore(
@@ -382,7 +384,7 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
     integrationsResolved &&
     integrationsQuery.data === false
   const noOnlineRunners = !!runnersQuery.data && runnersQuery.data.online === 0
-  const canShowRunBuild = hasProjects && !noOnlineRunners && canWriteBuilds
+  const canShowRunBuild = hasProjects && canWriteBuilds
   const blockedBuilds = activeBuilds.filter(
     (build) => build.runner_policy_block_reason,
   )
@@ -403,13 +405,29 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
     )
   }
 
+  const runBuildButton = (
+    <Button disabled={noOnlineRunners}>
+      <HugeiconsIcon icon={PlayIcon} data-icon="inline-start" />
+      Run build
+    </Button>
+  )
+
   return (
     <PageLayout width="wide">
       <div className="flex flex-col gap-8">
         <PageHeader
           title="Home"
           actions={
-            canShowRunBuild ? (
+            !canShowRunBuild ? undefined : noOnlineRunners ? (
+              <Tooltip>
+                <TooltipTrigger render={<span tabIndex={0} />}>
+                  {runBuildButton}
+                </TooltipTrigger>
+                <TooltipContent>
+                  No runner is online, so a build would only wait.
+                </TooltipContent>
+              </Tooltip>
+            ) : (
               <Suspense fallback={null}>
                 <TriggerBuildDrawer
                   description="Choose a project, pipeline and branch to build."
@@ -420,23 +438,12 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
                     })
                   }}
                 >
-                  <Button>
-                    <HugeiconsIcon icon={PlayIcon} data-icon="inline-start" />
-                    Run build
-                  </Button>
+                  {runBuildButton}
                 </TriggerBuildDrawer>
               </Suspense>
-            ) : undefined
+            )
           }
         />
-
-        {incidentsQuery.data?.incidents.map((incident) => (
-          <OperatorIncidentAlert
-            incident={incident}
-            key={incident.id}
-            onRead={() => markIncidentRead.mutate(incident.id)}
-          />
-        ))}
 
         {!projectsQuery.isLoading &&
         !projectsQuery.error &&
@@ -445,6 +452,7 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
             canWriteIntegrations={canWriteIntegrations}
             canWriteProjects={canWriteProjects}
             noConnectedSources={noConnectedSources}
+            noOnlineRunners={noOnlineRunners}
             runtimeMode={runtimeMode}
           />
         ) : null}
@@ -474,30 +482,14 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
           </Alert>
         ) : null}
 
-        {hasProjects && !recentBuildsQuery.isLoading ? (
-          <DashboardBuildIncident
-            blocked={blockedBuilds}
-            failing={recentBuildsQuery.data?.failing ?? []}
-            noOnlineRunners={noOnlineRunners}
-          />
-        ) : null}
-
-        {hasProjects ? (
-          <DashboardBuildHealth
-            days={insightsDays}
-            onDaysChange={setInsightsDays}
-            onlineRunners={runnersQuery.data?.online}
-            totalRunners={runnersQuery.data?.total}
-          />
-        ) : null}
-
-        {hasProjects ? (
-          <Suspense fallback={null}>
-            <ReleaseBoard />
-          </Suspense>
-        ) : null}
-
-        {hasProjects ? <DashboardStoreHealth /> : null}
+        <DashboardBuildIncident
+          items={
+            hasProjects
+              ? attention.items
+              : // First run lists connecting a runner as a step already.
+                attention.items.filter((item) => item.key !== 'no-runner')
+          }
+        />
 
         {hasProjects || projectsQuery.error ? (
           <DashboardBuildActivity
@@ -510,13 +502,25 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
           />
         ) : null}
 
-        {hasProjects ? <DashboardProjectHealth days={insightsDays} /> : null}
-
         {hasProjects ? (
           <Suspense fallback={null}>
-            <ReleaseActivity showProject />
+            <ReleaseBoard />
+            <ReleaseActivity limit={3} showProject />
           </Suspense>
         ) : null}
+
+        {hasProjects ? (
+          <DashboardBuildHealth
+            canApprove={canApprove}
+            days={insightsDays}
+            onDaysChange={setInsightsDays}
+            onlineRunners={runnersQuery.data?.online}
+          />
+        ) : null}
+
+        {hasProjects ? <DashboardStoreHealth /> : null}
+
+        {hasProjects ? <DashboardProjectHealth days={insightsDays} /> : null}
       </div>
     </PageLayout>
   )
