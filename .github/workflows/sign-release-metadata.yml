@@ -37,6 +37,7 @@ jobs:
   preflight-and-sign:
     name: Preflight key and sign metadata
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: release-signing
     steps:
       - name: Validate the trusted workflow source

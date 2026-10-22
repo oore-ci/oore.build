@@ -10,7 +10,8 @@
 	package-release-assets preview-docs preview-site preview-web \
 	register-runner release-smoke run-daemon run-runner setup-token \
 	rust-target-size clean-rust-debug-dry-run clean-rust-debug \
-	test-deployment-headers test-rust test-site test-web \
+	check-client-openapi smoke-install \
+	test-deployment-headers test-rust test-site test-tools test-web \
 	validate validate-ci validate-docs validate-frontend validate-rust \
 	validate-shell validate-web-launcher validate-workflows
 
@@ -265,16 +266,31 @@ validate-workflows:
 	actionlint .github/workflows/*.yml
 
 validate-shell:
-	shellcheck --severity=error scripts/*.sh tools/*.sh
-	bash -n scripts/*.sh tools/*.sh
+	shellcheck scripts/*.sh tools/*.sh
+	@for script in scripts/*.sh tools/*.sh; do bash -n "$$script" || exit 1; done
 
-validate-ci: validate-workflows validate-shell test-deployment-headers
+# A leading ./ makes Bun treat the argument as a path instead of a name filter
+# that would also match apps/*/tools tests.
+test-tools:
+	bun test ./tools/
+
+validate-ci: validate-workflows validate-shell test-tools
+
+# Bootstraps the CLI built from this checkout through scripts/install.sh and
+# scripts/uninstall.sh over the unsigned loopback path. macOS only.
+smoke-install:
+	bash tools/install-smoke.sh
+
+# The web app builds against the published @oore/client; its bundled spec must
+# match the daemon's.
+check-client-openapi:
+	bun tools/check-client-openapi.ts apps/docs/public/openapi.json
 
 validate-web-launcher: build-web
 	bun test apps/web/tools/oore-web.test.js
 	bash tools/validate-standalone-web.sh
 
-validate-frontend: format-check lint-web test-web validate-web-launcher
+validate-frontend: format-check lint-web test-web check-client-openapi validate-web-launcher
 
 validate-docs: format-check lint-docs lint-site test-site check-docs-types build-docs build-site
 
