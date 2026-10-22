@@ -5725,6 +5725,25 @@ fn http_client() -> anyhow::Result<reqwest::Client> {
         .context("failed to build HTTP client")
 }
 
+const RELEASE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// A release download that receives no bytes for this long is treated as
+/// stalled. Slow but progressing downloads are bounded only by the total limit.
+const RELEASE_READ_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const RELEASE_METADATA_TIMEOUT: Duration = Duration::from_secs(120);
+const RELEASE_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const RELEASE_DOWNLOAD_ATTEMPTS: u32 = 3;
+
+/// The client for release index, signature and archive downloads. Unlike the
+/// loopback daemon client, it never waits forever on a stalled network.
+fn release_http_client() -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(format!("oore/{}/update", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(RELEASE_CONNECT_TIMEOUT)
+        .read_timeout(RELEASE_READ_IDLE_TIMEOUT)
+        .build()
+        .context("failed to build the release download client")
+}
+
 fn normalized_release_signing_public_key() -> anyhow::Result<String> {
     RELEASE_SIGNING_PUBLIC_KEY
         .lines()
@@ -5797,38 +5816,108 @@ fn verify_signed_release_metadata(
     Ok(())
 }
 
+enum ReleaseDownloadError {
+    Retryable(anyhow::Error),
+    Fatal(anyhow::Error),
+}
+
+fn release_download_status_is_retryable(status: reqwest::StatusCode) -> bool {
+    status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+}
+
+async fn download_release_bytes_once(
+    client: &reqwest::Client,
+    url: &str,
+    description: &str,
+    limit: usize,
+) -> Result<Vec<u8>, ReleaseDownloadError> {
+    use ReleaseDownloadError::{Fatal, Retryable};
+
+    let total_timeout = if limit > MAX_RELEASE_METADATA_BYTES {
+        RELEASE_ARCHIVE_TIMEOUT
+    } else {
+        RELEASE_METADATA_TIMEOUT
+    };
+    let mut response = client
+        .get(url)
+        .timeout(total_timeout)
+        .send()
+        .await
+        .map_err(|error| {
+            Retryable(
+                anyhow::Error::new(error).context(format!("failed to download {description}")),
+            )
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        let error = anyhow::anyhow!("{description} download failed with HTTP {status}: {url}");
+        return Err(if release_download_status_is_retryable(status) {
+            Retryable(error)
+        } else {
+            Fatal(error)
+        });
+    }
+    if let Some(length) = response.content_length()
+        && length > limit as u64
+    {
+        return Err(Fatal(anyhow::anyhow!(
+            "{description} exceeds the size limit"
+        )));
+    }
+    let mut bytes = Vec::new();
+    loop {
+        let chunk = response.chunk().await.map_err(|error| {
+            let context = if error.is_timeout() {
+                format!(
+                    "{description} download stalled or exceeded its {}-minute limit",
+                    total_timeout.as_secs().div_ceil(60)
+                )
+            } else {
+                format!("failed to read {description}")
+            };
+            Retryable(anyhow::Error::new(error).context(context))
+        })?;
+        let Some(chunk) = chunk else {
+            break;
+        };
+        if bytes.len().saturating_add(chunk.len()) > limit {
+            return Err(Fatal(anyhow::anyhow!(
+                "{description} exceeds the size limit"
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
 async fn download_release_bytes(
     client: &reqwest::Client,
     url: &str,
     description: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<u8>> {
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("failed to download {description}"))?
-        .error_for_status()
-        .with_context(|| format!("{description} download failed: {url}"))?;
-    if let Some(length) = response.content_length() {
-        anyhow::ensure!(
-            length <= limit as u64,
-            "{description} exceeds the size limit"
-        );
+    let mut attempt = 1;
+    loop {
+        match download_release_bytes_once(client, url, description, limit).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(ReleaseDownloadError::Fatal(error)) => return Err(error),
+            Err(ReleaseDownloadError::Retryable(error)) if attempt >= RELEASE_DOWNLOAD_ATTEMPTS => {
+                return Err(error.context(format!(
+                    "{description} download failed after {RELEASE_DOWNLOAD_ATTEMPTS} attempts"
+                )));
+            }
+            Err(ReleaseDownloadError::Retryable(error)) => {
+                let delay = Duration::from_secs(2u64.pow(attempt));
+                eprintln!(
+                    "Warning: {error:#}; retrying in {} seconds ({}/{RELEASE_DOWNLOAD_ATTEMPTS})...",
+                    delay.as_secs(),
+                    attempt + 1
+                );
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+            }
+        }
     }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .with_context(|| format!("failed to read {description}"))?
-    {
-        anyhow::ensure!(
-            bytes.len().saturating_add(chunk.len()) <= limit,
-            "{description} exceeds the size limit"
-        );
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
 }
 
 async fn download_verified_release_metadata(
@@ -11590,7 +11679,7 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
     };
     let client = http_client()?;
     let prepared = prepare_update_release(
-        &client,
+        &release_http_client()?,
         &repo,
         channel,
         args.staged_release.as_deref(),
@@ -11910,22 +11999,20 @@ fn read_claimed_update_request(
     Ok(request)
 }
 
+/// The installed release metadata an update decision is based on. `oore
+/// update` reads it before downloading and again under the lifecycle lock, and
+/// refuses to continue when another command changed it in between.
+fn installed_release_identity(install_root: &Path) -> [Option<String>; 3] {
+    ["VERSION", "CHANNEL", "GITHUB_REPO"].map(|name| read_trimmed_file(&install_root.join(name)))
+}
+
 async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     let install_root = resolve_install_root()?;
     let defer_daemon_restart = std::env::var_os("OORE_UPDATE_DEFER_DAEMON_RESTART").is_some();
     if defer_daemon_restart {
         return handle_deferred_update(args).await;
     }
-    let _lifecycle_lock = if args.check {
-        None
-    } else {
-        Some(install_lock::InstallLock::acquire(&install_root)?)
-    };
-    let profile_manifest = if args.check {
-        None
-    } else {
-        load_backend_update_manifest(&install_root)?
-    };
+    let release_identity = installed_release_identity(&install_root);
     let current_str = read_trimmed_file(&install_root.join("VERSION"))
         .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
     let current = parse_semver_loose(&current_str).context("failed to parse current version")?;
@@ -11944,9 +12031,10 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         None => installed_channel,
     };
 
-    let client = http_client()?;
+    // Download and verify before taking the lifecycle lock, so a slow or
+    // stalled network never blocks other install, setup or uninstall commands.
     let prepared = prepare_update_release(
-        &client,
+        &release_http_client()?,
         &repo,
         channel,
         args.staged_release.as_deref(),
@@ -11986,6 +12074,13 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     if args.check {
         return Ok(());
     }
+    let _lifecycle_lock = install_lock::InstallLock::acquire(&install_root)?;
+    anyhow::ensure!(
+        installed_release_identity(&install_root) == release_identity,
+        "the installation changed while the update was downloading; run `oore update` again"
+    );
+    let profile_manifest = load_backend_update_manifest(&install_root)?;
+    let client = http_client()?;
     let profile_update = prepare_profile_update_plan(
         profile_manifest,
         &prepared,
@@ -12842,5 +12937,75 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    /// Serves one canned HTTP response per connection and counts connections.
+    async fn serve_release_responses(
+        responses: Vec<&'static str>,
+    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/asset", listener.local_addr().unwrap());
+        let connections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = connections.clone();
+        tokio::spawn(async move {
+            for response in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut request = [0_u8; 1024];
+                let _ = stream.read(&mut request).await;
+                stream.write_all(response.as_bytes()).await.unwrap();
+                stream.shutdown().await.unwrap();
+            }
+        });
+        (url, connections)
+    }
+
+    #[tokio::test]
+    async fn release_downloads_retry_a_transient_server_error() {
+        let (url, connections) = serve_release_responses(vec![
+            "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+            "HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+        ])
+        .await;
+
+        let bytes = download_release_bytes(&release_http_client().unwrap(), &url, "asset", 64)
+            .await
+            .unwrap();
+
+        assert_eq!(bytes, b"hello");
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn release_downloads_do_not_retry_a_missing_asset() {
+        let (url, connections) = serve_release_responses(vec![
+            "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+            "HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+        ])
+        .await;
+
+        let error = download_release_bytes(&release_http_client().unwrap(), &url, "asset", 64)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("HTTP 404"), "{error:#}");
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn release_downloads_do_not_retry_an_oversized_asset() {
+        let (url, connections) = serve_release_responses(vec![
+            "HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+        ])
+        .await;
+
+        let error = download_release_bytes(&release_http_client().unwrap(), &url, "asset", 4)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "asset exceeds the size limit");
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }
