@@ -46,9 +46,6 @@ function channelIdentity(channel: NotificationChannel) {
       <span className="block truncate font-medium group-hover:underline">
         {channel.name}
       </span>
-      <span className="block truncate font-mono text-[11px] text-muted-foreground">
-        {channel.id.slice(0, 8)}
-      </span>
     </Link>
   )
 }
@@ -116,6 +113,7 @@ function getNotificationColumns({
       header: () => <span className="sr-only">Actions</span>,
       cell: ({ row }) => (
         <ChannelActions
+          name={row.original.name}
           pending={pending}
           onDelete={() => onDelete(row.original)}
           onTest={() => onTest(row.original)}
@@ -190,6 +188,7 @@ export function NotificationInventory({
           placeholder: 'Search channels',
         }}
         pagination={{ onPageChange, page, pageSize, total }}
+        isLoading={isLoading}
         emptyMessage={isLoading ? 'Loading notification channels…' : undefined}
       />
     </section>

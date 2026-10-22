@@ -265,13 +265,12 @@ function AuditLogPage() {
         }
         entries={entries}
         error={auditQuery.error}
+        activeFilterCount={
+          Number(!!search.resource) + Number(!!(search.from || search.to))
+        }
+        onClearFilters={clearFilters}
         filters={
           <>
-            {hasFilters ? (
-              <Button variant="ghost" size="sm" onClick={clearFilters}>
-                Clear filters
-              </Button>
-            ) : null}
             <DataTableSelectFilter
               value={search.resource ?? 'all'}
               options={RESOURCE_TYPE_OPTIONS}

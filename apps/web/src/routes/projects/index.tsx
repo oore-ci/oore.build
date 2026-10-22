@@ -6,12 +6,7 @@ import {
   useSearch,
 } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Add01Icon,
-  Folder02Icon,
-  Link04Icon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
+import { Add01Icon, Folder02Icon, Link04Icon } from '@hugeicons/core-free-icons'
 
 import {
   getActiveInstanceOrRedirect,
@@ -180,13 +175,12 @@ function ProjectsListPage() {
   )
 
   const hasSearch = !!search.q
+  const needsSource = runtimeMode === 'remote' && noConnectedSources
   const showTrueEmpty =
     !projectsQuery.isLoading &&
     !projectsQuery.error &&
     total === 0 &&
     !hasSearch
-  const showFilteredEmpty =
-    !projectsQuery.isLoading && !projectsQuery.error && total === 0 && hasSearch
 
   return (
     <PageLayout width="wide" fill>
@@ -195,7 +189,10 @@ function ProjectsListPage() {
         title="Projects"
         description="Repositories, pipelines, and build access."
         actions={
-          canWriteProjects ? (
+          // While the page is empty its one next step lives in the empty
+          // state, and without a connected source the dialog has nothing to
+          // pick from.
+          canWriteProjects && !showTrueEmpty && !needsSource ? (
             <Button onClick={() => setCreateOpen(true)}>
               <HugeiconsIcon icon={Add01Icon} />
               New project
@@ -219,12 +216,12 @@ function ProjectsListPage() {
                   {runtimeMode === 'local'
                     ? 'Choose a local Git repository to create your first project.'
                     : noConnectedSources
-                      ? 'Connect a source before creating your first remote project.'
-                      : 'Create a project from a connected source repository to define pipelines and start builds.'}
+                      ? 'Connect GitHub or GitLab so Oore can see your repositories, then create a project from one.'
+                      : 'Pick a repository from a connected source, then add a pipeline to start building.'}
                 </EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
-                {runtimeMode === 'remote' && noConnectedSources ? (
+                {needsSource ? (
                   canWriteIntegrations ? (
                     <Button
                       render={<Link to="/settings/integrations" />}
@@ -251,28 +248,6 @@ function ProjectsListPage() {
                     Ask an owner or admin to create the first project.
                   </p>
                 )}
-              </EmptyContent>
-            </Empty>
-          ) : showFilteredEmpty ? (
-            <Empty className="border bg-card">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <HugeiconsIcon icon={Search01Icon} />
-                </EmptyMedia>
-                <EmptyTitle>No matching projects</EmptyTitle>
-                <EmptyDescription>
-                  Try a different search or clear the current query.
-                </EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    updateSearch({ q: undefined, page: undefined })
-                  }
-                >
-                  Clear search
-                </Button>
               </EmptyContent>
             </Empty>
           ) : null

@@ -3,7 +3,6 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import {
   GitBranchIcon,
   InformationCircleIcon,
-  MoreHorizontalCircle01Icon,
   Refresh01Icon,
   Search01Icon,
 } from '@hugeicons/core-free-icons'
@@ -13,6 +12,7 @@ import {
   DataTable,
   useDataTable,
   type DataTableColumnDef,
+  DataTableRowActionsTrigger,
 } from '@/components/data-table'
 import type {
   Integration,
@@ -28,7 +28,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
   Empty,
@@ -84,13 +83,16 @@ function RepositoryIdentity({
   )
 }
 
-function RepositoryWebhookAction({ onSelect }: { onSelect: () => void }) {
+function RepositoryWebhookAction({
+  name,
+  onSelect,
+}: {
+  name: string
+  onSelect: () => void
+}) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" />}>
-        <span className="sr-only">Open menu</span>
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
-      </DropdownMenuTrigger>
+      <DataTableRowActionsTrigger label={`Actions for ${name}`} />
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Actions</DropdownMenuLabel>
@@ -167,6 +169,7 @@ function RepositoryRows({
         header: () => <span className="sr-only">Webhook actions</span>,
         cell: ({ row }) => (
           <RepositoryWebhookAction
+            name={row.original.full_name}
             onSelect={() => onWebhookSelect(row.original)}
           />
         ),

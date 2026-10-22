@@ -48,13 +48,14 @@ export function UsersCollection({
       ) : (
         <DataTable
           table={table}
-          filters={toolbar}
+          actions={toolbar}
           search={{
             value: query,
             onChange: onSearch,
             placeholder: 'Search users',
           }}
           pagination={{ onPageChange, page, pageSize, total }}
+          isLoading={isLoading}
           emptyMessage={isLoading ? 'Loading users…' : undefined}
         />
       )}

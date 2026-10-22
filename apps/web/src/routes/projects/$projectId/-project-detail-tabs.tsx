@@ -147,24 +147,19 @@ export function ProjectBuildsTab({
             builds={builds}
             direction={direction}
             filters={
-              <>
-                {hasFilters ? (
-                  <Button variant="ghost" size="sm" onClick={clearFilters}>
-                    Clear filters
-                  </Button>
-                ) : null}
-                <DataTableSelectFilter
-                  value={search.status ?? 'all'}
-                  options={BUILD_STATUS_FILTER_OPTIONS}
-                  onValueChange={(value) =>
-                    updateSearch({
-                      status: value && value !== 'all' ? value : undefined,
-                      page: undefined,
-                    })
-                  }
-                />
-              </>
+              <DataTableSelectFilter
+                value={search.status ?? 'all'}
+                options={BUILD_STATUS_FILTER_OPTIONS}
+                onValueChange={(value) =>
+                  updateSearch({
+                    status: value && value !== 'all' ? value : undefined,
+                    page: undefined,
+                  })
+                }
+              />
             }
+            activeFilterCount={Number(!!search.status)}
+            onClearFilters={hasFilters ? clearFilters : undefined}
             isLoading={buildsQuery.isLoading}
             onPageChange={(nextPage) =>
               updateSearch({ page: nextPage > 1 ? nextPage : undefined })

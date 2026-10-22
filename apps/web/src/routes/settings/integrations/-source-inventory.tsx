@@ -53,9 +53,6 @@ function sourceIdentity(integration: Integration) {
       <span className="block truncate font-medium group-hover:underline">
         {integration.display_name ?? integration.provider}
       </span>
-      <span className="block truncate font-mono text-[11px] text-muted-foreground">
-        {integration.id.slice(0, 8)}
-      </span>
     </Link>
   )
 }
@@ -160,6 +157,7 @@ export function SourceInventory({
           placeholder: 'Search connected sources',
         }}
         pagination={{ onPageChange, page, pageSize, total }}
+        isLoading={isLoading}
         emptyMessage={isLoading ? 'Loading connected sources…' : undefined}
       />
     </div>
