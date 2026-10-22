@@ -68,6 +68,14 @@ impl InstallLock {
             return Err(error).context("failed to lock the Oore installation");
         }
 
+        // A lifecycle command is often the first thing an operator runs after a
+        // web UI update was interrupted, so put a held daemon back here.
+        if let Err(error) =
+            crate::update_supervisor::recover_interrupted_update_and_restart(install_root)
+        {
+            eprintln!("Could not recover an interrupted backend update: {error:#}");
+        }
+
         Ok(Self { file })
     }
 }

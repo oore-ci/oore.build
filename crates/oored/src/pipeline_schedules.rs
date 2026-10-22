@@ -218,9 +218,10 @@ pub async fn run_schedule_tick(
                 warn!(%pipeline_id, cron = %schedule.cron, "skipping invalid schedule");
                 continue;
             };
-            if !claim_due_run(pool, &pipeline_id, schedule, &cron, now).await? {
+            let Some(previous) = claim_due_run(pool, &pipeline_id, schedule, &cron, now).await?
+            else {
                 continue;
-            }
+            };
             match crate::builds::create_scheduled_build(
                 pool,
                 encryption_key,
@@ -233,8 +234,23 @@ pub async fn run_schedule_tick(
                     info!(%pipeline_id, %build_id, cron = %schedule.cron, "scheduled build started");
                     started.push(build_id);
                 }
-                Err((status, body)) => {
+                // A source outage or a busy database is usually brief. Hand
+                // the run back so a later tick retries it within the
+                // catch-up window.
+                Err((status, body))
+                    if status.is_server_error()
+                        && release_claim(pool, &pipeline_id, schedule, previous, now).await? =>
+                {
                     warn!(
+                        %pipeline_id,
+                        cron = %schedule.cron,
+                        %status,
+                        error = %body.0.error,
+                        "scheduled build could not start; retrying"
+                    );
+                }
+                Err((status, body)) => {
+                    error!(
                         %pipeline_id,
                         cron = %schedule.cron,
                         %status,
@@ -248,15 +264,16 @@ pub async fn run_schedule_tick(
     Ok(started)
 }
 
-/// Advance the schedule's checkpoint to `now` and report whether a run came
-/// due in between. The conditional update makes a run fire at most once.
+/// Advance the schedule's checkpoint to `now`. When a run came due in
+/// between, returns the previous checkpoint. The conditional update makes a
+/// run fire at most once.
 async fn claim_due_run(
     pool: &SqlitePool,
     pipeline_id: &str,
     schedule: &ScheduleTrigger,
     cron: &Cron,
     now: i64,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<i64>> {
     let key = schedule_key(schedule);
     let last_checked: Option<i64> = sqlx::query_scalar(
         "SELECT last_checked_at FROM pipeline_schedule_runs \
@@ -278,10 +295,10 @@ async fn claim_due_run(
         .bind(now)
         .execute(pool)
         .await?;
-        return Ok(false);
+        return Ok(None);
     };
     if now / 60 <= last_checked / 60 {
-        return Ok(false);
+        return Ok(None);
     }
 
     let claimed = sqlx::query(
@@ -296,7 +313,37 @@ async fn claim_due_run(
     .await?
     .rows_affected()
         == 1;
-    Ok(claimed && cron.due_between(last_checked.max(now - CATCH_UP_SECS), now))
+    Ok(
+        (claimed && cron.due_between(last_checked.max(now - CATCH_UP_SECS), now))
+            .then_some(last_checked),
+    )
+}
+
+/// Put the checkpoint back to `previous` after a run claimed at `now` failed
+/// to start, unless another tick moved it or the run's build exists after all.
+async fn release_claim(
+    pool: &SqlitePool,
+    pipeline_id: &str,
+    schedule: &ScheduleTrigger,
+    previous: i64,
+    now: i64,
+) -> anyhow::Result<bool> {
+    let released = sqlx::query(
+        "UPDATE pipeline_schedule_runs SET last_checked_at = ?1 \
+         WHERE pipeline_id = ?2 AND schedule_key = ?3 AND last_checked_at = ?4 \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM builds \
+               WHERE pipeline_id = ?2 AND trigger_type = 'schedule' AND created_at >= ?4 \
+           )",
+    )
+    .bind(previous)
+    .bind(pipeline_id)
+    .bind(schedule_key(schedule))
+    .bind(now)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(released == 1)
 }
 
 #[cfg(test)]
@@ -388,32 +435,129 @@ mod tests {
         let hour = at("2026-10-21T10:00:00Z").timestamp();
 
         // First sight records a checkpoint even though the minute is due.
-        assert!(
-            !claim_due_run(&pool, "pl1", &schedule, &cron, hour + 5)
+        assert_eq!(
+            claim_due_run(&pool, "pl1", &schedule, &cron, hour + 5)
                 .await
-                .unwrap()
+                .unwrap(),
+            None
         );
-        assert!(
-            !claim_due_run(&pool, "pl1", &schedule, &cron, hour + 30)
+        assert_eq!(
+            claim_due_run(&pool, "pl1", &schedule, &cron, hour + 30)
                 .await
-                .unwrap()
+                .unwrap(),
+            None
         );
-        assert!(
+        assert_eq!(
             claim_due_run(&pool, "pl1", &schedule, &cron, hour + 3600)
                 .await
-                .unwrap()
+                .unwrap(),
+            Some(hour + 5)
         );
-        assert!(
-            !claim_due_run(&pool, "pl1", &schedule, &cron, hour + 3610)
+        assert_eq!(
+            claim_due_run(&pool, "pl1", &schedule, &cron, hour + 3610)
                 .await
-                .unwrap()
+                .unwrap(),
+            None
         );
 
         // Runs missed for longer than the catch-up window are skipped.
+        assert_eq!(
+            claim_due_run(&pool, "pl1", &schedule, &cron, hour + 3 * 3600 + 900)
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn a_run_that_fails_to_start_is_retried_on_the_next_tick() {
+        let repo = tempfile::tempdir().unwrap();
+        let path = repo.path().to_str().unwrap();
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(path)
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        let pool = pool().await;
+        for statement in [
+            "INSERT INTO integrations (id, provider, host_url, auth_mode, created_by, created_at, updated_at) \
+             VALUES ('i1', 'local_git', 'local://filesystem', 'local_path', 'u1', 0, 0)"
+                .to_string(),
+            "INSERT INTO integration_installations (id, integration_id, external_id, account_name, created_at, updated_at) \
+             VALUES ('inst1', 'i1', 'local', 'local', 0, 0)"
+                .to_string(),
+            format!(
+                "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, html_url, created_at, updated_at) \
+                 VALUES ('r1', 'inst1', 'repo', 'app', '{path}', 0, 0)"
+            ),
+            "UPDATE projects SET repository_id = 'r1', default_branch = 'main'".to_string(),
+            r#"UPDATE pipelines SET trigger_config = '{"schedules":[{"cron":"0 * * * *"}]}'"#
+                .to_string(),
+            "CREATE TRIGGER fail_build BEFORE INSERT ON builds \
+             BEGIN SELECT RAISE(ABORT, 'database is locked'); END"
+                .to_string(),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(statement))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let key = [0u8; 32];
+        let hour = at("2026-10-21T10:00:00Z").timestamp();
+
         assert!(
-            !claim_due_run(&pool, "pl1", &schedule, &cron, hour + 3 * 3600 + 900)
+            run_schedule_tick(&pool, &key, hour - 30)
                 .await
                 .unwrap()
+                .is_empty()
         );
+        assert!(
+            run_schedule_tick(&pool, &key, hour + 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        sqlx::query("DROP TRIGGER fail_build")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            run_schedule_tick(&pool, &key, hour + 30)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            run_schedule_tick(&pool, &key, hour + 50)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let builds: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM builds")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(builds, 1);
     }
 }
