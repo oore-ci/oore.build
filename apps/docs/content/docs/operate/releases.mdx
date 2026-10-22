@@ -229,6 +229,8 @@ The workflow signs release checksum manifests and published release indexes.
 
 It serializes all channel releases because they publish one shared index.
 
+Each deploy step refuses to run once a newer release has been published. Rerunning an older release run therefore cannot put its older index, installer, or Pages build back over a newer one. Dispatch the newest tag instead.
+
 Before index signing, the matching channel history and latest entry must both name the requested tag.
 
 The workflow publishes release assets once. It refuses to replace assets for an existing tag.

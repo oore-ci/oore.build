@@ -28,6 +28,15 @@ jobs:
     outputs:
       commit: ${{ steps.source.outputs.commit }}
     steps:
+      - name: Check out the trusted release tools
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: tools/require-current-release.sh
+          sparse-checkout-cone-mode: false
+          path: trusted
+
       - name: Resolve release tag commit
         id: source
         env:
@@ -45,36 +54,7 @@ jobs:
             exit 1
           }
 
-          case "$REQUESTED_RELEASE_TAG" in
-            *-alpha.*) release_channel=alpha ;;
-            *-beta.*) release_channel=beta ;;
-            *) release_channel=stable ;;
-          esac
-          tag_matches_channel() {
-            case "$release_channel" in
-              stable) [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ;;
-              alpha) [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]] ;;
-              beta) [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]] ;;
-            esac
-          }
-          latest_published_tag="$(
-            while IFS= read -r published_tag; do
-              if tag_matches_channel "$published_tag"; then
-                printf '%s\n' "$published_tag"
-              fi
-            done < <(
-              gh api --paginate \
-                "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-                --jq '.[] | select(.draft == false) | .tag_name'
-            ) | sort -V | tail -n1
-          )"
-          if [[ -n "$latest_published_tag" && "$REQUESTED_RELEASE_TAG" != "$latest_published_tag" ]]; then
-            newest_tag="$(printf '%s\n%s\n' "$latest_published_tag" "$REQUESTED_RELEASE_TAG" | sort -V | tail -n1)"
-            [[ "$newest_tag" == "$REQUESTED_RELEASE_TAG" ]] || {
-              echo "$REQUESTED_RELEASE_TAG is older than published $latest_published_tag for $release_channel." >&2
-              exit 1
-            }
-          fi
+          bash trusted/tools/require-current-release.sh "$REQUESTED_RELEASE_TAG"
 
           read -r object_type object_sha < <(
             gh api \
@@ -143,6 +123,15 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.source.outputs.commit }}
 
+      - name: Check out the trusted release tools
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: tools/require-current-release.sh
+          sparse-checkout-cone-mode: false
+          path: trusted
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -196,6 +185,8 @@ jobs:
             echo 'The release tag moved after source resolution.' >&2
             exit 1
           }
+          # A rerun of an older run must not deploy older Pages over newer ones.
+          bash trusted/tools/require-current-release.sh "$tag"
           pages_branch="stable"
           if echo "$tag" | grep -q -- '-alpha\.'; then
             pages_branch="alpha"
@@ -881,6 +872,9 @@ jobs:
             echo 'The release tag moved after source resolution.' >&2
             exit 1
           }
+          # Every channel shares the installer, so only the most recently
+          # published release may deploy it.
+          bash trusted/tools/require-current-release.sh "$RELEASE_TAG" --most-recent
 
           PAGES_COMMIT_HASH="$(git -C site-source rev-parse HEAD)"
           "$GITHUB_WORKSPACE/trusted/node_modules/.bin/wrangler" pages deploy \
@@ -902,6 +896,15 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.source.outputs.commit }}
+
+      - name: Check out the trusted release tools
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: tools/require-current-release.sh
+          sparse-checkout-cone-mode: false
+          path: trusted
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -961,6 +964,9 @@ jobs:
             echo 'The internal release source marker was not removed.' >&2
             exit 1
           }
+          # The index carries every channel. Deploy it only while each
+          # channel's latest entry is still the newest published release.
+          bash trusted/tools/require-current-release.sh "$RELEASE_TAG" --index dist/release-index
 
           PAGES_COMMIT_HASH="$RELEASE_COMMIT"
           export PAGES_COMMIT_HASH

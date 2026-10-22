@@ -10,7 +10,7 @@
 	package-release-assets preview-docs preview-site preview-web \
 	register-runner release-smoke run-daemon run-runner setup-token \
 	rust-target-size clean-rust-debug-dry-run clean-rust-debug \
-	test-deployment-headers test-rust test-site test-web \
+	test-deployment-headers test-release-tools test-rust test-site test-web \
 	validate validate-ci validate-docs validate-frontend validate-rust \
 	validate-shell validate-web-launcher validate-workflows
 
@@ -168,6 +168,9 @@ test-site:
 test-deployment-headers:
 	bun test tools/check-deployment-headers.test.ts
 
+test-release-tools:
+	bun test tools/require-current-release.test.ts
+
 # Rust
 # Static checks do not need incremental compiler state. This prevents repeated checks from growing target/debug/incremental.
 check-rust test-rust lint-rust lint-rust-full check-openapi: export CARGO_INCREMENTAL = 0
@@ -268,7 +271,7 @@ validate-shell:
 	shellcheck --severity=error scripts/*.sh tools/*.sh
 	bash -n scripts/*.sh tools/*.sh
 
-validate-ci: validate-workflows validate-shell test-deployment-headers
+validate-ci: validate-workflows validate-shell test-deployment-headers test-release-tools
 
 validate-web-launcher: build-web
 	bun test apps/web/tools/oore-web.test.js
