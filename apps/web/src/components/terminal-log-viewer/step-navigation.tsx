@@ -96,7 +96,7 @@ function StepItem({
         )}
       </ItemMedia>
       <ItemContent className="min-w-0">
-        <ItemTitle className="max-w-32 text-xs">{label}</ItemTitle>
+        <ItemTitle className="text-xs break-words">{label}</ItemTitle>
         <ItemDescription className="font-mono text-[10px]">
           {formatLineCount(count)}
         </ItemDescription>

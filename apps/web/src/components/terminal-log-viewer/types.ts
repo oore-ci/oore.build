@@ -9,6 +9,14 @@ export interface TerminalLogViewerProps {
   logsUnavailable?: boolean
   onRetryLogs?: () => void
   isTerminal?: boolean
+  /** Select a step and scroll to one of its lines; a new `key` repeats it. */
+  focusRequest?: LogFocusRequest | null
+}
+
+export interface LogFocusRequest {
+  step: string
+  sequence: number
+  key: number
 }
 
 export interface StepGroup {

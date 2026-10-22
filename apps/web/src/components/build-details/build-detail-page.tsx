@@ -2,21 +2,23 @@ import { lazy, Suspense, useMemo, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  ArrowDown01Icon,
+  Download04Icon,
   InformationCircleIcon,
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from '@/lib/toast'
 
 import { ArtifactsPanel } from './artifacts-panel'
-import { AppOutputs } from './app-outputs'
-import { buildStateDescription } from '@/lib/build-state-description'
+import { BuildStateAlert } from './build-state-alert'
+import { buildStateSummary } from '@/lib/build-state-description'
+import { artifactInstallReadiness } from '@/lib/artifact-install'
 import { retryStepLabel } from '@/lib/build-steps'
 import { BuildSummary } from './build-summary'
 import { EventTimeline } from './event-timeline'
 import { TestsPanel } from './tests-panel'
 import type { BuildLogChunk } from '@oore/client/models'
 import { useBuildNotification } from '@/hooks/use-build-notification'
-import { useIsBelowBreakpoint } from '@/hooks/use-mobile'
 import {
   isTerminalStatus,
   useArtifacts,
@@ -41,13 +43,25 @@ import { isOoreApiError } from '@oore/client/client'
 import { PageMeta } from '@/lib/seo'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import { StatusBadge } from '@/components/status-badge'
-import { cn } from '@/lib/utils'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import TerminalLogViewer from '@/components/terminal-log-viewer'
+import {
+  findFailureLine,
+  groupLogs,
+} from '@/components/terminal-log-viewer/log-model'
+import type { LogFocusRequest } from '@/components/terminal-log-viewer/types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTime } from '@/hooks/use-time'
@@ -58,6 +72,16 @@ const loadCancelBuildDialog = () => import('./cancel-build-dialog')
 const CancelBuildDialog = lazy(loadCancelBuildDialog)
 const loadRejectBuildDialog = () => import('./reject-build-dialog')
 const RejectBuildDialog = lazy(loadRejectBuildDialog)
+
+function missingTabMessage(tab: string | number, shownTab: string | number) {
+  const reason =
+    tab === 'tests'
+      ? 'This build has no test results'
+      : tab === 'release'
+        ? 'This build has not been sent to a store'
+        : `This build has no “${tab}” view`
+  return `${reason}, so ${shownTab === 'tests' ? 'Tests' : 'Logs'} is shown instead.`
+}
 
 export function BuildDetailPage({
   buildId,
@@ -70,7 +94,6 @@ export function BuildDetailPage({
 }) {
   const time = useTime()
   const navigate = useNavigate()
-  const usesTabbedArtifacts = useIsBelowBreakpoint(1280)
   const [
     canTriggerBuildGlobally,
     canCancelBuildGlobally,
@@ -116,26 +139,45 @@ export function BuildDetailPage({
   const approveMutation = useBuildApprovalDecision('approve')
   const rejectMutation = useBuildApprovalDecision('reject')
   const [rejectOpen, setRejectOpen] = useState(false)
-  const [chosenTab, setActiveTab] = useState<string | number | null>(
-    initialTab ?? null,
-  )
+  const [chosenTab, setActiveTab] = useState<string | number | null>(null)
+  const [logFocus, setLogFocus] = useState<LogFocusRequest | null>(null)
   const testsQuery = useBuildTests(buildId, {
     refetchInterval: isTerminal ? false : 5000,
   })
   const testSummary = testsQuery.data?.summary
   const hasTestsTab =
-    !!testSummary || testsQuery.isError || initialTab === 'tests'
-  // A failed build with failing tests opens on Tests until the user picks a tab.
-  const activeTab =
-    chosenTab ??
-    (buildStatus === 'failed' && testSummary?.failed ? 'tests' : 'logs')
+    !!testSummary ||
+    testsQuery.isError ||
+    (initialTab === 'tests' && testsQuery.isLoading)
+  // The daemon records a release while the build is still running, so a build
+  // that failed after publishing still has a live rollout to watch or halt.
   const releasesQuery = useReleases(
     { build_id: buildId },
-    { enabled: buildStatus === 'succeeded' },
+    { enabled: !!buildStatus, pollWhenIdle: !!buildStatus && !isTerminal },
   )
   const releases = releasesQuery.data?.releases ?? []
   const hasReleaseTab =
-    releases.length > 0 || releasesQuery.isError || initialTab === 'release'
+    releases.length > 0 ||
+    releasesQuery.isError ||
+    (initialTab === 'release' && releasesQuery.isLoading)
+  const availableTabs = new Set<string | number>([
+    'logs',
+    'timeline',
+    'artifacts',
+  ])
+  if (hasTestsTab) availableTabs.add('tests')
+  if (hasReleaseTab) availableTabs.add('release')
+  const requestedTab = chosenTab ?? initialTab ?? null
+  // A finished build with failing tests opens on Tests until the user picks a tab.
+  const defaultTab = isTerminal && testSummary?.failed ? 'tests' : 'logs'
+  const activeTab =
+    requestedTab !== null && availableTabs.has(requestedTab)
+      ? requestedTab
+      : defaultTab
+  const missingTab =
+    chosenTab === null && initialTab && !availableTabs.has(initialTab)
+      ? initialTab
+      : null
 
   const label = data?.build.build_number
     ? `Build #${data.build.build_number}`
@@ -160,6 +202,15 @@ export function BuildDetailPage({
   const mergedLogs: Array<BuildLogChunk> = useMemo(() => {
     return mergeBuildLogSnapshots(streamLogs, fullLogsData?.logs ?? [])
   }, [streamLogs, fullLogsData?.logs])
+  const stepResults = data?.build.step_results
+  const failureLine = useMemo(() => {
+    if (buildStatus !== 'failed' && buildStatus !== 'timed_out') return null
+    const { stepGroups, allVisibleLogs } = groupLogs(
+      mergedLogs,
+      stepResults ?? [],
+    )
+    return findFailureLine(stepGroups, allVisibleLogs)
+  }, [buildStatus, mergedLogs, stepResults])
 
   function handleApprove() {
     approveMutation.mutate(
@@ -258,16 +309,42 @@ export function BuildDetailPage({
   const duration = build.started_at
     ? (build.finished_at ?? Math.floor(time / 1000)) - build.started_at
     : null
-  const stateDescription = buildStateDescription(build, events)
+  const stateSummary = buildStateSummary(build, events, {
+    canApprove: canDecideApproval,
+  })
+  const installableApps =
+    build.status === 'succeeded'
+      ? artifacts.filter((artifact) => artifactInstallReadiness(artifact).ready)
+      : []
+  const showTests = () => setActiveTab('tests')
+  const nextStep =
+    build.status === 'failed' || build.status === 'timed_out' ? (
+      firstRetryLabel ? (
+        `The build's artifacts are stored, so once the cause is fixed you can retry the ${firstRetryLabel} without rebuilding.`
+      ) : testSummary?.failed ? (
+        <>
+          {testSummary.failed === 1
+            ? '1 test failed.'
+            : `${testSummary.failed} tests failed.`}{' '}
+          <Button
+            variant="link"
+            size="xs"
+            className="h-auto px-0 align-baseline text-sm text-muted-foreground underline"
+            onClick={showTests}
+          >
+            Open Tests
+          </Button>
+        </>
+      ) : (
+        'Fix the cause, then re-run the build.'
+      )
+    ) : (build.status === 'canceled' || build.status === 'expired') &&
+      canTriggerBuild ? (
+      'Re-run it to start a new build.'
+    ) : null
 
   return (
-    <PageLayout
-      width="full"
-      className={cn(
-        usesTabbedArtifacts &&
-          'flex min-h-0 flex-1 flex-col gap-6 space-y-0 overflow-hidden pb-6',
-      )}
-    >
+    <PageLayout width="full" className="flex-1">
       <PageMeta title={label} noindex />
       <PageHeader
         title={`Build #${build.build_number}`}
@@ -291,6 +368,56 @@ export function BuildDetailPage({
         }
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {installableApps.length === 1 ? (
+              <Button
+                size="sm"
+                render={
+                  <Link
+                    to="/builds/$buildId"
+                    params={{ buildId: build.id }}
+                    search={{ install: installableApps[0].id }}
+                  />
+                }
+                nativeButton={false}
+              >
+                <HugeiconsIcon icon={Download04Icon} size={14} />
+                Install
+              </Button>
+            ) : installableApps.length > 1 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger render={<Button size="sm" />}>
+                  <HugeiconsIcon icon={Download04Icon} size={14} />
+                  Install
+                  <HugeiconsIcon
+                    icon={ArrowDown01Icon}
+                    size={14}
+                    data-icon="inline-end"
+                  />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-auto">
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>Apps to install</DropdownMenuLabel>
+                    {installableApps.map((artifact) => (
+                      <DropdownMenuItem
+                        key={artifact.id}
+                        render={
+                          <Link
+                            to="/builds/$buildId"
+                            params={{ buildId: build.id }}
+                            search={{ install: artifact.id }}
+                          />
+                        }
+                      >
+                        <span className="text-muted-foreground">
+                          {artifact.artifact_type === 'apk' ? 'Android' : 'iOS'}
+                        </span>
+                        {artifact.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
             {retryableSteps.map((step) => (
               <Button
                 key={step}
@@ -429,66 +556,30 @@ export function BuildDetailPage({
         </Alert>
       ) : null}
 
-      {stateDescription ? (
-        <Alert
-          variant={
-            isTerminal && build.status !== 'succeeded'
-              ? 'destructive'
-              : 'default'
-          }
-        >
-          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-2">
-            <p role="status">{stateDescription}</p>
-            {isTerminal && build.status !== 'succeeded' ? (
-              <p>
-                {firstRetryLabel
-                  ? `The build's artifacts are stored, so once the cause is fixed you can retry the ${firstRetryLabel} without rebuilding.`
-                  : testSummary?.failed
-                    ? `${testSummary.failed} tests failed. Check Tests and Logs before retrying.`
-                    : 'Check Logs and Timeline before retrying.'}
-              </p>
-            ) : null}
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {build.status === 'succeeded' ? (
-        artifactsQuery.error ? (
-          <Alert>
-            <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
-              Could not load apps.
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void refetchArtifacts()}
-              >
-                Retry
-              </Button>
-            </AlertDescription>
-          </Alert>
-        ) : artifactsQuery.isLoading ? (
-          <Skeleton className="h-32 w-full" />
-        ) : (
-          <AppOutputs
-            artifacts={artifacts}
-            projectName={build.context?.project_name}
-          />
-        )
+      {stateSummary ? (
+        <BuildStateAlert
+          summary={stateSummary}
+          failureLine={failureLine}
+          nextStep={nextStep}
+          onShowFailureLine={() => {
+            if (!failureLine) return
+            setActiveTab('logs')
+            setLogFocus({
+              step: failureLine.step,
+              sequence: failureLine.sequence,
+              key: Date.now(),
+            })
+          }}
+        />
       ) : null}
 
       <Tabs
-        value={
-          !usesTabbedArtifacts && activeTab === 'artifacts' ? 'logs' : activeTab
-        }
+        value={activeTab}
         onValueChange={setActiveTab}
-        className={cn('gap-3', usesTabbedArtifacts && 'min-h-0 flex-1')}
+        className="min-h-0 flex-1 gap-3"
       >
         <TabsList variant="line" aria-label="Build details">
           <TabsTrigger value="logs">Logs</TabsTrigger>
-          <TabsTrigger value="timeline">
-            Timeline{events.length > 0 ? ` (${events.length})` : ''}
-          </TabsTrigger>
           {hasTestsTab ? (
             <TabsTrigger value="tests">
               Tests
@@ -499,90 +590,71 @@ export function BuildDetailPage({
                   : ''}
             </TabsTrigger>
           ) : null}
-          {usesTabbedArtifacts ? (
-            <TabsTrigger value="artifacts">
-              Artifacts
-              {artifacts.length ? ` (${artifacts.length})` : ''}
-            </TabsTrigger>
-          ) : null}
+          <TabsTrigger value="artifacts">
+            Artifacts{artifacts.length ? ` (${artifacts.length})` : ''}
+          </TabsTrigger>
           {hasReleaseTab ? (
             <TabsTrigger value="release">
               Release{releases.length ? ` (${releases.length})` : ''}
             </TabsTrigger>
           ) : null}
+          <TabsTrigger value="timeline">
+            Timeline{events.length > 0 ? ` (${events.length})` : ''}
+          </TabsTrigger>
         </TabsList>
-        <div
-          className={cn(
-            'grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]',
-            usesTabbedArtifacts && 'min-h-0 flex-1',
-          )}
-        >
-          <div
-            className={cn('min-w-0', usesTabbedArtifacts && 'h-full min-h-0')}
-          >
-            <TabsContent
-              value="logs"
-              keepMounted
-              className={cn(usesTabbedArtifacts && 'h-full min-h-0')}
-            >
-              <TerminalLogViewer
-                logs={mergedLogs}
-                stepResults={build.step_results ?? []}
-                isStreaming={isStreaming && !isTerminal}
-                fillAvailableHeight={usesTabbedArtifacts}
-                isLoading={isTerminal && fullLogsQuery.isLoading}
-                logsUnavailable={fullLogsQuery.isError}
-                onRetryLogs={() => void fullLogsQuery.refetch()}
-                isTerminal={isTerminal}
-              />
-            </TabsContent>
-            <TabsContent value="timeline">
-              <EventTimeline events={events} />
-            </TabsContent>
-            {hasTestsTab ? (
-              <TabsContent value="tests">
-                <TestsPanel
-                  buildId={build.id}
-                  data={testsQuery.data}
-                  error={testsQuery.error}
-                  isLoading={testsQuery.isLoading}
-                  onRetry={() => void testsQuery.refetch()}
-                />
-              </TabsContent>
-            ) : null}
-            {hasReleaseTab ? (
-              <TabsContent value="release">
-                <ReleasePanel
-                  error={releasesQuery.error}
-                  isLoading={releasesQuery.isLoading}
-                  onRetry={() => void releasesQuery.refetch()}
-                  releases={releases}
-                  selectedReleaseId={selectedReleaseId}
-                />
-              </TabsContent>
-            ) : null}
-            {usesTabbedArtifacts ? (
-              <TabsContent value="artifacts">
-                <ArtifactsPanel
-                  artifacts={artifacts}
-                  isLoading={artifactsQuery.isLoading}
-                  buildStatus={build.status}
-                  canManageShareLinks={canManageShareLinks}
-                />
-              </TabsContent>
-            ) : null}
-          </div>
-          {!usesTabbedArtifacts ? (
-            <aside aria-label="Build output" className="sticky top-6">
-              <ArtifactsPanel
-                artifacts={artifacts}
-                isLoading={artifactsQuery.isLoading}
-                buildStatus={build.status}
-                canManageShareLinks={canManageShareLinks}
-              />
-            </aside>
-          ) : null}
-        </div>
+        {missingTab ? (
+          <p className="text-sm text-muted-foreground" role="status">
+            {missingTabMessage(missingTab, activeTab)}
+          </p>
+        ) : null}
+        <TabsContent value="logs" keepMounted className="flex min-h-0 flex-col">
+          <TerminalLogViewer
+            logs={mergedLogs}
+            stepResults={build.step_results ?? []}
+            isStreaming={isStreaming && !isTerminal}
+            fillAvailableHeight
+            isLoading={isTerminal && fullLogsQuery.isLoading}
+            logsUnavailable={fullLogsQuery.isError}
+            onRetryLogs={() => void fullLogsQuery.refetch()}
+            isTerminal={isTerminal}
+            focusRequest={logFocus}
+          />
+        </TabsContent>
+        {hasTestsTab ? (
+          <TabsContent value="tests">
+            <TestsPanel
+              buildId={build.id}
+              data={testsQuery.data}
+              error={testsQuery.error}
+              isLoading={testsQuery.isLoading}
+              onRetry={() => void testsQuery.refetch()}
+            />
+          </TabsContent>
+        ) : null}
+        <TabsContent value="artifacts">
+          <ArtifactsPanel
+            artifacts={artifacts}
+            error={artifactsQuery.error}
+            isLoading={artifactsQuery.isLoading}
+            onRetry={() => void refetchArtifacts()}
+            buildStatus={build.status}
+            canManageShareLinks={canManageShareLinks}
+          />
+        </TabsContent>
+        {hasReleaseTab ? (
+          <TabsContent value="release">
+            <ReleasePanel
+              error={releasesQuery.error}
+              isLoading={releasesQuery.isLoading}
+              onRetry={() => void releasesQuery.refetch()}
+              releases={releases}
+              selectedReleaseId={selectedReleaseId}
+            />
+          </TabsContent>
+        ) : null}
+        <TabsContent value="timeline">
+          <EventTimeline events={events} />
+        </TabsContent>
       </Tabs>
 
       {rejectOpen ? (

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { Release, ReleaseHistoryEntry } from '@oore/client/models'
 import { ReleaseActions } from '@/components/releases/release-actions'
 import {
@@ -28,6 +29,7 @@ import {
   releaseTransitionLabel,
   releaseVersionLabel,
 } from '@/lib/releases'
+import { cn } from '@/lib/utils'
 
 /** Build detail's Release tab: every store release made from this build. */
 export function ReleasePanel({
@@ -81,20 +83,41 @@ export function ReleasePanel({
   return (
     <div className="flex flex-col gap-4">
       {ordered.map((release) => (
-        <ReleaseCard key={release.id} release={release} />
+        <ReleaseCard
+          key={release.id}
+          release={release}
+          selected={release.id === selectedReleaseId}
+        />
       ))}
     </div>
   )
 }
 
-function ReleaseCard({ release }: { release: Release }) {
+function ReleaseCard({
+  release,
+  selected,
+}: {
+  release: Release
+  selected: boolean
+}) {
+  const cardRef = useRef<HTMLDivElement>(null)
+  // A notification deep link lands on this release, so bring it into view.
+  useEffect(() => {
+    if (selected) cardRef.current?.scrollIntoView({ block: 'start' })
+  }, [selected])
   const nowSeconds = useTime((time) => Math.floor(time / 60_000) * 60)
   const detailQuery = useRelease(release.id)
   // The detail poll is fresher than the list once it has loaded.
   const current = detailQuery.data?.release ?? release
 
   return (
-    <Card size="sm" id={`release-${release.id}`}>
+    <Card
+      ref={cardRef}
+      size="sm"
+      id={`release-${release.id}`}
+      className={cn('scroll-mt-4', selected && 'ring-2 ring-primary/40')}
+      aria-current={selected ? 'true' : undefined}
+    >
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <CardTitle>

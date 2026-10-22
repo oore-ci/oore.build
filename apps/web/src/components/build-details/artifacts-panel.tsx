@@ -175,12 +175,16 @@ function ArtifactRow({
 
 export function ArtifactsPanel({
   artifacts,
+  error,
   isLoading,
+  onRetry,
   buildStatus,
   canManageShareLinks,
 }: {
   artifacts: Array<Artifact>
+  error?: Error | null
   isLoading: boolean
+  onRetry?: () => void
   buildStatus: BuildStatus
   canManageShareLinks: boolean
 }) {
@@ -211,7 +215,18 @@ export function ArtifactsPanel({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
+        {error ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              Artifacts could not be loaded.
+            </p>
+            {onRetry ? (
+              <Button variant="outline" size="sm" onClick={onRetry}>
+                Retry
+              </Button>
+            ) : null}
+          </div>
+        ) : isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-8 w-full" />
             <Skeleton className="h-8 w-full" />

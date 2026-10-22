@@ -56,6 +56,8 @@ export function useReleases<TData = ListReleasesResponse>(
   },
   options?: {
     enabled?: boolean
+    /** Poll even with no live release, such as while a build may publish. */
+    pollWhenIdle?: boolean
     select?: (data: ListReleasesResponse) => TData
   },
 ) {
@@ -71,7 +73,9 @@ export function useReleases<TData = ListReleasesResponse>(
     enabled: !!baseUrl && !!token && (options?.enabled ?? true),
     staleTime: 2_000,
     refetchInterval: (query) =>
-      query.state.data?.releases.some(isLiveRelease) ? pollInterval : false,
+      options?.pollWhenIdle || query.state.data?.releases.some(isLiveRelease)
+        ? pollInterval
+        : false,
     placeholderData: keepPreviousData,
     select: options?.select,
   })

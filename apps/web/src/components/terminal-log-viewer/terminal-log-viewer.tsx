@@ -37,6 +37,7 @@ export default function TerminalLogViewer({
   logsUnavailable = false,
   onRetryLogs,
   isTerminal = false,
+  focusRequest = null,
 }: TerminalLogViewerProps) {
   'use no memo' // TanStack Virtual updates its instance in place.
 
@@ -45,7 +46,17 @@ export default function TerminalLogViewer({
   const [wrapLines, setWrapLines] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [activeMatchOrdinal, setActiveMatchOrdinal] = useState(0)
+  const [appliedFocusKey, setAppliedFocusKey] = useState<number | null>(null)
+  const [focusedSequence, setFocusedSequence] = useState<number | null>(null)
+  if (focusRequest && focusRequest.key !== appliedFocusKey) {
+    setAppliedFocusKey(focusRequest.key)
+    setUserSelectedStep(focusRequest.step)
+    setFocusedSequence(focusRequest.sequence)
+    setSearchQuery('')
+    setAutoScroll(false)
+  }
   const deferredSearchQuery = useDeferredValue(searchQuery)
+  const sectionRef = useRef<HTMLElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const isMobile = useIsMobile()
@@ -69,6 +80,18 @@ export default function TerminalLogViewer({
         ? allVisibleLogs
         : (stepGroupsByName.get(selectedStep)?.logs ?? []),
     [selectedStep, allVisibleLogs, stepGroupsByName],
+  )
+  // Number lines 1..n across the whole log so a step view keeps their numbers.
+  const lineNumbers = useMemo(
+    () => new Map(allVisibleLogs.map((chunk, index) => [chunk, index + 1])),
+    [allVisibleLogs],
+  )
+  const focusedIndex = useMemo(
+    () =>
+      focusedSequence === null
+        ? null
+        : selectedLogs.findIndex((chunk) => chunk.sequence === focusedSequence),
+    [selectedLogs, focusedSequence],
   )
   const matchingIndexes = useMemo(() => {
     const query = deferredSearchQuery.trim().toLocaleLowerCase()
@@ -120,8 +143,19 @@ export default function TerminalLogViewer({
     virtualizer.scrollToIndex(currentMatchIndex, { align: 'center' })
   }, [currentMatchIndex, virtualizer])
 
-  const logStepGroups = stepGroups.filter((group) => group.logs.length > 0)
-  const hasSteps = logStepGroups.length > 0
+  useEffect(() => {
+    if (appliedFocusKey === null || focusedIndex === null || focusedIndex < 0)
+      return
+    sectionRef.current?.scrollIntoView({ block: 'nearest' })
+    virtualizer.scrollToIndex(focusedIndex, { align: 'center' })
+  }, [appliedFocusKey, focusedIndex, virtualizer])
+
+  // Steps show even before they print a line. Logs without step markers
+  // (older runners) only have a full log, so a step list would read as empty.
+  const hasSteps =
+    stepGroups.length > 0 &&
+    (allVisibleLogs.length === 0 ||
+      stepGroups.some((group) => group.logs.length > 0))
   function downloadRawLogs() {
     const blob = new Blob(
       [selectedLogs.map((chunk) => chunk.content).join('\n')],
@@ -170,6 +204,7 @@ export default function TerminalLogViewer({
 
   function handleSelectStep(step: string) {
     setUserSelectedStep(step)
+    setFocusedSequence(null)
     setActiveMatchOrdinal(0)
     setAutoScroll(true)
   }
@@ -191,11 +226,12 @@ export default function TerminalLogViewer({
 
   return (
     <section
+      ref={sectionRef}
       aria-labelledby="build-logs-heading"
       className={cn(
         'flex flex-col overflow-hidden rounded-xl border bg-card shadow-xs',
         fillAvailableHeight
-          ? 'h-full min-h-80'
+          ? 'min-h-[max(22rem,55dvh)] flex-1'
           : 'h-[clamp(28rem,62dvh,50rem)]',
       )}
     >
@@ -272,7 +308,7 @@ export default function TerminalLogViewer({
               }
             >
               <StepSelect
-                groups={logStepGroups}
+                groups={stepGroups}
                 selectedStep={selectedStep}
                 allLogCount={allVisibleLogs.length}
                 onSelect={handleSelectStep}
@@ -280,7 +316,7 @@ export default function TerminalLogViewer({
             </Suspense>
           ) : (
             <StepNavigation
-              groups={logStepGroups}
+              groups={stepGroups}
               selectedStep={selectedStep}
               allLogCount={allVisibleLogs.length}
               onSelect={handleSelectStep}
@@ -301,8 +337,12 @@ export default function TerminalLogViewer({
             logsUnavailable={logsUnavailable}
             isTerminal={isTerminal}
             wrapLines={wrapLines}
+            lineNumbers={lineNumbers}
             matchingIndexes={matchingIndexSet}
-            currentMatchIndex={currentMatchIndex}
+            currentMatchIndex={
+              currentMatchIndex ??
+              (focusedIndex !== null && focusedIndex >= 0 ? focusedIndex : null)
+            }
             showJumpToLatest={!autoScroll}
             onJumpToLatest={jumpToLatest}
             scrollContainerRef={scrollContainerRef}

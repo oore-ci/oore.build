@@ -26,6 +26,7 @@ interface LogOutputProps {
   logsUnavailable: boolean
   isTerminal: boolean
   wrapLines: boolean
+  lineNumbers: ReadonlyMap<BuildLogChunk, number>
   matchingIndexes: ReadonlySet<number>
   currentMatchIndex: number | null
   showJumpToLatest: boolean
@@ -43,6 +44,7 @@ export function LogOutput({
   logsUnavailable,
   isTerminal,
   wrapLines,
+  lineNumbers,
   matchingIndexes,
   currentMatchIndex,
   showJumpToLatest,
@@ -53,8 +55,9 @@ export function LogOutput({
   'use no memo' // Read fresh row positions from the mutable virtualizer.
 
   const verticalPadding = 8
-  const maxSeq = logs.length > 0 ? logs[logs.length - 1].sequence : 0
-  const lineNumWidth = Math.max(String(maxSeq).length, 3)
+  const maxLineNumber =
+    logs.length > 0 ? (lineNumbers.get(logs.at(-1)!) ?? 0) : 0
+  const lineNumWidth = Math.max(String(maxLineNumber).length, 3)
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
@@ -129,7 +132,7 @@ export function LogOutput({
                     )}
                     style={{ width: `${lineNumWidth + 4}ch` }}
                   >
-                    {chunk.sequence}
+                    {lineNumbers.get(chunk) ?? virtualRow.index + 1}
                   </span>
                   <span
                     className={cn(
