@@ -4,6 +4,7 @@ import { streamLiveEvents } from '@oore/client/events'
 import { useApiContext } from '@/hooks/use-api-context'
 import { createWebOoreClient } from '@/lib/api-client/client'
 import { queryClient } from '@/lib/query-client'
+import { reportSessionEnded } from '@/lib/session-events'
 import {
   ALL_LIVE_TAGS,
   createTagBatcher,
@@ -12,6 +13,11 @@ import {
   tagsForLiveEvent,
 } from '@/lib/live-events'
 import { useLiveEventsStore } from '@/stores/live-events-store'
+
+// The generated SSE client reports HTTP failures as plain errors.
+function isUnauthorizedStreamError(cause: unknown): boolean {
+  return cause instanceof Error && /^SSE failed: 401\b/.test(cause.message)
+}
 
 /**
  * Keeps build, release and runner queries fresh from `GET /v1/events`.
@@ -24,6 +30,7 @@ export function useLiveEvents(enabled: boolean) {
 
   useEffect(() => {
     if (!enabled || !baseUrl || !token) return
+    const sessionToken = token
 
     const client = createWebOoreClient({ baseUrl, token })
     const abort = new AbortController()
@@ -35,6 +42,7 @@ export function useLiveEvents(enabled: boolean) {
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     let attempt = 0
     let hasConnected = false
+    let rejected = false
 
     async function connect() {
       attempt += 1
@@ -42,6 +50,9 @@ export function useLiveEvents(enabled: boolean) {
         for await (const event of streamLiveEvents({
           client,
           signal: abort.signal,
+          onSseError: (cause) => {
+            rejected ||= isUnauthorizedStreamError(cause)
+          },
         })) {
           if (abort.signal.aborted) return
           if (event.type === 'ready') {
@@ -64,6 +75,11 @@ export function useLiveEvents(enabled: boolean) {
 
       if (abort.signal.aborted) return
       setConnected(false)
+      if (rejected) {
+        // Reconnecting with a rejected session would loop forever.
+        reportSessionEnded({ reason: 'rejected', token: sessionToken })
+        return
+      }
       retryTimer = setTimeout(() => void connect(), reconnectDelay(attempt))
     }
 

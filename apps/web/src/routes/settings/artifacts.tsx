@@ -39,9 +39,9 @@ export const Route = createFileRoute('/settings/artifacts')({
       title: 'Artifact storage',
     },
   },
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'], context)
   },
   component: ArtifactStoragePage,
 })

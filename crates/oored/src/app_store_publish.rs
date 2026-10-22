@@ -1376,9 +1376,19 @@ pub(crate) async fn poll_releases(state: &AppState, client: &reqwest::Client) {
     }
 }
 
+/// The client for App Store Connect calls. Bounded, so one hung request
+/// cannot stall the monitor for every release or a user's release control.
+fn app_store_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(60))
+        .build()
+        .expect("failed to build the App Store Connect HTTP client")
+}
+
 pub fn start_release_monitor(state: Arc<AppState>) {
     tokio::spawn(async move {
-        let client = reqwest::Client::new();
+        let client = app_store_http_client();
         loop {
             poll_releases(&state, &client).await;
             tokio::time::sleep(MONITOR_INTERVAL).await;
@@ -1404,7 +1414,7 @@ impl AppStoreReleaseClient {
         Self {
             pool,
             encryption_key,
-            client: reqwest::Client::new(),
+            client: app_store_http_client(),
         }
     }
 

@@ -128,13 +128,16 @@ impl PlayReleaseStoreClient {
             edits.update_track(&track, &track_release).await
         }
         .await;
-        match result {
+        let result = match result {
             Ok(()) => edits.commit().await,
-            Err(error) => {
-                let _ = edits.delete().await;
-                Err(error)
-            }
+            Err(error) => Err(error),
+        };
+        // A failed commit leaves the edit open, and an open edit would get
+        // in the way of the next one.
+        if result.is_err() {
+            let _ = edits.delete().await;
         }
+        result
     }
 
     async fn observe_play(&self, release: &Release) -> anyhow::Result<StoreObservation> {

@@ -85,6 +85,8 @@ const FINAL_REPORT_WINDOW: Duration = Duration::from_secs(600);
 /// How long it keeps trying to say a claimed build started. Shorter than the
 /// backend's 5 minute lease, after which the build is queued again.
 const RUNNING_REPORT_WINDOW: Duration = Duration::from_secs(120);
+/// Longest a Google Play upload may run before the runner stops it.
+const PLAY_PUBLISH_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 /// How long a canceled step's processes get to exit after SIGTERM.
 const STEP_TERM_GRACE: Duration = Duration::from_secs(5);
 /// How long a step's output may stay quiet after the step exits before the
@@ -4912,6 +4914,7 @@ async fn execute_step_retry(
             signed_ipa_path: ipa.as_ref().map(|(path, _)| path.as_path()),
             ios_artifact_metadata: ipa.as_ref().map(|(_, metadata)| metadata),
             only: Some(retry_steps),
+            authority,
         },
         steps,
     )
@@ -6106,6 +6109,7 @@ Install the required tooling on the runner, set isolation: vm, or override build
             signed_ipa_path: signed_ipa_path.as_deref(),
             ios_artifact_metadata: ios_artifact_metadata.as_ref(),
             only: None,
+            authority: &authority,
         },
         &mut steps,
     )
@@ -6123,6 +6127,7 @@ struct PublishInputs<'a> {
     /// Runs only these upload steps, for a step retry. `None` runs every
     /// upload the pipeline turns on.
     only: Option<&'a [String]>,
+    authority: &'a Arc<BuildAuthorityState>,
 }
 
 /// Runs the store uploads the pipeline turns on, stopping at the first failure.
@@ -6142,6 +6147,7 @@ async fn run_publish_steps(
         signed_ipa_path,
         ios_artifact_metadata,
         only,
+        authority,
     } = inputs;
     let runs = |step: &str| only.is_none_or(|only| only.iter().any(|name| name == step));
     let publish_plan = match fetch_job_publish_plan(
@@ -6183,6 +6189,26 @@ async fn run_publish_steps(
             publish_plan.changelog.as_deref(),
             play,
             &mut lines,
+            publish::PublishGate {
+                stopped: async {
+                    tokio::select! {
+                        _ = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
+                            authority.terminated()
+                        }
+                        _ = tokio::time::sleep(PLAY_PUBLISH_TIMEOUT) => anyhow::anyhow!(
+                            "Google Play upload timed out after {} minutes",
+                            PLAY_PUBLISH_TIMEOUT.as_secs() / 60
+                        ),
+                    }
+                },
+                still_active: check_build_active(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    authority,
+                ),
+            },
         )
         .await;
         for line in lines {
@@ -6295,10 +6321,27 @@ async fn run_publish_steps(
         let result = match (signed_ipa_path, ios_artifact_metadata) {
             (Some(ipa), Some(metadata)) => {
                 let key_dir = signing_workspace.join(".oore").join("asc-keys");
-                match app_store_upload::upload_ipa(ipa, &app_store.credentials, &key_dir).await {
-                    Ok(message) => app_store_upload::publish_result(metadata, &app_store.config)
-                        .map(|result| (message, result)),
-                    Err(error) => Err(error),
+                // Once altool starts, Apple may get the build; don't start
+                // it for a build that has already stopped.
+                match check_build_active(client, daemon_url, config, &job.build_id, authority)
+                    .await
+                {
+                    Err(error) => Err(error.context(
+                        "The build stopped before the App Store Connect upload started; nothing was uploaded",
+                    )),
+                    Ok(()) => tokio::select! {
+                        uploaded = app_store_upload::upload_ipa(ipa, &app_store.credentials, &key_dir) => {
+                            uploaded.and_then(|message| {
+                                app_store_upload::publish_result(metadata, &app_store.config)
+                                    .map(|result| (message, result))
+                            })
+                        }
+                        _ = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
+                            Err(authority.terminated().context(
+                                "The build stopped during the App Store Connect upload, so the upload was stopped",
+                            ))
+                        }
+                    },
                 }
             }
             _ => Err(anyhow::anyhow!(

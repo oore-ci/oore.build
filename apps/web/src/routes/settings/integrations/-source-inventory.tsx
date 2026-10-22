@@ -14,6 +14,7 @@ import {
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
 import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
+import { integrationStatusReason } from '@/lib/integration-status'
 import { StatusBadge } from '@/components/status-badge'
 import { Badge } from '@/components/ui/badge'
 
@@ -83,9 +84,19 @@ const sourceColumns: Array<DataTableColumnDef<Integration>> = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Status" />
     ),
-    cell: ({ row }) => (
-      <StatusBadge kind="integration" value={row.original.status} />
-    ),
+    cell: ({ row }) => {
+      const reason = integrationStatusReason(row.original)
+      return (
+        <div className="flex min-w-0 flex-col items-start gap-1">
+          <StatusBadge kind="integration" value={row.original.status} />
+          {reason ? (
+            <span className="max-w-56 text-xs whitespace-normal text-muted-foreground">
+              {reason}
+            </span>
+          ) : null}
+        </div>
+      )
+    },
   },
   {
     accessorKey: 'auth_mode',

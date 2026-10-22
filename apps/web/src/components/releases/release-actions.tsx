@@ -126,26 +126,32 @@ function ReleaseActionDialog({
   const reasonId = `release-${release.id}-${action}-reason`
 
   function confirm() {
-    mutation.mutate(
-      {
+    // The promise settles even if the dialog is gone, unlike mutate callbacks.
+    mutation
+      .mutateAsync({
         action,
         releaseId: release.id,
         body: { reason: reason.trim() || null },
-      },
-      {
-        onSuccess: () => {
+      })
+      .then(
+        () => {
           toast.success(`${copy.done}: ${releaseVersionLabel(release)}`)
           onOpenChange(false)
         },
-        onError: (error) => {
+        (error: Error) => {
           toast.error(`Could not ${copy.label.toLowerCase()}: ${error.message}`)
         },
-      },
-    )
+      )
   }
 
   return (
-    <AlertDialog open onOpenChange={onOpenChange}>
+    <AlertDialog
+      open
+      onOpenChange={(open) => {
+        if (!open && mutation.isPending) return
+        onOpenChange(open)
+      }}
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{copy.title}</AlertDialogTitle>

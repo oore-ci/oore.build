@@ -10,8 +10,6 @@ import {
   BreadcrumbItem,
   BreadcrumbLink,
   BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -25,13 +23,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useLogout } from '@/hooks/use-auth'
-import { useArtifacts, useBuild, useProjectArtifacts } from '@/hooks/use-builds'
+import { useBuild } from '@/hooks/use-builds'
 import { useInfiniteProjects, useProject } from '@/hooks/use-projects'
 import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
-import { qaBuildVersion, qaProjectVersionBase } from '@/lib/qa-releases'
-import RepositoryAvatar from '@/components/repository-avatar'
+import { useQaProjectSelection } from '@/hooks/use-qa-project'
+import { PAGE_WIDTH_CLASSES } from '@/components/page-layout'
+import QaAppMonogram from '@/components/qa-app-monogram'
+import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
-import { useQaReleasesStore } from '@/stores/qa-releases-store'
 
 const QaProjectPicker = lazy(() => import('./qa-project-picker'))
 
@@ -50,12 +49,8 @@ export default function QaAppHeader() {
   const location = useLocation()
   const { buildId = '' } = useParams({ strict: false })
   const user = useAuthStore((state) => state.user)
-  const selectedProjectId = useQaReleasesStore(
-    (state) => state.selectedProjectId,
-  )
-  const setSelectedProjectId = useQaReleasesStore(
-    (state) => state.setSelectedProjectId,
-  )
+  const { project: selectedProject, setSelectedProjectId } =
+    useQaProjectSelection()
   const logoutMutation = useLogout()
   const { resolvedTheme, setTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
@@ -79,37 +74,23 @@ export default function QaAppHeader() {
     () => projectsQuery.data?.pages.flatMap((page) => page.projects) ?? [],
     [projectsQuery.data?.pages],
   )
-  const selectedProjectQuery = useProject(selectedProjectId ?? '')
-  const selectedProject = selectedProjectId
-    ? (selectedProjectQuery.data?.project ??
-      projects.find((project) => project.id === selectedProjectId))
-    : projects.at(0)
   const buildQuery = useBuild(isReleasesHome ? '' : buildId, {
     refetchInterval: false,
   })
-  const artifactsQuery = useArtifacts(isReleasesHome ? '' : buildId, {
-    refetchInterval: false,
-  })
-  const detailProjectId = buildQuery.data?.build.project_id ?? ''
-  const detailProjectQuery = useProject(detailProjectId)
-  const historyArtifactsQuery = useProjectArtifacts(detailProjectId)
-  const detailProject = detailProjectQuery.data?.project
+  const detailProjectQuery = useProject(buildQuery.data?.build.project_id ?? '')
   const detailBuild = buildQuery.data?.build
-  const detailArtifacts = artifactsQuery.data?.artifacts ?? []
-  const detailVersion = detailBuild
-    ? qaBuildVersion(
-        detailBuild,
-        detailArtifacts,
-        qaProjectVersionBase(historyArtifactsQuery.data?.artifacts ?? []),
-      )
-    : null
   const detailProjectName =
-    detailProject?.name ?? detailBuild?.context?.project_name
+    detailProjectQuery.data?.project.name ?? detailBuild?.context?.project_name
   const [pickerOpen, setPickerOpen] = useState(false)
 
   return (
     <header className="sticky top-0 z-30 border-b bg-background/95 pt-(--safe-area-top) backdrop-blur supports-[backdrop-filter]:bg-background/80">
-      <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-3 px-4 sm:px-6">
+      <div
+        className={cn(
+          PAGE_WIDTH_CLASSES.default,
+          'mx-auto flex h-14 w-full items-center gap-3 px-4 sm:px-6',
+        )}
+      >
         <Link to="/" className="flex shrink-0 items-center gap-3">
           <img src="/logo.svg" alt="Oore CI" className="size-7" />
           <span className="hidden font-semibold tracking-tight sm:inline">
@@ -131,7 +112,7 @@ export default function QaAppHeader() {
               projects={projects}
             />
           </Suspense>
-        ) : detailBuild && detailProjectName && detailVersion ? (
+        ) : detailBuild && detailProjectName ? (
           <Breadcrumb className="min-w-0">
             <BreadcrumbList className="flex-nowrap">
               <BreadcrumbItem className="min-w-0">
@@ -144,27 +125,11 @@ export default function QaAppHeader() {
                       }
                     />
                   }
-                  className="flex min-w-0 items-center gap-2"
+                  className="flex min-h-11 min-w-0 items-center gap-2"
                 >
-                  {detailProject ? (
-                    <RepositoryAvatar
-                      fullName={
-                        detailProject.repository_full_name ?? detailProject.name
-                      }
-                      avatarUrl={detailProject.repository_avatar_url}
-                      repositoryId={detailProject.repository_id}
-                      provider={detailProject.repository_provider}
-                      size="sm"
-                    />
-                  ) : null}
+                  <QaAppMonogram name={detailProjectName} />
                   <span className="truncate">{detailProjectName}</span>
                 </BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator className="shrink-0" />
-              <BreadcrumbItem className="min-w-0">
-                <BreadcrumbPage className="truncate">
-                  {detailVersion}
-                </BreadcrumbPage>
               </BreadcrumbItem>
             </BreadcrumbList>
           </Breadcrumb>

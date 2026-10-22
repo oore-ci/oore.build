@@ -32,21 +32,13 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import { ROLE_DESCRIPTIONS } from './-user-role-labels'
 
 const ROLE_OPTIONS = {
   admin: 'Admin',
   developer: 'Developer',
   qa_viewer: 'QA Viewer',
 } as const
-
-const ROLE_DESCRIPTIONS = {
-  admin:
-    'Can manage users, integrations, and all projects. Cannot delete the instance.',
-  developer:
-    'Can work on assigned projects according to their project role. Cannot create projects or manage instance settings.',
-  qa_viewer:
-    'Tester access to assigned project releases, install actions, and diagnostic logs.',
-} satisfies Record<keyof typeof ROLE_OPTIONS, string>
 
 const inviteUserSchema = z.object({
   email: z.email('Enter a valid email address.'),

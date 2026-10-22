@@ -644,6 +644,12 @@ async fn execute_build_insert(
            JOIN integration_repositories r ON r.id = p.repository_id \
            WHERE p.id = ?2 \
              AND p.repository_id = json_extract(?11, '$.repository_id') \
+         ) \
+         AND NOT EXISTS ( \
+           SELECT 1 FROM builds other, json_each(other.config_snapshot, '$.retry_steps') step \
+           WHERE other.source_build_id = ?13 \
+             AND other.status NOT IN ('succeeded', 'failed', 'canceled', 'timed_out', 'expired') \
+             AND step.value IN (SELECT value FROM json_each(?11, '$.retry_steps')) \
          )",
     )
     .bind(b.build_id)
@@ -2038,6 +2044,16 @@ pub(crate) async fn queue_rerun(
     )
     .await?;
     if !inserted {
+        // Another retry of the same upload may have been created meanwhile.
+        if let Some(steps) = &retry_steps
+            && let Ok(Some((_, build_number))) =
+                crate::step_retry::active_retry(pool, &build_id, steps).await
+        {
+            return Err(crate::step_retry::retry_in_progress(
+                steps.join(", ").as_str(),
+                build_number,
+            ));
+        }
         return Err(api_err(
             StatusCode::CONFLICT,
             "source_changed",
@@ -2872,6 +2888,65 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(status, "timed_out");
+    }
+
+    #[tokio::test]
+    async fn a_second_retry_of_the_same_upload_is_not_created() {
+        let pool = pool("{}", "{}", 60).await;
+        let source = &deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown).await[0];
+        let snapshot = serde_json::json!({
+            "repository_id": "r1",
+            "retry_steps": ["publish-play", "publish-app-store"],
+        })
+        .to_string();
+        let insert = |build_id: &'static str| BuildInsertBinds {
+            build_id,
+            project_id: "p1",
+            pipeline_id: "pl1",
+            actor: Some("lead@example.com"),
+            event_type: Some("retry"),
+            trigger_ref: None,
+            commit_sha: None,
+            branch: None,
+            changelog: None,
+            config_snapshot: &snapshot,
+            webhook_id: None,
+            now: 10,
+            trigger_type: "manual",
+            source_build_id: Some(&source.id),
+            cancel_previous: false,
+            approval_required: false,
+        };
+
+        assert!(
+            execute_build_insert(&pool, "", &insert("retry1"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !execute_build_insert(&pool, "", &insert("retry2"))
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            crate::step_retry::active_retry(&pool, &source.id, &["publish-app-store".to_string()])
+                .await
+                .unwrap()
+                .map(|(id, _)| id)
+                .as_deref(),
+            Some("retry1")
+        );
+
+        // Once the first retry has finished, the upload can be retried again.
+        sqlx::query("UPDATE builds SET status = 'failed' WHERE id = 'retry1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            execute_build_insert(&pool, "", &insert("retry2"))
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
