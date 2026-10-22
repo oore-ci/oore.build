@@ -7,7 +7,6 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import {
   Item,
   ItemActions,
@@ -17,133 +16,202 @@ import {
   ItemMedia,
   ItemTitle,
 } from '@/components/ui/item'
-import { formatDuration } from '@/lib/format-utils'
+import { relativeTime } from '@/lib/format-utils'
 import { getRunnerPolicyBlockLabel } from '@/lib/status-variants'
-import type { Build } from '@oore/client/models'
-import { useTime } from '@/hooks/use-time'
+import type { Build, RunnerPolicyBlockReason } from '@oore/client/models'
 
+const isFailure = (build: Build) =>
+  build.status === 'failed' || build.status === 'timed_out'
+
+/** A project whose newest verdict, in at least one pipeline, is a failure. */
+export type FailingProject = {
+  projectId: string
+  projectName: string
+  pipelineNames: Array<string>
+  failures: number
+  latest: Build
+}
+
+/**
+ * Projects that are failing right now. A pipeline counts while its newest
+ * passed-or-failed build failed; one success clears it. Canceled and expired
+ * builds give no verdict and are skipped.
+ */
+export function failingProjects(finished: Array<Build>): Array<FailingProject> {
+  const newestFirst = [...finished].sort(
+    (a, b) => (b.finished_at ?? b.queued_at) - (a.finished_at ?? a.queued_at),
+  )
+  const settled = new Set<string>()
+  const projects = new Map<string, FailingProject>()
+  for (const build of newestFirst) {
+    if (settled.has(build.pipeline_id)) continue
+    if (build.status === 'succeeded') {
+      settled.add(build.pipeline_id)
+      continue
+    }
+    if (!isFailure(build)) continue
+    const project = projects.get(build.project_id)
+    const pipelineName = build.context?.pipeline_name ?? 'Pipeline'
+    if (!project) {
+      projects.set(build.project_id, {
+        projectId: build.project_id,
+        projectName: build.context?.project_name ?? build.project_id,
+        pipelineNames: [pipelineName],
+        failures: 1,
+        latest: build,
+      })
+      continue
+    }
+    project.failures += 1
+    if (!project.pipelineNames.includes(pipelineName)) {
+      project.pipelineNames.push(pipelineName)
+    }
+  }
+  return [...projects.values()]
+}
+
+function blockDescription(reason: RunnerPolicyBlockReason): string {
+  if (reason === 'repository_unavailable')
+    return "Oore can't check out the source"
+  if (reason === 'instance_paused') return 'Mac builds are paused'
+  return getRunnerPolicyBlockLabel(reason)
+}
+
+/** Blocked builds per project, oldest first within each. */
+function blockedGroups(blocked: Array<Build>) {
+  const groups = new Map<string, Array<Build>>()
+  for (const build of [...blocked].sort((a, b) => a.queued_at - b.queued_at)) {
+    if (!build.runner_policy_block_reason) continue
+    groups.set(build.project_id, [
+      ...(groups.get(build.project_id) ?? []),
+      build,
+    ])
+  }
+  return [...groups.values()]
+}
+
+function AttentionItem({
+  title,
+  description,
+  link,
+  icon,
+}: {
+  title: string
+  description: string
+  link: React.ReactElement
+  icon: typeof TriangleAlertIcon
+}) {
+  return (
+    <Item variant="outline" size="sm" render={link}>
+      <ItemMedia variant="icon">
+        <HugeiconsIcon icon={icon} className="text-warning!" />
+      </ItemMedia>
+      <ItemContent className="min-w-0">
+        <ItemTitle>{title}</ItemTitle>
+        <ItemDescription className="line-clamp-1">
+          {description}
+        </ItemDescription>
+      </ItemContent>
+      <ItemActions>
+        <HugeiconsIcon icon={ChevronRightIcon} />
+      </ItemActions>
+    </Item>
+  )
+}
+
+function failingDescription(project: FailingProject): string {
+  const where =
+    project.pipelineNames.length === 1
+      ? project.pipelineNames[0]
+      : `${project.pipelineNames.length} pipelines`
+  const count =
+    project.failures === 1
+      ? 'Last build failed'
+      : `${project.failures} failures since the last pass`
+  const latest = project.latest
+  return `${where} · ${count} · #${latest.build_number} ${relativeTime(latest.finished_at ?? latest.queued_at)}`
+}
+
+/** What is broken right now, one line per project or cause, gone once it recovers. */
 export default function DashboardBuildIncident({
-  builds,
+  blocked,
+  failing,
   noOnlineRunners,
 }: {
-  builds: Array<Build>
+  blocked: Array<Build>
+  failing: Array<FailingProject>
   noOnlineRunners: boolean
 }) {
-  const time = useTime()
-  const issueCount = builds.length + (noOnlineRunners ? 1 : 0)
-  if (issueCount === 0) return null
-
-  const visibleBuilds = builds.slice(0, noOnlineRunners ? 2 : 3)
-  const hasHiddenBuilds = visibleBuilds.length < builds.length
+  const blockedByProject = blockedGroups(blocked)
+  const count =
+    failing.length + blockedByProject.length + (noOnlineRunners ? 1 : 0)
+  if (count === 0) return null
 
   return (
     <section className="flex flex-col gap-3" aria-labelledby="attention-needed">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <h2
-            id="attention-needed"
-            className="text-sm font-medium text-muted-foreground"
-          >
-            Needs attention
-          </h2>
-          <Badge variant="outline">{issueCount}</Badge>
-        </div>
-        {hasHiddenBuilds ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            render={<Link to="/builds" />}
-            nativeButton={false}
-          >
-            View all
-            <HugeiconsIcon icon={ChevronRightIcon} data-icon="inline-end" />
-          </Button>
-        ) : null}
+      <div className="flex items-center gap-2">
+        <h2
+          id="attention-needed"
+          className="text-sm font-medium text-muted-foreground"
+        >
+          Needs attention
+        </h2>
+        <Badge variant="outline">{count}</Badge>
       </div>
 
       <ItemGroup className="gap-2">
         {noOnlineRunners ? (
-          <Item
-            variant="outline"
-            size="default"
-            className="min-h-16"
-            render={
+          <AttentionItem
+            icon={CircleAlertIcon}
+            title="No runner is online"
+            description="Builds wait until a runner checks in."
+            link={
               <Link
                 to="/settings/runners"
                 aria-label="Review runner availability"
               />
             }
-          >
-            <ItemMedia variant="icon">
-              <HugeiconsIcon icon={CircleAlertIcon} className="text-warning!" />
-            </ItemMedia>
-            <ItemContent className="min-w-0">
-              <ItemTitle>No runner is available</ItemTitle>
-              <ItemDescription className="line-clamp-1">
-                Builds will wait until a runner checks in.
-              </ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <HugeiconsIcon icon={ChevronRightIcon} />
-            </ItemActions>
-          </Item>
+          />
         ) : null}
 
-        {visibleBuilds.map((build) => {
-          const projectName = build.context?.project_name ?? build.project_id
-          const issue = build.runner_policy_block_reason
-            ? getRunnerPolicyBlockLabel(build.runner_policy_block_reason)
-            : build.status === 'timed_out'
-              ? 'Timed out'
-              : 'Failed'
-          const pipelineName = build.context?.pipeline_name ?? 'Build pipeline'
-          const branch = build.branch ?? 'No branch'
-          const blockedFor = formatDuration(
-            Math.max(0, Math.floor(time / 1000) - build.queued_at),
-          )
-
+        {blockedByProject.map((builds) => {
+          const oldest = builds[0]
+          const projectName = oldest.context?.project_name ?? oldest.project_id
+          const reason = oldest.runner_policy_block_reason
+          const waiting =
+            builds.length === 1 ? '1 build' : `${builds.length} builds`
           return (
-            <Item
-              key={build.id}
-              variant="outline"
-              size="default"
-              className="min-h-16"
-              render={
+            <AttentionItem
+              key={oldest.project_id}
+              icon={CircleAlertIcon}
+              title={`${projectName} builds are blocked`}
+              description={`${reason ? blockDescription(reason) : 'Waiting'} · ${waiting} waiting since ${relativeTime(oldest.queued_at)}`}
+              link={
                 <Link
                   to="/builds/$buildId"
-                  params={{ buildId: build.id }}
-                  aria-label={`Review ${projectName} build #${build.build_number}`}
+                  params={{ buildId: oldest.id }}
+                  aria-label={`Open ${projectName} build #${oldest.build_number}, blocked the longest`}
                 />
               }
-            >
-              <ItemMedia variant="icon">
-                <HugeiconsIcon
-                  icon={TriangleAlertIcon}
-                  className="text-warning!"
-                />
-              </ItemMedia>
-              <ItemContent className="min-w-0">
-                <ItemTitle>
-                  {issue} for {projectName} #{build.build_number}
-                </ItemTitle>
-                <ItemDescription className="line-clamp-1">
-                  {build.runner_policy_block_reason === 'repository_unavailable'
-                    ? "Oore couldn't check out this project's source."
-                    : build.runner_policy_block_reason === 'instance_paused'
-                      ? 'Mac builds are paused.'
-                      : 'Review the failure and build logs.'}{' '}
-                  · {pipelineName} · {branch} ·{' '}
-                  {build.runner_policy_block_reason
-                    ? `Blocked ${blockedFor}`
-                    : 'Open build'}
-                </ItemDescription>
-              </ItemContent>
-              <ItemActions>
-                <HugeiconsIcon icon={ChevronRightIcon} />
-              </ItemActions>
-            </Item>
+            />
           )
         })}
+
+        {failing.map((project) => (
+          <AttentionItem
+            key={project.projectId}
+            icon={TriangleAlertIcon}
+            title={`${project.projectName} builds are failing`}
+            description={failingDescription(project)}
+            link={
+              <Link
+                to="/builds/$buildId"
+                params={{ buildId: project.latest.id }}
+                aria-label={`Open ${project.projectName} build #${project.latest.build_number}, the latest failure`}
+              />
+            }
+          />
+        ))}
       </ItemGroup>
     </section>
   )

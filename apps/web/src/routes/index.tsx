@@ -16,7 +16,9 @@ import {
   DashboardBuildActivity,
   DashboardGettingStarted,
 } from '@/components/dashboard-sections'
-import DashboardBuildIncident from '@/components/dashboard-build-incident'
+import DashboardBuildIncident, {
+  failingProjects,
+} from '@/components/dashboard-build-incident'
 import { DashboardBuildHealth } from '@/components/dashboard-build-health'
 import { DashboardProjectHealth } from '@/components/dashboard-project-health'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -94,6 +96,7 @@ function selectDashboardBuilds({ builds }: ListBuildsResponse) {
     builds,
     active: builds.filter((build) => ACTIVE_BUILD_STATUSES.has(build.status)),
     recentCompleted: completed.slice(0, 6),
+    failing: failingProjects(completed),
   }
 }
 
@@ -472,13 +475,8 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
 
         {hasProjects && !recentBuildsQuery.isLoading ? (
           <DashboardBuildIncident
-            builds={[
-              ...blockedBuilds,
-              ...recentCompletedBuilds.filter(
-                (build) =>
-                  build.status === 'failed' || build.status === 'timed_out',
-              ),
-            ]}
+            blocked={blockedBuilds}
+            failing={recentBuildsQuery.data?.failing ?? []}
             noOnlineRunners={noOnlineRunners}
           />
         ) : null}
