@@ -238,6 +238,19 @@ fn map_upstream_error(
     )
 }
 
+/// Apple refuses a new distribution certificate once the team has its
+/// maximum, which needs the user to free one in the developer portal.
+fn certificate_limit_error(body: &str) -> (StatusCode, Json<ApiError>) {
+    api_err(
+        StatusCode::CONFLICT,
+        "certificate_limit",
+        format!(
+            "Apple would not create another distribution certificate ({}). The team may already have the most Apple allows. Revoke one it no longer uses in the Apple Developer portal, or use Hybrid mode with an existing certificate, then sync again.",
+            parse_apple_error(body)
+        ),
+    )
+}
+
 fn to_device_record(data: AppleDeviceData) -> AppleDeviceRecord {
     AppleDeviceRecord {
         device_id: data.id,
@@ -525,6 +538,9 @@ pub async fn create_distribution_certificate(
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
+            if status == reqwest::StatusCode::CONFLICT {
+                return Err(certificate_limit_error(&body));
+            }
             return Err(map_upstream_error(
                 "Apple certificate creation",
                 status,
@@ -555,6 +571,8 @@ pub async fn create_distribution_certificate(
     for certificate_type in ["DISTRIBUTION", "IOS_DISTRIBUTION"] {
         match create_certificate_with_type(client, &jwt, csr_content, certificate_type).await {
             Ok(record) => return Ok(record),
+            // The team is at Apple's limit; the legacy type would hit it too.
+            Err(err) if err.0 == StatusCode::CONFLICT => return Err(err),
             Err(err) => last_err = Some(err),
         }
     }

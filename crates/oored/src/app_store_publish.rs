@@ -31,8 +31,8 @@ use crate::crypto;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{ProjectPermission, require_pipeline_project_permission};
 use crate::releases::{
-    self, BoxFuture, NewRelease, NoopReleaseStoreClient, ReleaseActor, ReleaseChange, ReleaseDeps,
-    ReleaseError, ReleaseStoreClient, StoreChange,
+    self, BoxFuture, NewRelease, ReleaseActor, ReleaseChange, ReleaseDeps, ReleaseError,
+    ReleaseStoreClient, StoreChange,
 };
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -518,24 +518,37 @@ async fn load_uploaded_ipa(pool: &SqlitePool, build_id: &str) -> anyhow::Result<
         .ok_or_else(|| anyhow::anyhow!("build has no App Store IPA artifact"))
 }
 
-/// Records a successful upload as an `app_store` release in `processing`.
-/// The monitor takes it from there.
-pub(crate) async fn record_upload(state: &AppState, build_id: &str) -> anyhow::Result<String> {
+/// Records a successful upload as an `app_store` release in `processing`,
+/// unless this build already has one. The release and the monitor link commit
+/// together, so the monitor always picks it up. Returns the new release's id.
+pub(crate) async fn record_upload(
+    deps: ReleaseDeps<'_>,
+    build_id: &str,
+) -> anyhow::Result<Option<String>> {
     let (project_id, pipeline_id): (String, String) =
         sqlx::query_as("SELECT project_id, pipeline_id FROM builds WHERE id = ?1")
             .bind(build_id)
-            .fetch_one(&state.db)
+            .fetch_one(deps.pool)
             .await?;
-    let (config, _) = load_config(&state.db, &pipeline_id)
+    let (config, _) = load_config(deps.pool, &pipeline_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("pipeline has no App Store publish settings"))?;
-    let ipa = load_uploaded_ipa(&state.db, build_id).await?;
+    let ipa = load_uploaded_ipa(deps.pool, build_id).await?;
     let track = match config.destination {
         AppStoreDestination::Testflight => config.testflight_groups.join(", "),
         AppStoreDestination::AppStore => "app_store".to_string(),
     };
-    let release = releases::create_release(
-        ReleaseDeps::from(state),
+    let config_json = serde_json::to_string(&config)?;
+
+    let mut tx = deps.pool.begin_with("BEGIN IMMEDIATE").await?;
+    if releases::find_build_release(&mut tx, build_id, ReleaseStore::AppStore)
+        .await?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    let created = releases::insert_release(
+        &mut tx,
         NewRelease {
             project_id,
             build_id: build_id.to_string(),
@@ -554,23 +567,17 @@ pub(crate) async fn record_upload(state: &AppState, build_id: &str) -> anyhow::R
     )
     .await
     .map_err(|error| anyhow::anyhow!("failed to create App Store release: {error:?}"))?;
-
-    let now = now_unix();
-    sqlx::query(
-        "INSERT INTO app_store_release_links (
-            release_id, pipeline_id, bundle_id, version, build_number, config,
-            stage, next_poll_at, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'awaiting_build', ?7, ?7, ?7)",
+    insert_release_link(
+        &mut tx,
+        &created.release.id,
+        &pipeline_id,
+        &ipa,
+        &config_json,
     )
-    .bind(&release.id)
-    .bind(&pipeline_id)
-    .bind(&ipa.bundle_id)
-    .bind(&ipa.version)
-    .bind(&ipa.build_number)
-    .bind(serde_json::to_string(&config)?)
-    .bind(now)
-    .execute(&state.db)
     .await?;
+    tx.commit().await?;
+
+    let release = releases::finish_create(deps, created, &ReleaseActor::System).await;
     info!(
         build_id,
         release_id = %release.id,
@@ -579,7 +586,33 @@ pub(crate) async fn record_upload(state: &AppState, build_id: &str) -> anyhow::R
         build_number = %ipa.build_number,
         "recorded App Store Connect upload"
     );
-    Ok(release.id)
+    Ok(Some(release.id))
+}
+
+async fn insert_release_link(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    release_id: &str,
+    pipeline_id: &str,
+    ipa: &UploadedIpa,
+    config_json: &str,
+) -> Result<(), sqlx::Error> {
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO app_store_release_links (
+            release_id, pipeline_id, bundle_id, version, build_number, config,
+            stage, next_poll_at, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'awaiting_build', ?7, ?7, ?7)",
+    )
+    .bind(release_id)
+    .bind(pipeline_id)
+    .bind(&ipa.bundle_id)
+    .bind(&ipa.version)
+    .bind(&ipa.build_number)
+    .bind(config_json)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 // ── Release monitor ─────────────────────────────────────────────
@@ -1093,10 +1126,6 @@ fn state_matches(
 /// Records what one poll read from Apple. Apple already holds that state, so
 /// nothing is sent back to App Store Connect.
 async fn apply_step(deps: ReleaseDeps<'_>, link: &LinkRow, step: Step) -> anyhow::Result<()> {
-    let record = ReleaseDeps {
-        store: &NoopReleaseStoreClient,
-        ..deps
-    };
     let mut next_poll_in = step.next_poll_in;
     let mut stage = step.stage;
     if let Some((target, target_fraction, reason)) = step.transition
@@ -1139,13 +1168,14 @@ async fn apply_step(deps: ReleaseDeps<'_>, link: &LinkRow, step: Step) -> anyhow
                 _ => to_fraction,
             };
             match releases::transition_release(
-                record,
+                deps,
                 &link.release_id,
                 ReleaseChange {
                     to_state,
                     to_fraction,
                     audit_action: "app_store_release_updated",
                     expect: expect.take(),
+                    from_store: true,
                 },
                 &ReleaseActor::System,
                 Some(&reason),
@@ -1230,19 +1260,16 @@ async fn try_record_poll_error(
             .chars()
             .take(500)
             .collect();
-    let record = ReleaseDeps {
-        store: &NoopReleaseStoreClient,
-        ..deps
-    };
     for to_state in transition_path(release.state, ReleaseState::Failed) {
         releases::transition_release(
-            record,
+            deps,
             release_id,
             ReleaseChange {
                 to_state,
                 to_fraction: None,
                 audit_action: "app_store_release_updated",
                 expect: None,
+                from_store: true,
             },
             &ReleaseActor::System,
             Some(&reason),
@@ -1596,6 +1623,7 @@ mod tests {
                 to_fraction: None,
                 audit_action: "release_paused",
                 expect: None,
+                from_store: false,
             },
             &ReleaseActor::System,
             None,
@@ -1896,5 +1924,74 @@ mod tests {
             beta_review_outcome(Some("BETA_REJECTED")).map(|(state, _)| state),
             Some(ReleaseState::Failed)
         );
+    }
+
+    async fn upload_pool() -> SqlitePool {
+        let pool = crate::releases::tests::pool().await;
+        sqlx::query(
+            "INSERT INTO pipeline_publish_targets (id, pipeline_id, store, enabled, config, created_at, updated_at) \
+             VALUES ('t1', 'pl1', 'app_store', 1, ?1, 0, 0)",
+        )
+        .bind(serde_json::to_string(&testflight(&["QA"])).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let metadata = serde_json::json!({
+            "ios_app": { "bundle_identifier": "com.example.app", "version": "1.2.0", "build_number": "42" },
+            "ios_signing": { "effective_export_method": "app-store-connect" }
+        });
+        sqlx::query(
+            "INSERT INTO artifacts (id, build_id, name, artifact_type, file_path, metadata, created_at) \
+             VALUES ('a1', 'b1', 'App.ipa', 'ipa', 'artifacts/b1/App.ipa', ?1, 0)",
+        )
+        .bind(metadata.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    async fn count(pool: &SqlitePool, sql: &'static str) -> i64 {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_upload_records_its_release_and_monitor_link_together() {
+        let pool = upload_pool().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let store = crate::releases::tests::FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        sqlx::raw_sql(
+            "CREATE TRIGGER fail_link BEFORE INSERT ON app_store_release_links \
+             BEGIN SELECT RAISE(ABORT, 'link insert failed'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(record_upload(deps, "b1").await.is_err());
+        assert_eq!(count(&pool, "SELECT COUNT(*) FROM releases").await, 0);
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM release_history").await,
+            0
+        );
+
+        sqlx::raw_sql("DROP TRIGGER fail_link")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let release_id = record_upload(deps, "b1").await.unwrap().unwrap();
+        assert_eq!(record_upload(deps, "b1").await.unwrap(), None);
+
+        assert_eq!(count(&pool, "SELECT COUNT(*) FROM releases").await, 1);
+        let linked: String = sqlx::query_scalar("SELECT release_id FROM app_store_release_links")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(linked, release_id);
     }
 }
