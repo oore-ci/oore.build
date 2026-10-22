@@ -102,7 +102,7 @@ autotag created.
 
 The workspace version in `Cargo.toml` is the release base. Autotag never increments this version.
 
-Autotag creates no tag until the workspace version is newer than the latest stable release.
+Autotag creates no tag until the workspace version is newer than the latest stable release. A release branch push that creates no tag fails the autotag run and says why in its summary.
 
 For `alpha` and `beta`, autotag increments only the pre-release number for that workspace version.
 
@@ -237,7 +237,7 @@ The workflow publishes release assets once and never replaces the assets of a pu
 
 It creates the GitHub release as a draft and publishes it only after every signed asset uploads.
 
-Before the signed channel index changes, the workflow deploys the installer that verifies these signatures. It generates that installer from protected `master` over stable site content. A deployment failure therefore stops the release instead of leaving an unsigned installation window.
+Before the signed channel index changes, the workflow deploys the installer that verifies these signatures. It generates that installer from protected `master` over the site content of the newest published stable release. A deployment failure therefore stops the release instead of leaving an unsigned installation window.
 
 Before index signing, every channel's history must be well formed, hold only that channel's releases newest first, and agree with its latest entry.
 

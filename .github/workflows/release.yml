@@ -817,11 +817,32 @@ jobs:
       actions: read
       contents: read
     steps:
+      - name: Resolve the published stable site source
+        id: site-source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Build the site from the newest published stable release, not the
+        # moving stable branch, so an alpha release never ships stable
+        # content that has not been released.
+        run: |
+          set -euo pipefail
+          stable_tag="$(
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' |
+              { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n1
+          )"
+          if [[ -n "$stable_tag" ]]; then
+            printf 'ref=refs/tags/%s\n' "$stable_tag" >> "$GITHUB_OUTPUT"
+          else
+            echo '::warning::No stable release is published yet. Building the site from the stable branch.'
+            printf 'ref=refs/heads/stable\n' >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: refs/heads/stable
+          ref: ${{ steps.site-source.outputs.ref }}
           path: site-source
 
       - name: Check out the trusted installer source
