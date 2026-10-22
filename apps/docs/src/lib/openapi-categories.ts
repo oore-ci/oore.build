@@ -33,7 +33,13 @@ export const OPENAPI_CATEGORIES = [
   {
     slug: 'pipelines',
     title: 'Pipelines',
-    tags: ['Pipelines', 'Pipeline Signing', 'Pipeline Publishing', 'Secrets'],
+    tags: [
+      'Pipelines',
+      'Pipeline Signing',
+      'Pipeline Publishing',
+      'Store Credentials',
+      'Secrets',
+    ],
   },
   { slug: 'setup', title: 'Setup', tags: ['Health', 'Setup'] },
   {
