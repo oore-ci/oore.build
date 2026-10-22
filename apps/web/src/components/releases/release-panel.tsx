@@ -106,7 +106,16 @@ function ReleaseCard({
     if (selected) cardRef.current?.scrollIntoView({ block: 'start' })
   }, [selected])
   const nowSeconds = useTime((time) => Math.floor(time / 60_000) * 60)
-  const detailQuery = useRelease(release.id)
+  // The build page polls the release list; refetch the detail (for its
+  // history) only when the list reports a change.
+  const detailQuery = useRelease(release.id, { poll: false })
+  const { refetch: refetchDetail } = detailQuery
+  const seenUpdatedAt = useRef(release.updated_at)
+  useEffect(() => {
+    if (seenUpdatedAt.current === release.updated_at) return
+    seenUpdatedAt.current = release.updated_at
+    void refetchDetail()
+  }, [release.updated_at, refetchDetail])
   // The detail poll is fresher than the list once it has loaded.
   const current = detailQuery.data?.release ?? release
 

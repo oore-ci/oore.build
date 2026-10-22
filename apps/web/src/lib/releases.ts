@@ -65,6 +65,18 @@ export function isLiveRelease(release: Pick<Release, 'state'>): boolean {
   return !TERMINAL_RELEASE_STATES.has(release.state)
 }
 
+const MOVING_RELEASE_STATES = new Set<ReleaseState>([
+  'uploading',
+  'processing',
+  'in_review',
+  'rolling',
+])
+
+/** Releases that change without anyone acting; halted and paused ones wait. */
+export function isMovingRelease(release: Pick<Release, 'state'>): boolean {
+  return MOVING_RELEASE_STATES.has(release.state)
+}
+
 export function getReleaseStateVariant(state: ReleaseState): BadgeVariant {
   return RELEASE_STATE_VARIANT[state]
 }

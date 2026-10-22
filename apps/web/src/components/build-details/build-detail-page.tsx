@@ -5,6 +5,7 @@ import {
   ArrowDown01Icon,
   Download04Icon,
   InformationCircleIcon,
+  Notification03Icon,
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from '@/lib/toast'
@@ -17,8 +18,11 @@ import { retryStepLabel } from '@/lib/build-steps'
 import { BuildSummary } from './build-summary'
 import { EventTimeline } from './event-timeline'
 import { TestsPanel } from './tests-panel'
-import type { BuildLogChunk } from '@oore/client/models'
-import { useBuildNotification } from '@/hooks/use-build-notification'
+import type { BuildLogChunk, StepResult } from '@oore/client/models'
+import {
+  useBuildNotification,
+  useNotificationPermission,
+} from '@/hooks/use-build-notification'
 import {
   isTerminalStatus,
   useArtifacts,
@@ -73,7 +77,12 @@ const CancelBuildDialog = lazy(loadCancelBuildDialog)
 const loadRejectBuildDialog = () => import('./reject-build-dialog')
 const RejectBuildDialog = lazy(loadRejectBuildDialog)
 
-function missingTabMessage(tab: string | number, shownTab: string | number) {
+const NO_STEP_RESULTS: Array<StepResult> = []
+
+function missingTabMessage(
+  tab: string | number,
+  shownTab: string | number | null,
+) {
   const reason =
     tab === 'tests'
       ? 'This build has no test results'
@@ -92,7 +101,6 @@ export function BuildDetailPage({
   initialTab?: string
   selectedReleaseId?: string
 }) {
-  const time = useTime()
   const navigate = useNavigate()
   const [
     canTriggerBuildGlobally,
@@ -129,6 +137,11 @@ export function BuildDetailPage({
     hasProjectPermission(projectRole, 'artifacts:write')
   const buildStatus = data?.build.status
   const isTerminal = buildStatus ? isTerminalStatus(buildStatus) : false
+  // Unfinished builds tick every second for their duration; finished builds
+  // only refresh relative times once a minute.
+  const nowSeconds = useTime((now) =>
+    isTerminal ? Math.floor(now / 60_000) * 60 : Math.floor(now / 1000),
+  )
   const artifactsQuery = useArtifacts(buildId, {
     refetchInterval: isTerminal ? false : 3000,
   })
@@ -169,11 +182,25 @@ export function BuildDetailPage({
   if (hasReleaseTab) availableTabs.add('release')
   const requestedTab = chosenTab ?? initialTab ?? null
   // A finished build with failing tests opens on Tests until the user picks a tab.
-  const defaultTab = isTerminal && testSummary?.failed ? 'tests' : 'logs'
+  // Decide once the build and its test results have loaded, then keep it, so
+  // the page never jumps from Logs to Tests under the user.
+  const settledDefaultTab = !buildStatus
+    ? null
+    : !isTerminal
+      ? 'logs'
+      : testsQuery.isPending
+        ? null
+        : testSummary?.failed
+          ? 'tests'
+          : 'logs'
+  const [defaultTab, setDefaultTab] = useState<string | null>(null)
+  if (defaultTab === null && settledDefaultTab !== null) {
+    setDefaultTab(settledDefaultTab)
+  }
   const activeTab =
     requestedTab !== null && availableTabs.has(requestedTab)
       ? requestedTab
-      : defaultTab
+      : (defaultTab ?? settledDefaultTab)
   const missingTab =
     chosenTab === null && initialTab && !availableTabs.has(initialTab)
       ? initialTab
@@ -184,6 +211,7 @@ export function BuildDetailPage({
     : 'Build Details'
 
   useBuildNotification(data?.build, isTerminal)
+  const notifications = useNotificationPermission()
 
   const streamEnabled = !isTerminal
   const { logs: streamLogs, isStreaming } = useLogStream(
@@ -307,7 +335,7 @@ export function BuildDetailPage({
   // A maintainer rejects rather than cancels a build waiting for approval.
   const canCancel = !isTerminal && canCancelBuild && !canDecideApproval
   const duration = build.started_at
-    ? (build.finished_at ?? Math.floor(time / 1000)) - build.started_at
+    ? (build.finished_at ?? nowSeconds) - build.started_at
     : null
   const stateSummary = buildStateSummary(build, events, {
     canApprove: canDecideApproval,
@@ -368,6 +396,12 @@ export function BuildDetailPage({
         }
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {!isTerminal && notifications.permission === 'default' ? (
+              <Button variant="ghost" size="sm" onClick={notifications.request}>
+                <HugeiconsIcon icon={Notification03Icon} size={14} />
+                Notify me when done
+              </Button>
+            ) : null}
             {installableApps.length === 1 ? (
               <Button
                 size="sm"
@@ -610,7 +644,7 @@ export function BuildDetailPage({
         <TabsContent value="logs" keepMounted className="flex min-h-0 flex-col">
           <TerminalLogViewer
             logs={mergedLogs}
-            stepResults={build.step_results ?? []}
+            stepResults={build.step_results ?? NO_STEP_RESULTS}
             isStreaming={isStreaming && !isTerminal}
             fillAvailableHeight
             isLoading={isTerminal && fullLogsQuery.isLoading}
