@@ -1426,7 +1426,16 @@ mod tests {
         assert_ne!(first.index, second.index);
         assert!(try_acquire_slot(&dir, 2).unwrap().is_none());
         drop(first);
-        assert!(try_acquire_slot(&dir, 2).unwrap().is_some());
+        // A child forked by a concurrent test inherits the lock's descriptor
+        // until it execs, so the released slot can stay held for a moment.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while try_acquire_slot(&dir, 2).unwrap().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the released slot stayed locked"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         drop(second);
         let _ = fs::remove_dir_all(&dir);
     }

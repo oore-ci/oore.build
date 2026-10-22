@@ -2036,12 +2036,13 @@ mod operations {
 
     /// Delete instance secret
     #[utoipa::path(delete, path = "/v1/secrets/{name}", tag = "Secrets",
-        params(("name" = String, Path, description = "Secret name")),
+        params(("name" = String, Path, description = "Secret name"), ("force" = Option<bool>, Query, description = "Delete even when Google Play publishing uses the secret")),
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Secret deleted", body = OkResponse),
             (status = 403, description = "Permission denied", body = ApiError),
             (status = 404, description = "Secret not found", body = ApiError),
+            (status = 409, description = "A pipeline uses the secret as its Google Play service account", body = ApiError),
         )
     )]
     pub(super) fn delete_instance_secret() {}
@@ -2092,12 +2093,13 @@ mod operations {
 
     /// Delete project secret
     #[utoipa::path(delete, path = "/v1/projects/{project_id}/secrets/{name}", tag = "Secrets",
-        params(("project_id" = String, Path, description = "Project ID"), ("name" = String, Path, description = "Secret name")),
+        params(("project_id" = String, Path, description = "Project ID"), ("name" = String, Path, description = "Secret name"), ("force" = Option<bool>, Query, description = "Delete even when Google Play publishing uses the secret")),
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Secret deleted", body = OkResponse),
             (status = 403, description = "Permission denied", body = ApiError),
             (status = 404, description = "Secret not found", body = ApiError),
+            (status = 409, description = "A pipeline uses the secret as its Google Play service account", body = ApiError),
         )
     )]
     pub(super) fn delete_project_secret() {}
@@ -2148,12 +2150,13 @@ mod operations {
 
     /// Delete pipeline secret
     #[utoipa::path(delete, path = "/v1/pipelines/{pipeline_id}/secrets/{name}", tag = "Secrets",
-        params(("pipeline_id" = String, Path, description = "Pipeline ID"), ("name" = String, Path, description = "Secret name")),
+        params(("pipeline_id" = String, Path, description = "Pipeline ID"), ("name" = String, Path, description = "Secret name"), ("force" = Option<bool>, Query, description = "Delete even when Google Play publishing uses the secret")),
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Secret deleted", body = OkResponse),
             (status = 403, description = "Permission denied", body = ApiError),
             (status = 404, description = "Secret not found", body = ApiError),
+            (status = 409, description = "A pipeline uses the secret as its Google Play service account", body = ApiError),
         )
     )]
     pub(super) fn delete_pipeline_secret() {}
@@ -2288,7 +2291,7 @@ mod operations {
             (status = 201, description = "Build queued", body = CreateBuildResponse),
             (status = 400, description = "Invalid input", body = ApiError),
             (status = 404, description = "Project or pipeline not found", body = ApiError),
-            (status = 409, description = "Project source is not configured or resolvable", body = ApiError),
+            (status = 409, description = "Project source is not configured or resolvable, or the Google Play service account secret is missing", body = ApiError),
         )
     )]
     pub(super) fn create_build() {}
@@ -2365,14 +2368,14 @@ mod operations {
 
     /// Refresh store vitals
     ///
-    /// Reads the stores now for the caller's apps, for example right after
-    /// granting a missing permission, and returns the fresh copy. One refresh
-    /// runs at a time, at most every 30 seconds.
+    /// Asks the daemon to read the stores now for the caller's apps, for
+    /// example right after granting a missing permission. Waits up to 20
+    /// seconds for the reads and returns what has been read by then. Apps read
+    /// in the last 30 seconds are not read again.
     #[utoipa::path(post, path = "/v1/store-vitals/refresh", tag = "Releases",
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Store vitals after the refresh", body = StoreVitalsResponse),
-            (status = 429, description = "A refresh is running or just ran", body = ApiError),
         )
     )]
     pub(super) fn refresh_store_vitals() {}
