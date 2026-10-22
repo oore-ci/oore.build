@@ -8605,22 +8605,34 @@ fn stop_user_launchd_service(service: &str) -> anyhow::Result<()> {
     if !output.status.success() && user_launchd_service_loaded(service) {
         anyhow::bail!("failed to stop legacy runner service {service}");
     }
-    if !wait_for_launchd_service_unloaded(|| Ok(user_launchd_service_loaded(service)))? {
+    if !wait_for_launchd_service_unloaded(LAUNCHD_RUNNER_UNLOAD_TIMEOUT, || {
+        Ok(user_launchd_service_loaded(service))
+    })? {
         anyhow::bail!("failed to stop legacy runner service {service}");
     }
     Ok(())
 }
 
+/// How long a runner service may take to leave launchd after bootout.
+const LAUNCHD_RUNNER_UNLOAD_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the daemon or web service may take to leave launchd after bootout.
+/// It covers launchd's default 20 second exit timeout before it kills the job.
+const LAUNCHD_SERVICE_UNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
+
 fn wait_for_launchd_service_unloaded(
+    timeout: Duration,
     mut is_loaded: impl FnMut() -> anyhow::Result<bool>,
 ) -> anyhow::Result<bool> {
-    for _ in 0..20 {
+    let deadline = Instant::now() + timeout;
+    loop {
         if !is_loaded()? {
             return Ok(true);
         }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
-    Ok(false)
 }
 
 fn system_launchd_service_loaded(service: &str) -> anyhow::Result<bool> {
@@ -8683,7 +8695,9 @@ fn stop_system_launchd_service(service: &str) -> anyhow::Result<()> {
         "/bin/launchctl",
         &[OsStr::new("bootout"), OsStr::new(service)],
     );
-    if !wait_for_launchd_service_unloaded(|| system_launchd_service_loaded(service))? {
+    if !wait_for_launchd_service_unloaded(LAUNCHD_RUNNER_UNLOAD_TIMEOUT, || {
+        system_launchd_service_loaded(service)
+    })? {
         anyhow::bail!("failed to stop system runner service {service}");
     }
     Ok(())
@@ -9768,6 +9782,16 @@ fn restart_launchd_service(label: &str) -> anyhow::Result<()> {
         if !status.success() && launchd_service_loaded(label) {
             anyhow::bail!("failed to stop managed service {label} before restart");
         }
+        // Bootstrapping while the old job is still tearing down fails with
+        // "Input/output error" or "already in progress".
+        if !wait_for_launchd_service_unloaded(LAUNCHD_SERVICE_UNLOAD_TIMEOUT, || {
+            Ok(launchd_service_loaded(label))
+        })? {
+            anyhow::bail!(
+                "managed service {label} did not unload within {} seconds of being stopped for restart",
+                LAUNCHD_SERVICE_UNLOAD_TIMEOUT.as_secs()
+            );
+        }
     }
 
     let mut bootstrap = std::process::Command::new(command);
@@ -9814,6 +9838,14 @@ fn stop_launchd_service(label: &str) -> anyhow::Result<()> {
     )?;
     if !status.success() && launchd_service_loaded(label) {
         anyhow::bail!("failed to stop managed service {label}");
+    }
+    if !wait_for_launchd_service_unloaded(LAUNCHD_SERVICE_UNLOAD_TIMEOUT, || {
+        Ok(launchd_service_loaded(label))
+    })? {
+        anyhow::bail!(
+            "managed service {label} did not unload within {} seconds of being stopped",
+            LAUNCHD_SERVICE_UNLOAD_TIMEOUT.as_secs()
+        );
     }
     Ok(())
 }
@@ -13102,5 +13134,21 @@ mod tests {
         let started = Instant::now();
         drop(SudoKeepalive::start());
         assert!(started.elapsed() < SUDO_KEEPALIVE_INTERVAL / 2);
+    }
+
+    #[test]
+    fn launchd_unload_waits_until_the_job_leaves_or_the_timeout_passes() {
+        let mut polls = 0;
+        assert!(
+            wait_for_launchd_service_unloaded(Duration::from_secs(5), || {
+                polls += 1;
+                Ok(polls < 3)
+            })
+            .unwrap()
+        );
+        assert_eq!(polls, 3);
+        assert!(
+            !wait_for_launchd_service_unloaded(Duration::from_millis(250), || Ok(true)).unwrap()
+        );
     }
 }
