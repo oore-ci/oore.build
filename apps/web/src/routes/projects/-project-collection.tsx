@@ -14,9 +14,11 @@ import {
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
 import RepositoryAvatar from '@/components/repository-avatar'
+import { StatusBadge } from '@/components/status-badge'
+import { usePipelines } from '@/hooks/use-pipelines'
 import { EmptyValue } from '@/components/table-values'
 import { relativeTime } from '@/lib/format-utils'
-import type { Project } from '@oore/client/models'
+import type { Project, ProjectBuildInsights } from '@oore/client/models'
 import ProjectActionsMenu from './-project-actions-menu'
 
 export type ProjectSort = 'created_at' | 'updated_at' | 'name'
@@ -51,8 +53,71 @@ function ProjectIdentity({ project }: { project: Project }) {
   )
 }
 
+/** Newest finished build in the insights window, with its success rate. */
+function ProjectLastBuild({
+  insights,
+  isLoading,
+  projectId,
+}: {
+  insights: ProjectBuildInsights | undefined
+  isLoading: boolean
+  projectId: string
+}) {
+  if (!insights) {
+    return (
+      <span className="text-muted-foreground">
+        {isLoading ? '…' : 'No recent builds'}
+      </span>
+    )
+  }
+  const rate = insights.totals.success_rate
+  return (
+    <Link
+      to="/projects/$projectId"
+      params={{ projectId }}
+      search={{ tab: 'builds' }}
+      className="flex flex-col items-start gap-0.5"
+      aria-label={`Builds for ${insights.project_name}`}
+    >
+      <StatusBadge kind="build" value={insights.last_status} />
+      <span className="text-xs text-muted-foreground">
+        {relativeTime(insights.last_finished_at)}
+        {rate != null ? ` · ${Math.round(rate * 100)}% succeeded` : ''}
+      </span>
+    </Link>
+  )
+}
+
+function ProjectPipelineCount({ projectId }: { projectId: string }) {
+  const pipelinesQuery = usePipelines(projectId, { limit: 1 })
+  const total = pipelinesQuery.data?.total
+  if (total === undefined) {
+    return (
+      <span className="text-muted-foreground">
+        {pipelinesQuery.isLoading ? '…' : 'Unavailable'}
+      </span>
+    )
+  }
+  return (
+    <Link
+      to="/projects/$projectId"
+      params={{ projectId }}
+      search={{ tab: 'pipelines' }}
+      className={
+        total === 0
+          ? 'text-muted-foreground underline-offset-4 hover:underline'
+          : 'tabular-nums underline-offset-4 hover:underline'
+      }
+    >
+      {total === 0 ? 'None' : total}
+    </Link>
+  )
+}
+
 function getProjectColumns(
   canManageProject: (project: Project) => boolean,
+  insightsByProject: ReadonlyMap<string, ProjectBuildInsights>,
+  insightsLoading: boolean,
 ): Array<DataTableColumnDef<Project>> {
   return [
     {
@@ -61,17 +126,50 @@ function getProjectColumns(
         <DataTableColumnHeader column={column} title="Project" />
       ),
       cell: ({ row }) => <ProjectIdentity project={row.original} />,
+      enableHiding: false,
+    },
+    {
+      id: 'last_build',
+      header: 'Last build',
+      cell: ({ row }) => (
+        <ProjectLastBuild
+          insights={insightsByProject.get(row.original.id)}
+          isLoading={insightsLoading}
+          projectId={row.original.id}
+        />
+      ),
+      enableSorting: false,
+    },
+    {
+      id: 'pipelines',
+      header: 'Pipelines',
+      cell: ({ row }) => <ProjectPipelineCount projectId={row.original.id} />,
+      enableSorting: false,
     },
     {
       accessorKey: 'default_branch',
       header: 'Default branch',
-      cell: ({ row }) => row.original.default_branch ?? <EmptyValue />,
+      cell: ({ row }) =>
+        row.original.default_branch ? (
+          <span className="font-mono text-xs">
+            {row.original.default_branch}
+          </span>
+        ) : (
+          <EmptyValue />
+        ),
       enableSorting: false,
     },
     {
       accessorKey: 'description',
       header: 'Description',
-      cell: ({ row }) => row.original.description || <EmptyValue />,
+      cell: ({ row }) =>
+        row.original.description ? (
+          <span className="line-clamp-2 max-w-80 whitespace-normal">
+            {row.original.description}
+          </span>
+        ) : (
+          <EmptyValue />
+        ),
       enableSorting: false,
     },
     {
@@ -100,6 +198,8 @@ export function ProjectCollection({
   direction,
   emptyState,
   error,
+  insights,
+  insightsLoading,
   isLoading,
   isRefreshing,
   onPageChange,
@@ -117,6 +217,9 @@ export function ProjectCollection({
   direction: SortDirection
   emptyState: ReactNode
   error: Error | null
+  /** Build health per project for the insights window. */
+  insights: ReadonlyArray<ProjectBuildInsights> | undefined
+  insightsLoading: boolean
   isLoading: boolean
   isRefreshing: boolean
   onPageChange: (page: number) => void
@@ -130,9 +233,15 @@ export function ProjectCollection({
   sort: ProjectSort
   total: number
 }) {
+  const insightsByProject = useMemo(
+    () =>
+      new Map((insights ?? []).map((project) => [project.project_id, project])),
+    [insights],
+  )
   const columns = useMemo(
-    () => getProjectColumns(canManageProject),
-    [canManageProject],
+    () =>
+      getProjectColumns(canManageProject, insightsByProject, insightsLoading),
+    [canManageProject, insightsByProject, insightsLoading],
   )
   const sorting = useMemo(
     () => dataTableSortingState(sort, direction),
@@ -142,6 +251,8 @@ export function ProjectCollection({
     columns,
     data: projects,
     getRowId: (project) => project.id,
+    // Description stays one click away in Columns so status gets the width.
+    initialState: { columnVisibility: { description: false } },
     state: { sorting },
     onSortingChange: (updater) => {
       const next = resolveDataTableSorting(

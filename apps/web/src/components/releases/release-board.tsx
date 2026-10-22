@@ -123,11 +123,14 @@ function ReleaseRow({
   )
 }
 
-/** Home's view of every release that is still moving or waiting on someone. */
-export function ReleaseBoard() {
+/**
+ * Every release that is still moving or waiting on someone: instance-wide on
+ * Home, or one project's on its overview.
+ */
+export function ReleaseBoard({ projectId }: { projectId?: string } = {}) {
   const nowSeconds = useTime((time) => Math.floor(time / 60_000) * 60)
   const releasesQuery = useReleases(
-    { state: LIVE_STATE_QUERY, limit: 50 },
+    { project_id: projectId, state: LIVE_STATE_QUERY, limit: 50 },
     { select: selectReleases },
   )
   const storeAnchors = new Set(

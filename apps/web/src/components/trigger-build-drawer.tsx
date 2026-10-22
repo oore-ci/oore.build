@@ -83,6 +83,16 @@ const triggerBuildSchema = z
 
 type TriggerBuildForm = z.infer<typeof triggerBuildSchema>
 
+/** The same optional marker as the New project drawer. */
+function OptionalLabel({ children }: { children: string }) {
+  return (
+    <FormLabel>
+      {children}{' '}
+      <span className="font-normal text-muted-foreground">(optional)</span>
+    </FormLabel>
+  )
+}
+
 function PlatformSelectionField({
   form,
   platforms,
@@ -805,7 +815,14 @@ export default function TriggerBuildDrawer({
                       <FormControl>
                         <ComboboxInput
                           className="w-full"
-                          placeholder={defaultBranch ?? 'main'}
+                          disabled={!projectId}
+                          placeholder={
+                            projectId
+                              ? (activeProject?.default_branch ??
+                                defaultBranch ??
+                                'Enter a branch')
+                              : 'Select a project first'
+                          }
                           autoComplete="off"
                         />
                       </FormControl>
@@ -835,18 +852,19 @@ export default function TriggerBuildDrawer({
                 name="commit_sha"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Commit SHA (optional)</FormLabel>
+                    <OptionalLabel>Commit SHA</OptionalLabel>
                     <FormControl>
                       <Input
                         placeholder="e.g. a1b2c3d4..."
                         autoComplete="off"
                         className="font-mono"
+                        disabled={!projectId}
                         {...field}
                       />
                     </FormControl>
-                    <p className="text-xs text-muted-foreground">
+                    <FormDescription>
                       If set, the runner checks out this exact commit.
-                    </p>
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -856,8 +874,8 @@ export default function TriggerBuildDrawer({
                 control={form.control}
                 name="changelog"
                 render={({ field }) => (
-                  <FormItem className="pb-4">
-                    <FormLabel>What changed? (optional)</FormLabel>
+                  <FormItem>
+                    <OptionalLabel>What changed?</OptionalLabel>
                     <FormControl>
                       <Textarea
                         {...field}
@@ -866,24 +884,33 @@ export default function TriggerBuildDrawer({
                           changelogPreviewQuery.data?.markdown ??
                           ''
                         }
-                        placeholder="No changes found since the previous build."
+                        disabled={!selectedPipelineId}
+                        placeholder={
+                          selectedPipelineId
+                            ? 'No changes found since the previous build.'
+                            : 'Choose a pipeline to draft release notes from its commits.'
+                        }
                         rows={5}
                       />
                     </FormControl>
                     <FormDescription>
-                      {changelogPreviewQuery.isFetching
-                        ? 'Drafting from commits since the previous successful build…'
-                        : changelogPreviewQuery.error
-                          ? 'Could not generate a draft. You can still write one.'
-                          : changelogPreviewQuery.data?.target_commit
-                            ? `Drafted from commits up to ${changelogPreviewQuery.data.target_commit.slice(0, 7)}. The build uses the latest commit on the branch when it starts. Markdown supported.`
-                            : 'Drafted from commit titles and authors. Edit or clear it before running. Markdown supported.'}
+                      {!selectedPipelineId
+                        ? 'Drafted from commit titles and authors once a pipeline is chosen. Markdown supported.'
+                        : changelogPreviewQuery.isFetching
+                          ? 'Drafting from commits since the previous successful build…'
+                          : changelogPreviewQuery.error
+                            ? 'Could not generate a draft. You can still write one.'
+                            : changelogPreviewQuery.data?.target_commit
+                              ? `Drafted from commits up to ${changelogPreviewQuery.data.target_commit.slice(0, 7)}. The build uses the latest commit on the branch when it starts. Markdown supported.`
+                              : 'Drafted from commit titles and authors. Edit or clear it before running. Markdown supported.'}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-
+            </div>
+            {/* Outside the scroll area so the footer never covers them. */}
+            <div className="flex shrink-0 flex-col gap-2 px-4 pb-4">
               <TriggerBuildBlockingAlerts
                 projectId={projectId}
                 canConfigure={
@@ -921,8 +948,8 @@ export default function TriggerBuildDrawer({
                     rel="noopener noreferrer"
                     className="underline underline-offset-4"
                   >
-                    Runners{' '}
-                    <span className="sr-only">(opens in a new tab)</span>
+                    View runners
+                    <span className="sr-only"> (opens in a new tab)</span>
                   </Link>
                   .
                 </AlertDescription>

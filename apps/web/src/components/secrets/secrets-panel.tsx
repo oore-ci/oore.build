@@ -221,6 +221,14 @@ export function SecretsPanel({
     }
   }
   const visibleInherited = [...inheritedByName.values()]
+  const inheritedScopes = new Set(
+    visibleInherited.map((secret) => secret.scope),
+  )
+  const [onlyInheritedScope] = inheritedScopes
+  const inheritedHeading =
+    inheritedScopes.size === 1 && onlyInheritedScope
+      ? `Inherited from ${SCOPE_LABEL[onlyInheritedScope].toLowerCase()}`
+      : 'Inherited from broader scopes'
 
   function handleDelete() {
     if (!deleteName) return
@@ -311,7 +319,7 @@ export function SecretsPanel({
       {visibleInherited.length > 0 ? (
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
-            <h3 className="text-sm font-medium">Inherited secrets</h3>
+            <h3 className="text-sm font-medium">{inheritedHeading}</h3>
             <p className="text-sm text-muted-foreground">
               Builds here can use these too. Manage them where they are stored;
               a secret above with the same name overrides them.

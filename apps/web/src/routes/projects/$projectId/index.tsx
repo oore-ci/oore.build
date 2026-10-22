@@ -28,7 +28,6 @@ import { relativeTime } from '@/lib/format-utils'
 import { isOoreApiError } from '@oore/client/client'
 import { PageMeta } from '@/lib/seo'
 import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
-import type { ListBuildsResponse } from '@oore/client/models'
 import type { SortDirection } from '@/components/data-table-features'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import ConfirmDialog from '@/components/ConfirmDialog'
@@ -47,6 +46,10 @@ import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ProjectPipelinesTab } from './-project-pipelines-tab'
+import {
+  EMPTY_LAST_BUILD_BY_PIPELINE,
+  selectProjectBuildSummary,
+} from './-project-build-summary'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 
 const ProjectOverview = lazy(() => import('./-project-overview'))
@@ -106,29 +109,6 @@ const PROJECT_BUILD_SORT_VALUES = new Set<ProjectBuildSort>([
   'pipeline_name',
   'branch',
 ])
-
-const EMPTY_LAST_BUILD_BY_PIPELINE = new Map<
-  string,
-  { status: string; time: number }
->()
-
-function selectProjectBuildSummary({ builds, total }: ListBuildsResponse) {
-  const lastBuildByPipeline = new Map<
-    string,
-    { status: string; time: number }
-  >()
-
-  for (const build of builds) {
-    if (build.pipeline_id && !lastBuildByPipeline.has(build.pipeline_id)) {
-      lastBuildByPipeline.set(build.pipeline_id, {
-        status: build.status,
-        time: build.queued_at,
-      })
-    }
-  }
-
-  return { buildCount: total, lastBuildByPipeline, builds }
-}
 
 function validateProjectSearch(search: SearchInput): ProjectDetailSearch {
   const tab = searchString(search, 'tab')
@@ -574,6 +554,11 @@ function ProjectDetailPage() {
                 projectId={projectId}
                 projectName={project.name}
                 builds={buildSummary?.builds ?? []}
+                lastBuildByPipeline={lastBuildByPipeline}
+                // The Pipelines tab's search and page share this query.
+                pipelines={
+                  search.pipelineQ || pipelinePage > 1 ? [] : pipelines
+                }
                 loading={buildSummaryQuery.isLoading}
                 error={buildSummaryQuery.error}
                 onRetry={() => void buildSummaryQuery.refetch()}
