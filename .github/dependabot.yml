@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Workflows pin third-party actions to commit SHAs; this keeps them current.
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - '*'
