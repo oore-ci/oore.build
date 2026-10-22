@@ -25,7 +25,7 @@ use crate::project_rbac::{
 use crate::rbac::check_permission;
 use crate::runners::{RunnerAuth, require_active_job_signing_grant};
 use crate::store::write_audit_log;
-use crate::util::{api_err, now_unix};
+use crate::util::{api_err, is_unique_violation, now_unix};
 
 type ApiFailure = (StatusCode, Json<ApiError>);
 type ApiResult<T> = Result<Json<T>, ApiFailure>;
@@ -59,6 +59,14 @@ impl SecretTarget {
 fn store_error(context: &str, e: impl std::fmt::Display) -> ApiFailure {
     error!(error = %e, "{context}");
     api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", context)
+}
+
+fn secret_exists(name: &str) -> ApiFailure {
+    api_err(
+        StatusCode::CONFLICT,
+        "secret_exists",
+        format!("Secret '{name}' already exists in this scope; rotate it instead"),
+    )
 }
 
 fn parse_scope(raw: &str) -> SecretScope {
@@ -179,11 +187,7 @@ async fn create_for_target(
     validate_value(&req.value)?;
 
     if find_summary(&state.db, &target, &name).await?.is_some() {
-        return Err(api_err(
-            StatusCode::CONFLICT,
-            "secret_exists",
-            format!("Secret '{name}' already exists in this scope; rotate it instead"),
-        ));
+        return Err(secret_exists(&name));
     }
 
     let encrypted = crypto::encrypt(&req.value, &state.encryption_key).map_err(|e| {
@@ -194,6 +198,24 @@ async fn create_for_target(
             "Failed to encrypt secret",
         )
     })?;
+    insert_secret(&state.db, &target, &name, &encrypted, &auth.0.user_id).await?;
+
+    audit(&state.db, auth, "secret_created", &target, &name).await;
+    info!(name = %name, scope = target.scope.as_str(), actor = %auth.0.email, "created secret");
+
+    let secret = find_summary(&state.db, &target, &name)
+        .await?
+        .ok_or_else(|| store_error("Failed to load secret", "secret vanished after insert"))?;
+    Ok((StatusCode::CREATED, Json(SecretResponse { secret })))
+}
+
+async fn insert_secret(
+    pool: &SqlitePool,
+    target: &SecretTarget,
+    name: &str,
+    encrypted: &str,
+    actor_id: &str,
+) -> Result<(), ApiFailure> {
     let now = now_unix();
     sqlx::query(
         "INSERT INTO secrets (
@@ -205,21 +227,21 @@ async fn create_for_target(
     .bind(target.scope.as_str())
     .bind(&target.project_id)
     .bind(&target.pipeline_id)
-    .bind(&name)
+    .bind(name)
     .bind(encrypted)
-    .bind(&auth.0.user_id)
+    .bind(actor_id)
     .bind(now)
-    .execute(&state.db)
+    .execute(pool)
     .await
-    .map_err(|e| store_error("Failed to save secret", e))?;
-
-    audit(&state.db, auth, "secret_created", &target, &name).await;
-    info!(name = %name, scope = target.scope.as_str(), actor = %auth.0.email, "created secret");
-
-    let secret = find_summary(&state.db, &target, &name)
-        .await?
-        .ok_or_else(|| store_error("Failed to load secret", "secret vanished after insert"))?;
-    Ok((StatusCode::CREATED, Json(SecretResponse { secret })))
+    .map_err(|e| {
+        // A concurrent request created it after the caller's check.
+        if is_unique_violation(&e) {
+            secret_exists(name)
+        } else {
+            store_error("Failed to save secret", e)
+        }
+    })?;
+    Ok(())
 }
 
 async fn rotate_for_target(
@@ -888,6 +910,32 @@ mod tests {
             .await
             .unwrap();
         assert!(!stored.contains("plain-value"));
+    }
+
+    #[tokio::test]
+    async fn a_lost_create_race_is_a_conflict() {
+        let pool = pool().await;
+        let target = SecretTarget {
+            scope: SecretScope::Project,
+            project_id: Some("p1".to_string()),
+            pipeline_id: None,
+        };
+        insert(
+            &pool,
+            &[7u8; 32],
+            "project",
+            Some("p1"),
+            None,
+            "TOKEN",
+            "first",
+        )
+        .await;
+
+        let (status, Json(error)) = insert_secret(&pool, &target, "TOKEN", "second", "u1")
+            .await
+            .unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(error.code, "secret_exists");
     }
 
     fn target(scope: SecretScope, project: Option<&str>, pipeline: Option<&str>) -> SecretTarget {

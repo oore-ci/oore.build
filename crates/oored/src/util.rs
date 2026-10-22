@@ -45,6 +45,21 @@ pub fn api_err(
     (status, Json(ApiError::new(code, message)))
 }
 
+/// Whether a write failed on a UNIQUE constraint, as when a concurrent request
+/// inserted the same name between a check and the insert.
+pub fn is_unique_violation(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Database(db) if db.is_unique_violation())
+}
+
+/// Whether a write failed on a FOREIGN KEY constraint, as when a concurrent
+/// request removed or attached the referenced row.
+pub fn is_foreign_key_violation(error: &sqlx::Error) -> bool {
+    // SQLite reports an `ON DELETE RESTRICT` refusal with the trigger
+    // constraint code, which sqlx does not classify as a foreign key error.
+    matches!(error, sqlx::Error::Database(db)
+        if db.is_foreign_key_violation() || db.message().contains("FOREIGN KEY constraint failed"))
+}
+
 /// Convert Axum's plain-text extractor rejections into the API error envelope.
 pub async fn normalize_extractor_rejection(request: Request, next: Next) -> Response {
     let response = next.run(request).await;

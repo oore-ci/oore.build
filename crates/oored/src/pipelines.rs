@@ -307,7 +307,7 @@ fn validate_timeout_minutes(minutes: u32) -> Vec<String> {
 }
 
 fn validate_approval_policy(policy: &ApprovalPolicy) -> Vec<String> {
-    policy
+    let mut errors: Vec<String> = policy
         .events
         .iter()
         .filter(|event| !ApprovalPolicy::EVENTS.contains(&event.as_str()))
@@ -317,7 +317,17 @@ fn validate_approval_policy(policy: &ApprovalPolicy) -> Vec<String> {
                 ApprovalPolicy::EVENTS.join(", ")
             )
         })
-        .collect()
+        .collect();
+    if policy
+        .expires_after_hours
+        .is_some_and(|hours| !(1..=ApprovalPolicy::MAX_EXPIRES_AFTER_HOURS).contains(&hours))
+    {
+        errors.push(format!(
+            "approval.expires_after_hours must be between 1 and {}",
+            ApprovalPolicy::MAX_EXPIRES_AFTER_HOURS
+        ));
+    }
+    errors
 }
 
 fn validate_manual_only_trigger_config(tc: &TriggerConfig) -> Vec<String> {

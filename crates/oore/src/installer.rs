@@ -942,7 +942,7 @@ fn validate_sha256(value: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn validate_release_base_url(value: &str) -> anyhow::Result<()> {
+pub(crate) fn validate_release_base_url(value: &str) -> anyhow::Result<()> {
     let url = url::Url::parse(value).context("OORE_RELEASE_BASE_URL is not a valid URL")?;
     anyhow::ensure!(
         url.username().is_empty()

@@ -108,12 +108,8 @@ fn unavailable_message(preflight: &RuntimeUpdatePreflight) -> String {
 }
 
 fn install_root_from_current_exe() -> anyhow::Result<PathBuf> {
-    let executable = std::env::current_exe().context("failed to locate oored")?;
-    executable
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .context("installed oored path has no install root")
+    oore_contract::install_root::install_root_for_current_executable()
+        .context("oored is not running from an Oore install root")
 }
 
 fn update_status_path() -> anyhow::Result<PathBuf> {

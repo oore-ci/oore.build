@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 
 pub mod data_paths;
+pub mod install_root;
 pub mod runtime_update_preflight;
 
 // ── Setup state machine ─────────────────────────────────────────
@@ -1350,11 +1351,17 @@ pub struct ApprovalPolicy {
     /// `tag_push`, `manual` or `schedule`. Empty means every build.
     #[serde(default)]
     pub events: Vec<String>,
+    /// Hours a build waits for a decision before it is canceled. Defaults
+    /// to 168 (7 days).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_after_hours: Option<u32>,
 }
 
 impl ApprovalPolicy {
     pub const EVENTS: &'static [&'static str] =
         &["push", "pull_request", "tag_push", "manual", "schedule"];
+    pub const DEFAULT_EXPIRES_AFTER_HOURS: u32 = 7 * 24;
+    pub const MAX_EXPIRES_AFTER_HOURS: u32 = 365 * 24;
 
     /// Whether a build started by `event` (a canonical trigger event, or
     /// `manual` / `schedule`) must wait for approval.
@@ -3807,10 +3814,13 @@ pub fn validate_google_play_publish_config(config: &GooglePlayPublishConfig) -> 
             errors.push("a draft release cannot have a staged rollout".to_string());
         }
     }
-    if let Some(policy) = &config.rollout_policy
-        && let Err(error) = policy.validate()
-    {
-        errors.push(error);
+    if let Some(policy) = &config.rollout_policy {
+        if let Err(error) = policy.validate() {
+            errors.push(error);
+        }
+        if let Err(error) = policy.validate_gate() {
+            errors.push(error);
+        }
     }
     if config.release_notes_locale.trim().is_empty() || config.release_notes_locale.len() > 16 {
         errors.push("release_notes_locale must be a Play language code such as en-US".to_string());
@@ -5170,7 +5180,8 @@ impl ReleaseHealth {
 pub enum ReleaseApprovalGate {
     #[default]
     None,
-    /// Approval before the runner uploads (release waits in `uploading`).
+    /// Not supported: rejected when a policy is saved. Use the pipeline's
+    /// build approval to hold a build before it uploads.
     BeforeUpload,
     /// Approval before a `production` track release starts rolling out.
     BeforeProduction,
@@ -5239,6 +5250,19 @@ impl ReleasePolicy {
             return Err("policy.crash_rate_threshold must be a fraction in (0, 1]".into());
         }
         Ok(())
+    }
+
+    /// Rejects approval gates Oore cannot enforce. The runner uploads before
+    /// a release exists, so nothing could hold a `before_upload` release;
+    /// gate the build with the pipeline's approval policy instead. Saved
+    /// policies that already use it still load.
+    pub fn validate_gate(&self) -> Result<(), String> {
+        match self.approval {
+            ReleaseApprovalGate::BeforeUpload => Err(
+                "policy.approval before_upload is not supported; require build approval on the pipeline or use before_production".into(),
+            ),
+            ReleaseApprovalGate::None | ReleaseApprovalGate::BeforeProduction => Ok(()),
+        }
     }
 
     /// First policy step above `fraction`.
@@ -5593,6 +5617,10 @@ mod tests {
             (
                 serde_json::json!({"in_app_update_priority": 6}),
                 "in_app_update_priority",
+            ),
+            (
+                serde_json::json!({"rollout_policy": {"approval": "before_upload"}}),
+                "before_upload is not supported",
             ),
         ] {
             let mut value = base.clone();

@@ -127,14 +127,21 @@ enum Commands {
     Uninstall(uninstaller::UninstallArgs),
     /// Configure this device and finish first-run setup
     Setup(Box<SetupArgs>),
+    /// Create a short-lived frontend pairing invitation
     Frontend(FrontendArgs),
+    /// Create a Local Only session or import an existing session
     Login(LoginArgs),
     /// Mint a single-use browser recovery link over the local management socket.
     Recovery(RecoveryArgs),
+    /// Show public setup status and authenticated runtime details
     Status(StatusArgs),
+    /// Register, start, install, or remove a Direct macOS runner
     Runner(RunnerArgs),
+    /// Read or write persistent CLI defaults
     Config(ConfigArgs),
+    /// Check the host and selected build-platform toolchains
     Doctor(DoctorArgs),
+    /// Validate repository pipeline configuration
     Pipeline(PipelineArgs),
     /// Print the installed oore version
     Version,
@@ -6023,7 +6030,7 @@ async fn fetch_latest_release(
         &format!("{} release index", channel.as_str()),
     )
     .await?;
-    let release: ReleaseManifest =
+    let mut release: ReleaseManifest =
         serde_json::from_slice(&payload).context("failed to parse release index JSON")?;
     if release.schema_version != 1 || release.channel != channel.as_str() {
         anyhow::bail!(
@@ -6037,12 +6044,21 @@ async fn fetch_latest_release(
             release.tag
         );
     }
+    // A mirror serves the same signed checksum manifest, so assets stay bound
+    // to the release key wherever they are downloaded from.
+    if let Ok(base) = std::env::var("OORE_RELEASE_BASE_URL") {
+        installer::validate_release_base_url(&base)?;
+        release.download_base_url = format!("{}/{}", base.trim_end_matches('/'), release.tag);
+        return Ok(release);
+    }
     let expected_download_base = format!(
         "https://github.com/{repo}/releases/download/{}",
         release.tag
     );
     if release.download_base_url.trim_end_matches('/') != expected_download_base {
-        anyhow::bail!("release index asset source does not match GitHub repo {repo}");
+        anyhow::bail!(
+            "release index asset source does not match GitHub repo {repo}; to update through a release mirror, set OORE_RELEASE_BASE_URL to the mirror's release download origin"
+        );
     }
     Ok(release)
 }
@@ -6096,12 +6112,8 @@ fn resolve_install_root() -> anyhow::Result<PathBuf> {
 
     // Prefer deriving install root from the current executable path so `oore update` works even
     // when users install to a non-default root and don't export `OORE_INSTALL_ROOT`.
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(bin_dir) = exe.parent()
-        && bin_dir.file_name() == Some(std::ffi::OsStr::new("bin"))
-        && let Some(root) = bin_dir.parent()
-    {
-        return Ok(root.to_path_buf());
+    if let Some(root) = oore_contract::install_root::install_root_for_current_executable() {
+        return Ok(root);
     }
 
     let home = dirs::home_dir().context("could not determine home directory")?;
@@ -11722,24 +11734,29 @@ fn load_backend_update_manifest(
         .transpose()
         .with_context(|| {
             format!(
-                "cannot identify the current device role from {}; repair this manifest before updating",
+                "cannot identify the current device role from {}",
                 manifest_path.display()
             )
         })?
     else {
         anyhow::bail!(
-            "this bootstrap-only installation has no backend profile; finish `oore install` before using backend updates"
+            "this bootstrap-only installation has no backend for `oore update` to update. To update the CLI, rerun the CLI bootstrap. To install a device role, run `oore install`"
         );
     };
-    anyhow::ensure!(
-        matches!(
-            manifest.profile,
-            install_manifest::InstallProfile::Complete
-                | install_manifest::InstallProfile::ControlPlane
+    let profile = installed_profile_name(manifest.profile);
+    match manifest.profile {
+        install_manifest::InstallProfile::Complete
+        | install_manifest::InstallProfile::ControlPlane => {}
+        install_manifest::InstallProfile::CliOnly => anyhow::bail!(
+            "the cli-only profile has no backend for `oore update` to update. To update the CLI, rerun the CLI bootstrap with the same channel and install root"
         ),
-        "the {} profile has no managed backend to update with `oore update`",
-        installed_profile_name(manifest.profile)
-    );
+        install_manifest::InstallProfile::WebNode => anyhow::bail!(
+            "the web-node profile has no backend for `oore update` to update. Run `oore-web update` on this Web node instead"
+        ),
+        install_manifest::InstallProfile::Runner => anyhow::bail!(
+            "the {profile} profile has no backend for `oore update` to update. To move it to a new release, run `oore uninstall`, which keeps Oore data, rerun the CLI bootstrap, then run `oore install --profile {profile}`"
+        ),
+    }
     anyhow::ensure!(
         manifest.lifecycle.state == install_manifest::InstallState::Ready,
         "finish `oore setup` before updating this backend profile"
@@ -11764,6 +11781,30 @@ struct ProfileUpdatePlan {
     release: install_manifest::InstallRelease,
     manifest_sha256: String,
     payload: UpdatePayloadSelection,
+}
+
+/// The one rule for leaving the installed channel: it needs `--switch-channel`,
+/// except to promote a pre-release to the stable build of the same version.
+fn ensure_channel_change_allowed(
+    installed_channel: &str,
+    installed_version: &semver::Version,
+    channel: ReleaseChannel,
+    target_version: &semver::Version,
+    switch_channel: bool,
+) -> anyhow::Result<()> {
+    let prerelease_to_stable = matches!(installed_channel, "alpha" | "beta")
+        && channel == ReleaseChannel::Stable
+        && !installed_version.pre.is_empty()
+        && target_version.pre.is_empty()
+        && installed_version.major == target_version.major
+        && installed_version.minor == target_version.minor
+        && installed_version.patch == target_version.patch;
+    anyhow::ensure!(
+        installed_channel == channel.as_str() || prerelease_to_stable || switch_channel,
+        "updates stay on the installed {installed_channel} channel; pass --switch-channel to move this installation to the {} channel",
+        channel.as_str()
+    );
+    Ok(())
 }
 
 fn prepare_profile_update_plan(
@@ -11793,19 +11834,13 @@ fn prepare_profile_update_plan(
         "profile updates must stay on the recorded {} repository",
         manifest.release.repository
     );
-    let prerelease_to_stable = matches!(manifest.release.channel.as_str(), "alpha" | "beta")
-        && channel == ReleaseChannel::Stable
-        && !installed_version.pre.is_empty()
-        && prepared.version.pre.is_empty()
-        && installed_version.major == prepared.version.major
-        && installed_version.minor == prepared.version.minor
-        && installed_version.patch == prepared.version.patch;
-    anyhow::ensure!(
-        manifest.release.channel == channel.as_str() || prerelease_to_stable || switch_channel,
-        "profile updates stay on the recorded {} channel; pass --switch-channel to move this installation to the {} channel",
-        manifest.release.channel,
-        channel.as_str()
-    );
+    ensure_channel_change_allowed(
+        &manifest.release.channel,
+        &installed_version,
+        channel,
+        &prepared.version,
+        switch_channel,
+    )?;
     let release = install_manifest::InstallRelease::new(
         prepared.version.to_string(),
         channel.as_str().to_string(),
@@ -12330,22 +12365,27 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         );
         Some(lock)
     };
+    // Checked after the release lookup so `--check` reports the same verdict as
+    // a real run.
+    let profile_manifest = load_backend_update_manifest(&install_root);
     let latest = &prepared.version;
     println!("Channel:         {}", channel.as_str());
     println!("GitHub repo:     {repo}");
     println!("Current version: {current}");
     println!("Latest version:  {latest} ({})", prepared.label);
     if channel != installed_channel {
+        ensure_channel_change_allowed(
+            installed_channel.as_str(),
+            &current,
+            channel,
+            latest,
+            args.switch_channel,
+        )?;
         anyhow::ensure!(
             current <= *latest,
             "cannot switch from the {} channel to the {} channel yet: its latest release {latest} is older than the installed {current}, and updates never downgrade; wait for a newer {} release",
             installed_channel.as_str(),
             channel.as_str(),
-            channel.as_str()
-        );
-        println!(
-            "Switching channel: {} -> {}",
-            installed_channel.as_str(),
             channel.as_str()
         );
     }
@@ -12355,24 +12395,36 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    if current < *latest {
-        println!("Update available: {current} -> {latest}");
-    } else {
-        println!("Reinstalling version {latest} (--force).");
-    }
-    if args.check {
-        return Ok(());
-    }
-    let profile_manifest = load_backend_update_manifest(&install_root)?;
-    let client = http_client()?;
     let profile_update = prepare_profile_update_plan(
-        profile_manifest,
+        profile_manifest?,
         &prepared,
         channel,
         &repo,
         true,
         args.switch_channel,
     )?;
+    if channel != installed_channel {
+        let verb = if args.check {
+            "Channel switch"
+        } else {
+            "Switching channel"
+        };
+        println!(
+            "{verb}: {} -> {}",
+            installed_channel.as_str(),
+            channel.as_str()
+        );
+    }
+    if current < *latest {
+        println!("Update available: {current} -> {latest}");
+    } else {
+        println!("Reinstalling version {latest} (--force).");
+    }
+    if args.check {
+        println!("Run `oore update` without --check to install it.");
+        return Ok(());
+    }
+    let client = http_client()?;
     fs::create_dir_all(&install_root)
         .with_context(|| format!("failed to create install root {}", install_root.display()))?;
 
@@ -12750,6 +12802,42 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Complete and Control plane profiles move forward in place with `oore update`.
+/// Returns `None` when only the preserve-data reinstall can reach the target.
+fn bootstrap_guard_next_step(
+    manifest: &install_manifest::InstallManifest,
+    current: &installer::ReleaseProvenance,
+    args: &BootstrapGuardArgs,
+    cli: &str,
+) -> Option<String> {
+    if !matches!(
+        manifest.profile,
+        install_manifest::InstallProfile::Complete | install_manifest::InstallProfile::ControlPlane
+    ) || manifest.lifecycle.state != install_manifest::InstallState::Ready
+        || current.repository != args.target_repository
+    {
+        return None;
+    }
+    let installed = semver::Version::parse(&current.version).ok()?;
+    let target = semver::Version::parse(&args.target_version).ok()?;
+    if target < installed {
+        return None;
+    }
+    let command = if current.channel == args.target_channel {
+        format!("{cli} update")
+    } else {
+        format!(
+            "{cli} update --channel {} --switch-channel",
+            args.target_channel
+        )
+    };
+    Some(format!(
+        "This profile updates in place. Run {command}.\n\
+         It installs the newest {} release, backs up Oore data, and restores the current release if verification fails.",
+        args.target_channel
+    ))
+}
+
 fn handle_bootstrap_guard(args: BootstrapGuardArgs) -> anyhow::Result<()> {
     anyhow::ensure!(
         args.target_version == args.target_version.trim(),
@@ -12834,11 +12922,16 @@ fn handle_bootstrap_guard(args: BootstrapGuardArgs) -> anyhow::Result<()> {
         || current.repository != args.target_repository;
     if release_changed && manifest.profile != install_manifest::InstallProfile::CliOnly {
         let cli = shell_word(&install_root.join("bin/oore").display().to_string());
+        let next_step =
+            bootstrap_guard_next_step(&manifest, &current, &args, &cli).unwrap_or_else(|| {
+                format!(
+                    "Run {cli} uninstall without --purge.\n\
+                     This preserves Oore data.\n\
+                     Then rerun the CLI bootstrap and install the same profile."
+                )
+            });
         anyhow::bail!(
-            "This profile records release {} ({}, {}), but the bootstrap selected {} ({}, {}).\n\
-             Run {cli} uninstall without --purge.\n\
-             This preserves Oore data.\n\
-             Then rerun the CLI bootstrap and install the same profile.",
+            "This profile records release {} ({}, {}), but the bootstrap selected {} ({}, {}).\n{next_step}",
             current.version,
             current.channel,
             current.repository,
@@ -13274,7 +13367,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             error.to_string(),
-            "profile updates stay on the recorded stable channel; pass --switch-channel to move this installation to the alpha channel"
+            "updates stay on the installed stable channel; pass --switch-channel to move this installation to the alpha channel"
         );
 
         let plan = plan_profile_update(
@@ -13319,6 +13412,89 @@ mod tests {
             error.to_string(),
             "profile updates cannot downgrade from 0.1.48-alpha.1 to 0.1.47"
         );
+    }
+
+    #[test]
+    fn channel_changes_follow_one_rule() {
+        let version = |raw| semver::Version::parse(raw).unwrap();
+        assert!(
+            ensure_channel_change_allowed(
+                "stable",
+                &version("0.1.47"),
+                ReleaseChannel::Beta,
+                &version("0.1.48-beta.1"),
+                false,
+            )
+            .is_err()
+        );
+        ensure_channel_change_allowed(
+            "stable",
+            &version("0.1.47"),
+            ReleaseChannel::Beta,
+            &version("0.1.48-beta.1"),
+            true,
+        )
+        .unwrap();
+        ensure_channel_change_allowed(
+            "beta",
+            &version("0.1.48-beta.2"),
+            ReleaseChannel::Stable,
+            &version("0.1.48"),
+            false,
+        )
+        .unwrap();
+    }
+
+    fn guard_next_step(
+        profile: install_manifest::InstallProfile,
+        installed: (&str, &str),
+        target: (&str, &str),
+    ) -> Option<String> {
+        let mut manifest = profile_manifest_on(installed.0, installed.1);
+        manifest.profile = profile;
+        manifest.components = profile.components().to_vec();
+        for service in profile.services() {
+            manifest.record_service(*service).unwrap();
+        }
+        manifest.mark_ready().unwrap();
+        let current = installer::ReleaseProvenance {
+            version: installed.0.to_string(),
+            channel: installed.1.to_string(),
+            repository: DEFAULT_GITHUB_REPO.to_string(),
+            archive: manifest.release.archive.clone(),
+            sha256: manifest.release.sha256.clone(),
+        };
+        let args = BootstrapGuardArgs {
+            target_version: target.0.to_string(),
+            target_channel: target.1.to_string(),
+            target_repository: DEFAULT_GITHUB_REPO.to_string(),
+        };
+        bootstrap_guard_next_step(&manifest, &current, &args, "oore")
+    }
+
+    #[test]
+    fn bootstrap_guard_points_backend_profiles_at_oore_update() {
+        use install_manifest::InstallProfile;
+
+        for profile in [InstallProfile::Complete, InstallProfile::ControlPlane] {
+            let step = guard_next_step(profile, ("0.1.47", "stable"), ("0.1.48", "stable"));
+            assert!(step.unwrap().contains("Run oore update."));
+            let step = guard_next_step(profile, ("0.1.47", "stable"), ("0.1.48-beta.1", "beta"));
+            assert!(
+                step.unwrap()
+                    .contains("Run oore update --channel beta --switch-channel.")
+            );
+            assert_eq!(
+                guard_next_step(profile, ("0.1.48", "stable"), ("0.1.47", "stable")),
+                None
+            );
+        }
+        for profile in [InstallProfile::Runner, InstallProfile::WebNode] {
+            assert_eq!(
+                guard_next_step(profile, ("0.1.47", "stable"), ("0.1.48", "stable")),
+                None
+            );
+        }
     }
 
     #[test]
