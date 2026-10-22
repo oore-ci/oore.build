@@ -12843,4 +12843,263 @@ mod tests {
             .is_err()
         );
     }
+
+    #[derive(Default)]
+    struct ScriptedServiceControl {
+        calls: Vec<String>,
+        failures: BTreeSet<usize>,
+    }
+
+    impl ScriptedServiceControl {
+        fn record(&mut self, call: String) -> anyhow::Result<()> {
+            let index = self.calls.len();
+            self.calls.push(call.clone());
+            anyhow::ensure!(!self.failures.contains(&index), "{call} failed");
+            Ok(())
+        }
+    }
+
+    impl UpdateServiceControl for ScriptedServiceControl {
+        fn restart_managed_service(&mut self, label: &str) -> anyhow::Result<()> {
+            self.record(format!("restart {label}"))
+        }
+
+        async fn activate_runner_service(
+            &mut self,
+            label: &str,
+            _previous_pid: Option<u32>,
+            _ack: Option<&RunnerUpdateAck>,
+            activation: ReleaseActivation,
+        ) -> anyhow::Result<()> {
+            let activation = match activation {
+                ReleaseActivation::Installed => "installed",
+                ReleaseActivation::Restored => "restored",
+            };
+            self.record(format!("activate {label} {activation}"))
+        }
+
+        fn stop_managed_service(&mut self, label: &str) -> anyhow::Result<()> {
+            self.record(format!("stop {label}"))
+        }
+
+        async fn restart_unmanaged_daemon(&mut self, listen: &str) -> anyhow::Result<()> {
+            self.record(format!("restart unmanaged {listen}"))
+        }
+
+        async fn stop_unmanaged_daemon(&mut self, listen: &str) -> anyhow::Result<()> {
+            self.record(format!("stop unmanaged {listen}"))
+        }
+
+        async fn wait_for_endpoint(&mut self, url: &str, _name: &str) -> anyhow::Result<()> {
+            self.record(format!("wait {url}"))
+        }
+
+        async fn wait_for_daemon_release(
+            &mut self,
+            ready_url: &str,
+            expected_package_version: &str,
+            _name: &str,
+        ) -> anyhow::Result<()> {
+            self.record(format!("wait {ready_url} {expected_package_version}"))
+        }
+    }
+
+    const INSTALLED_CALLS: [&str; 5] = [
+        "restart build.oore.oored",
+        "wait http://127.0.0.1:8787/readyz 0.1.49",
+        "restart build.oore.oore-web",
+        "wait http://127.0.0.1:3000/",
+        "activate build.oore.oore-runner installed",
+    ];
+
+    const ROLLBACK_CALLS: [&str; 6] = [
+        "stop build.oore.oored",
+        "restart build.oore.oored",
+        "wait http://127.0.0.1:8787/readyz 0.1.48",
+        "restart build.oore.oore-web",
+        "wait http://127.0.0.1:3000/",
+        "activate build.oore.oore-runner restored",
+    ];
+
+    struct UpdateFixture {
+        _temporary: tempfile::TempDir,
+        install_root: PathBuf,
+        previous_release: PathBuf,
+        stage: PathBuf,
+    }
+
+    impl UpdateFixture {
+        fn new() -> Self {
+            let temporary = tempfile::tempdir().unwrap();
+            let install_root = temporary.path().join("oore");
+            let previous_release = temporary.path().join("previous");
+            let stage = temporary.path().join("stage");
+            for (root, version) in [
+                (&install_root, "0.1.48"),
+                (&previous_release, "0.1.48"),
+                (&stage, "0.1.49"),
+            ] {
+                for binary in ["oore", "oored", "oore-web"] {
+                    let path = root.join("bin").join(binary);
+                    fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    fs::write(&path, format!("{binary} {version}")).unwrap();
+                    set_executable(&path).unwrap();
+                }
+                fs::write(root.join("VERSION"), version).unwrap();
+            }
+            for root in [&install_root, &previous_release] {
+                fs::write(root.join("CHANNEL"), "stable").unwrap();
+                fs::write(root.join("GITHUB_REPO"), "oore-ci/oore.build").unwrap();
+            }
+            fs::create_dir(stage.join("web-dist")).unwrap();
+            fs::write(stage.join("web-dist/index.html"), "0.1.49").unwrap();
+            Self {
+                _temporary: temporary,
+                install_root,
+                previous_release,
+                stage,
+            }
+        }
+
+        fn services() -> UpdateServicePlan {
+            UpdateServicePlan {
+                profile_update: None,
+                defer_daemon_restart: false,
+                daemon_is_managed: true,
+                unmanaged_daemon_listen: None,
+                daemon_should_be_running: true,
+                daemon_ready_url: "http://127.0.0.1:8787/readyz".to_string(),
+                installed_version: "0.1.49".to_string(),
+                restored_version: "0.1.48".to_string(),
+                runner_service: Some(RUNNER_SERVICE_LABEL),
+                runner_previous_pid: None,
+                runner_ack: None,
+                runner_installed_version: "0.1.49".to_string(),
+                runner_restored_version: "0.1.48".to_string(),
+                install_managed_runner: false,
+                managed_runner_service_existed: false,
+                managed_runner_config_existed: false,
+                managed_runner_database: None,
+                web_is_managed: true,
+                web_was_running: true,
+                web_ready_url: Some("http://127.0.0.1:3000/".to_string()),
+            }
+        }
+
+        async fn install(&self, control: &mut ScriptedServiceControl) -> anyhow::Result<()> {
+            install_release_with_rollback(
+                &self.stage,
+                &self.install_root,
+                &self.previous_release,
+                ReleaseChannel::Beta,
+                "oore-ci/oore.build",
+                None,
+                None,
+                None,
+                &Self::services(),
+                None,
+                control,
+            )
+            .await
+        }
+
+        fn read(&self, relative: &str) -> Option<String> {
+            fs::read_to_string(self.install_root.join(relative)).ok()
+        }
+
+        fn assert_release(&self, version: &str, channel: &str) {
+            for binary in ["oore", "oored", "oore-web"] {
+                assert_eq!(
+                    self.read(&format!("bin/{binary}")).as_deref(),
+                    Some(format!("{binary} {version}").as_str())
+                );
+            }
+            assert_eq!(self.read("VERSION").as_deref(), Some(version));
+            assert_eq!(self.read("CHANNEL").as_deref(), Some(channel));
+            // Markers are `v2:<nonce>:<executable identity>`; the nonce differs per write.
+            let identity =
+                |marker: &str| marker.trim_end().splitn(3, ':').nth(2).map(str::to_owned);
+            let expected =
+                oore_runner::runner_release_marker(&self.install_root.join("bin/oore")).unwrap();
+            let published = self.read(oore_runner::RUNNER_RELEASE_MARKER_FILE).unwrap();
+            assert_eq!(identity(&published), identity(&expected));
+            assert!(identity(&expected).is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn updates_install_the_staged_release_and_activate_every_service() {
+        let fixture = UpdateFixture::new();
+        let mut control = ScriptedServiceControl::default();
+
+        fixture.install(&mut control).await.unwrap();
+
+        assert_eq!(control.calls, INSTALLED_CALLS);
+        fixture.assert_release("0.1.49", "beta");
+        assert_eq!(fixture.read("WEB_VERSION").as_deref(), Some("0.1.49"));
+        assert_eq!(
+            fixture.read("web-dist/index.html").as_deref(),
+            Some("0.1.49")
+        );
+    }
+
+    #[tokio::test]
+    async fn updates_restore_the_previous_release_when_any_activation_step_fails() {
+        for failed_step in 0..INSTALLED_CALLS.len() {
+            let fixture = UpdateFixture::new();
+            let mut control = ScriptedServiceControl {
+                failures: BTreeSet::from([failed_step]),
+                ..Default::default()
+            };
+
+            let error = fixture.install(&mut control).await.unwrap_err();
+
+            assert_eq!(
+                error.to_string(),
+                format!("{} failed", INSTALLED_CALLS[failed_step]),
+            );
+            let expected = INSTALLED_CALLS[..=failed_step]
+                .iter()
+                .chain(ROLLBACK_CALLS.iter())
+                .collect::<Vec<_>>();
+            assert_eq!(control.calls.iter().collect::<Vec<_>>(), expected);
+            fixture.assert_release("0.1.48", "stable");
+            assert_eq!(fixture.read("WEB_VERSION"), None);
+            assert!(!fixture.install_root.join("web-dist").exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn updates_report_both_errors_when_the_rollback_also_fails() {
+        let fixture = UpdateFixture::new();
+        let rollback_restart = 1 + ROLLBACK_CALLS
+            .iter()
+            .position(|call| *call == "restart build.oore.oored")
+            .unwrap();
+        let mut control = ScriptedServiceControl {
+            failures: BTreeSet::from([0, rollback_restart]),
+            ..Default::default()
+        };
+
+        let error = fixture.install(&mut control).await.unwrap_err();
+
+        assert_eq!(
+            format!("{error:#}"),
+            "rollback also failed: restart build.oore.oored failed: restart build.oore.oored failed"
+        );
+        assert_eq!(control.calls.len(), rollback_restart + 1);
+        // The files were restored before the services failed to restart.
+        fixture.assert_release("0.1.48", "stable");
+    }
+
+    #[tokio::test]
+    async fn updates_refuse_to_start_without_an_installed_cli() {
+        let fixture = UpdateFixture::new();
+        fs::remove_file(fixture.install_root.join("bin/oore")).unwrap();
+        let mut control = ScriptedServiceControl::default();
+
+        assert!(fixture.install(&mut control).await.is_err());
+        assert!(control.calls.is_empty());
+        assert_eq!(fixture.read("VERSION").as_deref(), Some("0.1.48"));
+    }
 }

@@ -31,8 +31,8 @@ use crate::crypto;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{ProjectPermission, require_pipeline_project_permission};
 use crate::releases::{
-    self, BoxFuture, NewRelease, ReleaseActor, ReleaseChange, ReleaseDeps, ReleaseStoreClient,
-    StoreChange,
+    self, BoxFuture, NewRelease, NoopReleaseStoreClient, ReleaseActor, ReleaseChange, ReleaseDeps,
+    ReleaseError, ReleaseStoreClient, StoreChange,
 };
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -53,6 +53,9 @@ const POLL_PROCESSING_SECS: i64 = 60;
 const POLL_REVIEW_SECS: i64 = 5 * 60;
 const POLL_LIVE_SECS: i64 = 15 * 60;
 const POLL_ERROR_SECS: i64 = 5 * 60;
+/// How long App Store Connect may keep failing for a release before Oore
+/// gives up on it and marks it failed.
+const GIVE_UP_AFTER_SECS: i64 = 24 * 60 * 60;
 
 // ── Settings ────────────────────────────────────────────────────
 
@@ -1087,7 +1090,15 @@ fn state_matches(
         && next_fraction.is_none_or(|next_fraction| (next_fraction - fraction).abs() < f64::EPSILON)
 }
 
-async fn apply_step(state: &AppState, link: &LinkRow, step: Step) -> anyhow::Result<()> {
+/// Records what one poll read from Apple. Apple already holds that state, so
+/// nothing is sent back to App Store Connect.
+async fn apply_step(deps: ReleaseDeps<'_>, link: &LinkRow, step: Step) -> anyhow::Result<()> {
+    let record = ReleaseDeps {
+        store: &NoopReleaseStoreClient,
+        ..deps
+    };
+    let mut next_poll_in = step.next_poll_in;
+    let mut stage = step.stage;
     if let Some((target, target_fraction, reason)) = step.transition
         && !state_matches(
             &link.release_state,
@@ -1109,6 +1120,8 @@ async fn apply_step(state: &AppState, link: &LinkRow, step: Step) -> anyhow::Res
                 "App Store state has no release transition"
             );
         }
+        // The first hop must start from the state this poll compared against.
+        let mut expect = Some((from, link.rollout_fraction));
         for to_state in path {
             let to_fraction = match to_state {
                 ReleaseState::Rolling if target != ReleaseState::Rolling => {
@@ -1125,21 +1138,35 @@ async fn apply_step(state: &AppState, link: &LinkRow, step: Step) -> anyhow::Res
                 }
                 _ => to_fraction,
             };
-            releases::transition_release(
-                ReleaseDeps::from(state),
+            match releases::transition_release(
+                record,
                 &link.release_id,
                 ReleaseChange {
                     to_state,
                     to_fraction,
                     audit_action: "app_store_release_updated",
+                    expect: expect.take(),
                 },
                 &ReleaseActor::System,
                 Some(&reason),
             )
             .await
-            .map_err(|error| anyhow::anyhow!("failed to update App Store release: {error:?}"))?;
+            {
+                Ok(_) => {}
+                // Someone changed the release while Apple was read; read again.
+                Err(ReleaseError::Conflict(message)) => {
+                    info!(release_id = %link.release_id, %message, "App Store poll is stale; polling again");
+                    stage = None;
+                    next_poll_in = 0;
+                    break;
+                }
+                Err(error) => {
+                    anyhow::bail!("failed to update App Store release: {error:?}");
+                }
+            }
         }
     }
+    let now = now_unix();
     sqlx::query(
         "UPDATE app_store_release_links
          SET stage = COALESCE(?1, stage),
@@ -1147,38 +1174,94 @@ async fn apply_step(state: &AppState, link: &LinkRow, step: Step) -> anyhow::Res
              asc_build_id = COALESCE(?3, asc_build_id),
              asc_version_id = COALESCE(?4, asc_version_id),
              last_error = NULL,
+             failing_since = NULL,
              next_poll_at = ?5,
              updated_at = ?6
          WHERE release_id = ?7",
     )
-    .bind(step.stage.map(Stage::as_str))
+    .bind(stage.map(Stage::as_str))
     .bind(step.asc_app_id)
     .bind(step.asc_build_id)
     .bind(step.asc_version_id)
-    .bind(now_unix() + step.next_poll_in)
-    .bind(now_unix())
+    .bind(now + next_poll_in)
+    .bind(now)
     .bind(&link.release_id)
-    .execute(&state.db)
+    .execute(deps.pool)
     .await?;
     Ok(())
 }
 
-async fn record_poll_error(pool: &SqlitePool, release_id: &str, message: &str) {
-    let now = now_unix();
-    if let Err(error) = sqlx::query(
+/// Records a failed poll and backs off. A release that has kept failing for
+/// [`GIVE_UP_AFTER_SECS`] is marked failed with the last error as its reason.
+async fn record_poll_error(deps: ReleaseDeps<'_>, release_id: &str, message: &str) {
+    if let Err(error) = try_record_poll_error(deps, release_id, message, now_unix()).await {
+        error!(error = %error, release_id, "failed to record App Store poll error");
+    }
+}
+
+async fn try_record_poll_error(
+    deps: ReleaseDeps<'_>,
+    release_id: &str,
+    message: &str,
+    now: i64,
+) -> anyhow::Result<()> {
+    let failing_since: Option<i64> = sqlx::query_scalar(
         "UPDATE app_store_release_links
-         SET last_error = ?1, next_poll_at = ?2, updated_at = ?3
-         WHERE release_id = ?4",
+         SET last_error = ?1, next_poll_at = ?2, updated_at = ?3,
+             failing_since = COALESCE(failing_since, ?3)
+         WHERE release_id = ?4
+         RETURNING failing_since",
     )
     .bind(message)
     .bind(now + POLL_ERROR_SECS)
     .bind(now)
     .bind(release_id)
-    .execute(pool)
-    .await
-    {
-        error!(%error, release_id, "failed to record App Store poll error");
+    .fetch_optional(deps.pool)
+    .await?
+    .flatten();
+    if failing_since.is_none_or(|since| now - since < GIVE_UP_AFTER_SECS) {
+        return Ok(());
     }
+    let release = releases::load_release(deps.pool, release_id)
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    let reason: String =
+        format!("App Store Connect kept failing for 24 hours; last error: {message}")
+            .chars()
+            .take(500)
+            .collect();
+    let record = ReleaseDeps {
+        store: &NoopReleaseStoreClient,
+        ..deps
+    };
+    for to_state in transition_path(release.state, ReleaseState::Failed) {
+        releases::transition_release(
+            record,
+            release_id,
+            ReleaseChange {
+                to_state,
+                to_fraction: None,
+                audit_action: "app_store_release_updated",
+                expect: None,
+            },
+            &ReleaseActor::System,
+            Some(&reason),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    }
+    sqlx::query(
+        "UPDATE app_store_release_links SET stage = 'done', updated_at = ?1 WHERE release_id = ?2",
+    )
+    .bind(now)
+    .bind(release_id)
+    .execute(deps.pool)
+    .await?;
+    warn!(
+        release_id,
+        "gave up on an App Store release that kept failing"
+    );
+    Ok(())
 }
 
 pub(crate) async fn load_credentials(
@@ -1219,11 +1302,12 @@ pub(crate) async fn poll_releases(state: &AppState, client: &reqwest::Client) {
             return;
         }
     };
+    let deps = ReleaseDeps::from(state);
     for link in links {
         let creds = match load_credentials(state, &link.pipeline_id).await {
             Ok(creds) => creds,
             Err(error) => {
-                record_poll_error(&state.db, &link.release_id, &error.to_string()).await;
+                record_poll_error(deps, &link.release_id, &error.to_string()).await;
                 continue;
             }
         };
@@ -1240,8 +1324,9 @@ pub(crate) async fn poll_releases(state: &AppState, client: &reqwest::Client) {
                         step.asc_build_id.clone(),
                         step.asc_version_id.clone(),
                     );
-                    if let Err(error) = apply_step(state, &current, step).await {
+                    if let Err(error) = apply_step(deps, &current, step).await {
                         error!(%error, release_id = %current.release_id, "failed to apply App Store release step");
+                        record_poll_error(deps, &current.release_id, &format!("{error:#}")).await;
                         break;
                     }
                     if !immediate {
@@ -1256,7 +1341,7 @@ pub(crate) async fn poll_releases(state: &AppState, client: &reqwest::Client) {
                 }
                 Err(error) => {
                     warn!(%error, release_id = %current.release_id, "App Store Connect poll failed");
-                    record_poll_error(&state.db, &current.release_id, &error.0).await;
+                    record_poll_error(deps, &current.release_id, &error.0).await;
                     break;
                 }
             }
@@ -1427,6 +1512,187 @@ mod tests {
         let own = decrypt_credentials(&own, &encryption_key).unwrap().unwrap();
         assert_eq!(own.key_id, "OWNKEY1234");
         assert_eq!(own.private_key_pem, "own-pem");
+    }
+
+    async fn app_store_release(
+        deps: ReleaseDeps<'_>,
+        state: ReleaseState,
+        fraction: f64,
+    ) -> (Release, LinkRow) {
+        let release = releases::create_release(
+            deps,
+            NewRelease {
+                store: ReleaseStore::AppStore,
+                track: "app_store".into(),
+                state,
+                rollout_fraction: fraction,
+                ..releases::tests::new_release("app_store", Default::default())
+            },
+            &ReleaseActor::System,
+            None,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO app_store_release_links (release_id, pipeline_id, bundle_id, version, \
+             build_number, config, stage, asc_version_id, next_poll_at, created_at, updated_at) \
+             VALUES (?1, 'pl1', 'com.example.app', '1.2.0', '120', '{}', 'live', 'v1', 0, 0, 0)",
+        )
+        .bind(&release.id)
+        .execute(deps.pool)
+        .await
+        .unwrap();
+        let link = LinkRow {
+            release_id: release.id.clone(),
+            pipeline_id: "pl1".into(),
+            bundle_id: "com.example.app".into(),
+            version: "1.2.0".into(),
+            build_number: "120".into(),
+            config: "{}".into(),
+            stage: "live".into(),
+            asc_app_id: None,
+            asc_build_id: None,
+            asc_version_id: Some("v1".into()),
+            created_at: 0,
+            release_state: state.as_str().into(),
+            rollout_fraction: fraction,
+        };
+        (release, link)
+    }
+
+    #[tokio::test]
+    async fn monitor_records_apple_state_without_calling_apple_and_skips_stale_polls() {
+        let pool = releases::tests::pool().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let store = releases::tests::FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (release, link) = app_store_release(deps, ReleaseState::Rolling, 0.02).await;
+
+        // Apple moved the phased release on; the monitor only records it.
+        apply_step(
+            deps,
+            &link,
+            Step {
+                transition: Some((ReleaseState::Rolling, Some(0.05), "Phased".into())),
+                next_poll_in: POLL_LIVE_SECS,
+                ..Step::default()
+            },
+        )
+        .await
+        .unwrap();
+        let rolled = releases::load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(rolled.rollout_fraction, 0.05);
+
+        // A user pauses while a poll that read Apple as active is in flight.
+        releases::transition_release(
+            deps,
+            &release.id,
+            ReleaseChange {
+                to_state: ReleaseState::Paused,
+                to_fraction: None,
+                audit_action: "release_paused",
+                expect: None,
+            },
+            &ReleaseActor::System,
+            None,
+        )
+        .await
+        .unwrap();
+        let stale = LinkRow {
+            release_state: "rolling".into(),
+            rollout_fraction: 0.05,
+            ..link
+        };
+        apply_step(
+            deps,
+            &stale,
+            Step {
+                stage: Some(Stage::Done),
+                transition: Some((ReleaseState::Complete, Some(1.0), "Live".into())),
+                next_poll_in: POLL_LIVE_SECS,
+                ..Step::default()
+            },
+        )
+        .await
+        .unwrap();
+        let paused = releases::load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(paused.state, ReleaseState::Paused);
+        let (stage, next_poll_at): (String, i64) = sqlx::query_as(
+            "SELECT stage, next_poll_at FROM app_store_release_links WHERE release_id = ?1",
+        )
+        .bind(&release.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stage, "live");
+        assert!(next_poll_at <= now_unix());
+        // Only the user's pause reached the store; the monitor never did.
+        assert_eq!(*store.changes.lock().unwrap(), vec![StoreChange::Pause]);
+    }
+
+    #[tokio::test]
+    async fn monitor_backs_off_on_errors_and_gives_up_after_a_day() {
+        let pool = releases::tests::pool().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let store = releases::tests::FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (release, _) = app_store_release(deps, ReleaseState::InReview, 0.0).await;
+        let start = 1_000_000;
+
+        try_record_poll_error(deps, &release.id, "401 NOT_AUTHORIZED", start)
+            .await
+            .unwrap();
+        let (last_error, next_poll_at): (Option<String>, i64) = sqlx::query_as(
+            "SELECT last_error, next_poll_at FROM app_store_release_links WHERE release_id = ?1",
+        )
+        .bind(&release.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(last_error.as_deref(), Some("401 NOT_AUTHORIZED"));
+        assert_eq!(next_poll_at, start + POLL_ERROR_SECS);
+        assert_eq!(
+            releases::load_release(&pool, &release.id)
+                .await
+                .unwrap()
+                .state,
+            ReleaseState::InReview
+        );
+
+        try_record_poll_error(
+            deps,
+            &release.id,
+            "401 NOT_AUTHORIZED",
+            start + GIVE_UP_AFTER_SECS,
+        )
+        .await
+        .unwrap();
+        let failed = releases::load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(failed.state, ReleaseState::Failed);
+        let reason: String = sqlx::query_scalar(
+            "SELECT reason FROM release_history WHERE release_id = ?1 AND to_state = 'failed'",
+        )
+        .bind(&release.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(reason.contains("401 NOT_AUTHORIZED"));
+        let stage: String =
+            sqlx::query_scalar("SELECT stage FROM app_store_release_links WHERE release_id = ?1")
+                .bind(&release.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stage, "done");
+        assert!(store.changes.lock().unwrap().is_empty());
     }
 
     fn testflight(groups: &[&str]) -> AppStorePublishConfig {

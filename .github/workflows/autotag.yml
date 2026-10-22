@@ -18,6 +18,7 @@ jobs:
     # Git and gh only. A fresh hosted runner keeps the checkout token off any
     # persistent machine.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Branch protection requires validation before a release branch moves,
     # so this does not wait for the Validate workflow.
     steps:

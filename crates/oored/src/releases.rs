@@ -4,9 +4,10 @@
 //! applies the change at the store first, then writes the release row, a
 //! history entry and an audit log entry, and publishes a release event.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -177,7 +178,7 @@ impl ReleaseError {
                 api_err(
                     StatusCode::BAD_GATEWAY,
                     "store_rejected",
-                    "The store did not accept the change",
+                    store_rejection_message(&error),
                 )
             }
             ReleaseError::Db(error) => {
@@ -189,6 +190,23 @@ impl ReleaseError {
                 )
             }
         }
+    }
+}
+
+/// What the store said, for the person who asked for the change. Store error
+/// bodies hold no secrets; they already appear in build logs.
+fn store_rejection_message(error: &anyhow::Error) -> String {
+    let detail: String = format!("{error:#}")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(MAX_REASON_LEN)
+        .collect();
+    if detail.is_empty() {
+        "The store did not accept the change".to_string()
+    } else {
+        format!("The store did not accept the change: {detail}")
     }
 }
 
@@ -212,6 +230,27 @@ pub struct ReleaseChange {
     /// `None` keeps the current fraction.
     pub to_fraction: Option<f64>,
     pub audit_action: &'static str,
+    /// The state and fraction the caller decided on. When set, the change is
+    /// refused if the release has moved since, so a stale step never resumes
+    /// a release someone halted in the meantime.
+    pub expect: Option<(ReleaseState, f64)>,
+}
+
+/// One lock per release, held from the read through the store call to the
+/// row update, so two changes to one release never interleave.
+fn release_lock(release_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: LazyLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> =
+        LazyLock::new(Mutex::default);
+    let mut locks = LOCKS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(lock) = locks.get(release_id).and_then(Weak::upgrade) {
+        return lock;
+    }
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(release_id.to_string(), Arc::downgrade(&lock));
+    lock
 }
 
 pub(crate) fn awaiting_approval(release: &Release) -> bool {
@@ -269,8 +308,19 @@ pub(crate) fn allowed_actions(
     let manage = check_project_permission(role, ProjectPermission::ManageReleases);
     let awaiting = awaiting_approval(release);
     let state = release.state;
+    let app_store = release.store == ReleaseStore::AppStore;
+    // A Play draft is recorded as paused at 0%; Play cannot halt a draft.
+    let play_draft = release.store == ReleaseStore::GooglePlay
+        && state == ReleaseState::Paused
+        && release.rollout_fraction == 0.0;
     let mut actions = Vec::new();
-    if manage && state == ReleaseState::Rolling && !awaiting && release.rollout_fraction < 1.0 {
+    // Apple's phased release schedule owns the App Store percentage.
+    if manage
+        && !app_store
+        && state == ReleaseState::Rolling
+        && !awaiting
+        && release.rollout_fraction < 1.0
+    {
         actions.push(ReleaseAction::Raise);
     }
     if operate && state == ReleaseState::Rolling {
@@ -279,7 +329,12 @@ pub(crate) fn allowed_actions(
     if manage && matches!(state, ReleaseState::Paused | ReleaseState::Halted) && !awaiting {
         actions.push(ReleaseAction::Resume);
     }
-    if operate && matches!(state, ReleaseState::Rolling | ReleaseState::Paused) {
+    // App Store versions are paused or removed from sale, never halted.
+    if operate
+        && !app_store
+        && !play_draft
+        && matches!(state, ReleaseState::Rolling | ReleaseState::Paused)
+    {
         actions.push(ReleaseAction::Halt);
     }
     if manage && matches!(state, ReleaseState::Rolling | ReleaseState::Paused) && !awaiting {
@@ -565,8 +620,9 @@ async fn insert_history(
 
 /// Move a release to a new state or fraction.
 ///
-/// The store applies the change first; the row only changes if it is still in
-/// the state that was read, so concurrent changes cannot both land.
+/// Changes to one release are serialized: the release is read, the store
+/// applies the change, and the row is written under one per-release lock.
+/// The row update also checks the state that was read, as a backstop.
 pub async fn transition_release(
     deps: ReleaseDeps<'_>,
     release_id: &str,
@@ -574,8 +630,17 @@ pub async fn transition_release(
     actor: &ReleaseActor,
     reason: Option<&str>,
 ) -> Result<Release, ReleaseError> {
+    let lock = release_lock(release_id);
+    let _guard = lock.lock().await;
     let current = load_release(deps.pool, release_id).await?;
     let from = current.state;
+    if let Some((state, fraction)) = change.expect
+        && (state != from || (fraction - current.rollout_fraction).abs() > 1e-9)
+    {
+        return Err(ReleaseError::Conflict(
+            "release changed, reload and try again".into(),
+        ));
+    }
     let to = change.to_state;
     if !from.can_transition_to(to) {
         return Err(ReleaseError::Conflict(format!(
@@ -688,6 +753,8 @@ pub async fn approve_release(
     actor: &ReleaseActor,
     reason: Option<&str>,
 ) -> Result<Release, ReleaseError> {
+    let lock = release_lock(release_id);
+    let _guard = lock.lock().await;
     let current = load_release(deps.pool, release_id).await?;
     if !current.awaiting_approval {
         return Err(ReleaseError::Conflict(
@@ -832,6 +899,8 @@ pub(crate) async fn sync_release_with_store(
         ..deps
     };
     let reason = store_sync_reason(release, observed);
+    // Only record what was observed against the state it was compared with.
+    let mut expect = Some((release.state, release.rollout_fraction));
     for (to_state, to_fraction) in changes {
         transition_release(
             record,
@@ -840,6 +909,7 @@ pub(crate) async fn sync_release_with_store(
                 to_state,
                 to_fraction,
                 audit_action: "release_synced_from_store",
+                expect: expect.take(),
             },
             &ReleaseActor::System,
             Some(&reason),
@@ -854,6 +924,29 @@ pub(crate) async fn sync_release_with_store(
 
 // ── Rollout schedule ────────────────────────────────────────────
 
+/// A history note that the schedule is held or continues, without a change.
+async fn note_rollout_hold(
+    pool: &SqlitePool,
+    release: &Release,
+    reason: &str,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    insert_history(
+        &mut tx,
+        &release.id,
+        &ReleaseActor::System,
+        Some(release.state),
+        release.state,
+        Some(release.rollout_fraction),
+        Some(release.rollout_fraction),
+        Some(reason),
+        now,
+    )
+    .await?;
+    tx.commit().await
+}
+
 /// One pass of the rollout monitor: sync with the store, check health, halt
 /// on breach, take due steps.
 ///
@@ -866,12 +959,17 @@ pub(crate) async fn run_rollout_tick(
     now: i64,
     batch: i64,
 ) -> anyhow::Result<()> {
+    // Due steps first, then the releases checked longest ago, so releases
+    // that only need a sync never crowd out a due step.
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{RELEASE_SELECT} WHERE r.state IN ('rolling', 'paused', 'halted') \
          AND r.store = 'google_play' \
-         ORDER BY COALESCE(r.next_step_at, 0) LIMIT ?1"
+         ORDER BY CASE WHEN r.state = 'rolling' AND r.next_step_at <= ?2 THEN 0 ELSE 1 END, \
+         COALESCE(r.store_checked_at, 0) \
+         LIMIT ?1"
     )))
     .bind(batch)
+    .bind(now)
     .fetch_all(deps.pool)
     .await?;
 
@@ -910,20 +1008,30 @@ pub(crate) async fn run_rollout_tick(
             continue;
         }
 
+        let mut health_error: Option<String> = row.get("health_error");
         if let Some(threshold) = release.policy.crash_rate_threshold
             && checked_at.is_none_or(|at| now - at >= HEALTH_CHECK_INTERVAL_SECS)
         {
             match deps.store.crash_rate(&release).await {
                 Ok(rate) => {
                     sqlx::query(
-                        "UPDATE releases SET crash_rate = COALESCE(?1, crash_rate), crash_rate_checked_at = ?2 \
-                         WHERE id = ?3",
+                        "UPDATE releases SET crash_rate = COALESCE(?1, crash_rate), crash_rate_checked_at = ?2, \
+                         health_error = NULL WHERE id = ?3",
                     )
                     .bind(rate)
                     .bind(now)
                     .bind(&release.id)
                     .execute(deps.pool)
                     .await?;
+                    if health_error.take().is_some() {
+                        note_rollout_hold(
+                            deps.pool,
+                            &release,
+                            "Crash rate available again; scheduled rollout continues",
+                            now,
+                        )
+                        .await?;
+                    }
                     if let Some(rate) = rate {
                         release.crash_rate = Some(rate);
                         if rate >= threshold {
@@ -939,6 +1047,7 @@ pub(crate) async fn run_rollout_tick(
                                     to_state: ReleaseState::Halted,
                                     to_fraction: None,
                                     audit_action: "release_halted",
+                                    expect: None,
                                 },
                                 &ReleaseActor::System,
                                 Some(&reason),
@@ -953,8 +1062,34 @@ pub(crate) async fn run_rollout_tick(
                 }
                 Err(error) => {
                     warn!(release_id = %release.id, error = %error, "rollout monitor: crash rate check failed");
+                    let message: String =
+                        format!("{error:#}").chars().take(MAX_REASON_LEN).collect();
+                    // Retry at the normal health interval rather than every tick.
+                    sqlx::query(
+                        "UPDATE releases SET crash_rate_checked_at = ?1, health_error = ?2 WHERE id = ?3",
+                    )
+                    .bind(now)
+                    .bind(&message)
+                    .bind(&release.id)
+                    .execute(deps.pool)
+                    .await?;
+                    if health_error.is_none() {
+                        note_rollout_hold(
+                            deps.pool,
+                            &release,
+                            &format!("Rollout held: crash rate unavailable ({message})"),
+                            now,
+                        )
+                        .await?;
+                    }
+                    health_error = Some(message);
                 }
             }
+        }
+        // Without health data the configured crash-rate guard cannot work,
+        // so the schedule waits; the due step is taken once a check succeeds.
+        if release.policy.crash_rate_threshold.is_some() && health_error.is_some() {
+            continue;
         }
 
         let due = release.next_step_at.is_some_and(|at| at <= now);
@@ -976,6 +1111,7 @@ pub(crate) async fn run_rollout_tick(
                 to_state,
                 to_fraction: Some(fraction),
                 audit_action: "release_advanced",
+                expect: Some((ReleaseState::Rolling, release.rollout_fraction)),
             },
             &ReleaseActor::System,
             Some("scheduled rollout step"),
@@ -1335,6 +1471,7 @@ pub async fn release_action(
     }
     let actor = user_actor(&auth);
     let reason = request.reason.as_deref();
+    let seen = (current.state, current.rollout_fraction);
     let change = match action {
         ReleaseAction::Approve => {
             let mut release = approve_release(deps, &release_id, &actor, reason)
@@ -1366,12 +1503,15 @@ pub async fn release_action(
                 },
                 to_fraction: Some(fraction),
                 audit_action: "release_raised",
+                expect: Some(seen),
             }
         }
+        // Stopping a rollout must not fail because a step landed meanwhile.
         ReleaseAction::Pause => ReleaseChange {
             to_state: ReleaseState::Paused,
             to_fraction: None,
             audit_action: "release_paused",
+            expect: None,
         },
         // A draft (0%) resumes at the first policy step.
         ReleaseAction::Resume => ReleaseChange {
@@ -1380,16 +1520,19 @@ pub async fn release_action(
                 .then(|| current.policy.steps.first().copied())
                 .flatten(),
             audit_action: "release_resumed",
+            expect: Some(seen),
         },
         ReleaseAction::Halt => ReleaseChange {
             to_state: ReleaseState::Halted,
             to_fraction: None,
             audit_action: "release_halted",
+            expect: None,
         },
         ReleaseAction::Complete => ReleaseChange {
             to_state: ReleaseState::Complete,
             to_fraction: Some(1.0),
             audit_action: "release_completed",
+            expect: Some(seen),
         },
     };
     let mut release = transition_release(deps, &release_id, change, &actor, reason)
@@ -1458,16 +1601,21 @@ pub async fn list_release_activity(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::Mutex;
 
     use super::*;
 
     #[derive(Default)]
-    struct FakeStore {
-        changes: Mutex<Vec<StoreChange>>,
+    pub(crate) struct FakeStore {
+        pub(crate) changes: Mutex<Vec<StoreChange>>,
         crash_rate: Mutex<Option<f64>>,
+        crash_rate_fails: Mutex<bool>,
         observed: Mutex<Option<StoreObservation>>,
+        /// When set, the next `apply` signals `entered`, then waits for this
+        /// before recording.
+        gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
+        entered: tokio::sync::Notify,
     }
 
     impl ReleaseStoreClient for FakeStore {
@@ -1484,17 +1632,30 @@ mod tests {
             _: &'a Release,
             change: StoreChange,
         ) -> BoxFuture<'a, anyhow::Result<()>> {
-            self.changes.lock().unwrap().push(change);
-            Box::pin(async { Ok(()) })
+            let gate = self.gate.lock().unwrap().take();
+            Box::pin(async move {
+                if let Some(gate) = gate {
+                    self.entered.notify_one();
+                    gate.notified().await;
+                }
+                self.changes.lock().unwrap().push(change);
+                Ok(())
+            })
         }
 
         fn crash_rate<'a>(&'a self, _: &'a Release) -> BoxFuture<'a, anyhow::Result<Option<f64>>> {
             let rate = *self.crash_rate.lock().unwrap();
-            Box::pin(async move { Ok(rate) })
+            let fails = *self.crash_rate_fails.lock().unwrap();
+            Box::pin(async move {
+                if fails {
+                    anyhow::bail!("Play Developer Reporting API returned 403");
+                }
+                Ok(rate)
+            })
         }
     }
 
-    async fn pool() -> SqlitePool {
+    pub(crate) async fn pool() -> SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1514,7 +1675,7 @@ mod tests {
         pool
     }
 
-    fn new_release(track: &str, policy: ReleasePolicy) -> NewRelease {
+    pub(crate) fn new_release(track: &str, policy: ReleasePolicy) -> NewRelease {
         NewRelease {
             project_id: "p1".into(),
             build_id: "b1".into(),
@@ -1542,6 +1703,7 @@ mod tests {
             to_state,
             to_fraction: None,
             audit_action,
+            expect: None,
         }
     }
 
@@ -1810,6 +1972,7 @@ mod tests {
                 to_state: ReleaseState::Paused,
                 to_fraction: Some(0.5),
                 audit_action: "release_raised",
+                expect: None,
             },
             &user(),
             None,
@@ -1852,6 +2015,7 @@ mod tests {
                 to_state: ReleaseState::Rolling,
                 to_fraction: Some(0.005),
                 audit_action: "release_raised",
+                expect: None,
             },
             &user(),
             None,
@@ -1917,6 +2081,7 @@ mod tests {
                 to_state: ReleaseState::Rolling,
                 to_fraction: Some(0.05),
                 audit_action: "release_raised",
+                expect: None,
             },
             &user(),
             None,
@@ -1984,6 +2149,224 @@ mod tests {
         assert!(store.changes.lock().unwrap().is_empty());
     }
 
+    #[tokio::test]
+    async fn a_scheduled_step_racing_a_halt_leaves_the_store_halted() {
+        let pool = pool().await;
+        let scheduler = Scheduler::new(64);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let release = create_release(
+            deps,
+            new_release("production", ReleasePolicy::default()),
+            &user(),
+            None,
+        )
+        .await
+        .unwrap();
+        let due = release.next_step_at.unwrap();
+
+        // The step is inside its store call when the user halts.
+        let gate = Arc::new(tokio::sync::Notify::new());
+        *store.gate.lock().unwrap() = Some(gate.clone());
+        let (tick, halt) = tokio::join!(run_rollout_tick(deps, due, 100), async {
+            store.entered.notified().await;
+            let actor = user();
+            let halt = transition_release(
+                deps,
+                &release.id,
+                change(ReleaseState::Halted, "release_halted"),
+                &actor,
+                Some("emergency"),
+            );
+            tokio::pin!(halt);
+            // The halt waits for the step instead of landing underneath it.
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(200), &mut halt)
+                    .await
+                    .is_err()
+            );
+            gate.notify_one();
+            halt.await
+        });
+        tick.unwrap();
+        let halted = halt.unwrap();
+        assert_eq!(halted.state, ReleaseState::Halted);
+        // The halt waited for the step, so it is the last word at the store.
+        assert_eq!(
+            *store.changes.lock().unwrap(),
+            vec![StoreChange::Rollout { fraction: 0.05 }, StoreChange::Halt]
+        );
+
+        // A step planned before the halt is refused without a store call.
+        let stale = transition_release(
+            deps,
+            &release.id,
+            ReleaseChange {
+                to_state: ReleaseState::Rolling,
+                to_fraction: Some(0.2),
+                audit_action: "release_advanced",
+                expect: Some((ReleaseState::Rolling, 0.05)),
+            },
+            &ReleaseActor::System,
+            Some("scheduled rollout step"),
+        )
+        .await;
+        assert!(matches!(stale, Err(ReleaseError::Conflict(_))));
+        assert_eq!(store.changes.lock().unwrap().len(), 2);
+        let after = load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(after.state, ReleaseState::Halted);
+        assert_eq!(after.rollout_fraction, 0.05);
+    }
+
+    async fn history_reasons(pool: &SqlitePool, release_id: &str) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT reason FROM release_history WHERE release_id = ?1 AND reason IS NOT NULL \
+             ORDER BY at, rowid",
+        )
+        .bind(release_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn failed_crash_rate_check_holds_the_schedule_until_health_data_returns() {
+        let pool = pool().await;
+        let scheduler = Scheduler::new(64);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let policy = ReleasePolicy {
+            crash_rate_threshold: Some(0.02),
+            ..ReleasePolicy::default()
+        };
+        let release = create_release(deps, new_release("production", policy), &user(), None)
+            .await
+            .unwrap();
+        let due = release.next_step_at.unwrap();
+
+        *store.crash_rate_fails.lock().unwrap() = true;
+        for now in [due, due + 60, due + 120] {
+            run_rollout_tick(deps, now, 100).await.unwrap();
+            let held = load_release(&pool, &release.id).await.unwrap();
+            assert_eq!(held.state, ReleaseState::Rolling);
+            assert_eq!(held.rollout_fraction, 0.01);
+            assert_eq!(held.next_step_at, Some(due));
+        }
+        assert!(store.changes.lock().unwrap().is_empty());
+        // One note explains the hold; repeated failures do not add more.
+        let reasons = history_reasons(&pool, &release.id).await;
+        assert_eq!(reasons.len(), 1);
+        assert!(reasons[0].starts_with("Rollout held: crash rate unavailable"));
+        assert!(reasons[0].contains("403"));
+
+        *store.crash_rate_fails.lock().unwrap() = false;
+        *store.crash_rate.lock().unwrap() = Some(0.001);
+        run_rollout_tick(deps, due + HEALTH_CHECK_INTERVAL_SECS, 100)
+            .await
+            .unwrap();
+        let stepped = load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(stepped.rollout_fraction, 0.05);
+        assert_eq!(
+            *store.changes.lock().unwrap(),
+            vec![StoreChange::Rollout { fraction: 0.05 }]
+        );
+        assert!(
+            history_reasons(&pool, &release.id)
+                .await
+                .iter()
+                .any(|reason| reason.starts_with("Crash rate available again"))
+        );
+    }
+
+    #[tokio::test]
+    async fn without_a_threshold_a_failing_crash_rate_check_does_not_hold() {
+        let pool = pool().await;
+        let scheduler = Scheduler::new(16);
+        let store = FakeStore::default();
+        *store.crash_rate_fails.lock().unwrap() = true;
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let release = create_release(
+            deps,
+            new_release("production", ReleasePolicy::default()),
+            &user(),
+            None,
+        )
+        .await
+        .unwrap();
+        run_rollout_tick(deps, release.next_step_at.unwrap(), 100)
+            .await
+            .unwrap();
+        let stepped = load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(stepped.rollout_fraction, 0.05);
+    }
+
+    #[tokio::test]
+    async fn sync_only_releases_never_crowd_out_a_due_step() {
+        let pool = pool().await;
+        let scheduler = Scheduler::new(1024);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        for _ in 0..150 {
+            create_release(
+                deps,
+                NewRelease {
+                    state: ReleaseState::Paused,
+                    rollout_fraction: 0.0,
+                    ..new_release("production", ReleasePolicy::default())
+                },
+                &user(),
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        let rolling = create_release(
+            deps,
+            new_release("production", ReleasePolicy::default()),
+            &user(),
+            None,
+        )
+        .await
+        .unwrap();
+        run_rollout_tick(deps, rolling.next_step_at.unwrap(), 100)
+            .await
+            .unwrap();
+        let stepped = load_release(&pool, &rolling.id).await.unwrap();
+        assert_eq!(stepped.rollout_fraction, 0.05);
+    }
+
+    #[tokio::test]
+    async fn store_rejections_carry_the_store_message() {
+        for message in [
+            "version code 120 is no longer on the production track in Play Console; it was discarded or replaced there",
+            "App Store releases cannot be halted from Oore; pause the phased release or remove the version from sale in App Store Connect",
+        ] {
+            let (status, Json(body)) = ReleaseError::Store(anyhow::anyhow!(message)).into_api();
+            assert_eq!(status, StatusCode::BAD_GATEWAY);
+            assert_eq!(body.code, "store_rejected");
+            assert!(body.error.contains(message), "{}", body.error);
+        }
+        let chained = anyhow::anyhow!("403 Forbidden").context("Play rejected the edit");
+        let (_, Json(body)) = ReleaseError::Store(chained).into_api();
+        assert!(body.error.contains("Play rejected the edit: 403 Forbidden"));
+    }
+
     #[test]
     fn actions_follow_project_role() {
         let release = Release {
@@ -2033,6 +2416,32 @@ mod tests {
             allowed_actions(&EffectiveProjectRole::InstanceAdmin, &halted),
             vec![Resume]
         );
+
+        // Apple owns the phased percentage and cannot halt a version.
+        let admin = EffectiveProjectRole::InstanceAdmin;
+        let app_store = Release {
+            store: ReleaseStore::AppStore,
+            platform: "ios".into(),
+            track: "app_store".into(),
+            state: ReleaseState::Rolling,
+            ..halted.clone()
+        };
+        assert_eq!(allowed_actions(&admin, &app_store), vec![Pause, Complete]);
+        let app_store_paused = Release {
+            state: ReleaseState::Paused,
+            ..app_store
+        };
+        assert_eq!(
+            allowed_actions(&admin, &app_store_paused),
+            vec![Resume, Complete]
+        );
+        // A Play draft can be started or completed, not halted.
+        let draft = Release {
+            state: ReleaseState::Paused,
+            rollout_fraction: 0.0,
+            ..halted
+        };
+        assert_eq!(allowed_actions(&admin, &draft), vec![Resume, Complete]);
     }
 
     #[test]
