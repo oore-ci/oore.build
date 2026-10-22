@@ -251,7 +251,6 @@ export function IntegrationRepositoryInventory({
   pageSize,
   query,
   repositories,
-  repositoryCount,
   total,
 }: {
   canWrite: boolean
@@ -267,11 +266,9 @@ export function IntegrationRepositoryInventory({
   pageSize: number
   query?: string
   repositories: Array<IntegrationRepository>
-  repositoryCount: number
   total: number
 }) {
-  const repositoryKind =
-    integration.provider === 'gitlab' ? 'projects' : 'repositories'
+  const repositoryKind = 'repositories'
 
   return (
     <section aria-label="Repositories" className="min-w-0 space-y-4">
@@ -302,7 +299,7 @@ export function IntegrationRepositoryInventory({
         </div>
       ) : null}
 
-      {!isLoading && !error && repositoryCount === 0 ? (
+      {!isLoading && !error && !query && total === 0 ? (
         <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -316,7 +313,7 @@ export function IntegrationRepositoryInventory({
         </Empty>
       ) : null}
 
-      {!isLoading && !error && repositoryCount > 0 && total === 0 ? (
+      {!isLoading && !error && query && total === 0 ? (
         <Empty className="border bg-card">
           <EmptyHeader>
             <EmptyMedia variant="icon">

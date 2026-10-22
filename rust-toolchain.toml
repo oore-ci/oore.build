@@ -1,0 +1,6 @@
+# CI, release builds and local builds all use this exact compiler, so a new
+# stable release cannot add clippy lints or change codegen without a PR.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

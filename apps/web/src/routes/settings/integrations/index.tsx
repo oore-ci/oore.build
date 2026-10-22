@@ -114,9 +114,13 @@ function parseSearch(search: SearchInput): IntegrationsSearch {
 
 export const Route = createFileRoute('/settings/integrations/')({
   validateSearch: parseSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
+    requireInstanceRoleOrRedirect(
+      instance.id,
+      ['owner', 'admin', 'developer'],
+      context,
+    )
   },
   component: IntegrationsPage,
 })

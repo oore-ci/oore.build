@@ -100,9 +100,9 @@ export const Route = createFileRoute(
     },
   },
   validateSearch: parseEditPipelineSearch,
-  beforeLoad: async ({ params }) => {
+  beforeLoad: async ({ params, ...context }) => {
     const instance = getActiveInstanceOrRedirect()
-    const token = requireAuthOrRedirect(instance.id)
+    const token = requireAuthOrRedirect(instance.id, context)
     await requireProjectPermissionOrRedirect({
       action: 'write',
       instance,

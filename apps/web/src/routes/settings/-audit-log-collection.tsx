@@ -14,10 +14,10 @@ import {
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
 import { Badge } from '@/components/ui/badge'
-import { EmptyValue } from '@/components/table-values'
 import { formatEnumLabel } from '@/lib/format-utils'
 import { relativeTime } from '@/lib/format-utils'
 import type { AuditLogEntry } from '@oore/client/models'
+import { ROLE_LABELS } from './-user-role-labels'
 
 export type AuditSort =
   | 'created_at'
@@ -32,8 +32,38 @@ const AUDIT_SORTS = [
   'resource_type',
 ] satisfies ReadonlyArray<AuditSort>
 
+const PROPER_WORDS = new Map([
+  ['api', 'API'],
+  ['github', 'GitHub'],
+  ['gitlab', 'GitLab'],
+  ['oidc', 'OIDC'],
+  ['qa', 'QA'],
+  ['smtp', 'SMTP'],
+  ['url', 'URL'],
+])
+
 function auditActionLabel(action: string) {
   return formatEnumLabel(action.replace(/[.-]+/g, '_'))
+    .split(' ')
+    .map((word) => PROPER_WORDS.get(word.toLowerCase()) ?? word)
+    .join(' ')
+}
+
+// Details are free text from the daemon and can carry raw role values.
+function auditDetails(details: string) {
+  return details.replace(
+    /\b(owner|admin|developer|qa_viewer)\b/g,
+    (role) => ROLE_LABELS[role] ?? role,
+  )
+}
+
+function NotRecorded() {
+  return (
+    <span className="text-muted-foreground">
+      <span aria-hidden>—</span>
+      <span className="sr-only">Not recorded</span>
+    </span>
+  )
 }
 
 function AuditTime({ entry }: { entry: AuditLogEntry }) {
@@ -56,7 +86,7 @@ function AuditResourceId({
   id: string | null | undefined
   type: string
 }) {
-  if (!id) return <EmptyValue />
+  if (!id) return <NotRecorded />
   const className =
     'block max-w-48 truncate font-mono text-xs text-muted-foreground'
   const linkClassName = `${className} hover:text-foreground hover:underline`
@@ -154,7 +184,14 @@ const auditColumns: Array<DataTableColumnDef<AuditLogEntry>> = [
   {
     accessorKey: 'details',
     header: 'Details',
-    cell: ({ row }) => row.original.details ?? <EmptyValue />,
+    cell: ({ row }) =>
+      row.original.details ? (
+        <span className="block max-w-md min-w-48 break-words whitespace-normal">
+          {auditDetails(row.original.details)}
+        </span>
+      ) : (
+        <NotRecorded />
+      ),
     enableSorting: false,
   },
 ]

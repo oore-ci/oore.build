@@ -1,0 +1,87 @@
+---
+title: '`oore update`'
+status: implemented
+description: 'Check for and install a newer release on a Ready Complete or Control plane installation.'
+---
+
+Use `oore update` to move a Ready Complete or Control plane installation to a newer release in place.
+
+```text
+oore update [--check] [--force] [--channel <CHANNEL> [--switch-channel]] [--repo <OWNER/NAME>]
+```
+
+```bash
+oore update --check
+oore update
+```
+
+The update drains active runner work, creates a backup, restarts managed services, and verifies the new release. It restores the previous release when verification fails.
+
+For the full procedure and recovery steps, see [Upgrade Oore](/operate/maintain/upgrade).
+
+## Options
+
+| Option             | Purpose                                                                  |
+| ------------------ | ------------------------------------------------------------------------ |
+| `--check`          | Report the update this command would apply. Change nothing.              |
+| `--force`          | Reinstall the latest release even when it is already installed.          |
+| `--channel`        | Select `stable`, `beta`, or `alpha`. Defaults to the installed channel.  |
+| `--switch-channel` | Move this installation to the `--channel` channel. Requires `--channel`. |
+| `--repo`           | Select the release repository. Defaults to the installed `GITHUB_REPO`.  |
+| `--help`           | Print command help.                                                      |
+
+`--repo` also reads `OORE_GITHUB_REPO`. A profile installation must stay on the repository it records.
+
+## Check before you update
+
+`--check` verifies the signed channel index and checksum manifest. It does not download or run the release.
+
+It applies the same rules as a real run. If the real run would stop, `--check` stops with the same message and next step.
+
+## Change the release channel
+
+An update stays on the installed channel. To move to another channel, name it and pass `--switch-channel`:
+
+```bash
+oore update --check --channel alpha --switch-channel
+oore update --channel alpha --switch-channel
+```
+
+Without `--switch-channel`, Oore stops before it prints or changes anything.
+
+One case needs no switch. A pre-release installation can move to the stable build of the same version, such as `0.1.48-beta.2` to `0.1.48`.
+
+A switch never downgrades. If the target channel's latest release is older than the installed version, the command stops.
+
+## Other device roles
+
+`oore update` updates only a Ready Complete or Control plane installation. For other roles it names the next step:
+
+| Installation       | Next step                                                                                                       |
+| ------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Bootstrap only     | Rerun the CLI bootstrap to update the CLI, or run `oore install` to choose a role.                              |
+| CLI only           | Rerun the CLI bootstrap with the same channel and install root.                                                 |
+| Web node           | Run `oore-web update` on the Web node.                                                                          |
+| Runner             | Run `oore uninstall`, which keeps Oore data. Rerun the CLI bootstrap, then run `oore install --profile runner`. |
+| Setup not finished | Run `oore setup`, then update.                                                                                  |
+
+## Release mirrors
+
+`oore update` reads the same origin variables as the bootstrap:
+
+| Variable                      | Purpose                                                  |
+| ----------------------------- | -------------------------------------------------------- |
+| `OORE_RELEASE_INDEX_BASE_URL` | Read the signed channel index from a mirror.             |
+| `OORE_RELEASE_BASE_URL`       | Download the release assets from a mirror's tag folders. |
+
+```bash
+OORE_RELEASE_INDEX_BASE_URL=https://mirror.example.com/oore-index \
+OORE_RELEASE_BASE_URL=https://mirror.example.com/oore/releases/download \
+oore update
+```
+
+`OORE_RELEASE_BASE_URL` must use HTTPS. Oore appends the release tag, such as `/v0.1.48`.
+
+The mirror must serve the official signatures. Oore verifies the checksum manifest signature and the archive SHA-256 wherever the files come from.
+
+The bootstrap does not store these variables. Set them for each update.

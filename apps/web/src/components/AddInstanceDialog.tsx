@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/drawer'
 import { isHostedUiOrigin, isLocalLauncherOrigin } from '@/lib/connectivity'
 import { useInstanceStore } from '@/stores/instance-store'
+import { useSwitchInstance } from '@/hooks/use-switch-instance'
 import { DEFAULT_INSTANCE_ICON_KEY, INSTANCE_ICONS } from '@/lib/instance-icons'
 
 interface AddInstanceDialogProps {
@@ -66,6 +67,7 @@ export default function AddInstanceDialog({
   const localLauncher = isLocalLauncherOrigin(frontendOrigin)
   const addInstance = useInstanceStore((s) => s.addInstance)
   const setActiveInstance = useInstanceStore((s) => s.setActiveInstance)
+  const switchInstance = useSwitchInstance()
 
   const form = useForm<AddInstanceForm>({
     resolver: zodResolver(addInstanceSchema(frontendOrigin)),
@@ -84,7 +86,12 @@ export default function AddInstanceDialog({
       data.url,
       data.icon,
     )
-    setActiveInstance(id)
+    if (useInstanceStore.getState().activeInstanceId === id) {
+      // The first instance becomes active as it is added.
+      setActiveInstance(id)
+    } else {
+      void switchInstance(id)
+    }
     form.reset()
     onOpenChange(false)
   }

@@ -40,6 +40,16 @@ pub(crate) struct UninstallArgs {
         conflicts_with = "purge"
     )]
     legacy_v0_1_41: bool,
+
+    /// Uninstall even though the installation manifest cannot be read. Oore
+    /// then removes every component path and owned service it can prove
+    /// belongs to this install root.
+    #[arg(
+        long = "ignore-invalid-manifest",
+        default_value_t = false,
+        conflicts_with = "legacy_v0_1_41"
+    )]
+    ignore_invalid_manifest: bool,
 }
 
 struct RemovalPlan {
@@ -56,6 +66,7 @@ struct RemovalPlan {
 #[derive(Clone, Copy)]
 enum InstallationKind {
     Profile(InstallProfile),
+    InvalidManifest,
     BootstrapOnly,
     LegacyV0141(LegacyInstallMode),
 }
@@ -116,6 +127,7 @@ pub(crate) fn handle(args: UninstallArgs, terminal: Terminal) -> anyhow::Result<
 
     refuse_update_state(&install_root)?;
     let manifest_path = install_root.join("install-manifest.json");
+    let mut sudo_keepalive = None;
     let (installation, recorded_services, shell_path_files, component_targets, legacy_updater) =
         match fs::symlink_metadata(&manifest_path) {
             Ok(_) => {
@@ -123,33 +135,51 @@ pub(crate) fn handle(args: UninstallArgs, terminal: Terminal) -> anyhow::Result<
                     !args.legacy_v0_1_41,
                     "--legacy-v0-1-41 requires a pre-manifest v0.1.41 installation"
                 );
-                let manifest = InstallManifest::load(&manifest_path).with_context(|| {
-                    format!(
-                        "cannot uninstall safely without a valid installation manifest at {}",
-                        manifest_path.display()
-                    )
-                })?;
-                let services = manifest
-                    .lifecycle
-                    .services
-                    .iter()
-                    .map(|managed| managed.service)
-                    .collect::<Vec<_>>();
-                let mut services = services;
-                if matches!(
-                    manifest.profile,
-                    InstallProfile::Complete | InstallProfile::ControlPlane
-                ) {
-                    services.push(InstallService::Updater);
+                match InstallManifest::load(&manifest_path) {
+                    Ok(manifest) => {
+                        let mut services = manifest
+                            .lifecycle
+                            .services
+                            .iter()
+                            .map(|managed| managed.service)
+                            .collect::<Vec<_>>();
+                        if matches!(
+                            manifest.profile,
+                            InstallProfile::Complete | InstallProfile::ControlPlane
+                        ) {
+                            services.push(InstallService::Updater);
+                        }
+                        let targets =
+                            preflight_component_targets(&install_root, &manifest.components)?;
+                        (
+                            InstallationKind::Profile(manifest.profile),
+                            services,
+                            manifest.shell_path_files,
+                            targets,
+                            false,
+                        )
+                    }
+                    Err(error) if args.ignore_invalid_manifest => {
+                        // Refuse a manifest that is foreign-owned or a link: only
+                        // unreadable contents are safe to set aside.
+                        crate::install_manifest::ensure_private_manifest_file(&manifest_path)
+                            .map_err(|metadata_error| {
+                                metadata_error.context(format!("{error:#}"))
+                            })?;
+                        let targets = preflight_component_targets(
+                            &install_root,
+                            InstallProfile::Complete.components(),
+                        )?;
+                        (
+                            InstallationKind::InvalidManifest,
+                            ALL_SERVICES.to_vec(),
+                            SHELL_PATH_FILES.map(String::from).to_vec(),
+                            targets,
+                            false,
+                        )
+                    }
+                    Err(error) => return Err(error),
                 }
-                let targets = preflight_component_targets(&install_root, &manifest)?;
-                (
-                    InstallationKind::Profile(manifest.profile),
-                    services,
-                    manifest.shell_path_files,
-                    targets,
-                    false,
-                )
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 anyhow::ensure!(
@@ -165,7 +195,7 @@ pub(crate) fn handle(args: UninstallArgs, terminal: Terminal) -> anyhow::Result<
                             "Administrator access",
                             "Oore must inspect the protected v0.1.41 launchd definitions before it can show a safe removal plan. Your password is requested by sudo and is not stored by Oore.",
                         )?;
-                        crate::authorize_system_service_restart()?;
+                        sudo_keepalive = Some(crate::authorize_system_service_restart()?);
                     }
                     let legacy = preflight_legacy_v0141(&install_root)?;
                     (
@@ -222,8 +252,9 @@ pub(crate) fn handle(args: UninstallArgs, terminal: Terminal) -> anyhow::Result<
         return Ok(());
     }
     if (!plan.services.is_empty() || plan.legacy_updater) && !args.legacy_v0_1_41 {
-        crate::authorize_system_service_restart()?;
+        sudo_keepalive = Some(crate::authorize_system_service_restart()?);
     }
+    let _sudo_keepalive = sudo_keepalive;
 
     apply_path_edits(&mut plan.path_edits)?;
     if plan.legacy_updater
@@ -326,12 +357,8 @@ fn resolve_install_root() -> anyhow::Result<PathBuf> {
         return validate_install_root_text(&value).map(PathBuf::from);
     }
 
-    if let Ok(executable) = std::env::current_exe()
-        && let Some(bin) = executable.parent()
-        && bin.file_name().is_some_and(|name| name == "bin")
-        && let Some(root) = bin.parent()
-    {
-        return Ok(root.to_path_buf());
+    if let Some(root) = oore_contract::install_root::install_root_for_current_executable() {
+        return Ok(root);
     }
 
     let home = dirs::home_dir().context("could not determine the home directory")?;
@@ -478,18 +505,26 @@ fn inspect_runtime_update_status(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Every service Oore can register. Each one is removed only when its launchd
+/// definition proves that it belongs to the install root.
+const ALL_SERVICES: [InstallService; 4] = [
+    InstallService::Updater,
+    InstallService::Web,
+    InstallService::Runner,
+    InstallService::Daemon,
+];
+
+/// Every shell file that can hold the Oore PATH block. Files without the exact
+/// block are left unchanged.
+const SHELL_PATH_FILES: [&str; 3] = [".zshrc", ".bashrc", ".bash_profile"];
+
 fn preflight_services(
     root: &Path,
     recorded: &[InstallService],
 ) -> anyhow::Result<Vec<InstallService>> {
     let mut present = Vec::new();
 
-    for service in [
-        InstallService::Updater,
-        InstallService::Web,
-        InstallService::Runner,
-        InstallService::Daemon,
-    ] {
+    for service in ALL_SERVICES {
         let owned = service_is_owned(root, service).with_context(|| {
             format!(
                 "cannot prove ownership of service {}; no services or files were removed",
@@ -727,7 +762,7 @@ fn escape_double_quoted(value: &str) -> String {
 
 fn preflight_component_targets(
     root: &Path,
-    manifest: &InstallManifest,
+    components: &[InstallComponent],
 ) -> anyhow::Result<Vec<OwnedTarget>> {
     let root_dev = fs::symlink_metadata(root)?.dev();
     let mut paths = BTreeSet::from([
@@ -741,11 +776,9 @@ fn preflight_component_targets(
         "SHELL_PATH_FILE",
         "install-manifest.json",
     ]);
-    let control_plane = manifest
-        .components
-        .contains(&InstallComponent::ControlPlane);
-    let web = manifest.components.contains(&InstallComponent::Web);
-    let runner = manifest.components.contains(&InstallComponent::Runner);
+    let control_plane = components.contains(&InstallComponent::ControlPlane);
+    let web = components.contains(&InstallComponent::Web);
+    let runner = components.contains(&InstallComponent::Runner);
     if control_plane {
         paths.insert("bin/oored");
     }
@@ -1348,6 +1381,7 @@ fn format_plan(plan: &RemovalPlan, purge: bool) -> String {
         InstallationKind::Profile(InstallProfile::Runner) => "runner",
         InstallationKind::Profile(InstallProfile::WebNode) => "web-node",
         InstallationKind::Profile(InstallProfile::CliOnly) => "cli-only",
+        InstallationKind::InvalidManifest => "unknown (invalid installation manifest)",
         InstallationKind::BootstrapOnly => "bootstrap-only",
         InstallationKind::LegacyV0141(LegacyInstallMode::All) => "v0.1.41 all",
         InstallationKind::LegacyV0141(LegacyInstallMode::Backend) => "v0.1.41 backend",
@@ -2076,4 +2110,168 @@ fn launchd_job_loaded(service: &str) -> anyhow::Result<bool> {
 fn current_effective_uid() -> u32 {
     // SAFETY: `geteuid` has no arguments, pointer requirements, or failure state.
     unsafe { libc::geteuid() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn install_root() -> (tempfile::TempDir, PathBuf) {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temporary.path()).unwrap().join("oore");
+        fs::create_dir_all(root.join("bin")).unwrap();
+        for directory in [root.parent().unwrap(), &root, &root.join("bin")] {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let cli = root.join("bin/oore");
+        fs::write(&cli, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+        (temporary, root)
+    }
+
+    fn error_text(result: anyhow::Result<impl std::fmt::Debug>) -> String {
+        format!("{:#}", result.unwrap_err())
+    }
+
+    #[test]
+    fn install_root_text_must_be_a_plain_absolute_path() {
+        assert_eq!(
+            validate_install_root_text("/opt/oore").unwrap(),
+            "/opt/oore"
+        );
+        assert!(error_text(validate_install_root_text("")).contains("cannot be empty"));
+        assert!(error_text(validate_install_root_text("oore")).contains("absolute path"));
+        assert!(error_text(validate_install_root_text("/opt/a:b")).contains("colon"));
+        assert!(error_text(validate_install_root_text("/opt/a\nb")).contains("newline"));
+    }
+
+    #[test]
+    fn uninstall_refuses_unsafe_install_roots() {
+        let (_temporary, root) = install_root();
+        validate_install_root(&root, true).unwrap();
+
+        assert!(error_text(validate_install_root(Path::new("/"), false)).contains("refusing"));
+        let home = dirs::home_dir().unwrap();
+        assert!(error_text(validate_install_root(&home, false)).contains("home directory"));
+        assert!(
+            error_text(validate_install_root(&root.join("bin/../bin"), false))
+                .contains("unsupported path component")
+        );
+
+        let link = root.parent().unwrap().join("linked");
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        assert!(error_text(validate_install_root(&link, false)).contains("not a real directory"));
+
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(error_text(validate_install_root(&root, false)).contains("writable by another"));
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+
+        fs::set_permissions(root.join("bin/oore"), fs::Permissions::from_mode(0o644)).unwrap();
+        validate_install_root(&root, false).unwrap();
+        assert!(error_text(validate_install_root(&root, true)).contains("not executable"));
+        fs::remove_file(root.join("bin/oore")).unwrap();
+        assert!(validate_install_root(&root, true).is_err());
+    }
+
+    #[test]
+    fn uninstall_waits_for_pending_or_running_updates() {
+        let (_temporary, root) = install_root();
+        refuse_update_state(&root).unwrap();
+
+        let write_status = |phase| {
+            let status = RuntimeUpdateStatus {
+                phase,
+                error: None,
+                managed_service: true,
+            };
+            let path = root.join(".runtime-update-status.json");
+            fs::write(&path, serde_json::to_vec(&status).unwrap()).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        };
+        write_status(RuntimeUpdatePhase::Idle);
+        refuse_update_state(&root).unwrap();
+        write_status(RuntimeUpdatePhase::Failed);
+        refuse_update_state(&root).unwrap();
+        write_status(RuntimeUpdatePhase::Updating);
+        assert!(error_text(refuse_update_state(&root)).contains("runtime update is active"));
+        write_status(RuntimeUpdatePhase::Restarting);
+        assert!(error_text(refuse_update_state(&root)).contains("runtime update is active"));
+        fs::write(root.join(".runtime-update-status.json"), b"{").unwrap();
+        assert!(error_text(refuse_update_state(&root)).contains("invalid runtime update status"));
+        fs::remove_file(root.join(".runtime-update-status.json")).unwrap();
+
+        let request = root.join("run/runtime-update-queue/request.json");
+        fs::create_dir_all(request.parent().unwrap()).unwrap();
+        fs::write(&request, b"{}").unwrap();
+        assert!(error_text(refuse_update_state(&root)).contains("runtime update state exists"));
+        fs::remove_file(&request).unwrap();
+
+        for transaction in [
+            root.join(".update-1234"),
+            root.join(".supervised-update-1234"),
+            root.join("run/runtime-update-active-1234"),
+        ] {
+            fs::create_dir(&transaction).unwrap();
+            assert!(
+                error_text(refuse_update_state(&root)).contains("update transaction state exists")
+            );
+            fs::remove_dir(&transaction).unwrap();
+        }
+        refuse_update_state(&root).unwrap();
+    }
+
+    #[test]
+    fn only_the_exact_managed_path_block_is_removed() {
+        let path = Path::new("/home/user/.zshrc");
+        let export = "export PATH=\"/home/user/.oore/bin:$PATH\"";
+        let block = format!("{PATH_BLOCK_START}\n{export}\n{PATH_BLOCK_END}\n");
+
+        assert_eq!(
+            remove_exact_path_block("alias ll='ls -l'\n", export, path).unwrap(),
+            None
+        );
+        assert_eq!(
+            remove_exact_path_block(&format!("before\n{block}after\n"), export, path).unwrap(),
+            Some("before\nafter\n".to_string())
+        );
+        assert_eq!(
+            remove_exact_path_block(block.trim_end(), export, path).unwrap(),
+            Some(String::new())
+        );
+
+        for contents in [
+            format!("{block}{block}"),
+            format!("{PATH_BLOCK_START}\n{export}\n"),
+            format!("{PATH_BLOCK_START}\nexport PATH=\"/elsewhere:$PATH\"\n{PATH_BLOCK_END}\n"),
+            format!("{PATH_BLOCK_START}\n{export}\necho extra\n{PATH_BLOCK_END}\n"),
+            format!("# {PATH_BLOCK_START}\n{export}\n{PATH_BLOCK_END}\n"),
+        ] {
+            assert!(
+                remove_exact_path_block(&contents, export, path).is_err(),
+                "{contents:?} was edited"
+            );
+        }
+    }
+
+    #[test]
+    fn shell_paths_are_escaped_for_double_quotes() {
+        assert_eq!(
+            escape_double_quoted(r#"/Users/a "b"/$HOME/`x`\y"#),
+            r#"/Users/a \"b\"/\$HOME/\`x\`\\y"#
+        );
+    }
+
+    #[test]
+    fn purge_refuses_roots_it_must_never_delete() {
+        assert!(error_text(validate_purge_root(Path::new("relative"))).contains("absolute"));
+        assert!(error_text(validate_purge_root(Path::new("/"))).contains("refusing to purge /"));
+        let home = dirs::home_dir().unwrap();
+        assert!(error_text(validate_purge_root(&home)).contains("home directory"));
+
+        let (_temporary, root) = install_root();
+        let link = root.parent().unwrap().join("linked");
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        assert!(error_text(validate_purge_root(&link)).contains("symbolic link"));
+        validate_purge_root(&root).unwrap();
+    }
 }

@@ -19,9 +19,9 @@ export const Route = createFileRoute('/releases/$releaseId')({
       title: 'Release',
     },
   },
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireAuthOrRedirect(instance.id, context)
   },
   component: ReleaseRedirect,
 })
