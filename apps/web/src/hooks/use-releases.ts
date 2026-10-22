@@ -16,12 +16,14 @@ import {
   haltRelease,
   pauseRelease,
   raiseRelease,
+  refreshStoreVitals,
   resumeRelease,
 } from '@oore/client/operations'
 import {
   getReleaseOptions,
   getReleaseQueryKey,
   getStoreVitalsOptions,
+  getStoreVitalsQueryKey,
   listReleaseEventsOptions,
   listReleaseEventsQueryKey,
   listReleasesOptions,
@@ -89,6 +91,26 @@ export function useStoreVitals() {
     // The daemon refreshes stores every few hours; minutes are fresh enough.
     staleTime: 5 * 60_000,
     refetchInterval: 15 * 60_000,
+  })
+}
+
+/** Read the stores now instead of waiting for the daemon's next pass. */
+export function useRefreshStoreVitals() {
+  const queryClient = useQueryClient()
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useMutation({
+    mutationFn: () => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return refreshStoreVitals({ client })
+    },
+    onSuccess: (vitals) => {
+      queryClient.setQueryData(
+        scopeOoreQueryKey(instanceId, getStoreVitalsQueryKey({ client })),
+        vitals,
+      )
+    },
   })
 }
 

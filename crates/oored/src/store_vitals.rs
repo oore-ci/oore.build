@@ -19,6 +19,7 @@ use oore_contract::{
 use oore_google_play::{PlayErrorIssue, PlayVitalsKind, PlayVitalsRate};
 use serde_json::Value;
 use sqlx::{FromRow, SqlitePool};
+use tokio::sync::Mutex;
 use tracing::{error, warn};
 
 use crate::AppState;
@@ -32,7 +33,13 @@ type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
 const MONITOR_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const REFRESH_AFTER_SECS: i64 = 6 * 60 * 60;
-const RETRY_AFTER_SECS: i64 = 60 * 60;
+/// A failed read is often a setting someone is fixing right now.
+const RETRY_AFTER_SECS: i64 = 15 * 60;
+/// One manual refresh at a time, and not more often than this.
+const MANUAL_REFRESH_COOLDOWN_SECS: i64 = 30;
+const MANUAL_REFRESH_LIMIT: i64 = 20;
+
+static LAST_MANUAL_REFRESH: Mutex<i64> = Mutex::const_new(0);
 const REFRESH_BATCH: i64 = 5;
 const TOP_ISSUES: u32 = 5;
 /// Google Play's bad-behavior thresholds for user-perceived rates.
@@ -56,6 +63,74 @@ pub async fn get_store_vitals(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> ApiResult<StoreVitalsResponse> {
+    load_vitals(&state, &auth).await
+}
+
+/// `POST /v1/store-vitals/refresh` — read the stores now for the caller's
+/// apps, for example right after fixing a permission, instead of waiting for
+/// the next scheduled read.
+pub async fn refresh_store_vitals(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> ApiResult<StoreVitalsResponse> {
+    let store_err = |e: sqlx::Error| {
+        error!(error = %e, "failed to refresh store vitals");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to refresh store vitals",
+        )
+    };
+    {
+        let mut last = LAST_MANUAL_REFRESH.try_lock().map_err(|_| {
+            api_err(
+                StatusCode::TOO_MANY_REQUESTS,
+                "refresh_in_progress",
+                "Oore is already reading the stores. Try again in a moment.",
+            )
+        })?;
+        let now = now_unix();
+        if now - *last < MANUAL_REFRESH_COOLDOWN_SECS {
+            return Err(api_err(
+                StatusCode::TOO_MANY_REQUESTS,
+                "refresh_too_soon",
+                "Oore read the stores moments ago. Try again in half a minute.",
+            ));
+        }
+        discover_apps(&state.db).await.map_err(store_err)?;
+        let privileged = auth.0.role == "owner" || auth.0.role == "admin";
+        let rows = sqlx::query_as::<_, DueRow>(
+            "SELECT project_id, store, app_identifier, pipeline_id, asc_app_id FROM store_app_vitals v \
+             WHERE ?1 OR EXISTS (SELECT 1 FROM project_members pm \
+               WHERE pm.project_id = v.project_id AND pm.user_id = ?2) \
+             ORDER BY next_refresh_at LIMIT ?3",
+        )
+        .bind(privileged)
+        .bind(&auth.0.user_id)
+        .bind(MANUAL_REFRESH_LIMIT)
+        .fetch_all(&state.db)
+        .await
+        .map_err(store_err)?;
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .map_err(|e| {
+                error!(error = %e, "failed to build the store vitals HTTP client");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to refresh store vitals",
+                )
+            })?;
+        refresh_rows(&state, &http, rows, now)
+            .await
+            .map_err(store_err)?;
+        *last = now_unix();
+    }
+    load_vitals(&state, &auth).await
+}
+
+async fn load_vitals(state: &AppState, auth: &AuthUser) -> ApiResult<StoreVitalsResponse> {
     let privileged = auth.0.role == "owner" || auth.0.role == "admin";
     let rows = sqlx::query_as::<_, VitalsRow>(
         "SELECT v.project_id, p.name AS project_name, v.store, v.app_identifier, v.vitals_json, \
@@ -162,7 +237,16 @@ async fn refresh_due(state: &AppState, http: &reqwest::Client, now: i64) -> sqlx
     .bind(REFRESH_BATCH)
     .fetch_all(&state.db)
     .await?;
-    for row in due {
+    refresh_rows(state, http, due, now).await
+}
+
+async fn refresh_rows(
+    state: &AppState,
+    http: &reqwest::Client,
+    rows: Vec<DueRow>,
+    now: i64,
+) -> sqlx::Result<()> {
+    for row in rows {
         let read = match row.store.as_str() {
             "google_play" => read_play(state, http, &row).await,
             _ => read_app_store(state, http, &row).await,

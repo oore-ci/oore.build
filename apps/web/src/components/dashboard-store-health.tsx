@@ -19,7 +19,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { useStoreVitals } from '@/hooks/use-releases'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Refresh01Icon } from '@hugeicons/core-free-icons'
+
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+import { useRefreshStoreVitals, useStoreVitals } from '@/hooks/use-releases'
+import { toast } from '@/lib/toast'
 import { relativeTime } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
 
@@ -254,18 +260,39 @@ function AppCard({ app }: { app: StoreAppVitals }) {
 /** Crash, ANR, hang and launch numbers from the stores, one card per released app. */
 export function DashboardStoreHealth() {
   const vitalsQuery = useStoreVitals()
+  const refresh = useRefreshStoreVitals()
   const apps = vitalsQuery.data?.apps ?? []
   // Nothing released yet, or the daemon predates store vitals: stay out of the way.
   if (apps.length === 0) return null
 
   return (
     <section className="flex flex-col gap-2" aria-labelledby="store-health">
-      <h2
-        id="store-health"
-        className="text-sm font-medium text-muted-foreground"
-      >
-        Store health
-      </h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2
+          id="store-health"
+          className="text-sm font-medium text-muted-foreground"
+        >
+          Store health
+        </h2>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={refresh.isPending}
+          onClick={() =>
+            refresh.mutate(undefined, {
+              onError: (error) =>
+                toast.error(`Couldn't refresh store health: ${error.message}`),
+            })
+          }
+        >
+          {refresh.isPending ? (
+            <Spinner data-icon="inline-start" />
+          ) : (
+            <HugeiconsIcon icon={Refresh01Icon} data-icon="inline-start" />
+          )}
+          {refresh.isPending ? 'Reading stores…' : 'Refresh'}
+        </Button>
+      </div>
       <div className="grid grid-cols-1 gap-3 @3xl:grid-cols-2 @6xl:grid-cols-3">
         {apps.map((app) => (
           <AppCard

@@ -168,14 +168,14 @@ export const RELEASE_ACTION_COPY = {
     confirmLabel: 'Approve',
   },
   raise: {
-    done: 'Rollout raised',
-    label: 'Raise rollout',
-    title: 'Raise rollout?',
+    done: 'Rollout increased',
+    label: 'Increase rollout',
+    title: 'Increase rollout?',
     description: (release) =>
       release.next_fraction == null
         ? `${releaseVersionLabel(release)} moves to the next rollout step now.`
         : `${releaseVersionLabel(release)} goes from ${formatRolloutPercent(release.rollout_fraction)} to ${formatRolloutPercent(release.next_fraction)} of users now.`,
-    confirmLabel: 'Raise',
+    confirmLabel: 'Increase',
   },
   resume: {
     done: 'Rollout resumed',

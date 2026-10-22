@@ -2831,6 +2831,10 @@ pub async fn build_router_with_recovery(
             get(build_insights::get_build_insights),
         )
         .route("/v1/store-vitals", get(store_vitals::get_store_vitals))
+        .route(
+            "/v1/store-vitals/refresh",
+            post(store_vitals::refresh_store_vitals),
+        )
         .route("/v1/builds/{build_id}", get(builds::get_build))
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
         .route("/v1/builds/{build_id}/approve", post(builds::approve_build))

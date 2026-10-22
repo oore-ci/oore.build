@@ -176,6 +176,7 @@ use utoipa::{
         // ── Releases ──
         operations::list_releases,
         operations::get_store_vitals,
+        operations::refresh_store_vitals,
         operations::create_release,
         operations::get_release,
         operations::raise_release,
@@ -2361,6 +2362,20 @@ mod operations {
         )
     )]
     pub(super) fn get_store_vitals() {}
+
+    /// Refresh store vitals
+    ///
+    /// Reads the stores now for the caller's apps, for example right after
+    /// granting a missing permission, and returns the fresh copy. One refresh
+    /// runs at a time, at most every 30 seconds.
+    #[utoipa::path(post, path = "/v1/store-vitals/refresh", tag = "Releases",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Store vitals after the refresh", body = StoreVitalsResponse),
+            (status = 429, description = "A refresh is running or just ran", body = ApiError),
+        )
+    )]
+    pub(super) fn refresh_store_vitals() {}
 
     /// Get build detail
     #[utoipa::path(get, path = "/v1/builds/{build_id}", tag = "Builds",
