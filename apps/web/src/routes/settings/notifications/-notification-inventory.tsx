@@ -2,7 +2,8 @@ import { useMemo } from 'react'
 import { Link } from '@tanstack/react-router'
 
 import type { NotificationChannel } from '@oore/client/models'
-import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
+import { relativeTime } from '@/lib/format-utils'
+import { notificationEventLabel } from './-notification-form'
 import { enabledStatus } from '@/lib/status-variants'
 import { StatusBadge } from '@/components/status-badge'
 import {
@@ -100,7 +101,7 @@ function getNotificationColumns({
       header: 'Events',
       cell: ({ row }) =>
         row.original.events.length > 0
-          ? row.original.events.map(formatEnumLabel).join(', ')
+          ? row.original.events.map(notificationEventLabel).join(', ')
           : 'All events',
       enableSorting: false,
     },

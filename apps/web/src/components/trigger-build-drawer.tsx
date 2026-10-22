@@ -899,7 +899,7 @@ export default function TriggerBuildDrawer({
                     : runnersQuery.isLoading
                       ? 'Checking runner availability…'
                       : preferencesQuery.data?.direct_macos_runner_paused
-                        ? 'Mac builds are paused. This build will wait until an admin resumes them.'
+                        ? 'Runners are paused. This build will wait until an owner or admin resumes them.'
                         : runnersQuery.data?.online_total === 0
                           ? 'No runner is online. This build will wait for one to connect.'
                           : 'A runner is online. Toolchain, repository access and signing are checked when the build runs.'}{' '}
@@ -913,22 +913,6 @@ export default function TriggerBuildDrawer({
                     <span className="sr-only">(opens in a new tab)</span>
                   </Link>
                   .
-                  {canReadSettings &&
-                  preferencesQuery.data?.direct_macos_runner_paused ? (
-                    <>
-                      {' '}
-                      <Link
-                        to="/settings/preferences"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline underline-offset-4"
-                      >
-                        Execution settings{' '}
-                        <span className="sr-only">(opens in a new tab)</span>
-                      </Link>
-                      .
-                    </>
-                  ) : null}
                 </AlertDescription>
               </Alert>
             </div>

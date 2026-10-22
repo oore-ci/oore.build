@@ -379,6 +379,8 @@ pub fn row_to_integration(row: &sqlx::sqlite::SqliteRow) -> Integration {
         host_url: row.get("host_url"),
         auth_mode: row.get("auth_mode"),
         status: row.get("status"),
+        status_reason: row.get("status_reason"),
+        status_checked_at: row.get("status_checked_at"),
         display_name: row.get("display_name"),
         app_id: row.get("app_id"),
         app_slug: row.get("app_slug"),

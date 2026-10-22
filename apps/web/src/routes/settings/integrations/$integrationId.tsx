@@ -28,6 +28,7 @@ import {
 import {
   useDeleteIntegration,
   useGitLabAuthorize,
+  useGitLabTokenStatus,
   useInstallations,
   useIntegration,
   useIntegrationRepos,
@@ -61,6 +62,7 @@ import { GitLabTokenSettings } from './-gitlab-token-settings'
 import { IntegrationConnectionDetails } from './-integration-connection-details'
 import { IntegrationDisconnectDialog } from './-integration-disconnect-dialog'
 import { OperatorIncidentAlert } from '@/components/operator-incident-alert'
+import { SourceStatusAlert } from './-source-status-alert'
 
 type IntegrationDetailTab = 'repositories' | 'accounts' | 'connection'
 
@@ -139,6 +141,11 @@ function IntegrationDetailPage() {
     resourceId: integrationId,
   })
   const markIncidentRead = useMarkOperatorIncidentRead()
+  // Fetched only on demand, when an operator asks Oore to check the token.
+  const tokenCheckQuery = useGitLabTokenStatus(integrationId, false)
+  // Unfiltered count, so a search does not change the repository total.
+  const repositoryTotalQuery = useIntegrationRepos(integrationId, { limit: 1 })
+  const repositoryTotal = repositoryTotalQuery.data?.total
 
   const label =
     detailQuery.data?.integration.display_name ??
@@ -208,7 +215,7 @@ function IntegrationDetailPage() {
       onSuccess: () => {
         toast.success(
           provider === 'gitlab'
-            ? 'GitLab projects synced'
+            ? 'GitLab repositories synced'
             : 'GitHub repositories synced',
         )
       },
@@ -303,8 +310,7 @@ function IntegrationDetailPage() {
       : integration.provider === 'github'
         ? 'Install the GitHub App, then sync this source.'
         : 'This source has no linked local path.'
-  const syncLabel =
-    integration.provider === 'gitlab' ? 'Sync projects' : 'Sync repositories'
+  const syncLabel = 'Sync repositories'
   const canSyncInstallations =
     integration.provider === 'github' || integration.provider === 'gitlab'
   const tab = search.tab ?? 'repositories'
@@ -344,13 +350,11 @@ function IntegrationDetailPage() {
           <>
             <StatusBadge kind="integration" value={integration.status} />
             <Badge variant="outline">{providerLabel}</Badge>
-            {!repositoriesQuery.isLoading && !repositoriesQuery.error ? (
-              <>
-                <span>
-                  {repositories.length}{' '}
-                  {repositories.length === 1 ? 'repository' : 'repositories'}
-                </span>
-              </>
+            {repositoryTotal !== undefined ? (
+              <span>
+                {repositoryTotal}{' '}
+                {repositoryTotal === 1 ? 'repository' : 'repositories'}
+              </span>
             ) : null}
           </>
         }
@@ -432,6 +436,36 @@ function IntegrationDetailPage() {
         </Alert>
       ) : null}
 
+      {!canWrite ||
+      (incidentsQuery.isSuccess &&
+        incidentsQuery.data.incidents.length === 0) ? (
+        <SourceStatusAlert
+          canWrite={canWrite}
+          checkPending={tokenCheckQuery.isFetching}
+          integration={integration}
+          onCheckAgain={
+            integration.auth_mode === 'personal_token'
+              ? () =>
+                  void tokenCheckQuery
+                    .refetch()
+                    .then(() => detailQuery.refetch())
+              : undefined
+          }
+          onReconnect={
+            integration.auth_mode === 'personal_token'
+              ? () => updateSearch({ tab: 'connection' })
+              : integration.provider === 'github' && manageHref
+                ? () => window.open(manageHref, '_blank', 'noopener,noreferrer')
+                : undefined
+          }
+          reconnectLabel={
+            integration.auth_mode === 'personal_token'
+              ? 'Replace token'
+              : manageLabel
+          }
+        />
+      ) : null}
+
       {incidentsQuery.data?.incidents.map((incident) => (
         <OperatorIncidentAlert
           incident={incident}
@@ -453,7 +487,7 @@ function IntegrationDetailPage() {
           <TabsTrigger value="repositories">
             Repositories
             <span className="font-mono text-xs text-muted-foreground">
-              {repositoriesQuery.isLoading ? '…' : repositories.length}
+              {repositoryTotal ?? '…'}
             </span>
           </TabsTrigger>
           <TabsTrigger value="accounts">
@@ -513,7 +547,6 @@ function IntegrationDetailPage() {
             pageSize={pageSize}
             query={search.q}
             repositories={visibleRepositories}
-            repositoryCount={repositories.length}
             total={total}
           />
         </TabsContent>
@@ -576,7 +609,7 @@ function IntegrationDetailPage() {
           void disconnectImpactQuery.refetch()
         }}
         open={disconnectOpen}
-        repositoryCount={repositories.length}
+        repositoryCount={repositoryTotal ?? total}
       />
 
       {integration.provider === 'gitlab' && canWrite && gitLabWebhookUrl ? (

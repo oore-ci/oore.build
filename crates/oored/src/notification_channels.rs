@@ -7,7 +7,7 @@ use oore_contract::{
     ApiError, CreateNotificationChannelRequest, DeleteNotificationChannelResponse,
     ListNotificationChannelsResponse, ListNotificationDeliveriesResponse, NotificationChannel,
     NotificationChannelResponse, NotificationChannelType, NotificationDelivery,
-    NotificationDeliveryStatus, SmtpConfig, TestNotificationChannelResponse,
+    NotificationDeliveryStatus, SmtpConfig, SmtpConfigSummary, TestNotificationChannelResponse,
     UpdateNotificationChannelRequest,
 };
 use serde::Deserialize;
@@ -52,10 +52,38 @@ fn row_to_channel(row: &sqlx::sqlite::SqliteRow) -> NotificationChannel {
         has_url: encrypted_url.is_some(),
         has_secret: encrypted_secret.is_some(),
         has_smtp_config: encrypted_config.is_some(),
+        url_host: None,
+        smtp_summary: None,
         created_by: row.get("created_by"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
+}
+
+/// Adds the readable parts of a channel's encrypted settings, so the edit form
+/// can show where alerts go without exposing passwords or URL tokens.
+fn row_to_channel_detail(row: &sqlx::sqlite::SqliteRow, key: &[u8]) -> NotificationChannel {
+    let mut channel = row_to_channel(row);
+    let decrypt = |column: &str| {
+        row.get::<Option<String>, _>(column)
+            .and_then(|value| crypto::decrypt(&value, key).inspect_err(|e| {
+                warn!(error = %e, channel_id = %channel.id, column, "failed to decrypt notification channel setting");
+            }).ok())
+    };
+    channel.url_host = decrypt("encrypted_url")
+        .and_then(|value| url::Url::parse(&value).ok())
+        .and_then(|url| url.host_str().map(str::to_string));
+    channel.smtp_summary = decrypt("encrypted_config")
+        .and_then(|value| serde_json::from_str::<SmtpConfig>(&value).ok())
+        .map(|config| SmtpConfigSummary {
+            host: config.host,
+            port: config.port,
+            username: config.username,
+            tls_mode: config.tls_mode,
+            from_address: config.from_address,
+            recipients: config.recipients,
+        });
+    channel
 }
 
 fn row_to_delivery(row: &sqlx::sqlite::SqliteRow) -> NotificationDelivery {
@@ -393,6 +421,8 @@ pub async fn create_notification_channel(
         has_url: encrypted_url.is_some(),
         has_secret: encrypted_secret.is_some(),
         has_smtp_config: encrypted_config.is_some(),
+        url_host: None,
+        smtp_summary: None,
         created_by: Some(auth.0.user_id),
         created_at: now,
         updated_at: now,
@@ -515,7 +545,7 @@ pub async fn get_notification_channel(
         })?;
 
     Ok(Json(NotificationChannelResponse {
-        channel: row_to_channel(&row),
+        channel: row_to_channel_detail(&row, &state.encryption_key),
     }))
 }
 
@@ -824,7 +854,7 @@ pub async fn update_notification_channel(
         })?;
 
     Ok(Json(NotificationChannelResponse {
-        channel: row_to_channel(&row),
+        channel: row_to_channel_detail(&row, &state.encryption_key),
     }))
 }
 
