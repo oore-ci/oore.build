@@ -35,10 +35,14 @@ export const RELEASE_STORE_LABEL = {
   app_store: 'App Store',
 } satisfies Record<ReleaseStore, string>
 
+/**
+ * One health vocabulary for rollouts and store vitals, so the release board
+ * and Store health never describe the same numbers in different words.
+ */
 export const RELEASE_HEALTH_LABEL = {
   healthy: 'Healthy',
-  warning: 'Watch',
-  breached: 'Breached',
+  warning: 'Near threshold',
+  breached: 'Over threshold',
   unknown: 'No data',
 } satisfies Record<ReleaseHealth, string>
 
@@ -85,6 +89,38 @@ export function getReleaseHealthVariant(health: ReleaseHealth): BadgeVariant {
   return RELEASE_HEALTH_VARIANT[health]
 }
 
+/** From this share of its threshold a number is worth watching. */
+const NEAR_THRESHOLD = 0.75
+
+/** Mirrors the daemon's `ReleaseHealth::from_crash_rate` for any vital. */
+export function healthFromThreshold(
+  value: number | null | undefined,
+  threshold: number | null | undefined,
+): ReleaseHealth {
+  if (value == null || threshold == null || threshold <= 0) return 'unknown'
+  if (value >= threshold) return 'breached'
+  return value >= threshold * NEAR_THRESHOLD ? 'warning' : 'healthy'
+}
+
+/** Explains a rollout's health badge: it reads this version's crash rate only. */
+export function releaseHealthDetail(
+  release: Pick<Release, 'crash_rate' | 'crash_rate_threshold'>,
+): string {
+  const threshold =
+    release.crash_rate_threshold == null
+      ? null
+      : `${(release.crash_rate_threshold * 100).toFixed(2)}%`
+  if (release.crash_rate == null) {
+    return threshold
+      ? `No crash data for this version yet. Rollout halts at ${threshold}.`
+      : 'No crash data for this version yet.'
+  }
+  const rate = `${(release.crash_rate * 100).toFixed(2)}%`
+  return threshold
+    ? `This version's crash rate is ${rate}. Rollout halts at ${threshold}.`
+    : `This version's crash rate is ${rate}.`
+}
+
 export function formatRolloutPercent(fraction: number): string {
   const percent = Math.round(fraction * 1000) / 10
   return `${percent}%`
@@ -115,9 +151,9 @@ export function releaseNextStep(release: Release, nowSeconds: number): string {
     case 'in_review':
       return 'Waiting for store review'
     case 'paused':
-      return 'Paused until resumed'
+      return `Held at ${formatRolloutPercent(release.rollout_fraction)} until resumed`
     case 'halted':
-      return 'Halted until resumed'
+      return 'Stopped for new users until resumed'
     case 'complete':
       return 'Live for all users'
     case 'failed':
@@ -217,8 +253,13 @@ export const RELEASE_ACTION_COPY = {
     done: 'Rollout halted',
     label: 'Halt',
     title: 'Halt rollout?',
-    description: (release) =>
-      `${RELEASE_STORE_LABEL[release.store]} stops serving ${releaseVersionLabel(release)} to new users. Users who already updated keep it.`,
+    description: (release) => {
+      const stops = `${RELEASE_STORE_LABEL[release.store]} stops serving ${releaseVersionLabel(release)} to new users. Users who already updated keep it.`
+      const percent = formatRolloutPercent(release.rollout_fraction)
+      return release.state === 'paused'
+        ? `Paused only holds the rollout at ${percent}; new users still get this version. ${stops}`
+        : `${stops} To hold the rollout at ${percent} instead, pause it.`
+    },
     confirmLabel: 'Halt rollout',
     destructive: true,
   },
