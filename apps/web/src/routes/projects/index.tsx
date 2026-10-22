@@ -90,9 +90,9 @@ function parseSearch(search: SearchInput): ProjectsSearch {
 
 export const Route = createFileRoute('/projects/')({
   validateSearch: parseSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireAuthOrRedirect(instance.id, context)
     if (useAuthStore.getState().user?.role === 'qa_viewer') {
       throw redirect({ to: '/' })
     }

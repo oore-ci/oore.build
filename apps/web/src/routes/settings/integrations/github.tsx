@@ -69,9 +69,9 @@ export const Route = createFileRoute('/settings/integrations/github')({
       title: 'GitHub',
     },
   },
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'], context)
   },
   component: GitHubSetupPage,
 })

@@ -179,9 +179,13 @@ function validateProjectSearch(search: SearchInput): ProjectDetailSearch {
 
 export const Route = createFileRoute('/projects/$projectId/')({
   validateSearch: validateProjectSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
+    requireInstanceRoleOrRedirect(
+      instance.id,
+      ['owner', 'admin', 'developer'],
+      context,
+    )
   },
   component: ProjectDetailPage,
 })

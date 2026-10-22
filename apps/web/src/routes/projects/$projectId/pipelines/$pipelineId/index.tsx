@@ -142,9 +142,13 @@ export const Route = createFileRoute(
   '/projects/$projectId/pipelines/$pipelineId/',
 )({
   validateSearch: validatePipelineSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
+    requireInstanceRoleOrRedirect(
+      instance.id,
+      ['owner', 'admin', 'developer'],
+      context,
+    )
   },
   component: PipelineDetailPage,
 })

@@ -35,9 +35,9 @@ export const Route = createFileRoute('/settings/integrations/gitlab')({
       title: 'GitLab',
     },
   },
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'], context)
   },
   component: GitLabSetupPage,
 })
