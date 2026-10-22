@@ -168,7 +168,7 @@ export function ProjectBuildInventory({
       search={{
         value: query,
         onChange: onSearch,
-        placeholder: 'Search by branch',
+        placeholder: 'Search builds',
       }}
       pagination={{ onPageChange, page, pageSize, total }}
       isLoading={isLoading}
@@ -176,7 +176,7 @@ export function ProjectBuildInventory({
         isLoading
           ? 'Loading builds…'
           : query
-            ? `No builds on branch “${query}”.`
+            ? `No builds match “${query}”.`
             : 'No builds match these filters.'
       }
     />

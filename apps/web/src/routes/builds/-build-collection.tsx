@@ -223,7 +223,7 @@ export function BuildCollection({
           search={{
             value: query,
             onChange: onSearch,
-            placeholder: 'Search by branch',
+            placeholder: 'Search builds',
           }}
           pagination={{ onPageChange, page, pageSize, total }}
           isLoading={isLoading}
@@ -231,7 +231,7 @@ export function BuildCollection({
             isLoading
               ? 'Loading builds…'
               : query
-                ? `No builds on branch “${query}”.`
+                ? `No builds match “${query}”.`
                 : 'No builds match these filters.'
           }
         />

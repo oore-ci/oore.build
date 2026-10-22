@@ -52,7 +52,7 @@ export function ProjectBuildsTab({
   const buildsQuery = useBuilds(
     {
       project_id: projectId,
-      branch: search.q,
+      q: search.q,
       status: search.status,
       sort: search.sort,
       direction: search.direction,

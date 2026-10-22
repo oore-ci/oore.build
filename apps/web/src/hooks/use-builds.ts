@@ -66,6 +66,7 @@ export function useBuilds<TData = ListBuildsResponse>(
     pipeline_id?: string
     status?: string
     branch?: string
+    q?: string
     sort?: 'created_at' | 'status' | 'project_name' | 'pipeline_name' | 'branch'
     direction?: 'asc' | 'desc'
     limit?: number
