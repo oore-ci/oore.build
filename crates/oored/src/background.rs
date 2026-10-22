@@ -33,6 +33,16 @@ const RETENTION_RUN_BUDGET_SECS: u64 = 30;
 const RETENTION_BACKLOG_RETRY_SECS: i64 = 60;
 const TERMINAL_BUILD_STATUSES: [&str; 4] = ["succeeded", "failed", "canceled", "timed_out"];
 
+/// Keeps retention away from builds a release still needs. A release that is
+/// not `complete` or `failed` keeps its build and artifacts; any release keeps
+/// an `expired` build so Full cleanup never deletes the release record.
+fn push_release_guard(query: &mut QueryBuilder<Sqlite>, build: &str) {
+    query.push(format!(
+        " AND NOT EXISTS (SELECT 1 FROM releases r WHERE r.build_id = {build}.id \
+         AND (r.state NOT IN ('complete', 'failed') OR {build}.status = 'expired'))"
+    ));
+}
+
 struct CleanupArtifact {
     file_path: String,
     file_size: Option<i64>,
@@ -618,32 +628,21 @@ async fn cleanup_build_record(
     target: RetentionCleanupTarget,
 ) -> bool {
     let result = match target {
-        RetentionCleanupTarget::ArtifactsOnly => {
-            if let Err(error) = sqlx::query("DELETE FROM artifacts WHERE build_id = ?1")
-                .bind(build_id)
-                .execute(pool)
-                .await
-            {
-                Err(anyhow::Error::from(error))
-            } else {
-                crate::builds::transition_build(
-                    pool,
-                    build_id,
-                    BuildStatus::Expired,
-                    None,
-                    Some("retention policy cleanup"),
-                )
-                .await
-                .map(|_| ())
-                .map_err(|error| anyhow::anyhow!("{error:?}"))
-            }
-        }
-        RetentionCleanupTarget::Full => sqlx::query("DELETE FROM builds WHERE id = ?1")
-            .bind(build_id)
-            .execute(pool)
-            .await
-            .map(|_| ())
-            .map_err(anyhow::Error::from),
+        RetentionCleanupTarget::ArtifactsOnly => expire_build_artifacts(pool, build_id).await,
+        // A build with a release keeps its row, so the release and its history
+        // survive; only its artifacts go.
+        RetentionCleanupTarget::Full => match sqlx::query(
+            "DELETE FROM builds WHERE id = ?1 \
+             AND NOT EXISTS (SELECT 1 FROM releases WHERE build_id = ?1)",
+        )
+        .bind(build_id)
+        .execute(pool)
+        .await
+        {
+            Ok(done) if done.rows_affected() == 0 => expire_build_artifacts(pool, build_id).await,
+            Ok(_) => Ok(()),
+            Err(error) => Err(anyhow::Error::from(error)),
+        },
     };
 
     match result {
@@ -656,6 +655,23 @@ async fn cleanup_build_record(
             false
         }
     }
+}
+
+async fn expire_build_artifacts(pool: &SqlitePool, build_id: &str) -> anyhow::Result<()> {
+    sqlx::query("DELETE FROM artifacts WHERE build_id = ?1")
+        .bind(build_id)
+        .execute(pool)
+        .await?;
+    crate::builds::transition_build(
+        pool,
+        build_id,
+        BuildStatus::Expired,
+        None,
+        Some("retention policy cleanup"),
+    )
+    .await
+    .map(|_| ())
+    .map_err(|error| anyhow::anyhow!("{error:?}"))
 }
 
 fn push_status_filter(query: &mut QueryBuilder<Sqlite>, statuses: &[&str]) {
@@ -677,6 +693,7 @@ async fn load_expired_build_ids(
     let mut query = QueryBuilder::<Sqlite>::new("SELECT id FROM builds WHERE project_id = ");
     query.push_bind(project_id);
     push_status_filter(&mut query, statuses);
+    push_release_guard(&mut query, "builds");
     query
         .push(" AND finished_at IS NOT NULL AND finished_at < ")
         .push_bind(age_cutoff)
@@ -695,6 +712,7 @@ async fn load_excess_build_ids(
     let mut query = QueryBuilder::<Sqlite>::new("SELECT id FROM builds WHERE project_id = ");
     query.push_bind(project_id);
     push_status_filter(&mut query, statuses);
+    push_release_guard(&mut query, "builds");
     query
         .push(" ORDER BY finished_at DESC LIMIT ")
         .push_bind(limit as i64)
@@ -720,6 +738,7 @@ async fn load_oldest_build_sizes(
         separated.push_bind(*status);
     }
     separated.push_unseparated(")");
+    push_release_guard(&mut query, "b");
     query
         .push(" GROUP BY b.id ORDER BY b.finished_at ASC LIMIT ")
         .push_bind(limit as i64);
@@ -767,6 +786,26 @@ async fn load_artifacts_for_builds(
     Ok(artifacts_by_build)
 }
 
+/// Artifacts past their `expires_at`, except those of a build whose release is
+/// still in progress.
+async fn load_expired_artifacts(
+    pool: &SqlitePool,
+    now: i64,
+) -> Result<Vec<sqlx::sqlite::SqliteRow>, sqlx::Error> {
+    sqlx::query(
+        "SELECT a.id, a.file_path, a.file_size, a.build_id \
+         FROM artifacts a \
+         WHERE a.expires_at IS NOT NULL AND a.expires_at < ?1 \
+         AND NOT EXISTS (SELECT 1 FROM releases r WHERE r.build_id = a.build_id \
+             AND r.state NOT IN ('complete', 'failed')) \
+         ORDER BY a.expires_at LIMIT ?2",
+    )
+    .bind(now)
+    .bind(MONITOR_BATCH_SIZE)
+    .fetch_all(pool)
+    .await
+}
+
 /// Expired artifact and download token cleanup monitor.
 ///
 /// Runs every 5 minutes. Deletes artifacts whose `expires_at` has passed
@@ -780,17 +819,7 @@ async fn expired_artifact_monitor(pool: SqlitePool, storage: Arc<RwLock<StorageB
         let now = now_unix();
 
         // 1. Clean up expired artifacts
-        let expired_artifacts = match sqlx::query(
-            "SELECT a.id, a.file_path, a.file_size, a.build_id \
-             FROM artifacts a \
-             WHERE a.expires_at IS NOT NULL AND a.expires_at < ?1 \
-             ORDER BY a.expires_at LIMIT ?2",
-        )
-        .bind(now)
-        .bind(MONITOR_BATCH_SIZE)
-        .fetch_all(&pool)
-        .await
-        {
+        let expired_artifacts = match load_expired_artifacts(&pool, now).await {
             Ok(rows) => rows,
             Err(e) => {
                 error!(error = %e, "expired_artifact_monitor: failed to query expired artifacts");
@@ -877,5 +906,231 @@ async fn expired_artifact_monitor(pool: SqlitePool, storage: Arc<RwLock<StorageB
         }
 
         tokio::time::sleep(Duration::from_secs(300)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DAY: i64 = 86_400;
+    const NOW: i64 = 100 * DAY;
+
+    async fn pool() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        for statement in [
+            "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+             VALUES ('u1', 'dev@example.com', 'sub', 'developer', 0, 0)",
+            "INSERT INTO projects (id, name, created_by, created_at, updated_at) VALUES ('p1', 'App', 'u1', 0, 0)",
+            "INSERT INTO pipelines (id, project_id, name, created_at, updated_at) VALUES ('pl1', 'p1', 'main', 0, 0)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+        // b1 is the oldest; each build has one 100-byte artifact.
+        for number in 1..=4_i64 {
+            let finished_at = number * DAY;
+            sqlx::query(
+                "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, \
+                 queued_at, finished_at, created_at, updated_at) \
+                 VALUES (?1, 'p1', 'pl1', ?2, 'succeeded', 'manual', ?3, ?3, ?3, ?3)",
+            )
+            .bind(format!("b{number}"))
+            .bind(number)
+            .bind(finished_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO artifacts (id, build_id, name, file_path, file_size, expires_at, created_at) \
+                 VALUES (?1, ?2, 'app.aab', ?3, 100, ?4, ?4)",
+            )
+            .bind(format!("a{number}"))
+            .bind(format!("b{number}"))
+            .bind(format!("artifacts/b{number}/app.aab"))
+            .bind(finished_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        pool
+    }
+
+    async fn add_release(pool: &SqlitePool, build_id: &str, state: &str) {
+        sqlx::query(
+            "INSERT INTO releases (id, project_id, build_id, artifact_id, store, track, state, \
+             rollout_fraction, created_at, updated_at) \
+             VALUES (?1, 'p1', ?2, NULL, 'google_play', 'production', ?3, 0.2, 0, 0)",
+        )
+        .bind(format!("r-{build_id}"))
+        .bind(build_id)
+        .bind(state)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO release_history (id, release_id, to_state, at) VALUES (?1, ?2, ?3, 0)",
+        )
+        .bind(format!("h-{build_id}"))
+        .bind(format!("r-{build_id}"))
+        .bind(state)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn set_policy(pool: &SqlitePool, limit: &str, target: &str) {
+        let (age, count, size) = match limit {
+            "age" => (Some(30), None, None),
+            "count" => (None, Some(1), None),
+            "size" => (None, None, Some(100)),
+            _ => unreachable!(),
+        };
+        sqlx::query(
+            "INSERT OR REPLACE INTO retention_policy (id, enabled, max_age_days, \
+             max_builds_per_project, max_artifact_size_bytes, cleanup_target, created_at, updated_at) \
+             VALUES (1, 1, ?1, ?2, ?3, ?4, 0, 0)",
+        )
+        .bind(age)
+        .bind(count)
+        .bind(size)
+        .bind(target)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn cleanup(pool: &SqlitePool) {
+        let mut totals = CleanupTotals::default();
+        cleanup_project(pool, &StorageBackend::Disabled, "p1", NOW, &mut totals)
+            .await
+            .unwrap();
+    }
+
+    async fn count(pool: &SqlitePool, sql: &'static str, id: &str) -> i64 {
+        sqlx::query_scalar(sql)
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn build_status(pool: &SqlitePool, build_id: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT status FROM builds WHERE id = ?1")
+            .bind(build_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn retention_keeps_a_build_whose_release_is_in_progress() {
+        for limit in ["age", "count", "size"] {
+            for target in ["artifacts_only", "full"] {
+                let pool = pool().await;
+                add_release(&pool, "b1", "rolling").await;
+                set_policy(&pool, limit, target).await;
+
+                cleanup(&pool).await;
+
+                let case = format!("{limit} limit, {target} cleanup");
+                assert_eq!(
+                    build_status(&pool, "b1").await.as_deref(),
+                    Some("succeeded"),
+                    "{case}"
+                );
+                assert_eq!(
+                    count(
+                        &pool,
+                        "SELECT COUNT(*) FROM artifacts WHERE build_id = ?1",
+                        "b1"
+                    )
+                    .await,
+                    1,
+                    "{case}"
+                );
+                assert_eq!(
+                    count(
+                        &pool,
+                        "SELECT COUNT(*) FROM releases WHERE build_id = ?1",
+                        "b1"
+                    )
+                    .await,
+                    1,
+                    "{case}"
+                );
+                assert_eq!(
+                    count(
+                        &pool,
+                        "SELECT COUNT(*) FROM release_history WHERE release_id = ?1",
+                        "r-b1"
+                    )
+                    .await,
+                    1,
+                    "{case}"
+                );
+                // Retention still cleans the build without a release.
+                let b2 = build_status(&pool, "b2").await;
+                assert!(
+                    b2.is_none() || b2.as_deref() == Some("expired"),
+                    "{case}: b2 is {b2:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn full_cleanup_keeps_the_record_of_a_finished_release() {
+        let pool = pool().await;
+        add_release(&pool, "b1", "complete").await;
+        set_policy(&pool, "count", "full").await;
+
+        cleanup(&pool).await;
+
+        // The finished release's build loses its artifacts but keeps its row.
+        assert_eq!(build_status(&pool, "b1").await.as_deref(), Some("expired"));
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT COUNT(*) FROM artifacts WHERE build_id = ?1",
+                "b1"
+            )
+            .await,
+            0
+        );
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT COUNT(*) FROM releases WHERE build_id = ?1",
+                "b1"
+            )
+            .await,
+            1
+        );
+        assert_eq!(build_status(&pool, "b2").await, None);
+
+        // Later runs leave it alone.
+        cleanup(&pool).await;
+        assert_eq!(build_status(&pool, "b1").await.as_deref(), Some("expired"));
+    }
+
+    #[tokio::test]
+    async fn artifact_expiry_skips_builds_with_a_release_in_progress() {
+        let pool = pool().await;
+        add_release(&pool, "b1", "rolling").await;
+        add_release(&pool, "b2", "complete").await;
+
+        let expired: Vec<String> = load_expired_artifacts(&pool, NOW)
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.get("build_id"))
+            .collect();
+
+        assert_eq!(expired, ["b2", "b3", "b4"]);
     }
 }

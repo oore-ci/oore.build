@@ -341,15 +341,15 @@ fn row_to_release(row: &SqliteRow) -> Result<Release, ReleaseError> {
     Ok(release)
 }
 
-pub(crate) async fn load_release(
-    pool: &SqlitePool,
+pub(crate) async fn load_release<'e>(
+    executor: impl sqlx::SqliteExecutor<'e>,
     release_id: &str,
 ) -> Result<Release, ReleaseError> {
     let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{RELEASE_SELECT} WHERE r.id = ?1"
     )))
     .bind(release_id)
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await?
     .ok_or(ReleaseError::NotFound)?;
     row_to_release(&row)
@@ -422,6 +422,42 @@ pub async fn create_release(
     actor: &ReleaseActor,
     reason: Option<&str>,
 ) -> Result<Release, ReleaseError> {
+    let mut tx = deps.pool.begin().await?;
+    let created = insert_release(&mut tx, input, actor, reason).await?;
+    tx.commit().await?;
+    Ok(finish_create(deps, created, actor).await)
+}
+
+/// A release written inside a caller's transaction. Pass it to
+/// [`finish_create`] after the commit.
+pub(crate) struct CreatedRelease {
+    pub(crate) release: Release,
+    reason: Option<String>,
+}
+
+/// The release a store upload already recorded for this build, if any.
+pub(crate) async fn find_build_release(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    build_id: &str,
+    store: ReleaseStore,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT id FROM releases WHERE build_id = ?1 AND store = ?2 ORDER BY created_at LIMIT 1",
+    )
+    .bind(build_id)
+    .bind(store.as_str())
+    .fetch_optional(&mut **tx)
+    .await
+}
+
+/// Insert a release and its first history entry in `tx`, so callers can add
+/// their own rows in the same transaction.
+pub(crate) async fn insert_release(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    input: NewRelease,
+    actor: &ReleaseActor,
+    reason: Option<&str>,
+) -> Result<CreatedRelease, ReleaseError> {
     input.policy.validate().map_err(ReleaseError::Invalid)?;
     validate_fraction(input.rollout_fraction)?;
     if input.track.trim().is_empty() {
@@ -439,7 +475,6 @@ pub async fn create_release(
     let policy_json =
         serde_json::to_string(&input.policy).map_err(|error| ReleaseError::Db(error.into()))?;
 
-    let mut tx = deps.pool.begin().await?;
     sqlx::query(
         "INSERT INTO releases (id, project_id, build_id, artifact_id, store, track, package_name, \
          version_name, version_code, state, rollout_fraction, policy_json, created_by, created_at, updated_at) \
@@ -459,10 +494,10 @@ pub async fn create_release(
     .bind(&policy_json)
     .bind(actor.user_id())
     .bind(now)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     insert_history(
-        &mut tx,
+        tx,
         &id,
         actor,
         None,
@@ -473,17 +508,26 @@ pub async fn create_release(
         now,
     )
     .await?;
-    tx.commit().await?;
-
-    let mut release = load_release(deps.pool, &id).await?;
+    let mut release = load_release(&mut **tx, &id).await?;
     if let Some(at) = next_step_at(&release, now) {
         sqlx::query("UPDATE releases SET next_step_at = ?1 WHERE id = ?2")
             .bind(at)
             .bind(&id)
-            .execute(deps.pool)
+            .execute(&mut **tx)
             .await?;
         release.next_step_at = Some(at);
     }
+    Ok(CreatedRelease { release, reason })
+}
+
+/// Audit and announce a release after its transaction committed.
+pub(crate) async fn finish_create(
+    deps: ReleaseDeps<'_>,
+    created: CreatedRelease,
+    actor: &ReleaseActor,
+) -> Release {
+    let CreatedRelease { release, reason } = created;
+    let id = release.id.clone();
 
     audit(
         deps.pool,
@@ -529,7 +573,7 @@ pub async fn create_release(
         );
     }
     info!(release_id = %id, store = %release.store, track = %release.track, "release created");
-    Ok(release)
+    release
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1458,13 +1502,13 @@ pub async fn list_release_activity(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::Mutex;
 
     use super::*;
 
     #[derive(Default)]
-    struct FakeStore {
+    pub(crate) struct FakeStore {
         changes: Mutex<Vec<StoreChange>>,
         crash_rate: Mutex<Option<f64>>,
         observed: Mutex<Option<StoreObservation>>,
@@ -1494,7 +1538,7 @@ mod tests {
         }
     }
 
-    async fn pool() -> SqlitePool {
+    pub(crate) async fn pool() -> SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")

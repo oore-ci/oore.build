@@ -5946,6 +5946,7 @@ async fn run_publish_steps(
                     &job.build_id,
                     &job.signing_token,
                     &published,
+                    &PUBLISH_REPORT_DELAYS,
                 )
                 .await
                 {
@@ -5957,7 +5958,8 @@ async fn run_publish_steps(
                         log_seq,
                         "stderr",
                         &format!(
-                            "[oore-publish] Uploaded, but recording the release failed: {error:#}"
+                            "[oore-publish] Warning: the build is on Google Play, but Oore could not \
+                             record the release, so it will not track or roll it out: {error:#}"
                         ),
                     )
                     .await;
@@ -6062,6 +6064,7 @@ async fn run_publish_steps(
                     &job.build_id,
                     &job.signing_token,
                     &published,
+                    &PUBLISH_REPORT_DELAYS,
                 )
                 .await
                 {
@@ -6073,7 +6076,8 @@ async fn run_publish_steps(
                         log_seq,
                         "stderr",
                         &format!(
-                            "[oore-publish] Uploaded, but recording the release failed: {error:#}"
+                            "[oore-publish] Warning: the build is on App Store Connect, but Oore could not \
+                             record the release, so it will not track or roll it out: {error:#}"
                         ),
                     )
                     .await;
@@ -6487,6 +6491,20 @@ async fn fetch_job_publish_plan(
     Ok(resp.json().await?)
 }
 
+/// Waits between attempts to record a store upload: about two minutes in all,
+/// enough to ride out a daemon restart.
+const PUBLISH_REPORT_DELAYS: [Duration; 5] = [
+    Duration::ZERO,
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(20),
+    Duration::from_secs(40),
+];
+const PUBLISH_REPORT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Tell the daemon about a finished store upload so it records the release.
+/// The daemon ignores repeats, so this retries until the daemon answers or
+/// rejects the report.
 async fn report_publish_result(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -6494,21 +6512,43 @@ async fn report_publish_result(
     build_id: &str,
     signing_token: &str,
     result: &RunnerPublishResult,
+    delays: &[Duration],
 ) -> anyhow::Result<()> {
-    let resp = client
-        .post(format!(
-            "{}/v1/runners/{}/jobs/{}/publish-results",
-            daemon_url, config.runner_id, build_id
-        ))
-        .bearer_auth(&config.runner_token)
-        .header("x-oore-signing-token", signing_token)
-        .json(result)
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("publish result report failed: {}", resp.status());
+    let mut last_error = None;
+    for delay in delays {
+        if !delay.is_zero() {
+            tokio::time::sleep(*delay).await;
+        }
+        let sent = client
+            .post(format!(
+                "{}/v1/runners/{}/jobs/{}/publish-results",
+                daemon_url, config.runner_id, build_id
+            ))
+            .bearer_auth(&config.runner_token)
+            .header("x-oore-signing-token", signing_token)
+            .timeout(PUBLISH_REPORT_TIMEOUT)
+            .json(result)
+            .send()
+            .await;
+        let resp = match sent {
+            Ok(resp) => resp,
+            Err(error) => {
+                last_error = Some(anyhow::Error::new(error));
+                continue;
+            }
+        };
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body = resp.text().await.unwrap_or_default();
+        let error = anyhow::anyhow!("the daemon answered {status}: {body}");
+        if runner_response_is_terminal(status) {
+            return Err(error);
+        }
+        last_error = Some(error);
     }
-    Ok(())
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("the publish result was not sent")))
 }
 
 /// Parse the reports a step wrote and send them to the daemon. Test reporting
@@ -7684,5 +7724,95 @@ mod secret_tests {
         assert!(output.status.success(), "{stdout}");
         assert!(stdout.contains("self-signed"), "{stdout}");
         fs::remove_dir_all(&root).ok();
+    }
+}
+
+#[cfg(test)]
+mod publish_report_tests {
+    use std::time::Duration;
+
+    use oore_contract::{PublishStore, RunnerPublishResult};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::{RunnerConfig, report_publish_result};
+
+    /// Answers each connection with the next status and counts requests.
+    async fn daemon(statuses: &'static [u16]) -> (String, tokio::task::JoinHandle<usize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = tokio::spawn(async move {
+            let mut served = 0;
+            for status in statuses {
+                let Ok(Ok((mut socket, _))) =
+                    tokio::time::timeout(Duration::from_millis(500), listener.accept()).await
+                else {
+                    break;
+                };
+                let mut buf = vec![0u8; 8192];
+                let _ = socket.read(&mut buf).await;
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}"
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+                served += 1;
+            }
+            served
+        });
+        (url, handle)
+    }
+
+    async fn report(url: &str) -> anyhow::Result<()> {
+        let config = RunnerConfig {
+            runner_id: "r1".into(),
+            runner_token: "t".into(),
+            daemon_url: url.into(),
+            name: "runner".into(),
+        };
+        let result = RunnerPublishResult {
+            store: PublishStore::GooglePlay,
+            track: "production".into(),
+            package_name: "com.example.app".into(),
+            version_code: 7,
+            version_name: None,
+            rollout_fraction: Some(0.1),
+            status: "in_progress".into(),
+        };
+        report_publish_result(
+            &reqwest::Client::new(),
+            url,
+            &config,
+            "b1",
+            "signing",
+            &result,
+            &[
+                Duration::ZERO,
+                Duration::from_millis(10),
+                Duration::from_millis(10),
+            ],
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn retries_until_the_daemon_records_the_release() {
+        let (url, daemon) = daemon(&[503, 500, 200]).await;
+        report(&url).await.unwrap();
+        assert_eq!(daemon.await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn stops_when_the_daemon_rejects_the_report() {
+        let (url, daemon) = daemon(&[403, 200]).await;
+        assert!(report(&url).await.is_err());
+        assert_eq!(daemon.await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn gives_up_after_the_last_attempt() {
+        let (url, daemon) = daemon(&[500, 500, 500, 200]).await;
+        let error = report(&url).await.unwrap_err();
+        assert!(format!("{error:#}").contains("500"), "{error:#}");
+        assert_eq!(daemon.await.unwrap(), 3);
     }
 }
