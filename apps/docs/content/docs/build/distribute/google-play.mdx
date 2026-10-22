@@ -126,7 +126,8 @@ hours with the service account of the pipeline that made the newest release.
 The service account needs **View app information** for the app in Play
 Console, and the daemon host needs outbound HTTPS to
 `playdeveloperreporting.googleapis.com`. Without them, Home shows why the
-numbers could not be read.
+numbers could not be read. A failed read is retried after 15 minutes; after
+fixing access, choose **Refresh** in Store health to read the store at once.
 
 ## Limits
 
