@@ -3997,6 +3997,11 @@ pub struct UpdatePipelineIosSigningRequest {
     pub provisioning_profiles: Vec<IosProvisioningProfileInput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_credentials: Option<IosApiCredentialInput>,
+    /// Use a shared App Store Connect key instead of the pipeline's own.
+    /// Omit to keep the current choice; an empty string switches back to the
+    /// pipeline's own key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_api_key_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -4036,11 +4041,16 @@ pub struct PipelineIosSigningResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub p12_expires_at: Option<i64>,
     pub has_p12_password: bool,
+    /// Whether the pipeline stores its own App Store Connect API key.
     pub has_api_key: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_issuer_id: Option<String>,
+    /// The shared App Store Connect key in use. When set it takes the place of
+    /// the pipeline's own key, which stays stored for switching back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_api_key: Option<AppStoreConnectKeySummary>,
     #[serde(default)]
     #[schema(required = true)]
     pub provisioning_profiles: Vec<IosProvisioningProfileSummary>,
@@ -4128,6 +4138,82 @@ pub struct SyncPipelineIosSigningResponse {
     pub warnings: Vec<String>,
 }
 
+// ── Shared App Store Connect API keys ──────────────────────────
+
+/// An App Store Connect API key stored once for the instance. Pipelines that
+/// sign or publish for the same Apple team can use it instead of their own key.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AppStoreConnectKeySummary {
+    pub id: String,
+    pub name: String,
+    pub key_id: String,
+    pub issuer_id: String,
+    /// Pipelines whose iOS signing uses this key.
+    pub pipeline_count: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListAppStoreConnectKeysResponse {
+    pub keys: Vec<AppStoreConnectKeySummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AppStoreConnectKeyResponse {
+    pub key: AppStoreConnectKeySummary,
+}
+
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateAppStoreConnectKeyRequest {
+    pub name: String,
+    pub key_id: String,
+    pub issuer_id: String,
+    /// Base64 of the `.p8` file downloaded from App Store Connect.
+    pub private_key_base64: String,
+}
+
+impl fmt::Debug for CreateAppStoreConnectKeyRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateAppStoreConnectKeyRequest")
+            .field("name", &self.name)
+            .field("key_id", &self.key_id)
+            .field("issuer_id", &self.issuer_id)
+            .field("private_key_base64", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Rename a shared key or replace it. Omitted fields keep their stored value;
+/// a new `key_id` requires a new private key.
+#[derive(Clone, Serialize, Deserialize, Default, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateAppStoreConnectKeyRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_key_base64: Option<String>,
+}
+
+impl fmt::Debug for UpdateAppStoreConnectKeyRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UpdateAppStoreConnectKeyRequest")
+            .field("name", &self.name)
+            .field("key_id", &self.key_id)
+            .field("issuer_id", &self.issuer_id)
+            .field(
+                "private_key_base64",
+                &self.private_key_base64.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
+}
+
 // ── Pipeline App Store publishing types ─────────────────────────
 
 /// Where an App Store Connect upload goes once Apple finishes processing it.
@@ -4195,7 +4281,8 @@ pub struct AppStorePublishConfig {
 pub struct PipelineAppStorePublishResponse {
     pub pipeline_id: String,
     pub config: AppStorePublishConfig,
-    /// Whether the pipeline's iOS signing has an App Store Connect API key.
+    /// Whether the pipeline's iOS signing has an App Store Connect API key,
+    /// its own or a shared one.
     pub has_api_key: bool,
     /// Whether the pipeline's iOS signing exports App Store IPAs.
     pub app_store_export: bool,

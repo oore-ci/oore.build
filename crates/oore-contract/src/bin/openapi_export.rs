@@ -144,6 +144,11 @@ use utoipa::{
         // ── Pipeline Publishing ──
         operations::get_pipeline_google_play_publish,
         operations::update_pipeline_google_play_publish,
+        // ── Store Credentials ──
+        operations::list_app_store_connect_keys,
+        operations::create_app_store_connect_key,
+        operations::update_app_store_connect_key,
+        operations::delete_app_store_connect_key,
         // ── Secrets ──
         operations::list_instance_secrets,
         operations::create_instance_secret,
@@ -383,6 +388,12 @@ use utoipa::{
         oore_contract::RunnerRetryArtifactsResponse,
         oore_contract::PublishStore,
         oore_contract::RunnerPublishResult,
+        // Store Credentials
+        oore_contract::AppStoreConnectKeySummary,
+        oore_contract::ListAppStoreConnectKeysResponse,
+        oore_contract::AppStoreConnectKeyResponse,
+        oore_contract::CreateAppStoreConnectKeyRequest,
+        oore_contract::UpdateAppStoreConnectKeyRequest,
         // Secrets
         oore_contract::SecretScope,
         oore_contract::SecretSummary,
@@ -584,6 +595,7 @@ use utoipa::{
         (name = "Project Members", description = "Per-project role assignments for granular RBAC."),
         (name = "Pipelines", description = "Pipeline configuration — build platforms, commands, triggers, concurrency."),
         (name = "Pipeline Publishing", description = "Store publishing settings. The runner uploads from its own host after a successful build."),
+        (name = "Store Credentials", description = "App Store Connect API keys shared by every pipeline of the instance. Private keys are encrypted at rest and never returned."),
         (name = "Secrets", description = "Write-only secrets scoped to the instance, a project or a pipeline. Values are encrypted at rest, referenced as ${{ secrets.NAME }} and never returned."),
         (name = "Pipeline Signing", description = "Code signing configuration — Android keystores, iOS certificates/profiles."),
         (name = "Builds", description = "Build lifecycle — queue, list, detail, cancel."),
@@ -1900,6 +1912,67 @@ mod operations {
         )
     )]
     pub(super) fn update_pipeline_google_play_publish() {}
+
+    // ── Store Credentials ──
+
+    /// List shared App Store Connect keys
+    ///
+    /// Returns key names, IDs and how many pipelines use each. Private keys are never returned. Requires pipeline read access.
+    #[utoipa::path(get, path = "/v1/app-store-connect-keys", tag = "Store Credentials",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Shared keys", body = ListAppStoreConnectKeysResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+        )
+    )]
+    pub(super) fn list_app_store_connect_keys() {}
+
+    /// Create shared App Store Connect key
+    ///
+    /// Stores the `.p8` private key encrypted. Requires instance settings write access.
+    #[utoipa::path(post, path = "/v1/app-store-connect-keys", tag = "Store Credentials",
+        request_body = CreateAppStoreConnectKeyRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Key created", body = AppStoreConnectKeyResponse),
+            (status = 400, description = "Invalid name, ID or private key", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 409, description = "A key with this name already exists", body = ApiError),
+        )
+    )]
+    pub(super) fn create_app_store_connect_key() {}
+
+    /// Update shared App Store Connect key
+    ///
+    /// Renames or replaces the key. Pipelines using it pick up the change on their next build. Requires instance settings write access.
+    #[utoipa::path(put, path = "/v1/app-store-connect-keys/{id}", tag = "Store Credentials",
+        params(("id" = String, Path, description = "Shared key ID")),
+        request_body = UpdateAppStoreConnectKeyRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Key updated", body = AppStoreConnectKeyResponse),
+            (status = 400, description = "Invalid name, ID or private key", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Key not found", body = ApiError),
+            (status = 409, description = "A key with this name already exists", body = ApiError),
+        )
+    )]
+    pub(super) fn update_app_store_connect_key() {}
+
+    /// Delete shared App Store Connect key
+    ///
+    /// Refused while any pipeline uses the key. Requires instance settings write access.
+    #[utoipa::path(delete, path = "/v1/app-store-connect-keys/{id}", tag = "Store Credentials",
+        params(("id" = String, Path, description = "Shared key ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Key deleted", body = OkResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Key not found", body = ApiError),
+            (status = 409, description = "Pipelines still use this key", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_app_store_connect_key() {}
 
     // ── Secrets ──
 

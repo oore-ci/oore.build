@@ -6436,6 +6436,18 @@ async fn ensure_vm_image(
         }
         Some(_) => {}
     }
+    // Check Flutter the way build steps find it, so an image that cannot run
+    // Flutter is never cached.
+    let check = builder
+        .run_script("exec /bin/sh -c 'flutter --version'")
+        .await?;
+    anyhow::ensure!(
+        check.status.success(),
+        "Building VM image {} finished, but build steps cannot run flutter in it ({}): {}",
+        plan.name,
+        check.status,
+        String::from_utf8_lossy(&check.stderr).trim()
+    );
     let image = plan.name.clone();
     tokio::task::spawn_blocking(move || builder.keep_as(&image))
         .await

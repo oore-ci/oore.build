@@ -573,6 +573,14 @@ pub(crate) fn guest_step_script(
     Ok(script)
 }
 
+/// Wraps a script fed to a shell on stdin in one brace group, so the shell
+/// reads all of it before running any of it, and its commands read
+/// /dev/null. Otherwise a command that reads stdin, such as `brew install`,
+/// swallows the rest of the script and the shell exits 0 at EOF.
+fn stdin_script(script: &str) -> String {
+    format!("{{\n{script}\n}} </dev/null\n")
+}
+
 /// A host directory shared into the guest, such as a dependency cache.
 pub(crate) struct HostShare {
     pub name: &'static str,
@@ -909,6 +917,7 @@ impl TartVm {
     /// Feeds `script` to a guest login shell, which picks up the image's PATH
     /// (Flutter, Homebrew, Ruby).
     pub(crate) async fn spawn_script(&self, script: &str) -> anyhow::Result<tokio::process::Child> {
+        let script = stdin_script(script);
         let mut child = tokio::process::Command::new(&self.tart)
             .args(["exec", "-i", &self.name, "/bin/zsh", "-l", "-s"])
             .stdin(Stdio::piped())
@@ -1321,6 +1330,27 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stdin_scripts_run_past_commands_that_read_stdin() {
+        use std::io::Write as _;
+        let script = "set -e\ncat >/dev/null\necho after\nfalse\necho unreachable\n";
+        let mut child = std::process::Command::new("/bin/sh")
+            .arg("-s")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stdin_script(script).as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "after\n");
+        assert!(!output.status.success());
     }
 
     #[test]
