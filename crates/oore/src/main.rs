@@ -5943,12 +5943,8 @@ fn resolve_install_root() -> anyhow::Result<PathBuf> {
 
     // Prefer deriving install root from the current executable path so `oore update` works even
     // when users install to a non-default root and don't export `OORE_INSTALL_ROOT`.
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(bin_dir) = exe.parent()
-        && bin_dir.file_name() == Some(std::ffi::OsStr::new("bin"))
-        && let Some(root) = bin_dir.parent()
-    {
-        return Ok(root.to_path_buf());
+    if let Some(root) = oore_contract::install_root::install_root_for_current_executable() {
+        return Ok(root);
     }
 
     let home = dirs::home_dir().context("could not determine home directory")?;

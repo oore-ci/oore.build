@@ -326,12 +326,8 @@ fn resolve_install_root() -> anyhow::Result<PathBuf> {
         return validate_install_root_text(&value).map(PathBuf::from);
     }
 
-    if let Ok(executable) = std::env::current_exe()
-        && let Some(bin) = executable.parent()
-        && bin.file_name().is_some_and(|name| name == "bin")
-        && let Some(root) = bin.parent()
-    {
-        return Ok(root.to_path_buf());
+    if let Some(root) = oore_contract::install_root::install_root_for_current_executable() {
+        return Ok(root);
     }
 
     let home = dirs::home_dir().context("could not determine the home directory")?;
