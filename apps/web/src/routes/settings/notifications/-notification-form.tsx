@@ -103,9 +103,7 @@ export const notificationChannelSchema = z.object({
   smtp_recipients: z.string().optional(),
 })
 
-type NotificationChannelSchemaValues = z.infer<
-  typeof notificationChannelSchema
->
+type NotificationChannelSchemaValues = z.infer<typeof notificationChannelSchema>
 
 function requireSelectedEvents(
   values: NotificationChannelSchemaValues,
@@ -558,8 +556,8 @@ export function NotificationChannelFormFields({
                   </FormControl>
                   {editing && channel.has_smtp_config ? (
                     <FormDescription>
-                      Enter a new password only to change it. Changing the
-                      host, port or username needs it again.
+                      Enter a new password only to change it. Changing the host,
+                      port or username needs it again.
                     </FormDescription>
                   ) : null}
                   <FormMessage />

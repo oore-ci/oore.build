@@ -40,7 +40,6 @@ const ROLE_OPTIONS = {
   qa_viewer: 'QA Viewer',
 } as const
 
-
 const inviteUserSchema = z.object({
   email: z.email('Enter a valid email address.'),
   role: z.enum(['admin', 'developer', 'qa_viewer']),

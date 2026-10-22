@@ -8,7 +8,7 @@ export const Route = createFileRoute('/settings/integrations/local-git')({
   beforeLoad: () => {
     throw redirect({
       to: '/projects',
-      search: { openCreate: '1' },
+      search: { openCreate: 1 },
       replace: true,
     })
   },

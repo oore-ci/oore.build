@@ -216,8 +216,7 @@ export const notificationHandlers = [
                 body.smtp_config.from_address ??
                 existing.smtp_summary.from_address,
               recipients:
-                body.smtp_config.recipients ??
-                existing.smtp_summary.recipients,
+                body.smtp_config.recipients ?? existing.smtp_summary.recipients,
             }
           : existing.smtp_summary,
       updated_at: now(),

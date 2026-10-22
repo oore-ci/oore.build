@@ -409,8 +409,8 @@ export function BuildDetailPage({
                 </div>
               ) : (
                 <>
-                  This build is waiting because runners are paused. Ask an
-                  owner or admin to resume them.
+                  This build is waiting because runners are paused. Ask an owner
+                  or admin to resume them.
                 </>
               )
             ) : (

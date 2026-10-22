@@ -1103,3 +1103,60 @@ pub async fn list_deliveries(
         total,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn channel_row(
+        encrypted_url: Option<String>,
+        encrypted_config: Option<String>,
+    ) -> sqlx::sqlite::SqliteRow {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
+            "SELECT 'c1' AS id, 'Alerts' AS name, 'email' AS channel_type, 1 AS enabled, \
+             NULL AS event_filter_json, NULL AS project_id, ?1 AS encrypted_url, \
+             NULL AS encrypted_secret, ?2 AS encrypted_config, NULL AS created_by, \
+             0 AS created_at, 0 AS updated_at",
+        )
+        .bind(encrypted_url)
+        .bind(encrypted_config)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn channel_detail_shows_where_alerts_go_without_secrets() {
+        let key = vec![7u8; 32];
+        let config = SmtpConfig {
+            host: "smtp.example.com".to_string(),
+            port: 587,
+            username: "ci".to_string(),
+            password: "hunter2".to_string(),
+            tls_mode: oore_contract::SmtpTlsMode::StartTls,
+            from_address: "ci@example.com".to_string(),
+            recipients: vec!["team@example.com".to_string()],
+        };
+        let row = channel_row(
+            Some(crypto::encrypt("https://hooks.example.com/services/T0/B0/secret", &key).unwrap()),
+            Some(crypto::encrypt(&serde_json::to_string(&config).unwrap(), &key).unwrap()),
+        )
+        .await;
+
+        let channel = row_to_channel_detail(&row, &key);
+        assert_eq!(channel.url_host.as_deref(), Some("hooks.example.com"));
+        let summary = channel.smtp_summary.unwrap();
+        assert_eq!(summary.host, "smtp.example.com");
+        assert_eq!(summary.recipients, vec!["team@example.com"]);
+        let json = serde_json::to_string(&row_to_channel_detail(&row, &key)).unwrap();
+        assert!(!json.contains("hunter2"));
+        assert!(!json.contains("/services/"));
+
+        assert!(row_to_channel(&row).smtp_summary.is_none());
+    }
+}

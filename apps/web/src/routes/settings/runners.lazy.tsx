@@ -220,7 +220,7 @@ function EditRunnerDialog({ runner, onClose }: EditRunnerDialogProps) {
                     Saving...
                   </>
                 ) : (
-                  'Save'
+                  'Save changes'
                 )}
               </Button>
             </DialogFooter>

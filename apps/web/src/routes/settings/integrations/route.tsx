@@ -27,7 +27,7 @@ function SourceSetupLayout() {
           <Button
             variant="outline"
             size="sm"
-            render={<Link to="/projects" search={{ openCreate: '1' }} />}
+            render={<Link to="/projects" search={{ openCreate: 1 }} />}
             nativeButton={false}
           >
             Continue setup
