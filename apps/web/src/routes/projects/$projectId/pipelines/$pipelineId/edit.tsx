@@ -25,7 +25,10 @@ import {
   useUpdatePipelineAndroidSigning,
   useUpdatePipelineIosSigning,
 } from '@/hooks/use-pipelines'
-import { usePipelineAppStorePublish } from '@/hooks/use-pipeline-publish'
+import {
+  usePipelineAppStorePublish,
+  usePipelineGooglePlayPublish,
+} from '@/hooks/use-pipeline-publish'
 import { useProject } from '@/hooks/use-projects'
 import {
   buildNumberOffsetField,
@@ -131,6 +134,7 @@ function EditPipelinePage() {
   const iosSigningQuery = usePipelineIosSigning(pipelineId)
   const iosDevicesQuery = usePipelineIosDevices(pipelineId)
   const appStorePublishQuery = usePipelineAppStorePublish(pipelineId)
+  const googlePlayPublishQuery = usePipelineGooglePlayPublish(pipelineId)
   const updateMutation = useUpdatePipeline()
   const updateSigningMutation = useUpdatePipelineAndroidSigning()
   const updateIosSigningMutation = useUpdatePipelineIosSigning()
@@ -455,6 +459,7 @@ function EditPipelinePage() {
         iosSigningData={iosSigningQuery.data}
         iosSigningActions={iosSigningActions}
         iosAppStorePublishing={iosAppStorePublishing}
+        googlePlayUpload={!!googlePlayPublishQuery.data?.config?.enabled}
       >
         {iosProfileSyncAvailable &&
           storedIosSigning.export_method === 'ad_hoc' && (

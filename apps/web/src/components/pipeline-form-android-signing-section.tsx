@@ -6,6 +6,7 @@ import type {
   PipelineAndroidSigningResponse,
 } from '@oore/client/models'
 import { PipelineFormSubsection } from '@/components/pipeline-form-section'
+import { FileField } from '@/components/file-field'
 import SetupHint from '@/components/setup-hint'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -16,9 +17,8 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 
-const ANDROID_GRADLE_SIGNING_SNIPPET = `android {
+const ANDROID_GRADLE_GROOVY_SNIPPET = `android {
     signingConfigs {
         release {
             storeFile file(System.getenv("OORE_ANDROID_KEYSTORE_PATH"))
@@ -33,6 +33,27 @@ const ANDROID_GRADLE_SIGNING_SNIPPET = `android {
         }
     }
 }`
+
+const ANDROID_GRADLE_KOTLIN_SNIPPET = `android {
+    signingConfigs {
+        create("release") {
+            storeFile = file(System.getenv("OORE_ANDROID_KEYSTORE_PATH"))
+            storePassword = System.getenv("OORE_ANDROID_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("OORE_ANDROID_KEY_ALIAS")
+            keyPassword = System.getenv("OORE_ANDROID_KEY_PASSWORD")
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+}`
+
+const ANDROID_GRADLE_SNIPPETS = [
+  { label: 'build.gradle.kts', code: ANDROID_GRADLE_KOTLIN_SNIPPET },
+  { label: 'build.gradle', code: ANDROID_GRADLE_GROOVY_SNIPPET },
+]
 
 export function PipelineAndroidSigningSection({
   debugKeystoreFile,
@@ -53,6 +74,7 @@ export function PipelineAndroidSigningSection({
 
   return (
     <PipelineFormSubsection
+      id="android-signing"
       title="Android"
       description={signingSummary(releaseEnabled, debugEnabled)}
     >
@@ -85,10 +107,10 @@ export function PipelineAndroidSigningSection({
       {releaseEnabled || debugEnabled ? (
         <SetupHint
           title="Android project setup"
-          code={ANDROID_GRADLE_SIGNING_SNIPPET}
+          codeTabs={ANDROID_GRADLE_SNIPPETS}
           items={[
             'For standard Flutter release builds, upload the keystore here and Oore prepares the signing files for the runner.',
-            'For custom Gradle flavors or signingConfigs, read the OORE_ANDROID_* environment variables shown below.',
+            'For custom Gradle flavors or signingConfigs, read the OORE_ANDROID_* environment variables as shown below. New Flutter projects use build.gradle.kts.',
             'Oore also writes OORE_ANDROID_KEY_PROPERTIES_PATH if your Gradle setup prefers a generated key.properties file.',
           ]}
         />
@@ -120,8 +142,8 @@ function SigningToggle({
             />
             {label}
           </label>
-          {stored ? (
-            <p className="text-xs text-muted-foreground">
+          {stored && !field.value ? (
+            <p className="text-sm text-muted-foreground">
               {stored.has_keystore
                 ? `Stored keystore: ${stored.keystore_filename ?? 'present'}`
                 : `No stored ${name.includes('release') ? 'release' : 'debug'} keystore`}
@@ -153,24 +175,17 @@ function SigningCredentials({
 
   return (
     <div className="grid gap-3 rounded-[min(var(--radius-2xl),16px)] bg-muted/40 p-4">
-      <div className="space-y-2">
-        <Label htmlFor={`android-${kind}-keystore`}>
-          {title} keystore (.jks)
-        </Label>
-        <Input
-          id={`android-${kind}-keystore`}
-          type="file"
-          accept=".jks,.keystore"
-          onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
-        />
-        <p className="text-xs text-muted-foreground">
-          {file
-            ? `Selected: ${file.name}`
-            : stored?.has_keystore
-              ? 'Keep existing keystore or select a new file'
-              : 'Select a JKS/keystore file'}
-        </p>
-      </div>
+      <FileField
+        id={`android-${kind}-keystore`}
+        label={`${title} keystore (.jks)`}
+        accept=".jks,.keystore"
+        file={file}
+        onFileChange={onFileChange}
+        storedName={
+          stored?.has_keystore ? (stored.keystore_filename ?? true) : null
+        }
+        emptyLabel="No keystore stored yet"
+      />
       <FormField
         control={form.control}
         name={aliasName}

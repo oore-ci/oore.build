@@ -54,6 +54,7 @@ export function PipelineSigningSection({
   if (!values.platform_android && !values.platform_ios) return null
   return (
     <PipelineFormSection
+      id="signing"
       title="Signing"
       description="Credentials stay on the server. Builds are signed on the runner."
     >
