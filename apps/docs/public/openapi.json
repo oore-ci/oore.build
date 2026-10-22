@@ -1844,7 +1844,7 @@
           "Builds"
         ],
         "summary": "List builds",
-        "description": "Returns builds, optionally filtered by project, pipeline, or status.",
+        "description": "Returns builds, optionally filtered by project, pipeline, status, or branch, or searched with `q`.",
         "operationId": "list_builds",
         "parameters": [
           {
@@ -1889,6 +1889,24 @@
             "name": "status",
             "in": "query",
             "description": "Filter by one status or up to 9 comma-separated statuses",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "branch",
+            "in": "query",
+            "description": "Filter by exact branch name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search builds, case-insensitively, by build number (with or without #), part of the branch, the start of the commit SHA, or part of the pipeline or project name. At most 200 characters.",
             "required": false,
             "schema": {
               "type": "string"

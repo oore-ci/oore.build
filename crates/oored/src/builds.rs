@@ -750,10 +750,55 @@ pub struct ListBuildsQuery {
     pub pipeline_id: Option<String>,
     pub status: Option<String>,
     pub branch: Option<String>,
+    /// Free-text search across build number, branch, commit, pipeline and
+    /// project.
+    pub q: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub sort: Option<String>,
     pub direction: Option<String>,
+}
+
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// The `q` filter for `GET /v1/builds`. A number (with or without `#`)
+/// matches the build number; any text matches part of the branch, the start
+/// of the commit, or part of the pipeline or project name, ignoring case.
+/// Names come from subqueries so the count query needs no joins.
+fn build_search_condition(query: &str, bind_values: &mut Vec<String>) -> String {
+    let needle = query.trim();
+    bind_values.push(format!("%{}%", escape_like(&needle.to_lowercase())));
+    let contains = bind_values.len();
+    bind_values.push(format!("{}%", escape_like(&needle.to_lowercase())));
+    let prefix = bind_values.len();
+    let mut clauses = vec![
+        format!("lower(COALESCE(builds.branch, '')) LIKE ?{contains} ESCAPE '\\'"),
+        format!("lower(COALESCE(builds.commit_sha, '')) LIKE ?{prefix} ESCAPE '\\'"),
+        format!(
+            "EXISTS (SELECT 1 FROM pipelines sp WHERE sp.id = builds.pipeline_id \
+             AND lower(sp.name) LIKE ?{contains} ESCAPE '\\')"
+        ),
+        format!(
+            "EXISTS (SELECT 1 FROM projects sproj WHERE sproj.id = builds.project_id \
+             AND lower(sproj.name) LIKE ?{contains} ESCAPE '\\')"
+        ),
+    ];
+    let number = needle.strip_prefix('#').unwrap_or(needle);
+    if number.bytes().all(|b| b.is_ascii_digit())
+        && let Ok(number) = number.parse::<u64>()
+    {
+        bind_values.push(number.to_string());
+        clauses.push(format!(
+            "CAST(builds.build_number AS TEXT) = ?{}",
+            bind_values.len()
+        ));
+    }
+    format!("({})", clauses.join(" OR "))
 }
 
 fn build_order_clause(
@@ -1366,6 +1411,16 @@ pub async fn list_builds(
     if let Some(ref branch) = params.branch {
         bind_values.push(branch.clone());
         conditions.push(format!("builds.branch = ?{}", bind_values.len()));
+    }
+    if let Some(q) = normalize_optional(params.q) {
+        if q.chars().count() > 200 {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "q must be at most 200 characters",
+            ));
+        }
+        conditions.push(build_search_condition(&q, &mut bind_values));
     }
 
     let where_clause = if conditions.is_empty() {
@@ -3115,5 +3170,50 @@ mod tests {
             reason.as_deref(),
             Some("approval request expired after 2 hours")
         );
+    }
+
+    #[tokio::test]
+    async fn build_search_matches_number_branch_commit_pipeline_and_project() {
+        let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
+        for (id, number, branch, sha) in [
+            ("b1", 12, Some("feature/stripe_v3"), Some("ABC1234def")),
+            ("b2", 120, Some("main"), Some("0f0f0f0")),
+            ("b3", 7, None, None),
+        ] {
+            sqlx::query(
+                "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, branch, commit_sha, queued_at, created_at, updated_at) \
+                 VALUES (?1, 'p1', 'pl1', ?2, 'queued', 'manual', ?3, ?4, 0, 0, 0)",
+            )
+            .bind(id)
+            .bind(number)
+            .bind(branch)
+            .bind(sha)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        async fn matches(pool: &sqlx::SqlitePool, query: &str) -> Vec<String> {
+            let mut binds = Vec::new();
+            let condition = build_search_condition(query, &mut binds);
+            let sql = format!("SELECT id FROM builds WHERE {condition} ORDER BY id");
+            let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql));
+            for bind in &binds {
+                q = q.bind(bind);
+            }
+            q.fetch_all(pool).await.unwrap()
+        }
+
+        assert_eq!(matches(&pool, "#12").await, ["b1"]);
+        assert_eq!(matches(&pool, "120").await, ["b2"]);
+        assert_eq!(matches(&pool, "STRIPE").await, ["b1"]);
+        assert_eq!(matches(&pool, "abc123").await, ["b1"]);
+        assert!(matches(&pool, "1234").await.is_empty());
+        // `_` is literal, not a single-character wildcard.
+        assert_eq!(matches(&pool, "stripe_v").await, ["b1"]);
+        assert!(matches(&pool, "stripe%v").await.is_empty());
+        // Pipeline and project names match every build in them.
+        assert_eq!(matches(&pool, "relea").await, ["b1", "b2", "b3"]);
+        assert_eq!(matches(&pool, "app").await, ["b1", "b2", "b3"]);
     }
 }
