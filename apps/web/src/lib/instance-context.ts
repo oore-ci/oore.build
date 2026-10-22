@@ -1,6 +1,8 @@
-import { redirect } from '@tanstack/react-router'
+import { redirect, type ParsedLocation } from '@tanstack/react-router'
 import type { Instance } from '@/lib/types'
 import type { UserRole } from '@oore/client/models'
+import { loginSearchFor } from '@/lib/auth-redirect'
+import { toast } from '@/lib/toast'
 import { useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
 import { useSetupStore } from '@/stores/setup-store'
@@ -85,20 +87,34 @@ function getAuthExpiresForInstance(instanceId: string): number | null {
   }
 }
 
+/** Whether the instance has a stored, unexpired session token. */
+export function hasValidSessionForInstance(instanceId: string): boolean {
+  const expiresAt = getAuthExpiresForInstance(instanceId)
+  return (
+    !!getAuthTokenForInstance(instanceId) &&
+    expiresAt != null &&
+    expiresAt > Math.floor(Date.now() / 1000)
+  )
+}
+
+/** Where a route guard sends someone, and what they were trying to open. */
+interface GuardContext {
+  location: Pick<ParsedLocation, 'href'>
+  preload: boolean
+}
+
 /**
  * Require a non-expired auth token for the given instance.
- * If missing or expired, redirect to '/login'. For use in route `beforeLoad` guards.
+ * If missing or expired, redirect to '/login', which returns to the requested
+ * page after sign-in. For use in route `beforeLoad` guards.
  */
-export function requireAuthOrRedirect(instanceId: string): string {
+export function requireAuthOrRedirect(
+  instanceId: string,
+  { location }: Pick<GuardContext, 'location'>,
+): string {
   const token = getAuthTokenForInstance(instanceId)
-  if (!token) {
-    throw redirect({ to: '/login' })
-  }
-
-  // Check expiry
-  const expiresAt = getAuthExpiresForInstance(instanceId)
-  if (expiresAt == null || expiresAt <= Math.floor(Date.now() / 1000)) {
-    throw redirect({ to: '/login' })
+  if (!token || !hasValidSessionForInstance(instanceId)) {
+    throw redirect({ to: '/login', search: loginSearchFor(location.href) })
   }
 
   // Sync the auth store context
@@ -112,14 +128,24 @@ export function requireAuthOrRedirect(instanceId: string): string {
 /**
  * Require authentication plus one of the supplied instance roles.
  * This is a UI/direct-route guard; the API remains the authorization boundary.
+ * People without access go Home and are told why.
  */
 export function requireInstanceRoleOrRedirect(
   instanceId: string,
   allowedRoles: ReadonlyArray<UserRole>,
+  context: GuardContext,
 ): string {
-  const token = requireAuthOrRedirect(instanceId)
+  const token = requireAuthOrRedirect(instanceId, context)
   const role = useAuthStore.getState().user?.role
   if (!role || !allowedRoles.includes(role)) {
+    if (!context.preload) {
+      const needed = allowedRoles.includes('developer') ? 'Developer' : 'Admin'
+      toast.error(`You need ${needed} access to open that page.`, {
+        id: 'route-access-denied',
+        description:
+          'Ask an owner or admin of this instance to change your role.',
+      })
+    }
     throw redirect({ to: '/' })
   }
   return token

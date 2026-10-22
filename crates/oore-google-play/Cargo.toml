@@ -9,10 +9,14 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+async-stream.workspace = true
 chrono.workspace = true
 flate2.workspace = true
 jsonwebtoken.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["fs"] }
+tokio = { workspace = true, features = ["fs", "io-util"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["fs", "io-util", "net", "macros", "rt-multi-thread"] }

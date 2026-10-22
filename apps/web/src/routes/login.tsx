@@ -47,8 +47,22 @@ import { FocusedFlowHeader } from '@/components/focused-flow-header'
 import { isDemoMode } from '@/lib/demo-mode'
 import { useTime } from '@/hooks/use-time'
 import { createWebOoreClient } from '@/lib/api-client/client'
+import {
+  describeRedirectPath,
+  safeRedirectPath,
+  storeOidcRedirect,
+} from '@/lib/auth-redirect'
+import { searchString, type SearchInput } from '@/lib/search-input'
+
+interface LoginSearch {
+  redirect?: string
+}
 
 export const Route = createFileRoute('/login')({
+  validateSearch: (search: SearchInput): LoginSearch => {
+    const redirect = safeRedirectPath(searchString(search, 'redirect'))
+    return redirect ? { redirect } : {}
+  },
   component: LoginPage,
   staticData: {
     breadcrumb: {
@@ -140,6 +154,8 @@ function LoginPage() {
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
   const setActiveInstance = useInstanceStore((s) => s.setActiveInstance)
   const navigate = useNavigate()
+  const { redirect } = Route.useSearch()
+  const continueTo = redirect ? describeRedirectPath(redirect) : null
   const setAuth = useAuthStore((s) => s.setAuth)
   const token = useAuthStore((s) => s.token)
   const expiresAt = useAuthStore((s) => s.expiresAt)
@@ -191,10 +207,12 @@ function LoginPage() {
     }
   })
 
+  function continueAfterSignIn() {
+    void navigate({ href: redirect ?? '/', replace: true })
+  }
+
   useMountEffect(() => {
-    if (hasValidToken) {
-      void navigate({ to: '/' })
-    }
+    if (hasValidToken) continueAfterSignIn()
   })
 
   useMountEffect(() => {
@@ -282,7 +300,7 @@ function LoginPage() {
           resolvedLoginFlow,
         )
         setLoading(false)
-        void navigate({ to: '/' })
+        continueAfterSignIn()
         return
       }
 
@@ -302,7 +320,7 @@ function LoginPage() {
           'trusted_proxy',
         )
         setLoading(false)
-        void navigate({ to: '/' })
+        continueAfterSignIn()
         return
       }
 
@@ -319,6 +337,7 @@ function LoginPage() {
       } catch {
         // sessionStorage unavailable
       }
+      storeOidcRedirect(redirect ?? null)
 
       window.location.href = data.authorization_url
     } catch (e) {
@@ -350,9 +369,13 @@ function LoginPage() {
         <div className="w-full max-w-sm space-y-6">
           <FocusedFlowHeader
             title="Explore the Oore demo"
-            description="Choose a role to see its real navigation, data, and permissions."
+            description={
+              continueTo
+                ? `Choose a role to continue to ${continueTo}.`
+                : 'Choose a role to see its real navigation, data, and permissions.'
+            }
           />
-          <DemoLoginForm />
+          <DemoLoginForm redirectTo={redirect ?? '/'} />
         </div>
       </div>
     )
@@ -364,7 +387,11 @@ function LoginPage() {
       <div className="w-full max-w-sm space-y-6">
         <FocusedFlowHeader
           title="Sign in"
-          description="Authenticate to the active instance to continue."
+          description={
+            continueTo
+              ? `Sign in to continue to ${continueTo}.`
+              : 'Authenticate to the active instance to continue.'
+          }
         />
 
         <Card size="sm">

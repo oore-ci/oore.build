@@ -29,7 +29,9 @@ on:
 
 concurrency:
   group: release-train
-  cancel-in-progress: false
+  # Queue every run. Without this a nightly run queued behind a running
+  # train cancels a waiting manual stable promotion.
+  queue: max
 
 permissions:
   contents: read

@@ -91,7 +91,6 @@ validate_stage_tree() {
 
 validate_full_stage() {
   local stage="$1"
-  local obsolete
   require_stage_directory "$stage"
   require_executable "$stage/bin/oore"
   require_executable "$stage/bin/oored"

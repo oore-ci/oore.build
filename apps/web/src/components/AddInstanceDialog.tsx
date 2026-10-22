@@ -49,6 +49,7 @@ import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { toast } from '@/lib/toast'
 import type { Instance } from '@/lib/types'
 import { useInstanceStore } from '@/stores/instance-store'
+import { useSwitchInstance } from '@/hooks/use-switch-instance'
 import { DEFAULT_INSTANCE_ICON_KEY, INSTANCE_ICONS } from '@/lib/instance-icons'
 
 interface AddInstanceDialogProps {
@@ -117,6 +118,7 @@ export default function AddInstanceDialog({
   const instances = useInstanceStore((s) => s.instances)
   const addInstance = useInstanceStore((s) => s.addInstance)
   const setActiveInstance = useInstanceStore((s) => s.setActiveInstance)
+  const switchInstance = useSwitchInstance()
   const [checking, setChecking] = useState(false)
   const [unreachableUrl, setUnreachableUrl] = useState<string | null>(null)
 
@@ -148,14 +150,19 @@ export default function AddInstanceDialog({
     const label =
       data.label.trim() || (data.url ? 'Team instance' : 'Local Mac')
     const id = addInstance(label, data.url, data.icon)
-    setActiveInstance(id)
+    if (useInstanceStore.getState().activeInstanceId === id) {
+      // The first instance becomes active as it is added.
+      setActiveInstance(id)
+    } else {
+      void switchInstance(id)
+    }
     toast.success(`Connected to ${label}`)
     close()
   }
 
   async function onSubmit(data: AddInstanceForm) {
     if (existing) {
-      setActiveInstance(existing.id)
+      void switchInstance(existing.id)
       toast.success(`Switched to ${existing.label}`)
       close()
       return

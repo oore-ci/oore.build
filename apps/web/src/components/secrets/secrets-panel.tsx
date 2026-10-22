@@ -162,19 +162,27 @@ function RowList({ children }: { children: Array<React.ReactNode> }) {
  */
 export function SecretsPanel({
   canWrite,
+  createOpen: controlledCreateOpen,
   inheritedFrom = [],
+  onCreateOpenChange,
   target,
   title = 'Secrets',
 }: {
   canWrite: boolean
+  /** Pass with `onCreateOpenChange` when the page header owns Add secret. */
+  createOpen?: boolean
   inheritedFrom?: Array<SecretTarget>
+  onCreateOpenChange?: (open: boolean) => void
   target: SecretTarget
   title?: string
 }) {
   const secretsQuery = useSecrets(target)
   const inherited = useInheritedSecrets(inheritedFrom)
   const deleteMutation = useDeleteSecret(target)
-  const [createOpen, setCreateOpen] = useState(false)
+  const [ownCreateOpen, setOwnCreateOpen] = useState(false)
+  const headerOwnsCreate = onCreateOpenChange !== undefined
+  const createOpen = controlledCreateOpen ?? ownCreateOpen
+  const setCreateOpen = onCreateOpenChange ?? setOwnCreateOpen
   const [rotateName, setRotateName] = useState<string>()
   const [deleteName, setDeleteName] = useState<string>()
   const secrets = secretsQuery.data ?? []
@@ -206,7 +214,7 @@ export function SecretsPanel({
       title={title}
       description={SCOPE_DESCRIPTION[target.scope]}
       actions={
-        canWrite ? (
+        canWrite && !headerOwnsCreate ? (
           <Button size="sm" onClick={() => setCreateOpen(true)}>
             <HugeiconsIcon icon={Add01Icon} />
             Add secret
@@ -240,7 +248,11 @@ export function SecretsPanel({
           </EmptyHeader>
           {canWrite ? (
             <EmptyContent>
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Button
+                size="sm"
+                variant={headerOwnsCreate ? 'outline' : 'default'}
+                onClick={() => setCreateOpen(true)}
+              >
                 Add secret
               </Button>
             </EmptyContent>

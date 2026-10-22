@@ -72,9 +72,9 @@ function parseSearch(search: SearchInput): BuildsSearch {
 
 export const Route = createFileRoute('/builds/')({
   validateSearch: parseSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireAuthOrRedirect(instance.id, context)
     if (useAuthStore.getState().user?.role === 'qa_viewer') {
       throw redirect({ to: '/' })
     }
