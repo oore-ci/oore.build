@@ -17,6 +17,12 @@ export function StatusBadge({
   const { label, variant } = getStatusPresentation(kind, value)
   return (
     <Badge variant={variant} className={className}>
+      {kind === 'build' && value === 'running' ? (
+        <span aria-hidden className="relative flex size-1.5">
+          <span className="absolute inline-flex size-full rounded-full bg-current opacity-60 motion-safe:animate-ping" />
+          <span className="relative inline-flex size-1.5 rounded-full bg-current" />
+        </span>
+      ) : null}
       {label}
     </Badge>
   )

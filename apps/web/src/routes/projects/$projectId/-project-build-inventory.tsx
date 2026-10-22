@@ -15,6 +15,7 @@ import {
 import type { SortDirection } from '@/components/data-table-features'
 import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/status-badge'
+import { BuildSourceValue } from '@/components/table-values'
 import { relativeTime } from '@/lib/format-utils'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import type { ProjectBuildSort } from './-project-build-sort'
@@ -31,7 +32,11 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
     accessorKey: 'build_number',
     header: 'Build',
     cell: ({ row }) => (
-      <Link to="/builds/$buildId" params={{ buildId: row.original.id }}>
+      <Link
+        to="/builds/$buildId"
+        params={{ buildId: row.original.id }}
+        className="font-mono font-medium"
+      >
         #{row.original.build_number}
       </Link>
     ),
@@ -68,13 +73,13 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Branch" />
     ),
-    cell: ({ row }) => row.original.branch ?? 'n/a',
-  },
-  {
-    accessorKey: 'commit_sha',
-    header: 'Commit',
-    cell: ({ row }) => row.original.commit_sha?.slice(0, 10) ?? 'n/a',
-    enableSorting: false,
+    cell: ({ row }) => (
+      <BuildSourceValue
+        branch={row.original.branch}
+        commitSha={row.original.commit_sha}
+        context={row.original.context}
+      />
+    ),
   },
   {
     accessorKey: 'created_at',
@@ -86,10 +91,12 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
 ]
 
 export function ProjectBuildInventory({
+  activeFilterCount,
   builds,
   direction,
   filters,
   isLoading,
+  onClearFilters,
   onPageChange,
   onSearch,
   onSortChange,
@@ -99,10 +106,12 @@ export function ProjectBuildInventory({
   sort,
   total,
 }: {
+  activeFilterCount: number
   builds: Array<Build>
   direction: SortDirection
   filters: ReactNode
   isLoading: boolean
+  onClearFilters?: () => void
   onPageChange: (page: number) => void
   onSearch: (query: string) => void
   onSortChange: (sort: ProjectBuildSort, direction: SortDirection) => void
@@ -135,13 +144,22 @@ export function ProjectBuildInventory({
     <DataTable
       table={table}
       filters={filters}
+      activeFilterCount={activeFilterCount}
+      onClearFilters={onClearFilters}
       search={{
         value: query,
         onChange: onSearch,
         placeholder: 'Search by branch',
       }}
       pagination={{ onPageChange, page, pageSize, total }}
-      emptyMessage={isLoading ? 'Loading builds…' : 'No matching builds.'}
+      isLoading={isLoading}
+      emptyMessage={
+        isLoading
+          ? 'Loading builds…'
+          : query
+            ? `No builds on branch “${query}”.`
+            : 'No builds match these filters.'
+      }
     />
   )
 }

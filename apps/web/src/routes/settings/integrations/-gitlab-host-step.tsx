@@ -1,7 +1,6 @@
 import type { UseFormReturn } from 'react-hook-form'
 
 import type { GitLabHostKind, GitLabSetupForm } from './-gitlab-setup'
-import SetupHint from '@/components/setup-hint'
 import {
   FormControl,
   FormDescription,
@@ -51,7 +50,7 @@ export function GitLabHostStep({
             self_managed: 'Self-managed GitLab',
           }}
         >
-          <SelectTrigger id="gitlab-host">
+          <SelectTrigger id="gitlab-host" className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -59,6 +58,11 @@ export function GitLabHostStep({
             <SelectItem value="self_managed">Self-managed GitLab</SelectItem>
           </SelectContent>
         </Select>
+        {hostKind === 'self_managed' ? null : (
+          <p className="text-sm text-muted-foreground">
+            Oore connects to https://gitlab.com.
+          </p>
+        )}
       </div>
       {hostKind === 'self_managed' ? (
         <FormField
@@ -85,14 +89,7 @@ export function GitLabHostStep({
             </FormItem>
           )}
         />
-      ) : (
-        <SetupHint
-          title="GitLab.com selected"
-          items={[
-            'Oore will connect to https://gitlab.com. Choose self-managed only when your GitLab has a different host URL.',
-          ]}
-        />
-      )}
+      ) : null}
     </section>
   )
 }

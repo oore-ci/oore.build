@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils'
 
-const WIDTH_CLASSES = {
+export const PAGE_WIDTH_CLASSES = {
   default: 'max-w-5xl',
   narrow: 'max-w-2xl',
   wide: 'max-w-7xl',
@@ -11,7 +11,7 @@ interface PageLayoutProps {
   children: React.ReactNode
   className?: string
   fill?: boolean
-  width?: keyof typeof WIDTH_CLASSES
+  width?: keyof typeof PAGE_WIDTH_CLASSES
 }
 
 export default function PageLayout({
@@ -23,7 +23,7 @@ export default function PageLayout({
   return (
     <div
       className={cn(
-        WIDTH_CLASSES[width],
+        PAGE_WIDTH_CLASSES[width],
         'mx-auto w-full min-w-0 px-4 py-5 sm:p-6 lg:p-8',
         fill ? 'flex min-h-0 flex-1 flex-col gap-5' : 'flex flex-col gap-5',
         className,

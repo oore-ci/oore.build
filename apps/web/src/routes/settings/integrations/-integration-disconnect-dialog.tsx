@@ -143,6 +143,7 @@ export function IntegrationDisconnectDialog({
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
           <AlertDialogAction
+            variant="destructive"
             onClick={onConfirm}
             disabled={!previewReady || isPending}
           >

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface BuildInfo {
   build_number: number
@@ -13,12 +13,6 @@ export function useBuildNotification(
   const prevStatusRef = useRef<string | undefined>(undefined)
 
   useEffect(() => {
-    if (
-      globalThis.Notification !== undefined &&
-      globalThis.Notification.permission === 'default'
-    ) {
-      void Notification.requestPermission()
-    }
     return () => {
       document.title = 'Oore CI'
     }
@@ -65,4 +59,22 @@ export function useBuildNotification(
       })
     }
   }, [build, isTerminal])
+}
+
+/**
+ * Browsers only show the permission prompt after a user gesture, so ask from
+ * an explicit control rather than on page load.
+ */
+export function useNotificationPermission() {
+  const supported = globalThis.Notification !== undefined
+  const [permission, setPermission] = useState<
+    NotificationPermission | 'unsupported'
+  >(supported ? Notification.permission : 'unsupported')
+
+  function request() {
+    if (!supported) return
+    void Notification.requestPermission().then(setPermission)
+  }
+
+  return { permission, request }
 }

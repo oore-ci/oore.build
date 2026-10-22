@@ -34,6 +34,12 @@ type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 /// Maximum number of log lines stored per build.
 const MAX_LOG_LINES_PER_BUILD: i64 = 10_000;
 
+/// Lines kept from the start of an oversized log. Past the cap the lines
+/// after these are dropped oldest first, so the end of the log, where the
+/// error usually is, always survives. The first dropped line becomes a marker
+/// saying how much is missing.
+const LOG_HEAD_LINES: i64 = 1_000;
+
 /// Maximum content length per log line in bytes.
 const MAX_LINE_BYTES: usize = 4096;
 
@@ -466,65 +472,17 @@ pub async fn append_build_logs(
         return Ok(Json(AppendBuildLogsResponse { appended: 0 }));
     }
 
-    // Check current log count to enforce cap
-    let current_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM build_logs WHERE build_id = ?1")
-            .bind(&job_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "failed to count build logs");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "store_error",
-                    "Failed to count build logs",
-                )
-            })?;
-
-    let remaining_capacity = (MAX_LOG_LINES_PER_BUILD - current_count).max(0) as usize;
-    if remaining_capacity == 0 {
-        warn!(
-            build_id = %job_id,
-            "build log capacity reached, dropping new chunks"
-        );
-        return Ok(Json(AppendBuildLogsResponse { appended: 0 }));
-    }
-
-    // Limit chunks to remaining capacity
-    let chunks_to_insert = if req.chunks.len() > remaining_capacity {
-        &req.chunks[..remaining_capacity]
-    } else {
-        &req.chunks
-    };
-
     let now = now_unix();
-    let mut appended: i64 = 0;
-
-    // Batch insert to reduce per-row SQL overhead. 100 keeps us safely under
-    // SQLite's bind parameter limit (6 params/row => 600 params/query).
-    for batch in chunks_to_insert.chunks(100) {
-        let mut qb = QueryBuilder::<Sqlite>::new(
-            "INSERT OR IGNORE INTO build_logs (id, build_id, sequence, content, stream, created_at) ",
-        );
-        qb.push_values(batch, |mut b, chunk| {
-            let content = truncate_utf8_bytes(&chunk.content, MAX_LINE_BYTES);
-            b.push_bind(Uuid::new_v4().to_string())
-                .push_bind(&job_id)
-                .push_bind(chunk.sequence)
-                .push_bind(content)
-                .push_bind(&chunk.stream)
-                .push_bind(now);
-        });
-        let result = qb.build().execute(&pool).await.map_err(|e| {
-            error!(error = %e, build_id = %job_id, "failed to insert build log chunk batch");
+    let appended = store_log_chunks(&pool, &job_id, &req.chunks, now)
+        .await
+        .map_err(|e| {
+            error!(error = %e, build_id = %job_id, "failed to store build log chunks");
             api_err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "store_error",
                 "Failed to insert log chunk",
             )
         })?;
-        appended += result.rows_affected() as i64;
-    }
 
     info!(
         build_id = %job_id,
@@ -553,6 +511,80 @@ pub async fn append_build_logs(
     }
 
     Ok(Json(AppendBuildLogsResponse { appended }))
+}
+
+/// Insert log chunks and trim the build's log back under the cap in one
+/// transaction, so concurrent appends cannot push it past the limit.
+async fn store_log_chunks(
+    pool: &sqlx::SqlitePool,
+    build_id: &str,
+    chunks: &[BuildLogChunk],
+    now: i64,
+) -> Result<i64, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let mut appended: i64 = 0;
+
+    // Batch insert to reduce per-row SQL overhead. 100 keeps us safely under
+    // SQLite's bind parameter limit (6 params/row => 600 params/query).
+    for batch in chunks.chunks(100) {
+        let mut qb = QueryBuilder::<Sqlite>::new(
+            "INSERT OR IGNORE INTO build_logs (id, build_id, sequence, content, stream, created_at) ",
+        );
+        qb.push_values(batch, |mut b, chunk| {
+            let content = truncate_utf8_bytes(&chunk.content, MAX_LINE_BYTES);
+            b.push_bind(Uuid::new_v4().to_string())
+                .push_bind(build_id)
+                .push_bind(chunk.sequence)
+                .push_bind(content)
+                .push_bind(&chunk.stream)
+                .push_bind(now);
+        });
+        appended += qb.build().execute(&mut *tx).await?.rows_affected() as i64;
+    }
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM build_logs WHERE build_id = ?1")
+        .bind(build_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let excess = count - MAX_LOG_LINES_PER_BUILD;
+    if excess > 0 {
+        // Rows by sequence: the head, then the marker, then the tail. Drop the
+        // oldest tail rows.
+        sqlx::query(
+            "DELETE FROM build_logs WHERE id IN (SELECT id FROM build_logs WHERE build_id = ?1 \
+             ORDER BY sequence ASC LIMIT ?2 OFFSET ?3)",
+        )
+        .bind(build_id)
+        .bind(excess)
+        .bind(LOG_HEAD_LINES + 1)
+        .execute(&mut *tx)
+        .await?;
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT id, sequence FROM build_logs WHERE build_id = ?1 \
+             ORDER BY sequence ASC LIMIT 2 OFFSET ?2",
+        )
+        .bind(build_id)
+        .bind(LOG_HEAD_LINES)
+        .fetch_all(&mut *tx)
+        .await?;
+        if let [(marker_id, marker_sequence), (_, next_sequence)] = rows.as_slice() {
+            // Runner sequences are consecutive, so the gap is the number of
+            // lines replaced by the marker.
+            let omitted = next_sequence - marker_sequence;
+            sqlx::query("UPDATE build_logs SET content = ?1, stream = 'stderr' WHERE id = ?2")
+                .bind(format!(
+                    "[oore] {omitted} log lines omitted. Logs keep the first {LOG_HEAD_LINES} \
+                     and the latest {} lines of a build.",
+                    MAX_LOG_LINES_PER_BUILD - LOG_HEAD_LINES - 1
+                ))
+                .bind(marker_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+
+    tx.commit().await?;
+    Ok(appended)
 }
 
 /// `GET /v1/builds/{build_id}/logs` — fetch build logs with pagination.
@@ -871,5 +903,99 @@ fn build_log_sse_stream(
                 StreamWakeup::LogEvent(Ok(_)) | StreamWakeup::BuildStateEvent(Ok(_)) => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        for statement in [
+            "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+             VALUES ('u1', 'dev@example.com', 'sub', 'owner', 0, 0)",
+            "INSERT INTO projects (id, name, created_by, created_at, updated_at) VALUES ('p1', 'App', 'u1', 0, 0)",
+            "INSERT INTO pipelines (id, project_id, name, created_at, updated_at) VALUES ('pl1', 'p1', 'main', 0, 0)",
+            "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, queued_at, created_at, updated_at) \
+             VALUES ('b1', 'p1', 'pl1', 1, 'running', 'manual', 0, 0, 0)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+        pool
+    }
+
+    fn lines(sequences: std::ops::Range<i64>) -> Vec<BuildLogChunk> {
+        sequences
+            .map(|sequence| BuildLogChunk {
+                sequence,
+                content: format!("line {sequence}"),
+                stream: "stdout".to_string(),
+            })
+            .collect()
+    }
+
+    async fn stored(pool: &sqlx::SqlitePool) -> Vec<(i64, String)> {
+        sqlx::query_as(
+            "SELECT sequence, content FROM build_logs WHERE build_id = 'b1' ORDER BY sequence",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn oversized_logs_keep_their_start_and_end() {
+        let pool = pool().await;
+        let total = MAX_LOG_LINES_PER_BUILD + 2_500;
+        // One line per request at the end, as the runner sends them.
+        store_log_chunks(&pool, "b1", &lines(0..total - 3), 0)
+            .await
+            .unwrap();
+        for sequence in total - 3..total {
+            let appended = store_log_chunks(&pool, "b1", &lines(sequence..sequence + 1), 0)
+                .await
+                .unwrap();
+            assert_eq!(appended, 1);
+        }
+
+        let rows = stored(&pool).await;
+        assert_eq!(rows.len() as i64, MAX_LOG_LINES_PER_BUILD);
+        assert_eq!(rows[0], (0, "line 0".to_string()));
+        let head = LOG_HEAD_LINES as usize;
+        assert_eq!(rows[head - 1].1, format!("line {}", LOG_HEAD_LINES - 1));
+        assert_eq!(rows[head].0, LOG_HEAD_LINES);
+        assert!(
+            rows[head].1.starts_with("[oore] 2501 log lines omitted."),
+            "{}",
+            rows[head].1
+        );
+        assert_eq!(rows[head + 1].0, LOG_HEAD_LINES + 2_501);
+        assert_eq!(
+            rows.last().unwrap(),
+            &(total - 1, format!("line {}", total - 1))
+        );
+    }
+
+    #[tokio::test]
+    async fn logs_under_the_cap_are_untouched() {
+        let pool = pool().await;
+        store_log_chunks(&pool, "b1", &lines(0..MAX_LOG_LINES_PER_BUILD), 0)
+            .await
+            .unwrap();
+        // A retried chunk is ignored rather than counted twice.
+        let appended = store_log_chunks(&pool, "b1", &lines(5..6), 0)
+            .await
+            .unwrap();
+
+        assert_eq!(appended, 0);
+        let rows = stored(&pool).await;
+        assert_eq!(rows.len() as i64, MAX_LOG_LINES_PER_BUILD);
+        assert!(rows.iter().all(|(_, content)| content.starts_with("line ")));
     }
 }

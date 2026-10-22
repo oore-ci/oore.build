@@ -81,9 +81,9 @@ function parseSearch(search: SearchInput): NotificationsSearch {
 
 export const Route = createFileRoute('/settings/notifications/')({
   validateSearch: parseSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'], context)
   },
   component: NotificationsPage,
 })
@@ -278,18 +278,19 @@ function NotificationsPage() {
             <AlertDialogTitle>Delete notification channel?</AlertDialogTitle>
             <AlertDialogDescription>
               This permanently removes {deleteTarget?.name ?? 'the channel'} and
-              its delivery history.
+              its delivery history. Pipelines that notified it stop sending.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               onClick={() => {
                 if (deleteTarget) handleDelete(deleteTarget)
               }}
               disabled={deleteMutation.isPending}
             >
-              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+              {deleteMutation.isPending ? 'Deleting...' : 'Delete channel'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

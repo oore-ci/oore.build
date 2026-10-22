@@ -31,16 +31,7 @@ import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
 import type { ListBuildsResponse } from '@oore/client/models'
 import type { SortDirection } from '@/components/data-table-features'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DangerZone } from '@/components/danger-zone'
@@ -50,6 +41,8 @@ import {
 } from '@/components/settings/settings-section'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import { NotFoundState } from '@/components/root-route-boundaries'
+import { ResumeRunnersButton } from '@/components/settings/direct-runner-policy-panel'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -179,9 +172,13 @@ function validateProjectSearch(search: SearchInput): ProjectDetailSearch {
 
 export const Route = createFileRoute('/projects/$projectId/')({
   validateSearch: validateProjectSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
+    requireInstanceRoleOrRedirect(
+      instance.id,
+      ['owner', 'admin', 'developer'],
+      context,
+    )
   },
   component: ProjectDetailPage,
 })
@@ -297,7 +294,19 @@ function ProjectDetailPage() {
   }
 
   if (error) {
-    const notFound = isOoreApiError(error) && error.status === 404
+    if (isOoreApiError(error) && error.status === 404) {
+      return (
+        <PageLayout width="wide">
+          <PageMeta title="Project not found" noindex />
+          <NotFoundState
+            title="Project not found"
+            description="This project was deleted, expired, or the link is wrong."
+            backTo="/projects"
+            backLabel="Back to projects"
+          />
+        </PageLayout>
+      )
+    }
 
     return (
       <PageLayout width="wide">
@@ -305,28 +314,23 @@ function ProjectDetailPage() {
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              {notFound
-                ? 'This project was not found or is no longer available.'
-                : `Failed to load project: ${error.message}`}
-            </span>
+            <span>Failed to load project: {error.message}</span>
             <span className="flex gap-2">
               <Button
                 variant="outline"
                 size="sm"
                 render={<Link to="/projects" />}
+                nativeButton={false}
               >
                 Back to projects
               </Button>
-              {!notFound ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void projectQuery.refetch()}
-                >
-                  Retry
-                </Button>
-              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void projectQuery.refetch()}
+              >
+                Retry
+              </Button>
             </span>
           </AlertDescription>
         </Alert>
@@ -499,21 +503,24 @@ function ProjectDetailPage() {
           <AlertDescription>
             {runnerPolicyBlockReason === 'instance_paused' ? (
               canWriteInstanceSettings ? (
-                <>
-                  Direct macOS runner is paused. Builds can be queued, but they
-                  will not start until you resume it in{' '}
-                  <Link
-                    to="/settings/preferences"
-                    className="font-medium underline underline-offset-4"
-                  >
-                    Preferences
-                  </Link>
-                  .
-                </>
+                <span className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span>
+                    Runners are paused on{' '}
+                    <Link
+                      to="/settings/runners"
+                      className="font-medium underline underline-offset-4"
+                    >
+                      Runners
+                    </Link>
+                    . Builds can be queued, but they will not start until you
+                    resume them.
+                  </span>
+                  <ResumeRunnersButton />
+                </span>
               ) : (
                 <>
-                  Direct macOS runner is paused. Builds can be queued, but they
-                  will not start. Ask an owner or admin to resume it.
+                  Runners are paused. Builds can be queued, but they will not
+                  start. Ask an owner or admin to resume them.
                 </>
               )
             ) : (
@@ -710,23 +717,17 @@ function ProjectDetailPage() {
         </TabsContent>
       </Tabs>
 
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete project?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete "{project.name}" and all associated
-              pipelines and builds. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>
-              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete project?"
+        description={`This will permanently delete "${project.name}" and all associated pipelines and builds. This action cannot be undone.`}
+        confirmLabel="Delete project"
+        confirmVariant="destructive"
+        isPending={deleteMutation.isPending}
+        pendingLabel="Deleting..."
+        onConfirm={handleDelete}
+      />
     </PageLayout>
   )
 }

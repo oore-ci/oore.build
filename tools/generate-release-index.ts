@@ -3,7 +3,7 @@ import path from 'node:path'
 
 type Channel = 'alpha' | 'beta' | 'stable'
 
-interface GitHubRelease {
+export interface GitHubRelease {
   tag_name: string
   name?: string | null
   body?: string | null

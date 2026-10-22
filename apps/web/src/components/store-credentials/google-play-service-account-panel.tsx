@@ -79,7 +79,7 @@ export function GooglePlayServiceAccountPanel({
               {canWrite ? (
                 <Button
                   size="sm"
-                  variant={stored ? 'outline' : 'default'}
+                  variant="outline"
                   onClick={() => setDialogOpen(true)}
                 >
                   {stored ? 'Replace key' : 'Add service account'}

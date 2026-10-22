@@ -45,16 +45,7 @@ import {
   type DataTableColumnDef,
 } from '@/components/data-table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -68,6 +59,7 @@ import {
 } from '@/components/ui/empty'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import { BuildSourceValue } from '@/components/table-values'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { searchChoice } from '@/lib/search-input'
@@ -79,7 +71,11 @@ const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
     accessorKey: 'build_number',
     header: 'Build',
     cell: ({ row }) => (
-      <Link to="/builds/$buildId" params={{ buildId: row.original.id }}>
+      <Link
+        to="/builds/$buildId"
+        params={{ buildId: row.original.id }}
+        className="font-mono font-medium"
+      >
         #{row.original.build_number}
       </Link>
     ),
@@ -94,12 +90,13 @@ const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
     accessorKey: 'branch',
     header: 'Branch',
-    cell: ({ row }) =>
-      row.original.branch ? (
-        <span className="font-mono">{row.original.branch}</span>
-      ) : (
-        <span className="text-muted-foreground">—</span>
-      ),
+    cell: ({ row }) => (
+      <BuildSourceValue
+        branch={row.original.branch}
+        commitSha={row.original.commit_sha}
+        context={row.original.context}
+      />
+    ),
     enableSorting: false,
   },
   {
@@ -185,9 +182,13 @@ export const Route = createFileRoute(
   '/projects/$projectId/pipelines/$pipelineId/',
 )({
   validateSearch: validatePipelineSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
+    requireInstanceRoleOrRedirect(
+      instance.id,
+      ['owner', 'admin', 'developer'],
+      context,
+    )
   },
   component: PipelineDetailPage,
 })
@@ -305,10 +306,10 @@ function PipelineDetailPage() {
   }
 
   function handleToggleEnabled() {
-    setDisableOpen(false)
     updateMutation.mutate(
       { pipelineId: pipeline.id, data: { enabled: !pipeline.enabled } },
       {
+        onSettled: () => setDisableOpen(false),
         onSuccess: () =>
           toast.success(
             pipeline.enabled ? 'Pipeline disabled' : 'Pipeline enabled',
@@ -612,42 +613,28 @@ function PipelineDetailPage() {
         </TabsContent>
       </Tabs>
 
-      <AlertDialog open={disableOpen} onOpenChange={setDisableOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Disable {pipeline.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Pushes, pull requests and schedules stop starting builds for this
-              pipeline. Builds already running finish. You can enable it again
-              at any time.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleToggleEnabled}>
-              Disable pipeline
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={disableOpen}
+        onOpenChange={setDisableOpen}
+        title={`Disable ${pipeline.name}?`}
+        description="Pushes, pull requests and schedules stop starting builds for this pipeline. Builds already running finish. You can enable it again at any time."
+        confirmLabel="Disable pipeline"
+        isPending={updateMutation.isPending}
+        pendingLabel="Disabling..."
+        onConfirm={handleToggleEnabled}
+      />
 
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete pipeline?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete "{pipeline.name}". This action cannot
-              be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>
-              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete pipeline?"
+        description={`This permanently deletes "${pipeline.name}" with its build history, schedules, signing files, secrets and publishing settings. It cannot be undone.`}
+        confirmLabel="Delete pipeline"
+        confirmVariant="destructive"
+        isPending={deleteMutation.isPending}
+        pendingLabel="Deleting..."
+        onConfirm={handleDelete}
+      />
     </PageLayout>
   )
 }

@@ -124,11 +124,13 @@ wait_for_required_check() {
   while (( SECONDS < deadline )); do
     if ! read -r head state < <(
       gh pr view "$number" --json headRefOid,statusCheckRollup --jq "
+        # Judge the newest finished run only, so an older success cannot
+        # hide a newer failure.
         [.statusCheckRollup[] | select(.name == \"$REQUIRED_CHECK\")] as \$checks
         | .headRefOid + \" \" + (
             if (\$checks | length) == 0 then \"pending\"
             elif any(\$checks[]; .status != \"COMPLETED\") then \"pending\"
-            elif any(\$checks[]; .conclusion == \"SUCCESS\") then \"success\"
+            elif (\$checks | sort_by(.completedAt) | last | .conclusion) == \"SUCCESS\" then \"success\"
             else \"failure\" end)
       "
     ); then

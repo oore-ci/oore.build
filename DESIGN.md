@@ -21,7 +21,7 @@ The authoritative configuration is the pair of identical
 - Hugeicons
 - Default translucent menus with subtle menu accents
 
-The web app uses Inter for interface text and JetBrains Mono for machine data.
+The web app uses DM Sans for interface text and JetBrains Mono for machine data.
 It supports light, dark, and system appearance through `next-themes`. Component
 geometry and color palettes are not runtime-selectable.
 
@@ -211,6 +211,19 @@ Show field validation inline. Use `Alert` for persistent request failures and
 Sonner for transient success. Keep entered data while refreshing or retrying.
 Disable only the action being mutated, not the whole page. Put Save and Cancel
 at the end; use sticky actions only for genuinely long dirty forms.
+
+Settings forms follow one rule so every screen saves the same way:
+
+- `FormActions` sits directly after the form's surface, never inside it or
+  mid-page.
+- The submit label is `Save changes` when editing existing settings. Creating
+  something uses a verb for the object, such as `Create channel`.
+- Save stays disabled until the form is dirty, and the form resets to the saved
+  values after a successful save.
+- Selects inside forms are full width (`SelectTrigger className="w-full"`).
+- A screen has at most one filled primary action. A single-collection screen
+  puts its creation action in `PageHeader`; a screen with several peer
+  sections gives each section an outline action beside its title.
 
 Place destructive actions in a final, separated danger section and confirm them
 with `AlertDialog`.

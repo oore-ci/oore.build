@@ -53,6 +53,24 @@ const updateChannelSchema = z.toZod<UpdateNotificationChannelRequest>()(
   }),
 )
 
+function urlHost(value?: string | null): string | undefined {
+  if (!value) return undefined
+  try {
+    return new URL(value).host
+  } catch {
+    return undefined
+  }
+}
+
+// The daemon returns readable settings only when reading one channel.
+function listedChannel({
+  url_host: _urlHost,
+  smtp_summary: _smtpSummary,
+  ...channel
+}: NotificationChannel): NotificationChannel {
+  return channel
+}
+
 function now(): number {
   return Math.floor(Date.now() / 1000)
 }
@@ -95,7 +113,7 @@ export const notificationHandlers = [
         return direction * String(leftValue).localeCompare(String(rightValue))
       })
     return HttpResponse.json({
-      channels: channels.slice(offset, offset + limit),
+      channels: channels.slice(offset, offset + limit).map(listedChannel),
       total: channels.length,
     })
   }),
@@ -119,6 +137,17 @@ export const notificationHandlers = [
       has_url: !!body.url,
       has_secret: !!body.secret,
       has_smtp_config: !!body.smtp_config,
+      url_host: urlHost(body.url),
+      smtp_summary: body.smtp_config
+        ? {
+            host: body.smtp_config.host,
+            port: body.smtp_config.port,
+            username: body.smtp_config.username,
+            tls_mode: body.smtp_config.tls_mode,
+            from_address: body.smtp_config.from_address,
+            recipients: body.smtp_config.recipients,
+          }
+        : undefined,
       created_by: 'usr-demo-owner-001',
       created_at: now(),
       updated_at: now(),
@@ -173,6 +202,23 @@ export const notificationHandlers = [
       has_url: body.url ? true : existing.has_url,
       has_secret: body.secret ? true : existing.has_secret,
       has_smtp_config: body.smtp_config ? true : existing.has_smtp_config,
+      url_host: urlHost(body.url) ?? existing.url_host,
+      smtp_summary:
+        body.smtp_config && existing.smtp_summary
+          ? {
+              host: body.smtp_config.host ?? existing.smtp_summary.host,
+              port: body.smtp_config.port ?? existing.smtp_summary.port,
+              username:
+                body.smtp_config.username ?? existing.smtp_summary.username,
+              tls_mode:
+                body.smtp_config.tls_mode ?? existing.smtp_summary.tls_mode,
+              from_address:
+                body.smtp_config.from_address ??
+                existing.smtp_summary.from_address,
+              recipients:
+                body.smtp_config.recipients ?? existing.smtp_summary.recipients,
+            }
+          : existing.smtp_summary,
       updated_at: now(),
     }
 
@@ -224,9 +270,9 @@ export const notificationHandlers = [
 
   demoApi.listNotificationDeliveries(async ({ params }) => {
     await delay(150)
-    const channelDeliveries = demoState.notificationDeliveries.filter(
-      (d) => d.channel_id === params.id,
-    )
+    const channelDeliveries = demoState.notificationDeliveries
+      .filter((d) => d.channel_id === params.id)
+      .sort((a, b) => b.created_at - a.created_at)
     return HttpResponse.json({
       deliveries: channelDeliveries,
       total: channelDeliveries.length,

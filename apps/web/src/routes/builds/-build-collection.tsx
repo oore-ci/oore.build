@@ -13,8 +13,8 @@ import {
   resolveDataTableSorting,
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
-import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/status-badge'
+import { BuildSourceValue } from '@/components/table-values'
 import { relativeTime } from '@/lib/format-utils'
 import {
   getStatusPresentation,
@@ -44,7 +44,7 @@ const columns: Array<DataTableColumnDef<Build>> = [
       <Link
         to="/builds/$buildId"
         params={{ buildId: row.original.id }}
-        className="font-mono"
+        className="font-mono font-medium"
       >
         #{row.original.build_number}
       </Link>
@@ -58,12 +58,25 @@ const columns: Array<DataTableColumnDef<Build>> = [
       <DataTableColumnHeader column={column} title="Project" />
     ),
     cell: ({ row }) => (
-      <div>
-        <div>{projectName(row.original)}</div>
+      <div className="flex flex-col">
+        <Link
+          to="/projects/$projectId"
+          params={{ projectId: row.original.project_id }}
+          className="hover:underline"
+        >
+          {projectName(row.original)}
+        </Link>
         {row.original.context?.pipeline_name ? (
-          <div className="text-muted-foreground">
+          <Link
+            to="/projects/$projectId/pipelines/$pipelineId"
+            params={{
+              projectId: row.original.project_id,
+              pipelineId: row.original.pipeline_id,
+            }}
+            className="text-muted-foreground hover:text-foreground hover:underline"
+          >
             {row.original.context.pipeline_name}
-          </div>
+          </Link>
         ) : null}
       </div>
     ),
@@ -74,56 +87,56 @@ const columns: Array<DataTableColumnDef<Build>> = [
       <DataTableColumnHeader column={column} title="Status" />
     ),
     cell: ({ row }) => (
-      <div>
+      <div className="flex flex-col items-start gap-0.5">
         <StatusBadge kind="build" value={row.original.status} />
         {row.original.approval?.state === 'pending' ? (
-          <div className="text-warning">
+          <span className="text-xs text-warning">
             {
               getStatusPresentation('approval', row.original.approval.state)
                 .label
             }
-          </div>
+          </span>
         ) : null}
         {row.original.runner_policy_block_reason ? (
-          <div className="text-warning">
+          <span className="text-xs text-warning">
             {getRunnerPolicyBlockLabel(row.original.runner_policy_block_reason)}
-          </div>
+          </span>
         ) : null}
       </div>
     ),
-  },
-  {
-    accessorKey: 'trigger_type',
-    header: 'Trigger',
-    cell: ({ row }) => (
-      <Badge variant="outline">
-        {TRIGGER_TYPE_LABELS[row.original.trigger_type]}
-      </Badge>
-    ),
-    enableSorting: false,
   },
   {
     accessorKey: 'branch',
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Branch" />
     ),
-    cell: ({ row }) => row.original.branch ?? 'n/a',
-  },
-  {
-    accessorKey: 'commit_sha',
-    header: 'Commit',
-    cell: ({ row }) => row.original.commit_sha?.slice(0, 10) ?? 'n/a',
-    enableSorting: false,
+    cell: ({ row }) => (
+      <BuildSourceValue
+        branch={row.original.branch}
+        commitSha={row.original.commit_sha}
+        context={row.original.context}
+      />
+    ),
   },
   {
     accessorKey: 'created_at',
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Created" />
     ),
-    cell: ({ row }) => relativeTime(row.original.created_at),
+    // How it started reads with when it started, which keeps the table inside
+    // an 1100px window without a separate Trigger column.
+    cell: ({ row }) => (
+      <div className="flex flex-col">
+        <span>{relativeTime(row.original.created_at)}</span>
+        <span className="text-xs text-muted-foreground">
+          {TRIGGER_TYPE_LABELS[row.original.trigger_type]}
+        </span>
+      </div>
+    ),
   },
   {
     id: 'actions',
+    header: () => <span className="sr-only">Actions</span>,
     cell: ({ row }) => <BuildActionsMenu build={row.original} />,
     enableHiding: false,
     enableSorting: false,
@@ -131,6 +144,7 @@ const columns: Array<DataTableColumnDef<Build>> = [
 ]
 
 export function BuildCollection({
+  activeFilterCount,
   builds,
   direction,
   emptyState,
@@ -139,6 +153,7 @@ export function BuildCollection({
   isFiltered,
   isLoading,
   isRefreshing,
+  onClearFilters,
   onPageChange,
   onRetry,
   onSearch,
@@ -149,6 +164,7 @@ export function BuildCollection({
   sort,
   total,
 }: {
+  activeFilterCount: number
   builds: Array<Build>
   direction: SortDirection
   emptyState: ReactNode
@@ -157,6 +173,7 @@ export function BuildCollection({
   isFiltered: boolean
   isLoading: boolean
   isRefreshing: boolean
+  onClearFilters: () => void
   onPageChange: (page: number) => void
   onRetry: () => void
   onSearch: (query: string) => void
@@ -201,18 +218,21 @@ export function BuildCollection({
         <DataTable
           table={table}
           filters={filters}
+          activeFilterCount={activeFilterCount}
+          onClearFilters={isFiltered ? onClearFilters : undefined}
           search={{
             value: query,
             onChange: onSearch,
             placeholder: 'Search by branch',
           }}
           pagination={{ onPageChange, page, pageSize, total }}
+          isLoading={isLoading}
           emptyMessage={
             isLoading
               ? 'Loading builds…'
-              : isFiltered
-                ? 'No matching builds.'
-                : undefined
+              : query
+                ? `No builds on branch “${query}”.`
+                : 'No builds match these filters.'
           }
         />
       )}

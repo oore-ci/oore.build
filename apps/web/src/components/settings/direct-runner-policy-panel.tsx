@@ -30,8 +30,8 @@ export function DirectRunnerPolicyPanel() {
 
   return (
     <SettingsSection
-      title="Direct macOS runner"
-      description="The runner built into this Mac. Pausing it lets assigned and running builds finish and stops new claims."
+      title="Build intake"
+      description="Applies to every runner on this instance. Pausing stops new claims; assigned and running builds finish."
     >
       <DirectRunnerPolicyControl />
     </SettingsSection>
@@ -86,8 +86,8 @@ function DirectRunnerPolicyControl() {
         onSuccess: () =>
           toast.success(
             checked
-              ? 'Direct macOS runner enabled.'
-              : 'Direct macOS runner paused. Running builds will finish.',
+              ? 'Runners resumed.'
+              : 'Runners paused. Running builds will finish.',
           ),
         onError: (error) =>
           toast.error(`Failed to update runner policy: ${error.message}`),
@@ -102,8 +102,8 @@ function DirectRunnerPolicyControl() {
           <ItemTitle>Accept builds from approved repositories</ItemTitle>
           <ItemDescription>
             {enabled
-              ? 'New builds from approved repositories run on this Mac.'
-              : 'Paused. Builds in progress finish; new builds wait for another runner.'}
+              ? 'Connected runners claim new builds from approved repositories.'
+              : 'Paused. Builds in progress finish; new builds wait until you resume.'}
           </ItemDescription>
           {!canWrite ? (
             <ItemDescription>
@@ -122,5 +122,39 @@ function DirectRunnerPolicyControl() {
         </ItemActions>
       </Item>
     </SettingsSurface>
+  )
+}
+
+// Lets owners and admins resume paused runners from the alert that explains
+// why a build is waiting, instead of sending them to another page.
+export function ResumeRunnersButton() {
+  const preferencesQuery = useInstancePreferences()
+  const mutation = useUpdateInstancePreferences()
+  const preferences = preferencesQuery.data
+
+  if (!preferences?.direct_macos_runner_paused) return null
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={mutation.isPending}
+      onClick={() =>
+        mutation.mutate(
+          {
+            key_storage_mode: preferences.key_storage_mode,
+            direct_macos_runner_paused: false,
+          },
+          {
+            onSuccess: () => toast.success('Runners resumed.'),
+            onError: (error) =>
+              toast.error(`Failed to resume runners: ${error.message}`),
+          },
+        )
+      }
+    >
+      {mutation.isPending ? 'Resuming...' : 'Resume runners'}
+    </Button>
   )
 }

@@ -41,7 +41,7 @@ Oore CI lets you run your own mobile CI server. V1 targets Android, iOS, and mac
 ## Prerequisites
 
 - macOS on `arm64` or `x86_64` for the guided v0.1.42 installation
-- `curl`, `tar`, `lockf`, `ssh-keygen`, and `shasum` or `sha256sum`
+- `curl`, `tar`, `ssh-keygen`, and the macOS system `/usr/bin/stat`, `/usr/bin/lockf`, and `/usr/bin/shasum`
 
 For source development, also install [Rust](https://rustup.rs/) and [Bun](https://bun.sh/).
 

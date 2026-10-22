@@ -109,7 +109,10 @@ function getApiTokenColumns({
       header: () => <span className="sr-only">Actions</span>,
       cell: ({ row }) =>
         apiTokenStatus(row.original) === 'active' && canDelete ? (
-          <ApiTokenActions onRevoke={() => onRevoke(row.original)} />
+          <ApiTokenActions
+            name={row.original.name}
+            onRevoke={() => onRevoke(row.original)}
+          />
         ) : null,
       enableHiding: false,
       enableSorting: false,
@@ -182,6 +185,7 @@ export function ApiTokenInventory({
           placeholder: 'Search API tokens',
         }}
         pagination={{ onPageChange, page, pageSize, total }}
+        isLoading={isLoading}
         emptyMessage={isLoading ? 'Loading API tokens…' : undefined}
       />
     </section>

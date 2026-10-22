@@ -35,7 +35,7 @@ import {
   scopeOoreQueryOptions,
 } from '@/lib/api-client/client'
 import { LIVE_FALLBACK_POLL_MS } from '@/lib/live-events'
-import { isLiveRelease } from '@/lib/releases'
+import { isMovingRelease } from '@/lib/releases'
 import { useLiveEventsStore } from '@/stores/live-events-store'
 
 // Matches the build poll so rollout changes land on the same cadence.
@@ -56,6 +56,8 @@ export function useReleases<TData = ListReleasesResponse>(
   },
   options?: {
     enabled?: boolean
+    /** Poll even with no live release, such as while a build may publish. */
+    pollWhenIdle?: boolean
     select?: (data: ListReleasesResponse) => TData
   },
 ) {
@@ -71,7 +73,9 @@ export function useReleases<TData = ListReleasesResponse>(
     enabled: !!baseUrl && !!token && (options?.enabled ?? true),
     staleTime: 2_000,
     refetchInterval: (query) =>
-      query.state.data?.releases.some(isLiveRelease) ? pollInterval : false,
+      options?.pollWhenIdle || query.state.data?.releases.some(isMovingRelease)
+        ? pollInterval
+        : false,
     placeholderData: keepPreviousData,
     select: options?.select,
   })
@@ -114,7 +118,14 @@ export function useRefreshStoreVitals() {
   })
 }
 
-export function useRelease(releaseId: string, options?: { enabled?: boolean }) {
+export function useRelease(
+  releaseId: string,
+  options?: {
+    enabled?: boolean
+    /** Off when a polled release list already tracks this release. */
+    poll?: boolean
+  },
+) {
   const { baseUrl, client, instanceId, token } = useApiContext()
   const pollInterval = useReleasePollInterval()
   const query = scopeOoreQueryOptions(
@@ -127,7 +138,9 @@ export function useRelease(releaseId: string, options?: { enabled?: boolean }) {
     enabled: !!baseUrl && !!token && !!releaseId && (options?.enabled ?? true),
     staleTime: 2_000,
     refetchInterval: (query) =>
-      query.state.data && isLiveRelease(query.state.data.release)
+      (options?.poll ?? true) &&
+      query.state.data &&
+      isMovingRelease(query.state.data.release)
         ? pollInterval
         : false,
   })

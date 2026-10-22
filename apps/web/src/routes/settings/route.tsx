@@ -8,10 +8,15 @@ export const Route = createFileRoute('/settings')({
   staticData: {
     breadcrumb: {
       title: 'Settings',
+      link: false,
     },
   },
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
+    requireInstanceRoleOrRedirect(
+      instance.id,
+      ['owner', 'admin', 'developer'],
+      context,
+    )
   },
 })

@@ -44,7 +44,7 @@ export function OperatorIncidentNotifications() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80">
         <DropdownMenuGroup>
-          <DropdownMenuLabel>Operator notifications</DropdownMenuLabel>
+          <DropdownMenuLabel>Notifications</DropdownMenuLabel>
           {incidents.length === 0 ? (
             <p className="px-2 py-3 text-xs text-muted-foreground">
               No open incidents.

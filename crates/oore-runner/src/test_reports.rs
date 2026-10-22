@@ -51,11 +51,14 @@ fn shell_quote(value: &str) -> String {
 
 /// Parse and remove every report in `dir`. Returns `None` when the step
 /// wrote no reports. Paths under any of `workspaces` (the host workspace and,
-/// for a VM build, its guest path) are made relative.
+/// for a VM build, its guest path) are made relative. Failure text goes
+/// through `mask` before it is cut to size, so a secret that straddles the
+/// cut is still masked whole.
 pub(crate) fn collect_test_reports(
     dir: &Path,
     workspaces: &[PathBuf],
     step: &str,
+    mask: impl Fn(&str) -> String,
 ) -> Option<RunnerTestReport> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .ok()?
@@ -103,11 +106,11 @@ pub(crate) fn collect_test_reports(
         failure.message = failure
             .message
             .take()
-            .map(|message| truncate(&message, MAX_MESSAGE_BYTES));
+            .map(|message| truncate(&mask(&message), MAX_MESSAGE_BYTES));
         failure.stack_trace = failure
             .stack_trace
             .take()
-            .map(|stack| truncate(&stack, MAX_STACK_TRACE_BYTES));
+            .map(|stack| truncate(&mask(&stack), MAX_STACK_TRACE_BYTES));
     }
     Some(report)
 }
@@ -545,14 +548,39 @@ mod tests {
         std::fs::write(dir.join("notes.txt"), "ignored").unwrap();
 
         let workspaces = [workspace];
-        let report = collect_test_reports(&dir, &workspaces, "build-2").unwrap();
+        let report = collect_test_reports(&dir, &workspaces, "build-2", str::to_string).unwrap();
         assert_eq!(report.step, "build-2");
         assert_eq!((report.total, report.passed, report.failed), (5, 2, 2));
         assert_eq!(report.failures[0].suite, "test/login_test.dart");
         assert_eq!(report.failures[1].name, "loading test/broken_test.dart");
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
-        assert!(collect_test_reports(&dir, &workspaces, "build-3").is_none());
+        assert!(collect_test_reports(&dir, &workspaces, "build-3", str::to_string).is_none());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn secrets_are_masked_before_failure_text_is_cut() {
+        let dir = std::env::temp_dir().join(format!("oore-test-mask-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let secret = "sk_live_0123456789abcdef";
+        // The secret starts 8 bytes before the cut.
+        let message = format!("{}{secret} tail", "x".repeat(MAX_MESSAGE_BYTES - 8));
+        std::fs::write(
+            dir.join("r.xml"),
+            format!(
+                r#"<testsuite name="s"><testcase name="t"><failure message="{message}">{message}</failure></testcase></testsuite>"#
+            ),
+        )
+        .unwrap();
+        let report =
+            collect_test_reports(&dir, &[], "build-1", |text| text.replace(secret, "***")).unwrap();
+        let failure = &report.failures[0];
+        for text in [&failure.message, &failure.stack_trace] {
+            let text = text.as_deref().unwrap();
+            assert!(!text.contains(&secret[..8]), "secret prefix leaked");
+            assert!(text.contains("***"));
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

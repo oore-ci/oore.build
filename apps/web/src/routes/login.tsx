@@ -43,11 +43,26 @@ import { resolveLoginFlow } from '@/lib/login-flow'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 
 import DemoLoginForm from '@/components/demo-login-form'
+import { FocusedFlowHeader } from '@/components/focused-flow-header'
 import { isDemoMode } from '@/lib/demo-mode'
 import { useTime } from '@/hooks/use-time'
 import { createWebOoreClient } from '@/lib/api-client/client'
+import {
+  describeRedirectPath,
+  safeRedirectPath,
+  storeOidcRedirect,
+} from '@/lib/auth-redirect'
+import { searchString, type SearchInput } from '@/lib/search-input'
+
+interface LoginSearch {
+  redirect?: string
+}
 
 export const Route = createFileRoute('/login')({
+  validateSearch: (search: SearchInput): LoginSearch => {
+    const redirect = safeRedirectPath(searchString(search, 'redirect'))
+    return redirect ? { redirect } : {}
+  },
   component: LoginPage,
   staticData: {
     breadcrumb: {
@@ -77,9 +92,9 @@ const LOGIN_ERROR_MESSAGES = {
   external_access_origin_not_allowed:
     'External Access Public URL origin is not included in allowed frontend origins.',
   external_access_public_url_missing:
-    'Set External Access Public URL in Preferences on the host machine before enabling External Access.',
+    'Set the External Access public URL in Settings → General on the host machine before enabling External Access.',
   external_access_preflight_failed:
-    'External Access preflight checks are failing. Resolve setup and Preferences readiness checks first.',
+    'External Access preflight checks are failing. Resolve the readiness checks in Settings → General first.',
   trusted_proxy_peer_not_allowed:
     'Trusted proxy login request did not come from an allowlisted proxy peer.',
   trusted_proxy_identity_missing:
@@ -139,6 +154,8 @@ function LoginPage() {
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
   const setActiveInstance = useInstanceStore((s) => s.setActiveInstance)
   const navigate = useNavigate()
+  const { redirect } = Route.useSearch()
+  const continueTo = redirect ? describeRedirectPath(redirect) : null
   const setAuth = useAuthStore((s) => s.setAuth)
   const token = useAuthStore((s) => s.token)
   const expiresAt = useAuthStore((s) => s.expiresAt)
@@ -190,10 +207,12 @@ function LoginPage() {
     }
   })
 
+  function continueAfterSignIn() {
+    void navigate({ href: redirect ?? '/', replace: true })
+  }
+
   useMountEffect(() => {
-    if (hasValidToken) {
-      void navigate({ to: '/' })
-    }
+    if (hasValidToken) continueAfterSignIn()
   })
 
   useMountEffect(() => {
@@ -281,7 +300,7 @@ function LoginPage() {
           resolvedLoginFlow,
         )
         setLoading(false)
-        void navigate({ to: '/' })
+        continueAfterSignIn()
         return
       }
 
@@ -301,7 +320,7 @@ function LoginPage() {
           'trusted_proxy',
         )
         setLoading(false)
-        void navigate({ to: '/' })
+        continueAfterSignIn()
         return
       }
 
@@ -318,6 +337,7 @@ function LoginPage() {
       } catch {
         // sessionStorage unavailable
       }
+      storeOidcRedirect(redirect ?? null)
 
       window.location.href = data.authorization_url
     } catch (e) {
@@ -346,21 +366,16 @@ function LoginPage() {
     return (
       <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
         <PageMeta title="Demo login" />
-        <div className="w-full max-w-sm space-y-8">
-          <div className="space-y-4 text-center">
-            <div className="mx-auto flex size-14 items-center justify-center">
-              <img src="/logo.svg" alt="Oore logo" className="size-full" />
-            </div>
-            <div className="space-y-1">
-              <h1 className="text-3xl font-bold tracking-tight">
-                Explore the Oore demo
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                Choose a role to see its real navigation, data, and permissions.
-              </p>
-            </div>
-          </div>
-          <DemoLoginForm />
+        <div className="w-full max-w-sm space-y-6">
+          <FocusedFlowHeader
+            title="Explore the Oore demo"
+            description={
+              continueTo
+                ? `Choose a role to continue to ${continueTo}.`
+                : 'Choose a role to see its real navigation, data, and permissions.'
+            }
+          />
+          <DemoLoginForm redirectTo={redirect ?? '/'} />
         </div>
       </div>
     )
@@ -369,18 +384,15 @@ function LoginPage() {
   return (
     <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
       <PageMeta title="Login" />
-      <div className="w-full max-w-sm space-y-8">
-        <div className="space-y-4 text-center">
-          <div className="mx-auto flex size-14 items-center justify-center">
-            <img src="/logo.svg" alt="Oore logo" className="size-full" />
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-3xl font-bold tracking-tight">Sign in</h1>
-            <p className="text-sm text-muted-foreground">
-              Authenticate to the active instance to continue.
-            </p>
-          </div>
-        </div>
+      <div className="w-full max-w-sm space-y-6">
+        <FocusedFlowHeader
+          title="Sign in"
+          description={
+            continueTo
+              ? `Sign in to continue to ${continueTo}.`
+              : 'Authenticate to the active instance to continue.'
+          }
+        />
 
         <Card size="sm">
           <CardContent className="space-y-4">

@@ -1,12 +1,8 @@
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Cancel01Icon,
-  MoreHorizontalCircle01Icon,
-  UserCheck01Icon,
-} from '@hugeicons/core-free-icons'
+import { Cancel01Icon, UserCheck01Icon } from '@hugeicons/core-free-icons'
 
 import type { User, UserRole } from '@oore/client/models'
-import { Button } from '@/components/ui/button'
+import { DataTableRowActionsTrigger } from '@/components/data-table'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,7 +15,6 @@ import {
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ROLE_LABELS } from './-user-role-labels'
 
@@ -44,10 +39,7 @@ export function UserActions({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" />}>
-        <span className="sr-only">Open menu</span>
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
-      </DropdownMenuTrigger>
+      <DataTableRowActionsTrigger label={`Actions for ${user.email}`} />
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Actions</DropdownMenuLabel>
