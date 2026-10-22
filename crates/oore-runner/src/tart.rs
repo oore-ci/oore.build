@@ -9,8 +9,8 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use tokio::io::AsyncWriteExt;
@@ -34,6 +34,19 @@ const GUEST_WORKSPACE_DIR: &str = "oore-workspace";
 /// Apple's Virtualization framework runs at most two macOS guests per host.
 pub(crate) const MAX_MACOS_VMS: usize = 2;
 const BOOT_TIMEOUT: Duration = Duration::from_secs(180);
+/// One `tart exec <vm> true` probe while the guest boots. A wedged agent must
+/// not hold the boot past [`BOOT_TIMEOUT`].
+const BOOT_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+/// Tart queries such as `tart list` and `tart --version` answer in seconds.
+const TART_QUERY_TIMEOUT: Duration = Duration::from_secs(60);
+/// `tart clone` is an APFS clone of a local disk, but a registry image is
+/// copied out of Tart's OCI cache first.
+const TART_CLONE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// Short commands in the guest: the home probe, mounts, stopping daemons.
+const VM_EXEC_TIMEOUT: Duration = Duration::from_secs(90);
+/// Copying the workspace or a cache in, or a cache back out, over virtiofs.
+/// Multi-GB Gradle caches and DerivedData take minutes.
+const VM_COPY_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const VM_NAME_PREFIX: &str = "oore";
 const TART_RUN_STDERR_LIMIT: usize = 16 * 1024;
 
@@ -53,12 +66,10 @@ pub(crate) fn find_tart() -> Option<PathBuf> {
     fixed.chain(from_path).find(|path| path.is_file())
 }
 
+/// Blocks for up to [`TART_QUERY_TIMEOUT`]; call it off the async runtime.
 pub(crate) fn tart_version(tart: &Path) -> Option<String> {
-    let output = Command::new(tart).arg("--version").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let version = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    let version = run_tart_blocking(tart, &["--version"], TART_QUERY_TIMEOUT).ok()?;
+    let version = version.trim().to_string();
     (!version.is_empty()).then_some(version)
 }
 
@@ -243,14 +254,31 @@ yes | flutter doctor --android-licenses > /dev/null || true
     script
 }
 
-pub(crate) fn local_image_exists(tart: &Path, name: &str) -> anyhow::Result<bool> {
-    let listing = run_tart(tart, &["list", "--source", "local", "--quiet"])?;
-    Ok(listing.lines().any(|line| line.trim() == name))
+async fn local_vms(tart: &Path) -> anyhow::Result<Vec<String>> {
+    let listing = run_tart(
+        tart,
+        &["list", "--source", "local", "--quiet"],
+        TART_QUERY_TIMEOUT,
+    )
+    .await?;
+    Ok(listing
+        .lines()
+        .map(|line| line.trim().to_string())
+        .collect())
+}
+
+pub(crate) async fn local_image_exists(tart: &Path, name: &str) -> anyhow::Result<bool> {
+    Ok(local_vms(tart).await?.iter().any(|line| line == name))
 }
 
 /// Whether Tart's OCI cache already holds the registry image `reference`.
-pub(crate) fn registry_image_cached(tart: &Path, reference: &str) -> anyhow::Result<bool> {
-    let listing = run_tart(tart, &["list", "--source", "oci", "--quiet"])?;
+pub(crate) async fn registry_image_cached(tart: &Path, reference: &str) -> anyhow::Result<bool> {
+    let listing = run_tart(
+        tart,
+        &["list", "--source", "oci", "--quiet"],
+        TART_QUERY_TIMEOUT,
+    )
+    .await?;
     Ok(listing.lines().any(|line| line.trim() == reference))
 }
 
@@ -339,12 +367,15 @@ pub(crate) struct VmSlot {
     pub(crate) index: usize,
 }
 
-pub(crate) fn slot_dir() -> anyhow::Result<PathBuf> {
-    let tart_home = match std::env::var_os("TART_HOME") {
+fn tart_home() -> anyhow::Result<PathBuf> {
+    Ok(match std::env::var_os("TART_HOME") {
         Some(home) => PathBuf::from(home),
         None => PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?).join(".tart"),
-    };
-    Ok(tart_home.join("oore-slots"))
+    })
+}
+
+pub(crate) fn slot_dir() -> anyhow::Result<PathBuf> {
+    Ok(tart_home()?.join("oore-slots"))
 }
 
 pub(crate) fn try_acquire_slot(dir: &Path, slots: usize) -> anyhow::Result<Option<VmSlot>> {
@@ -369,19 +400,86 @@ pub(crate) fn try_acquire_slot(dir: &Path, slots: usize) -> anyhow::Result<Optio
     Ok(None)
 }
 
-fn run_tart(tart: &Path, args: &[&str]) -> anyhow::Result<String> {
-    let output = Command::new(tart)
+/// Runs `tart` with `args`, killing it when it outlives `timeout`.
+async fn run_tart(tart: &Path, args: &[&str], timeout: Duration) -> anyhow::Result<String> {
+    let output = tokio::process::Command::new(tart)
         .args(args)
         .stdin(Stdio::null())
-        .output()
+        .kill_on_drop(true)
+        .output();
+    let output = tokio::time::timeout(timeout, output)
+        .await
+        .map_err(|_| tart_timed_out(args, timeout))?
         .with_context(|| format!("failed to run tart {}", args.join(" ")))?;
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+    tart_result(args, output.status, &output.stdout, &output.stderr)
+}
+
+/// [`run_tart`] for code that cannot await, such as `Drop`.
+fn run_tart_blocking(tart: &Path, args: &[&str], timeout: Duration) -> anyhow::Result<String> {
+    let mut child = Command::new(tart)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to run tart {}", args.join(" ")))?;
+    let stdout = read_in_background(child.stdout.take());
+    let stderr = read_in_background(child.stderr.take());
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(tart_timed_out(args, timeout));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    // A process tart left behind may still hold a pipe open; do not wait on it.
+    let stdout = stdout
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap_or_default();
+    let stderr = stderr
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap_or_default();
+    tart_result(args, status, &stdout, &stderr)
+}
+
+fn read_in_background(pipe: Option<impl Read + Send + 'static>) -> mpsc::Receiver<Vec<u8>> {
+    let (tx, rx) = mpsc::channel();
+    if let Some(mut pipe) = pipe {
+        std::thread::spawn(move || {
+            let mut buffer = Vec::new();
+            let _ = pipe.read_to_end(&mut buffer);
+            let _ = tx.send(buffer);
+        });
+    }
+    rx
+}
+
+fn tart_timed_out(args: &[&str], timeout: Duration) -> anyhow::Error {
+    anyhow::anyhow!(
+        "tart {} did not finish within {}s and was stopped",
+        args.first().copied().unwrap_or_default(),
+        timeout.as_secs()
+    )
+}
+
+fn tart_result(
+    args: &[&str],
+    status: std::process::ExitStatus,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> anyhow::Result<String> {
+    if status.success() {
+        return Ok(String::from_utf8_lossy(stdout).into_owned());
     }
     anyhow::bail!(
         "tart {} failed: {}",
         args.first().copied().unwrap_or_default(),
-        String::from_utf8_lossy(&output.stderr).trim()
+        String::from_utf8_lossy(stderr).trim()
     )
 }
 
@@ -475,13 +573,34 @@ fn gradle_properties_script(shared: &str, local: &str) -> String {
 const DERIVED_DATA_SHARE: &str = "derived-data";
 const GUEST_DERIVED_DATA: &str = "Library/Developer/Xcode/DerivedData";
 
-/// Copies a DerivedData folder, dropping files the source no longer has so
-/// the saved copy does not grow with every build.
-fn derived_data_sync_script(from: &str, to: &str) -> String {
+/// The saved DerivedData lives in one of two folders under the share, and
+/// `current` names the complete one. A save mirrors the guest's folder into
+/// the other one and only then switches `current`, so a save that is cut off
+/// leaves the last complete copy in place. Mirroring over the older copy
+/// keeps a save incremental.
+const DERIVED_DATA_CURRENT: &str = "current";
+
+/// Saves the guest's DerivedData at `from` to the share at `to`. Also drops
+/// what the share held before it had two folders.
+fn derived_data_save_script(from: &str, to: &str) -> String {
     let from = shell_quote(from);
     let to = shell_quote(to);
     format!(
-        "if [ -d {from} ]; then mkdir -p {to} && {{ /usr/bin/rsync -a --delete {from}/ {to}/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }}; fi"
+        "[ -d {from} ] || exit 0; cur=$(cat {to}/{DERIVED_DATA_CURRENT} 2>/dev/null); if [ \"$cur\" = a ]; then next=b; else next=a; fi; \
+mkdir -p {to}/\"$next\" && {{ /usr/bin/rsync -a --delete {from}/ {to}/\"$next\"/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }} || exit 1; \
+printf %s \"$next\" > {to}/.{DERIVED_DATA_CURRENT}.tmp && mv {to}/.{DERIVED_DATA_CURRENT}.tmp {to}/{DERIVED_DATA_CURRENT} || exit 1; \
+for entry in {to}/* {to}/.[!.]*; do case \"${{entry##*/}}\" in a|b|{DERIVED_DATA_CURRENT}|'.[!.]*'|'*') ;; *) rm -rf \"$entry\";; esac; done"
+    )
+}
+
+/// Copies the complete saved DerivedData at `from` to the guest folder `to`,
+/// printing `restored` when there was one.
+fn derived_data_restore_script(from: &str, to: &str) -> String {
+    let from = shell_quote(from);
+    let to = shell_quote(to);
+    format!(
+        "cur=$(cat {from}/{DERIVED_DATA_CURRENT} 2>/dev/null); case \"$cur\" in a|b) ;; *) exit 0;; esac; [ -d {from}/\"$cur\" ] || exit 0; \
+mkdir -p {to} && {{ /usr/bin/rsync -a --delete {from}/\"$cur\"/ {to}/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }} && echo restored"
     )
 }
 
@@ -526,20 +645,145 @@ fn android_sdk_out_script(sdk: &str, share: &str, baseline: &str) -> String {
     )
 }
 
-/// Deletes VMs this runner left behind when it crashed or was killed mid-build.
-pub(crate) fn delete_stale_vms(tart: &Path, runner_id: &str) -> anyhow::Result<usize> {
+/// What one sweep for leftover VMs did.
+#[derive(Debug, Default)]
+pub(crate) struct VmSweep {
+    pub removed: usize,
+    pub errors: Vec<String>,
+}
+
+/// Deletes VMs this runner left behind: after a crash, a kill mid-build, or a
+/// teardown whose delete failed. One VM that cannot be deleted does not keep
+/// the others. Run it only while this runner has no build.
+pub(crate) async fn delete_stale_vms(tart: &Path, runner_id: &str) -> anyhow::Result<VmSweep> {
     let prefix = runner_vm_prefix(runner_id);
-    let listing = run_tart(tart, &["list", "--source", "local", "--quiet"])?;
-    let mut removed = 0;
-    for name in listing.lines().map(str::trim) {
+    let mut sweep = VmSweep::default();
+    for name in local_vms(tart).await? {
         if !name.starts_with(&prefix) {
             continue;
         }
-        let _ = run_tart(tart, &["stop", "--timeout", "5", name]);
-        run_tart(tart, &["delete", name])?;
-        removed += 1;
+        let _ = run_tart(tart, &["stop", "--timeout", "5", &name], TART_QUERY_TIMEOUT).await;
+        match run_tart(tart, &["delete", &name], TART_QUERY_TIMEOUT).await {
+            Ok(_) => sweep.removed += 1,
+            Err(error) => sweep.errors.push(format!("{name}: {error:#}")),
+        }
     }
-    Ok(removed)
+    Ok(sweep)
+}
+
+/// Local images the runner builds; only these are pruned.
+const BUILT_IMAGE_PREFIX: &str = "oore-flutter-";
+/// Days an image the runner built may go unused before it is deleted.
+pub(crate) const IMAGE_MAX_AGE_ENV: &str = "OORE_TART_IMAGE_MAX_AGE_DAYS";
+const DEFAULT_IMAGE_MAX_AGE_DAYS: u64 = 30;
+
+/// How long a built image may go unused; `None` turns pruning off.
+pub(crate) fn image_max_age() -> Option<Duration> {
+    let days = std::env::var(IMAGE_MAX_AGE_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_IMAGE_MAX_AGE_DAYS);
+    (days > 0).then(|| Duration::from_secs(days * 24 * 60 * 60))
+}
+
+fn image_use_path(dir: &Path, image: &str) -> PathBuf {
+    dir.join(format!("image-{}.used", name_component(image)))
+}
+
+fn read_image_use(dir: &Path, image: &str) -> Option<i64> {
+    fs::read_to_string(image_use_path(dir, image))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+fn write_image_use(dir: &Path, image: &str, now: i64) -> anyhow::Result<()> {
+    fs::create_dir_all(dir)?;
+    let path = image_use_path(dir, image);
+    fs::write(&path, now.to_string()).with_context(|| format!("failed to write {}", path.display()))
+}
+
+/// Records that a build is about to use `image`, so pruning keeps it. Waits
+/// briefly for the image's lock, so a prune that is deleting the image right
+/// now finishes first and the build then finds the image missing and builds
+/// it again. An image build holds the same lock for much longer; then the
+/// image does not exist yet and there is nothing to prune.
+pub(crate) async fn record_image_use(dir: &Path, image: &str, now: i64) -> anyhow::Result<()> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let _lock = loop {
+        if let Some(lock) = try_lock_image(dir, image)? {
+            break Some(lock);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break None;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    };
+    write_image_use(dir, image, now)
+}
+
+/// What one prune of unused images did.
+#[derive(Debug, Default)]
+pub(crate) struct ImagePrune {
+    pub deleted: Vec<String>,
+    pub errors: Vec<String>,
+    /// The images the runner built that remain, with their size on disk.
+    pub kept_bytes: u64,
+    pub kept: usize,
+}
+
+/// Deletes local images the runner built that no build used for `max_age`.
+/// An image with no record yet starts its clock now. Images a build is
+/// creating are skipped through their lock.
+pub(crate) async fn prune_unused_images(
+    tart: &Path,
+    dir: &Path,
+    vms_dir: Option<&Path>,
+    max_age: Option<Duration>,
+    now: i64,
+) -> anyhow::Result<ImagePrune> {
+    let mut prune = ImagePrune::default();
+    for image in local_vms(tart).await? {
+        if !image.starts_with(BUILT_IMAGE_PREFIX) {
+            continue;
+        }
+        let mut delete = false;
+        if let Some(max_age) = max_age
+            && let Some(_lock) = try_lock_image(dir, &image)?
+        {
+            match read_image_use(dir, &image) {
+                Some(used) => {
+                    delete = now.saturating_sub(used) > max_age.as_secs() as i64;
+                }
+                None => write_image_use(dir, &image, now)?,
+            }
+            if delete {
+                match run_tart(tart, &["delete", &image], TART_QUERY_TIMEOUT).await {
+                    Ok(_) => {
+                        let _ = fs::remove_file(image_use_path(dir, &image));
+                        prune.deleted.push(image.clone());
+                    }
+                    Err(error) => {
+                        delete = false;
+                        prune.errors.push(format!("{image}: {error:#}"));
+                    }
+                }
+            }
+        }
+        if !delete {
+            prune.kept += 1;
+            if let Some(vms_dir) = vms_dir {
+                prune.kept_bytes += crate::caches::allocated_size(&vms_dir.join(&image));
+            }
+        }
+    }
+    Ok(prune)
+}
+
+/// Where Tart keeps local VMs and images.
+pub(crate) fn local_vms_dir() -> Option<PathBuf> {
+    tart_home().ok().map(|home| home.join("vms"))
 }
 
 /// Single-quotes `value` for a POSIX shell.
@@ -599,6 +843,23 @@ fn share_guest_dir(share: &HostShare) -> String {
     format!("oore-cache/{}", name_component(share.name))
 }
 
+/// Gradle and Kotlin daemons a build started outlive its steps and keep
+/// writing the Gradle home. The brackets keep the patterns from matching the
+/// stopping script itself.
+const GRADLE_DAEMON_PATTERN: &str = "[G]radleDaemon|[K]otlinCompileDaemon";
+
+/// Stops the processes whose command line matches `pattern` and fails if they
+/// do not exit, so a cache is saved only once nothing writes to it. Prints
+/// how many were running.
+fn stop_processes_script(pattern: &str) -> String {
+    format!(
+        "p={}; n=$(pgrep -f \"$p\" | wc -l | tr -d ' '); [ \"$n\" -eq 0 ] && {{ echo 0; exit 0; }}; \
+pkill -TERM -f \"$p\"; i=0; while pgrep -f \"$p\" >/dev/null && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done; \
+pkill -KILL -f \"$p\"; sleep 1; if pgrep -f \"$p\" >/dev/null; then exit 1; fi; echo \"$n\"",
+        shell_quote(pattern)
+    )
+}
+
 pub(crate) struct TartVm {
     tart: PathBuf,
     name: String,
@@ -608,22 +869,25 @@ pub(crate) struct TartVm {
     /// The workspace share's mount point; empty without a workspace.
     guest_share: String,
     guest_env: Vec<(String, String)>,
-    /// The Gradle share and the guest-local Gradle home, synced back on drop.
+    /// The Gradle share and the guest-local Gradle home, saved by `save_caches`.
     gradle_sync: Option<(String, String)>,
-    /// The DerivedData share and Xcode's folder, synced back on drop.
+    /// The DerivedData share and Xcode's folder, saved by `save_caches`.
     derived_data_sync: Option<(String, String)>,
-    /// The Android SDK share, the guest SDK and its baseline, synced back on drop.
+    /// The Android SDK share, the guest SDK and its baseline, saved by `save_caches`.
     android_sdk_sync: Option<(String, String, String)>,
     /// Build log lines on what the guest got back from earlier builds.
     cache_notes: Vec<String>,
-    /// Set once the VM was kept as an image; nothing is deleted then.
-    kept: bool,
+    /// Set once the VM was deleted or kept as an image; `Drop` does nothing then.
+    released: bool,
+    /// Bounds each copy into or out of the guest.
+    copy_timeout: Duration,
 }
 
 impl TartVm {
     /// Clones `image`, boots it headless with `workspace` shared, and waits
     /// until the guest agent answers and the workspace is mounted. The caller
-    /// holds a [`VmSlot`] for as long as the VM lives.
+    /// holds a [`VmSlot`] for as long as the VM lives, and ends the VM with
+    /// [`TartVm::delete`] or [`TartVm::keep_as`].
     pub(crate) async fn start(
         tart: PathBuf,
         image: &str,
@@ -654,19 +918,11 @@ impl TartVm {
                 "{arg} cannot be shared into a VM because its path contains ':'"
             );
         }
-        {
-            let tart = tart.clone();
-            let source = image.to_string();
-            let name = name.clone();
-            tokio::task::spawn_blocking(move || run_tart(&tart, &["clone", &source, &name]))
-                .await
-                .context("tart clone task failed")?
-                .with_context(|| {
-                    format!(
-                        "failed to clone VM image {image}; build or pull it on this runner first"
-                    )
-                })?;
-        }
+        run_tart(&tart, &["clone", image, &name], TART_CLONE_TIMEOUT)
+            .await
+            .with_context(|| {
+                format!("failed to clone VM image {image}; build or pull it on this runner first")
+            })?;
 
         let mut vm = Self {
             tart,
@@ -680,20 +936,38 @@ impl TartVm {
             derived_data_sync: None,
             android_sdk_sync: None,
             cache_notes: Vec::new(),
-            kept: false,
+            released: false,
+            copy_timeout: VM_COPY_TIMEOUT,
         };
-        let mut child = Command::new(&vm.tart)
+        match vm.boot(&dir_args, workspace.is_some(), shares).await {
+            Ok(()) => Ok(vm),
+            Err(error) => {
+                if let Err(delete_error) = vm.delete().await {
+                    eprintln!("Warning: {delete_error:#}");
+                }
+                Err(error)
+            }
+        }
+    }
+
+    async fn boot(
+        &mut self,
+        dir_args: &[String],
+        has_workspace: bool,
+        shares: &[HostShare],
+    ) -> anyhow::Result<()> {
+        let mut child = Command::new(&self.tart)
             .arg("run")
-            .arg(&vm.name)
+            .arg(&self.name)
             .args(["--no-graphics", "--no-audio", "--no-clipboard"])
-            .args(&dir_args)
+            .args(dir_args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
             .context("failed to start tart run")?;
         if let Some(mut stderr) = child.stderr.take() {
-            let sink = vm.run_stderr.clone();
+            let sink = self.run_stderr.clone();
             std::thread::spawn(move || {
                 let mut buffer = [0_u8; 4096];
                 while let Ok(read) = stderr.read(&mut buffer) {
@@ -708,18 +982,20 @@ impl TartVm {
                 }
             });
         }
-        vm.run = Some(child);
+        self.run = Some(child);
 
-        vm.wait_for_agent().await?;
-        let home = vm.exec_capture("printf %s \"$HOME\"").await?;
+        self.wait_for_agent().await?;
+        let home = self
+            .exec_capture("printf %s \"$HOME\"", VM_EXEC_TIMEOUT)
+            .await?;
         anyhow::ensure!(
             home.starts_with('/'),
             "VM reported an unusable home directory '{home}'"
         );
         let home = home.trim_end_matches('/');
-        if workspace.is_none() {
-            vm.guest_workspace = home.to_string();
-            return Ok(vm);
+        if !has_workspace {
+            self.guest_workspace = home.to_string();
+            return Ok(());
         }
         let guest_workspace = format!("{home}/{GUEST_WORKSPACE_DIR}");
         let guest_share = format!("{home}/{GUEST_SHARE_DIR}");
@@ -742,56 +1018,62 @@ impl TartVm {
                 } else {
                     guest_dir.clone()
                 };
-                vm.guest_env.push((env.to_string(), value));
+                self.guest_env.push((env.to_string(), value));
             }
             mounts.push((share_tag(share.name), guest_dir));
         }
-        vm.exec_capture(&mount_script(&mounts))
+        self.exec_capture(&mount_script(&mounts), VM_EXEC_TIMEOUT)
             .await
             .context("failed to mount the build workspace and caches inside the VM")?;
-        vm.exec_capture(&workspace_in_script(&guest_share, &guest_workspace))
-            .await
-            .context("failed to copy the workspace into the VM")?;
+        self.exec_capture(
+            &workspace_in_script(&guest_share, &guest_workspace),
+            self.copy_timeout,
+        )
+        .await
+        .context("failed to copy the workspace into the VM")?;
         if let Some((shared, local)) = gradle_dirs {
-            vm.exec_capture(&gradle_sync_script(&shared, &local))
+            self.exec_capture(&gradle_sync_script(&shared, &local), self.copy_timeout)
                 .await
                 .context("failed to copy the Gradle cache into the VM")?;
-            vm.exec_capture(&gradle_properties_script(&shared, &local))
+            self.exec_capture(&gradle_properties_script(&shared, &local), VM_EXEC_TIMEOUT)
                 .await
                 .context("failed to write gradle.properties inside the VM")?;
-            vm.gradle_sync = Some((shared, local));
+            self.gradle_sync = Some((shared, local));
         }
         if let Some(shared) = derived_data_share {
             let local = format!("{home}/{GUEST_DERIVED_DATA}");
-            let restored = vm
-                .exec_capture(&format!(
-                    "{} && ls -A {}",
-                    derived_data_sync_script(&shared, &local),
-                    shell_quote(&shared)
-                ))
+            let restored = self
+                .exec_capture(
+                    &derived_data_restore_script(&shared, &local),
+                    self.copy_timeout,
+                )
                 .await
                 .context("failed to copy DerivedData into the VM")?;
-            vm.cache_notes.push(if restored.trim().is_empty() {
+            self.cache_notes.push(if restored.trim().is_empty() {
                 "  derived data: none saved for this project yet; Xcode's is kept when the VM stops"
                     .to_string()
             } else {
                 "  derived data: restored this project's DerivedData and Swift packages".to_string()
             });
-            vm.derived_data_sync = Some((shared, local));
+            self.derived_data_sync = Some((shared, local));
         }
         if let Some(shared) = android_sdk_share {
             // The image sets the SDK location in the login profile.
-            let sdk = vm
+            let sdk = self
                 .exec_capture(
                     "/bin/zsh -l -c 'printf \"\\n%s\" \"${ANDROID_HOME:-$ANDROID_SDK_ROOT}\"'",
+                    VM_EXEC_TIMEOUT,
                 )
                 .await
                 .unwrap_or_default();
             let sdk = sdk.lines().last().unwrap_or_default().trim().to_string();
             if sdk.starts_with('/') {
                 let baseline = format!("{home}/{ANDROID_SDK_BASELINE}");
-                let restored = vm
-                    .exec_capture(&android_sdk_in_script(&shared, &sdk, &baseline))
+                let restored = self
+                    .exec_capture(
+                        &android_sdk_in_script(&shared, &sdk, &baseline),
+                        self.copy_timeout,
+                    )
                     .await
                     .context("failed to copy Android SDK packages into the VM")?;
                 let restored = restored
@@ -800,27 +1082,35 @@ impl TartVm {
                     .filter(|l| !l.is_empty())
                     .collect::<Vec<_>>();
                 if !restored.is_empty() {
-                    vm.cache_notes
+                    self.cache_notes
                         .push(format!("  android sdk: restored {}", restored.join(", ")));
                 }
-                vm.android_sdk_sync = Some((shared, sdk, baseline));
+                self.android_sdk_sync = Some((shared, sdk, baseline));
             }
         }
-        vm.guest_workspace = guest_workspace;
-        vm.guest_share = guest_share;
-        Ok(vm)
+        self.guest_workspace = guest_workspace;
+        self.guest_share = guest_share;
+        Ok(())
     }
 
     /// Copies what the steps wrote in the guest workspace back to the host
     /// workspace. Runs after every step, so the host sees artifacts, archives
     /// and test reports as each step finishes.
     pub(crate) async fn sync_workspace_out(&self) -> anyhow::Result<()> {
-        self.exec_capture(&workspace_out_script(
-            &self.guest_workspace,
-            &self.guest_share,
-        ))
+        self.exec_capture(
+            &workspace_out_script(&self.guest_workspace, &self.guest_share),
+            self.copy_timeout,
+        )
         .await
         .context("failed to copy the workspace out of the VM")?;
+        Ok(())
+    }
+
+    /// Empties `dir` in the guest, creating it if needed.
+    pub(crate) async fn reset_guest_dir(&self, dir: &str) -> anyhow::Result<()> {
+        let dir = shell_quote(dir);
+        self.exec_capture(&format!("rm -rf {dir} && mkdir -p {dir}"), VM_EXEC_TIMEOUT)
+            .await?;
         Ok(())
     }
 
@@ -857,14 +1147,12 @@ impl TartVm {
             if let Some(message) = self.run_exit_message() {
                 anyhow::bail!("VM {} stopped while booting: {message}", self.name);
             }
-            let ready = tokio::process::Command::new(&self.tart)
-                .args(["exec", &self.name, "/usr/bin/true"])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
+            let probe = deadline
+                .saturating_duration_since(tokio::time::Instant::now())
+                .min(BOOT_PROBE_TIMEOUT);
+            let ready = run_tart(&self.tart, &["exec", &self.name, "/usr/bin/true"], probe)
                 .await
-                .is_ok_and(|status| status.success());
+                .is_ok();
             if ready {
                 return Ok(());
             }
@@ -878,20 +1166,14 @@ impl TartVm {
         }
     }
 
-    async fn exec_capture(&self, script: &str) -> anyhow::Result<String> {
-        let output = tokio::process::Command::new(&self.tart)
-            .args(["exec", &self.name, "/bin/sh", "-c", script])
-            .stdin(Stdio::null())
-            .output()
-            .await
-            .context("failed to run tart exec")?;
-        anyhow::ensure!(
-            output.status.success(),
-            "command in VM failed ({}): {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    async fn exec_capture(&self, script: &str, timeout: Duration) -> anyhow::Result<String> {
+        run_tart(
+            &self.tart,
+            &["exec", &self.name, "/bin/sh", "-c", script],
+            timeout,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("command in VM failed: {error:#}"))
     }
 
     /// Spawns one build step in the guest. Output streams like a host step.
@@ -932,12 +1214,89 @@ impl TartVm {
         drop(stdin);
         Ok(child)
     }
-}
 
-impl TartVm {
-    fn shut_down(&mut self, timeout_secs: &str) {
-        let _ = run_tart(&self.tart, &["stop", "--timeout", timeout_secs, &self.name]);
+    /// Whether [`TartVm::save_caches`] has anything to save.
+    pub(crate) fn has_cache_saves(&self) -> bool {
+        self.gradle_sync.is_some()
+            || self.derived_data_sync.is_some()
+            || self.android_sdk_sync.is_some()
+    }
+
+    /// Copies the guest's Gradle cache, DerivedData and new Android SDK
+    /// packages back to the host. Each copy is bounded, and the Gradle cache is
+    /// saved only after the guest's Gradle daemons exited. Returns a build log
+    /// line for each cache. Skip it for a canceled build, whose tools may have
+    /// stopped mid-write.
+    pub(crate) async fn save_caches(&mut self) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some((shared, local)) = self.gradle_sync.take() {
+            match self
+                .exec_capture(
+                    &stop_processes_script(GRADLE_DAEMON_PATTERN),
+                    VM_EXEC_TIMEOUT,
+                )
+                .await
+            {
+                Ok(stopped) => {
+                    let stopped = stopped.trim();
+                    let note = if stopped == "0" {
+                        String::new()
+                    } else {
+                        format!(", after stopping {stopped} Gradle daemon(s)")
+                    };
+                    lines.push(
+                        self.save_cache("gradle cache", &gradle_sync_script(&local, &shared))
+                            .await
+                            + &note,
+                    );
+                }
+                Err(error) => lines.push(format!(
+                    "  gradle cache: not saved, the build's Gradle daemons did not stop: {error:#}"
+                )),
+            }
+        }
+        if let Some((shared, local)) = self.derived_data_sync.take() {
+            lines.push(
+                self.save_cache("derived data", &derived_data_save_script(&local, &shared))
+                    .await,
+            );
+        }
+        if let Some((shared, sdk, baseline)) = self.android_sdk_sync.take() {
+            lines.push(
+                self.save_cache(
+                    "android sdk",
+                    &android_sdk_out_script(&sdk, &shared, &baseline),
+                )
+                .await,
+            );
+        }
+        lines
+    }
+
+    async fn save_cache(&self, what: &str, script: &str) -> String {
+        let started = Instant::now();
+        let result = self.exec_capture(script, self.copy_timeout).await;
+        let seconds = started.elapsed().as_secs();
+        match result {
+            Ok(_) => format!("  {what}: saved in {seconds}s"),
+            Err(error) => format!("  {what}: not saved after {seconds}s: {error:#}"),
+        }
+    }
+
+    async fn stop(&mut self, timeout_secs: u64) {
+        let timeout = timeout_secs.to_string();
+        let _ = run_tart(
+            &self.tart,
+            &["stop", "--timeout", &timeout, &self.name],
+            Duration::from_secs(timeout_secs) + TART_QUERY_TIMEOUT,
+        )
+        .await;
         if let Some(mut run) = self.run.take() {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+            while run.try_wait().ok().flatten().is_none() && tokio::time::Instant::now() < deadline
+            {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
             if run.try_wait().ok().flatten().is_none() {
                 let _ = run.kill();
             }
@@ -945,45 +1304,51 @@ impl TartVm {
         }
     }
 
+    /// Stops the VM and deletes it, each step bounded. A VM whose delete fails
+    /// is left for the runner's next sweep.
+    pub(crate) async fn delete(mut self) -> anyhow::Result<()> {
+        self.released = true;
+        self.stop(10).await;
+        run_tart(&self.tart, &["delete", &self.name], TART_QUERY_TIMEOUT)
+            .await
+            .with_context(|| format!("failed to delete VM {}", self.name))?;
+        Ok(())
+    }
+
     /// Shuts the guest down cleanly and keeps its disk as the local image `image`.
-    pub(crate) fn keep_as(mut self, image: &str) -> anyhow::Result<()> {
-        self.shut_down("120");
-        run_tart(&self.tart, &["rename", &self.name, image])?;
-        self.kept = true;
+    pub(crate) async fn keep_as(mut self, image: &str) -> anyhow::Result<()> {
+        self.stop(120).await;
+        run_tart(
+            &self.tart,
+            &["rename", &self.name, image],
+            TART_QUERY_TIMEOUT,
+        )
+        .await?;
+        self.released = true;
         Ok(())
     }
 }
 
+/// The last resort when a VM is dropped without [`TartVm::delete`], such as a
+/// build future dropped on cancel: no caches are saved, and stopping and
+/// deleting are bounded so a wedged Tart cannot hold the runner.
 impl Drop for TartVm {
     fn drop(&mut self) {
-        if self.kept {
+        if self.released {
             return;
         }
-        let mut saves = Vec::new();
-        if let Some((shared, local)) = self.gradle_sync.take() {
-            saves.push(("the Gradle cache", gradle_sync_script(&local, &shared)));
+        let _ = run_tart_blocking(
+            &self.tart,
+            &["stop", "--timeout", "5", &self.name],
+            Duration::from_secs(30),
+        );
+        if let Some(mut run) = self.run.take() {
+            let _ = run.kill();
+            let _ = run.wait();
         }
-        if let Some((shared, local)) = self.derived_data_sync.take() {
-            saves.push(("DerivedData", derived_data_sync_script(&local, &shared)));
-        }
-        if let Some((shared, sdk, baseline)) = self.android_sdk_sync.take() {
-            saves.push((
-                "Android SDK packages",
-                android_sdk_out_script(&sdk, &shared, &baseline),
-            ));
-        }
-        for (what, script) in saves {
-            if let Err(error) =
-                run_tart(&self.tart, &["exec", &self.name, "/bin/sh", "-c", &script])
-            {
-                eprintln!(
-                    "Warning: failed to save {what} from VM {}: {error:#}",
-                    self.name
-                );
-            }
-        }
-        self.shut_down("10");
-        if let Err(error) = run_tart(&self.tart, &["delete", &self.name]) {
+        if let Err(error) =
+            run_tart_blocking(&self.tart, &["delete", &self.name], Duration::from_secs(60))
+        {
             eprintln!("Warning: failed to delete VM {}: {error:#}", self.name);
         }
     }
@@ -1293,41 +1658,69 @@ mod tests {
         );
 
         // DerivedData mirrors, so files Xcode dropped leave the saved copy too.
+        write("dd-share/Runner-old/legacy", "l");
         write("dd-local/Runner-abc/Build/old.o", "o");
         write(
             "dd-local/Runner-abc/SourcePackages/checkouts/firebase/x",
             "f",
         );
-        assert!(
-            run_sh(&derived_data_sync_script(
-                &path("dd-local"),
-                &path("dd-share")
-            ))
-            .status
-            .success()
+        let save = derived_data_save_script(&path("dd-local"), &path("dd-share"));
+        let restore = derived_data_restore_script(&path("dd-share"), &path("dd-restored"));
+        assert!(run_sh(&save).status.success());
+        assert_eq!(
+            fs::read_to_string(root.join("dd-share/current")).unwrap(),
+            "a"
         );
+        // The copy from before the two folders is dropped.
+        assert!(!root.join("dd-share/Runner-old").exists());
         fs::remove_file(root.join("dd-local/Runner-abc/Build/old.o")).unwrap();
-        assert!(
-            run_sh(&derived_data_sync_script(
-                &path("dd-local"),
-                &path("dd-share")
-            ))
-            .status
-            .success()
+        assert!(run_sh(&save).status.success());
+        assert_eq!(
+            fs::read_to_string(root.join("dd-share/current")).unwrap(),
+            "b"
         );
+        let restored = run_sh(&restore);
+        assert!(restored.status.success());
+        assert_eq!(String::from_utf8_lossy(&restored.stdout).trim(), "restored");
         assert!(
-            root.join("dd-share/Runner-abc/SourcePackages/checkouts/firebase/x")
+            root.join("dd-restored/Runner-abc/SourcePackages/checkouts/firebase/x")
                 .is_file()
         );
-        assert!(!root.join("dd-share/Runner-abc/Build/old.o").exists());
+        assert!(!root.join("dd-restored/Runner-abc/Build/old.o").exists());
+
+        // A save that fails part way keeps the last complete copy current.
+        fs::remove_dir_all(root.join("dd-share/a")).unwrap();
+        write("dd-share/a", "not a folder");
+        write("dd-local/Runner-abc/Build/new.o", "n");
+        assert!(!run_sh(&save).status.success());
+        assert_eq!(
+            fs::read_to_string(root.join("dd-share/current")).unwrap(),
+            "b"
+        );
+        fs::remove_dir_all(root.join("dd-restored")).unwrap();
+        assert!(run_sh(&restore).status.success());
         assert!(
-            run_sh(&derived_data_sync_script(
+            root.join("dd-restored/Runner-abc/SourcePackages/checkouts/firebase/x")
+                .is_file()
+        );
+        assert!(!root.join("dd-restored/Runner-abc/Build/new.o").exists());
+
+        // Nothing saved yet: nothing restored, and a missing folder saves nothing.
+        let empty = run_sh(&derived_data_restore_script(
+            &path("dd-none"),
+            &path("dd-restored-none"),
+        ));
+        assert!(empty.status.success());
+        assert!(String::from_utf8_lossy(&empty.stdout).trim().is_empty());
+        assert!(
+            run_sh(&derived_data_save_script(
                 &path("missing"),
-                &path("dd-share")
+                &path("dd-none")
             ))
             .status
             .success()
         );
+        assert!(!root.join("dd-none").exists());
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -1416,6 +1809,185 @@ mod tests {
         assert!(script.contains("brew install 'jq'\n"));
         assert!(script.contains("yes | sdkmanager 'platforms;android-36'\n"));
         assert!(script.contains("/bin/sh -c 'echo hi'\n"));
+    }
+
+    /// A stand-in `tart` that logs its arguments, lists `vms`, fails to
+    /// delete `stuck` and hangs on `exec`.
+    fn fake_tart(dir: &Path, vms: &[&str], stuck: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::create_dir_all(dir).unwrap();
+        let tart = dir.join("tart");
+        let log = dir.join("calls.log");
+        fs::write(
+            &tart,
+            format!(
+                "#!/bin/sh\necho \"$*\" >> {log}\ncase \"$1\" in\n  list) printf '%s\\n' {vms} ;;\n  delete) [ \"$2\" = {stuck} ] && {{ echo locked >&2; exit 1; }} ;;\n  exec) exec sleep 600 ;;\nesac\nexit 0\n",
+                log = shell_quote(log.to_str().unwrap()),
+                vms = vms.iter().map(|vm| shell_quote(vm)).collect::<Vec<_>>().join(" "),
+                stuck = shell_quote(stuck),
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&tart, fs::Permissions::from_mode(0o755)).unwrap();
+        tart
+    }
+
+    fn fake_tart_calls(dir: &Path) -> Vec<String> {
+        fs::read_to_string(dir.join("calls.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn stopping_daemons_waits_for_them_to_exit() {
+        // A name no other process has, so the test stops only its own.
+        let name = format!("OoreTestDaemon{}", std::process::id());
+        let pattern = format!("[{}]{}", &name[..1], &name[1..]);
+        let script = stop_processes_script(&pattern);
+        // A shell whose `$0`, and so its command line, carries the name. A
+        // copied system binary would not do: macOS kills a platform binary
+        // run from outside its install path.
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "sleep 60; :", &name])
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !run_sh(&format!("pgrep -f {}", shell_quote(&pattern)))
+            .status
+            .success()
+        {
+            assert!(Instant::now() < deadline, "the test daemon never showed up");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let stopped = run_sh(&script);
+        assert!(stopped.status.success());
+        assert_eq!(String::from_utf8_lossy(&stopped.stdout).trim(), "1");
+        assert!(!child.wait().unwrap().success());
+        let none = run_sh(&script);
+        assert!(none.status.success());
+        assert_eq!(String::from_utf8_lossy(&none.stdout).trim(), "0");
+    }
+
+    #[tokio::test]
+    async fn sweep_keeps_deleting_after_one_delete_fails() {
+        let dir = std::env::temp_dir().join(format!("oore-tart-sweep-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let tart = fake_tart(
+            &dir,
+            &[
+                "oore-r1-a",
+                "oore-r1-stuck",
+                "oore-r1-b",
+                "oore-r10-other",
+                "oore-flutter-3.47.7",
+            ],
+            "oore-r1-stuck",
+        );
+        let sweep = delete_stale_vms(&tart, "r1").await.unwrap();
+        assert_eq!(sweep.removed, 2);
+        assert_eq!(sweep.errors.len(), 1);
+        assert!(sweep.errors[0].starts_with("oore-r1-stuck: "));
+        let deletes = fake_tart_calls(&dir)
+            .into_iter()
+            .filter(|call| call.starts_with("delete "))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            deletes,
+            [
+                "delete oore-r1-a",
+                "delete oore-r1-stuck",
+                "delete oore-r1-b"
+            ]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn teardown_is_bounded_when_the_guest_agent_hangs() {
+        let dir = std::env::temp_dir().join(format!("oore-tart-hang-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let tart = fake_tart(&dir, &[], "");
+        let mut vm = TartVm {
+            tart,
+            name: "oore-r1-build".to_string(),
+            run: None,
+            run_stderr: Arc::new(Mutex::new(String::new())),
+            guest_workspace: String::new(),
+            guest_share: String::new(),
+            guest_env: Vec::new(),
+            gradle_sync: None,
+            derived_data_sync: Some(("/share".to_string(), "/local".to_string())),
+            android_sdk_sync: None,
+            cache_notes: Vec::new(),
+            released: false,
+            copy_timeout: Duration::from_secs(1),
+        };
+        let started = Instant::now();
+        let lines = vm.save_caches().await;
+        vm.delete().await.unwrap();
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("  derived data: not saved after 1s: "));
+        assert!(lines[0].contains("did not finish within 1s"));
+        assert!(
+            fake_tart_calls(&dir)
+                .iter()
+                .any(|call| call == "delete oore-r1-build")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn prunes_built_images_unused_for_the_max_age() {
+        let dir = std::env::temp_dir().join(format!("oore-tart-prune-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let tart = fake_tart(
+            &dir,
+            &[
+                "oore-flutter-3.41.0",
+                "oore-flutter-3.47.7",
+                "oore-flutter-3.44.0",
+                "oore-flutter-3.40.0",
+                "my-golden-image",
+            ],
+            "",
+        );
+        let day = 24 * 60 * 60;
+        let now = 100 * day;
+        let max_age = Some(Duration::from_secs(30 * day as u64));
+        write_image_use(&dir, "oore-flutter-3.41.0", now - 31 * day).unwrap();
+        write_image_use(&dir, "oore-flutter-3.47.7", now - day).unwrap();
+        write_image_use(&dir, "oore-flutter-3.40.0", now - 90 * day).unwrap();
+        // A build is creating or using 3.40.0 right now.
+        let _busy = try_lock_image(&dir, "oore-flutter-3.40.0")
+            .unwrap()
+            .unwrap();
+
+        let prune = prune_unused_images(&tart, &dir, None, max_age, now)
+            .await
+            .unwrap();
+        assert_eq!(prune.deleted, ["oore-flutter-3.41.0"]);
+        assert_eq!(prune.kept, 3);
+        assert!(read_image_use(&dir, "oore-flutter-3.41.0").is_none());
+        // An image with no record starts its clock.
+        assert_eq!(read_image_use(&dir, "oore-flutter-3.44.0"), Some(now));
+        let deletes = fake_tart_calls(&dir)
+            .into_iter()
+            .filter(|call| call.starts_with("delete "))
+            .collect::<Vec<_>>();
+        assert_eq!(deletes, ["delete oore-flutter-3.41.0"]);
+
+        // A recorded use keeps the image; no max age keeps every image.
+        record_image_use(&dir, "oore-flutter-3.44.0", now + 40 * day)
+            .await
+            .unwrap();
+        let later = prune_unused_images(&tart, &dir, None, None, now + 365 * day)
+            .await
+            .unwrap();
+        assert!(later.deleted.is_empty());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

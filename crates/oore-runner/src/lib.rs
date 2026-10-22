@@ -3087,6 +3087,14 @@ fn terminal_runner_error(error: &anyhow::Error) -> bool {
 struct CacheReport {
     stats: Option<CacheStats>,
     purge_requested_at: Option<i64>,
+    vm_images: Option<VmImageUsage>,
+}
+
+/// The VM images this runner built that are on disk, outside the cache cap.
+#[derive(Debug, Clone, serde::Serialize)]
+struct VmImageUsage {
+    count: usize,
+    bytes: u64,
 }
 
 type SharedCacheReport = Arc<std::sync::Mutex<CacheReport>>;
@@ -3096,14 +3104,19 @@ fn heartbeat_capabilities(
     cache_report: &SharedCacheReport,
 ) -> serde_json::Value {
     let mut capabilities = capabilities.clone();
-    let stats = cache_report
+    let (stats, vm_images) = cache_report
         .lock()
-        .ok()
-        .and_then(|report| report.stats.clone());
+        .map(|report| (report.stats.clone(), report.vm_images.clone()))
+        .unwrap_or_default();
     if let (Some(object), Some(stats)) = (capabilities.as_object_mut(), stats)
         && let Ok(value) = serde_json::to_value(stats)
     {
         object.insert("caches".to_string(), value);
+    }
+    if let (Some(object), Some(vm_images)) = (capabilities.as_object_mut(), vm_images)
+        && let Ok(value) = serde_json::to_value(vm_images)
+    {
+        object.insert("vm_images".to_string(), value);
     }
     capabilities
 }
@@ -3248,13 +3261,8 @@ pub async fn run_runner_forever(
 
     reconcile_stale_runner_mutations()
         .context("failed to reconcile stale runner state before startup")?;
-    if let Some(tart_bin) = tart::find_tart() {
-        match tart::delete_stale_vms(&tart_bin, &config.runner_id) {
-            Ok(removed) if removed > 0 => println!("Deleted {removed} leftover build VM(s)"),
-            Ok(_) => {}
-            Err(error) => eprintln!("Warning: could not delete leftover build VMs: {error:#}"),
-        }
-    }
+    // Sweeps leftover VMs before the first claim.
+    let mut vm_upkeep = tart::find_tart().map(VmUpkeep::new);
 
     println!("Starting runner '{}' ({})", config.name, config.runner_id);
     println!("Connecting to: {}", daemon_url);
@@ -3369,6 +3377,9 @@ pub async fn run_runner_forever(
         if let Some(caches) = &caches {
             purge_caches_if_requested(caches, &cache_report).await;
         }
+        if let Some(upkeep) = vm_upkeep.as_mut() {
+            upkeep.run(&config.runner_id, &cache_report).await;
+        }
         match claim_and_execute(
             &client,
             &daemon_url,
@@ -3378,11 +3389,92 @@ pub async fn run_runner_forever(
         )
         .await
         {
-            Ok(_executed) => {}
+            Ok(executed) => {
+                // A build whose VM could not be deleted leaves it behind.
+                if executed && let Some(upkeep) = vm_upkeep.as_mut() {
+                    upkeep.sweep_now();
+                }
+            }
             Err(error) if terminal_runner_error(&error) => return Err(error),
             Err(e) => {
                 eprintln!("Error during claim/execute: {}", e);
                 tokio::time::sleep(Duration::from_secs(10)).await;
+            }
+        }
+    }
+}
+
+/// Idle-time VM housekeeping: deletes VMs this runner left behind and prunes
+/// the VM images it built that no build used for a while. Runs only between
+/// builds, when this runner has no VM of its own.
+struct VmUpkeep {
+    tart: PathBuf,
+    next_sweep: tokio::time::Instant,
+    next_prune: tokio::time::Instant,
+}
+
+impl VmUpkeep {
+    const SWEEP_INTERVAL: Duration = Duration::from_secs(10 * 60);
+    const PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+    fn new(tart: PathBuf) -> Self {
+        let now = tokio::time::Instant::now();
+        Self {
+            tart,
+            next_sweep: now,
+            next_prune: now,
+        }
+    }
+
+    fn sweep_now(&mut self) {
+        self.next_sweep = tokio::time::Instant::now();
+    }
+
+    async fn run(&mut self, runner_id: &str, cache_report: &SharedCacheReport) {
+        let now = tokio::time::Instant::now();
+        if now >= self.next_sweep {
+            self.next_sweep = now + Self::SWEEP_INTERVAL;
+            match tart::delete_stale_vms(&self.tart, runner_id).await {
+                Ok(sweep) => {
+                    if sweep.removed > 0 {
+                        println!("Deleted {} leftover build VM(s)", sweep.removed);
+                    }
+                    for error in sweep.errors {
+                        eprintln!("Warning: could not delete leftover build VM {error}");
+                    }
+                }
+                Err(error) => eprintln!("Warning: could not list leftover build VMs: {error:#}"),
+            }
+        }
+        if now >= self.next_prune {
+            self.next_prune = now + Self::PRUNE_INTERVAL;
+            let Ok(dir) = tart::slot_dir() else {
+                return;
+            };
+            match tart::prune_unused_images(
+                &self.tart,
+                &dir,
+                tart::local_vms_dir().as_deref(),
+                tart::image_max_age(),
+                now_unix(),
+            )
+            .await
+            {
+                Ok(prune) => {
+                    for image in &prune.deleted {
+                        println!("Deleted VM image {image}, which no build used recently");
+                    }
+                    for error in &prune.errors {
+                        eprintln!("Warning: could not delete unused VM image {error}");
+                    }
+                    if let Ok(mut report) = cache_report.lock() {
+                        report.vm_images = Some(VmImageUsage {
+                            count: prune.kept,
+                            bytes: prune.kept_bytes,
+                        });
+                    }
+                }
+                Err(error) => eprintln!("Warning: could not prune VM images: {error:#}"),
             }
         }
     }
@@ -4489,6 +4581,7 @@ async fn execute_build(
     cache_observation: &mut Option<CacheObservation>,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
     let mut log_seq = BuildLogCursor::default();
+    let mut build_vm = None;
     let (steps, result) = execute_build_steps(
         job,
         client,
@@ -4497,8 +4590,28 @@ async fn execute_build(
         caches,
         cache_observation,
         &mut log_seq,
+        &mut build_vm,
     )
     .await;
+    // A build that ended before its last step still has its VM. A canceled
+    // or timed-out build may have stopped tools mid-write, so its caches are
+    // not saved.
+    if let Some(vm) = build_vm.take() {
+        let terminated = result
+            .as_ref()
+            .err()
+            .is_some_and(|error| error.downcast_ref::<BuildTerminated>().is_some());
+        shutdown_build_vm(
+            vm,
+            !terminated,
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &mut log_seq,
+        )
+        .await;
+    }
     // Error text reaches the build record and the runner log, so mask it too.
     let result = result.map_err(|error| {
         if error.downcast_ref::<BuildTerminated>().is_some() {
@@ -4953,6 +5066,7 @@ async fn run_checkout(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_build_steps(
     job: &ClaimedJob,
     client: &reqwest::Client,
@@ -4961,6 +5075,7 @@ async fn execute_build_steps(
     caches: Option<&RunnerCaches>,
     cache_observation: &mut Option<CacheObservation>,
     log_seq: &mut BuildLogCursor,
+    build_vm: &mut Option<BuildVm>,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
     // Pin signer executables before any repository-controlled checkout or build stage runs.
     let android_signing_toolchain = AndroidSigningToolchain::discover();
@@ -5426,7 +5541,12 @@ async fn execute_build_steps(
         }
     };
 
-    // Inside the workspace so a VM build sees it through the workspace share.
+    // The caller ends the VM if a step returns early.
+    *build_vm = vm;
+    let vm = build_vm.as_ref();
+
+    // A VM build's steps write reports in the guest workspace; the copy back
+    // after each step brings them here.
     let test_reports_dir = workspace.join(test_reports::TEST_REPORTS_SUBDIR);
     if let Err(error) = fs::create_dir_all(&test_reports_dir) {
         return (
@@ -5441,6 +5561,18 @@ async fn execute_build_steps(
         .as_deref()
         .unwrap_or(&workspace)
         .join(test_reports::TEST_REPORTS_SUBDIR);
+    // The guest workspace was copied in before the host directory existed.
+    if let Some(vm) = vm
+        && let Err(error) = vm
+            .vm
+            .reset_guest_dir(&step_test_reports_dir.display().to_string())
+            .await
+    {
+        return (
+            steps,
+            Err(error.context("Failed to create the test reports directory in the VM")),
+        );
+    }
     step_env.push((
         test_reports::TEST_REPORTS_DIR_ENV.to_string(),
         step_test_reports_dir.display().to_string(),
@@ -5593,6 +5725,27 @@ async fn execute_build_steps(
                         &step_name,
                     )
                     .await;
+                    // The host removed the reports it read; remove the guest's
+                    // too, or the next step's copy back reports them again.
+                    if let Some(vm) = vm
+                        && let Err(error) = vm
+                            .vm
+                            .reset_guest_dir(&step_test_reports_dir.display().to_string())
+                            .await
+                    {
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            log_seq,
+                            "stderr",
+                            &format!(
+                                "[oore-tests] Could not clear the VM's test reports: {error:#}"
+                            ),
+                        )
+                        .await;
+                    }
                     steps.push(StepResult {
                         name: step_name,
                         status: if exit_code == 0 {
@@ -5899,7 +6052,9 @@ Install the required tooling on the runner, set isolation: vm, or override build
     }
 
     // Every step has run; free the VM slot before the upload.
-    drop(vm);
+    if let Some(vm) = build_vm.take() {
+        shutdown_build_vm(vm, true, client, daemon_url, config, &job.build_id, log_seq).await;
+    }
 
     if ios_signing_expected && !ios_signing_command_applied {
         return (
@@ -6091,6 +6246,7 @@ async fn run_publish_steps(
                     &job.build_id,
                     &job.signing_token,
                     &published,
+                    &PUBLISH_REPORT_DELAYS,
                 )
                 .await
                 {
@@ -6102,7 +6258,8 @@ async fn run_publish_steps(
                         log_seq,
                         "stderr",
                         &format!(
-                            "[oore-publish] Uploaded, but recording the release failed: {error:#}"
+                            "[oore-publish] Warning: the build is on Google Play, but Oore could not \
+                             record the release, so it will not track or roll it out: {error:#}"
                         ),
                     )
                     .await;
@@ -6224,6 +6381,7 @@ async fn run_publish_steps(
                     &job.build_id,
                     &job.signing_token,
                     &published,
+                    &PUBLISH_REPORT_DELAYS,
                 )
                 .await
                 {
@@ -6235,7 +6393,8 @@ async fn run_publish_steps(
                         log_seq,
                         "stderr",
                         &format!(
-                            "[oore-publish] Uploaded, but recording the release failed: {error:#}"
+                            "[oore-publish] Warning: the build is on App Store Connect, but Oore could not \
+                             record the release, so it will not track or roll it out: {error:#}"
                         ),
                     )
                     .await;
@@ -6287,6 +6446,56 @@ struct BuildVm {
     _slot: tart::VmSlot,
 }
 
+/// Saves the VM's caches back to the host unless `save_caches` is false,
+/// deletes the VM, and only then frees its slot. Every step is bounded.
+async fn shutdown_build_vm(
+    build_vm: BuildVm,
+    save_caches: bool,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    log_seq: &mut BuildLogCursor,
+) {
+    let BuildVm {
+        mut vm,
+        _slot: slot,
+    } = build_vm;
+    if save_caches && vm.has_cache_saves() {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            build_id,
+            log_seq,
+            "stdout",
+            &format!("Saving caches from VM {} to this runner", vm.name()),
+        )
+        .await;
+        for line in vm.save_caches().await {
+            let _ = append_runner_log_line(
+                client, daemon_url, config, build_id, log_seq, "stdout", &line,
+            )
+            .await;
+        }
+    }
+    let name = vm.name().to_string();
+    if let Err(error) = vm.delete().await {
+        eprintln!("Warning: {error:#}; the runner retries before its next build");
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            build_id,
+            log_seq,
+            "stderr",
+            &format!("Could not delete VM {name}; the runner retries before its next build"),
+        )
+        .await;
+    }
+    drop(slot);
+}
+
 /// Reads the repository's optional `oore.image.yaml`.
 fn read_vm_image_config(
     workspace: &Path,
@@ -6325,7 +6534,14 @@ async fn start_build_vm(
             tart::PINNED_TART_VERSION
         )
     })?;
-    let tart_version = tart::tart_version(&tart_bin).unwrap_or_default();
+    let tart_version = {
+        let tart_bin = tart_bin.clone();
+        tokio::task::spawn_blocking(move || tart::tart_version(&tart_bin))
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    };
     anyhow::ensure!(
         tart::version_is_supported(&tart_version),
         "Tart {} or newer is required for VM builds; this runner has '{}'",
@@ -6398,6 +6614,13 @@ async fn start_build_vm(
         )
         .await?;
     } else {
+        // Before the image is checked, so pruning cannot delete it under us.
+        if let Err(error) = tart::record_image_use(&slot_dir, &plan.name, now_unix()).await {
+            eprintln!(
+                "Warning: could not record the use of VM image {}: {error:#}",
+                plan.name
+            );
+        }
         ensure_vm_image(
             job, client, daemon_url, config, log_seq, authority, &tart_bin, &slot_dir, &plan, &name,
         )
@@ -6417,7 +6640,13 @@ async fn start_build_vm(
         ),
     )
     .await;
-    let vm = tart::TartVm::start(tart_bin, &plan.name, name, Some(workspace), shares).await?;
+    // Dropping the start on cancel deletes the half-started VM.
+    let vm = tokio::select! {
+        vm = tart::TartVm::start(tart_bin, &plan.name, name, Some(workspace), shares) => vm?,
+        () = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
+            return Err(authority.terminated());
+        }
+    };
     let _ = append_runner_log_line(
         client,
         daemon_url,
@@ -6461,7 +6690,7 @@ async fn pull_registry_image(
     tart_bin: &Path,
     reference: &str,
 ) -> anyhow::Result<()> {
-    if tart::registry_image_cached(tart_bin, reference)? {
+    if tart::registry_image_cached(tart_bin, reference).await? {
         return Ok(());
     }
     let _ = append_runner_log_line(
@@ -6511,7 +6740,7 @@ async fn ensure_vm_image(
 ) -> anyhow::Result<()> {
     let mut waiting_logged = false;
     let _image_lock = loop {
-        if tart::local_image_exists(tart_bin, &plan.name)? {
+        if tart::local_image_exists(tart_bin, &plan.name).await? {
             return Ok(());
         }
         if let Some(lock) = tart::try_lock_image(lock_dir, &plan.name)? {
@@ -6537,7 +6766,7 @@ async fn ensure_vm_image(
         tokio::time::sleep(Duration::from_secs(10)).await;
     };
     // The build holding the lock before us may have just finished it.
-    if tart::local_image_exists(tart_bin, &plan.name)? {
+    if tart::local_image_exists(tart_bin, &plan.name).await? {
         return Ok(());
     }
 
@@ -6560,54 +6789,67 @@ async fn ensure_vm_image(
         )
         .await?;
     }
-    let builder = tart::TartVm::start(
-        tart_bin.to_path_buf(),
-        &plan.base,
-        format!("{vm_name}-image"),
-        None,
-        &[],
-    )
-    .await
-    .with_context(|| format!("failed to start base image {}", plan.base))?;
-    let child = builder.spawn_script(&tart::provision_script(plan)).await?;
-    let status = run_and_stream(
-        child,
-        client,
-        daemon_url,
-        config,
-        &job.build_id,
-        log_seq,
-        poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
-    )
-    .await;
-    match status {
-        None => {
+    let builder = tokio::select! {
+        builder = tart::TartVm::start(
+            tart_bin.to_path_buf(),
+            &plan.base,
+            format!("{vm_name}-image"),
+            None,
+            &[],
+        ) => builder.with_context(|| format!("failed to start base image {}", plan.base))?,
+        () = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
             return Err(authority.terminated());
         }
-        Some(status) if !status.success() => {
-            anyhow::bail!(
-                "Building VM image {} failed with {status}; see the log above",
-                plan.name
-            );
+    };
+    let provisioned = async {
+        let child = builder.spawn_script(&tart::provision_script(plan)).await?;
+        let status = run_and_stream(
+            child,
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
+        )
+        .await;
+        match status {
+            None => {
+                return Err(authority.terminated());
+            }
+            Some(status) if !status.success() => {
+                anyhow::bail!(
+                    "Building VM image {} failed with {status}; see the log above",
+                    plan.name
+                );
+            }
+            Some(_) => {}
         }
-        Some(_) => {}
+        // Check Flutter the way build steps find it, so an image that cannot
+        // run Flutter is never cached.
+        let check = builder
+            .run_script("exec /bin/sh -c 'flutter --version'")
+            .await?;
+        anyhow::ensure!(
+            check.status.success(),
+            "Building VM image {} finished, but build steps cannot run flutter in it ({}): {}",
+            plan.name,
+            check.status,
+            String::from_utf8_lossy(&check.stderr).trim()
+        );
+        Ok(())
     }
-    // Check Flutter the way build steps find it, so an image that cannot run
-    // Flutter is never cached.
-    let check = builder
-        .run_script("exec /bin/sh -c 'flutter --version'")
-        .await?;
-    anyhow::ensure!(
-        check.status.success(),
-        "Building VM image {} finished, but build steps cannot run flutter in it ({}): {}",
-        plan.name,
-        check.status,
-        String::from_utf8_lossy(&check.stderr).trim()
-    );
-    let image = plan.name.clone();
-    tokio::task::spawn_blocking(move || builder.keep_as(&image))
+    .await;
+    if let Err(error) = provisioned {
+        if let Err(delete_error) = builder.delete().await {
+            eprintln!("Warning: {delete_error:#}");
+        }
+        return Err(error);
+    }
+    builder
+        .keep_as(&plan.name)
         .await
-        .context("saving the VM image failed")??;
+        .context("saving the VM image failed")?;
     let _ = append_runner_log_line(
         client,
         daemon_url,
@@ -6643,6 +6885,20 @@ async fn fetch_job_publish_plan(
     Ok(resp.json().await?)
 }
 
+/// Waits between attempts to record a store upload: about two minutes in all,
+/// enough to ride out a daemon restart.
+const PUBLISH_REPORT_DELAYS: [Duration; 5] = [
+    Duration::ZERO,
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(20),
+    Duration::from_secs(40),
+];
+const PUBLISH_REPORT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Tell the daemon about a finished store upload so it records the release.
+/// The daemon ignores repeats, so this retries until the daemon answers or
+/// rejects the report.
 async fn report_publish_result(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -6650,21 +6906,43 @@ async fn report_publish_result(
     build_id: &str,
     signing_token: &str,
     result: &RunnerPublishResult,
+    delays: &[Duration],
 ) -> anyhow::Result<()> {
-    let resp = client
-        .post(format!(
-            "{}/v1/runners/{}/jobs/{}/publish-results",
-            daemon_url, config.runner_id, build_id
-        ))
-        .bearer_auth(&config.runner_token)
-        .header("x-oore-signing-token", signing_token)
-        .json(result)
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("publish result report failed: {}", resp.status());
+    let mut last_error = None;
+    for delay in delays {
+        if !delay.is_zero() {
+            tokio::time::sleep(*delay).await;
+        }
+        let sent = client
+            .post(format!(
+                "{}/v1/runners/{}/jobs/{}/publish-results",
+                daemon_url, config.runner_id, build_id
+            ))
+            .bearer_auth(&config.runner_token)
+            .header("x-oore-signing-token", signing_token)
+            .timeout(PUBLISH_REPORT_TIMEOUT)
+            .json(result)
+            .send()
+            .await;
+        let resp = match sent {
+            Ok(resp) => resp,
+            Err(error) => {
+                last_error = Some(anyhow::Error::new(error));
+                continue;
+            }
+        };
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body = resp.text().await.unwrap_or_default();
+        let error = anyhow::anyhow!("the daemon answered {status}: {body}");
+        if runner_response_is_terminal(status) {
+            return Err(error);
+        }
+        last_error = Some(error);
     }
-    Ok(())
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("the publish result was not sent")))
 }
 
 /// Parse the reports a step wrote and send them to the daemon. Test reporting
@@ -6680,17 +6958,14 @@ async fn report_step_tests(
     workspaces: &[PathBuf],
     step_name: &str,
 ) {
-    let Some(mut report) = test_reports::collect_test_reports(reports_dir, workspaces, step_name)
+    let masker = &log_seq.masker;
+    let Some(report) =
+        test_reports::collect_test_reports(reports_dir, workspaces, step_name, |text| {
+            masker.mask(text)
+        })
     else {
         return;
     };
-    for failure in &mut report.failures {
-        failure.message = failure.message.as_deref().map(|m| log_seq.masker.mask(m));
-        failure.stack_trace = failure
-            .stack_trace
-            .as_deref()
-            .map(|s| log_seq.masker.mask(s));
-    }
     let _ = append_runner_log_line(
         client,
         daemon_url,
@@ -7948,6 +8223,96 @@ mod secret_tests {
         assert!(output.status.success(), "{stdout}");
         assert!(stdout.contains("self-signed"), "{stdout}");
         fs::remove_dir_all(&root).ok();
+    }
+}
+
+#[cfg(test)]
+mod publish_report_tests {
+    use std::time::Duration;
+
+    use oore_contract::{PublishStore, RunnerPublishResult};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::{RunnerConfig, report_publish_result};
+
+    /// Answers each connection with the next status and counts requests.
+    async fn daemon(statuses: &'static [u16]) -> (String, tokio::task::JoinHandle<usize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = tokio::spawn(async move {
+            let mut served = 0;
+            for status in statuses {
+                let Ok(Ok((mut socket, _))) =
+                    tokio::time::timeout(Duration::from_millis(500), listener.accept()).await
+                else {
+                    break;
+                };
+                let mut buf = vec![0u8; 8192];
+                let _ = socket.read(&mut buf).await;
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}"
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+                served += 1;
+            }
+            served
+        });
+        (url, handle)
+    }
+
+    async fn report(url: &str) -> anyhow::Result<()> {
+        let config = RunnerConfig {
+            runner_id: "r1".into(),
+            runner_token: "t".into(),
+            daemon_url: url.into(),
+            name: "runner".into(),
+        };
+        let result = RunnerPublishResult {
+            store: PublishStore::GooglePlay,
+            track: "production".into(),
+            package_name: "com.example.app".into(),
+            version_code: 7,
+            version_name: None,
+            rollout_fraction: Some(0.1),
+            status: "in_progress".into(),
+        };
+        report_publish_result(
+            &reqwest::Client::new(),
+            url,
+            &config,
+            "b1",
+            "signing",
+            &result,
+            &[
+                Duration::ZERO,
+                Duration::from_millis(10),
+                Duration::from_millis(10),
+            ],
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn retries_until_the_daemon_records_the_release() {
+        let (url, daemon) = daemon(&[503, 500, 200]).await;
+        report(&url).await.unwrap();
+        assert_eq!(daemon.await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn stops_when_the_daemon_rejects_the_report() {
+        let (url, daemon) = daemon(&[403, 200]).await;
+        assert!(report(&url).await.is_err());
+        assert_eq!(daemon.await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn gives_up_after_the_last_attempt() {
+        let (url, daemon) = daemon(&[500, 500, 500, 200]).await;
+        let error = report(&url).await.unwrap_err();
+        assert!(format!("{error:#}").contains("500"), "{error:#}");
+        assert_eq!(daemon.await.unwrap(), 3);
     }
 }
 

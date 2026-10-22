@@ -1,0 +1,31 @@
+---
+title: '`oore frontend`'
+status: implemented
+description: 'Create a single-use pairing code that connects a Web node to a Trusted Proxy control plane.'
+---
+
+Use `oore frontend invite` on the control-plane Mac before you install a Web node for a Trusted Proxy control plane.
+
+```text
+oore frontend invite [--ttl <DURATION>] [--state-file <PATH>] [--json]
+```
+
+```bash
+oore frontend invite
+```
+
+The command prints a single-use pairing code. Enter it during Web node setup.
+
+| Option         | Purpose                                                                  |
+| -------------- | ------------------------------------------------------------------------ |
+| `--ttl`        | How long the code stays valid, such as `10m` or `1h`. Defaults to `10m`. |
+| `--state-file` | Setup database file. Also reads `OORE_SETUP_STATE_FILE`.                 |
+| `--json`       | Print `code`, `expires_at`, and `single_use` as JSON.                    |
+
+The lifetime must be between one second and one hour.
+
+The command talks to the daemon on loopback, so run it on the control-plane Mac.
+
+Create a new code after a code expires or is used.
+
+See [Split roles across Macs](/operate/deploy/split-roles#2-connect-a-browser-client) for the full procedure.

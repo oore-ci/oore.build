@@ -3,7 +3,8 @@
 //!
 //! The daemon discovers apps from releases, reads each store in the
 //! background with the releasing pipeline's publishing credentials, and keeps
-//! the latest result so Home never waits on a store.
+//! the latest result so Home never waits on a store. Only the monitor reads
+//! stores; a manual refresh marks rows due and wakes it.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,7 +20,7 @@ use oore_contract::{
 use oore_google_play::{PlayErrorIssue, PlayVitalsKind, PlayVitalsRate};
 use serde_json::Value;
 use sqlx::{FromRow, SqlitePool};
-use tokio::sync::Mutex;
+use tokio::sync::Notify;
 use tracing::{error, warn};
 
 use crate::AppState;
@@ -35,11 +36,20 @@ const MONITOR_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const REFRESH_AFTER_SECS: i64 = 6 * 60 * 60;
 /// A failed read is often a setting someone is fixing right now.
 const RETRY_AFTER_SECS: i64 = 15 * 60;
-/// One manual refresh at a time, and not more often than this.
+/// Rows read this recently are not read again on a manual refresh.
 const MANUAL_REFRESH_COOLDOWN_SECS: i64 = 30;
 const MANUAL_REFRESH_LIMIT: i64 = 20;
+/// How long a manual refresh waits for the monitor before answering with
+/// whatever has been read so far. Keep it well under proxy timeouts.
+const MANUAL_REFRESH_WAIT: Duration = Duration::from_secs(20);
+/// A claimed row is read again after this if its read never finished, for
+/// example because the daemon stopped mid-read.
+const CLAIM_SECS: i64 = RETRY_AFTER_SECS;
 
-static LAST_MANUAL_REFRESH: Mutex<i64> = Mutex::const_new(0);
+/// Wakes the monitor for rows a manual refresh marked due.
+static MONITOR_WAKE: Notify = Notify::const_new();
+/// Signalled each time the monitor has no due rows left.
+static MONITOR_IDLE: Notify = Notify::const_new();
 const REFRESH_BATCH: i64 = 5;
 const TOP_ISSUES: u32 = 5;
 /// Google Play's bad-behavior thresholds for user-perceived rates.
@@ -81,53 +91,61 @@ pub async fn refresh_store_vitals(
             "Failed to refresh store vitals",
         )
     };
-    {
-        let mut last = LAST_MANUAL_REFRESH.try_lock().map_err(|_| {
-            api_err(
-                StatusCode::TOO_MANY_REQUESTS,
-                "refresh_in_progress",
-                "Oore is already reading the stores. Try again in a moment.",
-            )
-        })?;
-        let now = now_unix();
-        if now - *last < MANUAL_REFRESH_COOLDOWN_SECS {
-            return Err(api_err(
-                StatusCode::TOO_MANY_REQUESTS,
-                "refresh_too_soon",
-                "Oore read the stores moments ago. Try again in half a minute.",
-            ));
-        }
-        discover_apps(&state.db).await.map_err(store_err)?;
-        let privileged = auth.0.role == "owner" || auth.0.role == "admin";
-        let rows = sqlx::query_as::<_, DueRow>(
-            "SELECT project_id, store, app_identifier, pipeline_id, asc_app_id FROM store_app_vitals v \
-             WHERE ?1 OR EXISTS (SELECT 1 FROM project_members pm \
-               WHERE pm.project_id = v.project_id AND pm.user_id = ?2) \
-             ORDER BY next_refresh_at LIMIT ?3",
-        )
-        .bind(privileged)
-        .bind(&auth.0.user_id)
-        .bind(MANUAL_REFRESH_LIMIT)
-        .fetch_all(&state.db)
+    let privileged = auth.0.role == "owner" || auth.0.role == "admin";
+    let marked = mark_due(&state.db, privileged, &auth.0.user_id, now_unix())
         .await
         .map_err(store_err)?;
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()
-            .map_err(|e| {
-                error!(error = %e, "failed to build the store vitals HTTP client");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "store_error",
-                    "Failed to refresh store vitals",
-                )
-            })?;
-        refresh_rows(&state, &http, rows, now)
-            .await
-            .map_err(store_err)?;
-        *last = now_unix();
+    if marked > 0 {
+        MONITOR_WAKE.notify_one();
+        // A slow store must not hold the request open; whatever is still
+        // being read shows up on a later load.
+        let deadline = tokio::time::Instant::now() + MANUAL_REFRESH_WAIT;
+        loop {
+            // Listen before checking so an idle signal in between is kept.
+            let idle = MONITOR_IDLE.notified();
+            tokio::pin!(idle);
+            idle.as_mut().enable();
+            if !any_due(&state.db, now_unix()).await.map_err(store_err)?
+                || tokio::time::timeout_at(deadline, idle).await.is_err()
+            {
+                break;
+            }
+        }
     }
     load_vitals(&state, &auth).await
+}
+
+async fn any_due(pool: &SqlitePool, now: i64) -> sqlx::Result<bool> {
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM store_app_vitals WHERE next_refresh_at <= ?1)")
+        .bind(now)
+        .fetch_one(pool)
+        .await
+}
+
+/// Mark the caller's apps due so the monitor reads them next, skipping rows
+/// read in the last few seconds. Returns how many rows were marked.
+async fn mark_due(
+    pool: &SqlitePool,
+    privileged: bool,
+    user_id: &str,
+    now: i64,
+) -> sqlx::Result<u64> {
+    discover_apps(pool).await?;
+    let result = sqlx::query(
+        "UPDATE store_app_vitals SET next_refresh_at = 0 WHERE rowid IN ( \
+           SELECT rowid FROM store_app_vitals v \
+           WHERE (?1 OR EXISTS (SELECT 1 FROM project_members pm \
+             WHERE pm.project_id = v.project_id AND pm.user_id = ?2)) \
+             AND (refreshed_at IS NULL OR refreshed_at < ?3) \
+           ORDER BY next_refresh_at LIMIT ?4)",
+    )
+    .bind(privileged)
+    .bind(user_id)
+    .bind(now - MANUAL_REFRESH_COOLDOWN_SECS)
+    .bind(MANUAL_REFRESH_LIMIT)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 async fn load_vitals(state: &AppState, auth: &AuthUser) -> ApiResult<StoreVitalsResponse> {
@@ -213,6 +231,15 @@ async fn discover_apps(pool: &SqlitePool) -> sqlx::Result<()> {
     Ok(())
 }
 
+struct StoreRead {
+    vitals: Vec<StoreVital>,
+    issues: Vec<StoreErrorIssue>,
+    asc_app_id: Option<String>,
+}
+
+/// A row claimed for reading: its key, credentials and the claim's
+/// `next_refresh_at`, which tells whether someone asked for a new read while
+/// this one ran.
 #[derive(Debug, FromRow)]
 struct DueRow {
     project_id: String,
@@ -220,73 +247,94 @@ struct DueRow {
     app_identifier: String,
     pipeline_id: String,
     asc_app_id: Option<String>,
+    claimed_until: i64,
 }
 
-struct StoreRead {
-    vitals: Vec<StoreVital>,
-    issues: Vec<StoreErrorIssue>,
-    asc_app_id: Option<String>,
-}
-
-async fn refresh_due(state: &AppState, http: &reqwest::Client, now: i64) -> sqlx::Result<()> {
-    let due = sqlx::query_as::<_, DueRow>(
-        "SELECT project_id, store, app_identifier, pipeline_id, asc_app_id FROM store_app_vitals \
-         WHERE next_refresh_at <= ?1 ORDER BY next_refresh_at LIMIT ?2",
+/// Claim up to a batch of due rows by pushing their `next_refresh_at` out, so
+/// no other pass reads them at the same time.
+async fn claim_due(pool: &SqlitePool, now: i64) -> sqlx::Result<Vec<DueRow>> {
+    sqlx::query_as::<_, DueRow>(
+        "UPDATE store_app_vitals SET next_refresh_at = ?1 WHERE rowid IN ( \
+           SELECT rowid FROM store_app_vitals WHERE next_refresh_at <= ?2 \
+           ORDER BY next_refresh_at LIMIT ?3) \
+         RETURNING project_id, store, app_identifier, pipeline_id, asc_app_id, \
+           next_refresh_at AS claimed_until",
     )
+    .bind(now + CLAIM_SECS)
     .bind(now)
     .bind(REFRESH_BATCH)
-    .fetch_all(&state.db)
-    .await?;
-    refresh_rows(state, http, due, now).await
+    .fetch_all(pool)
+    .await
 }
 
-async fn refresh_rows(
-    state: &AppState,
-    http: &reqwest::Client,
-    rows: Vec<DueRow>,
-    now: i64,
-) -> sqlx::Result<()> {
-    for row in rows {
-        let read = match row.store.as_str() {
-            "google_play" => read_play(state, http, &row).await,
-            _ => read_app_store(state, http, &row).await,
-        };
-        let key = (&row.project_id, &row.store, &row.app_identifier);
-        match read {
-            Ok(read) => {
-                sqlx::query(
-                    "UPDATE store_app_vitals SET vitals_json = ?1, issues_json = ?2, error = NULL, \
-                     asc_app_id = COALESCE(?3, asc_app_id), refreshed_at = ?4, next_refresh_at = ?5 \
-                     WHERE project_id = ?6 AND store = ?7 AND app_identifier = ?8",
-                )
-                .bind(serde_json::to_string(&read.vitals).unwrap_or_default())
-                .bind(serde_json::to_string(&read.issues).unwrap_or_default())
-                .bind(read.asc_app_id)
-                .bind(now)
-                .bind(now + REFRESH_AFTER_SECS)
-                .bind(key.0)
-                .bind(key.1)
-                .bind(key.2)
-                .execute(&state.db)
-                .await?;
-            }
-            Err(error) => {
-                warn!(%error, project_id = %row.project_id, app = %row.app_identifier, "store vitals read failed");
-                // Keep the last good numbers; the error explains why they are stale.
-                sqlx::query(
-                    "UPDATE store_app_vitals SET error = ?1, next_refresh_at = ?2 \
-                     WHERE project_id = ?3 AND store = ?4 AND app_identifier = ?5",
-                )
-                .bind(format!("{error:#}"))
-                .bind(now + RETRY_AFTER_SECS)
-                .bind(key.0)
-                .bind(key.1)
-                .bind(key.2)
-                .execute(&state.db)
-                .await?;
-            }
+/// Read every due row, a batch at a time.
+async fn refresh_due(state: &AppState, http: &reqwest::Client) -> sqlx::Result<()> {
+    loop {
+        let rows = claim_due(&state.db, now_unix()).await?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+        for row in rows {
+            let started = now_unix();
+            let read = match row.store.as_str() {
+                "google_play" => read_play(state, http, &row).await,
+                _ => read_app_store(state, http, &row).await,
+            };
+            record_read(&state.db, &row, started, read).await?;
         }
     }
+}
+
+/// Store a read's result. A read never overwrites numbers from a read that
+/// started after it, and a manual refresh requested while it ran stays due.
+async fn record_read(
+    pool: &SqlitePool,
+    row: &DueRow,
+    started: i64,
+    read: anyhow::Result<StoreRead>,
+) -> sqlx::Result<()> {
+    let (vitals_json, issues_json, asc_app_id, error, next_refresh_at) = match read {
+        Ok(read) => (
+            Some(serde_json::to_string(&read.vitals).unwrap_or_default()),
+            Some(serde_json::to_string(&read.issues).unwrap_or_default()),
+            read.asc_app_id,
+            None,
+            started + REFRESH_AFTER_SECS,
+        ),
+        Err(error) => {
+            warn!(%error, project_id = %row.project_id, app = %row.app_identifier, "store vitals read failed");
+            (
+                None,
+                None,
+                None,
+                Some(format!("{error:#}")),
+                started + RETRY_AFTER_SECS,
+            )
+        }
+    };
+    // On failure keep the last good numbers; the error explains why they
+    // are stale.
+    sqlx::query(
+        "UPDATE store_app_vitals SET \
+           vitals_json = COALESCE(?1, vitals_json), issues_json = COALESCE(?2, issues_json), \
+           asc_app_id = COALESCE(?3, asc_app_id), error = ?4, \
+           refreshed_at = CASE WHEN ?4 IS NULL THEN ?5 ELSE refreshed_at END, \
+           next_refresh_at = CASE WHEN next_refresh_at = ?6 THEN ?7 ELSE next_refresh_at END \
+         WHERE project_id = ?8 AND store = ?9 AND app_identifier = ?10 \
+           AND (refreshed_at IS NULL OR refreshed_at <= ?5)",
+    )
+    .bind(vitals_json)
+    .bind(issues_json)
+    .bind(asc_app_id)
+    .bind(error)
+    .bind(started)
+    .bind(row.claimed_until)
+    .bind(next_refresh_at)
+    .bind(&row.project_id)
+    .bind(&row.store)
+    .bind(&row.app_identifier)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -489,10 +537,14 @@ pub fn start_store_vitals_monitor(state: Arc<AppState>) {
         loop {
             if let Err(error) = discover_apps(&state.db).await {
                 error!(%error, "store vitals: failed to discover apps");
-            } else if let Err(error) = refresh_due(&state, &http, now_unix()).await {
+            } else if let Err(error) = refresh_due(&state, &http).await {
                 error!(%error, "store vitals: failed to record a store read");
             }
-            tokio::time::sleep(MONITOR_INTERVAL).await;
+            MONITOR_IDLE.notify_waiters();
+            tokio::select! {
+                _ = tokio::time::sleep(MONITOR_INTERVAL) => {}
+                _ = MONITOR_WAKE.notified() => {}
+            }
         }
     });
 }
@@ -565,6 +617,126 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    fn read(value: f64) -> anyhow::Result<StoreRead> {
+        Ok(StoreRead {
+            vitals: vec![play_vital(
+                StoreVitalKind::CrashRate,
+                PlayVitalsRate {
+                    rate_28d: Some(value),
+                    days: Vec::new(),
+                },
+                PLAY_CRASH_THRESHOLD,
+            )],
+            issues: Vec::new(),
+            asc_app_id: None,
+        })
+    }
+
+    async fn play_row(pool: &SqlitePool) -> (Option<String>, Option<String>, Option<i64>, i64) {
+        sqlx::query_as(
+            "SELECT vitals_json, error, refreshed_at, next_refresh_at FROM store_app_vitals \
+             WHERE store = 'google_play'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_claimed_row_is_read_once_and_a_refresh_during_the_read_stays_due() {
+        let pool = pool().await;
+        discover_apps(&pool).await.unwrap();
+
+        let claimed = claim_due(&pool, 100).await.unwrap();
+        assert_eq!(claimed.len(), 2);
+        assert!(claim_due(&pool, 100).await.unwrap().is_empty());
+
+        // Someone asks for a refresh while the read is running.
+        assert_eq!(mark_due(&pool, true, "u1", 110).await.unwrap(), 2);
+        let play = claimed
+            .iter()
+            .find(|row| row.store == "google_play")
+            .unwrap();
+        record_read(&pool, play, 100, read(0.002)).await.unwrap();
+
+        let (vitals, error, refreshed_at, next_refresh_at) = play_row(&pool).await;
+        assert!(vitals.unwrap().contains("0.002"));
+        assert_eq!((error, refreshed_at, next_refresh_at), (None, Some(100), 0));
+    }
+
+    #[tokio::test]
+    async fn an_older_read_never_overwrites_a_newer_one() {
+        let pool = pool().await;
+        discover_apps(&pool).await.unwrap();
+        let slow = claim_due(&pool, 100)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|row| row.store == "google_play")
+            .unwrap();
+        mark_due(&pool, true, "u1", 150).await.unwrap();
+        let fast = claim_due(&pool, 150)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|row| row.store == "google_play")
+            .unwrap();
+
+        record_read(&pool, &fast, 150, read(0.002)).await.unwrap();
+        record_read(&pool, &slow, 100, Err(anyhow::anyhow!("timed out")))
+            .await
+            .unwrap();
+        record_read(&pool, &slow, 100, read(0.9)).await.unwrap();
+
+        let (vitals, error, refreshed_at, next_refresh_at) = play_row(&pool).await;
+        assert!(vitals.unwrap().contains("0.002"));
+        assert_eq!(
+            (error, refreshed_at, next_refresh_at),
+            (None, Some(150), 150 + REFRESH_AFTER_SECS)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_read_keeps_the_last_numbers_and_retries_sooner() {
+        let pool = pool().await;
+        discover_apps(&pool).await.unwrap();
+        let row = |rows: Vec<DueRow>| rows.into_iter().find(|r| r.store == "google_play").unwrap();
+        let first = row(claim_due(&pool, 100).await.unwrap());
+        record_read(&pool, &first, 100, read(0.002)).await.unwrap();
+        mark_due(&pool, true, "u1", 200).await.unwrap();
+        let second = row(claim_due(&pool, 200).await.unwrap());
+
+        record_read(
+            &pool,
+            &second,
+            200,
+            Err(anyhow::anyhow!("permission denied")),
+        )
+        .await
+        .unwrap();
+
+        let (vitals, error, refreshed_at, next_refresh_at) = play_row(&pool).await;
+        assert!(vitals.unwrap().contains("0.002"));
+        assert_eq!(
+            (error.as_deref(), refreshed_at, next_refresh_at),
+            (Some("permission denied"), Some(100), 200 + RETRY_AFTER_SECS)
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_refresh_skips_rows_read_moments_ago() {
+        let pool = pool().await;
+        discover_apps(&pool).await.unwrap();
+        for row in claim_due(&pool, 100).await.unwrap() {
+            record_read(&pool, &row, 100, read(0.002)).await.unwrap();
+        }
+
+        assert_eq!(mark_due(&pool, true, "u1", 110).await.unwrap(), 0);
+        // Not a project member.
+        assert_eq!(mark_due(&pool, false, "u1", 200).await.unwrap(), 0);
+        assert_eq!(mark_due(&pool, true, "u1", 200).await.unwrap(), 2);
     }
 
     #[test]

@@ -342,10 +342,15 @@ impl InstallManifest {
             "installation manifest changed while it was opened"
         );
 
-        let manifest: Self = serde_json::from_reader(BufReader::new(file))
-            .with_context(|| format!("failed to parse installation manifest {}", path.display()))?;
-        manifest.validate()?;
-        Ok(manifest)
+        serde_json::from_reader(BufReader::new(file))
+            .with_context(|| format!("failed to parse installation manifest {}", path.display()))
+            .and_then(|manifest: Self| manifest.validate().map(|()| manifest))
+            .with_context(|| {
+                format!(
+                    "installation manifest {} is invalid. To recover, run `oore uninstall --ignore-invalid-manifest`, which keeps Oore data, then rerun the CLI bootstrap and `oore install` with the same role",
+                    path.display()
+                )
+            })
     }
 }
 
@@ -457,6 +462,14 @@ fn validate_parent_directory(parent: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Checks that `path` is a private regular file owned by the current user,
+/// without reading or validating its contents.
+pub(crate) fn ensure_private_manifest_file(path: &Path) -> anyhow::Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to inspect installation manifest {}", path.display()))?;
+    validate_manifest_metadata(&metadata, current_effective_uid())
+}
+
 fn validate_manifest_metadata(metadata: &fs::Metadata, expected_uid: u32) -> anyhow::Result<()> {
     anyhow::ensure!(
         metadata.file_type().is_file(),
@@ -488,6 +501,31 @@ fn current_effective_uid() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_manifest_names_the_recovery_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("install-manifest.json");
+        fs::write(&path, b"{ not json").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let error = InstallManifest::load(&path).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("oore uninstall --ignore-invalid-manifest"),
+            "{error:#}"
+        );
+        ensure_private_manifest_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_shared_manifest_cannot_be_set_aside() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("install-manifest.json");
+        fs::write(&path, b"{}").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(ensure_private_manifest_file(&path).is_err());
+    }
 
     const SHA256: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
