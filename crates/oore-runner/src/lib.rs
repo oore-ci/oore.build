@@ -7612,6 +7612,15 @@ mod secret_tests {
             eprintln!("skipping: jarsigner or zip is not installed");
             return;
         }
+        // macOS ships /usr/bin/keytool as a stub that fails without a JDK.
+        if !Command::new(&keytool)
+            .arg("-help")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            eprintln!("skipping: keytool has no Java runtime");
+            return;
+        }
 
         let root = std::env::temp_dir().join(format!(
             "oore-aab-signing-test-{}-{}",
