@@ -132,7 +132,11 @@ export function AppStoreConnectKeysPanel({ canWrite }: { canWrite: boolean }) {
       description="Add a Team key once and pick it in each pipeline's iOS signing. It signs, syncs profiles and uploads to TestFlight and the App Store. A pipeline can still use its own key instead."
       actions={
         canWrite && keys.length > 0 ? (
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setCreateOpen(true)}
+          >
             <HugeiconsIcon icon={Add01Icon} />
             Add key
           </Button>

@@ -212,16 +212,20 @@ async fn record_credential_health(
     status: &str,
 ) -> anyhow::Result<()> {
     let deduplication_key = format!("source-credential:{integration_id}");
-    if status == "valid" {
-        incidents::resolve_incident(pool, &deduplication_key).await?;
-        sqlx::query("UPDATE integrations SET status = 'active', updated_at = ?1 WHERE id = ?2")
-            .bind(now_unix())
-            .bind(integration_id)
-            .execute(pool)
-            .await?;
+    if status == "unknown" {
         return Ok(());
     }
-    if status == "unknown" {
+    let now = now_unix();
+    if status == "valid" {
+        incidents::resolve_incident(pool, &deduplication_key).await?;
+        sqlx::query(
+            "UPDATE integrations SET status = 'active', status_reason = NULL, \
+             status_checked_at = ?1, updated_at = ?1 WHERE id = ?2",
+        )
+        .bind(now)
+        .bind(integration_id)
+        .execute(pool)
+        .await?;
         return Ok(());
     }
     let source_name: String = sqlx::query_scalar(
@@ -258,8 +262,18 @@ async fn record_credential_health(
     )
     .await?;
     if matches!(status, "expired" | "rejected" | "refresh_failed") {
-        sqlx::query("UPDATE integrations SET status = 'error', updated_at = ?1 WHERE id = ?2")
-            .bind(now_unix())
+        sqlx::query(
+            "UPDATE integrations SET status = 'error', status_reason = ?1, \
+             status_checked_at = ?2, updated_at = ?2 WHERE id = ?3",
+        )
+        .bind(status)
+        .bind(now)
+        .bind(integration_id)
+        .execute(pool)
+        .await?;
+    } else {
+        sqlx::query("UPDATE integrations SET status_checked_at = ?1 WHERE id = ?2")
+            .bind(now)
             .bind(integration_id)
             .execute(pool)
             .await?;
@@ -1648,6 +1662,8 @@ pub async fn gitlab_start(
         host_url,
         auth_mode: auth_mode.to_string(),
         status: integration_status.to_string(),
+        status_reason: None,
+        status_checked_at: None,
         display_name: Some(full_display_name),
         app_id: None,
         app_slug: None,
@@ -2457,7 +2473,7 @@ pub async fn replace_personal_token(
             "The GitLab source has no saved access token",
         ));
     }
-    sqlx::query("UPDATE integrations SET status = 'active', updated_at = ?1 WHERE id = ?2")
+    sqlx::query("UPDATE integrations SET status = 'active', status_reason = NULL, updated_at = ?1 WHERE id = ?2")
         .bind(now)
         .bind(&integration_id)
         .execute(&mut *tx)
@@ -3060,7 +3076,7 @@ async fn exchange_gitlab_code(
     .map_err(|e| format!("Failed to create installation: {e}"))?;
 
     // All critical writes succeeded — now activate the integration.
-    sqlx::query("UPDATE integrations SET status = 'active', updated_at = ?1 WHERE id = ?2")
+    sqlx::query("UPDATE integrations SET status = 'active', status_reason = NULL, updated_at = ?1 WHERE id = ?2")
         .bind(now)
         .bind(integration_id)
         .execute(&mut *tx)

@@ -23,9 +23,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Spinner } from '@/components/ui/spinner'
+import { FormActions } from '@/components/form-actions'
 import { ArtifactObjectStorageFields } from '@/components/settings/preferences-artifact-object-storage-fields'
 import {
   SettingsSection,
@@ -172,21 +171,21 @@ export function ArtifactStorageSettings({
 
       {!isLoading && !error && settings ? (
         <SettingsSection title="Storage provider">
-          <SettingsSurface className="flex flex-col gap-5">
-            {!canWrite ? (
-              <Alert>
-                <AlertDescription>
-                  You have read access only. Owner/Admin write permission is
-                  required to update settings.
-                </AlertDescription>
-              </Alert>
-            ) : null}
+          <Form {...form}>
+            <form
+              onSubmit={form.handleSubmit(onSubmit)}
+              className="flex flex-col gap-4"
+            >
+              <SettingsSurface className="flex flex-col gap-6">
+                {!canWrite ? (
+                  <Alert>
+                    <AlertDescription>
+                      You have read access only. Owner/Admin write permission is
+                      required to update settings.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
 
-            <Form {...form}>
-              <form
-                onSubmit={form.handleSubmit(onSubmit)}
-                className="flex flex-col gap-6"
-              >
                 <FormField
                   control={form.control}
                   name="backend_kind"
@@ -209,7 +208,7 @@ export function ArtifactStorageSettings({
                         }}
                       >
                         <FormControl>
-                          <SelectTrigger>
+                          <SelectTrigger className="w-full">
                             <SelectValue placeholder="Select backend" />
                           </SelectTrigger>
                         </FormControl>
@@ -292,18 +291,17 @@ export function ArtifactStorageSettings({
                     settings={settings}
                   />
                 ) : null}
-
-                <Separator />
-
-                <div className="flex justify-end">
-                  <Button type="submit" disabled={!canWrite || isSaving}>
-                    {isSaving ? <Spinner data-icon="inline-start" /> : null}
-                    {isSaving ? 'Saving...' : 'Save'}
-                  </Button>
-                </div>
-              </form>
-            </Form>
-          </SettingsSurface>
+              </SettingsSurface>
+              {canWrite ? (
+                <FormActions
+                  disabled={!form.formState.isDirty}
+                  disabledReason="No changes to save"
+                  isPending={isSaving}
+                  submitLabel="Save changes"
+                />
+              ) : null}
+            </form>
+          </Form>
         </SettingsSection>
       ) : null}
     </div>

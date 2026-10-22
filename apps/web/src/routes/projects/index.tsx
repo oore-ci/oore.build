@@ -51,7 +51,7 @@ const CreateProjectDialog = lazy(loadCreateProjectDialog)
 
 interface ProjectsSearch {
   direction?: SortDirection
-  openCreate?: string
+  openCreate?: 1
   page?: number
   pageSize?: 20 | 50 | 100
   q?: string
@@ -84,7 +84,7 @@ function parseSearch(search: SearchInput): ProjectsSearch {
     direction,
     page: Number.isInteger(page) && page > 1 ? page : undefined,
     pageSize: pageSize === 50 || pageSize === 100 ? pageSize : undefined,
-    openCreate: searchNumber(search, 'openCreate') === 1 ? '1' : undefined,
+    openCreate: searchNumber(search, 'openCreate') === 1 ? 1 : undefined,
   }
 }
 
@@ -143,7 +143,7 @@ function ProjectsListPage() {
     integrationsQuery.data === false
 
   const openCreateFromSearch =
-    search.openCreate === '1' &&
+    search.openCreate === 1 &&
     !projectsQuery.isLoading &&
     !projectsQuery.error &&
     canWriteProjects
@@ -162,7 +162,7 @@ function ProjectsListPage() {
 
   function handleCreateOpenChange(open: boolean) {
     setCreateOpen(open)
-    if (!open && search.openCreate === '1') {
+    if (!open && search.openCreate === 1) {
       updateSearch({ openCreate: undefined })
     }
   }

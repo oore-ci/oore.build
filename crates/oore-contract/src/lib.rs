@@ -905,6 +905,13 @@ pub struct Integration {
     pub host_url: String,
     pub auth_mode: String,
     pub status: String,
+    /// Why the source has its current status: `expired`, `rejected` or
+    /// `refresh_failed` when credentials stopped working.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_reason: Option<String>,
+    /// When Oore last checked the source's credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_checked_at: Option<i64>,
     pub display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
@@ -4740,6 +4747,18 @@ pub struct SmtpConfig {
     pub recipients: Vec<String>,
 }
 
+/// The SMTP settings an operator can read back. The password is never
+/// returned.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SmtpConfigSummary {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub tls_mode: SmtpTlsMode,
+    pub from_address: String,
+    pub recipients: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateSmtpConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4798,6 +4817,15 @@ pub struct NotificationChannel {
     pub has_secret: bool,
     /// True if the channel has SMTP configuration (email only).
     pub has_smtp_config: bool,
+    /// Host of the configured URL, so operators can tell which endpoint
+    /// receives alerts. The full URL can carry a token and is never exposed.
+    /// Returned when reading one channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_host: Option<String>,
+    /// SMTP settings without the password (email only). Returned when
+    /// reading one channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smtp_summary: Option<SmtpConfigSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
     pub created_at: i64,

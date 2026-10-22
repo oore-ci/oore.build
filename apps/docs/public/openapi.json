@@ -14984,6 +14984,21 @@
           "status": {
             "type": "string"
           },
+          "status_checked_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When Oore last checked the source's credentials."
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the source has its current status: `expired`, `rejected` or\n`refresh_failed` when credentials stopped working."
+          },
           "updated_at": {
             "type": "integer",
             "format": "int64"
@@ -15871,9 +15886,27 @@
             ],
             "description": "Project this channel is scoped to. Absent means the channel receives\nevents from every project, plus instance-wide events such as runner\noffline."
           },
+          "smtp_summary": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SmtpConfigSummary",
+                "description": "SMTP settings without the password (email only). Returned when\nreading one channel."
+              }
+            ]
+          },
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          },
+          "url_host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Host of the configured URL, so operators can tell which endpoint\nreceives alerts. The full URL can carry a token and is never exposed.\nReturned when reading one channel."
           }
         }
       },
@@ -18949,6 +18982,43 @@
             "type": "string"
           },
           "password": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tls_mode": {
+            "$ref": "#/components/schemas/SmtpTlsMode"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "SmtpConfigSummary": {
+        "type": "object",
+        "description": "The SMTP settings an operator can read back. The password is never\nreturned.",
+        "required": [
+          "host",
+          "port",
+          "username",
+          "tls_mode",
+          "from_address",
+          "recipients"
+        ],
+        "properties": {
+          "from_address": {
+            "type": "string"
+          },
+          "host": {
             "type": "string"
           },
           "port": {

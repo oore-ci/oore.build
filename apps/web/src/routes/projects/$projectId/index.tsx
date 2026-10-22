@@ -50,6 +50,7 @@ import {
 } from '@/components/settings/settings-section'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
+import { ResumeRunnersButton } from '@/components/settings/direct-runner-policy-panel'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -499,21 +500,24 @@ function ProjectDetailPage() {
           <AlertDescription>
             {runnerPolicyBlockReason === 'instance_paused' ? (
               canWriteInstanceSettings ? (
-                <>
-                  Direct macOS runner is paused. Builds can be queued, but they
-                  will not start until you resume it in{' '}
-                  <Link
-                    to="/settings/preferences"
-                    className="font-medium underline underline-offset-4"
-                  >
-                    Preferences
-                  </Link>
-                  .
-                </>
+                <span className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span>
+                    Runners are paused on{' '}
+                    <Link
+                      to="/settings/runners"
+                      className="font-medium underline underline-offset-4"
+                    >
+                      Runners
+                    </Link>
+                    . Builds can be queued, but they will not start until you
+                    resume them.
+                  </span>
+                  <ResumeRunnersButton />
+                </span>
               ) : (
                 <>
-                  Direct macOS runner is paused. Builds can be queued, but they
-                  will not start. Ask an owner or admin to resume it.
+                  Runners are paused. Builds can be queued, but they will not
+                  start. Ask an owner or admin to resume them.
                 </>
               )
             ) : (
