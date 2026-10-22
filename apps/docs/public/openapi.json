@@ -11095,7 +11095,7 @@
           "Releases"
         ],
         "summary": "Refresh store vitals",
-        "description": "Reads the stores now for the caller's apps, for example right after\ngranting a missing permission, and returns the fresh copy. One refresh\nruns at a time, at most every 30 seconds.",
+        "description": "Asks the daemon to read the stores now for the caller's apps, for\nexample right after granting a missing permission. Waits up to 20\nseconds for the reads and returns what has been read by then. Apps read\nin the last 30 seconds are not read again.",
         "operationId": "refresh_store_vitals",
         "responses": {
           "200": {
@@ -11104,16 +11104,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StoreVitalsResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "A refresh is running or just ran",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }

@@ -2365,14 +2365,14 @@ mod operations {
 
     /// Refresh store vitals
     ///
-    /// Reads the stores now for the caller's apps, for example right after
-    /// granting a missing permission, and returns the fresh copy. One refresh
-    /// runs at a time, at most every 30 seconds.
+    /// Asks the daemon to read the stores now for the caller's apps, for
+    /// example right after granting a missing permission. Waits up to 20
+    /// seconds for the reads and returns what has been read by then. Apps read
+    /// in the last 30 seconds are not read again.
     #[utoipa::path(post, path = "/v1/store-vitals/refresh", tag = "Releases",
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Store vitals after the refresh", body = StoreVitalsResponse),
-            (status = 429, description = "A refresh is running or just ran", body = ApiError),
         )
     )]
     pub(super) fn refresh_store_vitals() {}
