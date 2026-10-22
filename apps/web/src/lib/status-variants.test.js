@@ -17,8 +17,12 @@ test('formatEnumLabel turns machine enums into sentence case', () => {
 test('every status kind renders a sentence-case label, never the raw enum', () => {
   expect(getStatusPresentation('build', 'timed_out')).toEqual({
     label: 'Timed out',
-    variant: 'outline',
+    variant: 'destructive',
   })
+  expect(getStatusPresentation('build', 'running').variant).toBe('info')
+  expect(getStatusPresentation('build', 'queued').variant).toBe('outline')
+  expect(getStatusPresentation('build', 'canceled').variant).toBe('secondary')
+  expect(getStatusPresentation('runner', 'offline').variant).toBe('destructive')
   expect(getStatusPresentation('build', 'succeeded').variant).toBe('success')
   expect(getStatusPresentation('build', 'failed').variant).toBe('destructive')
   expect(getStatusPresentation('runner', 'draining')).toEqual({

@@ -1,7 +1,7 @@
 import { useRef } from 'react'
 
 import type { Project } from '@oore/client/models'
-import RepositoryAvatar from '@/components/repository-avatar'
+import QaAppMonogram from '@/components/qa-app-monogram'
 import { Button } from '@/components/ui/button'
 import {
   Combobox,
@@ -70,13 +70,7 @@ export default function QaProjectPicker({
         }
       >
         <span className="flex min-w-0 items-center gap-2">
-          <RepositoryAvatar
-            fullName={project.repository_full_name ?? project.name}
-            avatarUrl={project.repository_avatar_url}
-            repositoryId={project.repository_id}
-            provider={project.repository_provider}
-            size="sm"
-          />
+          <QaAppMonogram name={project.name} />
           <span className="truncate">{project.name}</span>
         </span>
       </ComboboxTrigger>
@@ -105,13 +99,7 @@ export default function QaProjectPicker({
         >
           {(item) => (
             <ComboboxItem key={item.id} value={item}>
-              <RepositoryAvatar
-                fullName={item.repository_full_name ?? item.name}
-                avatarUrl={item.repository_avatar_url}
-                repositoryId={item.repository_id}
-                provider={item.repository_provider}
-                size="sm"
-              />
+              <QaAppMonogram name={item.name} />
               <span className="truncate">{item.name}</span>
             </ComboboxItem>
           )}

@@ -1,11 +1,7 @@
 import { useMemo } from 'react'
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Add01Icon,
-  InformationCircleIcon,
-  MoreHorizontalCircle01Icon,
-} from '@hugeicons/core-free-icons'
+import { Add01Icon, InformationCircleIcon } from '@hugeicons/core-free-icons'
 
 import type { Pipeline } from '@oore/client/models'
 import type { SortDirection } from '@/components/data-table-features'
@@ -14,6 +10,7 @@ import {
   DataTableColumnHeader,
   useDataTable,
   type DataTableColumnDef,
+  DataTableRowActionsTrigger,
 } from '@/components/data-table'
 import {
   dataTableSortingState,
@@ -28,7 +25,6 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
   Empty,
@@ -80,10 +76,7 @@ function PipelineActions({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" />}>
-        <span className="sr-only">Open menu</span>
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
-      </DropdownMenuTrigger>
+      <DataTableRowActionsTrigger label={`Actions for ${pipeline.name}`} />
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Actions</DropdownMenuLabel>
@@ -292,25 +285,6 @@ export function ProjectPipelinesTab({
   return (
     <TabsContent value="pipelines">
       <div className="space-y-4 pt-2">
-        {canWritePipelines && total > 0 ? (
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground">
-              Each pipeline builds one or more platforms from this repository.
-            </p>
-            <Button
-              nativeButton={false}
-              render={
-                <Link
-                  to="/projects/$projectId/pipelines/new"
-                  params={{ projectId }}
-                />
-              }
-            >
-              <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" />
-              Add pipeline
-            </Button>
-          </div>
-        ) : null}
         {error ? (
           <Alert variant="destructive">
             <HugeiconsIcon icon={InformationCircleIcon} />
@@ -391,11 +365,24 @@ export function ProjectPipelinesTab({
               onChange: onQueryChange,
               placeholder: 'Search pipelines',
             }}
-            pagination={
-              page > 1 || total > pageSize
-                ? { onPageChange, page, pageSize, total }
-                : undefined
+            actions={
+              canWritePipelines ? (
+                <Button
+                  nativeButton={false}
+                  render={
+                    <Link
+                      to="/projects/$projectId/pipelines/new"
+                      params={{ projectId }}
+                    />
+                  }
+                >
+                  <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" />
+                  Add pipeline
+                </Button>
+              ) : undefined
             }
+            pagination={{ onPageChange, page, pageSize, total }}
+            isLoading={isLoading}
             emptyMessage={isLoading ? 'Loading pipelines…' : undefined}
           />
         )}

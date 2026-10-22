@@ -19,7 +19,21 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 
-export function RootNotFound() {
+/**
+ * The one not-found layout: a missing route, build or project all land here so
+ * the reason and the way back look the same everywhere.
+ */
+export function NotFoundState({
+  title,
+  description,
+  backTo,
+  backLabel,
+}: {
+  title: string
+  description: string
+  backTo: '/' | '/builds' | '/projects'
+  backLabel: string
+}) {
   return (
     <Empty className="min-h-[60vh]">
       <EmptyHeader>
@@ -28,18 +42,33 @@ export function RootNotFound() {
             404
           </span>
         </EmptyMedia>
-        <EmptyTitle>Page not found</EmptyTitle>
-        <EmptyDescription>
-          The page you're looking for doesn't exist or has been moved.
-        </EmptyDescription>
+        <EmptyTitle role="heading" aria-level={1}>
+          {title}
+        </EmptyTitle>
+        <EmptyDescription>{description}</EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
-        <Button variant="outline" render={<Link to="/" />} nativeButton={false}>
-          <HugeiconsIcon icon={Home01Icon} />
-          Dashboard
+        <Button
+          variant="outline"
+          render={<Link to={backTo} />}
+          nativeButton={false}
+        >
+          <HugeiconsIcon icon={backTo === '/' ? Home01Icon : ArrowLeft02Icon} />
+          {backLabel}
         </Button>
       </EmptyContent>
     </Empty>
+  )
+}
+
+export function RootNotFound() {
+  return (
+    <NotFoundState
+      title="Page not found"
+      description="The page you're looking for doesn't exist or has been moved."
+      backTo="/"
+      backLabel="Home"
+    />
   )
 }
 

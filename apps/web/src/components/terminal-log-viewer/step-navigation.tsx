@@ -33,9 +33,9 @@ export function StepNavigation({
       className="flex w-60 shrink-0 flex-col border-r bg-muted/10"
     >
       <div className="flex shrink-0 items-center justify-between border-b px-3 py-2.5">
-        <span className="text-xs font-medium">Build steps</span>
+        <span className="text-xs font-medium">Steps</span>
         <span className="text-xs text-muted-foreground tabular-nums">
-          {groups.length}
+          {groups.length === 1 ? '1 step' : `${groups.length} steps`}
         </span>
       </div>
       <ScrollArea className="min-h-0 flex-1">
@@ -82,7 +82,7 @@ function StepItem({
       variant={selected ? 'muted' : 'default'}
       size="xs"
       onClick={onClick}
-      className="shrink-0 cursor-pointer text-left hover:bg-muted/50"
+      className="shrink-0 cursor-pointer text-left shadow-[inset_2px_0_0_transparent] hover:bg-muted/50 aria-current:bg-muted aria-current:shadow-[inset_2px_0_0_var(--primary)]"
       aria-current={selected ? 'true' : undefined}
     >
       <ItemMedia variant="icon">
@@ -96,7 +96,7 @@ function StepItem({
         )}
       </ItemMedia>
       <ItemContent className="min-w-0">
-        <ItemTitle className="max-w-32 text-xs">{label}</ItemTitle>
+        <ItemTitle className="text-xs break-words">{label}</ItemTitle>
         <ItemDescription className="font-mono text-[10px]">
           {formatLineCount(count)}
         </ItemDescription>

@@ -6,25 +6,21 @@ import {
   DataTableColumnHeader,
   useDataTable,
   type DataTableColumnDef,
+  DataTableRowActionsTrigger,
 } from '@/components/data-table'
 import {
   dataTableSortingState,
   resolveDataTableSorting,
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { MoreHorizontalCircle01Icon } from '@hugeicons/core-free-icons'
-import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
 import { RelativeTime } from '@/components/relative-time'
-import RunnerStatusDot from '@/components/runner-status-dot'
 import { StatusBadge } from '@/components/status-badge'
 import {
   runnerCachePurgeRequestedAt,
@@ -136,12 +132,7 @@ function getRunnerColumns({
         <DataTableColumnHeader column={column} title="Name" />
       ),
       cell: ({ row }) => (
-        <>
-          <p className="font-medium">{row.original.name}</p>
-          <p className="font-mono text-xs text-muted-foreground">
-            {row.original.id.slice(0, 8)}
-          </p>
-        </>
+        <span className="font-medium">{row.original.name}</span>
       ),
     },
     {
@@ -150,10 +141,7 @@ function getRunnerColumns({
         <DataTableColumnHeader column={column} title="Status" />
       ),
       cell: ({ row }) => (
-        <div className="flex items-center">
-          <RunnerStatusDot status={row.original.status} />
-          <StatusBadge kind="runner" value={row.original.status} />
-        </div>
+        <StatusBadge kind="runner" value={row.original.status} />
       ),
     },
     {
@@ -228,12 +216,9 @@ function getRunnerColumns({
       header: () => <span className="sr-only">Actions</span>,
       cell: ({ row }) => (
         <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<Button variant="ghost" size="icon-xs" />}
-          >
-            <span className="sr-only">Open menu</span>
-            <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
-          </DropdownMenuTrigger>
+          <DataTableRowActionsTrigger
+            label={`Actions for ${row.original.name}`}
+          />
           <DropdownMenuContent align="end" className="w-40">
             <DropdownMenuGroup>
               <DropdownMenuItem onClick={() => onEdit(row.original)}>
@@ -335,6 +320,7 @@ export function RunnerInventory({
           placeholder: 'Search runners',
         }}
         pagination={{ onPageChange, page, pageSize, total }}
+        isLoading={isLoading}
         emptyMessage={isLoading ? 'Loading runners…' : undefined}
       />
     </section>

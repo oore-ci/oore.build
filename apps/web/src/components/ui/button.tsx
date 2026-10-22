@@ -47,6 +47,9 @@ function Button({
   return (
     <ButtonPrimitive
       data-slot="button"
+      // Triggers that render a Button replace its data-slot, so the
+      // coarse-pointer touch target rule in styles.css keys off this instead.
+      data-button-size={size}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
     />

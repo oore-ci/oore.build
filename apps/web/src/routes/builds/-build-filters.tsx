@@ -1,4 +1,3 @@
-import { Button } from '@/components/ui/button'
 import {
   ProjectFilter,
   StatusFilter,
@@ -11,22 +10,8 @@ interface BuildFiltersProps {
 }
 
 export function BuildFilters({ filters, onChange }: BuildFiltersProps) {
-  const hasFilters = !!filters.q || !!filters.project || !!filters.status
-  const clearFilters = () =>
-    onChange({
-      q: undefined,
-      project: undefined,
-      status: undefined,
-      page: undefined,
-    })
-
   return (
     <>
-      {hasFilters ? (
-        <Button variant="ghost" size="sm" onClick={clearFilters}>
-          Clear filters
-        </Button>
-      ) : null}
       <ProjectFilter className="w-44" filters={filters} onChange={onChange} />
       <StatusFilter filters={filters} onChange={onChange} />
     </>

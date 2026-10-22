@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { Release, ReleaseHistoryEntry } from '@oore/client/models'
 import { ReleaseActions } from '@/components/releases/release-actions'
 import {
@@ -28,6 +29,7 @@ import {
   releaseTransitionLabel,
   releaseVersionLabel,
 } from '@/lib/releases'
+import { cn } from '@/lib/utils'
 
 /** Build detail's Release tab: every store release made from this build. */
 export function ReleasePanel({
@@ -81,20 +83,50 @@ export function ReleasePanel({
   return (
     <div className="flex flex-col gap-4">
       {ordered.map((release) => (
-        <ReleaseCard key={release.id} release={release} />
+        <ReleaseCard
+          key={release.id}
+          release={release}
+          selected={release.id === selectedReleaseId}
+        />
       ))}
     </div>
   )
 }
 
-function ReleaseCard({ release }: { release: Release }) {
+function ReleaseCard({
+  release,
+  selected,
+}: {
+  release: Release
+  selected: boolean
+}) {
+  const cardRef = useRef<HTMLDivElement>(null)
+  // A notification deep link lands on this release, so bring it into view.
+  useEffect(() => {
+    if (selected) cardRef.current?.scrollIntoView({ block: 'start' })
+  }, [selected])
   const nowSeconds = useTime((time) => Math.floor(time / 60_000) * 60)
-  const detailQuery = useRelease(release.id)
+  // The build page polls the release list; refetch the detail (for its
+  // history) only when the list reports a change.
+  const detailQuery = useRelease(release.id, { poll: false })
+  const { refetch: refetchDetail } = detailQuery
+  const seenUpdatedAt = useRef(release.updated_at)
+  useEffect(() => {
+    if (seenUpdatedAt.current === release.updated_at) return
+    seenUpdatedAt.current = release.updated_at
+    void refetchDetail()
+  }, [release.updated_at, refetchDetail])
   // The detail poll is fresher than the list once it has loaded.
   const current = detailQuery.data?.release ?? release
 
   return (
-    <Card size="sm" id={`release-${release.id}`}>
+    <Card
+      ref={cardRef}
+      size="sm"
+      id={`release-${release.id}`}
+      className={cn('scroll-mt-4', selected && 'ring-2 ring-primary/40')}
+      aria-current={selected ? 'true' : undefined}
+    >
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <CardTitle>
@@ -105,7 +137,9 @@ function ReleaseCard({ release }: { release: Release }) {
             {current.package_name ? ` · ${current.package_name}` : ''}
           </p>
         </div>
-        <ReleaseActions release={current} />
+        <div className="-mt-0.5">
+          <ReleaseActions release={current} />
+        </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
@@ -165,27 +199,34 @@ function ReleaseHistory({ history }: { history: Array<ReleaseHistoryEntry> }) {
   }
 
   return (
-    <ol className="flex flex-col gap-3">
+    <ol className="flex flex-col gap-2">
       {history.map((entry) => (
-        <li key={entry.id} className="flex flex-col gap-0.5">
-          <div className="flex items-baseline justify-between gap-2">
-            <p className="text-xs font-medium">
-              <ReleaseStateBadge
-                release={{ state: entry.to_state, awaiting_approval: false }}
-              />{' '}
-              {releaseTransitionLabel(entry)}
-            </p>
-            <span
-              className="shrink-0 text-xs text-muted-foreground"
-              title={new Date(entry.at * 1000).toLocaleString()}
-            >
-              {relativeTime(entry.at)}
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {entry.actor_email ?? 'Oore'}
+        <li
+          key={entry.id}
+          className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 text-xs sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_auto]"
+        >
+          <p className="flex min-w-0 items-center gap-1.5 font-medium">
+            {entry.from_state ? (
+              <>
+                <ReleaseStateBadge
+                  release={{ state: entry.to_state, awaiting_approval: false }}
+                />
+                {releaseTransitionLabel(entry)}
+              </>
+            ) : (
+              'Release created'
+            )}
+          </p>
+          <p className="min-w-0 truncate text-muted-foreground max-sm:order-last max-sm:col-span-2">
+            {entry.actor_email ?? 'Oore (automatic)'}
             {entry.reason ? ` · ${entry.reason}` : ''}
           </p>
+          <span
+            className="text-right text-muted-foreground tabular-nums"
+            title={new Date(entry.at * 1000).toLocaleString()}
+          >
+            {relativeTime(entry.at)}
+          </span>
         </li>
       ))}
     </ol>

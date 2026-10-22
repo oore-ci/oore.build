@@ -26,6 +26,6 @@ test('commitUrl has no link for local repositories or missing context', () => {
       { repository_provider: 'local_git', repository_full_name: 'app' },
       'abc123',
     ),
-  ).toBeUndefined()
-  expect(commitUrl(undefined, 'abc123')).toBeUndefined()
+  ).toBeNull()
+  expect(commitUrl(undefined, 'abc123')).toBeNull()
 })

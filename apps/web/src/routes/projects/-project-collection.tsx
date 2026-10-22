@@ -16,6 +16,7 @@ import type { SortDirection } from '@/components/data-table-features'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { StatusBadge } from '@/components/status-badge'
 import { usePipelines } from '@/hooks/use-pipelines'
+import { EmptyValue } from '@/components/table-values'
 import { relativeTime } from '@/lib/format-utils'
 import type { Project, ProjectBuildInsights } from '@oore/client/models'
 import ProjectActionsMenu from './-project-actions-menu'
@@ -154,7 +155,7 @@ function getProjectColumns(
             {row.original.default_branch}
           </span>
         ) : (
-          <span className="text-muted-foreground">Not set</span>
+          <EmptyValue />
         ),
       enableSorting: false,
     },
@@ -167,7 +168,7 @@ function getProjectColumns(
             {row.original.description}
           </span>
         ) : (
-          <span className="text-muted-foreground">No description</span>
+          <EmptyValue />
         ),
       enableSorting: false,
     },
@@ -273,7 +274,7 @@ export function ProjectCollection({
         />
       ) : null}
 
-      {!isLoading && total === 0 && !error ? (
+      {!isLoading && total === 0 && !error && !query ? (
         emptyState
       ) : (
         <DataTable
@@ -284,6 +285,7 @@ export function ProjectCollection({
             placeholder: 'Search projects',
           }}
           pagination={{ onPageChange, page, pageSize, total }}
+          isLoading={isLoading}
           emptyMessage={isLoading ? 'Loading projects…' : undefined}
         />
       )}

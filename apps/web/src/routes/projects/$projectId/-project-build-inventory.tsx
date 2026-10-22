@@ -15,7 +15,7 @@ import {
 import type { SortDirection } from '@/components/data-table-features'
 import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/status-badge'
-import { commitUrl } from '@/lib/commit-url'
+import { BuildSourceValue, EmptyValue } from '@/components/table-values'
 import { formatDuration, relativeTime } from '@/lib/format-utils'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import type { ProjectBuildSort } from './-project-build-sort'
@@ -26,29 +26,6 @@ const PROJECT_BUILD_SORTS = [
   'branch',
   'created_at',
 ] satisfies ReadonlyArray<ProjectBuildSort>
-
-function BuildCommit({ build }: { build: Build }) {
-  const sha = build.commit_sha
-  if (!sha) return <span className="text-muted-foreground">No commit</span>
-  const label = sha.slice(0, 8)
-  const href = commitUrl(build.context, sha)
-  return href ? (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="font-mono text-xs underline-offset-4 hover:underline"
-      title={sha}
-    >
-      {label}
-      <span className="sr-only"> (opens in a new tab)</span>
-    </a>
-  ) : (
-    <span className="font-mono text-xs" title={sha}>
-      {label}
-    </span>
-  )
-}
 
 function buildDuration(build: Build): string | undefined {
   if (!build.started_at || !build.finished_at) return undefined
@@ -102,16 +79,13 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Branch" />
     ),
-    cell: ({ row }) =>
-      row.original.branch ?? (
-        <span className="text-muted-foreground">No branch</span>
-      ),
-  },
-  {
-    accessorKey: 'commit_sha',
-    header: 'Commit',
-    cell: ({ row }) => <BuildCommit build={row.original} />,
-    enableSorting: false,
+    cell: ({ row }) => (
+      <BuildSourceValue
+        branch={row.original.branch}
+        commitSha={row.original.commit_sha}
+        context={row.original.context}
+      />
+    ),
   },
   {
     id: 'duration',
@@ -121,7 +95,7 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
       return duration ? (
         <span className="font-mono text-xs tabular-nums">{duration}</span>
       ) : (
-        <span className="text-muted-foreground">—</span>
+        <EmptyValue />
       )
     },
     enableSorting: false,
@@ -136,10 +110,12 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
 ]
 
 export function ProjectBuildInventory({
+  activeFilterCount,
   builds,
   direction,
   filters,
   isLoading,
+  onClearFilters,
   onPageChange,
   onSearch,
   onSortChange,
@@ -149,10 +125,12 @@ export function ProjectBuildInventory({
   sort,
   total,
 }: {
+  activeFilterCount: number
   builds: Array<Build>
   direction: SortDirection
   filters: ReactNode
   isLoading: boolean
+  onClearFilters?: () => void
   onPageChange: (page: number) => void
   onSearch: (query: string) => void
   onSortChange: (sort: ProjectBuildSort, direction: SortDirection) => void
@@ -185,13 +163,22 @@ export function ProjectBuildInventory({
     <DataTable
       table={table}
       filters={filters}
+      activeFilterCount={activeFilterCount}
+      onClearFilters={onClearFilters}
       search={{
         value: query,
         onChange: onSearch,
         placeholder: 'Search by branch',
       }}
       pagination={{ onPageChange, page, pageSize, total }}
-      emptyMessage={isLoading ? 'Loading builds…' : 'No matching builds.'}
+      isLoading={isLoading}
+      emptyMessage={
+        isLoading
+          ? 'Loading builds…'
+          : query
+            ? `No builds on branch “${query}”.`
+            : 'No builds match these filters.'
+      }
     />
   )
 }

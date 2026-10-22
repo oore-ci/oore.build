@@ -326,16 +326,18 @@ function NotificationChannelDetailPage() {
                   Delete notification channel?
                 </AlertDialogTitle>
                 <AlertDialogDescription>
-                  This permanently removes the channel and its delivery history.
+                  This permanently removes "{channel.name}" and its delivery
+                  history. Pipelines that notified it stop sending.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
                 <AlertDialogAction
+                  variant="destructive"
                   onClick={handleDelete}
                   disabled={deleteMutation.isPending}
                 >
-                  {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+                  {deleteMutation.isPending ? 'Deleting...' : 'Delete channel'}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
