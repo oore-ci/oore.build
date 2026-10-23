@@ -301,7 +301,8 @@ pub struct DeleteSecretQuery {
 /// Names of pipelines whose Google Play settings resolve their service
 /// account to this secret, so deleting it would break their publishing,
 /// rollout controls and store vitals. A pipeline with a narrower secret of
-/// the same name does not depend on it.
+/// the same name does not depend on it, and neither does one with a wider
+/// secret of the same name, which takes over once this one is gone.
 async fn google_play_dependents(
     pool: &SqlitePool,
     target: &SecretTarget,
@@ -323,6 +324,11 @@ async fn google_play_dependents(
            AND (?1 != 'instance' OR NOT EXISTS ( \
                  SELECT 1 FROM secrets s WHERE s.name = ?4 AND s.scope = 'project' \
                    AND s.project_id = p.project_id)) \
+           AND (?1 != 'pipeline' OR NOT EXISTS ( \
+                 SELECT 1 FROM secrets s WHERE s.name = ?4 AND s.scope = 'project' \
+                   AND s.project_id = p.project_id)) \
+           AND (?1 = 'instance' OR NOT EXISTS ( \
+                 SELECT 1 FROM secrets s WHERE s.name = ?4 AND s.scope = 'instance')) \
          ORDER BY p.name",
     )
     .bind(target.scope.as_str())
@@ -968,7 +974,6 @@ mod tests {
         for pipeline in ["pl1", "pl2", "pl3"] {
             publish_with(&pool, pipeline, "PLAY").await;
         }
-        insert(&pool, &key, "instance", None, None, "PLAY", "{}").await;
         insert(
             &pool,
             &key,
@@ -985,18 +990,11 @@ mod tests {
             let pool = pool.clone();
             async move { google_play_dependents(&pool, &target, name).await.unwrap() }
         };
-        // pl2 has its own PLAY and p2 has a project PLAY, so only pl1 needs the instance one.
-        assert_eq!(
-            dependents(SecretTarget::instance(), "PLAY").await,
-            vec!["Android"]
-        );
+        // Without a wider fallback, deleting the secret a pipeline resolves to
+        // breaks it.
         assert_eq!(
             dependents(target(SecretScope::Project, Some("p2"), None), "PLAY").await,
             vec!["Other app"]
-        );
-        assert_eq!(
-            dependents(target(SecretScope::Project, Some("p1"), None), "PLAY").await,
-            vec!["Android"]
         );
         assert_eq!(
             dependents(
@@ -1005,6 +1003,46 @@ mod tests {
             )
             .await,
             vec!["Beta"]
+        );
+
+        insert(&pool, &key, "instance", None, None, "PLAY", "{}").await;
+        // pl2 has its own PLAY and p2 has a project PLAY, so only pl1 needs the instance one.
+        assert_eq!(
+            dependents(SecretTarget::instance(), "PLAY").await,
+            vec!["Android"]
+        );
+        // Once an instance PLAY exists, narrower ones can go: it takes over.
+        assert!(
+            dependents(target(SecretScope::Project, Some("p2"), None), "PLAY")
+                .await
+                .is_empty()
+        );
+        assert!(
+            dependents(
+                target(SecretScope::Pipeline, Some("p1"), Some("pl2")),
+                "PLAY"
+            )
+            .await
+            .is_empty()
+        );
+        sqlx::query("DELETE FROM secrets WHERE scope = 'instance'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // A project PLAY covers a pipeline-scoped one in that project.
+        insert(&pool, &key, "project", Some("p1"), None, "PLAY", "{}").await;
+        assert!(
+            dependents(
+                target(SecretScope::Pipeline, Some("p1"), Some("pl2")),
+                "PLAY"
+            )
+            .await
+            .is_empty()
+        );
+        assert_eq!(
+            dependents(target(SecretScope::Project, Some("p1"), None), "PLAY").await,
+            vec!["Android"]
         );
         assert!(
             dependents(SecretTarget::instance(), "OTHER")
