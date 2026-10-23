@@ -41,6 +41,7 @@ import type { ListIntegrationsResponse, Project } from '@oore/client/models'
 import { PageMeta } from '@/lib/seo'
 import { ProjectCollection } from './-project-collection'
 import type { ProjectSort } from './-project-collection'
+import { useListNavigation } from '@/hooks/use-list-navigation'
 
 const loadCreateProjectDialog = () => import('./-create-project-dialog')
 const CreateProjectDialog = lazy(loadCreateProjectDialog)
@@ -97,6 +98,7 @@ export const Route = createFileRoute('/projects/')({
 })
 
 function ProjectsListPage() {
+  useListNavigation()
   const scope = useFirstAppScope()
   const updateProgress = useFirstAppStore((state) => state.update)
   const search = useSearch({ from: '/projects/' })

@@ -50,6 +50,7 @@ import {
 import { useBuildInsights, type BuildInsightsWindow } from '@/hooks/use-builds'
 import { formatDuration, relativeTime } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
+import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
 
 const WINDOWS: Array<BuildInsightsWindow> = [7, 30, 90]
 
@@ -472,6 +473,7 @@ function FailingPipelines({
                 className="-mx-2.5"
                 render={
                   <Link
+                    {...LIST_NAV_ITEM}
                     to="/builds/$buildId"
                     params={{ buildId: pipeline.last_failed_build_id }}
                   />

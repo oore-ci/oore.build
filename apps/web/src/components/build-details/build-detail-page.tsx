@@ -3,17 +3,29 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowDown01Icon,
+  CommandLineIcon,
+  Copy01Icon,
   Download04Icon,
   InformationCircleIcon,
   Notification03Icon,
   Refresh01Icon,
+  StopCircleIcon,
 } from '@hugeicons/core-free-icons'
+import { detectPlatform } from '@tanstack/react-hotkeys'
 import { toast } from '@/lib/toast'
 
 import { ArtifactsPanel } from './artifacts-panel'
 import { BuildStateAlert } from './build-state-alert'
 import { buildStateSummary } from '@/lib/build-state-description'
-import { artifactInstallReadiness } from '@/lib/artifact-install'
+import {
+  artifactInstallReadiness,
+  latestAppPerPlatform,
+} from '@/lib/artifact-install'
+import { SHORTCUTS, shortcutHint } from '@/lib/keyboard-shortcuts'
+import { useAppShortcut } from '@/hooks/use-app-shortcut'
+import { useCopyInstallLink } from '@/hooks/use-copy-install-link'
+import { useRerunAndOpen } from '@/hooks/use-rerun-and-open'
+import { usePageCommands, type PageCommand } from '@/stores/command-store'
 import { retryStepLabel } from '@/lib/build-steps'
 import { BuildSummary, buildSourceRef } from './build-summary'
 import { EventTimeline } from './event-timeline'
@@ -31,7 +43,6 @@ import {
   useBuildLogs,
   useBuildTests,
   useCancelBuild,
-  useRerunBuild,
   useRetryBuildStep,
 } from '@/hooks/use-builds'
 import { useLogStream } from '@/hooks/use-log-stream'
@@ -122,7 +133,8 @@ export function BuildDetailPage({
     'artifacts:write',
     'instance_settings:write',
   ])
-  const rerunMutation = useRerunBuild()
+  const rerunAndOpen = useRerunAndOpen()
+  const copyInstallLink = useCopyInstallLink()
   const retryStepMutation = useRetryBuildStep()
   const liveEvents = useLiveEventsStore((s) => s.connected)
   const buildQuery = useBuild(buildId, {
@@ -289,6 +301,100 @@ export function BuildDetailPage({
     })
   }
 
+  // Worked out before the loading states return, so the shortcuts and
+  // Quick open actions below register on every render.
+  const loadedBuild = data?.build
+  const canDecideApproval =
+    loadedBuild?.approval?.state === 'pending' && canApproveBuild
+  const canRerun = !!loadedBuild && isTerminal && canTriggerBuild
+  // A maintainer rejects rather than cancels a build waiting for approval.
+  const canCancel =
+    !!loadedBuild && !isTerminal && canCancelBuild && !canDecideApproval
+  // A build no runner has started has no log yet; skip the empty workbench.
+  const showLogWorkbench = !!loadedBuild?.started_at || mergedLogs.length > 0
+  const installApps =
+    loadedBuild && isTerminal ? latestAppPerPlatform(artifacts) : []
+  const platform = detectPlatform()
+
+  function rerun() {
+    if (loadedBuild && canRerun) rerunAndOpen.rerun(loadedBuild.id)
+  }
+
+  function requestCancel() {
+    if (canCancel && !cancelMutation.isPending) setCancelOpen(true)
+  }
+
+  function focusLogs() {
+    setActiveTab('logs')
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(
+          '[data-build-log-output] [data-slot="scroll-area-viewport"]',
+        )
+        ?.focus()
+    })
+  }
+
+  useAppShortcut(SHORTCUTS.rerun, rerun, canRerun)
+  useAppShortcut(SHORTCUTS.cancel, requestCancel, canCancel)
+  useAppShortcut(SHORTCUTS.focusLogs, focusLogs, showLogWorkbench)
+
+  const buildNumberLabel = loadedBuild ? `#${loadedBuild.build_number}` : ''
+  const pageCommands: Array<PageCommand> = [
+    ...(canRerun && loadedBuild
+      ? [
+          {
+            id: `rerun-${loadedBuild.id}`,
+            label: `Re-run build ${buildNumberLabel}`,
+            icon: Refresh01Icon,
+            hint: shortcutHint(SHORTCUTS.rerun, platform),
+            keywords: ['rerun retry again'],
+            run: rerun,
+          },
+        ]
+      : []),
+    ...(canCancel && loadedBuild
+      ? [
+          {
+            id: `cancel-${loadedBuild.id}`,
+            label: `Stop build ${buildNumberLabel}…`,
+            icon: StopCircleIcon,
+            hint: shortcutHint(SHORTCUTS.cancel, platform),
+            keywords: ['cancel stop abort'],
+            run: requestCancel,
+          },
+        ]
+      : []),
+    ...installApps.map(({ artifact, label }) => ({
+      id: `install-${artifact.id}`,
+      label:
+        installApps.length === 1
+          ? 'Copy install link'
+          : `Copy ${label} install link`,
+      icon: Copy01Icon,
+      keywords: ['share install link url'],
+      run: () => {
+        if (loadedBuild) copyInstallLink(loadedBuild.id, artifact, label)
+      },
+    })),
+    ...(showLogWorkbench
+      ? [
+          {
+            id: 'focus-logs',
+            label: 'Focus logs',
+            icon: CommandLineIcon,
+            hint: shortcutHint(SHORTCUTS.focusLogs, platform),
+            keywords: ['log output scroll'],
+            run: focusLogs,
+          },
+        ]
+      : []),
+  ]
+  usePageCommands(
+    loadedBuild ? `Build ${buildNumberLabel}` : 'Build',
+    pageCommands,
+  )
+
   if (isLoading) {
     return (
       <PageLayout width="full">
@@ -353,9 +459,6 @@ export function BuildDetailPage({
     ? retryStepLabel(retryableSteps[0])
     : null
   const awaitingApproval = build.approval?.state === 'pending'
-  const canDecideApproval = awaitingApproval && canApproveBuild
-  // A maintainer rejects rather than cancels a build waiting for approval.
-  const canCancel = !isTerminal && canCancelBuild && !canDecideApproval
   const duration = build.started_at
     ? (build.finished_at ?? nowSeconds) - build.started_at
     : null
@@ -398,8 +501,6 @@ export function BuildDetailPage({
         },
       ]
     : undefined
-  // A build no runner has started has no log yet; skip the empty workbench.
-  const showLogWorkbench = !!build.started_at || mergedLogs.length > 0
   const installableApps =
     build.status === 'succeeded'
       ? artifacts.filter((artifact) => artifactInstallReadiness(artifact).ready)
@@ -565,30 +666,15 @@ export function BuildDetailPage({
                   : `Retry ${retryStepLabel(step)}`}
               </Button>
             ))}
-            {isTerminal && canTriggerBuild ? (
+            {canRerun ? (
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => {
-                  rerunMutation.mutate(build.id, {
-                    onSuccess: (result) => {
-                      toast.success(
-                        `Re-run queued as build #${result.build.build_number}`,
-                      )
-                      void navigate({
-                        to: '/builds/$buildId',
-                        params: { buildId: result.build.id },
-                      })
-                    },
-                    onError: (err) => {
-                      toast.error(`Failed to re-run: ${err.message}`)
-                    },
-                  })
-                }}
-                disabled={rerunMutation.isPending}
+                onClick={rerun}
+                disabled={rerunAndOpen.isPending}
               >
                 <HugeiconsIcon icon={Refresh01Icon} size={14} />
-                {rerunMutation.isPending ? 'Re-running...' : 'Re-run'}
+                {rerunAndOpen.isPending ? 'Re-running...' : 'Re-run'}
               </Button>
             ) : null}
             {canDecideApproval ? (

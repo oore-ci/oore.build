@@ -51,6 +51,7 @@ import {
   selectProjectBuildSummary,
 } from './-project-build-summary'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
+import { useListNavigation } from '@/hooks/use-list-navigation'
 
 const ProjectOverview = lazy(() => import('./-project-overview'))
 
@@ -167,6 +168,7 @@ export const Route = createFileRoute('/projects/$projectId/')({
 })
 
 function ProjectDetailPage() {
+  useListNavigation()
   const { projectId } = Route.useParams()
   const scope = useFirstAppScope()
   const guidedProjectId = useFirstAppStore(

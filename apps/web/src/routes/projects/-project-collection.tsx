@@ -20,6 +20,7 @@ import { EmptyValue } from '@/components/table-values'
 import { relativeTime } from '@/lib/format-utils'
 import type { Project, ProjectBuildInsights } from '@oore/client/models'
 import ProjectActionsMenu from './-project-actions-menu'
+import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
 
 export type ProjectSort = 'created_at' | 'updated_at' | 'name'
 
@@ -39,6 +40,7 @@ function ProjectIdentity({ project }: { project: Project }) {
       />
       <span className="min-w-0">
         <Link
+          {...LIST_NAV_ITEM}
           to="/projects/$projectId"
           params={{ projectId: project.id }}
           className="block truncate font-medium"

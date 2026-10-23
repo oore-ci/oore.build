@@ -17,6 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { PAGE_SEARCH } from '@/lib/keyboard-shortcuts'
 import {
   InputGroup,
   InputGroupAddon,
@@ -73,6 +74,7 @@ export function LogToolbar({
       <InputGroup className="w-full border-input bg-background sm:mr-auto sm:w-auto sm:max-w-72 sm:min-w-36 sm:flex-1">
         <InputGroupInput
           ref={searchInputRef}
+          {...PAGE_SEARCH}
           value={searchQuery}
           onChange={(event) => onSearchQueryChange(event.target.value)}
           placeholder={scope === 'step' ? 'Search this step' : 'Search log'}

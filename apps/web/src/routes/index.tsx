@@ -50,6 +50,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 import { createWebOoreClient } from '@/lib/api-client/client'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
+import { useListNavigation } from '@/hooks/use-list-navigation'
 
 const SetupChecklist = lazy(() => import('@/components/setup-checklist'))
 const ReleaseBoard = lazy(() =>
@@ -138,6 +139,7 @@ function IndexPage() {
     useState(false)
   const autoDetectAttemptedRef = useRef(false)
   const authUser = useAuthStore((s) => s.user)
+  useListNavigation(authUser?.role !== 'qa_viewer')
 
   useMountEffect(() => {
     if (instance || autoDetectAttemptedRef.current) return

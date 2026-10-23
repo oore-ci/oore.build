@@ -43,6 +43,7 @@ export default function InstanceSwitcher() {
         mod: true,
       },
       callback: () => void switchInstance(instance.id),
+      options: { meta: { name: `Switch to ${instance.label}` } },
     })),
     // Mod shortcuts fire inside text fields by default.
     { preventDefault: true, ignoreInputs: true },

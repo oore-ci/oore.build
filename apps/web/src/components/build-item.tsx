@@ -20,6 +20,7 @@ import { BUILD_PLATFORM_LABELS, getBuildPlatforms } from '@/lib/build-platforms'
 import { formatDuration, relativeTime } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
 import type { Build } from '@oore/client/models'
+import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
 
 /** How long the build ran, or has been running; `null` before it starts. */
 function buildDuration(build: Build): string | null {
@@ -94,6 +95,7 @@ export function BuildItem({
         )}
         render={
           <Link
+            {...LIST_NAV_ITEM}
             to="/builds/$buildId"
             params={{ buildId: build.id }}
             aria-label={`Open ${projectName} build #${build.build_number}`}

@@ -30,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { PAGE_SEARCH } from '@/lib/keyboard-shortcuts'
 import {
   Table,
   TableBody,
@@ -248,6 +249,7 @@ export function DataTable<TData extends RowData>({
             {search ? (
               <Input
                 type="search"
+                {...PAGE_SEARCH}
                 value={search.value}
                 placeholder={search.placeholder}
                 aria-label={search.placeholder}

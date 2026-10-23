@@ -26,6 +26,7 @@ import { BuildCollection } from './-build-collection'
 import { BuildsEmptyState } from './-builds-empty-state'
 import { BuildFilters } from './-build-filters'
 import type { BuildSort } from './-build-sort'
+import { useListNavigation } from '@/hooks/use-list-navigation'
 
 const TriggerBuildDrawer = lazy(
   () => import('@/components/trigger-build-drawer'),
@@ -86,6 +87,7 @@ export const Route = createFileRoute('/builds/')({
 })
 
 function OperationsBuildsPage() {
+  useListNavigation()
   const [buildDrawerOpen, setBuildDrawerOpen] = useState(false)
   const search = useSearch({ from: '/builds/' })
   const navigate = Route.useNavigate()

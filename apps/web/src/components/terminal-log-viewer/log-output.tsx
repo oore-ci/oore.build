@@ -82,6 +82,7 @@ export function LogOutput({
         viewportRef={scrollContainerRef}
         role="region"
         aria-label="Build log output"
+        data-build-log-output=""
       >
         {logs.length === 0 ? (
           <Empty className="h-full min-h-48 rounded-none border-0 p-6">

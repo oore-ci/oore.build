@@ -24,6 +24,7 @@ import {
 import type { Build } from '@oore/client/models'
 import BuildActionsMenu from './-build-actions-menu'
 import type { BuildSort } from './-build-sort'
+import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
 
 const BUILD_TABLE_SORTS = [
   'project_name',
@@ -42,6 +43,7 @@ const columns: Array<DataTableColumnDef<Build>> = [
     header: 'Build',
     cell: ({ row }) => (
       <Link
+        {...LIST_NAV_ITEM}
         to="/builds/$buildId"
         params={{ buildId: row.original.id }}
         className="font-mono font-medium"

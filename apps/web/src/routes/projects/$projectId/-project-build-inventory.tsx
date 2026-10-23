@@ -19,6 +19,7 @@ import { BuildSourceValue, EmptyValue } from '@/components/table-values'
 import { formatDuration, relativeTime } from '@/lib/format-utils'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import type { ProjectBuildSort } from './-project-build-sort'
+import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
 
 const PROJECT_BUILD_SORTS = [
   'pipeline_name',
@@ -38,6 +39,7 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
     header: 'Build',
     cell: ({ row }) => (
       <Link
+        {...LIST_NAV_ITEM}
         to="/builds/$buildId"
         params={{ buildId: row.original.id }}
         className="font-mono font-medium underline-offset-4 hover:underline"
