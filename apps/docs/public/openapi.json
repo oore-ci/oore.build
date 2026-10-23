@@ -12765,6 +12765,7 @@
           "apk",
           "ipa",
           "app",
+          "aab",
           "generic"
         ]
       },

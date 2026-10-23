@@ -7248,6 +7248,7 @@ fn artifact_type_for_extension(ext: &str) -> Option<&'static str> {
     match ext.to_lowercase().as_str() {
         "apk" => Some("apk"),
         "ipa" => Some("ipa"),
+        "aab" => Some("aab"),
         _ => None,
     }
 }
@@ -7820,12 +7821,25 @@ async fn run_and_stream(
 
 #[cfg(test)]
 mod step_retry_tests {
-    use super::retry_artifact_path;
+    use super::{artifact_type_for_extension, retry_artifact_path};
+
+    #[test]
+    fn artifact_types_follow_the_file_extension() {
+        assert_eq!(artifact_type_for_extension("apk"), Some("apk"));
+        assert_eq!(artifact_type_for_extension("ipa"), Some("ipa"));
+        assert_eq!(artifact_type_for_extension("aab"), Some("aab"));
+        assert_eq!(artifact_type_for_extension("AAB"), Some("aab"));
+        assert_eq!(artifact_type_for_extension("txt"), None);
+    }
 
     #[test]
     fn reused_artifacts_go_where_a_build_leaves_them() {
         assert_eq!(
             retry_artifact_path("app-release.aab", "generic").as_deref(),
+            Some("build/app/outputs/bundle/release/app-release.aab")
+        );
+        assert_eq!(
+            retry_artifact_path("app-release.aab", "aab").as_deref(),
             Some("build/app/outputs/bundle/release/app-release.aab")
         );
         assert_eq!(

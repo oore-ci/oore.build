@@ -2293,6 +2293,8 @@ pub enum ArtifactType {
     Apk,
     Ipa,
     App,
+    /// An Android App Bundle. Not installable on a device; Google Play takes it.
+    Aab,
     Generic,
 }
 
