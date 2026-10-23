@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router'
 import type { OperatorIncident } from '@oore/client/models'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { splitRowVariants } from '@/lib/recipes'
 
 function incidentDescription(incident: OperatorIncident): string {
   switch (incident.reason) {
@@ -69,7 +70,7 @@ export function OperatorIncidentAlert({
           ? 'Runner needs attention'
           : 'Source credential needs attention'}
       </AlertTitle>
-      <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <AlertDescription className={splitRowVariants()}>
         <span>
           {incidentDescription(incident)} Occurred {incident.occurrence_count}{' '}
           {incident.occurrence_count === 1 ? 'time' : 'times'}.

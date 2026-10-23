@@ -11,6 +11,7 @@ import {
   ItemMedia,
   ItemTitle,
 } from '@/components/ui/item'
+import { textVariants } from '@/lib/recipes'
 
 function withInlineCode(text: string) {
   return text.split('`').map((part, index) =>
@@ -37,7 +38,7 @@ export function RuntimeUpdatePreflightChecks({
 }) {
   if (preflight.isError) {
     return (
-      <p className={cn('text-xs text-muted-foreground', className)}>
+      <p className={cn(textVariants({ variant: 'caption' }), className)}>
         Could not check whether this backend can update from the web:{' '}
         {preflight.error.message}. Run{' '}
         <code className="font-mono text-[11px]">oore doctor --update</code> on

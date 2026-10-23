@@ -10,6 +10,9 @@ import type { Build } from '@oore/client/models'
 import { retryStepLabel } from '@/lib/build-steps'
 import { commitUrl } from '@/lib/commit-url'
 import { formatDuration, relativeTime } from '@/lib/format-utils'
+import { Row } from '@/components/layout/row'
+import { monoVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 export function BuildSummary({
   build,
@@ -42,7 +45,7 @@ export function BuildSummary({
       className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2"
     >
       {sourceRef || build.commit_sha ? (
-        <div className="flex min-w-0 items-center gap-2">
+        <Row gap={2} className="min-w-0">
           <dt className="sr-only">Source</dt>
           <dd className="flex min-w-0 items-center gap-2">
             {sourceRef ? (
@@ -56,7 +59,10 @@ export function BuildSummary({
                 href={commitHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex shrink-0 items-center gap-1 font-mono text-xs underline-offset-4 hover:text-foreground hover:underline"
+                className={cn(
+                  monoVariants({ size: 'xs' }),
+                  'inline-flex shrink-0 items-center gap-1 underline-offset-4 hover:text-foreground hover:underline',
+                )}
                 title={`Open commit ${build.commit_sha} on the source host`}
               >
                 <HugeiconsIcon icon={GitCommitIcon} size={14} />
@@ -72,14 +78,14 @@ export function BuildSummary({
               </span>
             ) : null}
           </dd>
-        </div>
+        </Row>
       ) : null}
 
-      <div className="flex items-center gap-1.5">
+      <Row gap={1.5}>
         <dt className="sr-only">Duration</dt>
         <HugeiconsIcon icon={TimeQuarterPassIcon} size={14} aria-hidden />
         <dd>{durationLabel}</dd>
-      </div>
+      </Row>
 
       <div>
         <dt className="sr-only">Timing</dt>

@@ -34,6 +34,9 @@ import {
   type SlackMention,
   type UpdateNotificationChannelRequest,
 } from '@/lib/notification-channels'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const CHANNEL_TYPES = {
   slack: 'Slack',
@@ -531,11 +534,11 @@ export function NotificationChannelFormFields({
       {channelType === 'email' ? (
         <>
           {smtpUnknown ? (
-            <p className="text-sm text-muted-foreground">
+            <Text variant="muted">
               {channel.has_smtp_config
                 ? 'Oore could not read the saved SMTP settings. Leave fields blank to keep them, or fill in the ones you want to change.'
                 : 'No SMTP settings are saved yet.'}
-            </p>
+            </Text>
           ) : null}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -928,7 +931,12 @@ export function NotificationChannelFormFields({
               <div className="grid gap-4 sm:grid-cols-3">
                 {NOTIFICATION_EVENT_GROUPS.map((group) => (
                   <fieldset key={group.label} className="space-y-2">
-                    <legend className="mb-2 text-xs font-medium text-muted-foreground">
+                    <legend
+                      className={cn(
+                        textVariants({ variant: 'caption' }),
+                        'mb-2 font-medium',
+                      )}
+                    >
                       {group.label}
                     </legend>
                     {group.events.map((event) => (

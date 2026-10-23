@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Text } from '@/components/layout/text'
 
 type GitLabAuthStepProps = {
   form: UseFormReturn<GitLabSetupForm>
@@ -36,9 +37,9 @@ export function GitLabAuthStep({
     <section className="space-y-4">
       <div>
         <p className="text-sm font-medium">2. Authenticate</p>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <Text variant="muted" className="mt-1">
           Choose the credential model that fits this GitLab source.
-        </p>
+        </Text>
       </div>
       <FormField
         control={form.control}

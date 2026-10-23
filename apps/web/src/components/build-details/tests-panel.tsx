@@ -18,6 +18,14 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatDuration } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
+import { Row } from '@/components/layout/row'
+import { Text } from '@/components/layout/text'
+import {
+  focusRingVariants,
+  monoVariants,
+  rowVariants,
+  textVariants,
+} from '@/lib/recipes'
 
 function formatTestDuration(ms: number) {
   return ms < 1000 ? `${ms}ms` : formatDuration(ms / 1000)
@@ -34,7 +42,7 @@ function TestHistory({
     (run) => run.status === 'failed',
   ).length
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <Row gap={2} className="flex-wrap">
       <ol
         className="flex items-center gap-0.5"
         aria-label={`Failed in ${failedRuns} of the last ${failure.history.length} builds that ran tests`}
@@ -71,10 +79,10 @@ function TestHistory({
           )
         })}
       </ol>
-      <span className="text-xs text-muted-foreground">
+      <span className={textVariants({ variant: 'caption' })}>
         Failed {failedRuns} of last {failure.history.length}
       </span>
-    </div>
+    </Row>
   )
 }
 
@@ -90,23 +98,35 @@ function FailureRow({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 space-y-0.5">
           <p className="text-sm font-medium wrap-break-word">{failure.name}</p>
-          <p className="font-mono text-xs wrap-break-word text-muted-foreground">
+          <Text variant="mono" className="wrap-break-word">
             {failure.suite}
             {failure.duration_ms != null
               ? ` · ${formatTestDuration(failure.duration_ms)}`
               : null}
-          </p>
+          </Text>
         </div>
         {failure.flaky ? <Badge variant="warning">Flaky</Badge> : null}
       </div>
       {failure.message ? (
-        <pre className="max-h-48 overflow-auto rounded-lg bg-muted/60 p-3 font-mono text-xs whitespace-pre-wrap text-foreground">
+        <pre
+          className={cn(
+            monoVariants({ size: 'xs' }),
+            'max-h-48 overflow-auto rounded-lg bg-muted/60 p-3 whitespace-pre-wrap text-foreground',
+          )}
+        >
           {failure.message}
         </pre>
       ) : null}
       {failure.stack_trace ? (
         <Collapsible>
-          <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50">
+          <CollapsibleTrigger
+            className={cn(
+              textVariants({ variant: 'caption' }),
+              rowVariants({ gap: 1 }),
+              focusRingVariants(),
+              'hover:text-foreground',
+            )}
+          >
             Stack trace
             <HugeiconsIcon
               icon={ArrowDown01Icon}
@@ -115,7 +135,12 @@ function FailureRow({
             />
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-muted/60 p-3 font-mono text-xs whitespace-pre-wrap text-muted-foreground">
+            <pre
+              className={cn(
+                textVariants({ variant: 'mono' }),
+                'mt-2 max-h-64 overflow-auto rounded-lg bg-muted/60 p-3 whitespace-pre-wrap',
+              )}
+            >
               {failure.stack_trace}
             </pre>
           </CollapsibleContent>
@@ -156,11 +181,7 @@ export function TestsPanel({
   }
   const summary = data?.summary
   if (!summary) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        This build did not report test results.
-      </p>
-    )
+    return <Text variant="muted">This build did not report test results.</Text>
   }
   const failures = data.failures
   const hiddenFailures = summary.failed - failures.length
@@ -173,7 +194,7 @@ export function TestsPanel({
             ? `${summary.failed} of ${summary.total} tests failed`
             : `All ${summary.total} tests passed`}
         </CardTitle>
-        <div className="flex flex-wrap items-center gap-1.5">
+        <Row gap={1.5} className="flex-wrap">
           <Badge variant="success">{summary.passed} passed</Badge>
           {summary.failed > 0 ? (
             <Badge variant="destructive">{summary.failed} failed</Badge>
@@ -181,10 +202,10 @@ export function TestsPanel({
           {summary.skipped > 0 ? (
             <Badge variant="outline">{summary.skipped} skipped</Badge>
           ) : null}
-          <span className="text-xs text-muted-foreground">
+          <span className={textVariants({ variant: 'caption' })}>
             {formatTestDuration(summary.duration_ms)}
           </span>
-        </div>
+        </Row>
       </CardHeader>
       {failures.length > 0 ? (
         <CardContent>
@@ -198,12 +219,12 @@ export function TestsPanel({
             ))}
           </ul>
           {hiddenFailures > 0 ? (
-            <p className="mt-4 text-xs text-muted-foreground">
+            <Text variant="caption" className="mt-4">
               {hiddenFailures === 1
                 ? '1 more failed test is not shown.'
                 : `${hiddenFailures} more failed tests are not shown.`}{' '}
               Check the logs for the rest.
-            </p>
+            </Text>
           ) : null}
         </CardContent>
       ) : null}

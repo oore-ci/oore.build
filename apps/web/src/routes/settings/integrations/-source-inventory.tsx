@@ -17,6 +17,9 @@ import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
 import { integrationStatusReason } from '@/lib/integration-status'
 import { StatusBadge } from '@/components/status-badge'
 import { Badge } from '@/components/ui/badge'
+import { Stack } from '@/components/layout/stack'
+import { focusRingVariants, textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 export type IntegrationSort = 'name' | 'provider' | 'status' | 'updated_at'
 
@@ -49,7 +52,7 @@ function sourceIdentity(integration: Integration) {
     <Link
       to="/settings/integrations/$integrationId"
       params={{ integrationId: integration.id }}
-      className="group block min-w-0 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      className={cn(focusRingVariants(), 'group block min-w-0 rounded-md')}
     >
       <span className="block truncate font-medium group-hover:underline">
         {integration.display_name ?? integration.provider}
@@ -84,14 +87,19 @@ const sourceColumns: Array<DataTableColumnDef<Integration>> = [
     cell: ({ row }) => {
       const reason = integrationStatusReason(row.original)
       return (
-        <div className="flex min-w-0 flex-col items-start gap-1">
+        <Stack gap={1} className="min-w-0 items-start">
           <StatusBadge kind="integration" value={row.original.status} />
           {reason ? (
-            <span className="max-w-56 text-xs whitespace-normal text-muted-foreground">
+            <span
+              className={cn(
+                textVariants({ variant: 'caption' }),
+                'max-w-56 whitespace-normal',
+              )}
+            >
               {reason}
             </span>
           ) : null}
-        </div>
+        </Stack>
       )
     },
   },
@@ -156,10 +164,7 @@ export function SourceInventory({
   })
 
   return (
-    <div
-      aria-label="Connected source inventory"
-      className="flex min-h-0 min-w-0 flex-1 flex-col"
-    >
+    <Stack aria-label="Connected source inventory" fill>
       <DataTable
         table={table}
         search={{
@@ -171,6 +176,6 @@ export function SourceInventory({
         isLoading={isLoading}
         emptyMessage={isLoading ? 'Loading connected sources…' : undefined}
       />
-    </div>
+    </Stack>
   )
 }

@@ -22,6 +22,8 @@ import {
   releaseAppName,
   releaseTransitionLabel,
 } from '@/lib/releases'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 /**
  * Recent release and rollout changes. Renders nothing until there is
@@ -108,7 +110,10 @@ function ReleaseActivityItem({
           release={{ state: event.to_state, awaiting_approval: false }}
         />
         <span
-          className="text-xs whitespace-nowrap text-muted-foreground"
+          className={cn(
+            textVariants({ variant: 'caption' }),
+            'whitespace-nowrap',
+          )}
           title={new Date(event.at * 1000).toLocaleString()}
         >
           {relativeTime(event.at)}

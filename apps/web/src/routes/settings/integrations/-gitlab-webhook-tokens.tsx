@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/input'
 import { useRotateGitLabRepositoryWebhookSecret } from '@/hooks/use-integrations'
 import { toast } from '@/lib/toast'
 import type { IntegrationRepository } from '@oore/client/models'
+import { Text } from '@/components/layout/text'
 
 interface RevealedWebhookToken {
   repository: IntegrationRepository
@@ -117,9 +118,9 @@ export function GitLabWebhookTokenDialogs({
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground">
+              <Text variant="caption" className="font-medium">
                 Webhook URL
-              </p>
+              </Text>
               <div className="flex gap-2">
                 <Input
                   readOnly
@@ -140,9 +141,9 @@ export function GitLabWebhookTokenDialogs({
             </div>
 
             <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground">
+              <Text variant="caption" className="font-medium">
                 Secret token
-              </p>
+              </Text>
               <div className="flex gap-2">
                 <Input
                   readOnly

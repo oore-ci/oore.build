@@ -39,6 +39,24 @@
       }
     },
     {
+      "files": ["apps/web/src/**/*.{ts,tsx}"],
+      "rules": {
+        // DESIGN.md, "Layout primitives": a long class list belongs in a
+        // recipe or a primitive, so only the primitives may exceed it.
+        "layout/max-class-utilities": "error"
+      }
+    },
+    {
+      "files": [
+        "apps/web/src/components/ui/**",
+        "apps/web/src/components/layout/**",
+        "apps/web/src/lib/recipes.ts"
+      ],
+      "rules": {
+        "layout/max-class-utilities": "off"
+      }
+    },
+    {
       "files": ["apps/web/**/*.{js,jsx,mjs,cjs,ts,tsx}"],
       "rules": {
         "anti-slop/no-chained-type-assertions": "error",
@@ -61,6 +79,10 @@
   ],
   "jsPlugins": [
     "oxlint-tailwindcss",
+    {
+      "name": "layout",
+      "specifier": "./apps/web/tools/oxlint/layout/index.ts"
+    },
     {
       "name": "anti-slop",
       "specifier": "./apps/web/tools/oxlint/anti-slop/index.ts"

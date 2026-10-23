@@ -51,6 +51,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 
 // Limits match the daemon's validation in app_store_publish.rs.
 const MAX_GROUPS = 20
@@ -264,10 +266,10 @@ function SwitchField({
       name={name}
       render={({ field }) => (
         <FormItem className="flex flex-row items-start justify-between gap-4">
-          <div className="flex flex-col gap-1">
+          <Stack gap={1}>
             <FormLabel>{label}</FormLabel>
             <FormDescription>{description}</FormDescription>
-          </div>
+          </Stack>
           <FormControl>
             <Switch
               checked={field.value}
@@ -347,7 +349,7 @@ function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
           )}
         />
       ) : (
-        <div className="flex flex-col gap-4">
+        <Stack gap={4}>
           <SwitchField
             form={form}
             name="submit_for_review"
@@ -365,7 +367,7 @@ function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
                 : 'Available when Oore submits the version for review.'
             }
           />
-        </div>
+        </Stack>
       )}
     </>
   )
@@ -380,12 +382,12 @@ function ReleaseNotesFields({ form }: { form: UseFormReturn<FormValues> }) {
   const label = destination === 'testflight' ? 'What to Test' : 'What’s New'
 
   return (
-    <div className="flex flex-col gap-4">
-      <p className="text-sm text-muted-foreground">
+    <Stack gap={4}>
+      <Text variant="muted">
         {destination === 'testflight'
           ? 'Testers see this in TestFlight. Locales without text are left as they are in App Store Connect.'
           : 'Users see this on the App Store. Locales without text are left as they are in App Store Connect.'}
-      </p>
+      </Text>
       {fields.map((item, index) => (
         <div
           key={item.id}
@@ -453,7 +455,7 @@ function ReleaseNotesFields({ form }: { form: UseFormReturn<FormValues> }) {
           </Button>
         </div>
       ) : null}
-    </div>
+    </Stack>
   )
 }
 

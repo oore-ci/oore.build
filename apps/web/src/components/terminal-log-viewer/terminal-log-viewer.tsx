@@ -21,6 +21,9 @@ import { useAutoScroll } from '@/hooks/use-auto-scroll'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 
 const StepSelect = lazy(() =>
   import('./step-select').then((module) => ({
@@ -242,8 +245,11 @@ export default function TerminalLogViewer({
           : 'h-[clamp(28rem,62dvh,50rem)]',
       )}
     >
-      <div className="flex shrink-0 flex-col gap-2 border-b bg-muted/20 px-3 py-2.5 sm:flex-row sm:items-center">
-        <div className="flex shrink-0 items-center gap-2">
+      <Stack
+        gap={2}
+        className="shrink-0 border-b bg-muted/20 px-3 py-2.5 sm:flex-row sm:items-center"
+      >
+        <Row gap={2} className="shrink-0">
           <h2 id="build-logs-heading" className="text-sm font-medium">
             Build logs
           </h2>
@@ -256,7 +262,7 @@ export default function TerminalLogViewer({
               Live
             </Badge>
           ) : null}
-        </div>
+        </Row>
         <div className="min-w-0 flex-1 sm:ml-auto">
           <LogToolbar
             searchQuery={searchQuery}
@@ -281,11 +287,12 @@ export default function TerminalLogViewer({
             onDownload={downloadRawLogs}
           />
         </div>
-      </div>
+      </Stack>
 
       {logsUnavailable ? (
-        <div
-          className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2"
+        <Row
+          gap={2}
+          className="shrink-0 justify-between border-b px-3 py-2"
           role="status"
         >
           <p className="text-sm">Logs could not be loaded.</p>
@@ -294,21 +301,22 @@ export default function TerminalLogViewer({
               Retry
             </Button>
           ) : null}
-        </div>
+        </Row>
       ) : buildStatus === 'running' && isPolling && !isStreaming ? (
-        <div
-          className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5"
+        <Row
+          gap={2}
+          className="shrink-0 justify-between border-b px-3 py-1.5"
           role="status"
         >
-          <p className="text-sm text-muted-foreground">
+          <Text variant="muted">
             Live logs disconnected. New lines load every few seconds.
-          </p>
+          </Text>
           {onReconnect ? (
             <Button variant="outline" size="sm" onClick={onReconnect}>
               Reconnect
             </Button>
           ) : null}
-        </div>
+        </Row>
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">

@@ -45,6 +45,7 @@ import { rankPaletteSections } from '@/lib/palette-ranking'
 import { useCommandStore } from '@/stores/command-store'
 import type { RunBuildTarget } from '@/stores/command-store'
 import type { Build, Project } from '@oore/client/models'
+import { Text } from '@/components/layout/text'
 
 const EMPTY_PROJECTS: Array<Project> = []
 const EMPTY_BUILDS: Array<Build> = []
@@ -485,12 +486,9 @@ export default function CommandPalette({
           ))}
         </CommandList>
         {projectStatus ? (
-          <p
-            className="border-t px-3 py-2 text-xs text-muted-foreground"
-            role="status"
-          >
+          <Text variant="caption" className="border-t px-3 py-2" role="status">
             {projectStatus}
-          </p>
+          </Text>
         ) : null}
       </Command>
     </CommandDialog>

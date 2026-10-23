@@ -36,6 +36,7 @@ import { useSetupModeGuard } from '@/hooks/use-setup-route-transitions'
 import { CopyableOidcRedirectUri } from '@/components/setup-oidc-components'
 import { SetupStepError } from '@/components/setup-route-components'
 import type { OidcConfigureRequest } from '@oore/client/models'
+import { Text } from '@/components/layout/text'
 
 // ── Predefined OIDC providers ──────────────────────────────────
 
@@ -308,19 +309,19 @@ function OidcConfigStep() {
           <h2 className="text-lg font-medium">
             Connect your identity provider
           </h2>
-          <p className="text-sm text-muted-foreground">
+          <Text variant="muted">
             Enter the issuer URL and client credentials from your OIDC
             application.
-          </p>
+          </Text>
         </div>
 
         {/* Redirect URI guidance */}
         <div className="space-y-2 border-b pb-4">
           <div className="space-y-0.5">
             <p className="text-sm font-medium">Redirect URI</p>
-            <p className="text-xs text-muted-foreground">
+            <Text variant="caption">
               Allow this exact URL in your identity provider.
-            </p>
+            </Text>
           </div>
           <CopyableOidcRedirectUri
             uri={`${window.location.origin}/auth/callback`}
@@ -461,9 +462,9 @@ function OidcConfigStep() {
               <Label htmlFor="remove-saved-client-secret">
                 Remove the saved client secret
               </Label>
-              <p className="text-xs text-muted-foreground">
+              <Text variant="caption">
                 Use this only when the new OIDC client is public.
-              </p>
+              </Text>
             </div>
           </div>
         ) : null}
@@ -484,10 +485,10 @@ function OidcConfigStep() {
               <Label htmlFor="use-public-auth0-client">
                 Use an Auth0 public client without a secret
               </Label>
-              <p className="text-xs text-muted-foreground">
+              <Text variant="caption">
                 Use this only when Client Authentication Method is None in
                 Auth0.
-              </p>
+              </Text>
             </div>
           </div>
         ) : null}

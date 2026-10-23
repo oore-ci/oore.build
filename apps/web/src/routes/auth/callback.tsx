@@ -13,6 +13,9 @@ import { PageMeta } from '@/lib/seo'
 import { resolveRequiredInstanceApiBaseUrl } from '@/lib/instance-url'
 import { takeOidcRedirect } from '@/lib/auth-redirect'
 import { createWebOoreClient } from '@/lib/api-client/client'
+import { Row } from '@/components/layout/row'
+import { Text } from '@/components/layout/text'
+import { FocusedFlowLayout } from '@/components/focused-flow-layout'
 
 export const Route = createFileRoute('/auth/callback')({
   component: AuthCallbackPage,
@@ -202,7 +205,7 @@ function AuthCallbackPage() {
         ? 'Setup authentication failed'
         : 'Authentication failed'
     return (
-      <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
+      <FocusedFlowLayout>
         <PageMeta title="Signing In" />
         <div className="w-full max-w-md space-y-6">
           <FocusedFlowHeader title={title} />
@@ -218,9 +221,9 @@ function AuthCallbackPage() {
             </AlertDescription>
           </Alert>
           {errorHint ? (
-            <p className="text-xs text-muted-foreground">
+            <Text variant="caption">
               Diagnostic hint: <code>{errorHint}</code>
-            </p>
+            </Text>
           ) : null}
           <div className="text-center">
             <Button
@@ -231,17 +234,17 @@ function AuthCallbackPage() {
             </Button>
           </div>
         </div>
-      </div>
+      </FocusedFlowLayout>
     )
   }
 
   return (
-    <div className="focused-flow flex min-h-0 flex-1 items-center p-4 sm:p-6">
+    <FocusedFlowLayout align="center">
       <PageMeta title="Signing In" />
-      <div className="flex items-center gap-3">
+      <Row gap={3}>
         <Spinner className="size-5" />
-        <p className="text-sm text-muted-foreground">Completing sign-in...</p>
-      </div>
-    </div>
+        <Text variant="muted">Completing sign-in...</Text>
+      </Row>
+    </FocusedFlowLayout>
   )
 }

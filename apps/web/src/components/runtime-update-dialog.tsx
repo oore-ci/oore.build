@@ -39,6 +39,10 @@ import {
   RuntimeUpdatePreflightChecks,
   backendUpdateReady,
 } from '@/components/runtime-update-preflight'
+import { Row } from '@/components/layout/row'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 function updateButtonLabel(phase: string | undefined, pending: boolean) {
   if (pending) return 'Starting...'
@@ -93,8 +97,8 @@ function RuntimeUpdateCard({
         </CardAction>
       </CardHeader>
       <CardContent>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-xs text-muted-foreground">
+        <Row gap={2}>
+          <span className={textVariants({ variant: 'mono' })}>
             {release.version}
           </span>
           <HugeiconsIcon
@@ -105,7 +109,7 @@ function RuntimeUpdateCard({
           <span className="font-mono text-xs font-medium">
             {release.latest_version}
           </span>
-        </div>
+        </Row>
         {phase === 'failed' && !pending ? (
           <p className="mt-2 text-xs wrap-break-word text-destructive">
             {failure || 'The last update stopped before completion.'}
@@ -113,7 +117,12 @@ function RuntimeUpdateCard({
         ) : null}
         {checks}
         {!managed && !checks ? (
-          <div className="mt-2 space-y-2 text-xs text-muted-foreground">
+          <div
+            className={cn(
+              textVariants({ variant: 'caption' }),
+              'mt-2 space-y-2',
+            )}
+          >
             <p>{unmanagedHint}</p>
           </div>
         ) : null}
@@ -196,14 +205,14 @@ function ReleaseChangelog({ changelog }: { changelog: Changelog }) {
   const count = changelog.entries.length
   return (
     <section className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-3">
+      <Row gap={3} className="justify-between">
         <div>
           <p className="text-sm font-medium">What changed</p>
-          <p className="text-xs text-muted-foreground">
+          <Text variant="caption">
             {count === 1
               ? `1 release since ${changelog.installed}`
               : `${count} releases since ${changelog.installed}`}
-          </p>
+          </Text>
         </div>
         <Badge
           variant="link"
@@ -219,7 +228,7 @@ function ReleaseChangelog({ changelog }: { changelog: Changelog }) {
           Full changelog
           <HugeiconsIcon icon={ArrowUpRight01Icon} data-icon="inline-end" />
         </Badge>
-      </div>
+      </Row>
       <ScrollArea className="max-h-72 rounded-lg bg-muted/30 ring-1 ring-foreground/10">
         <div className="flex flex-col divide-y divide-foreground/10">
           {changelog.entries.map((entry) => {
@@ -239,7 +248,10 @@ function ReleaseChangelog({ changelog }: { changelog: Changelog }) {
                   {at === null ? null : (
                     <RelativeTime
                       at={at}
-                      className="shrink-0 text-xs text-muted-foreground"
+                      className={cn(
+                        textVariants({ variant: 'caption' }),
+                        'shrink-0',
+                      )}
                     />
                   )}
                 </div>
@@ -344,11 +356,11 @@ export default function RuntimeUpdateDialog({
           </Alert>
         ) : null}
 
-        <p className="text-xs text-muted-foreground">
+        <Text variant="caption">
           {plan.kind === 'ready'
             ? 'For split deployments, update components one at a time: the backend first, then the frontend, so the interface never runs ahead of the API.'
             : 'Update the backend first, then the frontend, so the interface never runs ahead of the API.'}
-        </p>
+        </Text>
 
         <div className="grid gap-3 sm:grid-cols-2">
           {backendAvailable ? (

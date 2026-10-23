@@ -47,6 +47,7 @@ import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { NotificationInventory } from './-notification-inventory'
 import type { NotificationSort } from './-notification-inventory'
+import { splitRowVariants } from '@/lib/recipes'
 
 interface NotificationsSearch {
   direction?: SortDirection
@@ -182,7 +183,7 @@ function NotificationsPage() {
       {channelsQuery.error ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Failed to load notification channels:{' '}
               {channelsQuery.error.message}

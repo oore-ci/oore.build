@@ -9,6 +9,8 @@ import { StatusBadge } from '@/components/status-badge'
 import { RelativeTime } from '@/components/relative-time'
 import { UserActions } from './-user-actions'
 import { ROLE_LABELS } from './-user-role-labels'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const ROLE_BADGE_VARIANT = {
   owner: 'outline',
@@ -75,7 +77,11 @@ export function getColumns(
           <span>
             {row.original.email}
             {isSelf ? (
-              <span className="ml-2 text-xs text-muted-foreground">(you)</span>
+              <span
+                className={cn(textVariants({ variant: 'caption' }), 'ml-2')}
+              >
+                (you)
+              </span>
             ) : null}
           </span>
         )
@@ -109,7 +115,7 @@ export function getColumns(
       cell: ({ row }) => (
         <RelativeTime
           at={row.original.created_at}
-          className="text-xs text-muted-foreground"
+          className={textVariants({ variant: 'caption' })}
         />
       ),
     },

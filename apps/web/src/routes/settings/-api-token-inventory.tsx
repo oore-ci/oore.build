@@ -17,6 +17,8 @@ import { RelativeTime } from '@/components/relative-time'
 import { StatusBadge } from '@/components/status-badge'
 import { apiTokenStatus } from '@/lib/status-variants'
 import { ApiTokenActions } from './-api-token-actions'
+import { Text } from '@/components/layout/text'
+import { Stack } from '@/components/layout/stack'
 
 const API_TOKEN_TABLE_SORTS = [
   'name',
@@ -58,9 +60,7 @@ function getApiTokenColumns({
       cell: ({ row }) => (
         <>
           <p className="font-medium">{row.original.name}</p>
-          <p className="font-mono text-xs text-muted-foreground">
-            {row.original.prefix}…
-          </p>
+          <Text variant="mono">{row.original.prefix}…</Text>
         </>
       ),
     },
@@ -173,10 +173,7 @@ export function ApiTokenInventory({
   })
 
   return (
-    <section
-      aria-label="API token inventory"
-      className="flex min-h-0 min-w-0 flex-1 flex-col"
-    >
+    <Stack aria-label="API token inventory" fill render={<section />}>
       <DataTable
         table={table}
         search={{
@@ -188,6 +185,6 @@ export function ApiTokenInventory({
         isLoading={isLoading}
         emptyMessage={isLoading ? 'Loading API tokens…' : undefined}
       />
-    </section>
+    </Stack>
   )
 }

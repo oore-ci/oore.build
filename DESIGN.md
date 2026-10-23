@@ -195,6 +195,43 @@ hint exceeds 120 characters.
 Use breadcrumbs only when they express meaningful entity hierarchy. Do not use
 them as a generic screen label.
 
+## Layout primitives
+
+Repeated layout and text treatments live in recipes, not in copied class
+strings. `apps/web/src/lib/recipes.ts` holds `cva` recipes that return plain
+class strings and import nothing from React, so they survive a renderer
+change. `apps/web/src/components/layout` wraps them in thin components:
+
+| Need                                            | Component  | Recipe             |
+| ----------------------------------------------- | ---------- | ------------------ |
+| Vertical flex column with a gap; `fill` to grow | `Stack`    | `stackVariants`    |
+| Centered horizontal row with a gap              | `Row`      | `rowVariants`      |
+| Stacks on phones, ends apart from `sm` up       | `SplitRow` | `splitRowVariants` |
+| Secondary copy: `muted`, `caption`, `mono`      | `Text`     | `textVariants`     |
+| Machine data such as hashes, ids and paths      | `Mono`     | `monoVariants`     |
+
+Use the component when the element is a plain `div` (`Text`: `p`, `Mono`:
+`span`); pass `render` for another element, for example
+`<Stack render={<section />}>`. Use the recipe inside `cn()` when the element
+is another component, such as `AlertDescription` or `CardTitle`.
+
+Page skeletons own their frame. `PageLayout fill` owns the page's remaining
+height, `FocusedFlowLayout` owns the focused-flow shell, `PageHeader` owns the
+title and actions row, and `SettingsSection` owns the section heading row.
+Routes do not re-declare `min-h-0 flex-1` or header rows around them; a result
+frame inside a filled page is `<Stack fill>`.
+
+Rules:
+
+- Three or more utilities repeated in two files become a recipe in
+  `lib/recipes.ts`, with a component in `components/layout` when it is a
+  layout element.
+- A `className` lists at most eight utilities outside `components/ui`,
+  `components/layout` and `lib/recipes.ts`. Strings passed to `cn()` add up;
+  recipe calls do not count. `make lint-web` enforces this with the
+  `layout/max-class-utilities` rule. A genuine one-off may disable the rule on
+  that line with a reason.
+
 ## Collections
 
 A collection screen has one chassis:

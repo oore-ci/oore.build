@@ -37,6 +37,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 const ISOLATION_OPTIONS = {
   host: 'On the runner, with its installed toolchains',
@@ -124,17 +127,18 @@ export function PipelineBuildSection({
         hint="The platform default build runs unless you add commands before or after it."
         meta={
           commandCount > 0 ? (
-            <span className="text-xs text-muted-foreground">
+            <span className={textVariants({ variant: 'caption' })}>
               {commandCount} custom
             </span>
           ) : undefined
         }
       >
         {previewDefaults.length > 0 ? (
-          <div
+          <Stack
             role="note"
             aria-label="Platform build commands"
-            className="flex flex-col gap-1.5 rounded-2xl bg-muted/50 px-4 py-3 text-sm"
+            gap={1.5}
+            className="rounded-2xl bg-muted/50 px-4 py-3 text-sm"
           >
             <p className="font-medium">Platform build commands</p>
             <ul className="flex flex-col gap-0.5">
@@ -163,7 +167,7 @@ export function PipelineBuildSection({
                 clear the override.
               </p>
             ) : null}
-          </div>
+          </Stack>
         ) : null}
         <FormField
           control={form.control}
@@ -217,12 +221,12 @@ export function PipelineBuildSection({
             Per-platform arguments and overrides
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <div className="flex flex-col gap-4 pt-3">
+            <Stack gap={4} className="pt-3">
               {argumentFields.length > 0 ? (
-                <p className="text-sm text-muted-foreground">
+                <Text variant="muted">
                   Each line is appended to the platform&apos;s default Flutter
                   build command.
-                </p>
+                </Text>
               ) : null}
               {argumentFields.map(([name, label]) => (
                 <FormField
@@ -245,10 +249,10 @@ export function PipelineBuildSection({
                 />
               ))}
               {overrideFields.length > 0 ? (
-                <p className="text-sm text-muted-foreground">
+                <Text variant="muted">
                   A command override replaces the default platform command
                   entirely.
-                </p>
+                </Text>
               ) : null}
               {overrideFields.map(([name, label]) => (
                 <FormField
@@ -271,11 +275,11 @@ export function PipelineBuildSection({
                 />
               ))}
               {argumentFields.length === 0 && overrideFields.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
+                <Text variant="muted">
                   Choose a platform under Basics to add arguments or overrides.
-                </p>
+                </Text>
               ) : null}
-            </div>
+            </Stack>
           </CollapsibleContent>
         </Collapsible>
       </PipelineFormSubsection>
@@ -287,7 +291,9 @@ export function PipelineBuildSection({
         hint="Available in every build step."
         meta={
           envVarCount > 0 ? (
-            <span className="text-xs text-muted-foreground">{envVarCount}</span>
+            <span className={textVariants({ variant: 'caption' })}>
+              {envVarCount}
+            </span>
           ) : undefined
         }
       >

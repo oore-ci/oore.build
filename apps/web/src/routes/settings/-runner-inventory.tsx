@@ -27,6 +27,8 @@ import {
   runnerCacheStats,
 } from '@/hooks/use-runners'
 import { formatFileSize } from '@/lib/format-utils'
+import { Text } from '@/components/layout/text'
+import { Stack } from '@/components/layout/stack'
 
 export type RunnerSort = 'created_at' | 'name' | 'status' | 'last_heartbeat_at'
 
@@ -95,11 +97,9 @@ function RunnerCacheCell({ runner }: { runner: Runner }) {
     <>
       <p>{stats ? formatFileSize(stats.total_bytes) : 'Not reported'}</p>
       {purgePending ? (
-        <p className="text-xs text-muted-foreground">Purge pending</p>
+        <Text variant="caption">Purge pending</Text>
       ) : stats ? (
-        <p className="text-xs text-muted-foreground">
-          of {formatFileSize(stats.max_bytes)}
-        </p>
+        <Text variant="caption">of {formatFileSize(stats.max_bytes)}</Text>
       ) : null}
     </>
   )
@@ -308,10 +308,7 @@ export function RunnerInventory({
   })
 
   return (
-    <section
-      aria-label="Runner inventory"
-      className="flex min-h-0 min-w-0 flex-1 flex-col"
-    >
+    <Stack aria-label="Runner inventory" fill render={<section />}>
       <DataTable
         table={table}
         search={{
@@ -323,6 +320,6 @@ export function RunnerInventory({
         isLoading={isLoading}
         emptyMessage={isLoading ? 'Loading runners…' : undefined}
       />
-    </section>
+    </Stack>
   )
 }

@@ -8,6 +8,7 @@ import {
 } from '@/lib/integration-status'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { splitRowVariants } from '@/lib/recipes'
 
 // Explains why a source is in error when no open incident already does, and
 // offers the fix next to the explanation.
@@ -33,7 +34,7 @@ export function SourceStatusAlert({
     <Alert variant="destructive">
       <HugeiconsIcon icon={Alert02Icon} />
       <AlertTitle>This source cannot be used</AlertTitle>
-      <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <AlertDescription className={splitRowVariants()}>
         <span>
           {reason} Builds from its repositories cannot check out code until it
           is fixed.

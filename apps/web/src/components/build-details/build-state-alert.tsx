@@ -34,6 +34,7 @@ export function BuildStateAlert({
       <AlertDescription className="flex min-w-0 flex-col gap-2">
         {failureLine ? (
           <>
+            {/* oxlint-disable-next-line layout/max-class-utilities -- failure line chip */}
             <div className="flex min-w-0 items-start gap-2 rounded-lg border bg-muted/40 py-1 pr-1 pl-2.5">
               <code className="min-w-0 flex-1 py-0.5 font-mono text-xs wrap-break-word whitespace-pre-wrap text-foreground">
                 {failureLine.text}

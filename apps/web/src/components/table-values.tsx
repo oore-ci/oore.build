@@ -1,4 +1,6 @@
 import type { BuildContext } from '@oore/client/models'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 /** A cell with nothing to show: a quiet dash that reads as "None". */
 export function EmptyValue() {
@@ -42,12 +44,15 @@ export function CommitValue({
       target="_blank"
       rel="noreferrer"
       title={sha}
-      className="font-mono text-xs text-muted-foreground hover:text-foreground hover:underline"
+      className={cn(
+        textVariants({ variant: 'mono' }),
+        'hover:text-foreground hover:underline',
+      )}
     >
       {short}
     </a>
   ) : (
-    <span title={sha} className="font-mono text-xs text-muted-foreground">
+    <span title={sha} className={textVariants({ variant: 'mono' })}>
       {short}
     </span>
   )

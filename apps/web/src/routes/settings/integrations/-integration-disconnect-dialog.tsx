@@ -17,6 +17,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { isNearScrollEnd } from '@/lib/scroll'
+import { Text } from '@/components/layout/text'
 
 export function IntegrationDisconnectDialog({
   affectedProjects,
@@ -123,9 +124,9 @@ export function IntegrationDisconnectDialog({
               </AlertDescription>
             </Alert>
           ) : (
-            <p className="text-sm text-muted-foreground">
+            <Text variant="muted">
               No current projects are linked to repositories from this source.
-            </p>
+            </Text>
           )}
 
           {previewReady ? (

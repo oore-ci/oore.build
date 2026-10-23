@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Text } from '@/components/layout/text'
 
 type GitLabHostStepProps = {
   form: UseFormReturn<GitLabSetupForm>
@@ -36,9 +37,9 @@ export function GitLabHostStep({
     <section className="space-y-4">
       <div>
         <p className="text-sm font-medium">1. Choose GitLab host</p>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <Text variant="muted" className="mt-1">
           GitLab.com and self-managed GitLab use the same connection flow.
-        </p>
+        </Text>
       </div>
       <div className="space-y-2">
         <Label htmlFor="gitlab-host">GitLab host</Label>
@@ -59,9 +60,7 @@ export function GitLabHostStep({
           </SelectContent>
         </Select>
         {hostKind === 'self_managed' ? null : (
-          <p className="text-sm text-muted-foreground">
-            Oore connects to https://gitlab.com.
-          </p>
+          <Text variant="muted">Oore connects to https://gitlab.com.</Text>
         )}
       </div>
       {hostKind === 'self_managed' ? (

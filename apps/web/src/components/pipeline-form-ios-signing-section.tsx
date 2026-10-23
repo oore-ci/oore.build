@@ -32,6 +32,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 const EXPORT_METHODS = {
   ad_hoc: 'Ad hoc',
@@ -100,7 +102,7 @@ export function PipelineIosSigningSection({
       title="iOS"
       hint="Required to install on physical iOS devices."
       meta={
-        <span className="text-xs text-muted-foreground">
+        <span className={textVariants({ variant: 'caption' })}>
           {enabled ? SIGNING_MODE_SUMMARIES[mode] : 'Off'}
         </span>
       }
@@ -171,9 +173,7 @@ function IosSigningToggle({
             Enable iOS signing
           </label>
           {signingData ? (
-            <p className="text-sm text-muted-foreground">
-              {storedSigningSummary(signingData)}
-            </p>
+            <Text variant="muted">{storedSigningSummary(signingData)}</Text>
           ) : null}
           <FormMessage />
         </FormItem>
@@ -270,7 +270,7 @@ function IosSigningIdentityFields({
               </p>
             ) : null}
             {field.value === 'app_store' && appStorePublishing ? (
-              <p className="text-sm text-muted-foreground">
+              <Text variant="muted">
                 {appStorePublishing.configured ? (
                   <>
                     Signed builds upload as set up on the Publishing tab.{' '}
@@ -283,7 +283,7 @@ function IosSigningIdentityFields({
                     yourself. {appStorePublishing.link}
                   </>
                 )}
-              </p>
+              </Text>
             ) : null}
             <FormMessage />
           </FormItem>
@@ -582,9 +582,9 @@ function IosProvisioningProfiles({
       <p className="text-sm font-medium">Provisioning profiles by bundle ID</p>
       <div>
         {bundleIds.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
+          <Text variant="muted">
             Add at least one bundle ID to attach provisioning profiles.
-          </p>
+          </Text>
         ) : (
           <div className="space-y-3">
             {bundleIds.map((bundleId) => {

@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { Stack } from '@/components/layout/stack'
 
 export default function RejectBuildDialog({
   buildNumber,
@@ -38,7 +39,7 @@ export default function RejectBuildDialog({
             timeline and in the audit log.
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="flex flex-col gap-2">
+        <Stack gap={2}>
           <Label htmlFor="reject-build-reason">Reason (optional)</Label>
           <Textarea
             id="reject-build-reason"
@@ -46,7 +47,7 @@ export default function RejectBuildDialog({
             maxLength={1000}
             onChange={(event) => setReason(event.target.value)}
           />
-        </div>
+        </Stack>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isPending}>
             Keep waiting

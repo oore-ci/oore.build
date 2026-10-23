@@ -12,6 +12,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 /** The header view of Home's Needs attention, from the same items. */
 export function OperatorIncidentNotifications() {
@@ -59,13 +61,13 @@ export function OperatorIncidentNotifications() {
             </DropdownMenuItem>
           ) : null}
           {items.length === 0 ? (
-            <p className="px-2 py-3 text-xs text-muted-foreground">
+            <Text variant="caption" className="px-2 py-3">
               {isLoading
                 ? 'Checking…'
                 : isError
                   ? 'Nothing else to show.'
                   : 'Nothing needs attention.'}
-            </p>
+            </Text>
           ) : (
             items.map((item) => (
               <DropdownMenuItem
@@ -75,7 +77,12 @@ export function OperatorIncidentNotifications() {
               >
                 <span className="flex min-w-0 flex-col">
                   <span className="truncate font-medium">{item.title}</span>
-                  <span className="truncate text-xs text-muted-foreground">
+                  <span
+                    className={cn(
+                      textVariants({ variant: 'caption' }),
+                      'truncate',
+                    )}
+                  >
                     {item.description}
                   </span>
                 </span>

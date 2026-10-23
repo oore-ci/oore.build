@@ -54,6 +54,8 @@ import {
 } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
 import { SecretValueDialog } from './secret-value-dialog'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 
 const SCOPE_LABEL = {
   instance: 'Instance',
@@ -309,14 +311,14 @@ export function SecretsPanel({
       )}
 
       {visibleInherited.length > 0 ? (
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
+        <Stack gap={3}>
+          <Stack gap={1}>
             <h3 className="text-sm font-medium">{inheritedHeading}</h3>
-            <p className="text-sm text-muted-foreground">
+            <Text variant="muted">
               Builds here can use these too. Manage them where they are stored;
               a secret above with the same name overrides them.
-            </p>
-          </div>
+            </Text>
+          </Stack>
           <RowList>
             {visibleInherited.map((secret) => {
               const overridden = ownNames.has(secret.name)
@@ -339,7 +341,7 @@ export function SecretsPanel({
               )
             })}
           </RowList>
-        </div>
+        </Stack>
       ) : null}
 
       <SecretValueDialog

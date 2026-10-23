@@ -30,6 +30,9 @@ import {
   SettingsSection,
   SettingsSurface,
 } from '@/components/settings/settings-section'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { splitRowVariants } from '@/lib/recipes'
 
 export const artifactStorageSchema = z
   .object({
@@ -135,21 +138,18 @@ export function ArtifactStorageSettings({
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <Stack gap={5}>
       {isLoading ? (
-        <div
-          className="flex flex-col gap-3"
-          aria-label="Loading artifact storage settings"
-        >
+        <Stack gap={3} aria-label="Loading artifact storage settings">
           <Skeleton className="h-5 w-40" />
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
-        </div>
+        </Stack>
       ) : null}
 
       {error ? (
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>Failed to load artifact settings: {error.message}</span>
             <Button type="button" variant="outline" size="sm" onClick={onRetry}>
               Retry
@@ -160,7 +160,7 @@ export function ArtifactStorageSettings({
 
       {!isLoading && !error && !settings ? (
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>The response did not include artifact storage settings.</span>
             <Button type="button" variant="outline" size="sm" onClick={onRetry}>
               Retry
@@ -241,7 +241,7 @@ export function ArtifactStorageSettings({
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Local base directory</FormLabel>
-                        <div className="flex items-center gap-2">
+                        <Row gap={2}>
                           <FormControl>
                             <Input
                               placeholder="/absolute/path/to/artifacts"
@@ -263,7 +263,7 @@ export function ArtifactStorageSettings({
                               <HugeiconsIcon icon={Folder02Icon} />
                             </Button>
                           ) : null}
-                        </div>
+                        </Row>
                         <FormDescription>
                           Absolute path on the daemon host where artifact files
                           are stored.
@@ -304,6 +304,6 @@ export function ArtifactStorageSettings({
           </Form>
         </SettingsSection>
       ) : null}
-    </div>
+    </Stack>
   )
 }

@@ -30,6 +30,9 @@ import {
 } from './-build-filter-controls'
 import type { BuildSort } from './-build-sort'
 import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
+import { Stack } from '@/components/layout/stack'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const BUILD_TABLE_SORTS = [
   'project_name',
@@ -103,7 +106,10 @@ const columns: Array<DataTableColumnDef<Build>> = [
       <DataTableColumnHeader column={column} title="Status" />
     ),
     cell: ({ row }) => (
-      <div className="flex flex-col items-start gap-0.5 in-data-[density=compact]:flex-row in-data-[density=compact]:items-center in-data-[density=compact]:gap-2">
+      <Stack
+        gap={0.5}
+        className="items-start in-data-[density=compact]:flex-row in-data-[density=compact]:items-center in-data-[density=compact]:gap-2"
+      >
         <StatusBadge kind="build" value={row.original.status} />
         {row.original.approval?.state === 'pending' ? (
           <span className="text-xs text-warning">
@@ -118,7 +124,7 @@ const columns: Array<DataTableColumnDef<Build>> = [
             {getRunnerPolicyBlockLabel(row.original.runner_policy_block_reason)}
           </span>
         ) : null}
-      </div>
+      </Stack>
     ),
   },
   {
@@ -144,7 +150,12 @@ const columns: Array<DataTableColumnDef<Build>> = [
     cell: ({ row }) => (
       <div className={CELL_STACK}>
         <span>{relativeTime(row.original.created_at)}</span>
-        <span className="max-w-56 truncate text-xs text-muted-foreground">
+        <span
+          className={cn(
+            textVariants({ variant: 'caption' }),
+            'max-w-56 truncate',
+          )}
+        >
           {buildTriggerLabel(row.original)}
           {row.original.trigger_actor ? (
             <span title={row.original.trigger_actor}>

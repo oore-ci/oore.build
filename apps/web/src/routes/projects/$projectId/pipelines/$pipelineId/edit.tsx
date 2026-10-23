@@ -58,6 +58,7 @@ import PageHeader from '@/components/page-header'
 import { Skeleton } from '@/components/ui/skeleton'
 import PipelineForm from '@/components/pipeline-form'
 import { PipelineFormSection } from '@/components/pipeline-form-section'
+import { Text } from '@/components/layout/text'
 
 const iosDeviceColumns: Array<DataTableColumnDef<RegisteredIosDevice>> = [
   { accessorKey: 'name', header: 'Name', enableSorting: false },
@@ -516,9 +517,7 @@ function EditPipelinePage() {
               </div>
 
               {iosDevicesQuery.isLoading ? (
-                <p className="text-sm text-muted-foreground">
-                  Loading devices...
-                </p>
+                <Text variant="muted">Loading devices...</Text>
               ) : iosDevicesQuery.isError ? (
                 <CollectionError
                   title="Failed to load registered devices"
@@ -528,9 +527,9 @@ function EditPipelinePage() {
               ) : iosDevicesQuery.data?.devices.length ? (
                 <IosDeviceTable devices={iosDevicesQuery.data.devices} />
               ) : (
-                <p className="text-sm text-muted-foreground">
+                <Text variant="muted">
                   No iOS devices registered for this pipeline.
-                </p>
+                </Text>
               )}
             </PipelineFormSection>
           )}

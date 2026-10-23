@@ -31,6 +31,7 @@ import { PAGE_WIDTH_CLASSES } from '@/components/page-layout'
 import QaAppMonogram from '@/components/qa-app-monogram'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
+import { rowVariants, textVariants } from '@/lib/recipes'
 
 const QaProjectPicker = lazy(() => import('./qa-project-picker'))
 
@@ -88,7 +89,8 @@ export default function QaAppHeader() {
       <div
         className={cn(
           PAGE_WIDTH_CLASSES.default,
-          'mx-auto flex h-14 w-full items-center gap-3 px-4 sm:px-6',
+          rowVariants({ gap: 3 }),
+          'mx-auto h-14 w-full px-4 sm:px-6',
         )}
       >
         <Link to="/" className="flex shrink-0 items-center gap-3">
@@ -134,7 +136,7 @@ export default function QaAppHeader() {
             </BreadcrumbList>
           </Breadcrumb>
         ) : (
-          <span className="truncate text-sm text-muted-foreground">
+          <span className={cn(textVariants({ variant: 'muted' }), 'truncate')}>
             Test releases
           </span>
         )}

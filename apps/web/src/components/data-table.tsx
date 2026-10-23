@@ -48,6 +48,10 @@ import {
   features,
   type DataTableFeatures,
 } from './data-table-features'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { rowVariants } from '@/lib/recipes'
 
 export type { DataTableFeatures } from './data-table-features'
 
@@ -269,8 +273,8 @@ export function DataTable<TData extends RowData>({
   return (
     <div className="@container w-full">
       {hasToolbar ? (
-        <div className="flex flex-col gap-2 py-4">
-          <div className="flex items-center gap-2">
+        <Stack gap={2} className="py-4">
+          <Row gap={2}>
             {search ? (
               <Input
                 type="search"
@@ -282,7 +286,7 @@ export function DataTable<TData extends RowData>({
                 className="min-w-0 flex-1 @2xl:max-w-sm"
               />
             ) : null}
-            <div className="ml-auto flex shrink-0 items-center gap-2">
+            <Row gap={2} className="ml-auto shrink-0">
               {filters ? (
                 <>
                   {collapseFilters ? null : (
@@ -366,12 +370,13 @@ export function DataTable<TData extends RowData>({
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : null}
-            </div>
-          </div>
+            </Row>
+          </Row>
           {filters && filtersOpen ? (
             <div
               className={cn(
-                'flex flex-wrap items-center gap-2 rounded-md border p-2',
+                rowVariants({ gap: 2 }),
+                'flex-wrap rounded-md border p-2',
                 !collapseFilters && '@2xl:hidden',
               )}
               role="group"
@@ -381,7 +386,7 @@ export function DataTable<TData extends RowData>({
               {clearFiltersButton}
             </div>
           ) : null}
-        </div>
+        </Stack>
       ) : null}
       <div
         className="overflow-hidden rounded-md border"
@@ -453,7 +458,7 @@ export function DataTable<TData extends RowData>({
                   colSpan={visibleColumns.length}
                   className="h-32 text-center whitespace-normal text-muted-foreground"
                 >
-                  <div className="flex flex-col items-center justify-center gap-3">
+                  <Stack gap={3} className="items-center justify-center">
                     <span>{emptyText}</span>
                     {isLoading ? null : onClearFilters ? (
                       <Button
@@ -468,7 +473,7 @@ export function DataTable<TData extends RowData>({
                         Clear search
                       </Button>
                     ) : null}
-                  </div>
+                  </Stack>
                 </TableCell>
               </TableRow>
             )}
@@ -476,12 +481,12 @@ export function DataTable<TData extends RowData>({
         </Table>
       </div>
       {pagination && pagination.total > 0 ? (
-        <div className="flex items-center justify-between gap-2 py-4">
-          <p className="text-sm text-muted-foreground tabular-nums">
+        <Row gap={2} className="justify-between py-4">
+          <Text variant="muted" className="tabular-nums">
             {firstResult}–{lastResult} of {pagination.total}
-          </p>
+          </Text>
           {pageCount > 1 ? (
-            <div className="flex items-center gap-2">
+            <Row gap={2}>
               <Button
                 variant="outline"
                 size="sm"
@@ -498,9 +503,9 @@ export function DataTable<TData extends RowData>({
               >
                 Next
               </Button>
-            </div>
+            </Row>
           ) : null}
-        </div>
+        </Row>
       ) : null}
     </div>
   )
