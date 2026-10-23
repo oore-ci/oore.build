@@ -109,6 +109,11 @@ curl -X POST "$OORE_URL/v1/pipelines/$PIPELINE_ID/publish/google-play/test-crede
 The response has `ok`, a `message` with what passed or the exact failure, and
 the key's `service_account_email`.
 
+Oore keeps the pipeline's latest check, and the Publishing tab shows it with
+when it ran. It is returned as `last_credentials_check` with the Google Play
+publish settings until the key behind its secret name changes: rotating the
+secret, deleting it, or adding a narrower secret with the same name clears it.
+
 ## 4. Run a build
 
 After the build, signing and artifact steps succeed, the runner adds a

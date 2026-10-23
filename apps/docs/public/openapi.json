@@ -14888,6 +14888,7 @@
         "description": "Outcome of a Google Play credentials check. A failed check is a normal\nanswer, with Google's reason in `message`, not an HTTP error.",
         "required": [
           "ok",
+          "service_account_secret",
           "message",
           "checked_at"
         ],
@@ -14916,6 +14917,10 @@
               "null"
             ],
             "description": "The key's `client_email`, when the secret is a service account key."
+          },
+          "service_account_secret": {
+            "type": "string",
+            "description": "The secret that was checked."
           }
         }
       },
@@ -16576,6 +16581,17 @@
               {
                 "$ref": "#/components/schemas/GooglePlayPublishConfig",
                 "description": "Absent until publish settings are saved."
+              }
+            ]
+          },
+          "last_credentials_check": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GooglePlayCredentialsTestResponse",
+                "description": "The latest credentials check, while the key it checked is still the\none its secret name resolves to."
               }
             ]
           },

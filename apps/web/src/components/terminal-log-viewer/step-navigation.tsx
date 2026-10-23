@@ -82,7 +82,7 @@ function StepItem({
       variant={selected ? 'muted' : 'default'}
       size="xs"
       onClick={onClick}
-      className="shrink-0 cursor-pointer text-left shadow-[inset_2px_0_0_transparent] hover:bg-muted/50 aria-current:bg-muted aria-current:shadow-[inset_2px_0_0_var(--primary)]"
+      className="shrink-0 cursor-pointer text-left hover:bg-muted/50 aria-current:bg-muted"
       aria-current={selected ? 'true' : undefined}
     >
       <ItemMedia variant="icon">

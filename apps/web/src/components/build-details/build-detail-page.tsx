@@ -432,7 +432,14 @@ export function BuildDetailPage({
     ) : null
 
   return (
-    <PageLayout width="full" className="flex-1">
+    <PageLayout
+      width="full"
+      // The log panel takes the height that is left and scrolls inside, so
+      // the steps and toolbar stay in view. Other tabs scroll the page.
+      className={
+        activeTab === 'logs' && showLogWorkbench ? 'min-h-0 flex-1' : 'flex-1'
+      }
+    >
       <PageMeta title={label} noindex />
       <PageHeader
         title={`Build #${build.build_number}`}
