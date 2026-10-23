@@ -8,13 +8,28 @@ import {
 } from '@hugeicons/core-free-icons'
 import { toast } from '@/lib/toast'
 
-import type { Artifact, BuildStatus } from '@oore/client/models'
+import type {
+  Artifact,
+  ArtifactSizeComparison,
+  BuildSizeReport,
+  BuildStatus,
+} from '@oore/client/models'
 import { useArtifactDownloadLink } from '@/hooks/use-builds'
-import { formatFileSize, relativeTime } from '@/lib/format-utils'
+import {
+  formatFileSize,
+  formatSizeChange,
+  relativeTime,
+} from '@/lib/format-utils'
 import { artifactInstallReadiness } from '@/lib/artifact-install'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -93,16 +108,51 @@ function ArtifactShareControl({ artifact }: { artifact: Artifact }) {
   )
 }
 
+function SizeChange({
+  comparison,
+  baselineNumber,
+}: {
+  comparison: ArtifactSizeComparison | undefined
+  baselineNumber: number | undefined
+}) {
+  if (baselineNumber == null || !comparison) return null
+  if (
+    comparison.delta_bytes == null ||
+    comparison.baseline_size_bytes == null
+  ) {
+    return (
+      <span title={`No matching artifact in #${baselineNumber}`}>· New</span>
+    )
+  }
+  const renamed =
+    comparison.baseline_name && comparison.baseline_name !== comparison.name
+      ? ` (${comparison.baseline_name})`
+      : ''
+  return (
+    <span
+      className="tabular-nums"
+      title={`${formatFileSize(comparison.baseline_size_bytes)} in #${baselineNumber}${renamed}`}
+    >
+      ·{' '}
+      {formatSizeChange(comparison.delta_bytes, comparison.baseline_size_bytes)}
+    </span>
+  )
+}
+
 function ArtifactRow({
   artifact,
   isDownloadPending,
   onDownload,
   canManageShareLinks,
+  sizeComparison,
+  baselineNumber,
 }: {
   artifact: Artifact
   isDownloadPending: boolean
   onDownload: (artifactId: string, name: string) => void
   canManageShareLinks: boolean
+  sizeComparison?: ArtifactSizeComparison
+  baselineNumber?: number
 }) {
   const expired = isArtifactExpired(artifact)
   const expiryLabel = artifactExpiryLabel(artifact)
@@ -121,6 +171,10 @@ function ArtifactRow({
               ? formatFileSize(artifact.file_size)
               : '—'}
           </span>
+          <SizeChange
+            comparison={sizeComparison}
+            baselineNumber={baselineNumber}
+          />
           {expiryLabel ? (
             <span className={expired ? 'text-destructive' : undefined}>
               {expiryLabel}
@@ -182,6 +236,7 @@ export function ArtifactsPanel({
   onRetry,
   buildStatus,
   canManageShareLinks,
+  sizes,
 }: {
   artifacts: Array<Artifact>
   error?: Error | null
@@ -189,8 +244,16 @@ export function ArtifactsPanel({
   onRetry?: () => void
   buildStatus: BuildStatus
   canManageShareLinks: boolean
+  sizes?: BuildSizeReport
 }) {
   const downloadMutation = useArtifactDownloadLink()
+  const comparisons = new Map(
+    (sizes?.artifacts ?? []).map((comparison) => [
+      comparison.artifact_id,
+      comparison,
+    ]),
+  )
+  const baseline = sizes?.baseline
 
   function handleDownload(artifactId: string, name: string) {
     downloadMutation.mutate(artifactId, {
@@ -215,6 +278,25 @@ export function ArtifactsPanel({
             </Badge>
           ) : null}
         </CardTitle>
+        {artifacts.length > 0 && baseline ? (
+          <CardDescription>
+            Size changes compared with{' '}
+            <Link
+              to="/builds/$buildId"
+              params={{ buildId: baseline.build_id }}
+              className="underline underline-offset-2"
+            >
+              build #{baseline.build_number}
+            </Link>{' '}
+            on <span className="font-mono">{baseline.branch}</span>
+          </CardDescription>
+        ) : artifacts.length > 0 && sizes?.base_branch && comparisons.size ? (
+          <CardDescription>
+            No earlier successful build on{' '}
+            <span className="font-mono">{sizes.base_branch}</span> to compare
+            sizes with
+          </CardDescription>
+        ) : null}
       </CardHeader>
       <CardContent>
         {error ? (
@@ -248,6 +330,8 @@ export function ArtifactsPanel({
                   isDownloadPending={downloadMutation.isPending}
                   onDownload={handleDownload}
                   canManageShareLinks={canManageShareLinks}
+                  sizeComparison={comparisons.get(artifact.id)}
+                  baselineNumber={baseline?.build_number}
                 />
               ))}
           </div>

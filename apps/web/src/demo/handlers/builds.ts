@@ -6,8 +6,11 @@ import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { requireDemoProjectPermission } from '../authorization'
 import { demoState } from '../state'
 import { demoBuildInsights } from '../data/build-insights'
+import { demoSizeBaselines } from '../data/build-sizes'
 import type {
+  ArtifactSizeComparison,
   BuildFeedback,
+  BuildSizeReport,
   CreateBuildFeedbackRequest,
   CreateBuildRequest,
 } from '@oore/client/models'
@@ -804,6 +807,40 @@ export const buildHandlers = [
     return new HttpResponse(image, {
       headers: { 'Content-Type': image.type },
     })
+  }),
+
+  demoApi.getBuildSizeReport(async ({ params, request }) => {
+    await delay(150)
+    const buildId = String(params.build_id)
+    const persona = getDemoPersonaFromRequest(request)
+    const build = demoState.builds.find((candidate) => candidate.id === buildId)
+    if (!build || !getDemoProjectRole(persona, build.project_id)) {
+      return HttpResponse.json(
+        { error: 'Build not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    const known = demoSizeBaselines.get(buildId)
+    const artifacts: Array<ArtifactSizeComparison> = []
+    for (const artifact of demoState.artifacts[buildId] ?? []) {
+      if (artifact.file_size == null) continue
+      const comparison: ArtifactSizeComparison = {
+        artifact_id: artifact.id,
+        name: artifact.name,
+        artifact_type: artifact.artifact_type,
+        size_bytes: artifact.file_size,
+      }
+      const baselineSize = known?.sizes.get(artifact.name)
+      if (baselineSize != null) {
+        comparison.baseline_name = artifact.name
+        comparison.baseline_size_bytes = baselineSize
+        comparison.delta_bytes = artifact.file_size - baselineSize
+      }
+      artifacts.push(comparison)
+    }
+    const report: BuildSizeReport = { base_branch: 'main', artifacts }
+    if (known) report.baseline = known.baseline
+    return HttpResponse.json(report)
   }),
 
   demoApi.listArtifacts(async ({ params, request }) => {

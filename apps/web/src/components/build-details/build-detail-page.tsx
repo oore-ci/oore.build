@@ -46,6 +46,7 @@ import {
   useBuilds,
   useBuildApprovalDecision,
   useBuildLogs,
+  useBuildSizeReport,
   useBuildTests,
   useCancelBuild,
   useRetryBuildStep,
@@ -190,6 +191,9 @@ export function BuildDetailPage({
   const [logFocus, setLogFocus] = useState<LogFocusRequest | null>(null)
   const feedbackQuery = useBuildFeedback(buildId)
   const feedback = feedbackQuery.data?.feedback ?? NO_FEEDBACK
+  const sizesQuery = useBuildSizeReport(buildId, {
+    refetchInterval: isTerminal ? false : 5000,
+  })
   const testsQuery = useBuildTests(buildId, {
     refetchInterval: isTerminal ? false : 5000,
   })
@@ -897,6 +901,7 @@ export function BuildDetailPage({
             artifacts={artifacts}
             error={artifactsQuery.error}
             isLoading={artifactsQuery.isLoading}
+            sizes={sizesQuery.data}
             onRetry={() => void refetchArtifacts()}
             buildStatus={build.status}
             canManageShareLinks={canManageShareLinks}
