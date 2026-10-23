@@ -290,7 +290,7 @@ function NotificationChannelDetailPage() {
                         ) : null}
                       </ItemDescription>
                       {delivery.last_error ? (
-                        <ItemDescription className="font-mono text-xs break-words">
+                        <ItemDescription className="font-mono text-xs wrap-break-word">
                           {delivery.last_error}
                         </ItemDescription>
                       ) : null}

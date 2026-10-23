@@ -487,7 +487,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
                           {INSTANCE_ROLE_LABELS[member.user_role] ?? 'Unknown'}
                         </Badge>
                       </ItemTitle>
-                      <ItemDescription className="break-words">
+                      <ItemDescription className="wrap-break-word">
                         {member.user_display_name
                           ? `${member.user_email} · `
                           : ''}

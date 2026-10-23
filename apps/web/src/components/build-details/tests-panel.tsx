@@ -89,8 +89,8 @@ function FailureRow({
     <li className="space-y-2 py-4 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 space-y-0.5">
-          <p className="text-sm font-medium break-words">{failure.name}</p>
-          <p className="font-mono text-xs break-words text-muted-foreground">
+          <p className="text-sm font-medium wrap-break-word">{failure.name}</p>
+          <p className="font-mono text-xs wrap-break-word text-muted-foreground">
             {failure.suite}
             {failure.duration_ms != null
               ? ` · ${formatTestDuration(failure.duration_ms)}`

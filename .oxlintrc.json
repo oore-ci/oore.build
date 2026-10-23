@@ -73,9 +73,13 @@
   },
   "rules": {
     "tailwindcss/no-conflicting-classes": "error",
-    "tailwindcss/enforce-sort-order": "warn",
+    "tailwindcss/no-duplicate-classes": "error",
+    "tailwindcss/no-contradicting-variants": "error",
+    "tailwindcss/no-unnecessary-whitespace": "error",
+    "tailwindcss/no-deprecated-classes": "error",
+    "tailwindcss/enforce-sort-order": "error",
     "tailwindcss/enforce-canonical": "error",
-    "tailwindcss/enforce-shorthand": "warn"
+    "tailwindcss/enforce-shorthand": "error"
   },
   "plugins": ["react", "import", "react-perf", "oxc", "promise", "typescript"]
 }
