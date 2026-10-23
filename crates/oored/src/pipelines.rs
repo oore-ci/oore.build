@@ -1087,9 +1087,13 @@ pub async fn delete_pipeline(
     check_permission(&state.enforcer, &auth.0.role, "pipelines", "delete").await?;
 
     let pool = &state.db;
-    let artifact_paths = delete_pipeline_rows(pool, &pipeline_id).await?;
+    let DeletedPipelineFiles {
+        artifact_paths,
+        screenshot_keys,
+    } = delete_pipeline_rows(pool, &pipeline_id).await?;
 
     let storage = state.storage.read().await.clone();
+    crate::build_feedback::delete_screenshots(&storage, &screenshot_keys).await;
     let mut artifacts_left = 0;
     for file_path in &artifact_paths {
         if let Err(error) = storage.delete_object(file_path).await {
@@ -1119,12 +1123,20 @@ pub async fn delete_pipeline(
     Ok(Json(OkResponse { ok: true }))
 }
 
-/// Delete a pipeline and its finished builds. Returns the storage paths of the
-/// deleted builds' artifacts, which the caller removes after the commit.
+/// Storage objects of a deleted pipeline's builds, which the caller removes
+/// after the commit.
+#[derive(Debug)]
+struct DeletedPipelineFiles {
+    artifact_paths: Vec<String>,
+    screenshot_keys: Vec<String>,
+}
+
+/// Delete a pipeline and its finished builds. Returns the storage objects of
+/// the deleted builds' artifacts and feedback screenshots.
 async fn delete_pipeline_rows(
     pool: &sqlx::SqlitePool,
     pipeline_id: &str,
-) -> Result<Vec<String>, (StatusCode, Json<ApiError>)> {
+) -> Result<DeletedPipelineFiles, (StatusCode, Json<ApiError>)> {
     // Use a transaction so the active-build check, terminal-build cleanup,
     // and pipeline delete are atomic (prevents race with concurrent build creation).
     // IMMEDIATE takes the write lock up front, so a concurrent write cannot
@@ -1215,6 +1227,19 @@ async fn delete_pipeline_rows(
         )
     })?;
 
+    // Feedback rows go with their builds too.
+    let screenshot_keys =
+        crate::build_feedback::screenshot_keys_for_pipeline(&mut *tx, pipeline_id)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to list feedback screenshots for pipeline");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to delete pipeline",
+                )
+            })?;
+
     // Delete terminal builds first (non-cascading FK on builds.pipeline_id)
     sqlx::query(
         "DELETE FROM builds WHERE pipeline_id = ?1 \
@@ -1266,7 +1291,10 @@ async fn delete_pipeline_rows(
             "Failed to delete pipeline",
         )
     })?;
-    Ok(artifact_paths)
+    Ok(DeletedPipelineFiles {
+        artifact_paths,
+        screenshot_keys,
+    })
 }
 
 /// `POST /v1/pipelines/validate` — dry-run validation of pipeline config.
@@ -1355,9 +1383,25 @@ mod delete_tests {
             .await
             .unwrap();
 
-        let paths = delete_pipeline_rows(&pool, "pl1").await.unwrap();
+        sqlx::query(
+            "INSERT INTO build_feedback (id, build_id, author_user_id, author_email, message, \
+             screenshot_key, created_at) \
+             VALUES ('f1', 'b1', 'qa', 'qa@example.com', 'hi', 'feedback/p1/b1/f1.png', 0), \
+                    ('f2', 'b1', 'qa', 'qa@example.com', 'no shot', NULL, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
-        assert_eq!(paths, ["artifacts/b1/app.aab"]);
+        let files = delete_pipeline_rows(&pool, "pl1").await.unwrap();
+
+        assert_eq!(files.artifact_paths, ["artifacts/b1/app.aab"]);
+        assert_eq!(files.screenshot_keys, ["feedback/p1/b1/f1.png"]);
+        let feedback: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM build_feedback")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(feedback, 0);
         let pipelines: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pipelines")
             .fetch_one(&pool)
             .await

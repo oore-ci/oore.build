@@ -711,7 +711,7 @@ async fn send(
                 || match notification.category.as_str() {
                     "runner" => runner_email_html(payload),
                     "release" => release_email_html(payload),
-                    FEEDBACK_CATEGORY => feedback_email_html(payload),
+                    FEEDBACK_CATEGORY => feedback_email_html(payload, link),
                     _ => build_email_html(payload),
                 },
             )
@@ -1020,11 +1020,8 @@ fn feedback_context(payload: &serde_json::Value) -> Vec<String> {
     if feedback["has_screenshot"].as_bool() == Some(true) {
         context.push("Screenshot attached".to_string());
     }
-    if let Some(email) = feedback["author_email"].as_str()
-        && feedback["author_name"].is_string()
-    {
-        context.push(email.to_string());
-    }
+    // The tester is named in the headline. Their email stays out of channel
+    // text when they have a display name; webhooks still get it as data.
     context
 }
 
@@ -1075,7 +1072,7 @@ fn feedback_mattermost_payload(payload: &serde_json::Value) -> serde_json::Value
     })
 }
 
-fn feedback_email_html(payload: &serde_json::Value) -> (String, String) {
+fn feedback_email_html(payload: &serde_json::Value, link: Option<&str>) -> (String, String) {
     let subject = feedback_summary(payload, "", |value| value.to_string());
     let heading = html_escape(&subject);
     let message = html_escape(payload["feedback"]["message"].as_str().unwrap_or_default());
@@ -1084,6 +1081,15 @@ fn feedback_email_html(payload: &serde_json::Value) -> (String, String) {
         .map(|item| html_escape(item))
         .collect::<Vec<_>>()
         .join(" · ");
+    let button = link
+        .map(|link| {
+            format!(
+                r#"
+  <p style="margin-bottom: 0;"><a href="{}" style="display: inline-block; background: #2563eb; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none;">View feedback</a></p>"#,
+                html_escape(link)
+            )
+        })
+        .unwrap_or_default();
     let html = format!(
         r#"<!DOCTYPE html>
 <html><body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -1092,7 +1098,7 @@ fn feedback_email_html(payload: &serde_json::Value) -> (String, String) {
 </div>
 <div style="padding: 24px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
   <p style="white-space: pre-wrap; margin-top: 0;">{message}</p>
-  <p style="color: #6b7280; font-size: 14px;">{context}</p>
+  <p style="color: #6b7280; font-size: 14px;">{context}</p>{button}
 </div>
 <p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 16px;">Sent by Oore CI</p>
 </body></html>"#
@@ -2034,19 +2040,46 @@ mod tests {
         ));
         assert!(text.ends_with("Pixel 8 · Android 15 · App 2.4.0+118"));
 
-        let (subject, html) = feedback_email_html(&payload);
+        let (subject, html) = feedback_email_html(&payload, None);
         assert_eq!(
             subject,
             "Kite <app> build #42: feedback from qa@example.com"
         );
         assert!(html.contains("&lt;b&gt;now&lt;/b&gt;"));
         assert!(!html.contains("<b>now"));
+        assert!(!html.contains("View feedback"));
+        let (_, html) = feedback_email_html(
+            &payload,
+            Some("https://oore.example.com/builds/b1?tab=timeline"),
+        );
+        assert!(html.contains(r#"<a href="https://oore.example.com/builds/b1?tab=timeline" "#));
+        assert!(html.contains(">View feedback</a>"));
 
         let slack = slack_message(FEEDBACK_CATEGORY, &payload, None, None);
         assert_eq!(slack["blocks"][1]["text"]["type"], "plain_text");
         assert_eq!(
             slack["text"],
             ":speech_balloon: *Kite &lt;app&gt;* build #42: feedback from qa@example.com"
+        );
+    }
+
+    #[test]
+    fn feedback_names_the_tester_without_their_email_when_a_name_exists() {
+        let mut payload = feedback_payload();
+        payload["feedback"]["author_name"] = "Quinn".into();
+        payload["feedback"]["has_screenshot"] = true.into();
+        let mattermost = feedback_mattermost_payload(&payload);
+        let text = mattermost["text"].as_str().unwrap();
+        assert!(text.contains("feedback from Quinn"));
+        assert!(!text.contains("qa@"));
+        let (subject, html) = feedback_email_html(&payload, None);
+        assert!(subject.ends_with("feedback from Quinn"));
+        assert!(!html.contains("qa@example.com"));
+        let slack = slack_message(FEEDBACK_CATEGORY, &payload, None, None);
+        assert!(!slack.to_string().contains("qa@example.com"));
+        assert_eq!(
+            slack["blocks"][2]["elements"][0]["text"],
+            "Pixel 8  ·  Android 15  ·  App 2.4.0+118  ·  Screenshot attached"
         );
     }
 

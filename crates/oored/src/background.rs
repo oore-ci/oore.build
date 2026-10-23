@@ -668,9 +668,26 @@ async fn cleanup_project(
         if !delete_artifact_files(storage, build_id, artifacts, totals).await {
             continue;
         }
+        // A full cleanup deletes the build row and its feedback with it, so
+        // collect the screenshots first.
+        let screenshot_keys = match policy.cleanup_target {
+            RetentionCleanupTarget::Full => {
+                match crate::build_feedback::screenshot_keys_for_build(pool, build_id).await {
+                    Ok(keys) => keys,
+                    Err(error) => {
+                        warn!(%build_id, %error, "retention_cleanup: failed to list feedback screenshots");
+                        continue;
+                    }
+                }
+            }
+            RetentionCleanupTarget::ArtifactsOnly => Vec::new(),
+        };
         if cleanup_build_record(pool, build_id, policy.cleanup_target).await {
             totals.builds_expired += 1;
             cleaned += 1;
+            if !screenshot_keys.is_empty() && !build_exists(pool, build_id).await {
+                crate::build_feedback::delete_screenshots(storage, &screenshot_keys).await;
+            }
         }
     }
 
@@ -863,6 +880,17 @@ async fn cleanup_build_record(
             false
         }
     }
+}
+
+/// Whether the build row is still there. A full cleanup keeps the row of a
+/// build with a release. On a read error it answers yes, so nothing the row
+/// still points at is removed.
+async fn build_exists(pool: &SqlitePool, build_id: &str) -> bool {
+    sqlx::query_scalar::<_, i64>("SELECT 1 FROM builds WHERE id = ?1")
+        .bind(build_id)
+        .fetch_optional(pool)
+        .await
+        .map_or(true, |row| row.is_some())
 }
 
 /// Delete a build's artifact rows and mark it `expired`, remembering the
@@ -1470,6 +1498,60 @@ mod tests {
             assert_eq!(got.pop().as_deref(), Some("failed"), "b5 at {max_size}");
             assert_eq!(got, expected, "max size {max_size}");
         }
+    }
+
+    #[tokio::test]
+    async fn full_cleanup_removes_the_screenshots_of_deleted_builds_only() {
+        let pool = pool().await;
+        let dir = tempfile::tempdir().unwrap();
+        let storage = StorageBackend::Local(Arc::new(
+            crate::storage::LocalStorageClient::new(dir.path().to_path_buf(), None).unwrap(),
+        ));
+        // b1 is deleted outright; b2 keeps its row for a finished release.
+        add_release(&pool, "b2", "complete").await;
+        for build_id in ["b1", "b2"] {
+            let key = format!("feedback/p1/{build_id}/f.png");
+            storage
+                .put_object(&key, b"\x89PNG\r\n\x1a\n".to_vec(), "image/png")
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO build_feedback (id, build_id, author_user_id, author_email, message, \
+                 screenshot_key, created_at) VALUES (?1, ?2, 'u1', 'qa@example.com', 'hi', ?3, 0)",
+            )
+            .bind(format!("f-{build_id}"))
+            .bind(build_id)
+            .bind(&key)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT OR REPLACE INTO retention_policy (id, enabled, max_builds_per_project, \
+             cleanup_target, created_at, updated_at) VALUES (1, 1, 2, 'full', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut totals = CleanupTotals::default();
+        cleanup_project(&pool, &storage, "p1", NOW, &mut totals)
+            .await
+            .unwrap();
+
+        assert_eq!(build_status(&pool, "b1").await, None);
+        assert!(!dir.path().join("feedback/p1/b1/f.png").exists());
+        assert_eq!(build_status(&pool, "b2").await.as_deref(), Some("expired"));
+        assert!(dir.path().join("feedback/p1/b2/f.png").exists());
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT COUNT(*) FROM build_feedback WHERE build_id = ?1",
+                "b2"
+            )
+            .await,
+            1
+        );
     }
 
     #[tokio::test]

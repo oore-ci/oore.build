@@ -2566,6 +2566,16 @@
                 }
               }
             }
+          },
+          "500": {
+            "description": "The screenshot could not be read from artifact storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         },
         "security": [

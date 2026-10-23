@@ -2752,6 +2752,7 @@ mod operations {
         responses(
             (status = 200, description = "Screenshot image", body = BinaryPayload, content_type = "image/*"),
             (status = 404, description = "Build, feedback or screenshot not found", body = ApiError),
+            (status = 500, description = "The screenshot could not be read from artifact storage", body = ApiError),
         )
     )]
     pub(super) fn get_build_feedback_screenshot() {}

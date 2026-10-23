@@ -9,7 +9,7 @@ use oore_contract::{
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::AppState;
@@ -1068,22 +1068,16 @@ pub async fn delete_project(
 
     // Feedback rows go with their builds; their screenshots are removed after
     // the commit, best effort, since a stray screenshot is harmless.
-    let screenshot_keys: Vec<String> = sqlx::query_scalar(
-        "SELECT f.screenshot_key FROM build_feedback f \
-         JOIN builds b ON b.id = f.build_id \
-         WHERE b.project_id = ?1 AND f.screenshot_key IS NOT NULL",
-    )
-    .bind(&project_id)
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to load project feedback screenshots");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to delete project",
-        )
-    })?;
+    let screenshot_keys = crate::build_feedback::screenshot_keys_for_project(&mut *tx, &project_id)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to load project feedback screenshots");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to delete project",
+            )
+        })?;
 
     // Delete terminal builds first (non-cascading FK on builds.project_id)
     sqlx::query(
@@ -1126,11 +1120,7 @@ pub async fn delete_project(
 
     if !screenshot_keys.is_empty() {
         let storage = state.storage.read().await.clone();
-        for key in screenshot_keys {
-            if let Err(e) = storage.delete_object(&key).await {
-                warn!(error = %e, %key, "failed to delete a feedback screenshot");
-            }
-        }
+        crate::build_feedback::delete_screenshots(&storage, &screenshot_keys).await;
     }
 
     let details = serde_json::json!({

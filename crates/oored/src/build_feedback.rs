@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::Response;
@@ -46,8 +46,9 @@ fn invalid(message: impl Into<String>) -> ApiFailure {
     api_err(StatusCode::BAD_REQUEST, "invalid_input", message)
 }
 
-/// Trim, drop control characters (keeping line breaks and tabs when
-/// `multiline`) and enforce a character limit. Empty becomes `None`.
+/// Trim, drop control characters and enforce a character limit. Line breaks
+/// and tabs are kept when `multiline`, otherwise they become spaces. Empty
+/// becomes `None`.
 fn clean_text(
     value: Option<&str>,
     field: &str,
@@ -60,7 +61,12 @@ fn clean_text(
     let cleaned: String = value
         .replace("\r\n", "\n")
         .chars()
-        .filter(|c| !c.is_control() || (multiline && (*c == '\n' || *c == '\t')))
+        .filter_map(|c| match c {
+            '\n' | '\t' if multiline => Some(c),
+            '\n' | '\t' | '\r' => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
         .collect();
     let cleaned = cleaned.trim();
     if cleaned.is_empty() {
@@ -109,7 +115,7 @@ fn too_large() -> ApiFailure {
     api_err(
         StatusCode::PAYLOAD_TOO_LARGE,
         "screenshot_too_large",
-        "The screenshot must be 5 MB or smaller",
+        "The screenshot must be 5 MiB or smaller",
     )
 }
 
@@ -185,17 +191,107 @@ pub(crate) async fn load_feedback(
     Ok(row.as_ref().map(row_to_feedback))
 }
 
+/// Storage keys of feedback screenshots on one build. Feedback rows are
+/// deleted with their build, so callers collect these first and remove the
+/// objects once the build is gone.
+pub(crate) async fn screenshot_keys_for_build<'e, E>(
+    executor: E,
+    build_id: &str,
+) -> Result<Vec<String>, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    sqlx::query_scalar(
+        "SELECT screenshot_key FROM build_feedback \
+         WHERE build_id = ?1 AND screenshot_key IS NOT NULL",
+    )
+    .bind(build_id)
+    .fetch_all(executor)
+    .await
+}
+
+/// Storage keys of feedback screenshots on a pipeline's finished builds.
+pub(crate) async fn screenshot_keys_for_pipeline<'e, E>(
+    executor: E,
+    pipeline_id: &str,
+) -> Result<Vec<String>, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    sqlx::query_scalar(
+        "SELECT f.screenshot_key FROM build_feedback f JOIN builds b ON b.id = f.build_id \
+         WHERE b.pipeline_id = ?1 AND f.screenshot_key IS NOT NULL \
+         AND b.status IN ('succeeded', 'failed', 'canceled', 'timed_out', 'expired')",
+    )
+    .bind(pipeline_id)
+    .fetch_all(executor)
+    .await
+}
+
+/// Storage keys of feedback screenshots on a project's finished builds.
+pub(crate) async fn screenshot_keys_for_project<'e, E>(
+    executor: E,
+    project_id: &str,
+) -> Result<Vec<String>, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    sqlx::query_scalar(
+        "SELECT f.screenshot_key FROM build_feedback f JOIN builds b ON b.id = f.build_id \
+         WHERE b.project_id = ?1 AND f.screenshot_key IS NOT NULL \
+         AND b.status IN ('succeeded', 'failed', 'canceled', 'timed_out', 'expired')",
+    )
+    .bind(project_id)
+    .fetch_all(executor)
+    .await
+}
+
+/// Remove screenshot objects whose feedback rows are gone, best effort: a
+/// stray screenshot is only reachable through a feedback row, so a failure
+/// is logged and left.
+pub(crate) async fn delete_screenshots(storage: &crate::storage::StorageBackend, keys: &[String]) {
+    for key in keys {
+        if let Err(e) = storage.delete_object(key).await {
+            warn!(error = %e, %key, "failed to delete a feedback screenshot");
+        }
+    }
+}
+
 /// `POST /v1/builds/{build_id}/feedback`
 pub async fn create_build_feedback(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(build_id): Path<String>,
-    Json(request): Json<CreateBuildFeedbackRequest>,
+    body: Bytes,
 ) -> Result<(StatusCode, Json<BuildFeedback>), ApiFailure> {
     let pool = &state.db;
-    // Same access as installing the build from the QA portal.
+    // Same access as installing the build from the QA portal. Checked before
+    // the body is parsed, so callers who cannot see the build cost nothing.
     let project_id =
         authorize_build(pool, &auth, &build_id, ProjectPermission::ReadArtifacts).await?;
+
+    // Rate limit before any parsing or decoding, so rejected attempts are
+    // cheap too.
+    let now = now_unix();
+    let recent: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM build_feedback WHERE author_user_id = ?1 AND created_at > ?2",
+    )
+    .bind(&auth.0.user_id)
+    .bind(now - RATE_WINDOW_SECS)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| store_error("Failed to check recent feedback", e))?;
+    if recent >= RATE_LIMIT {
+        return Err(api_err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "You have sent a lot of feedback in the last few minutes. Try again shortly.",
+        ));
+    }
+
+    let request: CreateBuildFeedbackRequest =
+        serde_json::from_slice(&body).map_err(|e| invalid(format!("Invalid request body: {e}")))?;
+    drop(body);
 
     let message = clean_text(
         Some(&request.message),
@@ -254,23 +350,6 @@ pub async fn create_build_feedback(
         }
         _ => None,
     };
-
-    let now = now_unix();
-    let recent: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM build_feedback WHERE author_user_id = ?1 AND created_at > ?2",
-    )
-    .bind(&auth.0.user_id)
-    .bind(now - RATE_WINDOW_SECS)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| store_error("Failed to check recent feedback", e))?;
-    if recent >= RATE_LIMIT {
-        return Err(api_err(
-            StatusCode::TOO_MANY_REQUESTS,
-            "rate_limited",
-            "You have sent a lot of feedback in the last few minutes. Try again shortly.",
-        ));
-    }
 
     let feedback_id = Uuid::new_v4().to_string();
     let (screenshot_key, screenshot_content_type) = match screenshot {
@@ -424,7 +503,7 @@ pub async fn get_build_feedback_screenshot(
             header::CONTENT_SECURITY_POLICY,
             "default-src 'none'; sandbox",
         )
-        .header(header::CACHE_CONTROL, "private, max-age=300")
+        .header(header::CACHE_CONTROL, "private, no-store")
         .body(Body::from(bytes))
         .map_err(|e| {
             error!(error = %e, "failed to build screenshot response");
@@ -470,7 +549,7 @@ mod tests {
         );
         assert_eq!(
             clean_text(Some("Pixel\n8"), "device", 100, false).unwrap(),
-            Some("Pixel8".to_string())
+            Some("Pixel 8".to_string())
         );
         assert_eq!(clean_text(Some("   "), "device", 100, false).unwrap(), None);
         assert!(clean_text(Some("abcd"), "device", 3, false).is_err());
@@ -633,6 +712,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(outsider.status(), 404);
+        // The body is not parsed before access is checked.
+        let outsider_garbage = client
+            .post(&url)
+            .bearer_auth(&dev)
+            .header("content-type", "application/json")
+            .body("{not json")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(outsider_garbage.status(), 404);
+        let garbage = client
+            .post(&url)
+            .bearer_auth(&qa)
+            .header("content-type", "application/json")
+            .body("{not json")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(garbage.status(), 400);
         let outsider_list = client.get(&url).bearer_auth(&dev).send().await.unwrap();
         assert_eq!(outsider_list.status(), 404);
 
@@ -702,6 +800,7 @@ mod tests {
         assert_eq!(screenshot.status(), 200);
         assert_eq!(screenshot.headers()["content-type"], "image/png");
         assert_eq!(screenshot.headers()["x-content-type-options"], "nosniff");
+        assert_eq!(screenshot.headers()["cache-control"], "private, no-store");
         assert!(
             screenshot.headers()["content-disposition"]
                 .to_str()
@@ -735,7 +834,7 @@ mod tests {
         );
         assert_eq!(
             blocks[2]["elements"][0]["text"],
-            "Pixel 8  ·  Android 15  ·  App 2.4.0+118  ·  Screenshot attached  ·  qa@example.com"
+            "Pixel 8  ·  Android 15  ·  App 2.4.0+118  ·  Screenshot attached"
         );
 
         // Ten notes in ten minutes is the limit.
@@ -754,6 +853,16 @@ mod tests {
             .post(&url)
             .bearer_auth(&qa)
             .json(&serde_json::json!({ "message": "one more" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(limited.status(), 429);
+        // The limit applies before the body is read, so a bad screenshot is
+        // not decoded either.
+        let limited = client
+            .post(&url)
+            .bearer_auth(&qa)
+            .json(&serde_json::json!({ "message": "x", "screenshot_base64": "!!" }))
             .send()
             .await
             .unwrap();
