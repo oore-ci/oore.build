@@ -50,6 +50,9 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { AppStoreConnectKeyDialog } from './app-store-connect-key-dialog'
 
+const APP_STORE_CONNECT_DOCS_URL =
+  'https://docs.oore.build/build/sign/ios/app-store-connect#2-share-the-key-across-pipelines'
+
 export function pipelineUsage(count: number) {
   if (count === 0) return 'Not used yet'
   return count === 1 ? 'Used by 1 pipeline' : `Used by ${count} pipelines`
@@ -129,7 +132,6 @@ export function AppStoreConnectKeysPanel({ canWrite }: { canWrite: boolean }) {
   return (
     <SettingsSection
       title="App Store Connect API keys"
-      description="Add a Team key once and pick it in each pipeline's iOS signing. It signs, syncs profiles and uploads to TestFlight and the App Store. A pipeline can still use its own key instead."
       actions={
         canWrite && keys.length > 0 ? (
           <Button
@@ -157,10 +159,18 @@ export function AppStoreConnectKeysPanel({ canWrite }: { canWrite: boolean }) {
             <EmptyMedia variant="icon">
               <HugeiconsIcon icon={AppStoreIcon} />
             </EmptyMedia>
-            <EmptyTitle>No shared App Store Connect keys</EmptyTitle>
+            <EmptyTitle>No shared keys yet</EmptyTitle>
             <EmptyDescription>
-              If your apps share an Apple team, add its key here instead of
-              uploading the same .p8 to every pipeline.
+              Add your Apple team key once and pick it in each pipeline&apos;s
+              iOS signing.{' '}
+              <a
+                href={APP_STORE_CONNECT_DOCS_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-4"
+              >
+                Learn more
+              </a>
             </EmptyDescription>
           </EmptyHeader>
           {canWrite ? (
@@ -189,6 +199,19 @@ export function AppStoreConnectKeysPanel({ canWrite }: { canWrite: boolean }) {
           </ItemGroup>
         </SettingsSurface>
       )}
+      {keys.length > 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Pipelines pick a shared key in iOS signing, or upload their own.{' '}
+          <a
+            href={APP_STORE_CONNECT_DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-4"
+          >
+            Learn more
+          </a>
+        </p>
+      ) : null}
 
       <AppStoreConnectKeyDialog
         open={createOpen}

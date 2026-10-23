@@ -446,7 +446,6 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
     <>
       <SettingsSection
         title="Access"
-        description="Grant developers or QA viewers access to this project."
         actions={<AddProjectMemberDialog projectId={projectId} />}
       >
         <SettingsSurface inset={false}>

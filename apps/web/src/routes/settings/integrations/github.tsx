@@ -151,10 +151,7 @@ function GitHubSetupPage() {
         </SettingsSurface>
       </SettingsSection>
 
-      <SettingsSection
-        title="Endpoints"
-        description="Filled into the app manifest for you. Copy them if you register the app by hand."
-      >
+      <SettingsSection title="Endpoints">
         <SettingsSurface inset={false}>
           <ItemGroup className="gap-0">
             <EndpointRow label="Webhook URL" value={webhookUrl} />
@@ -162,6 +159,10 @@ function GitHubSetupPage() {
             <EndpointRow label="Redirect URL" value={redirectUrl} />
           </ItemGroup>
         </SettingsSurface>
+        <p className="text-xs text-muted-foreground">
+          Filled into the app manifest for you. Copy them only if you register
+          the app by hand.
+        </p>
       </SettingsSection>
     </PageLayout>
   )

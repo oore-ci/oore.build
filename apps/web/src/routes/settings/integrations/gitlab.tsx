@@ -148,10 +148,7 @@ function GitLabSetupPage() {
           onSubmit={form.handleSubmit(handleSubmit)}
           className="flex flex-col gap-8"
         >
-          <SettingsSection
-            title="Connection"
-            description="Oore verifies the host before it stores the source."
-          >
+          <SettingsSection title="Connection">
             <SettingsSurface className="flex flex-col gap-5">
               <GitLabHostStep
                 form={form}

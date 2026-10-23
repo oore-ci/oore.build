@@ -164,10 +164,7 @@ function EnabledRetentionFields({
 
       <SettingsSurfaceSeparator />
 
-      <SettingsSection
-        title="Cleanup behavior"
-        description="Choose what the cleanup removes and how often it runs."
-      >
+      <SettingsSection title="Cleanup behavior">
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField
             control={form.control}
@@ -467,7 +464,7 @@ function RetentionPage() {
               render={({ field }) => (
                 <SettingsSection
                   title="Automatic cleanup"
-                  description="Apply the policy below on a schedule. Running builds and protected statuses are never removed."
+                  description="Running builds and protected statuses are never removed."
                   actions={
                     <FormItem>
                       <FormControl>

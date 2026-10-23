@@ -209,10 +209,7 @@ function NotificationChannelDetailPage() {
           onSubmit={form.handleSubmit(onSubmit)}
           className="flex flex-col gap-4"
         >
-          <SettingsSection
-            title="Channel"
-            description="Where updates go, and which events send them."
-          >
+          <SettingsSection title="Channel">
             <SettingsSurface className="flex flex-col gap-4">
               <NotificationChannelFormFields channel={channel} form={form} />
             </SettingsSurface>
@@ -226,10 +223,7 @@ function NotificationChannelDetailPage() {
         </form>
       </Form>
 
-      <SettingsSection
-        title="Delivery history"
-        description="The most recent attempts to reach this channel."
-      >
+      <SettingsSection title="Delivery history">
         <SettingsSurface inset={false}>
           {deliveriesLoading ? (
             <div

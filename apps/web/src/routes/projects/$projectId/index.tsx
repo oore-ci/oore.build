@@ -648,10 +648,7 @@ function ProjectDetailPage() {
                     }}
                   />
                 ) : (
-                  <SettingsSection
-                    title="General"
-                    description="Only project maintainers can change these."
-                  >
+                  <SettingsSection title="General">
                     <SettingsSurface>
                       <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[10rem_1fr]">
                         <dt className="text-muted-foreground">Name</dt>

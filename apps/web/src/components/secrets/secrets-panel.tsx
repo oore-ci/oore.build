@@ -61,15 +61,6 @@ const SCOPE_LABEL = {
   pipeline: 'Pipeline',
 } as const satisfies Record<SecretScope, string>
 
-const SCOPE_DESCRIPTION = {
-  instance:
-    'Available to every build on this instance. A project or pipeline secret with the same name takes precedence.',
-  project:
-    'Available to every pipeline in this project. A pipeline secret with the same name takes precedence; this one takes precedence over an instance secret.',
-  pipeline:
-    'Available only to this pipeline, and take precedence over project and instance secrets with the same name.',
-} as const satisfies Record<SecretScope, string>
-
 export function secretReference(name: string) {
   return `\${{ secrets.${name} }}`
 }
@@ -246,7 +237,6 @@ export function SecretsPanel({
   return (
     <SettingsSection
       title={title}
-      description={SCOPE_DESCRIPTION[target.scope]}
       actions={
         canWrite && !headerOwnsCreate ? (
           <Button size="sm" onClick={() => setCreateOpen(true)}>

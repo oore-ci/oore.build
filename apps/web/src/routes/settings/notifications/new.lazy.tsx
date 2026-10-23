@@ -54,10 +54,7 @@ function NewNotificationChannelPage() {
           onSubmit={form.handleSubmit(onSubmit)}
           className="flex flex-col gap-8"
         >
-          <SettingsSection
-            title="Channel"
-            description="Where build and runner updates go, and which events send them."
-          >
+          <SettingsSection title="Channel">
             <SettingsSurface className="flex flex-col gap-4">
               <NotificationChannelFormFields form={form} />
             </SettingsSurface>

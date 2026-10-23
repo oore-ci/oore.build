@@ -52,10 +52,7 @@ export function RuntimeOverview({
   const frontendRelease = runtimeUpdates.frontendRelease.data
 
   return (
-    <SettingsSection
-      title="Runtime"
-      description="Installed frontend and backend versions for this instance."
-    >
+    <SettingsSection title="Runtime">
       <SettingsSurface inset={false}>
         <ItemGroup aria-label="Runtime versions" className="gap-0">
           <Item>
