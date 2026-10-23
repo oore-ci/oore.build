@@ -2926,6 +2926,54 @@
         ]
       }
     },
+    "/v1/builds/{build_id}/sizes": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Get build artifact sizes",
+        "description": "Returns the size of each artifact the build published and its change\nfrom the latest earlier successful build of the same pipeline on the\nbase branch: a pull request's target branch, otherwise the project's\ndefault branch.",
+        "operationId": "get_build_size_report",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Artifact sizes and changes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildSizeReport"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/builds/{build_id}/stream-token": {
       "post": {
         "tags": [
@@ -13500,6 +13548,53 @@
           "ios"
         ]
       },
+      "ArtifactSizeComparison": {
+        "type": "object",
+        "description": "One artifact's size, and its change from the matching baseline artifact.",
+        "required": [
+          "artifact_id",
+          "name",
+          "artifact_type",
+          "size_bytes"
+        ],
+        "properties": {
+          "artifact_id": {
+            "type": "string"
+          },
+          "artifact_type": {
+            "$ref": "#/components/schemas/ArtifactType"
+          },
+          "baseline_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of the baseline artifact this one was matched with."
+          },
+          "baseline_size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "delta_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "`size_bytes - baseline_size_bytes`; absent when nothing matched."
+          },
+          "name": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ArtifactStorageProvider": {
         "type": "string",
         "enum": [
@@ -14468,6 +14563,59 @@
             "type": "integer",
             "format": "int64",
             "description": "Queued and scheduled builds that a runner can pick up."
+          }
+        }
+      },
+      "BuildSizeBaseline": {
+        "type": "object",
+        "description": "The earlier build a size report compares against.",
+        "required": [
+          "build_id",
+          "build_number",
+          "branch"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "build_id": {
+            "type": "string"
+          },
+          "build_number": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "BuildSizeReport": {
+        "type": "object",
+        "required": [
+          "artifacts"
+        ],
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactSizeComparison"
+            }
+          },
+          "base_branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Branch the build is compared with: a pull request's target branch,\notherwise the project's default branch. Absent when neither is known."
+          },
+          "baseline": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildSizeBaseline",
+                "description": "The latest earlier successful build of the same pipeline on\n`base_branch` that recorded artifact sizes."
+              }
+            ]
           }
         }
       },

@@ -4,6 +4,7 @@ pub mod app_store_connect_keys;
 pub mod app_store_publish;
 pub mod apple_api;
 pub mod artifact_install;
+pub mod artifact_sizes;
 pub mod artifact_tokens;
 pub mod artifacts;
 pub mod audit_logs;
@@ -3019,6 +3020,10 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/builds/{build_id}/artifacts",
             get(artifacts::list_artifacts),
+        )
+        .route(
+            "/v1/builds/{build_id}/sizes",
+            get(artifact_sizes::get_build_size_report),
         )
         .route(
             "/v1/projects/{project_id}/artifacts",

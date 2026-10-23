@@ -2314,6 +2314,45 @@ pub struct ListBuildFeedbackResponse {
     pub feedback: Vec<BuildFeedback>,
 }
 
+/// The earlier build a size report compares against.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildSizeBaseline {
+    pub build_id: String,
+    pub build_number: i64,
+    pub branch: String,
+}
+
+/// One artifact's size, and its change from the matching baseline artifact.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ArtifactSizeComparison {
+    pub artifact_id: String,
+    pub name: String,
+    #[schema(value_type = ArtifactType)]
+    pub artifact_type: String,
+    pub size_bytes: i64,
+    /// Name of the baseline artifact this one was matched with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_size_bytes: Option<i64>,
+    /// `size_bytes - baseline_size_bytes`; absent when nothing matched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta_bytes: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildSizeReport {
+    /// Branch the build is compared with: a pull request's target branch,
+    /// otherwise the project's default branch. Absent when neither is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_branch: Option<String>,
+    /// The latest earlier successful build of the same pipeline on
+    /// `base_branch` that recorded artifact sizes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<BuildSizeBaseline>,
+    pub artifacts: Vec<ArtifactSizeComparison>,
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListRunnersResponse {
     pub runners: Vec<Runner>,

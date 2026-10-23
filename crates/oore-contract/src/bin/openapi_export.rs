@@ -239,6 +239,7 @@ use utoipa::{
         operations::list_artifacts,
         operations::list_project_artifacts,
         operations::list_build_artifacts,
+        operations::get_build_size_report,
         operations::generate_download_link,
         operations::create_artifact_install_link,
         operations::get_ios_install_manifest,
@@ -602,6 +603,10 @@ use utoipa::{
         oore_contract::CreateBuildFeedbackRequest,
         oore_contract::BuildFeedback,
         oore_contract::ListBuildFeedbackResponse,
+        // Artifact sizes
+        oore_contract::BuildSizeBaseline,
+        oore_contract::ArtifactSizeComparison,
+        oore_contract::BuildSizeReport,
         // Notification Channels
         oore_contract::NotificationChannelType,
         oore_contract::SmtpTlsMode,
@@ -3388,6 +3393,22 @@ mod operations {
         )
     )]
     pub(super) fn list_artifacts() {}
+
+    /// Get build artifact sizes
+    ///
+    /// Returns the size of each artifact the build published and its change
+    /// from the latest earlier successful build of the same pipeline on the
+    /// base branch: a pull request's target branch, otherwise the project's
+    /// default branch.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/sizes", tag = "Artifacts",
+        params(("build_id" = String, Path, description = "Build ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Artifact sizes and changes", body = BuildSizeReport),
+            (status = 404, description = "Build not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_size_report() {}
 
     /// List available artifacts across a project
     #[utoipa::path(get, path = "/v1/projects/{project_id}/artifacts", tag = "Artifacts",

@@ -77,7 +77,7 @@ fn row_to_artifact(row: &sqlx::sqlite::SqliteRow) -> Artifact {
     }
 }
 
-async fn require_project_artifact_read(
+pub(crate) async fn require_project_artifact_read(
     pool: &sqlx::SqlitePool,
     auth: &AuthUser,
     project_id: &str,
@@ -372,6 +372,9 @@ async fn finish_artifact(
             "artifact_not_pending",
             "Artifact is not pending or does not belong to this runner job",
         ));
+    }
+    if available {
+        crate::artifact_sizes::record_artifact_size(&pool, &artifact_id).await;
     }
     let row = sqlx::query("SELECT * FROM artifacts WHERE id = ?1")
         .bind(&artifact_id)

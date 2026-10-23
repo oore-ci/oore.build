@@ -20,6 +20,22 @@ installable APK or IPA for that platform, the check links straight to its
 install page instead. The GitHub check summary also lists every artifact
 with an install link.
 
+## App size
+
+When a build succeeds, the GitHub check summary also shows the size of each
+artifact for that platform and how much it changed. Oore compares with the
+latest earlier successful build of the same pipeline on the base branch: the
+pull request's target branch, or the project's default branch for a push. A
+build on the default branch therefore compares with the one before it.
+
+Artifacts pair up by file name. When the name changes between builds, for
+example because it carries a version, an artifact pairs with the only file of
+the same kind in the baseline build, such as the only `.aab`. Split APKs pair
+by name only. The build page shows the same comparison next to each artifact.
+
+Oore records sizes when an upload finishes and keeps them after retention
+deletes the files, so an old baseline still compares.
+
 A re-run, or a second build of the same pipeline and commit, updates the
 same check instead of adding another one. The newest build owns the check, so
 an older build that finishes late does not overwrite it.

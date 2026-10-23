@@ -7,11 +7,12 @@
 use std::time::Duration;
 
 use chrono::{DateTime, SecondsFormat};
-use oore_contract::BuildStatus;
+use oore_contract::{BuildSizeReport, BuildStatus};
 use sqlx::{Row, SqlitePool};
 use tracing::{debug, warn};
 use url::Url;
 
+use crate::artifact_sizes::{format_delta, format_size, load_size_report};
 use crate::instance_settings::{
     DEFAULT_ALLOWED_ORIGINS, load_effective_external_access_network_settings,
 };
@@ -338,10 +339,70 @@ fn markdown_text(value: &str) -> String {
     escaped
 }
 
+/// The size of each of a platform's artifacts and its change from the
+/// baseline build, as a Markdown section.
+fn size_section(
+    report: &BuildSizeReport,
+    base: Option<&Url>,
+    platform: &str,
+    single_platform: bool,
+) -> Option<String> {
+    let rows: Vec<_> = report
+        .artifacts
+        .iter()
+        .filter(
+            |artifact| match artifact_platform(&artifact.artifact_type, &artifact.name) {
+                Some(owner) => owner == platform,
+                None => single_platform,
+            },
+        )
+        .collect();
+    if rows.is_empty() {
+        return None;
+    }
+    let mut section = String::from("\n**App size**");
+    match (&report.baseline, &report.base_branch) {
+        (Some(baseline), _) => {
+            let label = format!("build #{}", baseline.build_number);
+            let label = match base {
+                Some(base) => format!(
+                    "[{label}]({})",
+                    web_url(base, &format!("/builds/{}", baseline.build_id), None)
+                ),
+                None => label,
+            };
+            section.push_str(&format!(
+                " compared with {label} on `{}`\n",
+                baseline.branch.replace('`', "")
+            ));
+        }
+        (None, Some(branch)) => section.push_str(&format!(
+            "\n\nNo earlier successful build on `{}` to compare with.\n",
+            branch.replace('`', "")
+        )),
+        (None, None) => section.push('\n'),
+    }
+    section.push_str("\n| Artifact | Size | Change |\n| --- | ---: | ---: |\n");
+    for artifact in rows {
+        let change = match (artifact.delta_bytes, artifact.baseline_size_bytes) {
+            (Some(delta), Some(baseline)) => format_delta(delta, baseline),
+            _ if report.baseline.is_some() => "New".to_string(),
+            _ => "—".to_string(),
+        };
+        section.push_str(&format!(
+            "| {} | {} | {change} |\n",
+            markdown_text(&artifact.name),
+            format_size(artifact.size_bytes),
+        ));
+    }
+    Some(section)
+}
+
 fn platform_reports(
     ctx: &BuildContext,
     base: Option<&Url>,
     artifacts: &[ArtifactLink],
+    sizes: Option<&BuildSizeReport>,
 ) -> Vec<PlatformReport> {
     let build_url = base.map(|base| web_url(base, &format!("/builds/{}", ctx.build_id), None));
     let title = status_title(ctx.build_number, ctx.status);
@@ -380,6 +441,12 @@ fn platform_reports(
                         None => summary.push_str(&format!("- {}\n", markdown_text(&artifact.name))),
                     }
                 }
+            }
+
+            if let Some(section) =
+                sizes.and_then(|sizes| size_section(sizes, base, platform, single_platform))
+            {
+                summary.push_str(&section);
             }
 
             // A successful build links straight to its one install, a failed
@@ -483,7 +550,13 @@ async fn report_build(
     } else {
         Vec::new()
     };
-    let reports = platform_reports(&ctx, base.as_ref(), &artifacts);
+    // Sizes only mean something for a build that finished its work.
+    let sizes = if ctx.status == BuildStatus::Succeeded {
+        load_size_report(pool, &ctx.build_id).await?
+    } else {
+        None
+    };
+    let reports = platform_reports(&ctx, base.as_ref(), &artifacts, sizes.as_ref());
 
     match ctx.provider.as_str() {
         "github" => {
@@ -727,7 +800,8 @@ mod tests {
         let ctx = load_context(pool, build_id).await.unwrap().unwrap();
         let url = frontend_base_url(pool).await;
         let artifacts = load_artifacts(pool, url.as_ref(), build_id).await.unwrap();
-        let reports = platform_reports(&ctx, url.as_ref(), &artifacts);
+        let sizes = load_size_report(pool, build_id).await.unwrap();
+        let reports = platform_reports(&ctx, url.as_ref(), &artifacts, sizes.as_ref());
         let client = scm_http_client().unwrap();
         report_github(pool, client, base, "token", &ctx, &reports)
             .await
@@ -819,6 +893,49 @@ mod tests {
             .find(|a| a.name == "app-release.apk")
             .unwrap();
         assert!(apk.install_url.is_some());
+    }
+
+    #[tokio::test]
+    async fn github_summary_shows_app_size_change_from_the_base_branch() {
+        let (base, received) = capture_server().await;
+        let pool = seeded_pool("github", "https://github.com").await;
+        sqlx::query("UPDATE projects SET default_branch = 'main'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (build, number, bytes) in [("b1", 1, 20_000_000_i64), ("b2", 2, 21_258_291)] {
+            insert_build(&pool, build, number, number * 100).await;
+            set_status(&pool, build, "succeeded").await;
+            let artifact_id = format!("{build}-aab");
+            sqlx::query(
+                "INSERT INTO artifacts (id, build_id, name, artifact_type, file_path, file_size, created_at) \
+                 VALUES (?1, ?2, 'app-release.aab', 'generic', 'k', ?3, 0)",
+            )
+            .bind(&artifact_id)
+            .bind(build)
+            .bind(bytes)
+            .execute(&pool)
+            .await
+            .unwrap();
+            crate::artifact_sizes::record_artifact_size(&pool, &artifact_id).await;
+        }
+
+        report_github_build(&pool, &base, "b2").await;
+        let calls = received.lock().unwrap();
+        let android = calls[0].2["output"]["summary"].as_str().unwrap();
+        assert!(
+            android.contains(
+                "**App size** compared with [build #1](https://oore.example.com/builds/b1) on `main`"
+            ),
+            "{android}"
+        );
+        assert!(
+            android.contains("| app-release.aab | 20.3 MB | +1.2 MB (+6.3%) |"),
+            "{android}"
+        );
+        // An app bundle belongs to Android only.
+        let ios = calls[1].2["output"]["summary"].as_str().unwrap();
+        assert!(!ios.contains("App size"), "{ios}");
     }
 
     async fn gitlab_pool(base: &str, key: &[u8]) -> SqlitePool {
