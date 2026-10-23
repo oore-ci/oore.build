@@ -31,7 +31,7 @@ export function DirectRunnerPolicyPanel() {
   return (
     <SettingsSection
       title="Build intake"
-      description="Applies to every runner on this instance. Pausing stops new claims; assigned and running builds finish."
+      hint="Applies to every runner. Pausing stops new claims; assigned and running builds finish."
     >
       <DirectRunnerPolicyControl />
     </SettingsSection>

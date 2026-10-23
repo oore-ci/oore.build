@@ -1,7 +1,15 @@
 import { useId } from 'react'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { InformationCircleIcon } from '@hugeicons/core-free-icons'
 
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 export function SettingsSurface({
   className,
@@ -30,42 +38,102 @@ export function SettingsSurfaceSeparator() {
 }
 
 /**
- * The longest description a section or subsection heading may carry. One
- * sentence of about 90 characters is the target (DESIGN.md, "Headings and
- * descriptions"); anything past this is documentation and belongs in a field
- * description, an empty state, a footnote, or the docs site.
+ * The longest hint a section or subsection heading may carry. One sentence
+ * of about 90 characters is the target (DESIGN.md, "Headings and hints");
+ * anything past this is documentation and belongs in a field description,
+ * an empty state, a footnote, or the docs site.
  */
-export const MAX_DESCRIPTION_LENGTH = 120
+export const MAX_HINT_LENGTH = 120
 
-const warnedDescriptions = new Set<string>()
+const warnedHints = new Set<string>()
 
-/** Dev-only nudge when a heading description outgrows one sentence. */
-export function warnLongDescription(component: string, description?: string) {
-  if (!import.meta.env.DEV || !description) return
-  if (description.length <= MAX_DESCRIPTION_LENGTH) return
-  if (warnedDescriptions.has(description)) return
-  warnedDescriptions.add(description)
+/** Dev-only nudge when a heading hint outgrows one sentence. */
+export function warnLongHint(component: string, hint?: string) {
+  if (!import.meta.env.DEV || !hint) return
+  if (hint.length <= MAX_HINT_LENGTH) return
+  if (warnedHints.has(hint)) return
+  warnedHints.add(hint)
   console.warn(
-    `${component}: description is ${description.length} characters, over the ${MAX_DESCRIPTION_LENGTH} limit. ` +
+    `${component}: hint is ${hint.length} characters, over the ${MAX_HINT_LENGTH} limit. ` +
       'Keep it to one sentence or move it to a field, empty state, or footnote. ' +
-      `"${description.slice(0, 60)}…"`,
+      `"${hint.slice(0, 60)}…"`,
   )
 }
 
-/** One-line muted copy under a section or subsection heading. */
-export function SectionDescription({
-  className,
-  ...props
-}: React.ComponentProps<'p'>) {
+/**
+ * One sentence of help behind an info icon beside a heading. It opens on
+ * hover and on keyboard focus, so the sentence is there when someone wants
+ * it and the heading row stays one line otherwise.
+ */
+export function SectionHint({
+  children,
+  label,
+}: {
+  children: string
+  /** The heading the hint belongs to, for the icon's accessible name. */
+  label: string
+}) {
   return (
-    <p
-      data-slot="section-description"
-      className={cn(
-        'max-w-[65ch] text-[13px] leading-snug text-muted-foreground',
-        className,
-      )}
-      {...props}
-    />
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="-my-1 text-muted-foreground"
+          />
+        }
+      >
+        <HugeiconsIcon icon={InformationCircleIcon} />
+        <span className="sr-only">About {label}</span>
+      </TooltipTrigger>
+      <TooltipContent side="top" align="start" className="text-pretty">
+        {children}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** The heading row shared by sections and subsections. */
+export function SectionHeading({
+  as: Heading,
+  hint,
+  id,
+  meta,
+  status,
+  title,
+}: {
+  as: 'h2' | 'h3'
+  hint?: string
+  id: string
+  meta?: React.ReactNode
+  status?: React.ReactNode
+  title: string
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+        <Heading
+          id={id}
+          className={cn(
+            Heading === 'h2' ? 'font-semibold' : 'font-medium',
+            'text-sm',
+          )}
+        >
+          {title}
+        </Heading>
+        {hint ? <SectionHint label={title}>{hint}</SectionHint> : null}
+        {meta ? (
+          <span className="ms-0.5 inline-flex items-center gap-2">{meta}</span>
+        ) : null}
+      </div>
+      {status ? (
+        <p className="max-w-[65ch] text-[13px] leading-snug text-muted-foreground">
+          {status}
+        </p>
+      ) : null}
+    </div>
   )
 }
 
@@ -73,24 +141,30 @@ export function SettingsSection({
   actions,
   children,
   className,
-  description,
+  hint,
   id,
   meta,
+  status,
   title,
 }: {
   actions?: React.ReactNode
   children?: React.ReactNode
   className?: string
-  /** One sentence stating a rule that governs every control in the section. */
-  description?: string
+  /** One sentence of help, shown in a tooltip behind an info icon. */
+  hint?: string
   /** Anchor for deep links; the heading clears sticky page chrome. */
   id?: string
   /** Status beside the title, such as a mode or count badge. Not prose. */
   meta?: React.ReactNode
+  /**
+   * One line of live state under the title, such as what a toggle will do
+   * with the current form values. Never static copy; that is `hint`.
+   */
+  status?: React.ReactNode
   title: string
 }) {
   const titleId = useId()
-  warnLongDescription('SettingsSection', description)
+  warnLongHint('SettingsSection', hint)
 
   return (
     <section
@@ -102,17 +176,14 @@ export function SettingsSection({
       )}
     >
       <div className="flex items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h2 id={titleId} className="text-sm font-semibold">
-              {title}
-            </h2>
-            {meta ?? null}
-          </div>
-          {description ? (
-            <SectionDescription>{description}</SectionDescription>
-          ) : null}
-        </div>
+        <SectionHeading
+          as="h2"
+          hint={hint}
+          id={titleId}
+          meta={meta}
+          status={status}
+          title={title}
+        />
         {actions ? (
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {actions}

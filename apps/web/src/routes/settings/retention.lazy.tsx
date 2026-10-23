@@ -94,7 +94,7 @@ function EnabledRetentionFields({
     <>
       <SettingsSection
         title="Retention criteria"
-        description="A build is cleaned up when it matches any configured limit. Leave a field empty to disable that limit."
+        hint="A build is cleaned up when it matches any limit. Leave a field empty to disable that limit."
       >
         <div className="grid gap-4 sm:grid-cols-3">
           <FormField
@@ -238,7 +238,7 @@ function EnabledRetentionFields({
 
       <SettingsSection
         title="Protected statuses"
-        description="Builds with these statuses are never cleaned up, regardless of other criteria."
+        hint="Builds with these statuses are never cleaned up, whatever the other criteria say."
       >
         <FormField
           control={form.control}
@@ -277,7 +277,7 @@ function EnabledRetentionFields({
 
       <SettingsSection
         title="Dry run"
-        description="Log what the policy would remove without deleting builds or artifacts."
+        hint="Log what the policy would remove without deleting anything."
         actions={
           <FormField
             control={form.control}
@@ -464,7 +464,7 @@ function RetentionPage() {
               render={({ field }) => (
                 <SettingsSection
                   title="Automatic cleanup"
-                  description="Running builds and protected statuses are never removed."
+                  hint="Running builds and protected statuses are never removed."
                   actions={
                     <FormItem>
                       <FormControl>

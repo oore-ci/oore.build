@@ -336,7 +336,7 @@ function UploadToggle({ form }: { form: UseFormReturn<FormValues> }) {
       render={({ field }) => (
         <SettingsSection
           title="Upload after each build"
-          description={effect}
+          status={effect}
           actions={
             <FormItem>
               <FormControl>
@@ -1075,7 +1075,7 @@ export function GooglePlayPublishSection({
     <SettingsSection
       id="google-play"
       title="Google Play"
-      description="Upload the signed App Bundle from each successful build. The runner that built it uploads it with your service account key."
+      hint="The runner that built the app uploads the signed App Bundle with your service account key."
     >
       <PublishReadiness checks={checks} />
 

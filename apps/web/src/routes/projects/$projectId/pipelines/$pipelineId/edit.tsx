@@ -487,7 +487,7 @@ function EditPipelinePage() {
           storedIosSigning.export_method === 'ad_hoc' && (
             <PipelineFormSection
               title="Registered iOS devices"
-              description="Ad hoc builds install only on these devices. Registering one re-syncs the provisioning profiles."
+              hint="Ad hoc builds install only on these devices. Registering one re-syncs the profiles."
             >
               <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
                 <Input

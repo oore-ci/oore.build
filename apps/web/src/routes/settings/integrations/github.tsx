@@ -118,7 +118,7 @@ function GitHubSetupPage() {
 
       <SettingsSection
         title="GitHub App"
-        description="Oore creates the app, sends you to GitHub to install it, and brings you back here."
+        hint="Oore creates the app, sends you to GitHub to install it, and brings you back here."
         actions={
           <Button
             onClick={handleConnect}

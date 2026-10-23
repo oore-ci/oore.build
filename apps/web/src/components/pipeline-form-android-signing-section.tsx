@@ -76,7 +76,11 @@ export function PipelineAndroidSigningSection({
     <PipelineFormSubsection
       id="android-signing"
       title="Android"
-      description={signingSummary(releaseEnabled, debugEnabled)}
+      meta={
+        <span className="text-xs text-muted-foreground">
+          {signingSummary(releaseEnabled, debugEnabled)}
+        </span>
+      }
     >
       <SigningToggle
         name="android_signing_release_enabled"

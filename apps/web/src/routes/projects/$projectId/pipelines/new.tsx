@@ -446,7 +446,7 @@ function NewPipelinePage() {
       <div className="flex flex-col gap-8">
         <PipelineFormSection
           title="Start from"
-          description={startDescription}
+          hint={startDescription}
           actions={
             !workflowsQuery.isLoading &&
             validWorkflows.length > 0 &&

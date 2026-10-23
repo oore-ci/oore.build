@@ -150,27 +150,31 @@ floating without a visible group anchor.
 Section headings use one compact treatment across a screen. Counts use the
 same compact badge or count treatment; do not repeat the unit in the count.
 
-### Headings and descriptions
+### Headings and hints
 
-Every level of the page can carry a description, and a screen that fills all of
+Every level of the page can carry help text, and a screen that fills all of
 them reads as an article instead of a settings screen. Each level has one job:
 
-| Level       | Primitive                                | Description allowed                               | May contain                                             |
-| ----------- | ---------------------------------------- | ------------------------------------------------- | ------------------------------------------------------- |
-| Page        | `PageHeader`                             | Only when the title is an entity name             | That entity's identity or status                        |
-| Section     | `SettingsSection`, `PipelineFormSection` | One sentence, only a rule governing every control | "Running builds are never removed."                     |
-| Subsection  | `PipelineFormSubsection`                 | No                                                |                                                         |
-| Field       | `FormDescription`                        | Only if label plus placeholder cannot carry it    | Format, unit, limit, consequence                        |
-| Empty state | `Empty`                                  | One sentence, the why                             | Why you would add the first one, with a Learn more link |
-| Footnote    | Muted paragraph under a surface          | One sentence                                      | Where it is stored, what overrides what                 |
+| Level       | Primitive                                | Help allowed                                        | May contain                                                         |
+| ----------- | ---------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------- |
+| Page        | `PageHeader`                             | A description only when the title is an entity name | That entity's identity or status                                    |
+| Section     | `SettingsSection`, `PipelineFormSection` | A `hint`: one sentence behind an info icon          | A rule governing every control: "Running builds are never removed." |
+| Subsection  | `PipelineFormSubsection`                 | A `hint`, same as a section                         |                                                                     |
+| Field       | `FormDescription`                        | Only if label plus placeholder cannot carry it      | Format, unit, limit, consequence                                    |
+| Empty state | `Empty`                                  | One visible sentence, the why                       | Why you would add the first one, with a Learn more link             |
+| Footnote    | Muted paragraph under a surface          | One visible sentence                                | Where it is stored, what overrides what                             |
 
-The budget: a screen gets at most one free-prose block that is not attached to
-a control or an empty state. If the page header has a description, its sections
-do not, and the reverse. Two descriptions in a row with nothing between them is
-always wrong.
+Section and subsection headings never carry visible prose. Help for a heading
+goes in `hint`, which renders an info icon that shows the sentence on hover
+and on keyboard focus. The heading row stays one line and the sentence is
+there for whoever wants it. Live state is different from help: a mode, a
+count, or a signing summary goes in `meta` beside the title as a badge or
+muted text, and a sentence that describes what a toggle will do with the
+current form values goes in `status` under the title. Neither slot takes
+static copy.
 
-A description earns its place only if it passes all three tests. Otherwise
-delete it or move it down to the lowest level that still applies:
+A hint earns its place only if it passes all three tests. Otherwise delete
+it or move it down to the lowest level that still applies:
 
 1. Cover it with your thumb. If the title, the controls, and their labels still
    tell you what to do, delete it.
@@ -181,14 +185,12 @@ delete it or move it down to the lowest level that still applies:
    storage or precedence, it is a footnote. Only a rule that governs the whole
    section stays at section level.
 
-A description that survives is one sentence of about 90 characters, says what
-happens or what the rule is rather than what the control is for, and never
-explains how Oore implements something. Implementation detail belongs in the
-docs site, linked once from the empty state or footnote with `Learn more`.
-Dynamic text such as a mode, a usage count, or an upload effect is status, not
-prose: render it in the heading's `meta` slot as a badge or inline text.
+A hint that survives is one sentence of about 90 characters, says what happens
+or what the rule is rather than what the control is for, and never explains
+how Oore implements something. Implementation detail belongs in the docs
+site, linked once from the empty state or footnote with `Learn more`.
 `SettingsSection` and `PipelineFormSubsection` warn in development when a
-description exceeds 120 characters.
+hint exceeds 120 characters.
 
 Use breadcrumbs only when they express meaningful entity hierarchy. Do not use
 them as a generic screen label.
