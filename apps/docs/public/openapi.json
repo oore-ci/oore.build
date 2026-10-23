@@ -15998,7 +15998,6 @@
           "has_url",
           "has_secret",
           "has_smtp_config",
-          "slack_mentions",
           "created_at",
           "updated_at"
         ],
@@ -16056,7 +16055,7 @@
             "items": {
               "$ref": "#/components/schemas/SlackMention"
             },
-            "description": "Slack member IDs to mention, matched against the person behind each\nevent (Slack only). Checked before the bot token lookup."
+            "description": "Slack member IDs to mention, matched against the person behind each\nevent (Slack only). Checked before the bot token lookup. Absent from\ndaemons that predate it, which is the same as none."
           },
           "smtp_summary": {
             "oneOf": [

@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::crypto;
 use crate::extractors::AuthUser;
-use crate::notification_dispatch::parse_slack_mentions;
+use crate::notification_dispatch::{normalize_slack_identity, parse_slack_mentions};
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -243,7 +243,7 @@ fn validate_slack_mentions(
     }
     let mut cleaned: Vec<SlackMention> = Vec::with_capacity(mentions.len());
     for mention in mentions {
-        let identity = mention.identity.trim().to_lowercase();
+        let identity = normalize_slack_identity(&mention.identity);
         if identity.is_empty() || identity.chars().count() > MAX_SLACK_IDENTITY_LEN {
             return Err(invalid(format!(
                 "Slack mention identity must be 1-{MAX_SLACK_IDENTITY_LEN} characters"
@@ -1272,6 +1272,7 @@ mod tests {
             &[
                 mention(" Dev@Example.com ", "U0123ABCD"),
                 mention("octocat", " W0OCTO "),
+                mention("ÉLODIE+a=b,c@example.com", "U0ELO"),
             ],
         )
         .unwrap()
@@ -1281,6 +1282,7 @@ mod tests {
             [
                 mention("dev@example.com", "U0123ABCD"),
                 mention("octocat", "W0OCTO"),
+                mention("élodie+a=b,c@example.com", "U0ELO"),
             ]
         );
         assert_eq!(validate_slack_mentions(slack, &[]).unwrap(), None);

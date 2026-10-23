@@ -1057,12 +1057,18 @@ pub(crate) fn parse_slack_mentions(json: Option<&str>) -> Vec<SlackMention> {
         .unwrap_or_default()
 }
 
+/// The form identities are stored and matched in: trimmed and lowercased.
+pub(crate) fn normalize_slack_identity(identity: &str) -> String {
+    identity.trim().to_lowercase()
+}
+
 /// The mapped `<@U…>` mention for the first identity that has one.
 fn mapped_mention(mentions: &[SlackMention], identities: &[&str]) -> Option<String> {
     identities.iter().find_map(|identity| {
+        let identity = normalize_slack_identity(identity);
         mentions
             .iter()
-            .find(|mention| mention.identity.eq_ignore_ascii_case(identity.trim()))
+            .find(|mention| normalize_slack_identity(&mention.identity) == identity)
             .map(|mention| &mention.member_id)
             .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()))
             .map(|id| format!("<@{id}>"))
@@ -1677,6 +1683,14 @@ mod tests {
             Some("&lt;!here&gt;".to_string())
         );
         assert_eq!(slack_mention(&mentions, None, None, None).await, None);
+        // Stored identities are lowercased with Unicode rules, so matching is too.
+        assert_eq!(
+            mapped_mention(
+                &[mention("élodie@example.com", "U0ELO")],
+                &["ÉLODIE@Example.com"]
+            ),
+            Some("<@U0ELO>".to_string())
+        );
         // A stored ID that is not plain alphanumerics is never rendered.
         assert_eq!(
             mapped_mention(&[mention("x", "U1> <!channel")], &["x"]),

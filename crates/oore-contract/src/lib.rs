@@ -4861,9 +4861,9 @@ pub struct NotificationChannel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smtp_summary: Option<SmtpConfigSummary>,
     /// Slack member IDs to mention, matched against the person behind each
-    /// event (Slack only). Checked before the bot token lookup.
+    /// event (Slack only). Checked before the bot token lookup. Absent from
+    /// daemons that predate it, which is the same as none.
     #[serde(default)]
-    #[schema(required = true)]
     pub slack_mentions: Vec<SlackMention>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
