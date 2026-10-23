@@ -587,6 +587,7 @@ export function createDemoState(
       has_url: true,
       has_secret: false,
       has_smtp_config: false,
+      slack_mentions: [],
       created_by: USER_IDS.admin,
       created_at: ago(86400 * 20),
       updated_at: ago(86400 * 5),

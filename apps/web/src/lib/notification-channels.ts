@@ -20,7 +20,7 @@ export interface SlackMention {
 }
 
 export type NotificationChannel = Flatten<
-  ClientNotificationChannel & { slack_mentions?: Array<SlackMention> }
+  ClientNotificationChannel & { slack_mentions: Array<SlackMention> }
 >
 
 export type CreateNotificationChannelRequest = Flatten<
