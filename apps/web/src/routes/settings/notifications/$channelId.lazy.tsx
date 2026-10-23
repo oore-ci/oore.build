@@ -12,7 +12,6 @@ import {
   useUpdateNotificationChannel,
 } from '@/hooks/use-notification-channels'
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
-import { fromClientChannel } from '@/lib/notification-channels'
 import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
@@ -89,8 +88,6 @@ function NotificationChannelDetailPage() {
   const deleteMutation = useDeleteNotificationChannel()
   const testMutation = useTestNotificationChannel()
   const channel = channelData?.channel
-    ? fromClientChannel(channelData.channel)
-    : undefined
   const deliveries = deliveriesData?.deliveries ?? []
   const form = useForm<NotificationChannelFormValues>({
     resolver: zodResolver(

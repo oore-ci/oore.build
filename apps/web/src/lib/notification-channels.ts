@@ -1,62 +1,11 @@
-import type {
-  CreateNotificationChannelRequest as ClientCreateNotificationChannelRequest,
-  NotificationChannel as ClientNotificationChannel,
+export type {
+  CreateNotificationChannelRequest,
+  NotificationChannel,
   NotificationChannelType,
-  UpdateNotificationChannelRequest as ClientUpdateNotificationChannelRequest,
+  SlackMention,
+  UpdateNotificationChannelRequest,
 } from '@oore/client/models'
-
-// The daemon contract has per-channel Slack member mappings, but the
-// published @oore/client models predate them. Drop these once the client is
-// regenerated.
-type Flatten<T> = { [K in keyof T]: T[K] }
-
-export type { NotificationChannelType }
-
-export interface SlackMention {
-  /** Oore sign-in email or Git username, matched without regard to case. */
-  identity: string
-  /** Slack member ID, such as U0123ABCD. */
-  member_id: string
-}
-
-export type NotificationChannel = Flatten<
-  ClientNotificationChannel & { slack_mentions: Array<SlackMention> }
->
-
-export type CreateNotificationChannelRequest = Flatten<
-  ClientCreateNotificationChannelRequest & {
-    slack_mentions?: Array<SlackMention>
-  }
->
-
-export type UpdateNotificationChannelRequest = Flatten<
-  ClientUpdateNotificationChannelRequest & {
-    slack_mentions?: Array<SlackMention>
-  }
->
-
-export function toClientCreateRequest(
-  request: CreateNotificationChannelRequest,
-): ClientCreateNotificationChannelRequest {
-  // SAFETY: the daemon accepts every field here; only the client's generated
-  // types lag behind, and operations do not validate request bodies.
-  return request as ClientCreateNotificationChannelRequest
-}
-
-export function toClientUpdateRequest(
-  request: UpdateNotificationChannelRequest,
-): ClientUpdateNotificationChannelRequest {
-  // SAFETY: as above.
-  return request as ClientUpdateNotificationChannelRequest
-}
-
-export function fromClientChannel(
-  channel: ClientNotificationChannel,
-): NotificationChannel {
-  // SAFETY: the daemon returns every field here; only the client's generated
-  // types lag behind.
-  return channel as NotificationChannel
-}
+import type { SlackMention } from '@oore/client/models'
 
 const SLACK_MEMBER_ID = /^[UW][A-Z0-9]{2,23}$/
 // Matches the daemon's limit.

@@ -54,7 +54,7 @@ const updateChannelSchema = z.toZod<UpdateNotificationChannelRequest>()(
     url: z.string().nullish(),
     secret: z.string().nullish(),
     smtp_config: updateSmtpConfigSchema.nullish(),
-    slack_mentions: slackMentionsSchema.optional(),
+    slack_mentions: slackMentionsSchema.nullish(),
   }),
 )
 

@@ -17,11 +17,9 @@ import {
   scopeOoreQueryKey,
   scopeOoreQueryOptions,
 } from '@/lib/api-client/client'
-import {
-  toClientCreateRequest,
-  toClientUpdateRequest,
-  type CreateNotificationChannelRequest,
-  type UpdateNotificationChannelRequest,
+import type {
+  CreateNotificationChannelRequest,
+  UpdateNotificationChannelRequest,
 } from '@/lib/notification-channels'
 
 type ListNotificationChannelsParams = NonNullable<
@@ -65,7 +63,7 @@ export function useCreateNotificationChannel() {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return createNotificationChannel({
-        body: toClientCreateRequest(data),
+        body: data,
         client,
       })
     },
@@ -94,11 +92,7 @@ export function useUpdateNotificationChannel() {
     }) => {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
-      return updateNotificationChannel({
-        body: toClientUpdateRequest(data),
-        client,
-        path: { id },
-      })
+      return updateNotificationChannel({ body: data, client, path: { id } })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({
