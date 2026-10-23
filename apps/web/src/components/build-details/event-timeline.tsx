@@ -14,7 +14,7 @@ import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
 import { getStatusPresentation } from '@/lib/status-variants'
 import { cn } from '@/lib/utils'
 import { Text } from '@/components/layout/text'
-import { textVariants } from '@/lib/recipes'
+import { focusRingVariants, textVariants } from '@/lib/recipes'
 
 // Dot colour follows the status the event moved the build into.
 function dotTone(status: string) {
@@ -83,7 +83,10 @@ function FeedbackScreenshot({ feedback }: { feedback: BuildFeedback }) {
     <>
       <button
         type="button"
-        className="mt-2 block overflow-hidden rounded-lg border outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        className={cn(
+          focusRingVariants(),
+          'mt-2 block overflow-hidden rounded-lg border',
+        )}
         aria-label="Open screenshot"
         onClick={() => setOpen(true)}
       >
