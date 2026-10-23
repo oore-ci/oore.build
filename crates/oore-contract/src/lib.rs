@@ -3862,6 +3862,10 @@ pub struct PipelineGooglePlayPublishResponse {
     pub service_account_secret_present: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
+    /// The latest credentials check, while the key it checked is still the
+    /// one its secret name resolves to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_credentials_check: Option<GooglePlayCredentialsTestResponse>,
 }
 
 /// Which service account key to check against Google Play. The values come
@@ -3881,6 +3885,8 @@ pub struct GooglePlayCredentialsTestRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct GooglePlayCredentialsTestResponse {
     pub ok: bool,
+    /// The secret that was checked.
+    pub service_account_secret: String,
     /// What passed, or the exact failure.
     pub message: String,
     /// The app the check opened, when one was known.

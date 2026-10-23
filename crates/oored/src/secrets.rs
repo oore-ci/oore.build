@@ -725,6 +725,31 @@ pub async fn resolve_secret_value(
 
 /// Whether a secret named `name` is visible to a pipeline, without
 /// decrypting anything.
+/// The row a pipeline resolves `name` to and when it last changed, so a
+/// result recorded against a key can tell when the key behind the name is a
+/// different one.
+pub async fn visible_secret_version(
+    pool: &SqlitePool,
+    project_id: &str,
+    pipeline_id: Option<&str>,
+    name: &str,
+) -> anyhow::Result<Option<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT id || ':' || updated_at FROM secrets \
+         WHERE name = ?3 \
+           AND (scope = 'instance' \
+            OR (scope = 'project' AND project_id = ?1) \
+            OR (scope = 'pipeline' AND pipeline_id IS ?2 AND ?2 IS NOT NULL)) \
+         ORDER BY CASE scope WHEN 'pipeline' THEN 0 WHEN 'project' THEN 1 ELSE 2 END \
+         LIMIT 1",
+    )
+    .bind(project_id)
+    .bind(pipeline_id)
+    .bind(name)
+    .fetch_optional(pool)
+    .await?)
+}
+
 pub async fn secret_name_visible(
     pool: &SqlitePool,
     project_id: &str,

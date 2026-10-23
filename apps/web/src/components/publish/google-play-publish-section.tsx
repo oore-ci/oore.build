@@ -18,6 +18,7 @@ import {
 import type { PipelineAndroidSigningResponse } from '@oore/client/models'
 
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
+import { relativeTime } from '@/lib/format-utils'
 import { buildsAppBundle } from '@/lib/pipeline-form-utils'
 import { toast } from '@/lib/toast'
 import {
@@ -434,6 +435,10 @@ function ServiceAccountField({
   )
 }
 
+function checkSummary(check: GooglePlayCredentialsTest) {
+  return `${check.message} Checked ${relativeTime(check.checked_at)}.`
+}
+
 function CredentialsCheck({
   credentials,
   form,
@@ -480,7 +485,7 @@ function CredentialsCheck({
               ? 'Google Play accepted the key'
               : 'Google Play check failed'}
           </AlertTitle>
-          <AlertDescription>{result.message}</AlertDescription>
+          <AlertDescription>{checkSummary(result)}</AlertDescription>
         </Alert>
       ) : credentials.error ? (
         <Alert variant="destructive" aria-live="polite">
@@ -935,8 +940,16 @@ export function GooglePlayPublishSection({
   const [checkResults, setCheckResults] = useState<
     ReadonlyMap<string, GooglePlayCredentialsTest>
   >(new Map())
+  const saved = publishQuery.data
+  // The daemon keeps the latest check, so it survives a reload. A check run
+  // on this page replaces it.
+  const results = new Map(checkResults)
+  const lastCheck = saved?.last_credentials_check
+  if (lastCheck && !results.has(lastCheck.service_account_secret)) {
+    results.set(lastCheck.service_account_secret, lastCheck)
+  }
   const credentials: CredentialsCheckState = {
-    results: checkResults,
+    results,
     error: testMutation.error,
     pending: testMutation.isPending,
     onTest: (secret, packageName) => {
@@ -963,7 +976,6 @@ export function GooglePlayPublishSection({
       secretScopes.set(secret.name, secret.scope)
     }
   }
-  const saved = publishQuery.data
   const secretName =
     saved?.config?.service_account_secret ??
     (secretScopes.has(PLAY_SERVICE_ACCOUNT_SECRET)
@@ -1021,14 +1033,14 @@ export function GooglePlayPublishSection({
     })
   }
   if (saved && secretReady) {
-    const savedCheck = checkResults.get(secretName)
+    const savedCheck = results.get(secretName)
     checks.push({
       key: 'access',
       label: 'Google Play access',
       ready: savedCheck ? savedCheck.ok : null,
-      detail:
-        savedCheck?.message ??
-        'Not checked yet. Test the key to confirm the service account can publish this app.',
+      detail: savedCheck
+        ? checkSummary(savedCheck)
+        : 'Not checked yet. Test the key to confirm the service account can publish this app.',
       action:
         canWrite && !savedCheck?.ok ? (
           <Button
