@@ -230,6 +230,19 @@ export const environmentHandlers = [
       return error(403, 'permission_denied', 'Maintainer role required')
     }
     const body = updateSchema.parse(await request.json())
+    if (
+      body.track &&
+      body.track !== environment.track &&
+      demoState.releases.some(
+        (release) => release.environment_id === environment.id,
+      )
+    ) {
+      return error(
+        400,
+        'invalid_input',
+        `${environment.name} already has releases on the ${environment.track} track, so its track cannot change. Add a new environment for the ${body.track} track instead.`,
+      )
+    }
     environment.name = body.name ?? environment.name
     environment.track = body.track ?? environment.track
     environment.approval_required =

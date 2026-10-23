@@ -474,7 +474,7 @@ export function ProjectEnvironmentsTab({
           if (!open) setDeleting(undefined)
         }}
         title={`Delete ${deleting?.name ?? 'environment'}?`}
-        description="Its releases stay, without an environment, and promotions waiting for approval are dropped. Nothing changes in the store."
+        description="Its releases stay, without an environment, and promotions waiting for approval are rejected. Nothing changes in the store."
         confirmLabel="Delete"
         confirmVariant="destructive"
         isPending={deleteMutation.isPending}

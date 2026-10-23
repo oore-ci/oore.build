@@ -2365,6 +2365,18 @@ pub async fn build_router_with_recovery(
         if let Err(e) = sched.reload_pending(pool).await {
             tracing::error!(error = %e, "failed to reload pending builds into scheduler");
         }
+        match environments::fail_interrupted_promotions(pool).await {
+            Ok(0) => {}
+            Ok(count) => {
+                tracing::warn!(
+                    count,
+                    "marked promotions interrupted by the restart as failed"
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to mark interrupted promotions as failed");
+            }
+        }
     }
 
     let external_access_network =

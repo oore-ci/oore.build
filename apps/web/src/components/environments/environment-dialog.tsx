@@ -132,6 +132,8 @@ export function EnvironmentDialog({
   projectId: string
 }) {
   const isEdit = environment !== undefined
+  // The daemon keeps the track of an environment that has releases.
+  const trackLocked = environment?.latest_release != null
   const createMutation = useCreateEnvironment(projectId)
   const updateMutation = useUpdateEnvironment(projectId)
   const mutation = isEdit ? updateMutation : createMutation
@@ -321,6 +323,7 @@ export function EnvironmentDialog({
                         placeholder={
                           store === 'google_play' ? 'production' : 'app_store'
                         }
+                        disabled={trackLocked}
                         {...field}
                       />
                     </FormControl>
@@ -330,9 +333,11 @@ export function EnvironmentDialog({
               />
             </div>
             <p className="-mt-2 text-sm text-muted-foreground">
-              {store === 'google_play'
-                ? 'internal, closed, open, production, or a custom track name.'
-                : 'App Store environments group the releases uploads record; promotion into them comes later.'}
+              {trackLocked
+                ? 'This environment has releases, so its track is fixed. Add a new environment for another track.'
+                : store === 'google_play'
+                  ? 'internal, closed, open, production, or a custom track name.'
+                  : 'App Store environments group the releases uploads record; promotion into them comes later.'}
             </p>
 
             <FormField

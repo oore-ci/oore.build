@@ -62,6 +62,11 @@ curl -X POST "$OORE_URL/v1/projects/$PROJECT_ID/environments" \
 
 A release that a pipeline uploads to an environment's track lands in that
 environment, so the first upload to `internal` shows under **Internal**.
+For now that upload keeps the pipeline's own rollout policy; the
+environment's policy applies to releases promoted into it.
+
+Once an environment has releases, its track is fixed. To move to another
+track, add a new environment.
 
 ## 2. Promote a build
 
@@ -89,6 +94,14 @@ When the target environment requires approval, the promotion waits under
 **Approve** to make the store change, or **Reject** to drop it. The approval
 is the release's approval, so the new release does not wait again.
 
+Approval applies to promotions only. A maintainer who records a release
+directly with [Create release](/openapi/operations/create_release)
+(`POST /v1/releases`) on an environment's track does not go through the
+environment's approval.
+
+Deleting an environment rejects its promotions that are waiting for approval,
+with the reason `environment deleted` in the audit log.
+
 ## Verify the result
 
 - The environment shows the promoted version and its rollout.
@@ -104,5 +117,9 @@ is the release's approval, so the new release does not wait again.
   is planned.
 - A build cannot be promoted into an environment where it already has a
   release, unless that release failed.
+- If the daemon stops during a promotion's store call, the promotion is
+  marked failed when it starts again ("interrupted by daemon restart"). Check
+  the track in Play Console before promoting again: the change may have
+  reached Play.
 - Per-environment approvers, notification channels, QA groups and secrets are
   not configurable yet.

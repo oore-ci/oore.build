@@ -451,6 +451,20 @@ pub(crate) async fn update_environment(
         Some(track) => validate_track(current.store, track)?,
         None => current.track.clone(),
     };
+    if track != current.track {
+        let has_releases: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM releases WHERE environment_id = ?1 LIMIT 1")
+                .bind(environment_id)
+                .fetch_optional(pool)
+                .await?;
+        if has_releases.is_some() {
+            return Err(EnvironmentError::Invalid(format!(
+                "{} already has releases on the {} track, so its track cannot change. \
+                 Add a new environment for the {} track instead.",
+                current.name, current.track, track
+            )));
+        }
+    }
     let policy = request
         .rollout_policy
         .clone()
@@ -524,8 +538,12 @@ pub(crate) async fn update_environment(
     Ok(environment)
 }
 
-/// Delete an environment. Its releases stay and lose the environment;
-/// its pending promotions go with it.
+/// Delete an environment. Its releases stay and lose the environment.
+///
+/// Pending promotions are rejected and audited first, and `promoting` rows
+/// that no call is working on (left by a call that never finished) are marked
+/// failed. A promotion whose store call is running right now still blocks the
+/// delete. The promotion rows then go with the environment.
 pub(crate) async fn delete_environment(
     pool: &SqlitePool,
     project_id: &str,
@@ -533,17 +551,80 @@ pub(crate) async fn delete_environment(
     actor: &ReleaseActor,
 ) -> Result<(), EnvironmentError> {
     let current = load_environment(pool, project_id, environment_id).await?;
-    let promoting: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM environment_promotions WHERE environment_id = ?1 AND state = 'promoting'",
+    let open: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id, build_id, state FROM environment_promotions \
+         WHERE environment_id = ?1 AND state IN ('pending', 'promoting')",
     )
     .bind(environment_id)
-    .fetch_optional(pool)
+    .fetch_all(pool)
     .await?;
-    if promoting.is_some() {
-        return Err(EnvironmentError::conflict(
-            "promotion_in_progress",
-            "A promotion into this environment is in progress; try again when it finishes",
-        ));
+    // Hold every open promotion's lock until the row is gone, so no request,
+    // approval or store call starts on it in between.
+    let mut guards = Vec::with_capacity(open.len());
+    for (id, build_id, state) in &open {
+        let lock = promotion_lock(build_id, environment_id);
+        let Ok(guard) = lock.try_lock_owned() else {
+            return Err(EnvironmentError::conflict(
+                "promotion_in_progress",
+                "A promotion into this environment is in progress; try again when it finishes",
+            ));
+        };
+        guards.push(guard);
+        let still: Option<String> =
+            sqlx::query_scalar("SELECT state FROM environment_promotions WHERE id = ?1")
+                .bind(id)
+                .fetch_optional(pool)
+                .await?;
+        match still.as_deref() {
+            Some("pending") => {
+                sqlx::query(
+                    "UPDATE environment_promotions SET state = 'rejected', decided_by = ?1, \
+                     decided_at = ?2, decision_reason = ?3, updated_at = ?2 \
+                     WHERE id = ?4 AND state = 'pending'",
+                )
+                .bind(actor_id(actor))
+                .bind(now_unix())
+                .bind(ENVIRONMENT_DELETED)
+                .bind(id)
+                .execute(pool)
+                .await?;
+                audit(
+                    pool,
+                    actor,
+                    "promotion_rejected",
+                    "environment_promotion",
+                    id,
+                    serde_json::json!({
+                        "actor_email": actor_email(actor),
+                        "project_id": project_id,
+                        "build_id": build_id,
+                        "environment": current.key,
+                        "reason": ENVIRONMENT_DELETED,
+                    }),
+                )
+                .await;
+            }
+            Some("promoting") => {
+                mark_failed(pool, id, STALE_PROMOTING).await?;
+                audit(
+                    pool,
+                    actor,
+                    "promotion_failed",
+                    "environment_promotion",
+                    id,
+                    serde_json::json!({
+                        "actor_email": actor_email(actor),
+                        "project_id": project_id,
+                        "build_id": build_id,
+                        "environment": current.key,
+                        "error": STALE_PROMOTING,
+                        "previous_state": state,
+                    }),
+                )
+                .await;
+            }
+            _ => {}
+        }
     }
     sqlx::query("DELETE FROM project_environments WHERE id = ?1 AND project_id = ?2")
         .bind(environment_id)
@@ -719,14 +800,37 @@ async fn ensure_not_promoted(
                 ),
             ));
         }
-        mark_failed(
-            pool,
-            &id,
-            "Oore stopped before it recorded the outcome; check the track in Play Console",
-        )
-        .await?;
+        mark_failed(pool, &id, STALE_PROMOTING).await?;
     }
     Ok(())
+}
+
+const STALE_PROMOTING: &str =
+    "Oore stopped before it recorded the outcome; check the track in Play Console";
+const ENVIRONMENT_DELETED: &str = "environment deleted";
+const INTERRUPTED_BY_RESTART: &str =
+    "Interrupted by daemon restart; check the track in Play Console before promoting again";
+
+/// Mark every `promoting` row failed. Called once at daemon start, before
+/// requests are served, when no promotion can be in flight.
+pub async fn fail_interrupted_promotions(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM environment_promotions WHERE state = 'promoting'")
+            .fetch_all(pool)
+            .await?;
+    for id in &ids {
+        mark_failed(pool, id, INTERRUPTED_BY_RESTART).await?;
+        audit(
+            pool,
+            &ReleaseActor::System,
+            "promotion_failed",
+            "environment_promotion",
+            id,
+            serde_json::json!({ "error": INTERRUPTED_BY_RESTART }),
+        )
+        .await;
+    }
+    Ok(ids.len() as u64)
 }
 
 async fn mark_failed(
@@ -902,6 +1006,13 @@ pub(crate) async fn decide_promotion(
             "This promotion is not waiting for approval",
         ));
     }
+    let requested_by: Option<String> =
+        sqlx::query_scalar("SELECT requested_by FROM environment_promotions WHERE id = ?1")
+            .bind(promotion_id)
+            .fetch_one(deps.pool)
+            .await?;
+    let decided_by = actor_id(actor);
+    let self_decided = requested_by.is_some() && requested_by.as_deref() == decided_by;
     audit(
         deps.pool,
         actor,
@@ -918,6 +1029,10 @@ pub(crate) async fn decide_promotion(
             "build_id": promotion.build_id,
             "environment": environment.key,
             "requested_by": promotion.requested_by_email,
+            "requested_by_id": requested_by,
+            "decided_by_id": decided_by,
+            "self_approval": approve && self_decided,
+            "self_decided": self_decided,
             "reason": reason,
         }),
     )
@@ -1862,5 +1977,284 @@ mod tests {
             load_environment(&pool, "p1", &beta.id).await,
             Err(EnvironmentError::NotFound(_))
         ));
+    }
+
+    async fn audit_details(
+        pool: &SqlitePool,
+        action: &str,
+        resource_id: &str,
+    ) -> serde_json::Value {
+        let details: String = sqlx::query_scalar(
+            "SELECT details FROM audit_logs WHERE action = ?1 AND resource_id = ?2 \
+             ORDER BY id DESC LIMIT 1",
+        )
+        .bind(action)
+        .bind(resource_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        serde_json::from_str(&details).unwrap()
+    }
+
+    async fn promotion_state(pool: &SqlitePool, id: &str) -> (String, Option<String>) {
+        sqlx::query_as("SELECT state, COALESCE(error, decision_reason) FROM environment_promotions WHERE id = ?1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// A pending promotion into `environment_id`, forced into `promoting`
+    /// as if the daemon stopped during the store call.
+    async fn stuck_promotion(deps: ReleaseDeps<'_>, environment_id: &str) -> String {
+        let (dev_role, dev) = developer();
+        let pending = request_promotion(
+            deps,
+            "p1",
+            &dev_role,
+            &dev,
+            CreatePromotionRequest {
+                build_id: "b1".into(),
+                environment_id: environment_id.into(),
+                reason: None,
+            },
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE environment_promotions SET state = 'promoting' WHERE id = ?1")
+            .bind(&pending.id)
+            .execute(deps.pool)
+            .await
+            .unwrap();
+        pending.id
+    }
+
+    #[tokio::test]
+    async fn the_daemon_start_fails_promotions_a_restart_interrupted() {
+        let pool = setup().await;
+        let scheduler = Scheduler::new(16);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (_, lead) = maintainer();
+        let production = create_environment(
+            &pool,
+            "p1",
+            &lead,
+            environment("production", "production", true),
+        )
+        .await
+        .unwrap();
+        internal_upload(deps).await;
+        let stuck = stuck_promotion(deps, &production.id).await;
+
+        assert_eq!(fail_interrupted_promotions(&pool).await.unwrap(), 1);
+        let (state, error) = promotion_state(&pool, &stuck).await;
+        assert_eq!(state, "failed");
+        assert!(error.unwrap().contains("Interrupted by daemon restart"));
+        assert!(
+            audit_details(&pool, "promotion_failed", &stuck).await["error"]
+                .as_str()
+                .unwrap()
+                .contains("daemon restart")
+        );
+        assert_eq!(fail_interrupted_promotions(&pool).await.unwrap(), 0);
+        assert!(store.promotions.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_an_environment_settles_its_open_promotions() {
+        let pool = setup().await;
+        let scheduler = Scheduler::new(16);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (_, lead) = maintainer();
+        let (dev_role, dev) = developer();
+        let beta = create_environment(&pool, "p1", &lead, environment("beta", "open", true))
+            .await
+            .unwrap();
+        let production = create_environment(
+            &pool,
+            "p1",
+            &lead,
+            environment("production", "production", true),
+        )
+        .await
+        .unwrap();
+        internal_upload(deps).await;
+
+        // A row left in `promoting` no longer blocks the delete.
+        let stuck = stuck_promotion(deps, &production.id).await;
+        delete_environment(&pool, "p1", &production.id, &lead)
+            .await
+            .unwrap();
+        assert_eq!(
+            audit_details(&pool, "promotion_failed", &stuck).await["environment"],
+            "production"
+        );
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM environment_promotions").await,
+            0
+        );
+
+        // A pending promotion is rejected, with an audit entry, first.
+        let pending = request_promotion(
+            deps,
+            "p1",
+            &dev_role,
+            &dev,
+            CreatePromotionRequest {
+                build_id: "b1".into(),
+                environment_id: beta.id.clone(),
+                reason: None,
+            },
+        )
+        .await
+        .unwrap();
+        delete_environment(&pool, "p1", &beta.id, &lead)
+            .await
+            .unwrap();
+        let rejected = audit_details(&pool, "promotion_rejected", &pending.id).await;
+        assert_eq!(rejected["reason"], "environment deleted");
+        assert_eq!(rejected["environment"], "beta");
+        assert!(store.promotions.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_promotion_running_now_still_blocks_the_delete() {
+        let pool = setup().await;
+        let scheduler = Scheduler::new(16);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (_, lead) = maintainer();
+        let production = create_environment(
+            &pool,
+            "p1",
+            &lead,
+            environment("production", "production", true),
+        )
+        .await
+        .unwrap();
+        internal_upload(deps).await;
+        let stuck = stuck_promotion(deps, &production.id).await;
+        let lock = promotion_lock("b1", &production.id);
+        let held = lock.lock().await;
+        assert!(matches!(
+            delete_environment(&pool, "p1", &production.id, &lead).await,
+            Err(EnvironmentError::Conflict {
+                code: "promotion_in_progress",
+                ..
+            })
+        ));
+        drop(held);
+        assert_eq!(promotion_state(&pool, &stuck).await.0, "promoting");
+    }
+
+    #[tokio::test]
+    async fn self_approval_is_recorded_in_the_audit_log() {
+        let pool = setup().await;
+        let scheduler = Scheduler::new(16);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (lead_role, lead) = maintainer();
+        let production = create_environment(
+            &pool,
+            "p1",
+            &lead,
+            environment("production", "production", true),
+        )
+        .await
+        .unwrap();
+        internal_upload(deps).await;
+        let pending = request_promotion(
+            deps,
+            "p1",
+            &lead_role,
+            &lead,
+            CreatePromotionRequest {
+                build_id: "b1".into(),
+                environment_id: production.id.clone(),
+                reason: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(pending.state, PromotionState::Pending);
+        decide_promotion(deps, "p1", &pending.id, &lead_role, &lead, true, None)
+            .await
+            .unwrap();
+        let details = audit_details(&pool, "promotion_approved", &pending.id).await;
+        assert_eq!(details["self_approval"], true);
+        assert_eq!(details["requested_by_id"], "u2");
+        assert_eq!(details["decided_by_id"], "u2");
+    }
+
+    #[tokio::test]
+    async fn an_environment_with_releases_keeps_its_track() {
+        let pool = setup().await;
+        let scheduler = Scheduler::new(16);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (_, lead) = maintainer();
+        let internal = create_environment(
+            &pool,
+            "p1",
+            &lead,
+            environment("internal", "internal", false),
+        )
+        .await
+        .unwrap();
+        let unused = create_environment(&pool, "p1", &lead, environment("beta", "open", false))
+            .await
+            .unwrap();
+        internal_upload(deps).await;
+        let moved = |track: &str| UpdateProjectEnvironmentRequest {
+            track: Some(track.into()),
+            ..Default::default()
+        };
+
+        let refused = update_environment(&pool, "p1", &internal.id, &lead, moved("alpha")).await;
+        let Err(error) = refused else {
+            panic!("the track change was accepted");
+        };
+        let (status, Json(body)) = error.into_api();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.error.contains("cannot change"), "{}", body.error);
+        // Other settings still change, and so does the track of an unused one.
+        update_environment(
+            &pool,
+            "p1",
+            &internal.id,
+            &lead,
+            UpdateProjectEnvironmentRequest {
+                name: Some("QA".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let retracked = update_environment(&pool, "p1", &unused.id, &lead, moved("closed"))
+            .await
+            .unwrap();
+        assert_eq!(retracked.track, "closed");
     }
 }
