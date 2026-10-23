@@ -7,9 +7,9 @@ use oore_contract::{
     ApiError, ApprovalPolicy, Build, BuildApproval, BuildApprovalRequest, BuildApprovalResponse,
     BuildApprovalState, BuildChangelogPreviewResponse, BuildContext, BuildDetailResponse,
     BuildEvent, BuildPlatform, BuildStatus, CancelBuildResponse, ConcurrencyPolicy,
-    CreateBuildRequest, CreateBuildResponse, DEFAULT_BUILD_TIMEOUT_MINUTES, ListBuildsResponse,
-    PipelineExecutionConfig, RerunBuildResponse, RunnerPolicyBlockReason, ScheduleTrigger,
-    TriggerConfig, scheduling_labels,
+    CreateBuildRequest, CreateBuildResponse, DEFAULT_BUILD_TIMEOUT_MINUTES,
+    ListBuildActorsResponse, ListBuildsResponse, PipelineExecutionConfig, RerunBuildResponse,
+    RunnerPolicyBlockReason, ScheduleTrigger, TriggerConfig, scheduling_labels,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -750,6 +750,15 @@ pub struct ListBuildsQuery {
     pub pipeline_id: Option<String>,
     pub status: Option<String>,
     pub branch: Option<String>,
+    /// Comma-separated trigger kinds: `manual`, `api`, `schedule`, or a
+    /// webhook event (`push`, `pull_request`, `tag_push`).
+    pub trigger: Option<String>,
+    /// Exact `trigger_actor`.
+    pub actor: Option<String>,
+    /// Unix seconds; builds created at or after this time.
+    pub created_after: Option<i64>,
+    /// Unix seconds; builds created before this time.
+    pub created_before: Option<i64>,
     /// Free-text search across build number, branch, commit, pipeline and
     /// project.
     pub q: Option<String>,
@@ -799,6 +808,223 @@ fn build_search_condition(query: &str, bind_values: &mut Vec<String>) -> String 
         ));
     }
     format!("({})", clauses.join(" OR "))
+}
+
+/// Trigger kinds `GET /v1/builds?trigger=` accepts. `manual`, `api` and
+/// `schedule` are trigger types; the rest are webhook events.
+const TRIGGER_TYPE_FILTERS: &[&str] = &["manual", "api", "schedule"];
+const TRIGGER_EVENT_FILTERS: &[&str] = &["push", "pull_request", "tag_push"];
+
+/// The `trigger_event` values each event filter matches. Webhook builds store
+/// the provider's event name: GitHub's `push`/`pull_request`, GitLab's
+/// `Push Hook`/`Merge Request Hook`, and `tag_push` for any tag push.
+fn trigger_event_aliases(event: &str) -> &'static [&'static str] {
+    match event {
+        "push" => &["push", "Push Hook"],
+        "pull_request" => &["pull_request", "Merge Request Hook"],
+        "tag_push" => &["tag_push", "Tag Push Hook"],
+        _ => &[],
+    }
+}
+const MAX_ACTOR_FILTER_CHARS: usize = 320;
+
+type ApiErr = (StatusCode, Json<ApiError>);
+
+fn invalid_input(message: &str) -> ApiErr {
+    api_err(StatusCode::BAD_REQUEST, "invalid_input", message)
+}
+
+/// Restricts builds to projects `viewer` belongs to. `None` sees every build
+/// (owners and admins).
+fn push_viewer_scope(viewer: Option<&str>, conditions: &mut Vec<String>, binds: &mut Vec<String>) {
+    if let Some(user_id) = viewer {
+        binds.push(user_id.to_string());
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = builds.project_id AND pm.user_id = ?{})",
+            binds.len()
+        ));
+    }
+}
+
+/// Splits a comma-separated filter into sorted, unique, non-empty values.
+fn split_filter_values(raw: &str) -> Vec<&str> {
+    let mut values = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    values
+}
+
+fn placeholders(values: &[&str], binds: &mut Vec<String>) -> String {
+    values
+        .iter()
+        .map(|value| {
+            binds.push((*value).to_string());
+            format!("?{}", binds.len())
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// WHERE conditions and their bind values for `GET /v1/builds`, scoped to
+/// what `viewer` may see. Every filter reads `builds` columns only so the
+/// count query needs no joins.
+fn build_list_conditions(
+    params: &ListBuildsQuery,
+    viewer: Option<&str>,
+) -> Result<(Vec<String>, Vec<String>), ApiErr> {
+    let mut conditions = Vec::new();
+    let mut bind_values: Vec<String> = Vec::new();
+
+    push_viewer_scope(viewer, &mut conditions, &mut bind_values);
+    if let Some(ref project_id) = params.project_id {
+        bind_values.push(project_id.clone());
+        conditions.push(format!("builds.project_id = ?{}", bind_values.len()));
+    }
+    if let Some(ref pipeline_id) = params.pipeline_id {
+        bind_values.push(pipeline_id.clone());
+        conditions.push(format!("builds.pipeline_id = ?{}", bind_values.len()));
+    }
+    if let Some(ref status) = params.status {
+        let values = split_filter_values(status);
+        if values.len() > 9 {
+            return Err(invalid_input(
+                "status accepts at most 9 comma-separated values",
+            ));
+        }
+        if values.is_empty() {
+            conditions.push("1 = 0".to_string());
+        } else {
+            conditions.push(format!(
+                "builds.status IN ({})",
+                placeholders(&values, &mut bind_values)
+            ));
+        }
+    }
+    if let Some(ref branch) = params.branch {
+        bind_values.push(branch.clone());
+        conditions.push(format!("builds.branch = ?{}", bind_values.len()));
+    }
+    if let Some(ref trigger) = params.trigger {
+        let values = split_filter_values(trigger);
+        if let Some(unknown) = values.iter().find(|value| {
+            !TRIGGER_TYPE_FILTERS.contains(value) && !TRIGGER_EVENT_FILTERS.contains(value)
+        }) {
+            return Err(invalid_input(&format!(
+                "unknown trigger '{unknown}'; use manual, api, schedule, push, pull_request, or tag_push"
+            )));
+        }
+        let (types, events): (Vec<&str>, Vec<&str>) = values
+            .into_iter()
+            .partition(|value| TRIGGER_TYPE_FILTERS.contains(value));
+        let mut clauses = Vec::new();
+        if !types.is_empty() {
+            clauses.push(format!(
+                "builds.trigger_type IN ({})",
+                placeholders(&types, &mut bind_values)
+            ));
+        }
+        if !events.is_empty() {
+            let stored = events
+                .iter()
+                .flat_map(|event| trigger_event_aliases(event).iter().copied())
+                .collect::<Vec<_>>();
+            clauses.push(format!(
+                "(builds.trigger_type = 'webhook' AND builds.trigger_event IN ({}))",
+                placeholders(&stored, &mut bind_values)
+            ));
+        }
+        conditions.push(if clauses.is_empty() {
+            "1 = 0".to_string()
+        } else {
+            format!("({})", clauses.join(" OR "))
+        });
+    }
+    if let Some(actor) = normalize_optional(params.actor.clone()) {
+        if actor.chars().count() > MAX_ACTOR_FILTER_CHARS {
+            return Err(invalid_input("actor must be at most 320 characters"));
+        }
+        bind_values.push(actor);
+        conditions.push(format!("builds.trigger_actor = ?{}", bind_values.len()));
+    }
+    for (value, name) in [
+        (params.created_after, "created_after"),
+        (params.created_before, "created_before"),
+    ] {
+        if value.is_some_and(|seconds| seconds < 0) {
+            return Err(invalid_input(&format!("{name} must not be negative")));
+        }
+    }
+    if let (Some(after), Some(before)) = (params.created_after, params.created_before)
+        && after >= before
+    {
+        return Err(invalid_input(
+            "created_after must be earlier than created_before",
+        ));
+    }
+    if let Some(after) = params.created_after {
+        bind_values.push(after.to_string());
+        conditions.push(format!(
+            "builds.created_at >= CAST(?{} AS INTEGER)",
+            bind_values.len()
+        ));
+    }
+    if let Some(before) = params.created_before {
+        bind_values.push(before.to_string());
+        conditions.push(format!(
+            "builds.created_at < CAST(?{} AS INTEGER)",
+            bind_values.len()
+        ));
+    }
+    if let Some(q) = normalize_optional(params.q.clone()) {
+        if q.chars().count() > 200 {
+            return Err(invalid_input("q must be at most 200 characters"));
+        }
+        conditions.push(build_search_condition(&q, &mut bind_values));
+    }
+
+    Ok((conditions, bind_values))
+}
+
+fn where_sql(conditions: &[String]) -> String {
+    if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    }
+}
+
+/// The `GET /v1/builds` page query: `bind_count` filter values, then the
+/// limit and offset.
+fn build_list_query(where_clause: &str, order_by: &str, bind_count: usize) -> String {
+    format!(
+        "SELECT builds.*, projects.name AS project_name, integration_repositories.id AS repository_id, integration_repositories.avatar_url AS project_avatar_url, \
+         integration_repositories.full_name AS repository_full_name, integrations.provider AS repository_provider, \
+         integrations.host_url AS repository_host_url, pipelines.name AS pipeline_name, runners.name AS runner_name, \
+         CASE \
+           WHEN builds.status != 'queued' THEN NULL \
+           WHEN integration_repositories.id IS NULL \
+             OR json_extract(builds.config_snapshot, '$.repository_id') IS NULL \
+             OR json_extract(builds.config_snapshot, '$.repository_id') != projects.repository_id \
+             THEN 'repository_unavailable' \
+           WHEN COALESCE(instance_preferences.direct_macos_runner_paused, 0) = 1 THEN 'instance_paused' \
+           ELSE NULL \
+         END AS runner_policy_block_reason \
+         FROM builds \
+         LEFT JOIN projects ON projects.id = builds.project_id \
+         LEFT JOIN integration_repositories ON integration_repositories.id = projects.repository_id \
+         LEFT JOIN integration_installations ON integration_installations.id = integration_repositories.installation_id \
+         LEFT JOIN integrations ON integrations.id = integration_installations.integration_id \
+         LEFT JOIN instance_preferences ON instance_preferences.id = 1 \
+         LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
+         LEFT JOIN runners ON runners.id = builds.runner_id \
+         {where_clause} ORDER BY {order_by} LIMIT ?{} OFFSET ?{}",
+        bind_count + 1,
+        bind_count + 2
+    )
 }
 
 fn build_order_clause(
@@ -1362,99 +1588,14 @@ pub async fn list_builds(
     let offset = params.offset.unwrap_or(0);
     let order_by = build_order_clause(params.sort.as_deref(), params.direction.as_deref())?;
 
-    // Build dynamic query with filters
-    let mut conditions = Vec::new();
-    let mut bind_values: Vec<String> = Vec::new();
+    let viewer =
+        (auth.0.role != "owner" && auth.0.role != "admin").then_some(auth.0.user_id.as_str());
+    let (conditions, bind_values) = build_list_conditions(&params, viewer)?;
 
-    if auth.0.role != "owner" && auth.0.role != "admin" {
-        bind_values.push(auth.0.user_id.clone());
-        conditions.push(format!(
-            "EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = builds.project_id AND pm.user_id = ?{})",
-            bind_values.len()
-        ));
-    }
-    if let Some(ref project_id) = params.project_id {
-        bind_values.push(project_id.clone());
-        conditions.push(format!("builds.project_id = ?{}", bind_values.len()));
-    }
-    if let Some(ref pipeline_id) = params.pipeline_id {
-        bind_values.push(pipeline_id.clone());
-        conditions.push(format!("builds.pipeline_id = ?{}", bind_values.len()));
-    }
-    if let Some(ref status) = params.status {
-        let mut values = status
-            .split(',')
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>();
-        values.sort_unstable();
-        values.dedup();
-        if values.len() > 9 {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_input",
-                "status accepts at most 9 comma-separated values",
-            ));
-        }
-        if values.is_empty() {
-            conditions.push("1 = 0".to_string());
-        }
-        let mut placeholders = Vec::new();
-        for value in values {
-            bind_values.push(value.to_string());
-            placeholders.push(format!("?{}", bind_values.len()));
-        }
-        if !placeholders.is_empty() {
-            conditions.push(format!("builds.status IN ({})", placeholders.join(", ")));
-        }
-    }
-    if let Some(ref branch) = params.branch {
-        bind_values.push(branch.clone());
-        conditions.push(format!("builds.branch = ?{}", bind_values.len()));
-    }
-    if let Some(q) = normalize_optional(params.q) {
-        if q.chars().count() > 200 {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_input",
-                "q must be at most 200 characters",
-            ));
-        }
-        conditions.push(build_search_condition(&q, &mut bind_values));
-    }
-
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
+    let where_clause = where_sql(&conditions);
 
     let count_query = format!("SELECT COUNT(*) FROM builds {where_clause}");
-    let list_query = format!(
-        "SELECT builds.*, projects.name AS project_name, integration_repositories.id AS repository_id, integration_repositories.avatar_url AS project_avatar_url, \
-         integration_repositories.full_name AS repository_full_name, integrations.provider AS repository_provider, \
-         integrations.host_url AS repository_host_url, pipelines.name AS pipeline_name, runners.name AS runner_name, \
-         CASE \
-           WHEN builds.status != 'queued' THEN NULL \
-           WHEN integration_repositories.id IS NULL \
-             OR json_extract(builds.config_snapshot, '$.repository_id') IS NULL \
-             OR json_extract(builds.config_snapshot, '$.repository_id') != projects.repository_id \
-             THEN 'repository_unavailable' \
-           WHEN COALESCE(instance_preferences.direct_macos_runner_paused, 0) = 1 THEN 'instance_paused' \
-           ELSE NULL \
-         END AS runner_policy_block_reason \
-         FROM builds \
-         LEFT JOIN projects ON projects.id = builds.project_id \
-         LEFT JOIN integration_repositories ON integration_repositories.id = projects.repository_id \
-         LEFT JOIN integration_installations ON integration_installations.id = integration_repositories.installation_id \
-         LEFT JOIN integrations ON integrations.id = integration_installations.integration_id \
-         LEFT JOIN instance_preferences ON instance_preferences.id = 1 \
-         LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
-         LEFT JOIN runners ON runners.id = builds.runner_id \
-         {where_clause} ORDER BY {order_by} LIMIT ?{} OFFSET ?{}",
-        bind_values.len() + 1,
-        bind_values.len() + 2
-    );
+    let list_query = build_list_query(&where_clause, &order_by, bind_values.len());
 
     // Execute count query
     let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_query));
@@ -1482,6 +1623,74 @@ pub async fn list_builds(
     let builds = rows.iter().map(row_to_redacted_build).collect();
 
     Ok(Json(ListBuildsResponse { builds, total }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListBuildActorsQuery {
+    pub project_id: Option<String>,
+    pub q: Option<String>,
+    pub limit: Option<i64>,
+}
+
+/// Distinct actors of the builds `viewer` can see, most recently active first.
+async fn query_build_actors(
+    pool: &sqlx::SqlitePool,
+    params: &ListBuildActorsQuery,
+    viewer: Option<&str>,
+) -> Result<Vec<String>, ApiErr> {
+    let limit = params.limit.unwrap_or(50);
+    if limit <= 0 {
+        return Err(invalid_input("limit must be greater than zero"));
+    }
+    let limit = limit.min(200);
+    let mut conditions = vec!["builds.trigger_actor IS NOT NULL".to_string()];
+    let mut binds = Vec::new();
+    push_viewer_scope(viewer, &mut conditions, &mut binds);
+    if let Some(project_id) = normalize_optional(params.project_id.clone()) {
+        binds.push(project_id);
+        conditions.push(format!("builds.project_id = ?{}", binds.len()));
+    }
+    if let Some(q) = normalize_optional(params.q.clone()) {
+        if q.chars().count() > 200 {
+            return Err(invalid_input("q must be at most 200 characters"));
+        }
+        binds.push(format!("%{}%", escape_like(&q.to_lowercase())));
+        conditions.push(format!(
+            "lower(builds.trigger_actor) LIKE ?{} ESCAPE '\\'",
+            binds.len()
+        ));
+    }
+    let sql = format!(
+        "SELECT builds.trigger_actor FROM builds WHERE {} \
+         GROUP BY builds.trigger_actor \
+         ORDER BY MAX(builds.created_at) DESC, builds.trigger_actor LIMIT ?{}",
+        conditions.join(" AND "),
+        binds.len() + 1
+    );
+    let mut query = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql));
+    for bind in &binds {
+        query = query.bind(bind);
+    }
+    query.bind(limit).fetch_all(pool).await.map_err(|e| {
+        error!(error = %e, "failed to list build actors");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list build actors",
+        )
+    })
+}
+
+/// `GET /v1/builds/actors` — who triggered the builds the caller can see.
+pub async fn list_build_actors(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Query(params): Query<ListBuildActorsQuery>,
+) -> ApiResult<ListBuildActorsResponse> {
+    let viewer =
+        (auth.0.role != "owner" && auth.0.role != "admin").then_some(auth.0.user_id.as_str());
+    let actors = query_build_actors(&state.db, &params, viewer).await?;
+    Ok(Json(ListBuildActorsResponse { actors }))
 }
 
 /// `GET /v1/builds/{build_id}` — build detail with events timeline.
@@ -3215,5 +3424,353 @@ mod tests {
         // Pipeline and project names match every build in them.
         assert_eq!(matches(&pool, "relea").await, ["b1", "b2", "b3"]);
         assert_eq!(matches(&pool, "app").await, ["b1", "b2", "b3"]);
+    }
+
+    fn list_params() -> ListBuildsQuery {
+        ListBuildsQuery {
+            project_id: None,
+            pipeline_id: None,
+            status: None,
+            branch: None,
+            trigger: None,
+            actor: None,
+            created_after: None,
+            created_before: None,
+            q: None,
+            limit: None,
+            offset: None,
+            sort: None,
+            direction: None,
+        }
+    }
+
+    async fn insert_filter_builds(pool: &sqlx::SqlitePool) {
+        sqlx::query(
+            "INSERT INTO projects (id, name, created_by, created_at, updated_at) \
+             VALUES ('p2', 'Other', 'u1', 0, 0)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO pipelines (id, project_id, name, created_at, updated_at) \
+             VALUES ('pl2', 'p2', 'nightly', 0, 0)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        for (id, project, pipeline, number, trigger_type, event, actor, created_at) in [
+            (
+                "push",
+                "p1",
+                "pl1",
+                1,
+                "webhook",
+                Some("push"),
+                Some("octocat"),
+                100,
+            ),
+            (
+                "pr",
+                "p1",
+                "pl1",
+                2,
+                "webhook",
+                Some("pull_request"),
+                Some("hubot"),
+                200,
+            ),
+            (
+                "tag",
+                "p1",
+                "pl1",
+                3,
+                "webhook",
+                Some("tag_push"),
+                Some("octocat"),
+                300,
+            ),
+            (
+                "manual",
+                "p1",
+                "pl1",
+                4,
+                "manual",
+                None,
+                Some("lead@example.com"),
+                400,
+            ),
+            (
+                "rerun",
+                "p1",
+                "pl1",
+                5,
+                "manual",
+                Some("rerun"),
+                Some("lead@example.com"),
+                500,
+            ),
+            (
+                "nightly",
+                "p2",
+                "pl2",
+                1,
+                "schedule",
+                Some("schedule"),
+                None,
+                600,
+            ),
+            (
+                "hidden",
+                "p2",
+                "pl2",
+                2,
+                "webhook",
+                Some("push"),
+                Some("stranger"),
+                700,
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, trigger_event, trigger_actor, queued_at, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, 'succeeded', ?5, ?6, ?7, ?8, ?8, ?8)",
+            )
+            .bind(id)
+            .bind(project)
+            .bind(pipeline)
+            .bind(number)
+            .bind(trigger_type)
+            .bind(event)
+            .bind(actor)
+            .bind(created_at)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    async fn listed(
+        pool: &sqlx::SqlitePool,
+        params: &ListBuildsQuery,
+        viewer: Option<&str>,
+    ) -> Vec<String> {
+        let (conditions, binds) = build_list_conditions(params, viewer).unwrap();
+        let sql = format!(
+            "SELECT id FROM builds {} ORDER BY created_at",
+            where_sql(&conditions)
+        );
+        let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql));
+        for bind in &binds {
+            q = q.bind(bind);
+        }
+        q.fetch_all(pool).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn builds_filter_by_trigger_kind() {
+        let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
+        insert_filter_builds(&pool).await;
+        let by = |trigger: &str| ListBuildsQuery {
+            trigger: Some(trigger.to_string()),
+            ..list_params()
+        };
+
+        assert_eq!(listed(&pool, &by("push"), None).await, ["push", "hidden"]);
+        assert_eq!(listed(&pool, &by("pull_request"), None).await, ["pr"]);
+        assert_eq!(listed(&pool, &by("tag_push"), None).await, ["tag"]);
+        // A rerun is manual whatever its event says.
+        assert_eq!(
+            listed(&pool, &by("manual"), None).await,
+            ["manual", "rerun"]
+        );
+        assert_eq!(listed(&pool, &by("schedule"), None).await, ["nightly"]);
+        assert_eq!(
+            listed(&pool, &by("schedule, pull_request,schedule"), None).await,
+            ["pr", "nightly"]
+        );
+        assert!(listed(&pool, &by(" , "), None).await.is_empty());
+
+        // GitLab builds store GitLab's event names.
+        for (id, number, event) in [
+            ("gl-push", 8, "Push Hook"),
+            ("gl-mr", 9, "Merge Request Hook"),
+        ] {
+            sqlx::query(
+                "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, trigger_event, queued_at, created_at, updated_at) \
+                 VALUES (?1, 'p1', 'pl1', ?2, 'succeeded', 'webhook', ?3, 800, 800, 800)",
+            )
+            .bind(id)
+            .bind(number)
+            .bind(event)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            listed(&pool, &by("push"), None).await,
+            ["push", "hidden", "gl-push"]
+        );
+        assert_eq!(
+            listed(&pool, &by("pull_request"), None).await,
+            ["pr", "gl-mr"]
+        );
+
+        let error = build_list_conditions(&by("push,cron"), None).unwrap_err();
+        assert_eq!(error.0, StatusCode::BAD_REQUEST);
+        assert!(error.1.error.contains("cron"), "{}", error.1.error);
+    }
+
+    #[tokio::test]
+    async fn builds_filter_by_actor_and_creation_time() {
+        let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
+        insert_filter_builds(&pool).await;
+
+        let actor = ListBuildsQuery {
+            actor: Some(" octocat ".to_string()),
+            ..list_params()
+        };
+        assert_eq!(listed(&pool, &actor, None).await, ["push", "tag"]);
+
+        // `created_after` is inclusive and `created_before` exclusive.
+        let window = ListBuildsQuery {
+            created_after: Some(200),
+            created_before: Some(500),
+            ..list_params()
+        };
+        assert_eq!(listed(&pool, &window, None).await, ["pr", "tag", "manual"]);
+
+        let combined = ListBuildsQuery {
+            trigger: Some("push,tag_push".to_string()),
+            actor: Some("octocat".to_string()),
+            created_after: Some(150),
+            ..list_params()
+        };
+        assert_eq!(listed(&pool, &combined, None).await, ["tag"]);
+
+        for invalid in [
+            ListBuildsQuery {
+                created_after: Some(500),
+                created_before: Some(500),
+                ..list_params()
+            },
+            ListBuildsQuery {
+                created_before: Some(-1),
+                ..list_params()
+            },
+            ListBuildsQuery {
+                actor: Some("a".repeat(321)),
+                ..list_params()
+            },
+        ] {
+            let error = build_list_conditions(&invalid, None).unwrap_err();
+            assert_eq!(error.0, StatusCode::BAD_REQUEST, "{}", error.1.error);
+        }
+    }
+
+    #[tokio::test]
+    async fn filters_and_actors_stay_inside_the_viewers_projects() {
+        let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
+        insert_filter_builds(&pool).await;
+        sqlx::query(
+            "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+             VALUES ('u2', 'dev@example.com', 'sub2', 'developer', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO project_members (id, project_id, user_id, role, created_by, created_at, updated_at) \
+             VALUES ('m1', 'p1', 'u2', 'developer', 'u1', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let push = ListBuildsQuery {
+            trigger: Some("push".to_string()),
+            ..list_params()
+        };
+        assert_eq!(listed(&pool, &push, Some("u2")).await, ["push"]);
+        let stranger = ListBuildsQuery {
+            actor: Some("stranger".to_string()),
+            ..list_params()
+        };
+        assert!(listed(&pool, &stranger, Some("u2")).await.is_empty());
+
+        let all = ListBuildActorsQuery {
+            project_id: None,
+            q: None,
+            limit: None,
+        };
+        assert_eq!(
+            query_build_actors(&pool, &all, None).await.unwrap(),
+            ["stranger", "lead@example.com", "octocat", "hubot"]
+        );
+        assert_eq!(
+            query_build_actors(&pool, &all, Some("u2")).await.unwrap(),
+            ["lead@example.com", "octocat", "hubot"]
+        );
+        let search = ListBuildActorsQuery {
+            project_id: Some("p1".to_string()),
+            q: Some("OCTO".to_string()),
+            limit: Some(5),
+        };
+        assert_eq!(
+            query_build_actors(&pool, &search, None).await.unwrap(),
+            ["octocat"]
+        );
+    }
+
+    /// The query plan of the handler's real page query for `params`.
+    async fn page_plan(pool: &sqlx::SqlitePool, params: &ListBuildsQuery) -> Vec<String> {
+        let (conditions, binds) = build_list_conditions(params, None).unwrap();
+        let order_by = build_order_clause(None, None).unwrap();
+        let sql = format!(
+            "EXPLAIN QUERY PLAN {}",
+            build_list_query(&where_sql(&conditions), &order_by, binds.len())
+        );
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for bind in &binds {
+            query = query.bind(bind);
+        }
+        let rows = query
+            .bind(20_i64)
+            .bind(0_i64)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        rows.iter().map(|row| row.get("detail")).collect()
+    }
+
+    #[tokio::test]
+    async fn builds_pages_read_an_index_in_page_order() {
+        let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
+        for (params, index) in [
+            (list_params(), "idx_builds_created_at"),
+            (
+                ListBuildsQuery {
+                    trigger: Some("manual".to_string()),
+                    ..list_params()
+                },
+                "idx_builds_trigger_type",
+            ),
+            (
+                ListBuildsQuery {
+                    actor: Some("octocat".to_string()),
+                    ..list_params()
+                },
+                "idx_builds_trigger_actor",
+            ),
+        ] {
+            let plan = page_plan(&pool, &params).await;
+            assert!(
+                plan.iter().any(|detail| detail.contains(index)),
+                "{index}: {plan:?}"
+            );
+            assert!(
+                !plan.iter().any(|detail| detail.contains("TEMP B-TREE")),
+                "{index} sorts the whole set: {plan:?}"
+            );
+        }
     }
 }

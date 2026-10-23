@@ -40,6 +40,10 @@ import {
 } from '@/lib/releases'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { focusRingVariants, textVariants } from '@/lib/recipes'
 
 const VITAL_LABELS = {
   crash_rate: 'Crash rate',
@@ -167,14 +171,17 @@ function VitalStat({ vital }: { vital: StoreVital }) {
     <Tooltip>
       <TooltipTrigger
         render={
-          <div
+          <Row
             tabIndex={0}
-            className="flex min-w-0 items-center gap-3 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            gap={3}
+            className={cn(focusRingVariants(), 'min-w-0 rounded-md')}
           />
         }
       >
         <div className="flex min-w-0 flex-col">
-          <span className="truncate text-xs text-muted-foreground">
+          <span
+            className={cn(textVariants({ variant: 'caption' }), 'truncate')}
+          >
             {VITAL_LABELS[vital.kind]}
           </span>
           <span className="flex items-center gap-1.5 text-sm font-medium tabular-nums">
@@ -218,14 +225,19 @@ function IssueRow({ issue }: { issue: StoreErrorIssue }) {
           {issue.cause}
         </span>
         <span
-          className="truncate text-xs text-muted-foreground"
+          className={cn(textVariants({ variant: 'caption' }), 'truncate')}
           title={issue.location ?? undefined}
         >
           {kind}
           {issue.location ? ` · ${issue.location}` : ''}
         </span>
       </div>
-      <span className="shrink-0 text-right text-xs text-muted-foreground tabular-nums">
+      <span
+        className={cn(
+          textVariants({ variant: 'caption' }),
+          'shrink-0 text-right tabular-nums',
+        )}
+      >
         {issue.reports.toLocaleString()} reports ·{' '}
         {issue.users.toLocaleString()} users
       </span>
@@ -253,17 +265,20 @@ function AppRow({ app }: { app: StoreAppVitals }) {
   const issues = app.issues.slice(0, 3)
   const storeLabel = RELEASE_STORE_LABEL[app.store]
   return (
-    <div
+    <Stack
       id={storeHealthAnchor(app.project_id, app.store)}
-      className="flex scroll-mt-20 flex-col gap-3 p-4"
+      gap={3}
+      className="scroll-mt-20 p-4"
     >
-      <div className="flex flex-col gap-3 @3xl/main:flex-row @3xl/main:items-center">
+      <Stack gap={3} className="@3xl/main:flex-row @3xl/main:items-center">
         <div className="flex min-w-0 items-start justify-between gap-3 @3xl/main:w-64 @3xl/main:shrink-0">
           <div className="flex min-w-0 flex-col">
             <span className="truncate text-sm font-medium">
               {app.project_name} · {storeLabel}
             </span>
-            <span className="truncate text-xs text-muted-foreground">
+            <span
+              className={cn(textVariants({ variant: 'caption' }), 'truncate')}
+            >
               {app.app_identifier}
               {app.refreshed_at == null
                 ? ''
@@ -275,16 +290,17 @@ function AppRow({ app }: { app: StoreAppVitals }) {
           </Badge>
         </div>
         {app.vitals.length > 0 ? (
+          // oxlint-disable-next-line layout/max-class-utilities -- responsive vitals grid
           <div className="grid min-w-0 flex-1 grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 @5xl/main:flex @5xl/main:flex-wrap">
             {app.vitals.map((vital) => (
               <VitalStat key={vital.kind} vital={vital} />
             ))}
           </div>
         ) : !app.error ? (
-          <p className="flex-1 text-xs text-muted-foreground">
+          <Text variant="caption" className="flex-1">
             Oore reads this app's numbers within a few minutes of its first
             release.
-          </p>
+          </Text>
         ) : (
           <div className="flex-1" />
         )}
@@ -294,7 +310,7 @@ function AppRow({ app }: { app: StoreAppVitals }) {
         >
           {status.label}
         </Badge>
-      </div>
+      </Stack>
       {app.error ? (
         <Alert variant="destructive">
           <AlertDescription className="flex flex-col gap-2 @3xl/main:flex-row @3xl/main:items-center @3xl/main:justify-between">
@@ -353,7 +369,7 @@ function AppRow({ app }: { app: StoreAppVitals }) {
           </CollapsibleContent>
         </Collapsible>
       ) : null}
-    </div>
+    </Stack>
   )
 }
 

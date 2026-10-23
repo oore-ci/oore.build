@@ -25,6 +25,7 @@ import {
   SetupStepIndicator,
 } from '@/components/setup-route-components'
 import { FocusedFlowHeader } from '@/components/focused-flow-header'
+import { FocusedFlowLayout } from '@/components/focused-flow-layout'
 
 function normalizeHandoffBackend(value: string): string | null {
   try {
@@ -171,7 +172,7 @@ function SetupLayout() {
   useExpiredSetupSessionRedirect(isExpired)
 
   return (
-    <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
+    <FocusedFlowLayout>
       <PageMeta title="Setup" />
       <div className="w-full max-w-lg space-y-5 sm:space-y-6">
         <FocusedFlowHeader
@@ -194,6 +195,6 @@ function SetupLayout() {
           <Outlet />
         </div>
       </div>
-    </div>
+    </FocusedFlowLayout>
   )
 }

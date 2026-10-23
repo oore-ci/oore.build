@@ -9,6 +9,9 @@ import { Button } from '@/components/ui/button'
 import { ItemGroup, ItemSeparator } from '@/components/ui/item'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/utils'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { textVariants } from '@/lib/recipes'
 
 /**
  * One heading, count, scope and action treatment for every Home section.
@@ -40,16 +43,16 @@ export function DashboardSection({
   return (
     <section aria-labelledby={titleId} className="flex min-w-0 flex-col gap-3">
       <div className="flex min-h-7 flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <div className="flex min-w-0 items-center gap-2">
+        <Row gap={2} className="min-w-0">
           <h2 id={titleId} className="text-sm font-semibold">
             {title}
           </h2>
           {count == null ? null : <Badge variant="outline">{count}</Badge>}
           {scope ? (
-            <span className="text-sm text-muted-foreground">{scope}</span>
+            <span className={textVariants({ variant: 'muted' })}>{scope}</span>
           ) : null}
-        </div>
-        <div className="flex items-center gap-2">
+        </Row>
+        <Row gap={2}>
           {open ? action : null}
           {collapsible ? (
             <Button
@@ -68,12 +71,12 @@ export function DashboardSection({
               />
             </Button>
           ) : null}
-        </div>
+        </Row>
       </div>
       {open ? (
-        <div id={contentId} className="flex min-w-0 flex-col gap-3">
+        <Stack id={contentId} gap={3} className="min-w-0">
           {children}
-        </div>
+        </Stack>
       ) : null}
     </section>
   )

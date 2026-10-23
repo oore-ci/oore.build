@@ -1,21 +1,18 @@
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Calendar03Icon,
-  InformationCircleIcon,
-} from '@hugeicons/core-free-icons'
+import { InformationCircleIcon } from '@hugeicons/core-free-icons'
 import { createFileRoute, useSearch } from '@tanstack/react-router'
-import { format } from 'date-fns'
-import type { DateRange } from 'react-day-picker'
-import * as z from 'zod'
 import { searchChoice, searchNumber, searchString } from '@/lib/search-input'
-import type { SearchInput, SearchValue } from '@/lib/search-input'
+import type { SearchInput } from '@/lib/search-input'
 
 import type { SortDirection } from '@/components/data-table-features'
 import { DataTableSelectFilter } from '@/components/data-table'
+import {
+  DateRangeFilter,
+  searchDateRange,
+  validSearchDate,
+} from '@/components/date-range-filter'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
-import { Button } from '@/components/ui/button'
-import { Calendar } from '@/components/ui/calendar'
 import {
   Empty,
   EmptyDescription,
@@ -23,11 +20,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
 import { useAuditLogs } from '@/hooks/use-audit-logs'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import {
@@ -69,16 +61,6 @@ const AUDIT_SORT_VALUES = new Set<AuditSort>([
   'resource_type',
 ])
 
-function validDate(value: SearchValue): string | undefined {
-  const parsed = z.string().safeParse(value)
-  if (!parsed.success || !/^\d{4}-\d{2}-\d{2}$/.test(parsed.data)) {
-    return undefined
-  }
-  return Number.isNaN(new Date(`${parsed.data}T00:00:00`).getTime())
-    ? undefined
-    : parsed.data
-}
-
 function parseSearch(search: SearchInput): AuditLogSearch {
   const page = searchNumber(search, 'page')
   const pageSize = searchNumber(search, 'pageSize')
@@ -96,8 +78,8 @@ function parseSearch(search: SearchInput): AuditLogSearch {
   return {
     q: q || undefined,
     resource,
-    from: validDate(searchString(search, 'from')),
-    to: validDate(searchString(search, 'to')),
+    from: validSearchDate(searchString(search, 'from')),
+    to: validSearchDate(searchString(search, 'to')),
     sort,
     direction:
       direction === 'asc' || direction === 'desc' ? direction : undefined,
@@ -119,67 +101,6 @@ export const Route = createFileRoute('/settings/audit-log')({
   },
   component: AuditLogPage,
 })
-
-function dateFromSearch(value?: string): Date | undefined {
-  if (!value) return undefined
-  const date = new Date(`${value}T00:00:00`)
-  return Number.isNaN(date.getTime()) ? undefined : date
-}
-
-function AuditDateRangePicker({
-  from,
-  onChange,
-  to,
-}: {
-  from?: string
-  onChange: (range: DateRange | undefined) => void
-  to?: string
-}) {
-  const fromDate = dateFromSearch(from)
-  const toDate = dateFromSearch(to)
-  const selected: DateRange | undefined =
-    fromDate || toDate ? { from: fromDate, to: toDate } : undefined
-  const label = fromDate
-    ? toDate
-      ? `${format(fromDate, 'MMM d, yyyy')} to ${format(toDate, 'MMM d, yyyy')}`
-      : `From ${format(fromDate, 'MMM d, yyyy')}`
-    : toDate
-      ? `Through ${format(toDate, 'MMM d, yyyy')}`
-      : 'Pick a date range'
-
-  return (
-    <Popover>
-      <PopoverTrigger
-        render={
-          <Button
-            variant="secondary"
-            className="max-w-64 justify-start overflow-hidden text-left font-normal"
-            aria-label={`Date range: ${label}`}
-          />
-        }
-      >
-        <HugeiconsIcon
-          icon={Calendar03Icon}
-          data-icon="inline-start"
-          aria-hidden
-        />
-        <span className="truncate">{label}</span>
-      </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        className="max-h-[calc(100dvh-2rem)] w-auto max-w-[calc(100vw-2rem)] overflow-auto p-0"
-      >
-        <Calendar
-          mode="range"
-          selected={selected}
-          defaultMonth={fromDate ?? toDate}
-          numberOfMonths={2}
-          onSelect={onChange}
-        />
-      </PopoverContent>
-    </Popover>
-  )
-}
 
 function AuditLogPage() {
   const navigate = Route.useNavigate()
@@ -278,17 +199,11 @@ function AuditLogPage() {
                 })
               }
             />
-            <AuditDateRangePicker
+            <DateRangeFilter
               from={search.from}
               to={search.to}
               onChange={(range) =>
-                updateSearch({
-                  from: range?.from
-                    ? format(range.from, 'yyyy-MM-dd')
-                    : undefined,
-                  to: range?.to ? format(range.to, 'yyyy-MM-dd') : undefined,
-                  page: undefined,
-                })
+                updateSearch({ ...searchDateRange(range), page: undefined })
               }
             />
           </>

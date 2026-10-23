@@ -49,6 +49,7 @@ import {
 } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AppStoreConnectKeyDialog } from './app-store-connect-key-dialog'
+import { Text } from '@/components/layout/text'
 
 const APP_STORE_CONNECT_DOCS_URL =
   'https://docs.oore.build/build/sign/ios/app-store-connect#2-share-the-key-across-pipelines'
@@ -200,7 +201,7 @@ export function AppStoreConnectKeysPanel({ canWrite }: { canWrite: boolean }) {
         </SettingsSurface>
       )}
       {keys.length > 0 ? (
-        <p className="text-xs text-muted-foreground">
+        <Text variant="caption">
           Pipelines pick a shared key in iOS signing, or upload their own.{' '}
           <a
             href={APP_STORE_CONNECT_DOCS_URL}
@@ -210,7 +211,7 @@ export function AppStoreConnectKeysPanel({ canWrite }: { canWrite: boolean }) {
           >
             Learn more
           </a>
-        </p>
+        </Text>
       ) : null}
 
       <AppStoreConnectKeyDialog

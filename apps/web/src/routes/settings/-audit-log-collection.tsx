@@ -18,6 +18,8 @@ import { formatEnumLabel } from '@/lib/format-utils'
 import { relativeTime } from '@/lib/format-utils'
 import type { AuditLogEntry } from '@oore/client/models'
 import { ROLE_LABELS } from './-user-role-labels'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 export type AuditSort =
   | 'created_at'
@@ -71,7 +73,7 @@ function AuditTime({ entry }: { entry: AuditLogEntry }) {
     <time
       dateTime={new Date(entry.created_at * 1000).toISOString()}
       title={new Date(entry.created_at * 1000).toLocaleString()}
-      className="text-xs whitespace-nowrap text-muted-foreground"
+      className={cn(textVariants({ variant: 'caption' }), 'whitespace-nowrap')}
     >
       {relativeTime(entry.created_at)}
     </time>
@@ -87,8 +89,10 @@ function AuditResourceId({
   type: string
 }) {
   if (!id) return <NotRecorded />
-  const className =
-    'block max-w-48 truncate font-mono text-xs text-muted-foreground'
+  const className = cn(
+    textVariants({ variant: 'mono' }),
+    'block max-w-48 truncate',
+  )
   const linkClassName = `${className} hover:text-foreground hover:underline`
   if (type === 'build')
     return (

@@ -18,6 +18,10 @@ import {
   shortcutKeyCaps,
   type ShortcutEntry,
 } from '@/lib/keyboard-shortcuts'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { rowVariants, textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 /** The sidebar's own shortcut, which comes with the shadcn primitive. */
 const SIDEBAR_ENTRY: ShortcutEntry = {
@@ -78,7 +82,7 @@ export default function KeyboardMapDialog({
             Shortcuts for this page. They never fire while you type.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-5">
+        <Stack gap={5}>
           {sections.map((section) => (
             <section
               key={section.group}
@@ -86,18 +90,28 @@ export default function KeyboardMapDialog({
             >
               <h3
                 id={`shortcuts-${section.group.replaceAll(' ', '-')}`}
-                className="mb-1.5 text-xs font-medium text-muted-foreground"
+                className={cn(
+                  textVariants({ variant: 'caption' }),
+                  'mb-1.5 font-medium',
+                )}
               >
                 {section.group}
               </h3>
               <dl className="divide-y rounded-xl border">
                 {section.entries.map((entry) => (
-                  <div
+                  <Row
                     key={entry.id}
-                    className="flex items-center justify-between gap-4 px-3 py-2"
+                    gap={4}
+                    className="justify-between px-3 py-2"
                   >
                     <dt className="min-w-0 truncate">{entry.label}</dt>
-                    <dd className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    <dd
+                      className={cn(
+                        textVariants({ variant: 'caption' }),
+                        rowVariants({ gap: 1.5 }),
+                        'shrink-0',
+                      )}
+                    >
                       {entry.steps.map((step, index) => (
                         <Fragment key={`${step}-${index}`}>
                           {index > 0 ? <span>then</span> : null}
@@ -111,12 +125,12 @@ export default function KeyboardMapDialog({
                         </Fragment>
                       ))}
                     </dd>
-                  </div>
+                  </Row>
                 ))}
               </dl>
             </section>
           ))}
-        </div>
+        </Stack>
       </DialogContent>
     </Dialog>
   )

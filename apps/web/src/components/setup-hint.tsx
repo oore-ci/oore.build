@@ -5,6 +5,8 @@ import type { ReactNode } from 'react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { monoVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 interface SetupHintProps {
   title: string
@@ -18,7 +20,12 @@ interface SetupHintProps {
 
 function CodeBlock({ code }: { code: string }) {
   return (
-    <pre className="overflow-x-auto rounded-md bg-background p-3 font-mono text-[11px] leading-relaxed text-foreground ring-1 ring-foreground/10">
+    <pre
+      className={cn(
+        monoVariants({ size: '2xs' }),
+        'overflow-x-auto rounded-md bg-background p-3 leading-relaxed text-foreground ring-1 ring-foreground/10',
+      )}
+    >
       <code>{code}</code>
     </pre>
   )

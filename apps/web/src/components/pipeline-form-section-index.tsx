@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { cn } from '@/lib/utils'
+import { textVariants } from '@/lib/recipes'
 
 /**
  * Jump links for the long pipeline form. Sticks to the top of the scroll
@@ -40,6 +41,7 @@ export function PipelineSectionIndex({
   return (
     <nav
       aria-label="Pipeline sections"
+      // oxlint-disable-next-line layout/max-class-utilities -- sticky section strip
       className="sticky top-(--header-height) z-20 -mx-1 -mb-4 flex gap-1 overflow-x-auto bg-background/95 px-1 py-2 backdrop-blur supports-backdrop-filter:bg-background/80"
     >
       {sections.map((section) => (
@@ -60,8 +62,10 @@ export function PipelineSectionIndex({
             )
             setActiveId(section.id)
           }}
+          // oxlint-disable-next-line layout/max-class-utilities -- section link chip
           className={cn(
-            'inline-flex h-8 shrink-0 items-center rounded-2xl px-3 text-sm font-medium text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30',
+            textVariants({ variant: 'muted' }),
+            'inline-flex h-8 shrink-0 items-center rounded-2xl px-3 font-medium transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30',
             activeId === section.id && 'bg-muted text-foreground',
           )}
         >

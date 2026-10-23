@@ -15,6 +15,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Text } from '@/components/layout/text'
 
 export function BuildsEmptyState({
   capabilities,
@@ -51,9 +52,9 @@ export function BuildsEmptyState({
               <HugeiconsIcon icon={ArrowRight01Icon} data-icon="inline-end" />
             </Button>
           ) : (
-            <p className="text-sm text-muted-foreground">
+            <Text variant="muted">
               Ask an owner or admin to create the first project.
-            </p>
+            </Text>
           )}
         </EmptyContent>
       </Empty>

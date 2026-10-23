@@ -51,6 +51,8 @@ import { useBuildInsights, type BuildInsightsWindow } from '@/hooks/use-builds'
 import { formatDuration, relativeTime } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
 import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
+import { Stack } from '@/components/layout/stack'
+import { focusRingVariants, stackVariants, textVariants } from '@/lib/recipes'
 
 const WINDOWS: Array<BuildInsightsWindow> = [7, 30, 90]
 
@@ -131,7 +133,7 @@ function MetricCard({
       to={to}
       search={search}
       aria-label={label}
-      className="rounded-xl outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      className={cn(focusRingVariants(), 'rounded-xl')}
     >
       <Card size="sm" className="@container/card h-full">
         <CardHeader>
@@ -339,7 +341,10 @@ function BuildTrend({ insights }: { insights: BuildInsightsResponse }) {
       <CardContent className="flex flex-1 flex-col gap-2">
         <div className="relative flex min-h-40 flex-1 gap-2">
           <div
-            className="-my-2 flex w-6 flex-col justify-between text-right text-xs text-muted-foreground tabular-nums"
+            className={cn(
+              textVariants({ variant: 'caption' }),
+              '-my-2 flex w-6 flex-col justify-between text-right tabular-nums',
+            )}
             aria-hidden
           >
             {ticks.map((tick) => (
@@ -374,7 +379,11 @@ function BuildTrend({ insights }: { insights: BuildInsightsResponse }) {
                         role="listitem"
                         tabIndex={0}
                         aria-label={`${dayLabel(day)}: ${daySummary(day)}`}
-                        className="group flex h-full min-w-0 flex-1 flex-col items-center justify-end rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                        className={cn(
+                          stackVariants(),
+                          focusRingVariants(),
+                          'group h-full min-w-0 flex-1 items-center justify-end rounded-sm',
+                        )}
                       />
                     }
                   >
@@ -412,7 +421,10 @@ function BuildTrend({ insights }: { insights: BuildInsightsResponse }) {
           </div>
         </div>
         <div
-          className="flex justify-between pl-8 text-xs text-muted-foreground"
+          className={cn(
+            textVariants({ variant: 'caption' }),
+            'flex justify-between pl-8',
+          )}
           aria-hidden
         >
           <span>{days[0] ? dayLabel(days[0]) : null}</span>
@@ -567,22 +579,19 @@ export function DashboardBuildHealth({
           </AlertDescription>
         </Alert>
       ) : !insights ? (
-        <div
-          className="flex flex-col gap-3"
-          role="status"
-          aria-label="Loading build health"
-        >
+        <Stack gap={3} role="status" aria-label="Loading build health">
           <div className="grid grid-cols-1 gap-3 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
             {Array.from({ length: 4 }, (_, index) => (
               <Skeleton key={index} className="h-28 w-full" />
             ))}
           </div>
           <Skeleton className="h-56 w-full" />
-        </div>
+        </Stack>
       ) : (
         <div
           className={cn(
-            'flex flex-col gap-3 transition-opacity',
+            stackVariants({ gap: 3 }),
+            'transition-opacity',
             insightsQuery.isPlaceholderData && 'opacity-60',
           )}
         >

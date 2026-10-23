@@ -24,6 +24,8 @@ import {
   ItemDescription,
   ItemTitle,
 } from '@/components/ui/item'
+import { Row } from '@/components/layout/row'
+import { Text } from '@/components/layout/text'
 
 const loadArtifactShareMenu = () => import('./artifact-share-menu')
 const ArtifactShareMenu = lazy(loadArtifactShareMenu)
@@ -216,25 +218,21 @@ export function ArtifactsPanel({
       </CardHeader>
       <CardContent>
         {error ? (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground">
-              Artifacts could not be loaded.
-            </p>
+          <Row gap={3} className="flex-wrap justify-between">
+            <Text variant="muted">Artifacts could not be loaded.</Text>
             {onRetry ? (
               <Button variant="outline" size="sm" onClick={onRetry}>
                 Retry
               </Button>
             ) : null}
-          </div>
+          </Row>
         ) : isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-8 w-full" />
             <Skeleton className="h-8 w-full" />
           </div>
         ) : !artifacts.length ? (
-          <p className="text-xs text-muted-foreground">
-            {artifactEmptyMessage(buildStatus)}
-          </p>
+          <Text variant="caption">{artifactEmptyMessage(buildStatus)}</Text>
         ) : (
           <div className="space-y-2">
             {[...artifacts]

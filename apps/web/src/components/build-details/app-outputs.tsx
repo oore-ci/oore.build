@@ -10,6 +10,8 @@ import { formatFileSize, relativeTime } from '@/lib/format-utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Row } from '@/components/layout/row'
+import { Text } from '@/components/layout/text'
 
 export function AppOutputs({
   artifacts,
@@ -31,9 +33,10 @@ export function AppOutputs({
       <CardContent className="space-y-3">
         {apps.length ? (
           apps.map((artifact) => (
-            <div
+            <Row
               key={artifact.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+              gap={3}
+              className="flex-wrap justify-between rounded-lg border p-3"
             >
               <div className="min-w-0 flex-1 basis-48">
                 <p className="font-medium">
@@ -44,13 +47,13 @@ export function AppOutputs({
                     {artifact.artifact_type === 'apk' ? 'Android' : 'iOS'}
                   </Badge>
                 </p>
-                <p className="mt-1 text-sm break-all text-muted-foreground">
+                <Text variant="muted" className="mt-1 break-all">
                   {artifact.name}
                   {artifact.file_size != null
                     ? ` · ${formatFileSize(artifact.file_size)}`
                     : ''}
                   {` · Published ${relativeTime(artifact.created_at)}`}
-                </p>
+                </Text>
               </div>
               <Button
                 render={
@@ -65,13 +68,13 @@ export function AppOutputs({
                 <HugeiconsIcon icon={Download04Icon} />
                 Install
               </Button>
-            </div>
+            </Row>
           ))
         ) : (
-          <p className="text-sm text-muted-foreground">
+          <Text variant="muted">
             No installable app was found in recent outputs. Check output paths,
             file availability and iOS signing in the build details.
-          </p>
+          </Text>
         )}
       </CardContent>
     </Card>

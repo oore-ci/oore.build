@@ -210,7 +210,7 @@ fn snapshot_platforms(snapshot: &serde_json::Value) -> Vec<String> {
 
 fn artifact_platform(artifact_type: &str, name: &str) -> Option<&'static str> {
     match artifact_type {
-        "apk" => Some("android"),
+        "apk" | "aab" => Some("android"),
         "ipa" => Some("ios"),
         _ if name.ends_with(".aab") => Some("android"),
         _ => None,
@@ -792,6 +792,33 @@ mod tests {
         assert_eq!(calls[4].1, "/repos/acme/app/check-runs/42");
         assert_eq!(calls[4].2["status"], "queued");
         assert_eq!(calls[4].2["external_id"], "b2");
+    }
+
+    #[tokio::test]
+    async fn app_bundles_link_to_android_without_an_install_link() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        insert_build(&pool, "b1", 1, 100).await;
+        sqlx::query(
+            "INSERT INTO artifacts (id, build_id, name, artifact_type, file_path, created_at) \
+             VALUES ('a1', 'b1', 'app-release.aab', 'aab', 'k1', 0), \
+                    ('a2', 'b1', 'app-release.apk', 'apk', 'k2', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let url = frontend_base_url(&pool).await;
+        let artifacts = load_artifacts(&pool, url.as_ref(), "b1").await.unwrap();
+        let aab = artifacts
+            .iter()
+            .find(|a| a.name == "app-release.aab")
+            .unwrap();
+        assert_eq!(aab.platform, Some("android"));
+        assert_eq!(aab.install_url, None);
+        let apk = artifacts
+            .iter()
+            .find(|a| a.name == "app-release.apk")
+            .unwrap();
+        assert!(apk.install_url.is_some());
     }
 
     async fn gitlab_pool(base: &str, key: &[u8]) -> SqlitePool {

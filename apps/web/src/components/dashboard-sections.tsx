@@ -33,6 +33,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { RuntimeMode } from '@oore/client/models'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 import type { Build } from '@oore/client/models'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 
 type GettingStartedStep = {
   key: string
@@ -161,20 +163,20 @@ export function DashboardGettingStarted({
         </CardAction>
       </CardHeader>
       <CardContent>
-        <ol className="flex flex-col gap-4 text-sm">
+        <Stack gap={4} render={<ol />} className="text-sm">
           {steps.map((step, index) => (
             <li key={step.key} className="flex items-start gap-3">
               <Badge variant="outline" className="mt-0.5 size-5 px-0">
                 {index + 1}
               </Badge>
-              <div className="flex min-w-0 flex-col items-start gap-1.5">
+              <Stack gap={1.5} className="min-w-0 items-start">
                 <p className="font-medium">{step.title}</p>
-                <p className="text-xs text-muted-foreground">{step.hint}</p>
+                <Text variant="caption">{step.hint}</Text>
                 {step.action}
-              </div>
+              </Stack>
             </li>
           ))}
-        </ol>
+        </Stack>
       </CardContent>
     </Card>
   )

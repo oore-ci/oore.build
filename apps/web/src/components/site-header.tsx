@@ -17,6 +17,7 @@ import {
 } from '@/lib/keyboard-shortcuts'
 import { useCommandStore } from '@/stores/command-store'
 import type { RunBuildTarget } from '@/stores/command-store'
+import { Row } from '@/components/layout/row'
 
 const CommandPalette = lazy(() => import('./command-palette'))
 const TriggerBuildDrawer = lazy(() => import('./trigger-build-drawer'))
@@ -43,12 +44,13 @@ export default function SiteHeader() {
   const openCommandPalette = () => setCommandPaletteOpen(true)
 
   return (
+    // oxlint-disable-next-line layout/max-class-utilities -- the operator header bar
     <header className="sticky top-0 z-30 flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-background/90 backdrop-blur-md transition-[width,height] ease-linear supports-[backdrop-filter]:bg-background/75 md:rounded-t-xl">
       <GlobalShortcuts />
-      <div className="flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
+      <Row gap={1} className="w-full px-4 lg:gap-2 lg:px-6">
         <SidebarTrigger className="-ml-1" />
         <PageBreadcrumb />
-        <div className="ml-auto flex items-center gap-2">
+        <Row gap={2} className="ml-auto">
           <OperatorIncidentNotifications />
           <Button
             variant="outline"
@@ -65,7 +67,7 @@ export default function SiteHeader() {
               {shortcutHint(SHORTCUTS.palette, detectPlatform())}
             </Kbd>
           </Button>
-        </div>
+        </Row>
         {commandPaletteOpen ? (
           <Suspense fallback={null}>
             <CommandPalette
@@ -99,7 +101,7 @@ export default function SiteHeader() {
             />
           </Suspense>
         ) : null}
-      </div>
+      </Row>
     </header>
   )
 }

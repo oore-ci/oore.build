@@ -17,6 +17,8 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 const ANDROID_GRADLE_GROOVY_SNIPPET = `android {
     signingConfigs {
@@ -77,7 +79,7 @@ export function PipelineAndroidSigningSection({
       id="android-signing"
       title="Android"
       meta={
-        <span className="text-xs text-muted-foreground">
+        <span className={textVariants({ variant: 'caption' })}>
           {signingSummary(releaseEnabled, debugEnabled)}
         </span>
       }
@@ -147,11 +149,11 @@ function SigningToggle({
             {label}
           </label>
           {stored && !field.value ? (
-            <p className="text-sm text-muted-foreground">
+            <Text variant="muted">
               {stored.has_keystore
                 ? `Stored keystore: ${stored.keystore_filename ?? 'present'}`
                 : `No stored ${name.includes('release') ? 'release' : 'debug'} keystore`}
-            </p>
+            </Text>
           ) : null}
         </FormItem>
       )}

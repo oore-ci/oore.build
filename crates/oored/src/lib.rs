@@ -2835,6 +2835,7 @@ pub async fn build_router_with_recovery(
             get(builds::preview_build_changelog),
         )
         .route("/v1/builds", get(builds::list_builds))
+        .route("/v1/builds/actors", get(builds::list_build_actors))
         .route(
             "/v1/builds/insights",
             get(build_insights::get_build_insights),

@@ -64,6 +64,7 @@ import {
   type NotificationChannelFormValues,
   updateNotificationChannelRequest,
 } from './-notification-form'
+import { splitRowVariants } from '@/lib/recipes'
 
 export const Route = createLazyFileRoute('/settings/notifications/$channelId')({
   component: NotificationChannelDetailPage,
@@ -145,7 +146,7 @@ function NotificationChannelDetailPage() {
       <PageLayout width="wide">
         <PageHeader title="Notification channel" />
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Failed to load notification channel: {channelError.message}
             </span>
@@ -233,7 +234,7 @@ function NotificationChannelDetailPage() {
           ) : deliveriesError ? (
             <div className="p-4 sm:p-5">
               <Alert variant="destructive">
-                <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <AlertDescription className={splitRowVariants()}>
                   <span>
                     Failed to load delivery history: {deliveriesError.message}
                   </span>

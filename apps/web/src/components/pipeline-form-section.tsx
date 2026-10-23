@@ -7,6 +7,8 @@ import {
   warnLongHint,
 } from '@/components/settings/settings-section'
 import { Badge } from '@/components/ui/badge'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
 
 /**
  * One top-level block of the pipeline editor: a heading outside one bordered
@@ -44,10 +46,10 @@ export function PipelineFormSection({
       title={title}
       actions={
         errorBadge || actions ? (
-          <div className="flex items-center gap-2">
+          <Row gap={2}>
             {errorBadge}
             {actions}
-          </div>
+          </Row>
         ) : undefined
       }
     >
@@ -82,11 +84,12 @@ export function PipelineFormSubsection({
   const headingId = useId()
   warnLongHint('PipelineFormSubsection', hint)
   return (
-    <div
+    <Stack
       id={id}
       role="group"
       aria-labelledby={headingId}
-      className="flex scroll-mt-[calc(var(--header-height)+4rem)] flex-col gap-4"
+      gap={4}
+      className="scroll-mt-[calc(var(--header-height)+4rem)]"
     >
       <div className="flex items-start justify-between gap-3">
         <SectionHeading
@@ -99,6 +102,6 @@ export function PipelineFormSubsection({
         {actions ? <div className="shrink-0">{actions}</div> : null}
       </div>
       {children}
-    </div>
+    </Stack>
   )
 }

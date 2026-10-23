@@ -35,6 +35,7 @@ import {
   getBuildLogsQueryKey,
   getBuildQueryKey,
   getBuildTestResultsOptions,
+  listBuildActorsOptions,
   listArtifactsOptions,
   listBuildsOptions,
   listBuildsQueryKey,
@@ -66,6 +67,10 @@ export function useBuilds<TData = ListBuildsResponse>(
     pipeline_id?: string
     status?: string
     branch?: string
+    trigger?: string
+    actor?: string
+    created_after?: number
+    created_before?: number
     q?: string
     sort?: 'created_at' | 'status' | 'project_name' | 'pipeline_name' | 'branch'
     direction?: 'asc' | 'desc'
@@ -98,6 +103,20 @@ export function useBuilds<TData = ListBuildsResponse>(
       hasActiveBuilds(query.state.data) ? pollInterval : false,
     placeholderData: keepPreviousData,
     select: options?.select,
+  })
+}
+
+/** Who triggered the builds the caller can see, for the actor filter. */
+export function useBuildActors(params: { project_id?: string; q?: string }) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  return useQuery({
+    ...scopeOoreQueryOptions(
+      instanceId,
+      listBuildActorsOptions({ client, query: { ...params, limit: 50 } }),
+    ),
+    enabled: !!baseUrl && !!token,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   })
 }
 

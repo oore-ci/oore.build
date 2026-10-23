@@ -71,6 +71,10 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
+import { Row } from '@/components/layout/row'
+import { SplitRow } from '@/components/layout/split-row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 
 const TRACKS = {
   internal: {
@@ -386,7 +390,7 @@ function ServiceAccountField({
       render={({ field }) => (
         <FormItem>
           <FormLabel>Service account key</FormLabel>
-          <div className="flex flex-wrap items-center gap-2">
+          <Row gap={2} className="flex-wrap">
             <Select
               value={field.value || null}
               onValueChange={(next) => field.onChange(next ?? '')}
@@ -418,7 +422,7 @@ function ServiceAccountField({
               <HugeiconsIcon icon={Add01Icon} />
               Add secret
             </Button>
-          </div>
+          </Row>
           <FormDescription>
             {!value
               ? 'Store the whole service account JSON key file as a secret, then choose it here.'
@@ -453,12 +457,12 @@ function CredentialsCheck({
   const result = credentials.results.get(secret)
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-muted-foreground">
+    <Stack gap={3}>
+      <SplitRow>
+        <Text variant="muted">
           Check the key against Google Play without running a build. Nothing
           changes in Play Console.
-        </p>
+        </Text>
         <Button
           type="button"
           variant="outline"
@@ -470,7 +474,7 @@ function CredentialsCheck({
           {credentials.pending ? <Spinner data-icon="inline-start" /> : null}
           Test credentials
         </Button>
-      </div>
+      </SplitRow>
       {result ? (
         <Alert
           variant={result.ok ? 'default' : 'destructive'}
@@ -496,7 +500,7 @@ function CredentialsCheck({
           </AlertDescription>
         </Alert>
       ) : null}
-    </div>
+    </Stack>
   )
 }
 
@@ -508,7 +512,7 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
 
   return (
     <>
-      <div className="flex flex-col gap-4">
+      <Stack gap={4}>
         <FormField
           control={form.control}
           name="track"
@@ -566,7 +570,7 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
             )}
           />
         ) : null}
-      </div>
+      </Stack>
 
       <FormField
         control={form.control}
@@ -629,7 +633,7 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
         />
       ) : null}
 
-      <div className="flex flex-col gap-4">
+      <Stack gap={4}>
         <FormField
           control={form.control}
           name="release_notes"
@@ -698,14 +702,14 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
             )}
           />
         ) : null}
-      </div>
+      </Stack>
     </>
   )
 }
 
 function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
   return (
-    <div className="flex flex-col gap-4">
+    <Stack gap={4}>
       <FormField
         control={form.control}
         name="package_name"
@@ -764,13 +768,13 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
         name="upload_mapping"
         render={({ field }) => (
           <FormItem className="flex flex-row items-start justify-between gap-4">
-            <div className="flex flex-col gap-1">
+            <Stack gap={1}>
               <FormLabel>Upload mapping.txt</FormLabel>
               <FormDescription>
                 Play Console deobfuscates crash reports with it. Skipped when
                 the build produced none.
               </FormDescription>
-            </div>
+            </Stack>
             <FormControl>
               <Switch
                 checked={field.value}
@@ -781,7 +785,7 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
           </FormItem>
         )}
       />
-    </div>
+    </Stack>
   )
 }
 

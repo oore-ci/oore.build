@@ -8,6 +8,8 @@ import {
   ComboboxItem,
   ComboboxList,
 } from '@/components/ui/combobox'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 type IssuerPresetKind = 'quick' | 'template'
 
@@ -129,7 +131,12 @@ export const OidcIssuerUrlAutocomplete = React.forwardRef<
               >
                 <span className="flex min-w-0 flex-col gap-0.5">
                   <span>{preset.label}</span>
-                  <span className="font-mono text-xs break-all text-muted-foreground">
+                  <span
+                    className={cn(
+                      textVariants({ variant: 'mono' }),
+                      'break-all',
+                    )}
+                  >
                     {preset.value}
                   </span>
                   {preset.hint ? (

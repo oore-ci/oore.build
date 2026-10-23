@@ -1691,6 +1691,13 @@ pub struct ListBuildsResponse {
     pub total: i64,
 }
 
+/// Distinct `trigger_actor` values on builds the caller can see, most
+/// recently active first.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListBuildActorsResponse {
+    pub actors: Vec<String>,
+}
+
 /// Outcome counts for builds that finished in a window.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct BuildOutcomeTotals {
@@ -2292,6 +2299,8 @@ pub enum ArtifactType {
     Apk,
     Ipa,
     App,
+    /// An Android App Bundle. Not installable on a device; Google Play takes it.
+    Aab,
     Generic,
 }
 

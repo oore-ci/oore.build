@@ -22,6 +22,8 @@ export interface TerminalLogViewerProps {
   onReconnect?: () => void
   /** Select a step and scroll to one of its lines; a new `key` repeats it. */
   focusRequest?: LogFocusRequest | null
+  /** Typical duration in ms of each step, by step name, to compare against. */
+  stepMedians?: ReadonlyMap<string, number>
 }
 
 export interface LogFocusRequest {

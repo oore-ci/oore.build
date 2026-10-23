@@ -14,6 +14,7 @@ import { RelativeTime } from '@/components/relative-time'
 import { formatEnumLabel } from '@/lib/format-utils'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Row } from '@/components/layout/row'
 
 interface ConnectionDetail {
   label: string
@@ -79,7 +80,7 @@ export function IntegrationConnectionDetails({
         value: networkSettingsLoading ? (
           <Skeleton className="h-6 w-72" />
         ) : networkSettingsError ? (
-          <div className="flex items-center gap-3">
+          <Row gap={3}>
             <span className="text-sm text-destructive">
               Could not load webhook URL
             </span>
@@ -90,9 +91,9 @@ export function IntegrationConnectionDetails({
             >
               Retry
             </Button>
-          </div>
+          </Row>
         ) : gitLabWebhookUrl ? (
-          <div className="flex items-center gap-2">
+          <Row gap={2}>
             <code className="font-mono text-xs">{gitLabWebhookUrl}</code>
             <Button
               variant="ghost"
@@ -108,7 +109,7 @@ export function IntegrationConnectionDetails({
             >
               <HugeiconsIcon icon={Copy01Icon} />
             </Button>
-          </div>
+          </Row>
         ) : null,
       })
       rows.push({

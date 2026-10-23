@@ -431,6 +431,17 @@ mod tests {
         ];
         assert!(pick_bundle(&ambiguous).is_none());
         assert!(pick_bundle(&[artifact("app-release.apk")]).is_none());
+
+        // Newer runners store bundles as `aab`; older builds have them as
+        // `generic`. Both are found by name.
+        let typed = StoredArtifact {
+            artifact_type: "aab".to_string(),
+            ..artifact("app-release.aab")
+        };
+        assert_eq!(
+            pick_bundle(&[artifact("app-release.apk"), typed]).map(|a| a.artifact_type.as_str()),
+            Some("aab")
+        );
     }
 
     async fn pool_with_failed_publish(step_results: &str) -> SqlitePool {

@@ -287,6 +287,46 @@ fn local_apk_links_work_without_weakening_ios_delivery_requirements() {
     );
 }
 
+/// The device platform an artifact installs on. Only APKs and signed ad-hoc
+/// IPAs install on a device; App Bundles (`aab`) only go to Google Play.
+fn install_platform(
+    artifact_type: &str,
+    metadata: &Value,
+) -> Result<ArtifactInstallPlatform, (StatusCode, Json<ApiError>)> {
+    match artifact_type {
+        "apk" => Ok(ArtifactInstallPlatform::Android),
+        "ipa" => {
+            parse_ios_manifest_metadata(metadata).map_err(|message| {
+                api_err(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "ios_artifact_not_installable",
+                    message,
+                )
+            })?;
+            Ok(ArtifactInstallPlatform::Ios)
+        }
+        _ => Err(api_err(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "artifact_not_installable",
+            "Only APK and signed ad-hoc IPA artifacts can be installed on a device",
+        )),
+    }
+}
+
+#[test]
+fn app_bundles_and_other_non_device_artifacts_are_not_installable() {
+    let empty = Value::Object(Default::default());
+    assert!(matches!(
+        install_platform("apk", &empty),
+        Ok(ArtifactInstallPlatform::Android)
+    ));
+    for artifact_type in ["aab", "app", "generic"] {
+        let (status, Json(error)) = install_platform(artifact_type, &empty).unwrap_err();
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(error.code, "artifact_not_installable");
+    }
+}
+
 /// `POST /v1/artifacts/{artifact_id}/install-link` — create a device install session.
 pub async fn create_install_link(
     State(state): State<Arc<AppState>>,
@@ -309,26 +349,7 @@ pub async fn create_install_link(
         ));
     }
 
-    let platform = match artifact.artifact_type.as_str() {
-        "apk" => ArtifactInstallPlatform::Android,
-        "ipa" => {
-            parse_ios_manifest_metadata(&artifact.metadata).map_err(|message| {
-                api_err(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "ios_artifact_not_installable",
-                    message,
-                )
-            })?;
-            ArtifactInstallPlatform::Ios
-        }
-        _ => {
-            return Err(api_err(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "artifact_not_installable",
-                "Only APK and signed ad-hoc IPA artifacts can be installed on a device",
-            ));
-        }
-    };
+    let platform = install_platform(&artifact.artifact_type, &artifact.metadata)?;
 
     let base =
         artifact_delivery_base_url(&pool, matches!(platform, ArtifactInstallPlatform::Ios)).await?;

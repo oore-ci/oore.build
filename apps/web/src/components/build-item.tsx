@@ -21,6 +21,8 @@ import { formatDuration, relativeTime } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
 import type { Build } from '@oore/client/models'
 import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 /** How long the build ran, or has been running; `null` before it starts. */
 function buildDuration(build: Build): string | null {
@@ -115,7 +117,12 @@ export function BuildItem({
         <ItemContent className="min-w-0">
           <ItemTitle className="w-full min-w-0">
             <span className="truncate">{projectName}</span>
-            <span className="text-xs font-normal text-muted-foreground tabular-nums">
+            <span
+              className={cn(
+                textVariants({ variant: 'caption' }),
+                'font-normal tabular-nums',
+              )}
+            >
               #{build.build_number}
             </span>
           </ItemTitle>
@@ -123,9 +130,9 @@ export function BuildItem({
             {pipelineName} · {build.branch ?? 'No branch'} ·{' '}
             <span className="font-mono">{commitLabel}</span>
           </ItemDescription>
-          <p className="truncate text-xs text-muted-foreground xl:hidden">
+          <Text variant="caption" className="truncate xl:hidden">
             {meta}
-          </p>
+          </Text>
         </ItemContent>
 
         <div className="hidden flex-wrap items-center gap-1.5 xl:flex">
@@ -136,7 +143,12 @@ export function BuildItem({
           ))}
         </div>
 
-        <div className="hidden min-w-0 items-center gap-1.5 text-xs text-muted-foreground xl:flex">
+        <div
+          className={cn(
+            textVariants({ variant: 'caption' }),
+            'hidden min-w-0 items-center gap-1.5 xl:flex',
+          )}
+        >
           {runner.runner ? (
             <HugeiconsIcon icon={ServerIcon} className="size-3.5 shrink-0" />
           ) : null}

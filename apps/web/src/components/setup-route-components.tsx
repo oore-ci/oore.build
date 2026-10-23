@@ -9,6 +9,10 @@ import { getConnectivityIssue, isHostedUiOrigin } from '@/lib/connectivity'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useInstanceStore } from '@/stores/instance-store'
 import { cn } from '@/lib/utils'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { stepMarkerVariants } from '@/lib/recipes'
+import { FocusedFlowLayout } from '@/components/focused-flow-layout'
 
 function quotePosixShellArgument(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`
@@ -51,7 +55,7 @@ export function SetupStepIndicator({
               <span
                 aria-hidden="true"
                 className={cn(
-                  'flex size-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-medium tabular-nums',
+                  stepMarkerVariants(),
                   isCompleted
                     ? 'border-primary bg-primary text-primary-foreground'
                     : isActive
@@ -122,7 +126,7 @@ export function SetupStepError({ error }: { error: Error }) {
         <AlertTitle>Something went wrong</AlertTitle>
         <AlertDescription>{error.message}</AlertDescription>
       </Alert>
-      <div className="flex flex-col gap-2 sm:flex-row">
+      <Stack gap={2} className="sm:flex-row">
         <Button onClick={() => void router.invalidate()}>Try again</Button>
         <Button
           variant="outline"
@@ -130,7 +134,7 @@ export function SetupStepError({ error }: { error: Error }) {
         >
           Back to setup
         </Button>
-      </div>
+      </Stack>
     </div>
   )
 }
@@ -158,25 +162,25 @@ export function SetupRouteError({ error }: { error: Error }) {
 
   if (!issue) {
     return (
-      <div className="focused-flow flex min-h-0 flex-1 items-center p-4 sm:p-6">
+      <FocusedFlowLayout align="center">
         <div className="w-full max-w-xl space-y-4">
           <Alert variant="destructive">
             <AlertTitle>Something went wrong</AlertTitle>
             <AlertDescription>{error.message}</AlertDescription>
           </Alert>
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <Stack gap={2} className="sm:flex-row">
             <Button onClick={() => void router.invalidate()}>Retry</Button>
             <Button variant="outline" onClick={goBack}>
               Go back
             </Button>
-          </div>
+          </Stack>
         </div>
-      </div>
+      </FocusedFlowLayout>
     )
   }
 
   return (
-    <div className="focused-flow flex min-h-0 flex-1 items-center p-4 sm:p-6">
+    <FocusedFlowLayout align="center">
       <div className="w-full max-w-xl space-y-4">
         <Alert variant="destructive">
           <AlertTitle>{issue.title}</AlertTitle>
@@ -187,9 +191,7 @@ export function SetupRouteError({ error }: { error: Error }) {
           <CardContent className="space-y-4">
             <div className="space-y-1">
               <p className="text-sm font-medium">Set up in Terminal</p>
-              <p className="text-sm text-muted-foreground">
-                Run this on the Mac that hosts Oore:
-              </p>
+              <Text variant="muted">Run this on the Mac that hosts Oore:</Text>
               <code className="block rounded-md bg-muted px-2 py-1 text-xs">
                 oore setup
               </code>
@@ -198,10 +200,10 @@ export function SetupRouteError({ error }: { error: Error }) {
               <p className="text-sm font-medium">
                 Connect through Cloudflare Access
               </p>
-              <p className="text-sm text-muted-foreground">
+              <Text variant="muted">
                 Use a named tunnel that Cloudflare Access protects. Do not use a
                 public Quick Tunnel for Oore.
-              </p>
+              </Text>
               <code className="block rounded-md bg-muted px-2 py-1 text-xs">
                 cloudflared tunnel run &lt;tunnel-name&gt;
               </code>
@@ -217,9 +219,7 @@ export function SetupRouteError({ error }: { error: Error }) {
             {hostedUi ? (
               <div className="space-y-1">
                 <p className="text-sm font-medium">Open Oore locally</p>
-                <p className="text-sm text-muted-foreground">
-                  For a local instance, run:
-                </p>
+                <Text variant="muted">For a local instance, run:</Text>
                 <code className="block rounded-md bg-muted px-2 py-1 text-xs">
                   oore-web --backend-url {backendUrlArgument}
                 </code>
@@ -228,7 +228,7 @@ export function SetupRouteError({ error }: { error: Error }) {
           </CardContent>
         </Card>
 
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <Stack gap={2} className="sm:flex-row">
           <Button onClick={() => void router.invalidate()}>Retry</Button>
           <Button variant="outline" onClick={goBack}>
             Go back
@@ -239,8 +239,8 @@ export function SetupRouteError({ error }: { error: Error }) {
           >
             Documentation
           </Button>
-        </div>
+        </Stack>
       </div>
-    </div>
+    </FocusedFlowLayout>
   )
 }

@@ -26,6 +26,7 @@ import { useSetupStore } from '@/stores/setup-store'
 import { PageMeta } from '@/lib/seo'
 import { useOwnerStepTransition } from '@/hooks/use-setup-route-transitions'
 import { SetupStepError } from '@/components/setup-route-components'
+import { Text } from '@/components/layout/text'
 
 const localOwnerSchema = z.object({
   email: z
@@ -200,13 +201,13 @@ function OwnerStep() {
       <PageMeta title="Setup Owner" />
       <div className="space-y-1">
         <h2 className="text-lg font-medium">Owner account</h2>
-        <p className="text-sm text-muted-foreground">
+        <Text variant="muted">
           {isLocalMode
             ? 'This email is only an account label on this Mac. Oore does not send email or ask for a password.'
             : isTrustedProxyMode
               ? 'Confirm owner identity from your trusted proxy.'
               : "Authenticate with your OIDC provider to verify your identity. Your email and OIDC subject will be extracted from the provider's ID token."}
-        </p>
+        </Text>
       </div>
 
       {isLocalMode ? (

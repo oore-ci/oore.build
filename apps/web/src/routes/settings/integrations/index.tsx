@@ -51,6 +51,10 @@ import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { SourceInventory } from './-source-inventory'
 import type { IntegrationSort } from './-source-inventory'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { splitRowVariants, textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 interface IntegrationsSearch {
   direction?: SortDirection
@@ -222,7 +226,7 @@ function IntegrationsPage() {
       ) : canWrite && preferencesQuery.error ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Failed to load access policy: {preferencesQuery.error.message}
             </span>
@@ -245,10 +249,10 @@ function IntegrationsPage() {
             <h2 id="local-only-sources-title" className="text-sm font-semibold">
               Local Only mode
             </h2>
-            <p className="mt-2 text-sm text-muted-foreground">
+            <Text variant="muted" className="mt-2">
               Create projects from paths on this Mac. GitHub and GitLab sources
               become available when External Access is configured.
-            </p>
+            </Text>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -271,14 +275,11 @@ function IntegrationsPage() {
         hasConnectedSources ||
         hasSearch ||
         !canWrite) ? (
-        <section
-          aria-label="Connected sources"
-          className="flex min-h-0 min-w-0 flex-1 flex-col gap-4"
-        >
+        <Stack aria-label="Connected sources" gap={4} fill render={<section />}>
           {integrationsQuery.error ? (
             <Alert variant="destructive">
               <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-              <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <AlertDescription className={splitRowVariants()}>
                 <span>
                   Failed to load sources: {integrationsQuery.error.message}
                 </span>
@@ -356,7 +357,7 @@ function IntegrationsPage() {
               total={total}
             />
           ) : null}
-        </section>
+        </Stack>
       ) : null}
 
       {sourcesAvailable &&
@@ -372,9 +373,9 @@ function IntegrationsPage() {
             <h2 id="connect-source-title" className="text-sm font-semibold">
               Connect a source
             </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <Text variant="muted" className="mt-1">
               Choose a provider to start discovering repositories.
-            </p>
+            </Text>
           </div>
           <div className="grid items-stretch gap-4 md:grid-cols-2">
             {PROVIDERS.map((provider) => (
@@ -384,7 +385,13 @@ function IntegrationsPage() {
                   <CardDescription>{provider.description}</CardDescription>
                 </CardHeader>
                 <CardContent className="flex-1">
-                  <div className="flex h-full flex-col gap-2 text-xs text-muted-foreground">
+                  <Stack
+                    gap={2}
+                    className={cn(
+                      textVariants({ variant: 'caption' }),
+                      'h-full',
+                    )}
+                  >
                     <p className="font-medium text-foreground">
                       {provider.heading}
                     </p>
@@ -393,7 +400,7 @@ function IntegrationsPage() {
                         <li key={item}>{item}</li>
                       ))}
                     </ul>
-                  </div>
+                  </Stack>
                 </CardContent>
                 <CardFooter>
                   <Button

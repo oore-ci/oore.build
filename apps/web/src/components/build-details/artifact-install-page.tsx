@@ -64,6 +64,14 @@ import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useAuthStore } from '@/stores/auth-store'
 import { useTime } from '@/hooks/use-time'
+import { Row } from '@/components/layout/row'
+import { Text } from '@/components/layout/text'
+import {
+  focusRingVariants,
+  rowVariants,
+  stickyActionBarVariants,
+  textVariants,
+} from '@/lib/recipes'
 
 const ChangelogMarkdown = lazy(() => import('./changelog-markdown'))
 const QaBuildLogs = lazy(() => import('./qa-build-logs'))
@@ -211,12 +219,12 @@ function QaReleaseDetail({
           <h1 className="text-2xl font-semibold tracking-tight wrap-break-word sm:text-3xl">
             {appName}
           </h1>
-          <div className="flex flex-wrap items-center gap-2">
+          <Row gap={2} className="flex-wrap">
             <QaBuildStatusBadge status={build.status} />
-            <span className="text-xs text-muted-foreground">
+            <span className={textVariants({ variant: 'caption' })}>
               Released {relativeTime(releasedAt)}
             </span>
-          </div>
+          </Row>
           {(androidArtifact && iosArtifact) ||
           (artifact && artifact.id !== androidArtifact?.id) ? (
             <ToggleGroup
@@ -269,9 +277,9 @@ function QaReleaseDetail({
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <p className="text-xs text-muted-foreground">
+              <Text variant="caption">
                 {expiryLabel(artifact.expires_at ?? undefined)}
-              </p>
+              </Text>
               <div className="space-y-1.5 text-sm">
                 <p className="font-medium">Before you install</p>
                 <p className="text-muted-foreground">
@@ -316,9 +324,9 @@ function QaReleaseDetail({
               <h2 id="release-notes-title" className="text-sm font-medium">
                 What changed
               </h2>
-              <p className="mt-2 text-sm text-muted-foreground">
+              <Text variant="muted" className="mt-2">
                 No release notes were provided for this version.
-              </p>
+              </Text>
             </section>
           )}
 
@@ -359,7 +367,13 @@ function QaReleaseDetail({
 
           {steps.length > 0 ? (
             <Collapsible className="border-y">
-              <CollapsibleTrigger className="flex min-h-11 w-full items-center gap-3 py-2 text-left text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+              <CollapsibleTrigger
+                className={cn(
+                  rowVariants({ gap: 3 }),
+                  focusRingVariants(),
+                  'min-h-11 w-full py-2 text-left text-sm',
+                )}
+              >
                 <span className="font-medium">Build checks</span>
                 <span className="text-muted-foreground">
                   {passedSteps} of {steps.length} completed
@@ -386,7 +400,9 @@ function QaReleaseDetail({
                       <ItemContent>
                         <ItemTitle>{step.name}</ItemTitle>
                       </ItemContent>
-                      <ItemActions className="text-xs text-muted-foreground">
+                      <ItemActions
+                        className={textVariants({ variant: 'caption' })}
+                      >
                         {step.duration_ms != null
                           ? formatDuration(step.duration_ms / 1000)
                           : step.status}
@@ -399,7 +415,13 @@ function QaReleaseDetail({
           ) : null}
 
           <Collapsible>
-            <CollapsibleTrigger className="flex min-h-11 w-full items-center gap-3 text-left text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+            <CollapsibleTrigger
+              className={cn(
+                rowVariants({ gap: 3 }),
+                focusRingVariants(),
+                'min-h-11 w-full text-left text-sm',
+              )}
+            >
               <span className="font-medium">Build diagnostics</span>
               <span className="text-muted-foreground">
                 Logs for troubleshooting
@@ -418,16 +440,16 @@ function QaReleaseDetail({
           </Collapsible>
 
           {historyError ? (
-            <p className="text-xs text-muted-foreground">
+            <Text variant="caption">
               Historical version context is temporarily unavailable. This does
               not affect installation.
-            </p>
+            </Text>
           ) : null}
         </div>
       </div>
 
       {artifact ? (
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:hidden">
+        <div className={cn(stickyActionBarVariants(), 'sm:hidden')}>
           <Button
             size="lg"
             onClick={handleInstall}

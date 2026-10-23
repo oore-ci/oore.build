@@ -167,6 +167,7 @@ use utoipa::{
         operations::create_build,
         operations::preview_build_changelog,
         operations::list_builds,
+        operations::list_build_actors,
         operations::get_build_insights,
         operations::get_build,
         operations::cancel_build,
@@ -446,6 +447,7 @@ use utoipa::{
         oore_contract::BuildChangelogPreviewResponse,
         oore_contract::BuildDetailResponse,
         oore_contract::ListBuildsResponse,
+        oore_contract::ListBuildActorsResponse,
         oore_contract::BuildOutcomeTotals,
         oore_contract::DurationPercentiles,
         oore_contract::BuildInsightsDay,
@@ -2338,7 +2340,7 @@ mod operations {
 
     /// List builds
     ///
-    /// Returns builds, optionally filtered by project, pipeline, status, or branch, or searched with `q`.
+    /// Returns builds, optionally filtered by project, pipeline, status, branch, trigger, actor, or creation time, or searched with `q`.
     #[utoipa::path(get, path = "/v1/builds", tag = "Builds",
         params(
             ("limit" = Option<i64>, Query, description = "Page size (default 50)"),
@@ -2347,6 +2349,10 @@ mod operations {
             ("pipeline_id" = Option<String>, Query, description = "Filter by pipeline"),
             ("status" = Option<String>, Query, description = "Filter by one status or up to 9 comma-separated statuses"),
             ("branch" = Option<String>, Query, description = "Filter by exact branch name"),
+            ("trigger" = Option<String>, Query, description = "Filter by one or more comma-separated trigger kinds: manual, api, schedule, push, pull_request, or tag_push. The last three are webhook events."),
+            ("actor" = Option<String>, Query, description = "Filter by exact trigger actor (the user email for manual builds, the SCM login for webhook builds). At most 320 characters."),
+            ("created_after" = Option<i64>, Query, description = "Only builds created at or after this Unix time in seconds"),
+            ("created_before" = Option<i64>, Query, description = "Only builds created before this Unix time in seconds. Must be later than created_after."),
             ("q" = Option<String>, Query, description = "Search builds, case-insensitively, by build number (with or without #), part of the branch, the start of the commit SHA, or part of the pipeline or project name. At most 200 characters."),
             ("sort" = Option<String>, Query, description = "Sort by created_at, status, project_name, pipeline_name, or branch"),
             ("direction" = Option<String>, Query, description = "Sort direction: asc or desc"),
@@ -2358,6 +2364,23 @@ mod operations {
         )
     )]
     pub(super) fn list_builds() {}
+
+    /// List build actors
+    ///
+    /// Distinct trigger actors on builds the caller can see, most recently active first, for the builds list's actor filter.
+    #[utoipa::path(get, path = "/v1/builds/actors", tag = "Builds",
+        params(
+            ("project_id" = Option<String>, Query, description = "Only actors of this project's builds"),
+            ("q" = Option<String>, Query, description = "Case-insensitive part of the actor. At most 200 characters."),
+            ("limit" = Option<i64>, Query, description = "Maximum actors (default 50, at most 200)"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Build actors", body = ListBuildActorsResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+        )
+    )]
+    pub(super) fn list_build_actors() {}
 
     /// Get build insights
     ///

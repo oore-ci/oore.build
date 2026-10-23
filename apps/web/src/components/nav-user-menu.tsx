@@ -36,6 +36,9 @@ import { isDemoMode } from '@/lib/demo-mode'
 import type { UserRole } from '@oore/client/models'
 import type { DemoScenario } from '@/demo/state'
 import { ROLE_LABELS } from '@/routes/settings/-user-role-labels'
+import { Row } from '@/components/layout/row'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const PERSONA_OPTIONS: ReadonlyArray<{ value: UserRole; label: string }> = (
   ['owner', 'admin', 'developer', 'qa_viewer'] as const
@@ -136,7 +139,7 @@ export default function NavUserMenu({
           >
             <DropdownMenuGroup>
               <DropdownMenuLabel className="p-0 font-normal">
-                <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+                <Row gap={2} className="px-1 py-1.5 text-left text-sm">
                   <Avatar className="size-8 rounded-lg">
                     {authUser.avatar_url ? (
                       <AvatarImage
@@ -156,7 +159,7 @@ export default function NavUserMenu({
                       {ROLE_LABELS[authUser.role] ?? authUser.role}
                     </span>
                   </div>
-                </div>
+                </Row>
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
@@ -169,7 +172,12 @@ export default function NavUserMenu({
                       aria-label={`Persona: ${PERSONA_OPTIONS.find(({ value }) => value === authUser.role)?.label ?? authUser.role}`}
                     >
                       Persona
-                      <span className="ml-auto text-xs text-muted-foreground">
+                      <span
+                        className={cn(
+                          textVariants({ variant: 'caption' }),
+                          'ml-auto',
+                        )}
+                      >
                         {PERSONA_OPTIONS.find(
                           ({ value }) => value === authUser.role,
                         )?.label ?? authUser.role}
@@ -194,7 +202,12 @@ export default function NavUserMenu({
                       aria-label={`Scenario: ${currentScenario.label}`}
                     >
                       Scenario
-                      <span className="ml-auto text-xs text-muted-foreground">
+                      <span
+                        className={cn(
+                          textVariants({ variant: 'caption' }),
+                          'ml-auto',
+                        )}
+                      >
                         {currentScenario.label}
                       </span>
                     </DropdownMenuSubTrigger>
@@ -217,7 +230,9 @@ export default function NavUserMenu({
               </>
             ) : null}
             <DropdownMenuGroup>
-              <DropdownMenuLabel className="text-xs text-muted-foreground">
+              <DropdownMenuLabel
+                className={textVariants({ variant: 'caption' })}
+              >
                 Theme
               </DropdownMenuLabel>
               <DropdownMenuRadioGroup value={theme ?? 'system'}>

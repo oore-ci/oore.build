@@ -38,6 +38,10 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Row } from '@/components/layout/row'
+import { Text } from '@/components/layout/text'
+import { focusRingVariants, rowVariants, splitRowVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 function repositoryUrl(
   integration: Integration,
@@ -74,12 +78,18 @@ function RepositoryIdentity({
       href={url}
       target="_blank"
       rel="noreferrer"
-      className="group flex min-w-0 items-center gap-2 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_span:last-child]:group-hover:underline"
+      className={cn(
+        rowVariants({ gap: 2 }),
+        focusRingVariants(),
+        'group min-w-0 rounded-md [&_span:last-child]:group-hover:underline',
+      )}
     >
       {content}
     </a>
   ) : (
-    <div className="flex min-w-0 items-center gap-2">{content}</div>
+    <Row gap={2} className="min-w-0">
+      {content}
+    </Row>
   )
 }
 
@@ -272,15 +282,15 @@ export function IntegrationRepositoryInventory({
 
   return (
     <section aria-label="Repositories" className="min-w-0 space-y-4">
-      <p className="text-sm text-muted-foreground">
+      <Text variant="muted">
         Repositories discovered from this source are available when an owner or
         admin creates a project.
-      </p>
+      </Text>
 
       {error ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Could not load {repositoryKind}: {error.message}
             </span>
@@ -369,7 +379,7 @@ export function IntegrationAccountsInventory({
     return (
       <Alert variant="destructive">
         <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-        <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <AlertDescription className={splitRowVariants()}>
           <span>
             Could not load {label.toLocaleLowerCase()}: {error.message}
           </span>

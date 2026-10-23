@@ -95,6 +95,8 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 const accessSchema = z.object({
   user_id: z.string().min(1, 'Select a user.'),
@@ -320,7 +322,9 @@ function AddProjectMemberDialog({ projectId }: { projectId: string }) {
                             <span className="min-w-0 flex-1 truncate">
                               {user.email}
                             </span>
-                            <span className="text-xs text-muted-foreground">
+                            <span
+                              className={textVariants({ variant: 'caption' })}
+                            >
                               {INSTANCE_ROLE_LABELS[user.role]}
                               {user.status === 'invited' ? ' · Invited' : ''}
                             </span>
@@ -461,10 +465,10 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
               </AlertDescription>
             </Alert>
           ) : members.length === 0 ? (
-            <p className="p-4 text-sm text-muted-foreground sm:p-5">
+            <Text variant="muted" className="p-4 sm:p-5">
               No explicit project members yet. Owners and admins can always open
               this project.
-            </p>
+            </Text>
           ) : (
             <ItemGroup className="gap-0" role="list">
               {members.flatMap((member, index) => {

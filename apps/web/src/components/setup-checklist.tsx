@@ -40,6 +40,9 @@ import {
   ItemTitle,
 } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { stepMarkerVariants } from '@/lib/recipes'
 
 /**
  * The first-app checklist has one home: the top of the project overview.
@@ -171,7 +174,8 @@ export default function SetupChecklist({
                 <span
                   aria-hidden
                   className={cn(
-                    'mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-medium tabular-nums',
+                    stepMarkerVariants(),
+                    'mt-0.5',
                     step.done && 'border-success/30 bg-success/10 text-success',
                     current && 'border-primary text-primary',
                   )}
@@ -182,7 +186,7 @@ export default function SetupChecklist({
                     index + 1
                   )}
                 </span>
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                <Stack gap={1} className="min-w-0 flex-1">
                   <span className="text-sm font-medium">
                     {step.label}
                     {step.done ? (
@@ -191,9 +195,7 @@ export default function SetupChecklist({
                   </span>
                   {current ? (
                     <>
-                      <p className="text-sm text-muted-foreground">
-                        {next.detail}
-                      </p>
+                      <Text variant="muted">{next.detail}</Text>
                       <SetupAction
                         canChangeSource={canChangeSource}
                         canConfigure={canConfigure}
@@ -204,7 +206,7 @@ export default function SetupChecklist({
                       />
                     </>
                   ) : null}
-                </div>
+                </Stack>
               </li>
             )
           })}
@@ -229,9 +231,7 @@ function SetupAction({
   next: SetupNext
   projectId: string
 }) {
-  const hint = (text: string) => (
-    <p className="text-sm text-muted-foreground">{text}</p>
-  )
+  const hint = (text: string) => <Text variant="muted">{text}</Text>
   switch (next.id) {
     case 'repository':
       return canChangeSource ? (

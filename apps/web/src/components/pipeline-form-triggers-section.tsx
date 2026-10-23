@@ -33,6 +33,8 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 
 /** Local repositories have no webhook events; only manual and scheduled starts exist. */
 const LOCAL_APPROVAL_EVENTS = ['manual', 'schedule'] as const
@@ -175,14 +177,14 @@ export function PipelineTriggersSection({
                     description="Skip when every changed file matches."
                   />
                 </div>
-                <p className="text-sm text-muted-foreground">
+                <Text variant="muted">
                   One glob per line, relative to the repository root.{' '}
                   <span className="font-mono">*</span> stays within one folder,{' '}
                   <span className="font-mono">**</span> spans folders, and a
                   pattern ending in <span className="font-mono">/</span> matches
                   everything below it. When Oore cannot tell which files
                   changed, it builds.
-                </p>
+                </Text>
               </PipelineFormSubsection>
             </>
           ) : null}
@@ -208,11 +210,11 @@ export function PipelineTriggersSection({
         }
       >
         {schedules.fields.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
+          <Text variant="muted">
             No schedules. Builds start from events or by hand.
-          </p>
+          </Text>
         ) : (
-          <div className="flex flex-col gap-3">
+          <Stack gap={3}>
             {schedules.fields.map((schedule, index) => (
               <div
                 key={schedule.id}
@@ -274,9 +276,9 @@ export function PipelineTriggersSection({
                 </Button>
               </div>
             ))}
-          </div>
+          </Stack>
         )}
-        <p className="text-sm text-muted-foreground">
+        <Text variant="muted">
           Five fields (minute, hour, day of month, month, weekday) or{' '}
           <span className="font-mono">@hourly</span>,{' '}
           <span className="font-mono">@daily</span>,{' '}
@@ -286,7 +288,7 @@ export function PipelineTriggersSection({
           <span className="font-mono">9-17</span>,{' '}
           <span className="font-mono">*/15</span>. Up to {MAX_SCHEDULES}{' '}
           schedules.
-        </p>
+        </Text>
         {form.formState.errors.schedules?.root?.message ? (
           <p className="text-sm text-destructive">
             {form.formState.errors.schedules.root.message}
@@ -377,7 +379,7 @@ export function PipelineTriggersSection({
           Builds wait for a maintainer before a runner picks them up
         </label>
         {approvalRequired ? (
-          <div className="flex flex-col gap-2">
+          <Stack gap={2}>
             <p className="text-sm font-medium">Which builds</p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {approvalOptions.map((event) => (
@@ -391,12 +393,12 @@ export function PipelineTriggersSection({
                 </label>
               ))}
             </div>
-            <p className="text-sm text-muted-foreground">
+            <Text variant="muted">
               {approvalEvents.length === 0
                 ? 'Nothing selected, so every build waits. A re-run of a held build waits again.'
                 : 'Builds started any other way run without approval.'}
-            </p>
-          </div>
+            </Text>
+          </Stack>
         ) : null}
       </PipelineFormSubsection>
     </PipelineFormSection>

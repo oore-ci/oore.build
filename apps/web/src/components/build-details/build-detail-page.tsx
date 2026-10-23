@@ -39,6 +39,7 @@ import {
   isTerminalStatus,
   useArtifacts,
   useBuild,
+  useBuilds,
   useBuildApprovalDecision,
   useBuildLogs,
   useBuildTests,
@@ -54,6 +55,7 @@ import {
 } from '@/hooks/use-permissions'
 import { useProject } from '@/hooks/use-projects'
 import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
+import { stepMedians } from '@/lib/step-timings'
 import { isOoreApiError } from '@oore/client/client'
 import { PageMeta } from '@/lib/seo'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
@@ -91,6 +93,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTime } from '@/hooks/use-time'
 import { LIVE_FALLBACK_POLL_MS } from '@/lib/live-events'
 import { useLiveEventsStore } from '@/stores/live-events-store'
+import { Row } from '@/components/layout/row'
+import { SplitRow } from '@/components/layout/split-row'
+import { Text } from '@/components/layout/text'
+import { splitRowVariants, textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const loadCancelBuildDialog = () => import('./cancel-build-dialog')
 const CancelBuildDialog = lazy(loadCancelBuildDialog)
@@ -253,6 +260,21 @@ export function BuildDetailPage({
     return mergeBuildLogSnapshots(streamLogs, fullLogsData?.logs ?? [])
   }, [streamLogs, fullLogsData?.logs])
   const stepResults = data?.build.step_results
+  // Recent successful runs of this pipeline give each step a typical time.
+  const pipelineHistoryQuery = useBuilds(
+    {
+      pipeline_id: data?.build.pipeline_id,
+      status: 'succeeded',
+      sort: 'created_at',
+      direction: 'desc',
+      limit: 20,
+    },
+    { enabled: !!data?.build.step_results?.length },
+  )
+  const medians = useMemo(
+    () => stepMedians(pipelineHistoryQuery.data?.builds ?? [], buildId),
+    [pipelineHistoryQuery.data?.builds, buildId],
+  )
   const failureLine = useMemo(() => {
     if (buildStatus !== 'failed' && buildStatus !== 'timed_out') return null
     const { stepGroups, allVisibleLogs } = groupLogs(
@@ -426,7 +448,7 @@ export function BuildDetailPage({
         <PageMeta title={label} noindex />
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>Failed to load build: {error.message}</span>
             <span className="flex gap-2">
               <Button
@@ -518,7 +540,10 @@ export function BuildDetailPage({
           <Button
             variant="link"
             size="xs"
-            className="h-auto px-0 align-baseline text-sm text-muted-foreground underline"
+            className={cn(
+              textVariants({ variant: 'muted' }),
+              'h-auto px-0 align-baseline underline',
+            )}
             onClick={showTests}
           >
             Open Tests
@@ -576,7 +601,7 @@ export function BuildDetailPage({
           </>
         }
         actions={
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <Row gap={2} className="flex-wrap justify-end">
             {!isTerminal && notifications.permission === 'default' ? (
               <Button variant="ghost" size="sm" onClick={notifications.request}>
                 <HugeiconsIcon icon={Notification03Icon} size={14} />
@@ -710,7 +735,7 @@ export function BuildDetailPage({
                 {cancelMutation.isPending ? 'Stopping...' : 'Stop build'}
               </Button>
             ) : null}
-          </div>
+          </Row>
         }
       />
 
@@ -720,7 +745,7 @@ export function BuildDetailPage({
           <AlertDescription>
             {build.runner_policy_block_reason === 'instance_paused' ? (
               canWriteInstanceSettings ? (
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <SplitRow>
                   <span>
                     This build is waiting because runners are paused on{' '}
                     <Link
@@ -732,7 +757,7 @@ export function BuildDetailPage({
                     .
                   </span>
                   <ResumeRunnersButton />
-                </div>
+                </SplitRow>
               ) : (
                 <>
                   This build is waiting because runners are paused. Ask an owner
@@ -806,15 +831,16 @@ export function BuildDetailPage({
           </TabsTrigger>
         </TabsList>
         {missingTab ? (
-          <p className="text-sm text-muted-foreground" role="status">
+          <Text variant="muted" role="status">
             {missingTabMessage(missingTab, activeTab)}
-          </p>
+          </Text>
         ) : null}
         <TabsContent value="logs" keepMounted className="flex min-h-0 flex-col">
           {showLogWorkbench ? (
             <TerminalLogViewer
               logs={mergedLogs}
               stepResults={build.step_results ?? NO_STEP_RESULTS}
+              stepMedians={medians}
               isStreaming={isStreaming && !isTerminal}
               fillAvailableHeight
               isLoading={isTerminal && fullLogsQuery.isLoading}

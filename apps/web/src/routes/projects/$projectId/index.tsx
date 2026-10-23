@@ -58,6 +58,8 @@ const ProjectOverview = lazy(() => import('./-project-overview'))
 const SetupChecklist = lazy(() => import('@/components/setup-checklist'))
 
 import type { ProjectBuildSort } from './-project-build-sort'
+import { Stack } from '@/components/layout/stack'
+import { splitRowVariants } from '@/lib/recipes'
 
 const loadTriggerBuildDrawer = () => import('@/components/trigger-build-drawer')
 const TriggerBuildDrawer = lazy(loadTriggerBuildDrawer)
@@ -298,7 +300,7 @@ function ProjectDetailPage() {
         <PageMeta title={label} noindex />
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>Failed to load project: {error.message}</span>
             <span className="flex gap-2">
               <Button
@@ -463,7 +465,7 @@ function ProjectDetailPage() {
       {!project.repository_id && !showSetup ? (
         <Alert>
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               This project has no repository.{' '}
               {canWriteInstanceSettings
@@ -488,7 +490,7 @@ function ProjectDetailPage() {
           <AlertDescription>
             {runnerPolicyBlockReason === 'instance_paused' ? (
               canWriteInstanceSettings ? (
-                <span className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <span className={splitRowVariants()}>
                   <span>
                     Runners are paused on{' '}
                     <Link
@@ -509,7 +511,7 @@ function ProjectDetailPage() {
                 </>
               )
             ) : (
-              <span className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className={splitRowVariants()}>
                 <span>
                   Oore cannot find this project&apos;s source repository. Builds
                   remain queued until{' '}
@@ -633,7 +635,7 @@ function ProjectDetailPage() {
         ) : null}
 
         <TabsContent value="settings">
-          <div className="flex flex-col gap-8 pt-2">
+          <Stack gap={8} className="pt-2">
             {activeTab === 'settings' ? (
               <Suspense fallback={<Skeleton className="h-48 w-full" />}>
                 {canWriteProjects ? (
@@ -700,7 +702,7 @@ function ProjectDetailPage() {
                 }
               />
             ) : null}
-          </div>
+          </Stack>
         </TabsContent>
       </Tabs>
 

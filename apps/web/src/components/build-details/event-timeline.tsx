@@ -3,6 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
 import { getStatusPresentation } from '@/lib/status-variants'
 import { cn } from '@/lib/utils'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 // Dot colour follows the status the event moved the build into.
 function dotTone(status: string) {
@@ -59,7 +61,7 @@ export function EventTimeline({ events }: { events: Array<BuildEvent> }) {
       </CardHeader>
       <CardContent>
         {events.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No events yet.</p>
+          <Text variant="caption">No events yet.</Text>
         ) : (
           <div className="relative space-y-0">
             {events.map((event, i) => (
@@ -93,7 +95,10 @@ export function EventTimeline({ events }: { events: Array<BuildEvent> }) {
                       ) : null}
                     </p>
                     <span
-                      className="shrink-0 text-xs text-muted-foreground tabular-nums"
+                      className={cn(
+                        textVariants({ variant: 'caption' }),
+                        'shrink-0 tabular-nums',
+                      )}
                       title={new Date(event.created_at * 1000).toLocaleString()}
                     >
                       {formatClock(event.created_at)} ·{' '}
@@ -101,9 +106,9 @@ export function EventTimeline({ events }: { events: Array<BuildEvent> }) {
                     </span>
                   </div>
                   {event.reason ? (
-                    <p className="mt-0.5 text-sm text-muted-foreground">
+                    <Text variant="muted" className="mt-0.5">
                       <EventReason reason={event.reason} />
-                    </p>
+                    </Text>
                   ) : null}
                 </div>
               </div>

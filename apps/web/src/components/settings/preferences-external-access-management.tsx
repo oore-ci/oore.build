@@ -21,6 +21,8 @@ import {
   ItemTitle,
 } from '@/components/ui/item'
 import { SettingsSurface } from '@/components/settings/settings-section'
+import { Stack } from '@/components/layout/stack'
+import { splitRowVariants } from '@/lib/recipes'
 
 export function ExternalAccessManagement({
   identityQuery,
@@ -42,7 +44,7 @@ export function ExternalAccessManagement({
   trustedProxySettings: TrustedProxySettingsPublic | undefined
 }) {
   return (
-    <div className="flex flex-col gap-2">
+    <Stack gap={2}>
       <SettingsSurface inset={false}>
         <ItemGroup className="gap-0">
           <Item
@@ -106,7 +108,7 @@ export function ExternalAccessManagement({
       </SettingsSurface>
       {networkSettingsQuery.error ? (
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Failed to load network settings:{' '}
               {networkSettingsQuery.error.message}
@@ -124,7 +126,7 @@ export function ExternalAccessManagement({
       ) : null}
       {identityQuery.error ? (
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Failed to load identity settings: {identityQuery.error.message}
             </span>
@@ -139,6 +141,6 @@ export function ExternalAccessManagement({
           </AlertDescription>
         </Alert>
       ) : null}
-    </div>
+    </Stack>
   )
 }

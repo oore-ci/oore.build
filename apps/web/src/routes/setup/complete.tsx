@@ -19,6 +19,8 @@ import {
   requireSetupSessionOrRedirect,
 } from '@/lib/instance-context'
 import { SetupStepError } from '@/components/setup-route-components'
+import { Row } from '@/components/layout/row'
+import { Text } from '@/components/layout/text'
 
 export const Route = createFileRoute('/setup/complete')({
   beforeLoad: () => {
@@ -75,9 +77,9 @@ function CompleteStep() {
       <PageMeta title="Setup Complete" />
       <div className="space-y-1">
         <h2 className="text-lg font-medium">Complete setup</h2>
-        <p className="text-sm text-muted-foreground">
+        <Text variant="muted">
           Review your configuration and finalize the instance.
-        </p>
+        </Text>
       </div>
 
       <div className="grid [&>[data-slot=collapsible]]:col-start-1 [&>[data-slot=collapsible]]:row-start-1">
@@ -212,12 +214,12 @@ function CompleteStep() {
                 </Alert>
               ) : null}
 
-              <div className="flex items-center gap-2 text-sm">
+              <Row gap={2} className="text-sm">
                 <span className="text-muted-foreground">Instance ID:</span>
                 <Badge variant="outline" className="font-mono text-xs">
                   {instanceId}
                 </Badge>
-              </div>
+              </Row>
 
               <div className="space-y-4">
                 <Separator />
