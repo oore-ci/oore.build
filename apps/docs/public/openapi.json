@@ -1844,7 +1844,7 @@
           "Builds"
         ],
         "summary": "List builds",
-        "description": "Returns builds, optionally filtered by project, pipeline, status, or branch, or searched with `q`.",
+        "description": "Returns builds, optionally filtered by project, pipeline, status, branch, trigger, actor, or creation time, or searched with `q`.",
         "operationId": "list_builds",
         "parameters": [
           {
@@ -1904,6 +1904,44 @@
             }
           },
           {
+            "name": "trigger",
+            "in": "query",
+            "description": "Filter by one or more comma-separated trigger kinds: manual, api, schedule, push, pull_request, or tag_push. The last three are webhook events.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor",
+            "in": "query",
+            "description": "Filter by exact trigger actor (the user email for manual builds, the SCM login for webhook builds). At most 320 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "description": "Only builds created at or after this Unix time in seconds",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Only builds created before this Unix time in seconds. Must be later than created_after.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
             "name": "q",
             "in": "query",
             "description": "Search builds, case-insensitively, by build number (with or without #), part of the branch, the start of the commit SHA, or part of the pipeline or project name. At most 200 characters.",
@@ -1938,6 +1976,73 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListBuildsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/builds/actors": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "List build actors",
+        "description": "Distinct trigger actors on builds the caller can see, most recently active first, for the builds list's actor filter.",
+        "operationId": "list_build_actors",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "description": "Only actors of this project's builds",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive part of the actor. At most 200 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum actors (default 50, at most 200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Build actors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListBuildActorsResponse"
                 }
               }
             }
@@ -15555,6 +15660,21 @@
           "total": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ListBuildActorsResponse": {
+        "type": "object",
+        "description": "Distinct `trigger_actor` values on builds the caller can see, most\nrecently active first.",
+        "required": [
+          "actors"
+        ],
+        "properties": {
+          "actors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
