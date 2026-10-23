@@ -1,8 +1,10 @@
 import { useId, type ReactNode } from 'react'
 
 import {
+  SectionHeading,
   SettingsSection,
   SettingsSurface,
+  warnLongHint,
 } from '@/components/settings/settings-section'
 import { Badge } from '@/components/ui/badge'
 
@@ -15,15 +17,16 @@ import { Badge } from '@/components/ui/badge'
 export function PipelineFormSection({
   actions,
   children,
-  description,
   errorCount,
+  hint,
   id,
   title,
 }: {
   actions?: ReactNode
   children: ReactNode
-  description?: string
   errorCount?: number
+  /** One sentence of help, shown in a tooltip behind an info icon. */
+  hint?: string
   /** Anchor used by the section index and by deep links into the editor. */
   id?: string
   title: string
@@ -37,7 +40,7 @@ export function PipelineFormSection({
   return (
     <SettingsSection
       id={id}
-      description={description}
+      hint={hint}
       title={title}
       actions={
         errorBadge || actions ? (
@@ -62,17 +65,22 @@ export function PipelineFormSection({
 export function PipelineFormSubsection({
   actions,
   children,
-  description,
+  hint,
   id,
+  meta,
   title,
 }: {
   actions?: ReactNode
   children: ReactNode
-  description?: ReactNode
+  /** One sentence of help, shown in a tooltip behind an info icon. */
+  hint?: string
   id?: string
+  /** Current state beside the title, such as a signing summary. Not prose. */
+  meta?: ReactNode
   title: string
 }) {
   const headingId = useId()
+  warnLongHint('PipelineFormSubsection', hint)
   return (
     <div
       id={id}
@@ -81,16 +89,13 @@ export function PipelineFormSubsection({
       className="flex scroll-mt-[calc(var(--header-height)+4rem)] flex-col gap-4"
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-1">
-          <h3 id={headingId} className="text-sm font-medium">
-            {title}
-          </h3>
-          {description ? (
-            <p className="max-w-[65ch] text-sm text-muted-foreground">
-              {description}
-            </p>
-          ) : null}
-        </div>
+        <SectionHeading
+          as="h3"
+          hint={hint}
+          id={headingId}
+          meta={meta}
+          title={title}
+        />
         {actions ? <div className="shrink-0">{actions}</div> : null}
       </div>
       {children}

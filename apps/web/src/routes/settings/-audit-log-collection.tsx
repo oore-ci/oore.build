@@ -186,7 +186,7 @@ const auditColumns: Array<DataTableColumnDef<AuditLogEntry>> = [
     header: 'Details',
     cell: ({ row }) =>
       row.original.details ? (
-        <span className="block max-w-md min-w-48 break-words whitespace-normal">
+        <span className="block max-w-md min-w-48 wrap-break-word whitespace-normal">
           {auditDetails(row.original.details)}
         </span>
       ) : (

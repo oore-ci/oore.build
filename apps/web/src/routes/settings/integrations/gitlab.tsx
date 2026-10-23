@@ -134,10 +134,7 @@ function GitLabSetupPage() {
   return (
     <PageLayout>
       <PageMeta title="Connect GitLab source" noindex />
-      <PageHeader
-        title="Connect GitLab"
-        description="GitLab.com or a self-managed host, for repository discovery and webhook-triggered builds."
-      />
+      <PageHeader title="Connect GitLab" />
       {!remoteEnabled && !preferencesLoading ? (
         <Alert>
           <AlertDescription>
@@ -151,10 +148,7 @@ function GitLabSetupPage() {
           onSubmit={form.handleSubmit(handleSubmit)}
           className="flex flex-col gap-8"
         >
-          <SettingsSection
-            title="Connection"
-            description="Oore verifies the host before it stores the source."
-          >
+          <SettingsSection title="Connection">
             <SettingsSurface className="flex flex-col gap-5">
               <GitLabHostStep
                 form={form}

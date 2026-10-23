@@ -83,7 +83,7 @@ export function PipelineTriggersSection({
     <PipelineFormSection
       id="triggers"
       title="Triggers"
-      description="When this pipeline runs on its own, and the rules every build follows. You can always run it by hand."
+      hint="You can always run the pipeline by hand, whatever is set here."
     >
       {manualOnlyTriggers ? (
         <Alert role="note">
@@ -96,10 +96,7 @@ export function PipelineTriggersSection({
         </Alert>
       ) : (
         <>
-          <PipelineFormSubsection
-            title="Events"
-            description="Repository events that start a build, and which branches or tags they apply to."
-          >
+          <PipelineFormSubsection title="Events">
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {TRIGGER_EVENTS.map((event) => (
                 <label key={event} className="flex items-center gap-2 text-sm">
@@ -162,7 +159,7 @@ export function PipelineTriggersSection({
               <SettingsSurfaceSeparator />
               <PipelineFormSubsection
                 title="Changed paths"
-                description="Build a push or pull request only when it touches matching files. Tag pushes always build."
+                hint="Only pushes and pull requests that touch matching files build. Tag pushes always build."
               >
                 <div className="grid gap-4 sm:grid-cols-2">
                   <PathPatternsField
@@ -196,7 +193,7 @@ export function PipelineTriggersSection({
 
       <PipelineFormSubsection
         title="Schedules"
-        description="Cron schedules in UTC. Each one builds its branch at the current commit."
+        hint="Cron schedules are in UTC. Each one builds its branch at the current commit."
         actions={
           <Button
             type="button"
@@ -299,10 +296,7 @@ export function PipelineTriggersSection({
 
       <SettingsSurfaceSeparator />
 
-      <PipelineFormSubsection
-        title="Limits"
-        description="How overlapping builds are handled and how long one may run."
-      >
+      <PipelineFormSubsection title="Limits">
         <label className="flex items-center gap-2 text-sm">
           <Checkbox
             checked={cancelPrevious}
@@ -364,7 +358,7 @@ export function PipelineTriggersSection({
 
       <PipelineFormSubsection
         title="Approval"
-        description={
+        hint={
           canChangeApproval
             ? 'Hold builds until a project maintainer approves them.'
             : 'Only project maintainers can change which builds wait for approval.'

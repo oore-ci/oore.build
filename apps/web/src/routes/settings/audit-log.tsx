@@ -241,10 +241,7 @@ function AuditLogPage() {
   return (
     <PageLayout width="wide" fill>
       <PageMeta title="Audit log" noindex />
-      <PageHeader
-        title="Audit log"
-        description="User and system activity across this instance."
-      />
+      <PageHeader title="Audit log" />
 
       <AuditLogCollection
         direction={direction}

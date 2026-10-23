@@ -1,9 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import type { RemoteAuthMode } from '@oore/client/models'
-import {
-  authModeDescription,
-  authModeLabel,
-} from '@/components/settings/preferences-utils'
+import { authModeLabel } from '@/components/settings/preferences-utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -45,12 +42,7 @@ export function ExternalAccessCard({
   return (
     <SettingsSection
       title="External access"
-      description={
-        externalAccessEnabled
-          ? authModeDescription(remoteAuthMode)
-          : 'Local sign-in is limited to this machine.'
-      }
-      actions={
+      meta={
         <Badge variant={externalAccessEnabled ? 'secondary' : 'outline'}>
           {externalAccessEnabled ? authModeLabel(remoteAuthMode) : 'Local only'}
         </Badge>

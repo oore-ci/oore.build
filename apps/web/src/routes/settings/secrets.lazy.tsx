@@ -23,7 +23,6 @@ function SecretsPage() {
       <PageMeta title="Secrets" noindex />
       <PageHeader
         title="Secrets"
-        description="Encrypted values that builds read as ${{ secrets.NAME }}. Projects and pipelines can add their own."
         actions={
           canWrite ? (
             <Button onClick={() => setCreateOpen(true)}>

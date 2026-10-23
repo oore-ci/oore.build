@@ -41,6 +41,7 @@
 - Use the tokens from `apps/web/src/styles.css` for colors.
 - Support light, dark, and system appearance.
 - Read `DESIGN.md` before frontend interface work.
+- Never commit PR screenshots to the repository. Attach them to the pull request instead.
 - Keep `apps/docs` as an Astro and Fumadocs static site.
 - Keep `apps/site` as a static Vite site.
 

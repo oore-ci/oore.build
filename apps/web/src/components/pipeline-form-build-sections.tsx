@@ -117,14 +117,17 @@ export function PipelineBuildSection({
     <PipelineFormSection
       id="build"
       title="Build"
-      description="What runs on the runner. Defaults work for a standard Flutter app."
+      hint="Defaults work for a standard Flutter app."
     >
       <PipelineFormSubsection
         title="Commands"
-        description={
-          commandCount > 0
-            ? `${commandCount} custom command${commandCount !== 1 ? 's' : ''} around the default platform build.`
-            : 'Platform defaults, with optional commands before and after.'
+        hint="The platform default build runs unless you add commands before or after it."
+        meta={
+          commandCount > 0 ? (
+            <span className="text-xs text-muted-foreground">
+              {commandCount} custom
+            </span>
+          ) : undefined
         }
       >
         {previewDefaults.length > 0 ? (
@@ -281,10 +284,11 @@ export function PipelineBuildSection({
 
       <PipelineFormSubsection
         title="Environment variables"
-        description={
-          envVarCount > 0
-            ? `${envVarCount} variable${envVarCount !== 1 ? 's' : ''}, available in every build step.`
-            : 'App-specific values, available in every build step.'
+        hint="Available in every build step."
+        meta={
+          envVarCount > 0 ? (
+            <span className="text-xs text-muted-foreground">{envVarCount}</span>
+          ) : undefined
         }
       >
         <FormField
@@ -328,7 +332,7 @@ export function PipelineBuildSection({
 
       <PipelineFormSubsection
         title="Artifacts"
-        description="Files to keep from the build output. These become the installable apps."
+        hint="Files kept from the build output become the installable apps."
       >
         <FormField
           control={form.control}
@@ -374,10 +378,7 @@ function RunnerSubsection() {
     },
   )
   return (
-    <PipelineFormSubsection
-      title="Runner"
-      description="Which runner may take a build and how isolated it is."
-    >
+    <PipelineFormSubsection title="Runner">
       <FormField
         control={form.control}
         name="isolation"

@@ -20,7 +20,7 @@ import {
   ItemTitle,
 } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
-import { artifactInstallReadiness } from '@/lib/artifact-install'
+import { latestAppPerPlatform } from '@/lib/artifact-install'
 import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
 import { formatFileSize, relativeTime } from '@/lib/format-utils'
 import type { LastPipelineBuild } from './-project-build-summary'
@@ -130,22 +130,6 @@ function PipelineSummary({
       })}
     </ItemGroup>
   )
-}
-
-const INSTALL_PLATFORMS = [
-  { type: 'apk', label: 'Android' },
-  { type: 'ipa', label: 'iOS' },
-] as const
-
-/** The newest installable file for each platform; older builds are one tab away. */
-function latestAppPerPlatform(artifacts: ReadonlyArray<Artifact>) {
-  const ready = artifacts
-    .filter((artifact) => artifactInstallReadiness(artifact).ready)
-    .sort((left, right) => right.created_at - left.created_at)
-  return INSTALL_PLATFORMS.flatMap(({ type, label }) => {
-    const artifact = ready.find((item) => item.artifact_type === type)
-    return artifact ? [{ artifact, label }] : []
-  })
 }
 
 function LatestApps({

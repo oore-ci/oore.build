@@ -20,7 +20,7 @@ use crate::releases::{
     NewRelease, ReleaseActor, ReleaseDeps, find_build_release, finish_create, insert_release,
 };
 use crate::runners::{RunnerAuth, require_active_job_signing_grant};
-use crate::secrets::{resolve_secret_value, secret_name_visible};
+use crate::secrets::{resolve_secret_value, secret_name_visible, visible_secret_version};
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
@@ -74,13 +74,83 @@ async fn google_play_response(
         .map_err(|e| store_error("Failed to check the service account secret", e))?,
         None => false,
     };
+    let last_credentials_check = load_credentials_check(&state.db, project_id, &pipeline_id)
+        .await
+        .map_err(|e| store_error("Failed to load the last Google Play check", e))?;
     let (config, updated_at) = loaded.unzip();
     Ok(Json(PipelineGooglePlayPublishResponse {
         pipeline_id,
         config,
         service_account_secret_present,
         updated_at,
+        last_credentials_check,
     }))
+}
+
+/// The pipeline's latest credentials check, unless the key behind its secret
+/// name was rotated, deleted or overridden since.
+async fn load_credentials_check(
+    pool: &SqlitePool,
+    project_id: &str,
+    pipeline_id: &str,
+) -> anyhow::Result<Option<GooglePlayCredentialsTestResponse>> {
+    let Some(row) = sqlx::query(
+        "SELECT service_account_secret, secret_version, ok, message, package_name, \
+                service_account_email, checked_at \
+         FROM pipeline_google_play_checks WHERE pipeline_id = ?1",
+    )
+    .bind(pipeline_id)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let secret: String = row.get("service_account_secret");
+    let version = visible_secret_version(pool, project_id, Some(pipeline_id), &secret).await?;
+    if version.as_deref() != Some(row.get::<String, _>("secret_version").as_str()) {
+        return Ok(None);
+    }
+    Ok(Some(GooglePlayCredentialsTestResponse {
+        ok: row.get::<i64, _>("ok") != 0,
+        service_account_secret: secret,
+        message: row.get("message"),
+        package_name: row.get("package_name"),
+        service_account_email: row.get("service_account_email"),
+        checked_at: row.get("checked_at"),
+    }))
+}
+
+async fn save_credentials_check(
+    pool: &SqlitePool,
+    pipeline_id: &str,
+    secret_version: &str,
+    check: &GooglePlayCredentialsTestResponse,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO pipeline_google_play_checks ( \
+            pipeline_id, service_account_secret, secret_version, ok, message, \
+            package_name, service_account_email, checked_at \
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+         ON CONFLICT (pipeline_id) DO UPDATE SET \
+            service_account_secret = excluded.service_account_secret, \
+            secret_version = excluded.secret_version, \
+            ok = excluded.ok, \
+            message = excluded.message, \
+            package_name = excluded.package_name, \
+            service_account_email = excluded.service_account_email, \
+            checked_at = excluded.checked_at",
+    )
+    .bind(pipeline_id)
+    .bind(&check.service_account_secret)
+    .bind(secret_version)
+    .bind(i32::from(check.ok))
+    .bind(&check.message)
+    .bind(&check.package_name)
+    .bind(&check.service_account_email)
+    .bind(check.checked_at)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// `GET /v1/pipelines/{pipeline_id}/publish/google-play`
@@ -217,6 +287,10 @@ pub async fn test_pipeline_google_play_credentials(
             .await
             .map_err(|e| store_error("Failed to load Google Play settings", e))?,
     };
+    let secret_version =
+        visible_secret_version(&state.db, &project_id, Some(&pipeline_id), secret_name)
+            .await
+            .map_err(|e| store_error("Failed to read the service account secret", e))?;
     let service_account = resolve_secret_value(
         &state.db,
         &state.encryption_key,
@@ -242,11 +316,20 @@ pub async fn test_pipeline_google_play_credentials(
     .await;
     let response = GooglePlayCredentialsTestResponse {
         ok: outcome.ok,
+        service_account_secret: secret_name.to_string(),
         message: outcome.message,
         package_name,
         service_account_email: outcome.service_account_email,
         checked_at: now_unix(),
     };
+    // Kept so the Publishing tab still shows it after a reload. A secret that
+    // is not visible has nothing to pin the result to.
+    if let Some(version) = &secret_version
+        && let Err(error) =
+            save_credentials_check(&state.db, &pipeline_id, version, &response).await
+    {
+        warn!(%error, pipeline_id = %pipeline_id, "failed to save the Google Play check");
+    }
 
     let details = serde_json::json!({
         "pipeline_id": &pipeline_id,
@@ -611,6 +694,95 @@ mod tests {
         .unwrap();
         assert_eq!(count, 1);
         assert!(next_step_at.is_some(), "the rollout is scheduled");
+    }
+
+    #[tokio::test]
+    async fn a_saved_check_lasts_until_the_key_behind_its_name_changes() {
+        let pool = pool().await;
+        let insert_secret = |id: &'static str, scope: &'static str, updated_at: i64| {
+            let pool = pool.clone();
+            async move {
+                let (project, pipeline) = match scope {
+                    "instance" => (None, None),
+                    "project" => (Some("p1"), None),
+                    _ => (Some("p1"), Some("pl1")),
+                };
+                sqlx::query(
+                    "INSERT INTO secrets (id, scope, project_id, pipeline_id, name, value_encrypted, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, 'PLAY', 'x', 0, ?5)",
+                )
+                .bind(id)
+                .bind(scope)
+                .bind(project)
+                .bind(pipeline)
+                .bind(updated_at)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        let version = || async {
+            visible_secret_version(&pool, "p1", Some("pl1"), "PLAY")
+                .await
+                .unwrap()
+                .unwrap()
+        };
+        let check = GooglePlayCredentialsTestResponse {
+            ok: true,
+            service_account_secret: "PLAY".into(),
+            message: "ok".into(),
+            package_name: Some("com.example.app".into()),
+            service_account_email: Some("sa@example.iam.gserviceaccount.com".into()),
+            checked_at: 5,
+        };
+        assert!(
+            load_credentials_check(&pool, "p1", "pl1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        insert_secret("s1", "instance", 1).await;
+        save_credentials_check(&pool, "pl1", &version().await, &check)
+            .await
+            .unwrap();
+        let loaded = load_credentials_check(&pool, "p1", "pl1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(loaded.ok);
+        assert_eq!(loaded.package_name.as_deref(), Some("com.example.app"));
+        assert_eq!(loaded.checked_at, 5);
+
+        // A narrower secret of the same name now wins, so the check is stale.
+        insert_secret("s2", "project", 1).await;
+        assert!(
+            load_credentials_check(&pool, "p1", "pl1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        save_credentials_check(&pool, "pl1", &version().await, &check)
+            .await
+            .unwrap();
+        assert!(
+            load_credentials_check(&pool, "p1", "pl1")
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        // Rotating it makes the check stale too.
+        sqlx::query("UPDATE secrets SET updated_at = 9 WHERE id = 's2'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            load_credentials_check(&pool, "p1", "pl1")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

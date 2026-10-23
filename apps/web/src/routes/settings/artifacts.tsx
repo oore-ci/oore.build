@@ -192,10 +192,7 @@ function ArtifactStoragePage() {
   return (
     <PageLayout width="wide">
       <PageMeta title="Artifact storage" noindex />
-      <PageHeader
-        title="Artifact storage"
-        description="Choose where build artifact files are stored and manage provider credentials."
-      />
+      <PageHeader title="Artifact storage" />
       <ArtifactStorageSettings
         backendKind={backendKind}
         canBrowseLocalFs={canBrowseLocalFs}

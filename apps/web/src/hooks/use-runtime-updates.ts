@@ -34,6 +34,16 @@ interface BackendRelease {
   github_repo?: string | null
 }
 
+/** One published release between the installed and the latest version. */
+export interface RuntimeReleaseEntry {
+  version: string
+  tag: string
+  published_at: string
+  release_name: string
+  release_notes: string
+  release_url: string
+}
+
 export interface RuntimeReleaseStatus extends RuntimeUpdateStatus {
   version: string
   latest_version: string
@@ -43,7 +53,10 @@ export interface RuntimeReleaseStatus extends RuntimeUpdateStatus {
   release_name: string
   release_notes: string
   release_url: string
+  /** Compare link from the installed tag when it was published, else the latest release's changelog. */
   changelog_url: string
+  /** Every release after `version` up to `latest_version`, newest first. Missing when oore-web could not read the release history. */
+  releases?: Array<RuntimeReleaseEntry>
   /** Why oore-web cannot update itself from the UI, when it cannot. */
   managed_service_reason?: string | null
   /** Update log on the web node, kept after a failed update. */

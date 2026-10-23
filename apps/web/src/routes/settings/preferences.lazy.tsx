@@ -430,10 +430,7 @@ function PreferencesPage() {
   return (
     <PageLayout width="wide">
       <PageMeta title="General settings" noindex />
-      <PageHeader
-        title="General"
-        description="Manage this instance's runtime and external access."
-      />
+      <PageHeader title="General" />
       <RuntimeOverview
         backendUpdatePhase={backendUpdatePhase}
         backendVersionLabel={backendVersionLabel}

@@ -2839,6 +2839,74 @@ export function ownerCheckFailureReason(request, status, config) {
   return `The backend rejected the owner check (HTTP ${status}).`
 }
 
+// Releases on the channel newer than the installed version, newest first,
+// so the update dialog can show everything an update brings, not only the
+// latest release notes.
+export function releasesSinceInstalled(history, current, latest, repo) {
+  const entries = Array.isArray(history?.releases) ? history.releases : []
+  const releases = []
+  let installedTag = null
+  for (const entry of entries) {
+    let version
+    try {
+      version = parseVersion(String(entry?.version ?? ''))
+    } catch {
+      continue
+    }
+    if (compareVersions(version, current) === 0) installedTag = entry.tag
+    if (
+      compareVersions(version, current) <= 0 ||
+      compareVersions(version, latest) > 0
+    ) {
+      continue
+    }
+    releases.push({
+      parsed: version,
+      version: version.raw,
+      tag: String(entry.tag || `v${version.raw}`),
+      published_at: String(entry.published_at || ''),
+      release_name: String(entry.release_name || entry.tag || version.raw),
+      release_notes: String(entry.release_notes || ''),
+      release_url: String(entry.release_url || ''),
+    })
+  }
+  releases.sort((a, b) => compareVersions(b.parsed, a.parsed))
+  const latestTag = releases[0]?.tag
+  return {
+    releases: releases.map((release) => ({
+      version: release.version,
+      tag: release.tag,
+      published_at: release.published_at,
+      release_name: release.release_name,
+      release_notes: release.release_notes,
+      release_url: release.release_url,
+    })),
+    // A compare link only works when the installed version was published.
+    compare_url:
+      installedTag && latestTag
+        ? `https://github.com/${repo}/compare/${installedTag}...${latestTag}`
+        : null,
+  }
+}
+
+async function fetchChannelHistory(channel) {
+  const baseUrl = (
+    process.env.OORE_RELEASE_INDEX_BASE_URL || DEFAULT_RELEASE_INDEX_BASE_URL
+  ).replace(/\/$/, '')
+  const url = `${baseUrl}/${channel}.json`
+  const payload = await downloadVerifiedReleaseMetadata(
+    url,
+    RELEASE_INDEX_NAMESPACE,
+    `${channel} release history`,
+    releaseIndexHeaders(),
+  )
+  const history = JSON.parse(decodeReleaseMetadata(payload, 'release history'))
+  if (history?.schema_version !== 1 || history.channel !== channel) {
+    throw new Error(`invalid ${channel} release history response from ${url}`)
+  }
+  return history
+}
+
 export async function getWebUpdateStatus(updateState, searchParams) {
   const metadata = readInstalledMetadata()
   const current = parseVersion(searchParams.get('current') || metadata.version)
@@ -2852,17 +2920,33 @@ export async function getWebUpdateStatus(updateState, searchParams) {
   )
   const { release, latest } = await fetchVerifiedWebRelease(channel, repo)
   const service = managedWebService()
+  const updateAvailable = compareVersions(current, latest) < 0
+  // The history is extra context: without it the dialog falls back to the
+  // latest release notes.
+  const since = updateAvailable
+    ? await fetchChannelHistory(channel)
+        .then((history) =>
+          releasesSinceInstalled(history, current, latest, repo),
+        )
+        .catch((error) => {
+          console.warn(
+            `[oore-web] failed to read the ${channel} release history: ${errorMessage(error)}`,
+          )
+          return null
+        })
+    : null
   return {
     ...metadata,
     version: current.raw,
     channel,
     github_repo: repo,
     latest_version: latest.raw,
-    update_available: compareVersions(current, latest) < 0,
+    update_available: updateAvailable,
     release_name: release.release_name || release.tag,
     release_notes: release.release_notes || '',
     release_url: release.release_url,
-    changelog_url: release.changelog_url,
+    changelog_url: since?.compare_url || release.changelog_url,
+    releases: since?.releases.length ? since.releases : undefined,
     managed_service: service.managed,
     managed_service_name: service.service,
     managed_service_reason: service.reason,

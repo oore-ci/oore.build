@@ -50,11 +50,7 @@ export function PipelineBasicsSection({
 }) {
   const form = useFormContext<PipelineFormValues>()
   return (
-    <PipelineFormSection
-      id="basics"
-      title="Basics"
-      description="Name the pipeline and choose what it builds."
-    >
+    <PipelineFormSection id="basics" title="Basics">
       <FormField
         control={form.control}
         name="name"
@@ -74,16 +70,13 @@ export function PipelineBasicsSection({
       {repositoryWorkflow ? (
         <PipelineFormSubsection
           title="Configuration"
-          description="Build settings come from the workflow checked into the repository."
+          hint="Build settings come from the workflow checked into the repository."
         >
           {repositoryWorkflow}
         </PipelineFormSubsection>
       ) : (
         <>
-          <PipelineFormSubsection
-            title="Platforms"
-            description="Which platforms this pipeline builds."
-          >
+          <PipelineFormSubsection title="Platforms">
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               {PLATFORM_FIELDS.map(([name, label]) => (
                 <FormField
@@ -106,10 +99,7 @@ export function PipelineBasicsSection({
 
           <SettingsSurfaceSeparator />
 
-          <PipelineFormSubsection
-            title="Configuration"
-            description="Where the build configuration comes from and which Flutter to use."
-          >
+          <PipelineFormSubsection title="Configuration">
             <FormField
               control={form.control}
               name="config_mode"

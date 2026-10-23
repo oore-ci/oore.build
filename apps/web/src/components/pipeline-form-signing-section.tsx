@@ -56,7 +56,7 @@ export function PipelineSigningSection({
     <PipelineFormSection
       id="signing"
       title="Signing"
-      description="Credentials stay on the server. Builds are signed on the runner."
+      hint="Credentials stay on the server. Builds are signed on the runner."
     >
       {values.platform_android ? (
         <PipelineAndroidSigningSection

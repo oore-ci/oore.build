@@ -101,10 +101,7 @@ export function ProjectSettingsForm({
         onSubmit={form.handleSubmit(onSubmit)}
         className="flex flex-col gap-8"
       >
-        <SettingsSection
-          title="General"
-          description="How this project appears across Oore and the repository it builds from."
-        >
+        <SettingsSection title="General">
           <SettingsSurface className="flex flex-col gap-4">
             <FormField
               control={form.control}

@@ -41,3 +41,6 @@ package-lock.json
 
 # local tooling
 .agents/skills/
+
+# PR screenshots belong in the PR, not the repository
+pr-screenshots/

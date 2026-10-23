@@ -94,7 +94,7 @@ function EnabledRetentionFields({
     <>
       <SettingsSection
         title="Retention criteria"
-        description="A build is cleaned up when it matches any configured limit. Leave a field empty to disable that limit."
+        hint="A build is cleaned up when it matches any limit. Leave a field empty to disable that limit."
       >
         <div className="grid gap-4 sm:grid-cols-3">
           <FormField
@@ -164,10 +164,7 @@ function EnabledRetentionFields({
 
       <SettingsSurfaceSeparator />
 
-      <SettingsSection
-        title="Cleanup behavior"
-        description="Choose what the cleanup removes and how often it runs."
-      >
+      <SettingsSection title="Cleanup behavior">
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField
             control={form.control}
@@ -241,7 +238,7 @@ function EnabledRetentionFields({
 
       <SettingsSection
         title="Protected statuses"
-        description="Builds with these statuses are never cleaned up, regardless of other criteria."
+        hint="Builds with these statuses are never cleaned up, whatever the other criteria say."
       >
         <FormField
           control={form.control}
@@ -280,7 +277,7 @@ function EnabledRetentionFields({
 
       <SettingsSection
         title="Dry run"
-        description="Log what the policy would remove without deleting builds or artifacts."
+        hint="Log what the policy would remove without deleting anything."
         actions={
           <FormField
             control={form.control}
@@ -406,10 +403,7 @@ function RetentionPage() {
     return (
       <PageLayout width="wide">
         <PageMeta title="Retention" />
-        <PageHeader
-          title="Retention"
-          description="Configure automatic cleanup of old builds and artifacts."
-        />
+        <PageHeader title="Retention" />
         <div
           className="flex flex-col gap-4"
           aria-label="Loading retention settings"
@@ -428,10 +422,7 @@ function RetentionPage() {
     return (
       <PageLayout width="wide">
         <PageMeta title="Retention" />
-        <PageHeader
-          title="Retention"
-          description="Configure automatic cleanup of old builds and artifacts."
-        />
+        <PageHeader title="Retention" />
         <Alert variant="destructive">
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>Failed to load the retention policy: {message}</span>
@@ -454,7 +445,6 @@ function RetentionPage() {
       <PageMeta title="Retention" />
       <PageHeader
         title="Retention"
-        description="Configure automatic cleanup of old builds and artifacts to manage disk usage."
         meta={
           <RetentionSummaryCard
             error={cleanupError}
@@ -474,7 +464,7 @@ function RetentionPage() {
               render={({ field }) => (
                 <SettingsSection
                   title="Automatic cleanup"
-                  description="Apply the policy below on a schedule. Running builds and protected statuses are never removed."
+                  hint="Running builds and protected statuses are never removed."
                   actions={
                     <FormItem>
                       <FormControl>

@@ -227,7 +227,7 @@ function UploadToggle({ form }: { form: UseFormReturn<FormValues> }) {
       render={({ field }) => (
         <SettingsSection
           title="Upload after each build"
-          description={effect}
+          status={effect}
           actions={
             <FormItem>
               <FormControl>
@@ -629,7 +629,7 @@ export function AppStorePublishSection({
     <SettingsSection
       id="app-store"
       title="App Store Connect"
-      description="Upload the signed IPA to TestFlight or the App Store. The upload runs on the Mac that built the app, using the API key from this pipeline’s iOS signing."
+      hint="The Mac that built the app uploads the signed IPA with the API key from iOS signing."
     >
       {checks.length > 0 ? (
         <PublishReadiness

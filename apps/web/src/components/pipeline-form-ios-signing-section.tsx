@@ -98,10 +98,11 @@ export function PipelineIosSigningSection({
     <PipelineFormSubsection
       id="ios-signing"
       title="iOS"
-      description={
-        enabled
-          ? `${SIGNING_MODE_SUMMARIES[mode]} Required to install on physical devices.`
-          : 'Optional. Required to install on physical iOS devices.'
+      hint="Required to install on physical iOS devices."
+      meta={
+        <span className="text-xs text-muted-foreground">
+          {enabled ? SIGNING_MODE_SUMMARIES[mode] : 'Off'}
+        </span>
       }
       actions={enabled ? actions : undefined}
     >

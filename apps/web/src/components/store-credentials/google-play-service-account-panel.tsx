@@ -42,10 +42,7 @@ export function GooglePlayServiceAccountPanel({
   )
 
   return (
-    <SettingsSection
-      title="Google Play service account"
-      description="One service account invited to your Play Console developer account can publish every app in it. Store its JSON key once and new pipelines use it on the Publishing tab. A pipeline secret overrides a project secret, which overrides this one."
-    >
+    <SettingsSection title="Google Play service account">
       {secretsQuery.error ? (
         <CollectionError
           title="Failed to load instance secrets"
@@ -70,7 +67,7 @@ export function GooglePlayServiceAccountPanel({
                     Instance secret · Updated {relativeTime(stored.updated_at)}
                   </>
                 ) : (
-                  'Not stored yet. Until you add it here, each project or pipeline needs its own PLAY_SERVICE_ACCOUNT secret.'
+                  'Not stored yet. Add the JSON key once and new pipelines use it on the Publishing tab.'
                 )}
               </ItemDescription>
             </ItemContent>
@@ -94,7 +91,15 @@ export function GooglePlayServiceAccountPanel({
         <Link to="/settings/secrets" className="underline underline-offset-4">
           instance secrets
         </Link>
-        .
+        . A project or pipeline secret with the same name overrides it.{' '}
+        <a
+          href="https://docs.oore.build/build/distribute/google-play#1-store-the-service-account-key-as-a-secret"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-4"
+        >
+          Learn more
+        </a>
       </p>
       <SecretValueDialog
         open={dialogOpen}

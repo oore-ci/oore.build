@@ -12,6 +12,7 @@ import {
   parseSystemctlShow,
   parseUpdateArgs,
   parseVersion,
+  releasesSinceInstalled,
   restoreWebUpdateState,
   spaFileResponse,
   validateManagedUpdateTransition,
@@ -242,5 +243,65 @@ test('update arguments only switch channel with an explicit channel', () => {
   assert.throws(
     () => parseUpdateArgs(['--switch-channel']),
     /--switch-channel requires --channel/,
+  )
+})
+
+test('the update changelog covers every release since the installed version', () => {
+  const entry = (version) => ({
+    version,
+    tag: `v${version}`,
+    published_at: '2026-10-22T00:00:00Z',
+    release_name: `v${version}`,
+    release_notes: `notes for ${version}`,
+    release_url: `https://github.com/oore-ci/oore.build/releases/tag/v${version}`,
+  })
+  const history = {
+    schema_version: 1,
+    channel: 'alpha',
+    releases: [
+      entry('0.1.47-alpha.13'),
+      entry('0.1.47-alpha.12'),
+      entry('0.1.47-alpha.11'),
+      entry('0.1.47-alpha.10'),
+      { version: 'not-a-version' },
+    ],
+  }
+  const since = releasesSinceInstalled(
+    history,
+    parseVersion('0.1.47-alpha.11'),
+    parseVersion('0.1.47-alpha.13'),
+    'oore-ci/oore.build',
+  )
+  assert.deepEqual(
+    since.releases.map((release) => release.version),
+    ['0.1.47-alpha.13', '0.1.47-alpha.12'],
+  )
+  assert.equal(since.releases[1].release_notes, 'notes for 0.1.47-alpha.12')
+  assert.equal(
+    since.compare_url,
+    'https://github.com/oore-ci/oore.build/compare/v0.1.47-alpha.11...v0.1.47-alpha.13',
+  )
+
+  // An index newer than the offered release does not leak into the range,
+  // and an unpublished installed version gets no compare link.
+  const unpublished = releasesSinceInstalled(
+    history,
+    parseVersion('0.1.47-alpha.9'),
+    parseVersion('0.1.47-alpha.12'),
+    'oore-ci/oore.build',
+  )
+  assert.deepEqual(
+    unpublished.releases.map((release) => release.version),
+    ['0.1.47-alpha.12', '0.1.47-alpha.11', '0.1.47-alpha.10'],
+  )
+  assert.equal(unpublished.compare_url, null)
+  assert.deepEqual(
+    releasesSinceInstalled(
+      null,
+      parseVersion('0.1.0'),
+      parseVersion('0.1.1'),
+      'o/r',
+    ).releases,
+    [],
   )
 })

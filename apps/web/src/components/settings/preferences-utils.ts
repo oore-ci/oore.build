@@ -25,12 +25,6 @@ export function authModeLabel(mode: RemoteAuthMode | undefined): string {
   return mode === 'trusted_proxy' ? 'Trusted Proxy' : 'OIDC'
 }
 
-export function authModeDescription(mode: RemoteAuthMode | undefined): string {
-  return mode === 'trusted_proxy'
-    ? 'Sign-in is delegated to a trusted upstream proxy.'
-    : 'Sign-in uses your configured OIDC provider.'
-}
-
 export function runtimeUpdateActive(phase?: string): boolean {
   return phase === 'updating' || phase === 'restarting'
 }

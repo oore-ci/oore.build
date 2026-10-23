@@ -446,7 +446,6 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
     <>
       <SettingsSection
         title="Access"
-        description="Grant developers or QA viewers access to this project."
         actions={<AddProjectMemberDialog projectId={projectId} />}
       >
         <SettingsSurface inset={false}>
@@ -488,7 +487,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
                           {INSTANCE_ROLE_LABELS[member.user_role] ?? 'Unknown'}
                         </Badge>
                       </ItemTitle>
-                      <ItemDescription className="break-words">
+                      <ItemDescription className="wrap-break-word">
                         {member.user_display_name
                           ? `${member.user_email} · `
                           : ''}

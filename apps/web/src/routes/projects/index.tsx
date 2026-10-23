@@ -190,7 +190,6 @@ function ProjectsListPage() {
       <PageMeta title="Projects" noindex />
       <PageHeader
         title="Projects"
-        description="Repositories, pipelines, and build access."
         actions={
           // While the page is empty its one next step lives in the empty
           // state, and without a connected source the dialog has nothing to

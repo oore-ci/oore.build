@@ -104,10 +104,7 @@ function GitHubSetupPage() {
   return (
     <PageLayout>
       <PageMeta title="Connect GitHub source" noindex />
-      <PageHeader
-        title="Connect GitHub"
-        description="Oore creates a GitHub App for repository access and webhooks, sends you to GitHub to install it, and brings you back here."
-      />
+      <PageHeader title="Connect GitHub" />
 
       {!remoteEnabled && !preferencesLoading ? (
         <Alert>
@@ -121,7 +118,7 @@ function GitHubSetupPage() {
 
       <SettingsSection
         title="GitHub App"
-        description="What the generated app can see and do."
+        hint="Oore creates the app, sends you to GitHub to install it, and brings you back here."
         actions={
           <Button
             onClick={handleConnect}
@@ -154,10 +151,7 @@ function GitHubSetupPage() {
         </SettingsSurface>
       </SettingsSection>
 
-      <SettingsSection
-        title="Endpoints"
-        description="Filled into the app manifest for you. Copy them if you register the app by hand."
-      >
+      <SettingsSection title="Endpoints">
         <SettingsSurface inset={false}>
           <ItemGroup className="gap-0">
             <EndpointRow label="Webhook URL" value={webhookUrl} />
@@ -165,6 +159,10 @@ function GitHubSetupPage() {
             <EndpointRow label="Redirect URL" value={redirectUrl} />
           </ItemGroup>
         </SettingsSurface>
+        <p className="text-xs text-muted-foreground">
+          Filled into the app manifest for you. Copy them only if you register
+          the app by hand.
+        </p>
       </SettingsSection>
     </PageLayout>
   )

@@ -32,6 +32,7 @@ import { DangerZone } from '@/components/danger-zone'
 import { FormActions } from '@/components/form-actions'
 import { RelativeTime } from '@/components/relative-time'
 import { StatusBadge } from '@/components/status-badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   SettingsSection,
@@ -186,7 +187,11 @@ function NotificationChannelDetailPage() {
       <PageMeta title={`${channel.name} notifications`} noindex />
       <PageHeader
         title={channel.name}
-        description={`${channelTypeLabel(channel.channel_type)} notification channel`}
+        meta={
+          <Badge variant="outline">
+            {channelTypeLabel(channel.channel_type)}
+          </Badge>
+        }
         actions={
           <Button
             variant="outline"
@@ -204,10 +209,7 @@ function NotificationChannelDetailPage() {
           onSubmit={form.handleSubmit(onSubmit)}
           className="flex flex-col gap-4"
         >
-          <SettingsSection
-            title="Channel"
-            description="Where updates go, and which events send them."
-          >
+          <SettingsSection title="Channel">
             <SettingsSurface className="flex flex-col gap-4">
               <NotificationChannelFormFields channel={channel} form={form} />
             </SettingsSurface>
@@ -221,10 +223,7 @@ function NotificationChannelDetailPage() {
         </form>
       </Form>
 
-      <SettingsSection
-        title="Delivery history"
-        description="The most recent attempts to reach this channel."
-      >
+      <SettingsSection title="Delivery history">
         <SettingsSurface inset={false}>
           {deliveriesLoading ? (
             <div
@@ -291,7 +290,7 @@ function NotificationChannelDetailPage() {
                         ) : null}
                       </ItemDescription>
                       {delivery.last_error ? (
-                        <ItemDescription className="font-mono text-xs break-words">
+                        <ItemDescription className="font-mono text-xs wrap-break-word">
                           {delivery.last_error}
                         </ItemDescription>
                       ) : null}

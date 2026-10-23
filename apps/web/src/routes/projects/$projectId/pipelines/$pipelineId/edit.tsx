@@ -446,14 +446,15 @@ function EditPipelinePage() {
   return (
     <PageLayout>
       <PageMeta title={label} noindex />
-      <PageHeader
-        title={`Edit ${pipeline.name}`}
-        description={
-          retrySigning
-            ? `Fix and retry ${retrySigning} signing without creating the pipeline again.`
-            : undefined
-        }
-      />
+      <PageHeader title={`Edit ${pipeline.name}`} />
+      {retrySigning ? (
+        <Alert>
+          <AlertDescription>
+            Fix and retry {retrySigning} signing without creating the pipeline
+            again.
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <PipelineForm
         initialValues={formInitialValues}
         manualOnlyTriggers={manualOnlyTriggers}
@@ -486,7 +487,7 @@ function EditPipelinePage() {
           storedIosSigning.export_method === 'ad_hoc' && (
             <PipelineFormSection
               title="Registered iOS devices"
-              description="Ad hoc builds install only on these devices. Registering one re-syncs the provisioning profiles."
+              hint="Ad hoc builds install only on these devices. Registering one re-syncs the profiles."
             >
               <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
                 <Input
