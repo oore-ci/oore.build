@@ -1,0 +1,39 @@
+{
+  "workflow": "adhoc",
+  "platforms": [
+    "android"
+  ],
+  "flutter_version": "3.24.5",
+  "steps": [
+    {
+      "name": "Get packages",
+      "phase": "pre_build",
+      "run": "flutter pub get",
+      "source": "steps[0].run"
+    },
+    {
+      "name": "Build Android (free)",
+      "phase": "build",
+      "run": "flutter build apk --release --flavor free",
+      "source": "workflows.adhoc.targets.android.build",
+      "platform": "android",
+      "flavor": "free"
+    }
+  ],
+  "env": [
+    {
+      "key": "BUILD_FLAVOR",
+      "value": "adhoc"
+    },
+    {
+      "key": "SENTRY_DSN",
+      "value": "${{ secrets.SENTRY_DSN }}"
+    }
+  ],
+  "artifact_patterns": [
+    "build/app/outputs/flutter-apk/*-free-release.apk"
+  ],
+  "build_number_offset": 4000,
+  "runs_on": [],
+  "isolation": "host"
+}

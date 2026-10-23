@@ -1,0 +1,37 @@
+{
+  "platforms": [
+    "android",
+    "ios"
+  ],
+  "steps": [
+    {
+      "name": "pre_build-1",
+      "phase": "pre_build",
+      "run": "flutter pub get",
+      "source": "commands.pre_build[0]"
+    },
+    {
+      "name": "build-1",
+      "phase": "build",
+      "run": "flutter build apk --release",
+      "source": "commands.build[0]",
+      "platform": "android"
+    },
+    {
+      "name": "build-2",
+      "phase": "build",
+      "run": "flutter build ios --release --no-codesign",
+      "source": "commands.build[1]",
+      "platform": "ios"
+    }
+  ],
+  "env": [],
+  "artifact_patterns": [
+    "build/app/outputs/flutter-apk/*.apk",
+    "build/app/outputs/bundle/**/*.aab",
+    "build/ios/ipa/*.ipa"
+  ],
+  "build_number_offset": 0,
+  "runs_on": [],
+  "isolation": "host"
+}

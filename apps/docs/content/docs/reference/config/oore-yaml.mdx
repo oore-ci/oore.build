@@ -7,6 +7,11 @@ description: 'The strict repository-owned pipeline configuration schema used by 
 Place `.oore.yaml` in the repository root to keep pipeline execution settings
 with the code they build. `.oore.yml` is also recognized.
 
+This page describes `version: 1`. Files that declare `version: 2` use
+workflows, targets with full build commands, named steps, and `vars`, `secrets`
+and `flavor` references; see [`.oore.yaml` version 2](/reference/config/oore-yaml-v2).
+Both versions are accepted, and a version 1 file runs exactly as before.
+
 ```yaml
 version: 1
 
@@ -47,7 +52,7 @@ The schema rejects unknown fields.
 
 | Field                 | Type     | Required | Default                         |
 | --------------------- | -------- | -------- | ------------------------------- |
-| `version`             | integer  | Yes      | Must be `1`                     |
+| `version`             | integer  | Yes      | `1` for this schema             |
 | `platforms`           | string[] | Yes      | No default; must not be empty   |
 | `flutter_version`     | string   | No       | `stable`                        |
 | `commands`            | object   | No       | Empty stages                    |

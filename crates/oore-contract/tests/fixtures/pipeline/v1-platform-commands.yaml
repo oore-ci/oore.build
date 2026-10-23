@@ -1,0 +1,8 @@
+version: 1
+platforms: [ios, android, macos]
+platform_commands:
+  ios: flutter build ipa --release --export-method ad-hoc
+platform_build_args:
+  android: ['--flavor', 'prod']
+  ios: ['--ignored-because-of-the-command']
+  macos: ['--dart-define=CHANNEL=beta']

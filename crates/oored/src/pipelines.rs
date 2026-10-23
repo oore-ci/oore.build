@@ -10,7 +10,7 @@ use oore_contract::{
     MAX_BUILD_TIMEOUT_MINUTES, OkResponse, Pipeline, PipelineDetailResponse,
     PipelineExecutionConfig, TriggerConfig, UpdatePipelineRequest, ValidatePipelineRequest,
     ValidatePipelineResponse, is_valid_pipeline_env_key, normalize_runner_labels,
-    parse_repository_pipeline_yaml, secret_expression_errors, validate_artifact_pattern,
+    parse_repository_config, secret_expression_errors, validate_artifact_pattern,
     validate_build_number_offset, validate_repository_config_path,
 };
 use serde::Deserialize;
@@ -1306,7 +1306,7 @@ pub async fn validate_pipeline(
         errors.extend(validate_execution_config(cfg));
     }
     if let Some(ref yaml) = req.repository_yaml
-        && let Err(error) = parse_repository_pipeline_yaml(yaml)
+        && let Err(error) = parse_repository_config(yaml)
     {
         errors.extend(error.lines().map(str::to_string));
     }

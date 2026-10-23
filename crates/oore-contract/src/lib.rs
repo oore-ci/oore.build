@@ -13,7 +13,13 @@ use utoipa::ToSchema;
 
 pub mod data_paths;
 pub mod install_root;
+pub mod pipeline_config;
 pub mod runtime_update_preflight;
+
+pub use pipeline_config::{
+    PipelinePlan, PlanRequest, PlanStep, RepositoryConfig, StepPhase, parse_repository_config,
+    plan_execution_config,
+};
 
 // ── Setup state machine ─────────────────────────────────────────
 
@@ -2959,7 +2965,7 @@ pub struct PlatformBuildCommands {
     pub macos: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PipelineEnvVar {
     pub key: String,
@@ -3101,6 +3107,7 @@ struct RepositoryArtifacts {
     patterns: Vec<String>,
 }
 
+/// Parse a `version: 1` file. [`parse_repository_config`] accepts both versions.
 pub fn parse_repository_pipeline_yaml(raw: &str) -> Result<PipelineExecutionConfig, String> {
     let parsed: RepositoryPipelineConfig =
         serde_yaml::from_str(raw).map_err(|error| format!("YAML parse error: {error}"))?;

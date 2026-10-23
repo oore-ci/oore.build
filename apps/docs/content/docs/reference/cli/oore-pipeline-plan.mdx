@@ -1,0 +1,51 @@
+---
+title: '`oore pipeline plan`'
+status: implemented
+description: 'Print the steps a repository pipeline file runs, per workflow and platform.'
+---
+
+```text
+oore pipeline plan [PATH] [--workflow NAME] [--platform PLATFORM]... [--json]
+```
+
+`PATH` defaults to `.oore.yaml`. The command validates the file like
+[`oore pipeline validate`](/reference/cli/oore-pipeline-validate), then prints
+what a build runs: the step names, their commands after `vars` and `flavor`
+references are resolved, the env, and the artifact patterns. It reads only the
+file and contacts no backend.
+
+| Option                | Effect                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------- |
+| `--workflow NAME`     | Plan one version 2 workflow. Without it, every workflow is printed.                          |
+| `--platform PLATFORM` | Plan only `android`, `ios` or `macos`, as a run that selects them would. Repeat for several. |
+| `--json`              | Print a JSON array with one plan per workflow.                                               |
+
+```bash
+oore pipeline plan
+oore pipeline plan --workflow release --platform android
+```
+
+```text
+.oore.yaml (version 2)
+
+workflow release
+  platforms: android
+  flutter: 3.24.5
+  env:
+    BUILD_FLAVOR=staging
+    SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+  steps:
+    1. Get packages [pre_build]
+       $ flutter pub get
+    2. Build Android (free) [build, android]
+       $ flutter build appbundle --release --flavor free
+  artifacts:
+    build/app/outputs/bundle/freeRelease/*.aab
+```
+
+Secret references are printed as written; the runner resolves them during the
+build. A version 1 file prints the same plan the runner uses, including
+Oore's default `flutter pub get` and platform build commands, with steps named
+`pre_build-1`, `build-1` and so on. When a pipeline uploads to Google Play,
+the runner also adds a `flutter build appbundle` step after a default Android
+command; the printed plan leaves it out.

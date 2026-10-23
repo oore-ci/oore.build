@@ -1,0 +1,60 @@
+# The .oore.yaml v2 example from the proposal, with two workflows.
+version: 2
+
+app:
+  flutter: 3.24.5
+  flavors: [free, pro]
+
+vars:
+  BUNDLE_DIR: build/app/outputs/bundle
+  ANDROID_BUILD: flutter build appbundle --release --flavor ${{ flavor }}
+
+targets:
+  android:
+    build: ${{ vars.ANDROID_BUILD }}
+    artifacts: ['${{ vars.BUNDLE_DIR }}/${{ flavor }}Release/*.aab']
+    publish:
+      play: { track: internal, rollout: 0.01 }
+  ios:
+    build: flutter build ipa --release --flavor ${{ flavor }} --export-method app-store-connect
+    artifacts: [build/ios/ipa/*.ipa]
+    publish:
+      testflight: { group: Internal }
+
+steps:
+  - name: Get packages
+    run: flutter pub get
+  - name: Tests
+    run: flutter test --machine > build/tests.json
+    reports: { tests: build/tests.json }
+  - build
+  - name: Size report
+    run: flutter build appbundle --analyze-size --flavor free
+
+env:
+  BUILD_FLAVOR: staging
+  SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+
+build_number_offset: 4000
+
+workflows:
+  adhoc:
+    on:
+      pull_request: true
+    targets:
+      android:
+        build: flutter build apk --release --flavor ${{ flavor }}
+        artifacts: ['build/app/outputs/flutter-apk/*-${{ flavor }}-release.apk']
+    flavors: [free]
+    steps:
+      - Get packages
+      - build
+    env:
+      BUILD_FLAVOR: adhoc
+  release:
+    on:
+      push: { branches: [main, release/*] }
+      tag: v*
+      paths: [lib/**, pubspec.*]
+    env:
+      RELEASE_CHANNEL: production

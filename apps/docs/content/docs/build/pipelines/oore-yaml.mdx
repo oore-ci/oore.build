@@ -38,7 +38,9 @@ The schema rejects unknown fields. `platforms` must contain at least one of
 `platform_commands` override is one string.
 
 For every field and accepted type, use the
-[`.oore.yaml` reference](/reference/config/oore-yaml).
+[`.oore.yaml` reference](/reference/config/oore-yaml). To name steps, write
+each platform's full build command, or share inputs through `vars`, use
+[version 2](/reference/config/oore-yaml-v2) instead.
 
 ## 2. Validate the file
 
@@ -53,6 +55,9 @@ A valid file exits successfully and prints:
 ```text
 .oore.yaml is valid
 ```
+
+To see the commands each build runs, in order and by step name, run
+`oore pipeline plan .oore.yaml`.
 
 ## 3. Create the pipeline
 

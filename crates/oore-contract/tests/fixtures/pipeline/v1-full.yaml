@@ -1,0 +1,36 @@
+# The example from the .oore.yaml v1 reference.
+version: 1
+
+platforms:
+  - android
+  - ios
+
+flutter_version: '3.24.5'
+
+isolation: vm
+
+commands:
+  pre_build:
+    - flutter pub get
+  post_build:
+    - echo "Build complete"
+
+platform_build_args:
+  android:
+    - '--split-per-abi'
+    - '--build-number=$OORE_VERSION_CODE'
+
+build_number_offset: 4000
+
+env:
+  - key: BUILD_FLAVOR
+    value: staging
+  - key: SENTRY_DSN
+    value: ${{ secrets.SENTRY_DSN }}
+
+artifacts:
+  patterns:
+    - 'build/app/outputs/flutter-apk/*.apk'
+    - 'build/ios/ipa/*.ipa'
+
+runs_on: [macos, xcode-16]

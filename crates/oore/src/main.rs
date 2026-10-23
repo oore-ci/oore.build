@@ -24,7 +24,7 @@ use oore_contract::{
     SetupOidcStartResponse, SetupOidcVerifyRequest, SetupOidcVerifyResponse,
     SetupPreferencesRequest, SetupState, SetupStateFile, SetupStatus, SetupSummaryResponse,
     SetupTrustedProxyConfigureRequest, UserProfileResponse, local_recovery_socket_path,
-    parse_repository_pipeline_yaml,
+    parse_repository_config,
 };
 use oore_runner::RunnerConfig;
 use ring::aead::{self, AES_256_GCM, Aad, BoundKey, NONCE_LEN, Nonce, NonceSequence, UnboundKey};
@@ -857,6 +857,8 @@ struct PipelineArgs {
 enum PipelineSubcommand {
     /// Validate repository pipeline YAML using the runner's schema.
     Validate(PipelineValidateArgs),
+    /// Print the steps a build runs for each workflow and platform.
+    Plan(PipelinePlanArgs),
 }
 
 #[derive(Debug, Args)]
@@ -866,12 +868,140 @@ struct PipelineValidateArgs {
     path: PathBuf,
 }
 
+#[derive(Debug, Args)]
+struct PipelinePlanArgs {
+    /// Repository pipeline file to plan.
+    #[arg(default_value = ".oore.yaml")]
+    path: PathBuf,
+    /// Plan only this workflow (version 2). Defaults to every workflow.
+    #[arg(long)]
+    workflow: Option<String>,
+    /// Plan only these platforms, as a run that selects them would.
+    #[arg(long = "platform", value_name = "PLATFORM")]
+    platforms: Vec<String>,
+    /// Print the plans as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+fn read_pipeline_config(path: &Path) -> anyhow::Result<oore_contract::RepositoryConfig> {
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    parse_repository_config(&raw).map_err(anyhow::Error::msg)
+}
+
 fn handle_pipeline_validate(args: PipelineValidateArgs) -> anyhow::Result<()> {
-    let raw = fs::read_to_string(&args.path)
-        .with_context(|| format!("failed to read {}", args.path.display()))?;
-    parse_repository_pipeline_yaml(&raw).map_err(anyhow::Error::msg)?;
+    let config = read_pipeline_config(&args.path)?;
+    for notice in config.notices() {
+        eprintln!("note: {notice}");
+    }
     println!("{} is valid", args.path.display());
     Ok(())
+}
+
+fn handle_pipeline_plan(args: PipelinePlanArgs) -> anyhow::Result<()> {
+    let config = read_pipeline_config(&args.path)?;
+    let platforms = args
+        .platforms
+        .iter()
+        .map(|platform| {
+            serde_json::from_value::<oore_contract::BuildPlatform>(serde_json::Value::String(
+                platform.to_ascii_lowercase(),
+            ))
+            .map_err(|_| {
+                anyhow::anyhow!("unknown platform '{platform}'; use android, ios or macos")
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let workflows: Vec<Option<String>> = match (&args.workflow, config.workflow_names()) {
+        (Some(workflow), _) => vec![Some(workflow.clone())],
+        (None, names) if names.is_empty() => vec![None],
+        (None, names) => names
+            .into_iter()
+            .map(|name| Some(name.to_string()))
+            .collect(),
+    };
+    let mut plans = Vec::new();
+    for workflow in &workflows {
+        let plan = config
+            .plan(oore_contract::PlanRequest {
+                workflow: workflow.as_deref(),
+                selected_platforms: (!platforms.is_empty()).then_some(platforms.as_slice()),
+                build_play_bundle: false,
+            })
+            .map_err(anyhow::Error::msg)?;
+        plans.push(plan);
+    }
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&plans)?);
+    } else {
+        println!("{} (version {})", args.path.display(), config.version());
+        for plan in &plans {
+            print!("\n{}", render_pipeline_plan(plan));
+        }
+    }
+    for notice in config.notices() {
+        eprintln!("note: {notice}");
+    }
+    Ok(())
+}
+
+fn render_pipeline_plan(plan: &oore_contract::PipelinePlan) -> String {
+    let platform_names = |platforms: &[oore_contract::BuildPlatform]| {
+        platforms
+            .iter()
+            .map(|platform| oore_contract::pipeline_config::platform_key(platform))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut out = String::new();
+    out.push_str(&match &plan.workflow {
+        Some(workflow) => format!("workflow {workflow}\n"),
+        None => "pipeline\n".to_string(),
+    });
+    out.push_str(&format!(
+        "  platforms: {}\n",
+        platform_names(&plan.platforms)
+    ));
+    out.push_str(&format!(
+        "  flutter: {}\n",
+        plan.flutter_version
+            .as_deref()
+            .unwrap_or("from .fvmrc, else stable")
+    ));
+    if !plan.runs_on.is_empty() {
+        out.push_str(&format!("  runs_on: {}\n", plan.runs_on.join(", ")));
+    }
+    if !plan.env.is_empty() {
+        out.push_str("  env:\n");
+        for entry in &plan.env {
+            out.push_str(&format!("    {}={}\n", entry.key, entry.value));
+        }
+    }
+    out.push_str("  steps:\n");
+    for (index, step) in plan.steps.iter().enumerate() {
+        let mut tags = vec![step.phase.as_str().to_string()];
+        if let Some(platform) = &step.platform {
+            tags.push(oore_contract::pipeline_config::platform_key(platform).to_string());
+        }
+        if let Some(report) = &step.test_report {
+            tags.push(format!("tests: {report}"));
+        }
+        out.push_str(&format!(
+            "    {}. {} [{}]\n",
+            index + 1,
+            step.name,
+            tags.join(", ")
+        ));
+        for line in step.run.lines() {
+            out.push_str(&format!("       $ {line}\n"));
+        }
+    }
+    out.push_str("  artifacts:\n");
+    for pattern in &plan.artifact_patterns {
+        out.push_str(&format!("    {pattern}\n"));
+    }
+    out
 }
 
 #[derive(Debug, Args)]
@@ -13076,6 +13206,7 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Pipeline(pipeline) => match pipeline.command {
             PipelineSubcommand::Validate(args) => handle_pipeline_validate(args)?,
+            PipelineSubcommand::Plan(args) => handle_pipeline_plan(args)?,
         },
         Commands::Version => {
             let install_root = resolve_install_root()?;

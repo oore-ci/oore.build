@@ -19,12 +19,13 @@ use oore_contract::{
     AndroidSigningBuildType, BuildIsolation, BuildPlatform, BuildStatus, ClaimJobRequest,
     ClaimJobResponse, ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse,
     IosExportMethod, JobStatusResponse, PUBLISH_APP_STORE_STEP, PUBLISH_PLAY_STEP,
-    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
-    PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
+    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlanRequest, PlanStep,
+    PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
     RunnerAndroidSigningResponse, RunnerHeartbeatResponse, RunnerIosSigningBundle,
     RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult,
-    RunnerRetryArtifactsResponse, StepResult, artifact_pattern_matches, is_valid_pipeline_env_key,
-    missing_runner_labels, normalize_runner_labels, parse_repository_pipeline_yaml,
+    RunnerRetryArtifactsResponse, StepPhase, StepResult, artifact_pattern_matches,
+    is_valid_pipeline_env_key, missing_runner_labels, normalize_runner_labels,
+    parse_repository_config, pipeline_config::select_v1_platforms, plan_execution_config,
     replace_secret_references, store_version_code, validate_artifact_pattern,
     validate_build_number_offset, validate_repository_config_path,
 };
@@ -3728,7 +3729,8 @@ const DEFAULT_FLUTTER_VERSION: &str = "stable";
 
 #[derive(Debug, Clone)]
 struct ResolvedExecutionPlan {
-    stage_commands: PipelineCommandStages,
+    /// Named steps in run order: pre-build, then build, then post-build.
+    steps: Vec<PlanStep>,
     artifact_patterns: Vec<String>,
     env: Vec<PipelineEnvVar>,
     /// `OORE_SECRET_<NAME>` variables backing `${{ secrets.NAME }}` in commands.
@@ -3792,23 +3794,17 @@ fn apply_secret_references(
     }
 
     let mut referenced = std::collections::BTreeSet::new();
-    for (stage, commands) in [
-        ("pre_build", &mut plan.stage_commands.pre_build),
-        ("build", &mut plan.stage_commands.build),
-        ("post_build", &mut plan.stage_commands.post_build),
-    ] {
-        for (index, command) in commands.iter_mut().enumerate() {
-            let path = format!("commands.{stage}[{index}]");
-            let mut names = Vec::new();
-            *command = replace_secret_references(command, |name| {
-                names.push(name.to_string());
-                format!("${{{}}}", secret_env_var(name))
-            })
-            .map_err(|error| anyhow::anyhow!("{path} {error}"))?;
-            for name in names {
-                lookup_secret(secrets, &name, &path)?;
-                referenced.insert(name);
-            }
+    for step in &mut plan.steps {
+        let path = step.source.clone();
+        let mut names = Vec::new();
+        step.run = replace_secret_references(&step.run, |name| {
+            names.push(name.to_string());
+            format!("${{{}}}", secret_env_var(name))
+        })
+        .map_err(|error| anyhow::anyhow!("{path} {error}"))?;
+        for name in names {
+            lookup_secret(secrets, &name, &path)?;
+            referenced.insert(name);
         }
     }
     plan.secret_env = referenced
@@ -4083,81 +4079,6 @@ fn normalize_execution_config(
     })
 }
 
-fn build_default_command_with_args(base: &str, args: &[String]) -> String {
-    if args.is_empty() {
-        return base.to_string();
-    }
-    format!("{base} {}", args.join(" "))
-}
-
-fn default_platform_command(
-    platform: &BuildPlatform,
-    overrides: &PlatformBuildCommands,
-    args: &PlatformBuildArgs,
-) -> String {
-    match platform {
-        BuildPlatform::Android => overrides.android.clone().unwrap_or_else(|| {
-            build_default_command_with_args("flutter build apk --release", &args.android)
-        }),
-        BuildPlatform::Ios => overrides.ios.clone().unwrap_or_else(|| {
-            build_default_command_with_args("flutter build ios --release --no-codesign", &args.ios)
-        }),
-        BuildPlatform::Macos => overrides.macos.clone().unwrap_or_else(|| {
-            build_default_command_with_args("flutter build macos --release", &args.macos)
-        }),
-    }
-}
-
-/// Google Play only accepts App Bundles. When the pipeline uploads to Play
-/// and keeps the default Android command, build a bundle after the APK so
-/// the upload has something to send and QA installs still get an APK.
-fn default_play_bundle_command(args: &PlatformBuildArgs) -> String {
-    // `--split-per-abi` is APK-only; `flutter build appbundle` rejects it.
-    let args = args
-        .android
-        .iter()
-        .filter(|arg| arg.as_str() != "--split-per-abi")
-        .cloned()
-        .collect::<Vec<_>>();
-    build_default_command_with_args("flutter build appbundle --release", &args)
-}
-
-fn materialize_stage_commands(
-    config: &PipelineExecutionConfig,
-    include_default_platform_commands: bool,
-    build_play_bundle: bool,
-) -> PipelineCommandStages {
-    let mut pre_build = Vec::new();
-    if include_default_platform_commands && !config.platforms.is_empty() {
-        pre_build.push("flutter pub get".to_string());
-    }
-    pre_build.extend(config.commands.pre_build.clone());
-
-    let mut build = Vec::new();
-    if include_default_platform_commands {
-        for platform in &config.platforms {
-            build.push(default_platform_command(
-                platform,
-                &config.platform_commands,
-                &config.platform_build_args,
-            ));
-            if build_play_bundle
-                && *platform == BuildPlatform::Android
-                && config.platform_commands.android.is_none()
-            {
-                build.push(default_play_bundle_command(&config.platform_build_args));
-            }
-        }
-    }
-    build.extend(config.commands.build.clone());
-
-    PipelineCommandStages {
-        pre_build,
-        build,
-        post_build: config.commands.post_build.clone(),
-    }
-}
-
 fn load_ui_execution_config(
     snapshot: &serde_json::Value,
 ) -> anyhow::Result<PipelineExecutionConfig> {
@@ -4169,41 +4090,14 @@ fn load_ui_execution_config(
     normalize_execution_config(parsed)
 }
 
-fn apply_run_platform_selection(
-    mut config: PipelineExecutionConfig,
-    snapshot: &serde_json::Value,
-) -> anyhow::Result<PipelineExecutionConfig> {
-    let Some(raw) = snapshot.get("selected_platforms") else {
-        return Ok(config);
-    };
-    if raw.is_null() {
-        return Ok(config);
+/// The run's platform selection from the snapshot, when it made one.
+fn selected_platforms(snapshot: &serde_json::Value) -> anyhow::Result<Option<Vec<BuildPlatform>>> {
+    match snapshot.get("selected_platforms") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(raw) => serde_json::from_value(raw.clone())
+            .map(Some)
+            .map_err(|error| anyhow::anyhow!("Invalid selected_platforms in snapshot: {error}")),
     }
-
-    let selected: Vec<BuildPlatform> = serde_json::from_value(raw.clone())
-        .map_err(|error| anyhow::anyhow!("Invalid selected_platforms in snapshot: {error}"))?;
-    if selected.is_empty() {
-        anyhow::bail!("selected_platforms must include at least one target");
-    }
-    let has_duplicate = selected
-        .iter()
-        .enumerate()
-        .any(|(index, platform)| selected[..index].contains(platform));
-    if has_duplicate
-        || selected
-            .iter()
-            .any(|platform| !config.platforms.contains(platform))
-    {
-        anyhow::bail!("selected_platforms must be unique and configured by the workflow");
-    }
-    if selected.len() < config.platforms.len() && !config.commands.build.is_empty() {
-        anyhow::bail!(
-            "Per-run platform selection requires platform_commands or default platform commands; shared commands.build cannot be filtered safely"
-        );
-    }
-
-    config.platforms = selected;
-    Ok(config)
 }
 
 /// The scheduler matched this runner against the pipeline's `runs_on`. A
@@ -4283,46 +4177,54 @@ fn resolve_execution_plan(
         let content = fs::read_to_string(&full_path).map_err(|e| {
             anyhow::anyhow!("Failed to read config file {}: {e}", full_path.display())
         })?;
-        let file_config = parse_repository_pipeline_yaml(&content).map_err(|e| {
+        let file_config = parse_repository_config(&content).map_err(|e| {
             anyhow::anyhow!("Invalid pipeline config in {}: {}", full_path.display(), e)
         })?;
-        require_runner_labels(&file_config.runs_on, snapshot, rel_path)?;
-        let file_config = apply_run_platform_selection(file_config, snapshot)?;
+        require_runner_labels(file_config.runs_on(), snapshot, rel_path)?;
+        let selected = selected_platforms(snapshot)?;
+        let plan = file_config
+            .plan(PlanRequest {
+                // Set once pipelines can name a v2 workflow.
+                workflow: snapshot.get("workflow").and_then(|v| v.as_str()),
+                selected_platforms: selected.as_deref(),
+                build_play_bundle,
+            })
+            .map_err(|e| anyhow::anyhow!("{rel_path}: {e}"))?;
         let resolved_flutter_version = fvmrc_version
-            .or_else(|| file_config.flutter_version.clone())
+            .or_else(|| plan.flutter_version.clone())
             .unwrap_or_else(|| DEFAULT_FLUTTER_VERSION.to_string());
-        let include_defaults = file_config.commands.build.is_empty();
-        let stage_commands =
-            materialize_stage_commands(&file_config, include_defaults, build_play_bundle);
 
         return Ok(ResolvedExecutionPlan {
-            stage_commands,
-            artifact_patterns: file_config.artifact_patterns,
-            env: file_config.env,
+            needs_xcode: needs_xcode(&plan.platforms),
+            steps: plan.steps,
+            artifact_patterns: plan.artifact_patterns,
+            env: plan.env,
             secret_env: Vec::new(),
             secret_env_keys: Default::default(),
-            build_number_offset: file_config.build_number_offset,
-            isolation: file_config.isolation,
-            needs_xcode: needs_xcode(&file_config.platforms),
+            build_number_offset: plan.build_number_offset,
+            isolation: plan.isolation,
             flutter_version: resolved_flutter_version,
             source: format!("file:{}", full_path.display()),
         });
     }
 
-    let fallback = apply_run_platform_selection(load_ui_execution_config(snapshot)?, snapshot)?;
+    let mut fallback = load_ui_execution_config(snapshot)?;
+    if let Some(selected) = selected_platforms(snapshot)? {
+        fallback = select_v1_platforms(fallback, &selected).map_err(anyhow::Error::msg)?;
+    }
     let resolved_flutter_version = fvmrc_version
         .or_else(|| fallback.flutter_version.clone())
         .unwrap_or_else(|| DEFAULT_FLUTTER_VERSION.to_string());
-    let stage_commands = materialize_stage_commands(&fallback, true, build_play_bundle);
+    let plan = plan_execution_config(&fallback, true, build_play_bundle);
     Ok(ResolvedExecutionPlan {
-        stage_commands,
-        artifact_patterns: fallback.artifact_patterns,
-        env: fallback.env,
+        needs_xcode: needs_xcode(&plan.platforms),
+        steps: plan.steps,
+        artifact_patterns: plan.artifact_patterns,
+        env: plan.env,
         secret_env: Vec::new(),
         secret_env_keys: Default::default(),
-        build_number_offset: fallback.build_number_offset,
-        isolation: fallback.isolation,
-        needs_xcode: needs_xcode(&fallback.platforms),
+        build_number_offset: plan.build_number_offset,
+        isolation: plan.isolation,
         flutter_version: resolved_flutter_version,
         source: "ui_fallback".to_string(),
     })
@@ -5271,8 +5173,13 @@ async fn execute_build_steps(
     let mut signing_source: Option<&str> = None;
     let mut signing_variant: Option<AndroidSigningBuildType> = None;
     let mut signing_inputs: Option<AndroidSigningInputs> = None;
-    let build_commands = execution_plan.stage_commands.build.as_slice();
-    match determine_android_signing_variant(build_commands) {
+    let build_commands: Vec<String> = execution_plan
+        .steps
+        .iter()
+        .filter(|step| step.phase == StepPhase::Build)
+        .map(|step| step.run.clone())
+        .collect();
+    match determine_android_signing_variant(&build_commands) {
         Ok(Some(variant)) => {
             signing_variant = Some(variant);
             match fetch_job_android_signing(
@@ -5613,25 +5520,23 @@ async fn execute_build_steps(
     let ios_signing_expected = ios_signing_bundle.is_some();
     let mut ios_artifact_metadata: Option<serde_json::Value> = None;
     let mut signed_ipa_path: Option<PathBuf> = None;
-    for (stage_name, commands) in [
-        (
-            "pre_build",
-            execution_plan.stage_commands.pre_build.as_slice(),
-        ),
-        ("build", execution_plan.stage_commands.build.as_slice()),
-        (
-            "post_build",
-            execution_plan.stage_commands.post_build.as_slice(),
-        ),
-    ] {
-        for (index, command) in commands.iter().enumerate() {
+    for phase in StepPhase::ALL {
+        let stage_name = phase.as_str();
+        let phase_steps: Vec<PlanStep> = execution_plan
+            .steps
+            .iter()
+            .filter(|step| step.phase == phase)
+            .cloned()
+            .collect();
+        for plan_step in &phase_steps {
+            let command = &plan_step.run;
             if let Err(e) =
                 check_build_active(client, daemon_url, config, &job.build_id, &authority).await
             {
                 return (steps, Err(e));
             }
 
-            let step_name = format!("{stage_name}-{}", index + 1);
+            let step_name = plan_step.name.clone();
             let start = now_unix();
             let (normalized_command, command_applied) = match normalize_stage_command_for_execution(
                 stage_name,
@@ -5645,7 +5550,7 @@ async fn execute_build_steps(
             ios_signing_command_applied |= command_applied;
             let normalized_command = test_reports::with_test_file_reporter(
                 &normalized_command,
-                &step_test_reports_dir.join(format!("{step_name}.json")),
+                &step_test_reports_dir.join(format!("{}.json", report_file_stem(&step_name))),
             );
             let command_preview = render_command_preview(&normalized_command, &step_env);
 
@@ -5729,7 +5634,7 @@ async fn execute_build_steps(
                         &job.build_id,
                         log_seq,
                         "stdout",
-                        &step_end_marker(&format!("{stage_name}-{}", index + 1), "canceled", None),
+                        &step_end_marker(&plan_step.name, "canceled", None),
                     )
                     .await;
                     return (steps, Err(authority.terminated()));
@@ -5743,6 +5648,25 @@ async fn execute_build_steps(
                         Some(vm) => vm.vm.sync_workspace_out().await.err(),
                         None => None,
                     };
+                    if let Some(report) = plan_step.test_report.as_deref()
+                        && let Err(error) = copy_declared_test_report(
+                            &workspace,
+                            report,
+                            &test_reports_dir,
+                            &step_name,
+                        )
+                    {
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            log_seq,
+                            "stderr",
+                            &format!("[oore-tests] {error}"),
+                        )
+                        .await;
+                    }
                     report_step_tests(
                         client,
                         daemon_url,
@@ -5788,7 +5712,7 @@ async fn execute_build_steps(
                         finished_at: finished,
                         duration_ms: (finished - start) * 1000,
                     });
-                    let step_name = format!("{stage_name}-{}", index + 1);
+                    let step_name = plan_step.name.clone();
                     let _ = append_runner_log_line(
                         client,
                         daemon_url,
@@ -6977,6 +6901,62 @@ async fn report_publish_result(
 /// Parse the reports a step wrote and send them to the daemon. Test reporting
 /// never fails the build; problems are logged instead.
 #[allow(clippy::too_many_arguments)]
+/// Test report file name for a step. Step names can hold spaces and
+/// punctuation; v1 names (`pre_build-1`) pass through unchanged.
+fn report_file_stem(step_name: &str) -> String {
+    step_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// Copy the report a v2 step declares in `reports.tests` into the reports
+/// directory the runner reads after every step.
+fn copy_declared_test_report(
+    workspace: &Path,
+    report: &str,
+    reports_dir: &Path,
+    step_name: &str,
+) -> Result<(), String> {
+    let source = workspace.join(report);
+    if !source.is_file() {
+        return Err(format!(
+            "step '{step_name}' declares reports.tests {report}, but the file was not written"
+        ));
+    }
+    let inside_workspace = match (source.canonicalize(), workspace.canonicalize()) {
+        (Ok(source), Ok(workspace)) => source.starts_with(workspace),
+        _ => false,
+    };
+    if !inside_workspace {
+        return Err(format!(
+            "step '{step_name}' declares reports.tests {report}, which resolves outside the workspace"
+        ));
+    }
+    let extension = source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("json");
+    fs::create_dir_all(reports_dir)
+        .and_then(|_| {
+            fs::copy(
+                &source,
+                reports_dir.join(format!(
+                    "{}-declared.{extension}",
+                    report_file_stem(step_name)
+                )),
+            )
+        })
+        .map(|_| ())
+        .map_err(|error| format!("could not read reports.tests {report}: {error}"))
+}
+
 async fn report_step_tests(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -7849,8 +7829,132 @@ mod tests {
         choose_ios_export_method, load_ui_execution_config, pubspec_version_name,
         require_runner_labels, resolve_execution_plan,
     };
-    use oore_contract::{BuildIsolation, IosExportMethod};
+    use oore_contract::{BuildIsolation, IosExportMethod, StepPhase};
     use serde_json::json;
+
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("{prefix}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn plan_commands(plan: &super::ResolvedExecutionPlan, phase: StepPhase) -> Vec<String> {
+        plan.steps
+            .iter()
+            .filter(|step| step.phase == phase)
+            .map(|step| step.run.clone())
+            .collect()
+    }
+
+    #[test]
+    fn v2_files_run_named_steps_through_the_same_plan() {
+        let workspace = TempDir::new("oore-v2-plan-test");
+        std::fs::write(
+            workspace.path().join(".oore.yaml"),
+            "version: 2\napp:\n  flutter: 3.47.7\ntargets:\n  android:\n    build: flutter build appbundle --release\n  ios:\n    build: flutter build ipa --release\nsteps:\n  - name: Get packages\n    run: flutter pub get\n  - build\n  - name: Notify\n    run: echo ${{ secrets.HOOK }}\nenv:\n  CHANNEL: beta\n",
+        )
+        .unwrap();
+
+        let plan = resolve_execution_plan(workspace.path(), &json!({}), true).unwrap();
+        let names: Vec<(&str, StepPhase)> = plan
+            .steps
+            .iter()
+            .map(|step| (step.name.as_str(), step.phase))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("Get packages", StepPhase::PreBuild),
+                ("Build Android", StepPhase::Build),
+                ("Build iOS", StepPhase::Build),
+                ("Notify", StepPhase::PostBuild),
+            ]
+        );
+        // v2 build commands are complete; a Play upload adds no hidden bundle step.
+        assert_eq!(
+            plan_commands(&plan, StepPhase::Build),
+            [
+                "flutter build appbundle --release",
+                "flutter build ipa --release"
+            ]
+        );
+        assert_eq!(plan.flutter_version, "3.47.7");
+        assert!(plan.needs_xcode);
+        assert_eq!(plan.env[0].key, "CHANNEL");
+
+        let secrets = std::collections::BTreeMap::from([("HOOK".to_string(), "x".to_string())]);
+        let resolved = super::apply_secret_references(plan, &secrets).unwrap();
+        assert_eq!(resolved.steps[3].run, "echo ${OORE_SECRET_HOOK}");
+
+        let android_only = resolve_execution_plan(
+            workspace.path(),
+            &json!({ "selected_platforms": ["android"] }),
+            false,
+        )
+        .unwrap();
+        assert_eq!(android_only.steps.len(), 3);
+        assert!(!android_only.needs_xcode);
+
+        std::fs::write(
+            workspace.path().join(".oore.yaml"),
+            "version: 2\ntargets:\n  android:\n    build: a\nworkflows:\n  adhoc: {}\n  release: {}\n",
+        )
+        .unwrap();
+        let error = resolve_execution_plan(workspace.path(), &json!({}), false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("choose one for the pipeline"), "{error}");
+        let release =
+            resolve_execution_plan(workspace.path(), &json!({ "workflow": "release" }), false)
+                .unwrap();
+        assert_eq!(release.steps[0].name, "Build Android");
+    }
+
+    #[test]
+    fn declared_test_reports_are_copied_for_collection() {
+        let workspace = TempDir::new("oore-declared-report-ws");
+        let reports = TempDir::new("oore-declared-report-out");
+        std::fs::create_dir_all(workspace.path().join("build")).unwrap();
+        std::fs::write(workspace.path().join("build/tests.json"), "{}").unwrap();
+
+        super::copy_declared_test_report(
+            workspace.path(),
+            "build/tests.json",
+            reports.path(),
+            "Unit tests",
+        )
+        .unwrap();
+        assert!(reports.path().join("Unit-tests-declared.json").is_file());
+
+        let error = super::copy_declared_test_report(
+            workspace.path(),
+            "build/missing.xml",
+            reports.path(),
+            "Unit tests",
+        )
+        .unwrap_err();
+        assert!(error.contains("was not written"), "{error}");
+        assert_eq!(super::report_file_stem("pre_build-1"), "pre_build-1");
+        assert_eq!(
+            super::report_file_stem("Build iOS (pro)"),
+            "Build-iOS--pro-"
+        );
+    }
 
     #[test]
     fn host_flutter_must_match_a_pinned_version() {
@@ -7939,7 +8043,7 @@ mod tests {
 
         let plan = resolve_execution_plan(&workspace, &snapshot, true).unwrap();
         assert_eq!(
-            plan.stage_commands.build,
+            plan_commands(&plan, StepPhase::Build),
             vec![
                 "flutter build apk --release --split-per-abi --flavor=prod",
                 "flutter build appbundle --release --flavor=prod",
@@ -7948,7 +8052,7 @@ mod tests {
 
         let plan = resolve_execution_plan(&workspace, &snapshot, false).unwrap();
         assert_eq!(
-            plan.stage_commands.build,
+            plan_commands(&plan, StepPhase::Build),
             vec!["flutter build apk --release --split-per-abi --flavor=prod"]
         );
 
@@ -7961,7 +8065,7 @@ mod tests {
         });
         let plan = resolve_execution_plan(&workspace, &snapshot, true).unwrap();
         assert_eq!(
-            plan.stage_commands.build,
+            plan_commands(&plan, StepPhase::Build),
             vec!["flutter build apk --release"]
         );
         std::fs::remove_dir_all(&workspace).ok();
@@ -7982,9 +8086,12 @@ mod tests {
         let plan = resolve_execution_plan(&workspace, &json!({}), false).unwrap();
         assert_eq!(plan.isolation, BuildIsolation::Vm);
         assert_eq!(plan.flutter_version, "3.47.7");
-        assert_eq!(plan.stage_commands.pre_build, vec!["flutter pub get"]);
         assert_eq!(
-            plan.stage_commands.build,
+            plan_commands(&plan, StepPhase::PreBuild),
+            vec!["flutter pub get"]
+        );
+        assert_eq!(
+            plan_commands(&plan, StepPhase::Build),
             vec!["flutter build apk --release"]
         );
 
@@ -7996,7 +8103,10 @@ mod tests {
         let plan = resolve_execution_plan(&workspace, &json!({}), false).unwrap();
         assert_eq!(plan.isolation, BuildIsolation::Host);
         assert_eq!(plan.flutter_version, "3.47.7");
-        assert_eq!(plan.stage_commands.pre_build, vec!["flutter pub get"]);
+        assert_eq!(
+            plan_commands(&plan, StepPhase::PreBuild),
+            vec!["flutter pub get"]
+        );
 
         let _ = std::fs::remove_dir_all(&workspace);
     }
@@ -8095,11 +8205,19 @@ mod secret_tests {
 
     fn plan(env: &[(&str, &str)], build: &[&str]) -> ResolvedExecutionPlan {
         ResolvedExecutionPlan {
-            stage_commands: PipelineCommandStages {
-                pre_build: vec![],
-                build: build.iter().map(|c| c.to_string()).collect(),
-                post_build: vec![],
-            },
+            steps: build
+                .iter()
+                .enumerate()
+                .map(|(index, command)| PlanStep {
+                    name: format!("build-{}", index + 1),
+                    phase: StepPhase::Build,
+                    run: command.to_string(),
+                    source: format!("commands.build[{index}]"),
+                    platform: None,
+                    flavor: None,
+                    test_report: None,
+                })
+                .collect(),
             artifact_patterns: vec![],
             env: env
                 .iter()
@@ -8144,7 +8262,7 @@ mod secret_tests {
         assert!(resolved.secret_env_keys.contains("AUTH"));
         assert!(!resolved.secret_env_keys.contains("FLAVOR"));
         assert_eq!(
-            resolved.stage_commands.build[0],
+            resolved.steps[0].run,
             "curl -H \"X-Token: ${OORE_SECRET_API_TOKEN}\" https://example.test"
         );
         assert_eq!(

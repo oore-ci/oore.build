@@ -1,0 +1,83 @@
+{
+  "workflow": "release",
+  "platforms": [
+    "android",
+    "ios"
+  ],
+  "flutter_version": "3.24.5",
+  "steps": [
+    {
+      "name": "Get packages",
+      "phase": "pre_build",
+      "run": "flutter pub get",
+      "source": "steps[0].run"
+    },
+    {
+      "name": "Tests",
+      "phase": "pre_build",
+      "run": "flutter test --machine > build/tests.json",
+      "source": "steps[1].run",
+      "test_report": "build/tests.json"
+    },
+    {
+      "name": "Build Android (free)",
+      "phase": "build",
+      "run": "flutter build appbundle --release --flavor free",
+      "source": "targets.android.build",
+      "platform": "android",
+      "flavor": "free"
+    },
+    {
+      "name": "Build Android (pro)",
+      "phase": "build",
+      "run": "flutter build appbundle --release --flavor pro",
+      "source": "targets.android.build",
+      "platform": "android",
+      "flavor": "pro"
+    },
+    {
+      "name": "Build iOS (free)",
+      "phase": "build",
+      "run": "flutter build ipa --release --flavor free --export-method app-store-connect",
+      "source": "targets.ios.build",
+      "platform": "ios",
+      "flavor": "free"
+    },
+    {
+      "name": "Build iOS (pro)",
+      "phase": "build",
+      "run": "flutter build ipa --release --flavor pro --export-method app-store-connect",
+      "source": "targets.ios.build",
+      "platform": "ios",
+      "flavor": "pro"
+    },
+    {
+      "name": "Size report",
+      "phase": "post_build",
+      "run": "flutter build appbundle --analyze-size --flavor free",
+      "source": "steps[3].run"
+    }
+  ],
+  "env": [
+    {
+      "key": "BUILD_FLAVOR",
+      "value": "staging"
+    },
+    {
+      "key": "SENTRY_DSN",
+      "value": "${{ secrets.SENTRY_DSN }}"
+    },
+    {
+      "key": "RELEASE_CHANNEL",
+      "value": "production"
+    }
+  ],
+  "artifact_patterns": [
+    "build/app/outputs/bundle/freeRelease/*.aab",
+    "build/app/outputs/bundle/proRelease/*.aab",
+    "build/ios/ipa/*.ipa"
+  ],
+  "build_number_offset": 4000,
+  "runs_on": [],
+  "isolation": "host"
+}

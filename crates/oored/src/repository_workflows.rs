@@ -7,9 +7,9 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
-    ApiError, DiscoverRepositoryWorkflowsResponse, RepositoryWorkflowExecutionPreview,
-    RepositoryWorkflowPreview, ScmProvider, parse_repository_pipeline_yaml,
-    validate_repository_config_path,
+    ApiError, DiscoverRepositoryWorkflowsResponse, PipelineExecutionConfig, PlanRequest,
+    RepositoryConfig, RepositoryWorkflowExecutionPreview, RepositoryWorkflowPreview, ScmProvider,
+    parse_repository_config, validate_repository_config_path,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -87,8 +87,25 @@ fn workflow_candidates(
     Ok((paths, false))
 }
 
+/// The execution a discovered file stands for, in the v1 preview shape. A v2
+/// file with several workflows previews its first one.
+fn preview_execution(config: RepositoryConfig) -> Result<PipelineExecutionConfig, String> {
+    match config {
+        RepositoryConfig::V1(config) => Ok(config),
+        RepositoryConfig::V2(v2) => {
+            let first = v2.workflow_names().first().map(|name| name.to_string());
+            RepositoryConfig::V2(v2)
+                .plan(PlanRequest {
+                    workflow: first.as_deref(),
+                    ..PlanRequest::default()
+                })
+                .map(|plan| plan.to_execution_config())
+        }
+    }
+}
+
 fn preview(path: String, raw: &str) -> RepositoryWorkflowPreview {
-    match parse_repository_pipeline_yaml(raw) {
+    match parse_repository_config(raw).and_then(preview_execution) {
         Ok(config) => RepositoryWorkflowPreview {
             path,
             valid: true,
@@ -817,4 +834,40 @@ pub async fn discover_repository_workflows(
         workflows,
         truncated,
     }))
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::preview;
+
+    #[test]
+    fn v1_and_v2_files_preview_in_the_same_shape() {
+        let v1 = preview(".oore.yaml".into(), "version: 1\nplatforms: [android]\n");
+        assert!(v1.valid, "{:?}", v1.errors);
+        assert_eq!(v1.execution.unwrap().artifact_patterns.len(), 2);
+
+        let v2 = preview(
+            ".oore.yaml".into(),
+            "version: 2\ntargets:\n  android:\n    build: flutter build apk --release\nsteps:\n  - name: Get packages\n    run: flutter pub get\n  - build\nenv:\n  TOKEN: ${{ secrets.TOKEN }}\nworkflows:\n  adhoc: {}\n  release:\n    targets:\n      android:\n        build: flutter build appbundle --release\n",
+        );
+        assert!(v2.valid, "{:?}", v2.errors);
+        let execution = v2.execution.unwrap();
+        assert_eq!(execution.commands.pre_build, ["flutter pub get"]);
+        assert_eq!(
+            execution.platform_commands.android.as_deref(),
+            Some("flutter build apk --release")
+        );
+        // Values never leave the daemon; only keys are shown.
+        assert_eq!(execution.env_keys, ["TOKEN"]);
+
+        let invalid = preview(
+            ".oore.yaml".into(),
+            "version: 2\ntargets:\n  android:\n    build: echo ${{ vars.NOPE }}\n",
+        );
+        assert!(!invalid.valid);
+        assert_eq!(
+            invalid.errors,
+            ["targets.android.build refers to vars.NOPE, which is not defined"]
+        );
+    }
 }

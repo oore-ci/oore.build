@@ -9,7 +9,9 @@ oore pipeline validate [PATH]
 ```
 
 `PATH` defaults to `.oore.yaml`. The command reads the selected file and
-validates it with the runner's repository pipeline parser.
+validates it with the runner's repository pipeline parser. It accepts
+`version: 1` and `version: 2` files, and for version 2 checks every workflow,
+including `vars`, step and target references.
 
 ```bash
 oore pipeline validate
@@ -23,11 +25,19 @@ A valid file prints:
 ```
 
 Invalid YAML, an unknown field, an unsupported schema version, an empty
-platform list, a duplicate environment key, or an invalid artifact pattern
-returns a non-zero exit and a specific validation message.
+platform list, a duplicate environment key, an invalid artifact pattern, or an
+undefined or cyclic reference returns a non-zero exit and a specific
+validation message. Shape errors include the line and column.
+
+For a version 2 file that declares settings Oore does not act on yet, such as
+`on` or `publish`, the command prints a `note:` line for each on standard
+error and still exits successfully.
 
 The command validates only the selected file. It does not contact the backend,
 create a pipeline, or verify whether every command-line tool used by the
 pipeline is installed.
 
-See [`.oore.yaml`](/reference/config/oore-yaml) for the schema.
+See [`.oore.yaml`](/reference/config/oore-yaml) and
+[`.oore.yaml` version 2](/reference/config/oore-yaml-v2) for the schemas, and
+[`oore pipeline plan`](/reference/cli/oore-pipeline-plan) to print the steps a
+file runs.

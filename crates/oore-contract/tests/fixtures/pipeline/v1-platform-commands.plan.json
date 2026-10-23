@@ -1,0 +1,46 @@
+{
+  "platforms": [
+    "ios",
+    "android",
+    "macos"
+  ],
+  "steps": [
+    {
+      "name": "pre_build-1",
+      "phase": "pre_build",
+      "run": "flutter pub get",
+      "source": "commands.pre_build[0]"
+    },
+    {
+      "name": "build-1",
+      "phase": "build",
+      "run": "flutter build ipa --release --export-method ad-hoc",
+      "source": "commands.build[0]",
+      "platform": "ios"
+    },
+    {
+      "name": "build-2",
+      "phase": "build",
+      "run": "flutter build apk --release --flavor prod",
+      "source": "commands.build[1]",
+      "platform": "android"
+    },
+    {
+      "name": "build-3",
+      "phase": "build",
+      "run": "flutter build macos --release --dart-define=CHANNEL=beta",
+      "source": "commands.build[2]",
+      "platform": "macos"
+    }
+  ],
+  "env": [],
+  "artifact_patterns": [
+    "build/app/outputs/flutter-apk/*.apk",
+    "build/app/outputs/bundle/**/*.aab",
+    "build/ios/ipa/*.ipa",
+    "build/macos/Build/Products/Release/*.app"
+  ],
+  "build_number_offset": 0,
+  "runs_on": [],
+  "isolation": "host"
+}

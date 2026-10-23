@@ -1,0 +1,11 @@
+# A shared commands.build replaces Oore's default platform commands.
+version: 1
+platforms: [android]
+commands:
+  pre_build: ['dart run build_runner build']
+  build:
+    - flutter build appbundle --release
+    - flutter build apk --release
+  post_build: ['echo done']
+platform_commands:
+  android: flutter build apk --debug
