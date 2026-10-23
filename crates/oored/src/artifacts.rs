@@ -812,7 +812,8 @@ mod migration_tests {
             .await
             .unwrap();
         let migrator = sqlx::migrate!("./migrations");
-        migrator.run_to(65, &pool).await.unwrap();
+        // Everything before 068_aab_artifact_type.sql.
+        migrator.run_to(67, &pool).await.unwrap();
         for statement in [
             "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
              VALUES ('u1', 'lead@example.com', 'sub', 'owner', 0, 0)",
@@ -852,6 +853,18 @@ mod migration_tests {
             1
         );
         assert_eq!(count(&pool, "PRAGMA foreign_keys").await, 1);
+        assert!(
+            sqlx::query("PRAGMA foreign_key_check")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(integrity, "ok");
         sqlx::query(
             "INSERT INTO artifacts (id, build_id, name, artifact_type, file_path, created_at) \
              VALUES ('a2', 'b1', 'app-release-2.aab', 'aab', 'k2', 0)",

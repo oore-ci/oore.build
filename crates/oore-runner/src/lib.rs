@@ -7432,23 +7432,7 @@ async fn scan_and_upload_artifacts(
             "metadata": metadata,
         });
 
-        let resp = client
-            .post(format!(
-                "{}/v1/runners/{}/jobs/{}/artifacts",
-                daemon_url, config.runner_id, build_id
-            ))
-            .bearer_auth(&config.runner_token)
-            .json(&body)
-            .send()
-            .await
-            .with_context(|| format!("failed to reserve artifact {name}"))?;
-
-        if !resp.status().is_success() {
-            anyhow::bail!(
-                "artifact reservation failed for {name} (HTTP {})",
-                resp.status()
-            );
-        }
+        let resp = reserve_artifact(client, daemon_url, config, build_id, name, body).await?;
 
         let create_resp: oore_contract::CreateArtifactResponse = resp.json().await?;
         let artifact_id = create_resp.artifact.id;
@@ -7513,6 +7497,56 @@ async fn scan_and_upload_artifacts(
         println!("  Uploaded artifact {}", name);
     }
     Ok(())
+}
+
+/// Reserves an artifact upload. A daemon older than the `aab` artifact type
+/// rejects it with `invalid_artifact_type`; the bundle is then reserved once
+/// more as `generic`, which is how those daemons stored App Bundles.
+async fn reserve_artifact(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    name: &str,
+    mut body: serde_json::Value,
+) -> anyhow::Result<reqwest::Response> {
+    let url = format!(
+        "{}/v1/runners/{}/jobs/{}/artifacts",
+        daemon_url, config.runner_id, build_id
+    );
+    let mut fell_back = false;
+    loop {
+        let resp = client
+            .post(&url)
+            .bearer_auth(&config.runner_token)
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("failed to reserve artifact {name}"))?;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(resp);
+        }
+        if !fell_back
+            && status == reqwest::StatusCode::BAD_REQUEST
+            && body["artifact_type"] == "aab"
+        {
+            let code = resp
+                .json::<oore_contract::ApiError>()
+                .await
+                .map(|error| error.code)
+                .unwrap_or_default();
+            if code == "invalid_artifact_type" {
+                println!(
+                    "  Daemon does not accept the aab artifact type yet; uploading {name} as generic"
+                );
+                body["artifact_type"] = serde_json::Value::from("generic");
+                fell_back = true;
+                continue;
+            }
+        }
+        anyhow::bail!("artifact reservation failed for {name} (HTTP {status})");
+    }
 }
 
 async fn abort_artifact(
@@ -8688,5 +8722,109 @@ mod build_lifecycle_tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+}
+
+#[cfg(test)]
+mod artifact_reservation_tests {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::{RunnerConfig, reserve_artifact};
+
+    /// Answers each connection with the next (status, body) and returns the
+    /// request bodies it received.
+    async fn daemon(
+        responses: Vec<(u16, &'static str)>,
+    ) -> (String, tokio::task::JoinHandle<Vec<serde_json::Value>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = tokio::spawn(async move {
+            let mut bodies = Vec::new();
+            for (status, body) in responses {
+                let Ok(Ok((mut socket, _))) =
+                    tokio::time::timeout(Duration::from_millis(500), listener.accept()).await
+                else {
+                    break;
+                };
+                let mut request = Vec::new();
+                let mut buf = [0u8; 4096];
+                let request_body = loop {
+                    let read = socket.read(&mut buf).await.unwrap();
+                    request.extend_from_slice(&buf[..read]);
+                    let text = String::from_utf8_lossy(&request).to_string();
+                    if let Some((head, rest)) = text.split_once("\r\n\r\n") {
+                        let length = head
+                            .lines()
+                            .find_map(|line| {
+                                let (key, value) = line.split_once(':')?;
+                                key.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())?
+                            })
+                            .unwrap_or(0);
+                        if rest.len() >= length || read == 0 {
+                            break rest.to_string();
+                        }
+                    } else if read == 0 {
+                        break String::new();
+                    }
+                };
+                bodies.push(serde_json::from_str(&request_body).unwrap());
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            bodies
+        });
+        (url, handle)
+    }
+
+    async fn reserve(url: &str, artifact_type: &str) -> anyhow::Result<reqwest::Response> {
+        let config = RunnerConfig {
+            runner_id: "r1".into(),
+            runner_token: "t".into(),
+            daemon_url: url.into(),
+            name: "runner".into(),
+        };
+        let body = serde_json::json!({ "name": "app.aab", "artifact_type": artifact_type });
+        reserve_artifact(&reqwest::Client::new(), url, &config, "b1", "app.aab", body).await
+    }
+
+    const INVALID_TYPE: &str =
+        r#"{"code":"invalid_artifact_type","error":"artifact_type must be one of: apk, ipa"}"#;
+
+    #[tokio::test]
+    async fn an_older_daemon_gets_app_bundles_as_generic() {
+        let (url, server) = daemon(vec![(400, INVALID_TYPE), (201, "{}")]).await;
+        assert!(reserve(&url, "aab").await.unwrap().status().is_success());
+        let bodies = server.await.unwrap();
+        assert_eq!(bodies.len(), 2);
+        assert_eq!(bodies[0]["artifact_type"], "aab");
+        assert_eq!(bodies[1]["artifact_type"], "generic");
+        assert_eq!(bodies[1]["name"], "app.aab");
+    }
+
+    #[tokio::test]
+    async fn falls_back_only_once_and_only_for_app_bundles() {
+        let (url, server) =
+            daemon(vec![(400, INVALID_TYPE), (400, INVALID_TYPE), (201, "{}")]).await;
+        assert!(reserve(&url, "aab").await.is_err());
+        assert_eq!(server.await.unwrap().len(), 2);
+
+        let (url, server) = daemon(vec![(400, INVALID_TYPE), (201, "{}")]).await;
+        assert!(reserve(&url, "apk").await.is_err());
+        assert_eq!(server.await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn other_rejections_are_not_retried() {
+        let body = r#"{"code":"invalid_name","error":"bad name"}"#;
+        let (url, server) = daemon(vec![(400, body), (201, "{}")]).await;
+        assert!(reserve(&url, "aab").await.is_err());
+        assert_eq!(server.await.unwrap().len(), 1);
     }
 }
