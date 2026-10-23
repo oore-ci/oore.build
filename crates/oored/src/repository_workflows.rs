@@ -91,7 +91,7 @@ fn workflow_candidates(
 /// file with several workflows previews its first one.
 fn preview_execution(config: RepositoryConfig) -> Result<PipelineExecutionConfig, String> {
     match config {
-        RepositoryConfig::V1(config) => Ok(config),
+        RepositoryConfig::V1(config) => Ok(*config),
         RepositoryConfig::V2(v2) => {
             let first = v2.workflow_names().first().map(|name| name.to_string());
             RepositoryConfig::V2(v2)

@@ -6898,9 +6898,6 @@ async fn report_publish_result(
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("the publish result was not sent")))
 }
 
-/// Parse the reports a step wrote and send them to the daemon. Test reporting
-/// never fails the build; problems are logged instead.
-#[allow(clippy::too_many_arguments)]
 /// Test report file name for a step. Step names can hold spaces and
 /// punctuation; v1 names (`pre_build-1`) pass through unchanged.
 fn report_file_stem(step_name: &str) -> String {
@@ -6957,6 +6954,9 @@ fn copy_declared_test_report(
         .map_err(|error| format!("could not read reports.tests {report}: {error}"))
 }
 
+/// Parse the reports a step wrote and send them to the daemon. Test reporting
+/// never fails the build; problems are logged instead.
+#[allow(clippy::too_many_arguments)]
 async fn report_step_tests(
     client: &reqwest::Client,
     daemon_url: &str,

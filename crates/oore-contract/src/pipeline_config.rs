@@ -146,7 +146,7 @@ pub struct PlanRequest<'a> {
 /// A parsed and validated repository pipeline file.
 #[derive(Debug, Clone)]
 pub enum RepositoryConfig {
-    V1(PipelineExecutionConfig),
+    V1(Box<PipelineExecutionConfig>),
     V2(Box<ConfigV2>),
 }
 
@@ -165,7 +165,9 @@ pub fn parse_repository_config(raw: &str) -> Result<RepositoryConfig, String> {
     match version {
         Some(2) => ConfigV2::parse(raw).map(|config| RepositoryConfig::V2(Box::new(config))),
         // A missing or malformed version gets v1's own error.
-        Some(1) | None => parse_repository_pipeline_yaml(raw).map(RepositoryConfig::V1),
+        Some(1) | None => {
+            parse_repository_pipeline_yaml(raw).map(|config| RepositoryConfig::V1(Box::new(config)))
+        }
         Some(other) => Err(format!(
             "unsupported config version {other}, expected 1 or 2"
         )),
@@ -205,8 +207,8 @@ impl RepositoryConfig {
                     ));
                 }
                 let config = match request.selected_platforms {
-                    Some(selected) => select_v1_platforms(config.clone(), selected)?,
-                    None => config.clone(),
+                    Some(selected) => select_v1_platforms((**config).clone(), selected)?,
+                    None => (**config).clone(),
                 };
                 let include_defaults = config.commands.build.is_empty();
                 Ok(plan_execution_config(
