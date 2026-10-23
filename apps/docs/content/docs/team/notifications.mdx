@@ -48,8 +48,15 @@ The test message says whether mentions work for the email you signed in with, so
 | Rollout complete | A rollout reaches 100%                             |
 | Approval needed  | A release waits for approval                       |
 | Release failed   | A release fails                                    |
+| Tester feedback  | A tester sends feedback from the QA portal         |
 
 Messages post within a few seconds of the change. If Slack does not accept a message, Oore tries again up to four more times over the next eight minutes; the delivery shows as pending until then. Delivery history for each channel is on its settings page.
+
+## Tester feedback
+
+Testers can select **Send feedback** on the latest release in the QA portal. The note carries their device, OS version and app version, which the form fills in and the tester can edit, plus an optional screenshot. It shows on the build's **Timeline** tab and posts to the project's channels with a **View feedback** button. Feedback messages do not mention anyone; they name the tester instead.
+
+Anyone who can install the build can send feedback. Each person can send 10 notes per 10 minutes. Screenshots must be PNG, JPEG or WebP images of 5 MB or less and need artifact storage.
 
 ## Mentions
 

@@ -2255,6 +2255,65 @@ pub struct BuildTestResultsResponse {
     pub history_window: i64,
 }
 
+// ── Tester feedback ─────────────────────────────────────────────
+
+/// Largest accepted feedback message, in characters.
+pub const BUILD_FEEDBACK_MAX_MESSAGE_CHARS: usize = 4000;
+/// Largest accepted device, OS version or app version, in characters.
+pub const BUILD_FEEDBACK_MAX_FIELD_CHARS: usize = 120;
+/// Largest accepted screenshot after base64 decoding, in bytes.
+pub const BUILD_FEEDBACK_MAX_SCREENSHOT_BYTES: usize = 5 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateBuildFeedbackRequest {
+    /// What the tester saw. 1 to 4000 characters.
+    pub message: String,
+    /// Device model, such as `Pixel 8` or `iPhone`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    /// Operating system and version, such as `Android 15` or `iOS 18.1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub os_version: Option<String>,
+    /// App version the tester installed, such as `2.4.0+118`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_version: Option<String>,
+    /// The build's artifact the tester installed. Must belong to this build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
+    /// Optional PNG, JPEG or WebP screenshot, base64 encoded, at most 5 MiB
+    /// decoded. Requires artifact storage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screenshot_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildFeedback {
+    pub id: String,
+    pub build_id: String,
+    /// Email of the person who sent it.
+    pub author_email: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_name: Option<String>,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub os_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
+    /// Fetch it from `GET /v1/builds/{build_id}/feedback/{feedback_id}/screenshot`.
+    pub has_screenshot: bool,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ListBuildFeedbackResponse {
+    /// Oldest first.
+    pub feedback: Vec<BuildFeedback>,
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListRunnersResponse {
     pub runners: Vec<Runner>,

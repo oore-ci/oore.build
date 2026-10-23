@@ -175,6 +175,9 @@ use utoipa::{
         operations::reject_build,
         operations::rerun_build,
         operations::retry_build_step,
+        operations::list_build_feedback,
+        operations::create_build_feedback,
+        operations::get_build_feedback_screenshot,
         // ── Releases ──
         operations::list_releases,
         operations::get_store_vitals,
@@ -578,6 +581,10 @@ use utoipa::{
         oore_contract::TestRunOutcome,
         oore_contract::BuildTestFailure,
         oore_contract::BuildTestResultsResponse,
+        // Tester feedback
+        oore_contract::CreateBuildFeedbackRequest,
+        oore_contract::BuildFeedback,
+        oore_contract::ListBuildFeedbackResponse,
         // Notification Channels
         oore_contract::NotificationChannelType,
         oore_contract::SmtpTlsMode,
@@ -2692,6 +2699,62 @@ mod operations {
         )
     )]
     pub(super) fn retry_build_step() {}
+
+    /// List build feedback
+    ///
+    /// Notes testers sent about this build, oldest first. Needs read access
+    /// to the build's project.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/feedback", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Feedback for the build", body = ListBuildFeedbackResponse),
+            (status = 404, description = "Build not found", body = ApiError),
+        )
+    )]
+    pub(super) fn list_build_feedback() {}
+
+    /// Send build feedback
+    ///
+    /// Files a tester's note against a build, with optional device, OS
+    /// version, app version and a PNG, JPEG or WebP screenshot of up to
+    /// 5 MiB. Anyone who can install the build's artifacts can send one. The
+    /// note shows on the build's timeline and is sent to the project's
+    /// notification channels as a `qa_feedback` event. Each person can send
+    /// 10 notes per 10 minutes.
+    #[utoipa::path(post, path = "/v1/builds/{build_id}/feedback", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        request_body = CreateBuildFeedbackRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Feedback recorded", body = BuildFeedback),
+            (status = 400, description = "Missing message, a field too long, or an artifact from another build", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Build not found", body = ApiError),
+            (status = 409, description = "A screenshot was attached but artifact storage is not configured", body = ApiError),
+            (status = 413, description = "Screenshot larger than 5 MiB", body = ApiError),
+            (status = 415, description = "Screenshot is not a PNG, JPEG or WebP image", body = ApiError),
+            (status = 429, description = "Too much feedback sent recently", body = ApiError),
+        )
+    )]
+    pub(super) fn create_build_feedback() {}
+
+    /// Get a build feedback screenshot
+    ///
+    /// Returns the screenshot attached to a feedback note, with the image
+    /// type detected from its bytes. Needs read access to the build's project.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/feedback/{feedback_id}/screenshot", tag = "Builds",
+        params(
+            ("build_id" = String, Path, description = "Build ID"),
+            ("feedback_id" = String, Path, description = "Feedback ID"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Screenshot image", body = BinaryPayload, content_type = "image/*"),
+            (status = 404, description = "Build, feedback or screenshot not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_feedback_screenshot() {}
 
     // ── Runners ──
 

@@ -131,6 +131,7 @@ const VALID_EVENTS: &[&str] = &[
     "rollout_completed",
     "release_approval_needed",
     "release_failed",
+    "qa_feedback",
 ];
 
 fn validate_events(events: &[String]) -> Result<(), (StatusCode, Json<ApiError>)> {

@@ -9,6 +9,7 @@ pub mod artifacts;
 pub mod audit_logs;
 pub mod auth;
 pub mod background;
+pub mod build_feedback;
 pub mod build_insights;
 pub mod builds;
 pub mod commit_checks;
@@ -2857,6 +2858,20 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/builds/{build_id}/tests",
             get(test_results::get_build_test_results),
+        )
+        .route(
+            "/v1/builds/{build_id}/feedback",
+            get(build_feedback::list_build_feedback),
+        )
+        .route(
+            "/v1/builds/{build_id}/feedback",
+            post(build_feedback::create_build_feedback).layer(DefaultBodyLimit::max(
+                build_feedback::MAX_FEEDBACK_REQUEST_BYTES,
+            )),
+        )
+        .route(
+            "/v1/builds/{build_id}/feedback/{feedback_id}/screenshot",
+            get(build_feedback::get_build_feedback_screenshot),
         )
         // Audit log endpoints
         .route("/v1/audit-logs", get(audit_logs::list_audit_logs))

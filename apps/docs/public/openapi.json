@@ -2354,6 +2354,227 @@
         ]
       }
     },
+    "/v1/builds/{build_id}/feedback": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "List build feedback",
+        "description": "Notes testers sent about this build, oldest first. Needs read access\nto the build's project.",
+        "operationId": "list_build_feedback",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Feedback for the build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListBuildFeedbackResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Send build feedback",
+        "description": "Files a tester's note against a build, with optional device, OS\nversion, app version and a PNG, JPEG or WebP screenshot of up to\n5 MiB. Anyone who can install the build's artifacts can send one. The\nnote shows on the build's timeline and is sent to the project's\nnotification channels as a `qa_feedback` event. Each person can send\n10 notes per 10 minutes.",
+        "operationId": "create_build_feedback",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBuildFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Feedback recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildFeedback"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing message, a field too long, or an artifact from another build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A screenshot was attached but artifact storage is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Screenshot larger than 5 MiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Screenshot is not a PNG, JPEG or WebP image",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too much feedback sent recently",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/builds/{build_id}/feedback/{feedback_id}/screenshot": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Get a build feedback screenshot",
+        "description": "Returns the screenshot attached to a feedback note, with the image\ntype detected from its bytes. Needs read access to the build's project.",
+        "operationId": "get_build_feedback_screenshot",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "feedback_id",
+            "in": "path",
+            "description": "Feedback ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Screenshot image",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BinaryPayload"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build, feedback or screenshot not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/builds/{build_id}/logs": {
       "get": {
         "tags": [
@@ -13332,6 +13553,70 @@
           }
         }
       },
+      "BuildFeedback": {
+        "type": "object",
+        "required": [
+          "id",
+          "build_id",
+          "author_email",
+          "message",
+          "has_screenshot",
+          "created_at"
+        ],
+        "properties": {
+          "app_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artifact_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author_email": {
+            "type": "string",
+            "description": "Email of the person who sent it."
+          },
+          "author_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_screenshot": {
+            "type": "boolean",
+            "description": "Fetch it from `GET /v1/builds/{build_id}/feedback/{feedback_id}/screenshot`."
+          },
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "os_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "BuildInsightsDay": {
         "type": "object",
         "description": "One day of finished builds, in the caller's UTC offset.",
@@ -14024,6 +14309,53 @@
           },
           "upload_url": {
             "type": "string"
+          }
+        }
+      },
+      "CreateBuildFeedbackRequest": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "app_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "App version the tester installed, such as `2.4.0+118`."
+          },
+          "artifact_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The build's artifact the tester installed. Must belong to this build."
+          },
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Device model, such as `Pixel 8` or `iPhone`."
+          },
+          "message": {
+            "type": "string",
+            "description": "What the tester saw. 1 to 4000 characters."
+          },
+          "os_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Operating system and version, such as `Android 15` or `iOS 18.1`."
+          },
+          "screenshot_base64": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional PNG, JPEG or WebP screenshot, base64 encoded, at most 5 MiB\ndecoded. Requires artifact storage."
           }
         }
       },
@@ -15690,6 +16022,21 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "ListBuildFeedbackResponse": {
+        "type": "object",
+        "required": [
+          "feedback"
+        ],
+        "properties": {
+          "feedback": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildFeedback"
+            },
+            "description": "Oldest first."
           }
         }
       },
