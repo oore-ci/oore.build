@@ -17,8 +17,13 @@ import {
 import type { JsonObject } from '@/lib/types'
 import type {
   AppStorePublishConfig,
+  BuildPlatform,
   CreatePipelineRequest,
   Pipeline,
+  PipelineExecutionConfig,
+  PipelinePlanStep,
+  PlanPipelineRequest,
+  PlanPipelineResponse,
   RegisterIosDeviceRequest,
   UpdatePipelineAndroidSigningRequest,
   UpdatePipelineRequest,
@@ -555,6 +560,30 @@ export const pipelineHandlers = [
     return HttpResponse.json({ valid: true })
   }),
 
+  demoApi.planPipeline(async ({ request }) => {
+    await delay(150)
+    const forbidden = requireDemoInstancePermission(request, 'pipelines:read')
+    if (forbidden) return forbidden
+    // SAFETY: demo requests come from the app's own typed client.
+    const body = (await request.json()) as PlanPipelineRequest
+    if (body.execution_config) {
+      return HttpResponse.json(
+        demoFormPlan(
+          body.execution_config,
+          body.platforms ?? [],
+          body.build_play_bundle ?? false,
+        ),
+      )
+    }
+    return HttpResponse.json(
+      demoFilePlan(
+        body.repository_yaml ?? '',
+        body.workflow ?? null,
+        body.platforms ?? [],
+      ),
+    )
+  }),
+
   demoApi.getPipelineAndroidSigning(async ({ params }) => {
     await delay(150)
     const id = String(params.pipeline_id)
@@ -756,3 +785,188 @@ export const pipelineHandlers = [
     })
   }),
 ]
+
+// ── Plan previews ───────────────────────────────────────────────
+
+const DEMO_PLATFORM_BUILDS = {
+  android: 'flutter build apk --release',
+  ios: 'flutter build ios --release --no-codesign',
+  macos: 'flutter build macos --release',
+} satisfies Record<BuildPlatform, string>
+
+/** Mirrors the runner's lowering of form settings (plan_execution_config). */
+function demoFormPlan(
+  config: PipelineExecutionConfig,
+  selected: Array<BuildPlatform>,
+  playBundle: boolean,
+): PlanPipelineResponse {
+  const available = config.platforms
+  if (available.length === 0) {
+    return {
+      valid: false,
+      errors: ['execution_config.platforms must include at least one platform'],
+      notices: [],
+      workflows: [],
+      available_platforms: [],
+    }
+  }
+  const platforms =
+    selected.length > 0
+      ? available.filter((platform) => selected.includes(platform))
+      : available
+  const steps: Array<PipelinePlanStep> = []
+  const push = (
+    phase: PipelinePlanStep['phase'],
+    run: string,
+    platform?: BuildPlatform,
+  ) => {
+    const index = steps.filter((step) => step.phase === phase).length
+    steps.push({
+      name: `${phase}-${index + 1}`,
+      phase,
+      run,
+      source: `commands.${phase}[${index}]`,
+      platform,
+    })
+  }
+  push('pre_build', 'flutter pub get')
+  for (const run of config.commands.pre_build) push('pre_build', run)
+  for (const platform of platforms) {
+    const args = config.platform_build_args?.[platform] ?? []
+    const override = config.platform_commands?.[platform]
+    push(
+      'build',
+      override || [DEMO_PLATFORM_BUILDS[platform], ...args].join(' '),
+      platform,
+    )
+    if (platform === 'android' && playBundle && !override) {
+      push(
+        'build',
+        // `--split-per-abi` is APK-only; the runner drops it too.
+        [
+          'flutter build appbundle --release',
+          ...args.filter((arg) => arg !== '--split-per-abi'),
+        ].join(' '),
+        platform,
+      )
+    }
+  }
+  for (const run of config.commands.build) push('build', run)
+  for (const run of config.commands.post_build) push('post_build', run)
+  return {
+    valid: true,
+    errors: [],
+    notices: [],
+    workflows: [],
+    available_platforms: available,
+    plan: {
+      platforms,
+      flutter_version: config.flutter_version ?? undefined,
+      steps,
+      env_keys: (config.env ?? []).map((entry) => entry.key),
+      artifact_patterns: config.artifact_patterns,
+      build_number_offset: config.build_number_offset ?? 0,
+      runs_on: config.runs_on ?? [],
+      isolation: config.isolation ?? 'host',
+    },
+  }
+}
+
+const DEMO_WORKFLOWS = {
+  nightly: { platforms: ['android', 'ios'], flavor: 'staging' },
+  release: { platforms: ['android', 'ios'], flavor: 'production' },
+} satisfies Record<string, { platforms: Array<BuildPlatform>; flavor: string }>
+
+/** A canned version 2 plan; the demo has no YAML parser. */
+function demoFilePlan(
+  yaml: string,
+  requested: string | null,
+  selected: Array<BuildPlatform>,
+): PlanPipelineResponse {
+  const workflows = Object.keys(DEMO_WORKFLOWS)
+  if (!/^version:\s*[12]\s*$/m.test(yaml)) {
+    return {
+      valid: false,
+      errors: ['missing field `version`; start the file with `version: 2`'],
+      notices: [],
+      workflows: [],
+      available_platforms: [],
+    }
+  }
+  const name = requested ?? workflows[0]
+  if (!(name in DEMO_WORKFLOWS)) {
+    return {
+      valid: false,
+      errors: [`workflow '${name}' is not defined`],
+      notices: [],
+      version: 2,
+      workflows,
+      available_platforms: [],
+    }
+  }
+  // SAFETY: `name in DEMO_WORKFLOWS` was checked above.
+  const workflow = DEMO_WORKFLOWS[name as keyof typeof DEMO_WORKFLOWS]
+  const available: Array<BuildPlatform> = workflow.platforms
+  const platforms =
+    selected.length > 0
+      ? available.filter((platform) => selected.includes(platform))
+      : available
+  const { flavor } = workflow
+  const steps: Array<PipelinePlanStep> = [
+    {
+      name: 'Get packages',
+      phase: 'pre_build',
+      run: 'flutter pub get',
+      source: 'steps[0]',
+    },
+    {
+      name: 'Test',
+      phase: 'pre_build',
+      run: 'flutter test --machine > build/test-results.json',
+      source: 'steps[1]',
+      test_report: 'build/test-results.json',
+    },
+    ...platforms.map((platform): PipelinePlanStep => ({
+      name: `Build ${platform === 'ios' ? 'iOS' : 'Android'} (${flavor})`,
+      phase: 'build',
+      run:
+        platform === 'ios'
+          ? `flutter build ipa --release --flavor ${flavor} --export-options-plist ios/ExportOptions.plist`
+          : `flutter build appbundle --release --flavor ${flavor}`,
+      source: `targets.${platform}.build`,
+      platform,
+      flavor,
+    })),
+    {
+      name: 'Upload symbols',
+      phase: 'post_build',
+      run: 'sentry-cli debug-files upload --auth-token ${{ secrets.SENTRY_TOKEN }} build/',
+      source: 'steps[3]',
+    },
+  ]
+  return {
+    valid: true,
+    errors: [],
+    notices: [
+      `this file defines workflows [${workflows.join(', ')}], but pipelines cannot select a workflow yet, so every build from this file fails with \`choose one for the pipeline\`; keep one workflow until workflow selection lands`,
+    ],
+    version: 2,
+    workflows,
+    available_platforms: available,
+    plan: {
+      workflow: name,
+      platforms,
+      flutter_version: '3.24.5',
+      steps,
+      env_keys: ['BUILD_FLAVOR', 'SENTRY_DSN'],
+      artifact_patterns: platforms.map((platform) =>
+        platform === 'ios'
+          ? 'build/ios/ipa/*.ipa'
+          : `build/app/outputs/bundle/${flavor}Release/*.aab`,
+      ),
+      build_number_offset: 0,
+      runs_on: [],
+      isolation: 'host',
+    },
+  }
+}

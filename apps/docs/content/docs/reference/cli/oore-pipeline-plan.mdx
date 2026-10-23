@@ -49,3 +49,7 @@ Oore's default `flutter pub get` and platform build commands, with steps named
 `pre_build-1`, `build-1` and so on. When a pipeline uploads to Google Play,
 the runner also adds a `flutter build appbundle` step after a default Android
 command; the printed plan leaves it out.
+
+The pipeline editor's **What will run** section shows the same plan from the
+daemon, for the form's settings or a pasted `.oore.yaml`, with the same errors.
+It lists env keys without their values.

@@ -34,6 +34,7 @@ import { PipelineBasicsSection } from '@/components/pipeline-form-basic-sections
 import { PipelineSectionIndex } from '@/components/pipeline-form-section-index'
 import { PipelineBuildSection } from '@/components/pipeline-form-build-sections'
 import { PipelineTriggersSection } from '@/components/pipeline-form-triggers-section'
+import { PipelinePlanPanel } from '@/components/pipeline-plan-panel'
 import { PipelineSigningSection } from '@/components/pipeline-form-signing-section'
 import type { IosAppStorePublishing } from '@/components/pipeline-form-ios-signing-section'
 import {
@@ -194,6 +195,7 @@ export default function PipelineForm({
   const sections = [
     { id: 'basics', label: 'Basics' },
     ...(repositoryWorkflow ? [] : [{ id: 'build', label: 'Build' }]),
+    { id: 'plan', label: 'Plan' },
     ...(values.platform_android || values.platform_ios
       ? [{ id: 'signing', label: 'Signing' }]
       : []),
@@ -243,6 +245,11 @@ export default function PipelineForm({
             previewDefaults={previewDefaults}
           />
         )}
+        <PipelinePlanPanel
+          playBundle={googlePlayUpload}
+          repositoryConfig={!!repositoryWorkflow}
+          values={values}
+        />
         <PipelineSigningSection
           androidSigningData={signingData}
           bundleIds={iosBundleIds}

@@ -1,4 +1,5 @@
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -6,6 +7,7 @@ import {
 } from '@tanstack/react-query'
 import type {
   CreatePipelineRequest,
+  PlanPipelineRequest,
   RegisterIosDeviceRequest,
   UpdatePipelineAndroidSigningRequest,
   UpdatePipelineIosSigningRequest,
@@ -15,6 +17,7 @@ import type {
 import {
   createPipeline,
   deletePipeline,
+  planPipeline,
   updatePipeline,
   validatePipeline,
   registerPipelineIosDevice,
@@ -271,6 +274,24 @@ export function useValidatePipeline() {
         return Promise.reject(new Error('Not authenticated'))
       return validatePipeline({ body: data, client })
     },
+  })
+}
+
+/**
+ * What a build would run for a `.oore.yaml` or the form's settings. Pass
+ * `null` to pause. The previous plan stays on screen while a new one loads.
+ */
+export function usePipelinePlan(body: PlanPipelineRequest | null) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useQuery({
+    queryKey: scopeOoreQueryKey(instanceId, ['planPipeline', body]),
+    queryFn: ({ signal }) =>
+      // SAFETY: the query is disabled while `body` is null.
+      planPipeline({ body: body as PlanPipelineRequest, client, signal }),
+    enabled: !!baseUrl && !!token && body !== null,
+    placeholderData: keepPreviousData,
+    staleTime: Infinity,
   })
 }
 
