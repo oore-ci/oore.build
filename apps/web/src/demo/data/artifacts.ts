@@ -11,7 +11,7 @@ export const demoArtifacts: DemoArtifactData = {
       id: 'art-aab-141',
       build_id: BUILD_IDS.failedPublish1,
       name: 'app-release.aab',
-      artifact_type: 'generic',
+      artifact_type: 'aab',
       file_path: 'build/app/outputs/bundle/release/app-release.aab',
       file_size: 40054374,
       checksum: 'sha256:9a8b7c6d5e4f...',
