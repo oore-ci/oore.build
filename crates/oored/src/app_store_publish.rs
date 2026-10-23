@@ -561,6 +561,8 @@ pub(crate) async fn record_upload(
             state: ReleaseState::Processing,
             rollout_fraction: 0.0,
             policy: ReleasePolicy::default(),
+            environment_id: None,
+            promoted_from_release_id: None,
         },
         &ReleaseActor::System,
         Some("Uploaded to App Store Connect; waiting for Apple to process the build"),
@@ -1520,6 +1522,18 @@ impl ReleaseStoreClient for StoreRouter {
             Box::pin(async { Ok(None) })
         } else {
             self.other.crash_rate(release)
+        }
+    }
+
+    fn promote<'a>(
+        &'a self,
+        source: &'a Release,
+        target: releases::PromotionTarget<'a>,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        if source.store == ReleaseStore::AppStore {
+            Box::pin(async { anyhow::bail!("App Store builds cannot be promoted yet") })
+        } else {
+            self.other.promote(source, target)
         }
     }
 }

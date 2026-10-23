@@ -640,6 +640,8 @@ async fn record_play_release(
             state: release_state,
             rollout_fraction,
             policy,
+            environment_id: None,
+            promoted_from_release_id: None,
         },
         &ReleaseActor::System,
         Some("uploaded by the runner"),

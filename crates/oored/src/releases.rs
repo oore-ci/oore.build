@@ -87,6 +87,24 @@ pub trait ReleaseStoreClient: Send + Sync {
     /// Current crash rate (0..1) for the release, if the store reports one.
     fn crash_rate<'a>(&'a self, release: &'a Release)
     -> BoxFuture<'a, anyhow::Result<Option<f64>>>;
+
+    /// Put the version `source` released on another track, without a new
+    /// upload. Stores that cannot promote refuse.
+    fn promote<'a>(
+        &'a self,
+        _source: &'a Release,
+        _target: PromotionTarget<'a>,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async { anyhow::bail!("this store does not support promotion") })
+    }
+}
+
+/// Where a promotion puts a released version.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PromotionTarget<'a> {
+    pub track: &'a str,
+    /// Staged rollout fraction, or `None` for a full release.
+    pub fraction: Option<f64>,
 }
 
 /// Records changes without calling a store. Used until a store client is configured.
@@ -99,6 +117,14 @@ impl ReleaseStoreClient for NoopReleaseStoreClient {
 
     fn crash_rate<'a>(&'a self, _: &'a Release) -> BoxFuture<'a, anyhow::Result<Option<f64>>> {
         Box::pin(async { Ok(None) })
+    }
+
+    fn promote<'a>(
+        &'a self,
+        _: &'a Release,
+        _: PromotionTarget<'a>,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -222,6 +248,10 @@ pub struct NewRelease {
     pub state: ReleaseState,
     pub rollout_fraction: f64,
     pub policy: ReleasePolicy,
+    /// `None` puts the release in the project environment whose store and
+    /// track match, if the project has one.
+    pub environment_id: Option<String>,
+    pub promoted_from_release_id: Option<String>,
 }
 
 /// A requested state or fraction change.
@@ -349,14 +379,15 @@ pub(crate) fn allowed_actions(
     actions
 }
 
-const RELEASE_SELECT: &str = "SELECT r.*, p.name AS project_name, b.build_number AS build_number, \
-     au.email AS approved_by_email \
+pub(crate) const RELEASE_SELECT: &str = "SELECT r.*, p.name AS project_name, b.build_number AS build_number, \
+     au.email AS approved_by_email, env.name AS environment_name \
      FROM releases r \
      LEFT JOIN projects p ON p.id = r.project_id \
      LEFT JOIN builds b ON b.id = r.build_id \
-     LEFT JOIN users au ON au.id = r.approved_by";
+     LEFT JOIN users au ON au.id = r.approved_by \
+     LEFT JOIN project_environments env ON env.id = r.environment_id";
 
-fn row_to_release(row: &SqliteRow) -> Result<Release, ReleaseError> {
+pub(crate) fn row_to_release(row: &SqliteRow) -> Result<Release, ReleaseError> {
     let parse_err = |message: String| ReleaseError::Db(anyhow::anyhow!(message));
     let store: ReleaseStore = row.get::<String, _>("store").parse().map_err(parse_err)?;
     let state: ReleaseState = row.get::<String, _>("state").parse().map_err(parse_err)?;
@@ -389,6 +420,9 @@ fn row_to_release(row: &SqliteRow) -> Result<Release, ReleaseError> {
         approved_at: row.get("approved_at"),
         approved_by_email: row.get("approved_by_email"),
         allowed_actions: Vec::new(),
+        environment_id: row.get("environment_id"),
+        environment_name: row.get("environment_name"),
+        promoted_from_release_id: row.get("promoted_from_release_id"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     };
@@ -500,7 +534,8 @@ pub(crate) async fn find_build_release(
     store: ReleaseStore,
 ) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT id FROM releases WHERE build_id = ?1 AND store = ?2 ORDER BY created_at LIMIT 1",
+        "SELECT id FROM releases WHERE build_id = ?1 AND store = ?2 \
+         AND promoted_from_release_id IS NULL ORDER BY created_at LIMIT 1",
     )
     .bind(build_id)
     .bind(store.as_str())
@@ -532,11 +567,26 @@ pub(crate) async fn insert_release(
     let id = Uuid::new_v4().to_string();
     let policy_json =
         serde_json::to_string(&input.policy).map_err(|error| ReleaseError::Db(error.into()))?;
+    let environment_id = match input.environment_id {
+        Some(environment_id) => Some(environment_id),
+        None => {
+            sqlx::query_scalar(
+                "SELECT id FROM project_environments \
+                 WHERE project_id = ?1 AND store = ?2 AND track = ?3",
+            )
+            .bind(&input.project_id)
+            .bind(input.store.as_str())
+            .bind(input.track.trim())
+            .fetch_optional(&mut **tx)
+            .await?
+        }
+    };
 
     sqlx::query(
         "INSERT INTO releases (id, project_id, build_id, artifact_id, store, track, package_name, \
-         version_name, version_code, state, rollout_fraction, policy_json, created_by, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)",
+         version_name, version_code, state, rollout_fraction, policy_json, created_by, created_at, updated_at, \
+         environment_id, promoted_from_release_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?15, ?16)",
     )
     .bind(&id)
     .bind(&input.project_id)
@@ -552,6 +602,8 @@ pub(crate) async fn insert_release(
     .bind(&policy_json)
     .bind(actor.user_id())
     .bind(now)
+    .bind(&environment_id)
+    .bind(&input.promoted_from_release_id)
     .execute(&mut **tx)
     .await?;
     insert_history(
@@ -1169,14 +1221,14 @@ pub(crate) async fn run_rollout_tick(
 
 // ── HTTP handlers ───────────────────────────────────────────────
 
-fn user_actor(auth: &AuthUser) -> ReleaseActor {
+pub(crate) fn user_actor(auth: &AuthUser) -> ReleaseActor {
     ReleaseActor::User {
         user_id: auth.0.user_id.clone(),
         email: auth.0.email.clone(),
     }
 }
 
-async fn project_role(
+pub(crate) async fn project_role(
     state: &AppState,
     auth: &AuthUser,
     project_id: &str,
@@ -1191,7 +1243,7 @@ async fn project_role(
     .await
 }
 
-fn row_role(auth: &AuthUser, row: &SqliteRow) -> EffectiveProjectRole {
+pub(crate) fn row_role(auth: &AuthUser, row: &SqliteRow) -> EffectiveProjectRole {
     if auth.0.role == "owner" || auth.0.role == "admin" {
         return EffectiveProjectRole::InstanceAdmin;
     }
@@ -1298,10 +1350,11 @@ pub async fn list_releases(
 
     let mut list = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT r.*, p.name AS project_name, b.build_number AS build_number, \
-         au.email AS approved_by_email, pm.role AS member_role {from} \
+         au.email AS approved_by_email, env.name AS environment_name, pm.role AS member_role {from} \
          LEFT JOIN projects p ON p.id = r.project_id \
          LEFT JOIN builds b ON b.id = r.build_id \
          LEFT JOIN users au ON au.id = r.approved_by \
+         LEFT JOIN project_environments env ON env.id = r.environment_id \
          {where_clause} ORDER BY r.created_at DESC, r.id LIMIT ?{} OFFSET ?{}",
         binds.len() + 1,
         binds.len() + 2
@@ -1440,6 +1493,8 @@ pub async fn create_release_handler(
             state: initial_state,
             rollout_fraction,
             policy,
+            environment_id: None,
+            promoted_from_release_id: None,
         },
         &user_actor(&auth),
         request.reason.as_deref(),
@@ -1660,6 +1715,9 @@ pub(crate) mod tests {
     #[derive(Default)]
     pub(crate) struct FakeStore {
         pub(crate) changes: Mutex<Vec<StoreChange>>,
+        /// (source release id, target track, fraction) per promotion.
+        pub(crate) promotions: Mutex<Vec<(String, String, Option<f64>)>>,
+        pub(crate) promote_fails: Mutex<bool>,
         crash_rate: Mutex<Option<f64>>,
         crash_rate_fails: Mutex<bool>,
         observed: Mutex<Option<StoreObservation>>,
@@ -1690,6 +1748,29 @@ pub(crate) mod tests {
                     gate.notified().await;
                 }
                 self.changes.lock().unwrap().push(change);
+                Ok(())
+            })
+        }
+
+        fn promote<'a>(
+            &'a self,
+            source: &'a Release,
+            target: PromotionTarget<'a>,
+        ) -> BoxFuture<'a, anyhow::Result<()>> {
+            let fails = *self.promote_fails.lock().unwrap();
+            if !fails {
+                self.promotions.lock().unwrap().push((
+                    source.id.clone(),
+                    target.track.to_string(),
+                    target.fraction,
+                ));
+            }
+            Box::pin(async move {
+                if fails {
+                    anyhow::bail!(
+                        "Play rejected the track update: version code 120 is lower than production"
+                    );
+                }
                 Ok(())
             })
         }
@@ -1739,6 +1820,8 @@ pub(crate) mod tests {
             state: ReleaseState::Rolling,
             rollout_fraction: 0.01,
             policy,
+            environment_id: None,
+            promoted_from_release_id: None,
         }
     }
 
@@ -2500,6 +2583,9 @@ pub(crate) mod tests {
             approved_at: None,
             approved_by_email: None,
             allowed_actions: Vec::new(),
+            environment_id: None,
+            environment_name: None,
+            promoted_from_release_id: None,
             created_at: 0,
             updated_at: 0,
         };
