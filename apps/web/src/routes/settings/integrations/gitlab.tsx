@@ -134,10 +134,7 @@ function GitLabSetupPage() {
   return (
     <PageLayout>
       <PageMeta title="Connect GitLab source" noindex />
-      <PageHeader
-        title="Connect GitLab"
-        description="GitLab.com or a self-managed host, for repository discovery and webhook-triggered builds."
-      />
+      <PageHeader title="Connect GitLab" />
       {!remoteEnabled && !preferencesLoading ? (
         <Alert>
           <AlertDescription>

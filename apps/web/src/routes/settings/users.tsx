@@ -268,7 +268,6 @@ function UsersSettingsPage() {
       <PageMeta title="Users" noindex />
       <PageHeader
         title="Users"
-        description="Instance access, roles, and account status."
         actions={
           <div className="flex flex-wrap gap-2">
             <UserCsvActions users={users} />

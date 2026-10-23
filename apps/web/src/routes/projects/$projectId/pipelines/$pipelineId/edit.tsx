@@ -446,14 +446,15 @@ function EditPipelinePage() {
   return (
     <PageLayout>
       <PageMeta title={label} noindex />
-      <PageHeader
-        title={`Edit ${pipeline.name}`}
-        description={
-          retrySigning
-            ? `Fix and retry ${retrySigning} signing without creating the pipeline again.`
-            : undefined
-        }
-      />
+      <PageHeader title={`Edit ${pipeline.name}`} />
+      {retrySigning ? (
+        <Alert>
+          <AlertDescription>
+            Fix and retry {retrySigning} signing without creating the pipeline
+            again.
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <PipelineForm
         initialValues={formInitialValues}
         manualOnlyTriggers={manualOnlyTriggers}

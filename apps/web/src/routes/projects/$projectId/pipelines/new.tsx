@@ -442,10 +442,7 @@ function NewPipelinePage() {
   return (
     <PageLayout>
       <PageMeta title="New pipeline" />
-      <PageHeader
-        title="New pipeline"
-        description="A pipeline is one build configuration for this project."
-      />
+      <PageHeader title="New pipeline" />
       <div className="flex flex-col gap-8">
         <PipelineFormSection
           title="Start from"

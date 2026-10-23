@@ -32,6 +32,7 @@ import { DangerZone } from '@/components/danger-zone'
 import { FormActions } from '@/components/form-actions'
 import { RelativeTime } from '@/components/relative-time'
 import { StatusBadge } from '@/components/status-badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   SettingsSection,
@@ -186,7 +187,11 @@ function NotificationChannelDetailPage() {
       <PageMeta title={`${channel.name} notifications`} noindex />
       <PageHeader
         title={channel.name}
-        description={`${channelTypeLabel(channel.channel_type)} notification channel`}
+        meta={
+          <Badge variant="outline">
+            {channelTypeLabel(channel.channel_type)}
+          </Badge>
+        }
         actions={
           <Button
             variant="outline"

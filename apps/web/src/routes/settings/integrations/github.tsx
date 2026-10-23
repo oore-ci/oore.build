@@ -104,10 +104,7 @@ function GitHubSetupPage() {
   return (
     <PageLayout>
       <PageMeta title="Connect GitHub source" noindex />
-      <PageHeader
-        title="Connect GitHub"
-        description="Oore creates a GitHub App for repository access and webhooks, sends you to GitHub to install it, and brings you back here."
-      />
+      <PageHeader title="Connect GitHub" />
 
       {!remoteEnabled && !preferencesLoading ? (
         <Alert>
@@ -121,7 +118,7 @@ function GitHubSetupPage() {
 
       <SettingsSection
         title="GitHub App"
-        description="What the generated app can see and do."
+        description="Oore creates the app, sends you to GitHub to install it, and brings you back here."
         actions={
           <Button
             onClick={handleConnect}

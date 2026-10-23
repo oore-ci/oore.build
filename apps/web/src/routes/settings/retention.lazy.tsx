@@ -406,10 +406,7 @@ function RetentionPage() {
     return (
       <PageLayout width="wide">
         <PageMeta title="Retention" />
-        <PageHeader
-          title="Retention"
-          description="Configure automatic cleanup of old builds and artifacts."
-        />
+        <PageHeader title="Retention" />
         <div
           className="flex flex-col gap-4"
           aria-label="Loading retention settings"
@@ -428,10 +425,7 @@ function RetentionPage() {
     return (
       <PageLayout width="wide">
         <PageMeta title="Retention" />
-        <PageHeader
-          title="Retention"
-          description="Configure automatic cleanup of old builds and artifacts."
-        />
+        <PageHeader title="Retention" />
         <Alert variant="destructive">
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>Failed to load the retention policy: {message}</span>
@@ -454,7 +448,6 @@ function RetentionPage() {
       <PageMeta title="Retention" />
       <PageHeader
         title="Retention"
-        description="Configure automatic cleanup of old builds and artifacts to manage disk usage."
         meta={
           <RetentionSummaryCard
             error={cleanupError}

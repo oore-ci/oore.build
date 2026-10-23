@@ -1,8 +1,10 @@
 import { useId, type ReactNode } from 'react'
 
 import {
+  SectionDescription,
   SettingsSection,
   SettingsSurface,
+  warnLongDescription,
 } from '@/components/settings/settings-section'
 import { Badge } from '@/components/ui/badge'
 
@@ -68,11 +70,12 @@ export function PipelineFormSubsection({
 }: {
   actions?: ReactNode
   children: ReactNode
-  description?: ReactNode
+  description?: string
   id?: string
   title: string
 }) {
   const headingId = useId()
+  warnLongDescription('PipelineFormSubsection', description)
   return (
     <div
       id={id}
@@ -86,9 +89,7 @@ export function PipelineFormSubsection({
             {title}
           </h3>
           {description ? (
-            <p className="max-w-[65ch] text-sm text-muted-foreground">
-              {description}
-            </p>
+            <SectionDescription>{description}</SectionDescription>
           ) : null}
         </div>
         {actions ? <div className="shrink-0">{actions}</div> : null}

@@ -17,10 +17,7 @@ function StoreCredentialsPage() {
   return (
     <PageLayout width="wide">
       <PageMeta title="Store credentials" noindex />
-      <PageHeader
-        title="Store credentials"
-        description="App Store Connect and Google Play keys that every project can use, so apps in the same developer account share one upload."
-      />
+      <PageHeader title="Store credentials" />
       <div className="flex flex-col gap-10">
         <AppStoreConnectKeysPanel canWrite={canWrite} />
         <GooglePlayServiceAccountPanel canWrite={canWrite} />

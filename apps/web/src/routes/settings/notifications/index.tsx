@@ -168,7 +168,6 @@ function NotificationsPage() {
       <PageMeta title="Notifications" noindex />
       <PageHeader
         title="Notifications"
-        description="Configure outbound notification channels for build status updates."
         actions={
           <Button
             render={<Link to="/settings/notifications/new" />}

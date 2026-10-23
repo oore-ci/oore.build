@@ -122,8 +122,11 @@ still does not become the scroll owner.
 ### `PageHeader`
 
 The page header owns entity identity, concise context or status, and primary
-page actions. Titles use sentence case. Descriptions are optional and should
-add decision-making context rather than restate the title.
+page actions. Titles use sentence case. A page description is allowed only when
+the title is an entity name and the description is that entity's identity or
+status: a project's description, a pipeline's trigger summary, a source's host.
+A collection or settings screen has no page description; its title is enough.
+Put status in `meta`, not in the description.
 
 Headers have no divider by default. Use `divided` only when a boundary is
 required by the surrounding layout, not as routine page decoration.
@@ -144,9 +147,48 @@ sections share one inset field surface and divide their subsections internally.
 Do not stack a `Card` for every setting, and do not leave settings controls
 floating without a visible group anchor.
 
-Section headings use one compact treatment across a screen. A subtitle is
-appropriate only when it prevents ambiguity. Counts use the same compact badge
-or count treatment; do not repeat the unit in the count.
+Section headings use one compact treatment across a screen. Counts use the
+same compact badge or count treatment; do not repeat the unit in the count.
+
+### Headings and descriptions
+
+Every level of the page can carry a description, and a screen that fills all of
+them reads as an article instead of a settings screen. Each level has one job:
+
+| Level       | Primitive                                | Description allowed                               | May contain                                             |
+| ----------- | ---------------------------------------- | ------------------------------------------------- | ------------------------------------------------------- |
+| Page        | `PageHeader`                             | Only when the title is an entity name             | That entity's identity or status                        |
+| Section     | `SettingsSection`, `PipelineFormSection` | One sentence, only a rule governing every control | "Running builds are never removed."                     |
+| Subsection  | `PipelineFormSubsection`                 | No                                                |                                                         |
+| Field       | `FormDescription`                        | Only if label plus placeholder cannot carry it    | Format, unit, limit, consequence                        |
+| Empty state | `Empty`                                  | One sentence, the why                             | Why you would add the first one, with a Learn more link |
+| Footnote    | Muted paragraph under a surface          | One sentence                                      | Where it is stored, what overrides what                 |
+
+The budget: a screen gets at most one free-prose block that is not attached to
+a control or an empty state. If the page header has a description, its sections
+do not, and the reverse. Two descriptions in a row with nothing between them is
+always wrong.
+
+A description earns its place only if it passes all three tests. Otherwise
+delete it or move it down to the lowest level that still applies:
+
+1. Cover it with your thumb. If the title, the controls, and their labels still
+   tell you what to do, delete it.
+2. If it could be generated from the title ("Configure retention", "Machines
+   that run builds"), delete it.
+3. If it is about one field, it is a `FormDescription`. If it is about why you
+   would want the feature, it is an empty state or a docs link. If it is about
+   storage or precedence, it is a footnote. Only a rule that governs the whole
+   section stays at section level.
+
+A description that survives is one sentence of about 90 characters, says what
+happens or what the rule is rather than what the control is for, and never
+explains how Oore implements something. Implementation detail belongs in the
+docs site, linked once from the empty state or footnote with `Learn more`.
+Dynamic text such as a mode, a usage count, or an upload effect is status, not
+prose: render it in the heading's `meta` slot as a badge or inline text.
+`SettingsSection` and `PipelineFormSubsection` warn in development when a
+description exceeds 120 characters.
 
 Use breadcrumbs only when they express meaningful entity hierarchy. Do not use
 them as a generic screen label.

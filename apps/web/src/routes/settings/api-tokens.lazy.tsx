@@ -368,7 +368,6 @@ function ApiTokensPage() {
       <PageMeta title="API tokens" noindex />
       <PageHeader
         title="API tokens"
-        description="Manage credentials for programmatic access to this instance."
         actions={
           canWrite ? (
             <Button onClick={() => setCreateOpen(true)}>

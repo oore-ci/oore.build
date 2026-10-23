@@ -285,10 +285,7 @@ function RunnersSettingsPage() {
   return (
     <PageLayout width="wide" fill>
       <PageMeta title="Runners" noindex />
-      <PageHeader
-        title="Runners"
-        description="Machines that run builds for this instance."
-      />
+      <PageHeader title="Runners" />
 
       <DirectRunnerPolicyPanel />
 

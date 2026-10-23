@@ -180,7 +180,6 @@ function IntegrationsPage() {
       <PageMeta title="Sources" noindex />
       <PageHeader
         title="Sources"
-        description="Source connections used to discover repositories and trigger builds."
         actions={
           sourcesAvailable && canWrite && hasConnectedSources ? (
             <DropdownMenu>

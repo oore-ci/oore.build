@@ -143,7 +143,6 @@ function OperationsBuildsPage() {
       <PageMeta title="Builds" noindex />
       <PageHeader
         title="Builds"
-        description="Every build across your projects, newest first."
         actions={
           canTriggerBuild ? (
             <Suspense fallback={null}>
