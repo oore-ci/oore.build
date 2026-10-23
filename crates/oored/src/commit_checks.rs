@@ -551,8 +551,14 @@ async fn report_build(
         Vec::new()
     };
     // Sizes only mean something for a build that finished its work.
+    // A failed size lookup must not hold back the build's result.
     let sizes = if ctx.status == BuildStatus::Succeeded {
-        load_size_report(pool, &ctx.build_id).await?
+        load_size_report(pool, &ctx.build_id)
+            .await
+            .unwrap_or_else(|error| {
+                warn!(%error, build_id = %ctx.build_id, "failed to load artifact sizes for the check");
+                None
+            })
     } else {
         None
     };
@@ -1011,6 +1017,25 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(reported.as_deref(), Some("failed"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_size_lookup_still_reports_the_result() {
+        let (base, received) = capture_server().await;
+        let key = vec![7u8; 32];
+        let pool = gitlab_pool(&base, &key).await;
+        insert_build(&pool, "b1", 1, 100).await;
+        set_status(&pool, "b1", "succeeded").await;
+        sqlx::query("DROP TABLE build_artifact_sizes")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        report_due_builds(&pool, &key, &base).await.unwrap();
+
+        let states = gitlab_states(&received);
+        let succeeded = ("Build #1 succeeded".to_string(), "success".to_string());
+        assert_eq!(states, [succeeded.clone(), succeeded]);
     }
 
     #[tokio::test]

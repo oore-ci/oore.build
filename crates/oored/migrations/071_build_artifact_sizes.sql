@@ -13,6 +13,8 @@ CREATE TABLE build_artifact_sizes (
 CREATE INDEX idx_build_artifact_sizes_build ON build_artifact_sizes (build_id);
 
 INSERT INTO build_artifact_sizes (artifact_id, build_id, name, artifact_type, size_bytes, recorded_at)
-SELECT id, build_id, name, artifact_type, file_size, COALESCE(finalized_at, created_at)
-FROM artifacts
-WHERE state = 'available' AND file_size IS NOT NULL AND file_size >= 0;
+SELECT a.id, a.build_id, a.name, a.artifact_type, a.file_size,
+       COALESCE(a.finalized_at, a.created_at)
+FROM artifacts a
+JOIN builds b ON b.id = a.build_id
+WHERE a.state = 'available' AND a.file_size IS NOT NULL AND a.file_size >= 0;

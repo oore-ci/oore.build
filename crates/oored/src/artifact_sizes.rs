@@ -100,24 +100,71 @@ fn pull_request_target(payload: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Reruns chain back to the build a trigger started.
+const MAX_RERUN_DEPTH: i64 = 50;
+/// Earlier successful builds on the base branch checked for a baseline.
+const MAX_BASELINE_CANDIDATES: i64 = 25;
+
+/// The target branch when the trigger that started a build, following reruns
+/// back to it, was a pull or merge request. `Some(None)` is a pull request
+/// whose target is unknown; `None` is not a pull request.
+async fn pull_request_origin(
+    pool: &SqlitePool,
+    build_id: &str,
+) -> Result<Option<Option<String>>, sqlx::Error> {
+    // A rerun has its own trigger event and no webhook, so the origin is the
+    // first build in its chain.
+    let Some(origin) = sqlx::query(
+        "WITH RECURSIVE chain(id, source_build_id, depth) AS ( \
+             SELECT id, source_build_id, 0 FROM builds WHERE id = ?1 \
+             UNION ALL \
+             SELECT b.id, b.source_build_id, chain.depth + 1 FROM builds b \
+             JOIN chain ON b.id = chain.source_build_id WHERE chain.depth < ?2 \
+         ) \
+         SELECT b.trigger_event, w.event_type, w.payload FROM chain \
+         JOIN builds b ON b.id = chain.id \
+         LEFT JOIN integration_webhooks w ON w.id = b.webhook_id \
+         ORDER BY chain.depth DESC LIMIT 1",
+    )
+    .bind(build_id)
+    .bind(MAX_RERUN_DEPTH)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let is_pull_request = ["trigger_event", "event_type"].iter().any(|column| {
+        origin
+            .get::<Option<String>, _>(*column)
+            .is_some_and(|event| {
+                oore_contract::TriggerConfig::normalize_event(&event) == "pull_request"
+            })
+    });
+    if !is_pull_request {
+        return Ok(None);
+    }
+    Ok(Some(
+        origin
+            .get::<Option<String>, _>("payload")
+            .and_then(|payload| serde_json::from_str::<serde_json::Value>(&payload).ok())
+            .as_ref()
+            .and_then(pull_request_target),
+    ))
+}
+
 /// Sizes of a build compared with its baseline. `None` when the build does
 /// not exist.
 pub(crate) async fn load_size_report(
     pool: &SqlitePool,
     build_id: &str,
 ) -> Result<Option<BuildSizeReport>, sqlx::Error> {
-    // A rerun keeps the trigger of the build it reran, but not its webhook.
     let Some(build) = sqlx::query(
-        "SELECT b.pipeline_id, b.build_number, b.trigger_event, \
-                COALESCE(w.payload, sw.payload) AS webhook_payload, \
+        "SELECT b.pipeline_id, b.build_number, \
                 p.default_branch AS project_default_branch, \
                 r.default_branch AS repository_default_branch \
          FROM builds b \
          JOIN projects p ON p.id = b.project_id \
          LEFT JOIN integration_repositories r ON r.id = p.repository_id \
-         LEFT JOIN integration_webhooks w ON w.id = b.webhook_id \
-         LEFT JOIN builds source ON source.id = b.source_build_id \
-         LEFT JOIN integration_webhooks sw ON sw.id = source.webhook_id \
          WHERE b.id = ?1",
     )
     .bind(build_id)
@@ -127,16 +174,7 @@ pub(crate) async fn load_size_report(
         return Ok(None);
     };
 
-    let trigger_event: Option<String> = build.get("trigger_event");
-    let is_pull_request = trigger_event.as_deref().is_some_and(|event| {
-        oore_contract::TriggerConfig::normalize_event(event) == "pull_request"
-    });
-    let pull_request_base = is_pull_request
-        .then(|| build.get::<Option<String>, _>("webhook_payload"))
-        .flatten()
-        .and_then(|payload| serde_json::from_str::<serde_json::Value>(&payload).ok())
-        .as_ref()
-        .and_then(pull_request_target);
+    let pull_request_base = pull_request_origin(pool, build_id).await?.flatten();
     let non_empty = |column: &str| {
         build
             .get::<Option<String>, _>(column)
@@ -149,26 +187,35 @@ pub(crate) async fn load_size_report(
 
     let current = load_sizes(pool, build_id).await?;
 
-    let baseline = match &base_branch {
-        Some(branch) => sqlx::query(
+    let mut baseline = None;
+    if let Some(branch) = &base_branch {
+        let candidates = sqlx::query(
             "SELECT b.id, b.build_number, b.branch FROM builds b \
              WHERE b.pipeline_id = ?1 AND b.branch = ?2 AND b.build_number < ?3 \
                AND (b.status = 'succeeded' OR (b.status = 'expired' AND b.expired_from = 'succeeded')) \
                AND EXISTS (SELECT 1 FROM build_artifact_sizes s WHERE s.build_id = b.id) \
-             ORDER BY b.build_number DESC LIMIT 1",
+             ORDER BY b.build_number DESC LIMIT ?4",
         )
         .bind(build.get::<String, _>("pipeline_id"))
         .bind(branch)
         .bind(build.get::<i64, _>("build_number"))
-        .fetch_optional(pool)
-        .await?
-        .map(|row| BuildSizeBaseline {
-            build_id: row.get("id"),
-            build_number: row.get("build_number"),
-            branch: row.get("branch"),
-        }),
-        None => None,
-    };
+        .bind(MAX_BASELINE_CANDIDATES)
+        .fetch_all(pool)
+        .await?;
+        // A pull request whose head branch has the base branch's name, for
+        // example a fork's `main`, is not the base branch.
+        for row in candidates {
+            let id: String = row.get("id");
+            if pull_request_origin(pool, &id).await?.is_none() {
+                baseline = Some(BuildSizeBaseline {
+                    build_id: id,
+                    build_number: row.get("build_number"),
+                    branch: row.get("branch"),
+                });
+                break;
+            }
+        }
+    }
     let baseline_sizes = match &baseline {
         Some(baseline) => load_sizes(pool, &baseline.build_id).await?,
         None => Vec::new(),
@@ -368,6 +415,7 @@ mod tests {
         status: &'a str,
         event: &'a str,
         webhook: Option<&'a str>,
+        source: Option<&'a str>,
         aab_bytes: Option<i64>,
     }
 
@@ -375,8 +423,9 @@ mod tests {
         let expired_from = (build.status == "expired").then_some("succeeded");
         sqlx::query(
             "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, \
-                 trigger_event, branch, webhook_id, expired_from, queued_at, created_at, updated_at) \
-             VALUES (?1, 'p1', ?2, ?3, ?4, 'webhook', ?5, ?6, ?7, ?8, ?3, ?3, ?3)",
+                 trigger_event, branch, webhook_id, source_build_id, expired_from, \
+                 queued_at, created_at, updated_at) \
+             VALUES (?1, 'p1', ?2, ?3, ?4, 'webhook', ?5, ?6, ?7, ?8, ?9, ?3, ?3, ?3)",
         )
         .bind(build.id)
         .bind(build.pipeline)
@@ -385,6 +434,7 @@ mod tests {
         .bind(build.event)
         .bind(build.branch)
         .bind(build.webhook)
+        .bind(build.source)
         .bind(expired_from)
         .execute(pool)
         .await
@@ -421,6 +471,7 @@ mod tests {
             status,
             event: "push",
             webhook: None,
+            source: None,
             aab_bytes: bytes,
         }
     }
@@ -466,6 +517,50 @@ mod tests {
             .unwrap();
         let report = load_size_report(&pool, "pr").await.unwrap().unwrap();
         assert_eq!(report.artifacts[0].baseline_size_bytes, Some(2_000));
+    }
+
+    #[tokio::test]
+    async fn pull_requests_from_a_branch_named_main_are_never_the_baseline() {
+        let pool = seeded_pool().await;
+        sqlx::query(
+            "INSERT INTO integration_webhooks (id, integration_id, provider_delivery_id, event_type, payload, received_at) \
+             VALUES ('w2', 'i1', 'd2', 'pull_request', \
+                 '{\"pull_request\":{\"base\":{\"ref\":\"release\"}}}', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        seed(&pool, push("main1", 1, "main", "succeeded", Some(1_000))).await;
+        // A fork's pull request whose head branch is also called `main`.
+        let fork_pr = Seed {
+            event: "pull_request",
+            webhook: Some("w2"),
+            ..push("fork", 2, "main", "succeeded", Some(9_000))
+        };
+        seed(&pool, fork_pr).await;
+        // A rerun of that pull request, then a rerun of the rerun.
+        let rerun = Seed {
+            event: "rerun",
+            source: Some("fork"),
+            ..push("rerun1", 3, "main", "succeeded", Some(9_100))
+        };
+        seed(&pool, rerun).await;
+        let rerun_of_rerun = Seed {
+            event: "retry",
+            source: Some("rerun1"),
+            ..push("rerun2", 4, "main", "succeeded", Some(9_200))
+        };
+        seed(&pool, rerun_of_rerun).await;
+        seed(&pool, push("main5", 5, "main", "succeeded", Some(1_100))).await;
+
+        let report = load_size_report(&pool, "main5").await.unwrap().unwrap();
+        assert_eq!(report.baseline.unwrap().build_id, "main1");
+        assert_eq!(report.artifacts[0].delta_bytes, Some(100));
+
+        // The rerun of a rerun still compares with the pull request's target.
+        let report = load_size_report(&pool, "rerun2").await.unwrap().unwrap();
+        assert_eq!(report.base_branch.as_deref(), Some("release"));
+        assert!(report.baseline.is_none());
     }
 
     #[tokio::test]
