@@ -55,6 +55,10 @@ import {
 } from '@/components/ui/item'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Spinner } from '@/components/ui/spinner'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
   staticData: {
@@ -268,15 +272,15 @@ function RepositoryWorkflowSummary({
       </Alert>
       <div className="grid gap-3 text-sm sm:grid-cols-2">
         <div>
-          <p className="text-xs text-muted-foreground">Platforms</p>
+          <Text variant="caption">Platforms</Text>
           <p>{execution.platforms.join(', ')}</p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Flutter</p>
+          <Text variant="caption">Flutter</Text>
           <p>{execution.flutter_version ?? 'From .fvmrc, or stable'}</p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Commands</p>
+          <Text variant="caption">Commands</Text>
           <p>
             {commandCount > 0
               ? `${commandCount} configured`
@@ -284,16 +288,16 @@ function RepositoryWorkflowSummary({
           </p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Artifacts</p>
+          <Text variant="caption">Artifacts</Text>
           <p className="font-mono text-xs">
             {execution.artifact_patterns.join(', ') || 'Platform defaults'}
           </p>
         </div>
       </div>
       {execution.env_keys.length > 0 ? (
-        <p className="text-xs text-muted-foreground">
+        <Text variant="caption">
           Environment keys: {execution.env_keys.join(', ')}. Values stay hidden.
-        </p>
+        </Text>
       ) : null}
     </div>
   )
@@ -443,7 +447,7 @@ function NewPipelinePage() {
     <PageLayout>
       <PageMeta title="New pipeline" />
       <PageHeader title="New pipeline" />
-      <div className="flex flex-col gap-8">
+      <Stack gap={8}>
         <PipelineFormSection
           title="Start from"
           hint={startDescription}
@@ -463,11 +467,11 @@ function NewPipelinePage() {
           }
         >
           {workflowsQuery.isLoading ? (
-            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+            <Row gap={3} className={textVariants({ variant: 'muted' })}>
               <Spinner className="size-4" />
               Looking for Oore workflows on{' '}
               {projectData?.project.default_branch ?? 'the default branch'}...
-            </div>
+            </Row>
           ) : workflowsQuery.error ? (
             <Alert variant="destructive">
               <HugeiconsIcon icon={AlertCircleIcon} size={16} />
@@ -636,7 +640,7 @@ function NewPipelinePage() {
             }
           />
         ) : null}
-      </div>
+      </Stack>
     </PageLayout>
   )
 }

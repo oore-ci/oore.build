@@ -15,6 +15,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { formatDuration } from '@/lib/format-utils'
 import { stepTimingTrend } from '@/lib/step-timings'
 import { cn } from '@/lib/utils'
+import { textVariants } from '@/lib/recipes'
 
 interface StepNavigationProps {
   groups: Array<StepGroup>
@@ -46,7 +47,9 @@ export function StepNavigation({
     >
       <div className="flex shrink-0 items-center justify-between border-b px-3 py-2.5">
         <span className="text-xs font-medium">Steps</span>
-        <span className="text-xs text-muted-foreground tabular-nums">
+        <span
+          className={cn(textVariants({ variant: 'caption' }), 'tabular-nums')}
+        >
           {groups.length === 1 ? '1 step' : `${groups.length} steps`}
         </span>
       </div>

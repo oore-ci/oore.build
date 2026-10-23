@@ -53,6 +53,11 @@ import {
   storeOidcRedirect,
 } from '@/lib/auth-redirect'
 import { searchString, type SearchInput } from '@/lib/search-input'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { FocusedFlowLayout } from '@/components/focused-flow-layout'
+import { Mono } from '@/components/layout/mono'
 
 interface LoginSearch {
   redirect?: string
@@ -364,7 +369,7 @@ function LoginPage() {
 
   if (isDemoMode) {
     return (
-      <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
+      <FocusedFlowLayout>
         <PageMeta title="Demo login" />
         <div className="w-full max-w-sm space-y-6">
           <FocusedFlowHeader
@@ -377,12 +382,12 @@ function LoginPage() {
           />
           <DemoLoginForm redirectTo={redirect ?? '/'} />
         </div>
-      </div>
+      </FocusedFlowLayout>
     )
   }
 
   return (
-    <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
+    <FocusedFlowLayout>
       <PageMeta title="Login" />
       <div className="w-full max-w-sm space-y-6">
         <FocusedFlowHeader
@@ -396,13 +401,17 @@ function LoginPage() {
 
         <Card size="sm">
           <CardContent className="space-y-4">
-            <div className="flex items-center gap-2 text-sm">
+            <Row gap={2} className="text-sm">
               <span className="text-muted-foreground">Instance</span>
               <Separator orientation="vertical" className="h-3!" />
-              <code className="bg-muted px-1.5 py-0.5 font-mono text-xs font-medium">
+              <Mono
+                size="xs"
+                render={<code />}
+                className="bg-muted px-1.5 py-0.5 font-medium"
+              >
                 {instance?.label ?? 'none selected'}
-              </code>
-            </div>
+              </Mono>
+            </Row>
 
             <Item variant="muted" size="sm">
               <ItemContent>
@@ -458,7 +467,7 @@ function LoginPage() {
             ) : null}
 
             {localLoginAvailable && !localModeNetworkBlocked ? (
-              <div className="flex flex-col gap-2">
+              <Stack gap={2}>
                 <Label htmlFor="local-login-email">Email (optional)</Label>
                 <Input
                   id="local-login-email"
@@ -469,16 +478,16 @@ function LoginPage() {
                   onChange={(event) => setLocalEmail(event.target.value)}
                   disabled={loading}
                 />
-                <p className="text-xs text-muted-foreground">
+                <Text variant="caption">
                   Leave blank if this instance has only one active user.
-                </p>
+                </Text>
                 {runtimeMode === 'local' ? (
-                  <p className="text-xs text-muted-foreground">
+                  <Text variant="caption">
                     Your first sign-in on a new local instance creates the owner
                     account.
-                  </p>
+                  </Text>
                 ) : null}
-              </div>
+              </Stack>
             ) : null}
 
             {error ? (
@@ -573,9 +582,9 @@ function LoginPage() {
           </CardHeader>
           <CardContent className="space-y-2">
             {instanceList.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
+              <Text variant="muted">
                 No saved instances yet. Add one to start signing in.
-              </p>
+              </Text>
             ) : (
               <RadioGroup
                 aria-label="Saved instances"
@@ -615,10 +624,14 @@ function LoginPage() {
                       </ItemContent>
                       <ItemActions>
                         {isActive ? (
-                          <span className="flex items-center gap-1 text-xs text-foreground">
+                          <Row
+                            gap={1}
+                            render={<span />}
+                            className="text-xs text-foreground"
+                          >
                             <HugeiconsIcon icon={Tick02Icon} size={14} />
                             Active
-                          </span>
+                          </Row>
                         ) : null}
                       </ItemActions>
                     </Item>
@@ -641,6 +654,6 @@ function LoginPage() {
         open={showAddInstance}
         onOpenChange={setShowAddInstance}
       />
-    </div>
+    </FocusedFlowLayout>
   )
 }

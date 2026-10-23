@@ -11,6 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 interface StepSelectProps {
   groups: Array<StepGroup>
@@ -51,7 +53,12 @@ export function StepSelect({
             <SelectItem value="all">
               <HugeiconsIcon icon={FileTerminalIcon} />
               Full log
-              <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+              <span
+                className={cn(
+                  textVariants({ variant: 'caption' }),
+                  'ml-auto tabular-nums',
+                )}
+              >
                 {allLogCount}
               </span>
             </SelectItem>
@@ -59,7 +66,12 @@ export function StepSelect({
               <SelectItem key={group.name} value={group.name}>
                 <StepStatusIcon status={group.status} />
                 <span className="min-w-0 flex-1 truncate">{group.name}</span>
-                <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                <span
+                  className={cn(
+                    textVariants({ variant: 'caption' }),
+                    'ml-auto tabular-nums',
+                  )}
+                >
                   {group.logs.length}
                 </span>
               </SelectItem>

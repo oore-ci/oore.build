@@ -7,6 +7,8 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import { cn } from '@/lib/utils'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 
 export interface ReadinessCheck {
   key: string
@@ -31,10 +33,11 @@ export function PublishReadiness({
 }) {
   const missing = checks.filter((check) => check.ready === false).length
   return (
-    <div
+    <Stack
       role="group"
       aria-label="Publishing readiness"
-      className="flex flex-col gap-3 rounded-lg border bg-card p-4 sm:p-5"
+      gap={3}
+      className="rounded-lg border bg-card p-4 sm:p-5"
     >
       <p className="text-sm font-medium">
         {missing === 0
@@ -62,7 +65,7 @@ export function PublishReadiness({
               )}
               aria-hidden
             />
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <Stack gap={0.5} className="min-w-0 flex-1">
               <span className="font-medium">
                 {check.label}
                 <span className="sr-only">
@@ -74,16 +77,14 @@ export function PublishReadiness({
                 </span>
               </span>
               <span className="text-muted-foreground">{check.detail}</span>
-            </div>
+            </Stack>
             {check.action ? (
               <div className="shrink-0">{check.action}</div>
             ) : null}
           </li>
         ))}
       </ul>
-      {footnote ? (
-        <p className="text-sm text-muted-foreground">{footnote}</p>
-      ) : null}
-    </div>
+      {footnote ? <Text variant="muted">{footnote}</Text> : null}
+    </Stack>
   )
 }

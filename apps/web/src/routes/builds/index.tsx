@@ -37,6 +37,7 @@ import {
 } from '@/components/date-range-filter'
 import type { BuildSort } from './-build-sort'
 import { useListNavigation } from '@/hooks/use-list-navigation'
+import { splitRowVariants } from '@/lib/recipes'
 
 const TriggerBuildDrawer = lazy(
   () => import('@/components/trigger-build-drawer'),
@@ -221,7 +222,7 @@ function OperationsBuildsPage() {
       {projectsQuery.error ? (
         <Alert>
           <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Project filters and build actions are temporarily unavailable.
             </span>

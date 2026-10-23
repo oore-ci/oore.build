@@ -63,6 +63,8 @@ import { IntegrationConnectionDetails } from './-integration-connection-details'
 import { IntegrationDisconnectDialog } from './-integration-disconnect-dialog'
 import { OperatorIncidentAlert } from '@/components/operator-incident-alert'
 import { SourceStatusAlert } from './-source-status-alert'
+import { Text } from '@/components/layout/text'
+import { splitRowVariants, textVariants } from '@/lib/recipes'
 
 type IntegrationDetailTab = 'repositories' | 'accounts' | 'connection'
 
@@ -284,9 +286,9 @@ function IntegrationDetailPage() {
       <PageLayout width="wide">
         <PageMeta title="Source not found" noindex />
         <PageHeader title="Source not found" />
-        <p className="text-sm text-muted-foreground">
+        <Text variant="muted">
           This source connection does not exist or is no longer available.
-        </p>
+        </Text>
       </PageLayout>
     )
   }
@@ -490,13 +492,13 @@ function IntegrationDetailPage() {
         <TabsList variant="line" aria-label="Source details">
           <TabsTrigger value="repositories">
             Repositories
-            <span className="font-mono text-xs text-muted-foreground">
+            <span className={textVariants({ variant: 'mono' })}>
               {repositoryTotal ?? (repositoryTotalQuery.isError ? '—' : '…')}
             </span>
           </TabsTrigger>
           <TabsTrigger value="accounts">
             {accountsTabLabel}
-            <span className="font-mono text-xs text-muted-foreground">
+            <span className={textVariants({ variant: 'mono' })}>
               {installationsQuery.isLoading
                 ? '…'
                 : installationsQuery.isError
@@ -513,7 +515,7 @@ function IntegrationDetailPage() {
           networkSettingsQuery.error ? (
             <Alert variant="destructive" className="mb-4">
               <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-              <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <AlertDescription className={splitRowVariants()}>
                 <span>
                   Webhook actions are unavailable because the public URL could
                   not be loaded.

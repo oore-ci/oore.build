@@ -5,6 +5,8 @@ import { File01Icon } from '@hugeicons/core-free-icons'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
+import { Text } from '@/components/layout/text'
+import { stackVariants } from '@/lib/recipes'
 
 /**
  * A credential file picker that says which file the pipeline will use: the
@@ -49,11 +51,12 @@ export function FileField({
   }
 
   return (
-    <div className={cn('flex flex-col gap-2', className)}>
+    <div className={cn(stackVariants({ gap: 2 }), className)}>
       <Label id={`${id}-label`} htmlFor={id} className={labelClassName}>
         {label}
       </Label>
       <div
+        // oxlint-disable-next-line layout/max-class-utilities -- mirrors the shadcn input surface
         className={cn(
           'flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-transparent bg-input/50 py-1.5 pr-1.5 pl-3',
           error && 'border-destructive ring-3 ring-destructive/20',
@@ -129,9 +132,9 @@ export function FileField({
         />
       </div>
       {description ? (
-        <p id={descriptionId} className="text-sm text-muted-foreground">
+        <Text id={descriptionId} variant="muted">
           {description}
-        </p>
+        </Text>
       ) : null}
       {error ? (
         <p id={errorId} className="text-sm text-destructive">

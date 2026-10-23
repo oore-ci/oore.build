@@ -21,6 +21,9 @@ import { relativeTime } from '@/lib/format-utils'
 import type { Project, ProjectBuildInsights } from '@oore/client/models'
 import ProjectActionsMenu from './-project-actions-menu'
 import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
+import { Row } from '@/components/layout/row'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 export type ProjectSort = 'created_at' | 'updated_at' | 'name'
 
@@ -31,7 +34,7 @@ const PROJECT_TABLE_SORTS = [
 
 function ProjectIdentity({ project }: { project: Project }) {
   return (
-    <div className="flex min-w-0 items-center gap-3">
+    <Row gap={3} className="min-w-0">
       <RepositoryAvatar
         fullName={project.repository_full_name ?? project.name}
         avatarUrl={project.repository_avatar_url}
@@ -47,11 +50,13 @@ function ProjectIdentity({ project }: { project: Project }) {
         >
           {project.name}
         </Link>
-        <span className="block truncate text-xs text-muted-foreground">
+        <span
+          className={cn(textVariants({ variant: 'caption' }), 'block truncate')}
+        >
           {project.repository_full_name ?? 'Local repository'}
         </span>
       </span>
-    </div>
+    </Row>
   )
 }
 
@@ -84,7 +89,7 @@ function ProjectLastBuild({
       aria-label={`Builds for ${insights.project_name}`}
     >
       <StatusBadge kind="build" value={insights.last_status} />
-      <span className="text-xs text-muted-foreground">
+      <span className={textVariants({ variant: 'caption' })}>
         {relativeTime(insights.last_finished_at)}
         {rate != null ? ` · ${Math.round(rate * 100)}% succeeded` : ''}
       </span>

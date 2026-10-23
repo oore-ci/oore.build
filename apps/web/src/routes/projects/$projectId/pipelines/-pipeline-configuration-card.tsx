@@ -18,6 +18,7 @@ import type {
   PipelineAndroidSigningResponse,
   PipelineIosSigningResponse,
 } from '@oore/client/models'
+import { Text } from '@/components/layout/text'
 
 function Section({
   title,
@@ -95,7 +96,11 @@ function SettingBody<T>({
     )
   }
   if (setting.isLoading) return <Skeleton className="my-1 h-5 w-48" />
-  return <p className="py-1 text-sm text-muted-foreground">Not set up</p>
+  return (
+    <Text variant="muted" className="py-1">
+      Not set up
+    </Text>
+  )
 }
 
 function KV({ label, children }: { label: string; children: ReactNode }) {

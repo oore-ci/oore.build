@@ -34,6 +34,10 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 const editProjectSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -156,12 +160,12 @@ export function ProjectSettingsForm({
                   <FormItem>
                     <FormLabel>Source repository</FormLabel>
                     {repositoriesQuery.isLoading ? (
-                      <div className="flex items-center gap-2 py-2">
+                      <Row gap={2} className="py-2">
                         <Spinner className="size-4" />
-                        <span className="text-sm text-muted-foreground">
+                        <span className={textVariants({ variant: 'muted' })}>
                           Loading repositories...
                         </span>
-                      </div>
+                      </Row>
                     ) : repositoriesQuery.error ? (
                       <Alert variant="destructive">
                         <AlertDescription className="flex items-center justify-between gap-3">
@@ -219,11 +223,11 @@ export function ProjectSettingsForm({
                         </SelectContent>
                       </Select>
                     ) : (
-                      <div className="flex flex-col items-start gap-2">
-                        <p className="text-sm text-muted-foreground">
+                      <Stack gap={2} className="items-start">
+                        <Text variant="muted">
                           No source is connected yet. Connect GitHub, GitLab or
                           a local folder first.
-                        </p>
+                        </Text>
                         <Button
                           type="button"
                           variant="outline"
@@ -232,7 +236,7 @@ export function ProjectSettingsForm({
                         >
                           Connect source
                         </Button>
-                      </div>
+                      </Stack>
                     )}
                     <FormDescription>
                       Choosing the source trusts its build commands to run with
@@ -260,7 +264,7 @@ export function ProjectSettingsForm({
                 )}
               />
             ) : (
-              <div className="flex flex-col gap-1.5 text-sm">
+              <Stack gap={1.5} className="text-sm">
                 <p className="font-medium">Source repository</p>
                 <p>
                   {currentValues.repository_full_name ? (
@@ -274,7 +278,7 @@ export function ProjectSettingsForm({
                     Only an owner or admin can change the source.
                   </span>
                 </p>
-              </div>
+              </Stack>
             )}
             <SettingsSurfaceSeparator />
             <FormActions

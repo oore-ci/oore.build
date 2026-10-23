@@ -16,6 +16,8 @@ import {
 } from '@/components/ui/empty'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import { Row } from '@/components/layout/row'
+import { textVariants } from '@/lib/recipes'
 
 interface LogOutputProps {
   logs: Array<BuildLogChunk>
@@ -64,8 +66,10 @@ export function LogOutput({
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
       {selectedStepMeta ? (
-        <div className="flex shrink-0 items-center gap-2 border-b bg-muted/20 px-3 py-2">
-          <span className="text-xs font-medium text-muted-foreground">
+        <Row gap={2} className="shrink-0 border-b bg-muted/20 px-3 py-2">
+          <span
+            className={cn(textVariants({ variant: 'caption' }), 'font-medium')}
+          >
             {selectedStep}
           </span>
           {selectedStepMeta.command ? (
@@ -73,7 +77,7 @@ export function LogOutput({
               $ {selectedStepMeta.command}
             </code>
           ) : null}
-        </div>
+        </Row>
       ) : null}
 
       <ScrollArea
@@ -144,6 +148,7 @@ export function LogOutput({
                   aria-current={isCurrentMatch ? 'true' : undefined}
                 >
                   <span
+                    // oxlint-disable-next-line layout/max-class-utilities -- sticky line-number gutter
                     className={cn(
                       'sticky left-0 z-10 shrink-0 border-r px-3 text-right text-muted-foreground select-none',
                       isCurrentMatch ? 'bg-primary/5' : 'bg-background',

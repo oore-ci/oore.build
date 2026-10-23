@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
+import { rowVariants } from '@/lib/recipes'
 
 /**
  * Save and Cancel at the end of a form, in one order everywhere: secondary
@@ -42,7 +43,8 @@ export function FormActions({
       data-slot="form-actions"
       data-sticky={sticky ? '' : undefined}
       className={cn(
-        'flex flex-wrap items-center justify-end gap-2',
+        rowVariants({ gap: 2 }),
+        'flex-wrap justify-end',
         chassis &&
           'rounded-[min(var(--radius-4xl),24px)] border border-transparent p-3 transition-colors',
         sticky &&

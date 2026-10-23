@@ -22,6 +22,7 @@ import {
   SettingsSection,
   SettingsSurface,
 } from '@/components/settings/settings-section'
+import { splitRowVariants } from '@/lib/recipes'
 
 export function DirectRunnerPolicyPanel() {
   const canRead = useHasPermission('instance_settings:read')
@@ -53,7 +54,7 @@ function DirectRunnerPolicyControl() {
     return (
       <Alert variant="destructive">
         <HugeiconsIcon icon={Alert02Icon} aria-hidden />
-        <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <AlertDescription className={splitRowVariants()}>
           <span>
             Failed to load Direct runner policy:{' '}
             {preferencesQuery.error.message}

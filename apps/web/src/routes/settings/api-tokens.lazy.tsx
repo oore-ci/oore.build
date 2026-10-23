@@ -73,6 +73,7 @@ import type { SortDirection } from '@/components/data-table-features'
 import type { ApiTokenSort, ApiTokensSearch } from './api-tokens'
 import { ApiTokenInventory } from './-api-token-inventory'
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from './-user-role-labels'
+import { splitRowVariants } from '@/lib/recipes'
 
 export const Route = createLazyFileRoute('/settings/api-tokens')({
   component: ApiTokensPage,
@@ -381,7 +382,7 @@ function ApiTokensPage() {
       {tokensQuery.error ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>Failed to load API tokens: {tokensQuery.error.message}</span>
             <Button
               variant="outline"

@@ -69,6 +69,10 @@ import {
   PipelineConfigurationCard,
   SettingUnavailable,
 } from '../-pipeline-configuration-card'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
@@ -539,11 +543,17 @@ function PipelineDetailPage() {
                   ) : null}
                 </Empty>
               ) : (
-                <div className="flex flex-col gap-3">
+                <Stack gap={3}>
                   <RecentBuildsTable builds={builds} />
                   {(buildsQuery.data?.total ?? builds.length) >
                   builds.length ? (
-                    <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                    <Row
+                      gap={3}
+                      className={cn(
+                        textVariants({ variant: 'muted' }),
+                        'justify-between',
+                      )}
+                    >
                       <span>
                         Showing the {builds.length} most recent builds.
                       </span>
@@ -561,9 +571,9 @@ function PipelineDetailPage() {
                       >
                         View all builds
                       </Button>
-                    </div>
+                    </Row>
                   ) : null}
-                </div>
+                </Stack>
               )}
             </CardContent>
           </Card>
@@ -587,7 +597,7 @@ function PipelineDetailPage() {
         <TabsContent value="publishing" className="pt-2">
           {tab === 'publishing' ? (
             <Suspense fallback={<Skeleton className="h-96 w-full" />}>
-              <div className="flex flex-col gap-8">
+              <Stack gap={8}>
                 {buildsAndroid ? (
                   <GooglePlayPublishSection
                     androidCommandOverride={
@@ -617,7 +627,7 @@ function PipelineDetailPage() {
                     </AlertDescription>
                   </Alert>
                 ) : null}
-              </div>
+              </Stack>
             </Suspense>
           ) : null}
         </TabsContent>

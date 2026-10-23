@@ -22,6 +22,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { StatusBadge } from '@/components/status-badge'
 import { useBuildInsights, type BuildInsightsWindow } from '@/hooks/use-builds'
 import { formatDuration, relativeTime } from '@/lib/format-utils'
+import { Row } from '@/components/layout/row'
+import { textVariants } from '@/lib/recipes'
 
 const SORTS = [
   'project',
@@ -64,7 +66,7 @@ function SuccessRate({ project }: { project: ProjectBuildInsights }) {
   }
   const percent = Math.round(rate * 100)
   return (
-    <div className="flex items-center gap-2">
+    <Row gap={2}>
       <div
         className="h-1.5 w-20 overflow-hidden rounded-full bg-muted"
         aria-hidden
@@ -75,7 +77,7 @@ function SuccessRate({ project }: { project: ProjectBuildInsights }) {
         />
       </div>
       <span className="text-xs tabular-nums">{percent}%</span>
-    </div>
+    </Row>
   )
 }
 
@@ -140,12 +142,12 @@ const columns: Array<DataTableColumnDef<ProjectBuildInsights>> = [
       <DataTableColumnHeader column={column} title="Last build" />
     ),
     cell: ({ row }) => (
-      <div className="flex items-center gap-2 whitespace-nowrap">
+      <Row gap={2} className="whitespace-nowrap">
         <StatusBadge kind="build" value={row.original.last_status} />
-        <span className="text-xs text-muted-foreground">
+        <span className={textVariants({ variant: 'caption' })}>
           {relativeTime(row.original.last_finished_at)}
         </span>
-      </div>
+      </Row>
     ),
   },
 ]

@@ -26,6 +26,10 @@ import {
   releaseNextStep,
   releaseVersionLabel,
 } from '@/lib/releases'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { focusRingVariants, textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const LIVE_STATE_QUERY = LIVE_RELEASE_STATES.join(',')
 
@@ -60,7 +64,7 @@ function RolloutHealth({
                 target.scrollIntoView({ behavior: 'smooth', block: 'center' })
               }}
               aria-label={`Rollout health ${RELEASE_HEALTH_LABEL[release.health]}. Open store health for ${releaseAppName(release)}`}
-              className="rounded-2xl outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              className={cn(focusRingVariants(), 'rounded-2xl')}
             />
           ) : (
             <span tabIndex={0} className="rounded-2xl outline-none" />
@@ -99,26 +103,28 @@ function ReleaseRow({
         >
           {releaseAppName(release)}
         </Link>
-        <span className="truncate text-xs text-muted-foreground">
+        <span className={cn(textVariants({ variant: 'caption' }), 'truncate')}>
           {RELEASE_STORE_LABEL[release.store]} {release.track} ·{' '}
           <span className="tabular-nums">{releaseVersionLabel(release)}</span>
         </span>
       </div>
-      <div className="flex w-full flex-col gap-1 sm:w-48">
+      <Stack gap={1} className="w-full sm:w-48">
         <ReleaseRollout release={release} />
-        <span className="truncate text-xs text-muted-foreground">
+        <span className={cn(textVariants({ variant: 'caption' }), 'truncate')}>
           {releaseNextStep(release, nowSeconds)}
         </span>
-      </div>
-      <div className="flex w-full items-center justify-between gap-3 sm:w-auto sm:min-w-56">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground sm:sr-only">
+      </Stack>
+      <Row gap={3} className="w-full justify-between sm:w-auto sm:min-w-56">
+        <Row gap={2}>
+          <span
+            className={cn(textVariants({ variant: 'caption' }), 'sm:sr-only')}
+          >
             Rollout health
           </span>
           <RolloutHealth release={release} storeAnchor={storeAnchor} />
-        </div>
+        </Row>
         <ReleaseActions release={release} />
-      </div>
+      </Row>
     </div>
   )
 }

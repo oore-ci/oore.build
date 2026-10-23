@@ -45,6 +45,9 @@ import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { isNearScrollEnd } from '@/lib/scroll'
 import { useActiveInstance } from '@/stores/instance-store'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { textVariants } from '@/lib/recipes'
 
 const createProjectSchema = z.object({
   name: z.string().trim().min(1, 'Enter a project name.'),
@@ -234,12 +237,14 @@ export default function CreateProjectDialog({
                       <FormItem>
                         <FormLabel>Repository</FormLabel>
                         {repositoriesQuery.isLoading ? (
-                          <div className="flex items-center gap-2 py-2">
+                          <Row gap={2} className="py-2">
                             <Spinner className="size-4" />
-                            <span className="text-sm text-muted-foreground">
+                            <span
+                              className={textVariants({ variant: 'muted' })}
+                            >
                               Loading repositories...
                             </span>
-                          </div>
+                          </Row>
                         ) : repositoriesQuery.error ? (
                           <Alert variant="destructive">
                             <AlertDescription className="flex items-center justify-between gap-3">
@@ -407,7 +412,7 @@ export default function CreateProjectDialog({
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Path</FormLabel>
-                        <div className="flex flex-col gap-2 md:flex-row">
+                        <Stack gap={2} className="md:flex-row">
                           <FormControl>
                             <Input
                               {...field}
@@ -429,7 +434,7 @@ export default function CreateProjectDialog({
                               </Button>
                             </div>
                           ) : null}
-                        </div>
+                        </Stack>
                         <FormDescription>
                           Absolute path to the Git repository.
                           {!canBrowseLocalFs ? (

@@ -28,6 +28,8 @@ import {
 } from '@/lib/instance-context'
 import { gitLabPublicEndpoints, normalizeGitLabHostUrl } from '@/lib/gitlab-url'
 import { PageMeta } from '@/lib/seo'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 
 export const Route = createFileRoute('/settings/integrations/gitlab')({
   staticData: {
@@ -164,20 +166,20 @@ function GitLabSetupPage() {
                 callbackUrl={callbackUrl}
               />
               <SettingsSurfaceSeparator />
-              <div className="flex flex-col gap-3">
+              <Stack gap={3}>
                 <div>
                   <p className="text-sm font-medium">3. Verify and finish</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
+                  <Text variant="muted" className="mt-1">
                     {authMode === 'personal_token'
                       ? 'Saving verifies the token against your GitLab account and discovers the projects it can reach. If that fails, create a new token with the listed read-only scopes.'
                       : 'Saving checks that the host is reachable, then sends you to GitLab to authorize the OAuth application. The source becomes active when GitLab returns you here.'}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
+                  </Text>
+                  <Text variant="muted" className="mt-1">
                     After the source syncs, generate a webhook token for each
                     GitLab project from the source details page.
-                  </p>
+                  </Text>
                 </div>
-              </div>
+              </Stack>
             </SettingsSurface>
           </SettingsSection>
           <FormActions

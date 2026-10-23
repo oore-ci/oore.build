@@ -44,6 +44,8 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { RetentionSummaryCard } from './-retention-summary-card'
+import { Stack } from '@/components/layout/stack'
+import { splitRowVariants } from '@/lib/recipes'
 
 export const Route = createLazyFileRoute('/settings/retention')({
   component: RetentionPage,
@@ -404,14 +406,11 @@ function RetentionPage() {
       <PageLayout width="wide">
         <PageMeta title="Retention" />
         <PageHeader title="Retention" />
-        <div
-          className="flex flex-col gap-4"
-          aria-label="Loading retention settings"
-        >
+        <Stack gap={4} aria-label="Loading retention settings">
           <Skeleton className="h-4 w-48" />
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
-        </div>
+        </Stack>
       </PageLayout>
     )
   }
@@ -424,7 +423,7 @@ function RetentionPage() {
         <PageMeta title="Retention" />
         <PageHeader title="Retention" />
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>Failed to load the retention policy: {message}</span>
             <Button
               type="button"

@@ -26,6 +26,7 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { useHotkeys } from '@tanstack/react-hotkeys'
 import { useSwitchInstance } from '@/hooks/use-switch-instance'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
+import { textVariants } from '@/lib/recipes'
 
 export default function InstanceSwitcher() {
   const [showAddDialog, setShowAddDialog] = useState(false)
@@ -81,7 +82,9 @@ export default function InstanceSwitcher() {
               sideOffset={4}
             >
               <DropdownMenuGroup>
-                <DropdownMenuLabel className="text-xs text-muted-foreground">
+                <DropdownMenuLabel
+                  className={textVariants({ variant: 'caption' })}
+                >
                   Instances
                 </DropdownMenuLabel>
                 {instanceList.map((candidate, index) => {

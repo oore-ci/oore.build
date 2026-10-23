@@ -4,6 +4,7 @@ import { useSetupStatus } from '@/hooks/use-setup'
 import { PageMeta } from '@/lib/seo'
 import { useSetupModeGuard } from '@/hooks/use-setup-route-transitions'
 import { SetupStepError } from '@/components/setup-route-components'
+import { Text } from '@/components/layout/text'
 
 export const Route = createLazyFileRoute('/setup/trusted-proxy')({
   component: SetupTrustedProxyStep,
@@ -24,11 +25,11 @@ function SetupTrustedProxyStep() {
             ? 'Setup completed'
             : 'Continue in the terminal'}
         </h2>
-        <p className="text-sm text-muted-foreground">
+        <Text variant="muted">
           {status?.is_configured
             ? 'Open Oore through the address managed by your trusted access proxy.'
             : 'The terminal will create the private proofs and verify the proxy settings.'}
-        </p>
+        </Text>
       </div>
 
       {!status?.is_configured ? (

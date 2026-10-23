@@ -21,6 +21,8 @@ import { TabsContent } from '@/components/ui/tabs'
 import { PipelineFilter } from '@/routes/builds/-build-filter-controls'
 import type { ProjectBuildSort } from './-project-build-sort'
 import { ProjectBuildInventory } from './-project-build-inventory'
+import { Stack } from '@/components/layout/stack'
+import { splitRowVariants } from '@/lib/recipes'
 
 type ProjectBuildSearchUpdates = Partial<{
   direction: SortDirection
@@ -108,11 +110,11 @@ export function ProjectBuildsTab({
 
   return (
     <TabsContent value="builds" className="min-h-0">
-      <div className="flex h-full min-h-0 flex-col gap-4 pt-2">
+      <Stack gap={4} className="h-full min-h-0 pt-2">
         {buildsQuery.error ? (
           <Alert variant="destructive">
             <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-            <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <AlertDescription className={splitRowVariants()}>
               <span>Failed to load builds: {buildsQuery.error.message}</span>
               <Button
                 variant="outline"
@@ -195,7 +197,7 @@ export function ProjectBuildsTab({
             total={total}
           />
         ) : null}
-      </div>
+      </Stack>
     </TabsContent>
   )
 }

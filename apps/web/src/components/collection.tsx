@@ -5,6 +5,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { Alert, AlertAction, AlertDescription, AlertTitle } from './ui/alert'
 import { Button } from './ui/button'
 import { cn } from '@/lib/utils'
+import { stackVariants } from '@/lib/recipes'
 
 export function CollectionFrame({
   ariaLabel,
@@ -25,7 +26,8 @@ export function CollectionFrame({
       // A true-empty state sits at its content height instead of stretching
       // a dashed frame down the whole page.
       className={cn(
-        'flex min-h-0 min-w-0 flex-1 flex-col gap-3 *:data-[slot=empty]:flex-none',
+        stackVariants({ gap: 3, fill: true }),
+        '*:data-[slot=empty]:flex-none',
         className,
       )}
     >

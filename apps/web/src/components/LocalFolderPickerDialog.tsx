@@ -29,6 +29,10 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { useBrowseLocalGitDirectories } from '@/hooks/use-integrations'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 interface LocalFolderPickerDialogProps {
   open: boolean
@@ -103,10 +107,10 @@ export default function LocalFolderPickerDialog({
           </Item>
 
           {quickJumps.length ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-xs font-medium text-muted-foreground">
+            <Row gap={2} className="flex-wrap">
+              <Text variant="caption" className="font-medium">
                 Jump to
-              </p>
+              </Text>
               {quickJumps.map((suggestion) => (
                 <Button
                   key={suggestion.path}
@@ -119,10 +123,10 @@ export default function LocalFolderPickerDialog({
                   {suggestion.label}
                 </Button>
               ))}
-            </div>
+            </Row>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-2">
+          <Row gap={2} className="flex-wrap">
             <Button
               type="button"
               variant="outline"
@@ -165,15 +169,15 @@ export default function LocalFolderPickerDialog({
                 {selectCurrentLabel}
               </Button>
             ) : null}
-          </div>
+          </Row>
 
           {browserLoading ? (
-            <div className="flex items-center gap-2 py-3">
+            <Row gap={2} className="py-3">
               <Spinner className="size-4" />
-              <span className="text-sm text-muted-foreground">
+              <span className={textVariants({ variant: 'muted' })}>
                 Loading folders...
               </span>
-            </div>
+            </Row>
           ) : (
             <ScrollArea className="h-80 rounded-lg ring-1 ring-foreground/10">
               {browserData?.directories.length ? (
@@ -182,9 +186,10 @@ export default function LocalFolderPickerDialog({
                     const canSelectDirectory =
                       !requireGitRepository || directory.is_git_repository
                     return (
-                      <div
+                      <Stack
                         key={directory.path}
-                        className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between"
+                        gap={3}
+                        className="px-4 py-3 md:flex-row md:items-center md:justify-between"
                       >
                         <Item
                           render={<button type="button" />}
@@ -220,15 +225,15 @@ export default function LocalFolderPickerDialog({
                             {selectDirectoryLabel}
                           </Button>
                         ) : null}
-                      </div>
+                      </Stack>
                     )
                   })}
                 </div>
               ) : (
                 <div className="p-6">
-                  <p className="text-sm text-muted-foreground">
+                  <Text variant="muted">
                     No subfolders found in this location.
-                  </p>
+                  </Text>
                 </div>
               )}
             </ScrollArea>

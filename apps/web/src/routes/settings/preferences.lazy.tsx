@@ -34,6 +34,7 @@ import type {
   ConfigureExternalAccessOidcRequest,
   UpdateTrustedProxySettingsRequest,
 } from '@oore/client/models'
+import { splitRowVariants } from '@/lib/recipes'
 
 const preloadExternalAccessNetworkDialog = () =>
   import('@/components/settings/preferences-external-access-network-dialog')
@@ -445,7 +446,7 @@ function PreferencesPage() {
         </SettingsSection>
       ) : preferencesQuery.error ? (
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Failed to load instance settings: {preferencesQuery.error.message}
             </span>
@@ -461,7 +462,7 @@ function PreferencesPage() {
         </Alert>
       ) : !preferences ? (
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>The response did not include instance settings.</span>
             <Button
               type="button"

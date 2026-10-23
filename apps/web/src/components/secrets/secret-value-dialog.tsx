@@ -37,6 +37,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
+import { Row } from '@/components/layout/row'
 
 const valueSchema = z
   .string()
@@ -207,7 +208,7 @@ export function SecretValueDialog({
               name="value"
               render={({ field }) => (
                 <FormItem>
-                  <div className="flex items-center justify-between gap-2">
+                  <Row gap={2} className="justify-between">
                     <FormLabel>Value</FormLabel>
                     <Button
                       type="button"
@@ -229,7 +230,7 @@ export function SecretValueDialog({
                         event.target.value = ''
                       }}
                     />
-                  </div>
+                  </Row>
                   <FormControl>
                     <Textarea
                       autoFocus={isRotate}
