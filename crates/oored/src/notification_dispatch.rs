@@ -349,8 +349,11 @@ pub async fn dispatch_build_feedback(
         return Ok(());
     };
     notification.category = FEEDBACK_CATEGORY.to_string();
-    // The tester may not be in the team's chat; name them in the text instead.
+    // The tester may not be in the team's chat, and the person who triggered
+    // the build did not write the note; name the tester in the text instead
+    // of mentioning anyone.
     notification.actor_email = None;
+    notification.actor_login = None;
     notification.payload["event"] = serde_json::json!("build.qa_feedback");
     notification.payload["feedback"] = serde_json::json!({
         "id": feedback.id,
@@ -1199,7 +1202,7 @@ fn slack_message(
     };
 
     let fallback = headline.clone();
-    if let Some(mention) = mention {
+    if let Some(mention) = mention.filter(|_| category != FEEDBACK_CATEGORY) {
         headline.push_str(&format!("\nTriggered by {mention}"));
     }
 

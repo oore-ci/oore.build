@@ -265,8 +265,9 @@ pub async fn create_build_feedback(
     body: Bytes,
 ) -> Result<(StatusCode, Json<BuildFeedback>), ApiFailure> {
     let pool = &state.db;
-    // Same access as installing the build from the QA portal. Checked before
-    // the body is parsed, so callers who cannot see the build cost nothing.
+    // Same access as installing the build from the QA portal. Axum has
+    // already buffered the body (within the route's limit) by now; the access
+    // check and rate limit gate parsing it and decoding a screenshot.
     let project_id =
         authorize_build(pool, &auth, &build_id, ProjectPermission::ReadArtifacts).await?;
 
@@ -634,6 +635,13 @@ mod tests {
                 vec![],
             ),
             (
+                // A push build whose committer is mapped to a Slack member.
+                "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, \
+                   trigger_actor, queued_at, created_at, updated_at, notified_status) \
+                 VALUES ('b3', 'p1', 'pl1', 14, 'succeeded', 'webhook', 'octocat', 0, 0, 0, 'succeeded')",
+                vec![],
+            ),
+            (
                 "INSERT INTO artifacts (id, build_id, name, file_path, created_at) \
                  VALUES ('a1', 'b1', 'app.apk', 'x/app.apk', 0), ('a2', 'b2', 'app.apk', 'y/app.apk', 0)",
                 vec![],
@@ -650,8 +658,10 @@ mod tests {
             ),
             (
                 "INSERT INTO notification_channels \
-                 (id, name, channel_type, enabled, event_filter_json, project_id, encrypted_url, created_at, updated_at) \
-                 VALUES ('kite', 'kite', 'slack', 1, '[\"qa_feedback\"]', 'p1', ?1, 0, 0)",
+                 (id, name, channel_type, enabled, event_filter_json, project_id, encrypted_url, \
+                  slack_mentions_json, created_at, updated_at) \
+                 VALUES ('kite', 'kite', 'slack', 1, '[\"qa_feedback\"]', 'p1', ?1, \
+                  '[{\"identity\":\"octocat\",\"member_id\":\"U0OCTO\"}]', 0, 0)",
                 vec![crate::crypto::encrypt(&hook, &key).unwrap()],
             ),
         ] {
@@ -837,6 +847,34 @@ mod tests {
             "Pixel 8  ·  Android 15  ·  App 2.4.0+118  ·  Screenshot attached"
         );
 
+        // Feedback on a push build does not mention the committer, even
+        // though the channel maps them to a Slack member.
+        let push_build = client
+            .post(format!("{base}/v1/builds/b3/feedback"))
+            .bearer_auth(&qa)
+            .json(&serde_json::json!({ "message": "Login button does nothing" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(push_build.status(), 201);
+        let mut message = None;
+        for _ in 0..100 {
+            if let Some(body) = received.lock().unwrap().get(1).cloned() {
+                message = Some(body);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let message = message.expect("push build feedback reached Slack");
+        assert_eq!(
+            message["blocks"][0]["text"]["text"],
+            ":speech_balloon: *Kite* build #14: feedback from Quinn &lt;QA&gt;"
+        );
+        let rendered = message.to_string();
+        assert!(!rendered.contains("Triggered by"), "{rendered}");
+        assert!(!rendered.contains("<@"), "{rendered}");
+        assert!(!message["text"].as_str().unwrap().contains("Triggered by"));
+
         // Ten notes in ten minutes is the limit.
         for index in 0..9 {
             sqlx::query(
@@ -857,7 +895,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(limited.status(), 429);
-        // The limit applies before the body is read, so a bad screenshot is
+        // The limit applies before the body is parsed, so a bad screenshot is
         // not decoded either.
         let limited = client
             .post(&url)
