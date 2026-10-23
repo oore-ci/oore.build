@@ -19,7 +19,7 @@ pub(crate) const TEST_REPORTS_SUBDIR: &str = ".oore/test-reports";
 const MAX_FAILURES_PER_REPORT: usize = 200;
 const MAX_MESSAGE_BYTES: usize = 2048;
 const MAX_STACK_TRACE_BYTES: usize = 4096;
-const MAX_REPORT_FILE_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_REPORT_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 const TEST_COMMANDS: [&[&str]; 4] = [
     &["flutter", "test"],

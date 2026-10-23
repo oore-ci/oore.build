@@ -163,8 +163,7 @@ Any other `${{ }}` expression is an error. Vars are repository-owned text and
 are substituted into commands before the build starts, so do not put
 credentials in them. A var that refers back to itself, directly or through
 other vars, is rejected with the cycle it forms, such as
-`vars form a cycle: vars.A -> vars.B -> vars.A`. A value may grow to at most
-64 KiB through vars and expand at most 100,000 var references.
+`vars form a cycle: vars.A -> vars.B -> vars.A`.
 
 ## Workflows
 
@@ -192,6 +191,29 @@ A workflow target that has no top-level target of the same platform must set
 | `pull_request` | `true` or `{ branches: [] }` | `true`                            |
 | `tag`          | string or string[]           | `v*`                              |
 | `paths`        | string[]                     | `[lib/**, pubspec.*]`             |
+
+## Limits
+
+Oore checks these limits before anything else, so a file stays cheap to
+validate:
+
+| What                                         | Limit            |
+| -------------------------------------------- | ---------------- |
+| Workflows                                    | 32               |
+| Flavors, in `app.flavors` or a workflow      | 32               |
+| Steps, top level or per workflow             | 100              |
+| Artifact patterns per target                 | 64               |
+| `env` entries, top level or per workflow     | 128              |
+| `vars`, top level or per workflow            | 128              |
+| Branches, tags or paths in one trigger field | 64               |
+| A `run` or `build` command as written        | 32 KiB           |
+| An artifact pattern as written               | 2,048 characters |
+| What vars add to one value                   | 64 KiB           |
+| Var references expanded, whole file          | 250,000          |
+| Text vars add, whole file                    | 4 MiB            |
+
+The last two count every workflow together. Each var is resolved once per
+flavor and reused, so ordinary files stay far below them.
 
 ## Errors
 

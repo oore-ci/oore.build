@@ -6936,6 +6936,14 @@ fn copy_declared_test_report(
             "step '{step_name}' declares reports.tests {report}, which resolves outside the workspace"
         ));
     }
+    // The collector skips larger reports anyway; do not copy them first.
+    let size = fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
+    if size > test_reports::MAX_REPORT_FILE_BYTES {
+        return Err(format!(
+            "step '{step_name}' declares reports.tests {report}, which is larger than {} MiB and is skipped",
+            test_reports::MAX_REPORT_FILE_BYTES / (1024 * 1024)
+        ));
+    }
     let extension = source
         .extension()
         .and_then(|ext| ext.to_str())
@@ -7949,6 +7957,25 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("was not written"), "{error}");
+
+        // Oversized reports are skipped, not copied. A sparse file keeps the
+        // test cheap.
+        std::fs::File::create(workspace.path().join("build/huge.json"))
+            .unwrap()
+            .set_len(super::test_reports::MAX_REPORT_FILE_BYTES + 1)
+            .unwrap();
+        let error = super::copy_declared_test_report(
+            workspace.path(),
+            "build/huge.json",
+            reports.path(),
+            "Huge",
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("larger than 64 MiB and is skipped"),
+            "{error}"
+        );
+        assert!(!reports.path().join("Huge-declared.json").exists());
         assert_eq!(super::report_file_stem("pre_build-1"), "pre_build-1");
         assert_eq!(
             super::report_file_stem("Build iOS (pro)"),
