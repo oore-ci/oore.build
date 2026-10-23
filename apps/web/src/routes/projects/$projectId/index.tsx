@@ -68,6 +68,11 @@ const ProjectBuildsTab = lazy(() =>
     default: module.ProjectBuildsTab,
   })),
 )
+const ProjectEnvironmentsTab = lazy(() =>
+  import('./-project-environments-tab').then((module) => ({
+    default: module.ProjectEnvironmentsTab,
+  })),
+)
 const loadProjectSettingsForm = () => import('./-project-settings-form')
 const ProjectSettingsForm = lazy(() =>
   loadProjectSettingsForm().then((module) => ({
@@ -86,7 +91,13 @@ const ProjectAccessCard = lazy(() =>
   })),
 )
 
-const TAB_VALUES = ['overview', 'pipelines', 'builds', 'settings'] as const
+const TAB_VALUES = [
+  'overview',
+  'pipelines',
+  'builds',
+  'environments',
+  'settings',
+] as const
 type TabValue = (typeof TAB_VALUES)[number]
 
 interface ProjectDetailSearch {
@@ -222,6 +233,9 @@ function ProjectDetailPage() {
   const canTriggerBuild =
     canTriggerBuildGlobally && hasProjectPermission(projectRole, 'builds:write')
   const canManageAccess = projectRole === 'maintainer'
+  const canManageReleases = projectRole === 'maintainer'
+  const canOperateReleases =
+    projectRole === 'maintainer' || projectRole === 'developer'
   const pipelineCount = search.pipelineQ
     ? (data?.pipeline_count ?? 0)
     : (pipelinesData?.total ?? data?.pipeline_count ?? 0)
@@ -542,17 +556,21 @@ function ProjectDetailPage() {
         }}
         className="min-h-0 flex-1"
       >
-        <TabsList variant="line">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="pipelines">
-            Pipelines
-            {pipelineCount > 0 ? ` (${pipelineCount})` : ''}
-          </TabsTrigger>
-          <TabsTrigger value="builds">
-            Builds{buildCount > 0 ? ` (${buildCount})` : ''}
-          </TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
-        </TabsList>
+        {/* Five tabs outgrow a phone; the row scrolls instead of the page. */}
+        <div className="-mb-2 max-w-full shrink-0 overflow-x-auto pb-2">
+          <TabsList variant="line">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="pipelines">
+              Pipelines
+              {pipelineCount > 0 ? ` (${pipelineCount})` : ''}
+            </TabsTrigger>
+            <TabsTrigger value="builds">
+              Builds{buildCount > 0 ? ` (${buildCount})` : ''}
+            </TabsTrigger>
+            <TabsTrigger value="environments">Environments</TabsTrigger>
+            <TabsTrigger value="settings">Settings</TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="overview">
           {activeTab === 'overview' ? (
@@ -629,6 +647,16 @@ function ProjectDetailPage() {
               onTriggerBuild={() => openTriggerBuild()}
               pipelineCount={pipelineCount}
               projectHasSource={projectHasSource}
+              projectId={projectId}
+            />
+          </Suspense>
+        ) : null}
+
+        {activeTab === 'environments' ? (
+          <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+            <ProjectEnvironmentsTab
+              canManage={canManageReleases}
+              canOperate={canOperateReleases}
               projectId={projectId}
             />
           </Suspense>

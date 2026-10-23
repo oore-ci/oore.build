@@ -44,6 +44,12 @@ import {
   demoNotificationChannels,
   demoNotificationDeliveries,
 } from './data/notification-channels'
+import {
+  demoEnvironments,
+  demoPromotions,
+  type DemoEnvironment,
+  type DemoPromotion,
+} from './data/environments'
 import { demoPipelines } from './data/pipelines'
 import {
   demoReleaseHistory,
@@ -117,6 +123,8 @@ interface DemoState {
   artifacts: Partial<Record<string, Array<Artifact>>>
   releases: Array<DemoRelease>
   releaseHistory: Partial<Record<string, Array<ReleaseHistoryEntry>>>
+  environments: Array<DemoEnvironment>
+  promotions: Array<DemoPromotion>
   runners: Array<Runner>
   integrations: Array<IntegrationWithStatus>
   installations: Partial<Record<string, Array<IntegrationInstallation>>>
@@ -680,6 +688,8 @@ export function createDemoState(
     buildEvents: clone(demoBuildEvents),
     releases: clone(demoReleases),
     releaseHistory: clone(demoReleaseHistory),
+    environments: clone(demoEnvironments),
+    promotions: clone(demoPromotions),
     buildLogs: clone(demoBuildLogs),
     buildTests: clone(demoBuildTests),
     buildFeedback: clone(demoBuildFeedback),
@@ -773,6 +783,8 @@ export function createDemoState(
     state.artifacts = {}
     state.releases = []
     state.releaseHistory = {}
+    state.environments = []
+    state.promotions = []
     state.runners = []
     state.integrations = []
     state.installations = {}

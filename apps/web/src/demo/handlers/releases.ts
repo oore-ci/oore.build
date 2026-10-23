@@ -54,7 +54,7 @@ function stateActions(release: DemoRelease): Array<ReleaseAction> {
   }
 }
 
-function withReleaseContext(release: DemoRelease, persona: DemoPersona) {
+export function withReleaseContext(release: DemoRelease, persona: DemoPersona) {
   const role = getDemoProjectRole(persona, release.project_id)
   const allowed = role ? ROLE_ACTIONS[role] : new Set<ReleaseAction>()
   return {
