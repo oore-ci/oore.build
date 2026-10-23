@@ -6,7 +6,11 @@ import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { requireDemoProjectPermission } from '../authorization'
 import { demoState } from '../state'
 import { demoBuildInsights } from '../data/build-insights'
-import type { CreateBuildRequest } from '@oore/client/models'
+import type {
+  BuildFeedback,
+  CreateBuildFeedbackRequest,
+  CreateBuildRequest,
+} from '@oore/client/models'
 
 const approvalDecisionSchema = z.object({ reason: z.string().nullish() })
 
@@ -23,6 +27,51 @@ const createBuildRequestSchema = z.toZod<CreateBuildRequest>()(
 const DEMO_TRIGGER_TYPES = new Set(['manual', 'api', 'schedule'])
 const DEMO_TRIGGER_EVENTS = new Set(['push', 'pull_request', 'tag_push'])
 const artifactQuerySchema = z.object({ build_ids: z.array(z.string()) })
+const createBuildFeedbackSchema = z.toZod<CreateBuildFeedbackRequest>()(
+  z.object({
+    message: z.string(),
+    device: z.string().nullish(),
+    os_version: z.string().nullish(),
+    app_version: z.string().nullish(),
+    artifact_id: z.string().nullish(),
+    screenshot_base64: z.string().nullish(),
+  }),
+)
+
+function base64Bytes(value: string) {
+  return Uint8Array.from(atob(value), (character) => character.charCodeAt(0))
+}
+
+function sniffImage(bytes: Uint8Array) {
+  if (bytes[0] === 0x89 && bytes[1] === 0x50) return 'image/png'
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg'
+  if (bytes[8] === 0x57 && bytes[9] === 0x45) return 'image/webp'
+  return null
+}
+
+/** A phone-shaped placeholder for seeded feedback screenshots. */
+async function drawDemoScreenshot() {
+  if (!('OffscreenCanvas' in globalThis)) return null
+  const canvas = new OffscreenCanvas(360, 720)
+  const context = canvas.getContext('2d')
+  if (!context) return null
+  context.fillStyle = '#f5f5f4'
+  context.fillRect(0, 0, 360, 720)
+  context.fillStyle = '#ffffff'
+  context.fillRect(16, 72, 328, 420)
+  context.fillStyle = '#d6d3d1'
+  for (const y of [104, 168, 232, 296]) context.fillRect(32, y, 296, 40)
+  context.fillStyle = '#1c1917'
+  context.font = '600 22px sans-serif'
+  context.fillText('Cart', 24, 48)
+  context.font = '500 18px sans-serif'
+  context.fillText('Total  $42.30', 32, 600)
+  context.fillStyle = '#f59e0b'
+  context.fillRect(150, 584, 190, 56)
+  context.fillStyle = '#1c1917'
+  context.fillText('Pay now', 210, 618)
+  return canvas.convertToBlob({ type: 'image/png' })
+}
 
 function withBuildContext(build: (typeof demoState.builds)[number]) {
   const project = demoState.projects.find(
@@ -654,6 +703,107 @@ export const buildHandlers = [
     return HttpResponse.json(
       demoState.buildTests[buildId] ?? { failures: [], history_window: 20 },
     )
+  }),
+
+  demoApi.listBuildFeedback(async ({ params, request }) => {
+    await delay(150)
+    const buildId = String(params.build_id)
+    const persona = getDemoPersonaFromRequest(request)
+    const build = demoState.builds.find((candidate) => candidate.id === buildId)
+    if (!build || !getDemoProjectRole(persona, build.project_id)) {
+      return HttpResponse.json(
+        { error: 'Build not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    return HttpResponse.json({
+      feedback: demoState.buildFeedback[buildId] ?? [],
+    })
+  }),
+
+  demoApi.createBuildFeedback(async ({ params, request }) => {
+    await delay(400)
+    const buildId = String(params.build_id)
+    const persona = getDemoPersonaFromRequest(request)
+    const build = demoState.builds.find((candidate) => candidate.id === buildId)
+    if (!build || !getDemoProjectRole(persona, build.project_id)) {
+      return HttpResponse.json(
+        { error: 'Build not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    const body = createBuildFeedbackSchema.parse(await request.json())
+    const message = body.message.trim()
+    if (!message) {
+      return HttpResponse.json(
+        { error: 'message is required', code: 'invalid_input' },
+        { status: 400 },
+      )
+    }
+    const screenshot = body.screenshot_base64
+      ? base64Bytes(body.screenshot_base64)
+      : null
+    if (screenshot && !sniffImage(screenshot)) {
+      return HttpResponse.json(
+        {
+          error: 'The screenshot must be a PNG, JPEG or WebP image',
+          code: 'unsupported_screenshot',
+        },
+        { status: 415 },
+      )
+    }
+    const feedback: BuildFeedback = {
+      id: `feedback-demo-${crypto.randomUUID().slice(0, 8)}`,
+      build_id: buildId,
+      author_email: persona.email,
+      author_name: persona.displayName,
+      message,
+      device: body.device?.trim() || null,
+      os_version: body.os_version?.trim() || null,
+      app_version: body.app_version?.trim() || null,
+      artifact_id: body.artifact_id ?? null,
+      has_screenshot: !!screenshot,
+      created_at: ago(0),
+    }
+    if (screenshot) demoState.feedbackScreenshots[feedback.id] = screenshot
+    demoState.buildFeedback[buildId] = [
+      ...(demoState.buildFeedback[buildId] ?? []),
+      feedback,
+    ]
+    return HttpResponse.json(feedback, { status: 201 })
+  }),
+
+  demoApi.getBuildFeedbackScreenshot(async ({ params, request }) => {
+    await delay(150)
+    const buildId = String(params.build_id)
+    const persona = getDemoPersonaFromRequest(request)
+    const build = demoState.builds.find((candidate) => candidate.id === buildId)
+    const feedback = demoState.buildFeedback[buildId]?.find(
+      (candidate) => candidate.id === params.feedback_id,
+    )
+    if (
+      !build ||
+      !getDemoProjectRole(persona, build.project_id) ||
+      !feedback?.has_screenshot
+    ) {
+      return HttpResponse.json(
+        { error: 'Screenshot not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    const uploaded = demoState.feedbackScreenshots[feedback.id]
+    const image = uploaded
+      ? new Blob([uploaded], { type: sniffImage(uploaded) ?? 'image/png' })
+      : await drawDemoScreenshot()
+    if (!image) {
+      return HttpResponse.json(
+        { error: 'Screenshot not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    return new HttpResponse(image, {
+      headers: { 'Content-Type': image.type },
+    })
   }),
 
   demoApi.listArtifacts(async ({ params, request }) => {

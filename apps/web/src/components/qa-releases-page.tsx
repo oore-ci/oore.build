@@ -7,6 +7,7 @@ import {
   AppleIcon,
   ArrowDown01Icon,
   ArrowRight01Icon,
+  BubbleChatEditIcon,
   CancelCircleIcon,
   CheckmarkCircle02Icon,
   Clock01Icon,
@@ -39,6 +40,7 @@ import { releaseAudienceLabel } from '@/lib/releases'
 import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import QaBuildStatusBadge from '@/components/qa-build-status-badge'
+import { QaFeedbackDrawer } from '@/components/qa-feedback-drawer'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -300,6 +302,16 @@ function CurrentRelease({
               </Button>
             </>
           ) : null}
+          <QaFeedbackDrawer
+            appVersion={version}
+            artifactId={preferredArtifact?.id}
+            buildId={build.id}
+          >
+            <Button variant="outline">
+              <HugeiconsIcon icon={BubbleChatEditIcon} aria-hidden />
+              Feedback
+            </Button>
+          </QaFeedbackDrawer>
           <Button
             render={
               <Link

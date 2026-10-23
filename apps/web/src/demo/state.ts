@@ -5,6 +5,7 @@ import type {
   AuditLogEntry,
   Build,
   BuildEvent,
+  BuildFeedback,
   BuildLogChunk,
   BuildTestResultsResponse,
   ExternalAccessNetworkSettings,
@@ -32,6 +33,7 @@ import { demoArtifacts } from './data/artifacts'
 import { demoAuditLogs } from './data/audit-logs'
 import { demoBuildLogs } from './data/build-logs'
 import { demoBuildTests } from './data/build-tests'
+import { demoBuildFeedback } from './data/build-feedback'
 import { demoBuildEvents, demoBuilds } from './data/builds'
 import {
   demoInstallations,
@@ -109,6 +111,9 @@ interface DemoState {
   buildEvents: Partial<Record<string, Array<BuildEvent>>>
   buildLogs: Partial<Record<string, Array<BuildLogChunk>>>
   buildTests: Partial<Record<string, BuildTestResultsResponse>>
+  buildFeedback: Partial<Record<string, Array<BuildFeedback>>>
+  /** Uploaded screenshot bytes by feedback id; seeded ones are drawn. */
+  feedbackScreenshots: Partial<Record<string, Uint8Array<ArrayBuffer>>>
   artifacts: Partial<Record<string, Array<Artifact>>>
   releases: Array<DemoRelease>
   releaseHistory: Partial<Record<string, Array<ReleaseHistoryEntry>>>
@@ -677,6 +682,8 @@ export function createDemoState(
     releaseHistory: clone(demoReleaseHistory),
     buildLogs: clone(demoBuildLogs),
     buildTests: clone(demoBuildTests),
+    buildFeedback: clone(demoBuildFeedback),
+    feedbackScreenshots: {},
     artifacts,
     runners,
     integrations: clone(demoIntegrations),
@@ -762,6 +769,7 @@ export function createDemoState(
     state.buildEvents = {}
     state.buildLogs = {}
     state.buildTests = {}
+    state.buildFeedback = {}
     state.artifacts = {}
     state.releases = []
     state.releaseHistory = {}

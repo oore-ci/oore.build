@@ -76,6 +76,10 @@ const NOTIFICATION_EVENT_GROUPS = [
     ],
   },
   {
+    label: 'QA',
+    events: [{ value: 'qa_feedback', label: 'Tester feedback' }],
+  },
+  {
     label: 'Runners',
     events: [{ value: 'runner_offline', label: 'Runner offline' }],
   },

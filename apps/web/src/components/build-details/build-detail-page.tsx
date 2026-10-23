@@ -30,7 +30,11 @@ import { retryStepLabel } from '@/lib/build-steps'
 import { BuildSummary, buildSourceRef } from './build-summary'
 import { EventTimeline } from './event-timeline'
 import { TestsPanel } from './tests-panel'
-import type { BuildLogChunk, StepResult } from '@oore/client/models'
+import type {
+  BuildFeedback,
+  BuildLogChunk,
+  StepResult,
+} from '@oore/client/models'
 import {
   useBuildNotification,
   useNotificationPermission,
@@ -47,6 +51,7 @@ import {
   useRetryBuildStep,
 } from '@/hooks/use-builds'
 import { useLogStream } from '@/hooks/use-log-stream'
+import { useBuildFeedback } from '@/hooks/use-build-feedback'
 import { useReleases } from '@/hooks/use-releases'
 import { ReleasePanel } from '@/components/releases/release-panel'
 import {
@@ -105,6 +110,7 @@ const loadRejectBuildDialog = () => import('./reject-build-dialog')
 const RejectBuildDialog = lazy(loadRejectBuildDialog)
 
 const NO_STEP_RESULTS: Array<StepResult> = []
+const NO_FEEDBACK: Array<BuildFeedback> = []
 
 function missingTabMessage(
   tab: string | number,
@@ -182,6 +188,8 @@ export function BuildDetailPage({
   const [rejectOpen, setRejectOpen] = useState(false)
   const [chosenTab, setActiveTab] = useState<string | number | null>(null)
   const [logFocus, setLogFocus] = useState<LogFocusRequest | null>(null)
+  const feedbackQuery = useBuildFeedback(buildId)
+  const feedback = feedbackQuery.data?.feedback ?? NO_FEEDBACK
   const testsQuery = useBuildTests(buildId, {
     refetchInterval: isTerminal ? false : 5000,
   })
@@ -827,7 +835,10 @@ export function BuildDetailPage({
             </TabsTrigger>
           ) : null}
           <TabsTrigger value="timeline">
-            Timeline{events.length > 0 ? ` (${events.length})` : ''}
+            Timeline
+            {events.length + feedback.length > 0
+              ? ` (${events.length + feedback.length})`
+              : ''}
           </TabsTrigger>
         </TabsList>
         {missingTab ? (
@@ -903,7 +914,7 @@ export function BuildDetailPage({
           </TabsContent>
         ) : null}
         <TabsContent value="timeline">
-          <EventTimeline events={events} />
+          <EventTimeline events={events} feedback={feedback} />
         </TabsContent>
       </Tabs>
 
