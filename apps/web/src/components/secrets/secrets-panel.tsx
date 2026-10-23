@@ -276,8 +276,10 @@ export function SecretsPanel({
             <EmptyDescription>
               Store tokens and keys here instead of in env values, then
               reference them as{' '}
-              <code className="font-mono">{secretReference('NAME')}</code>.
-              Values are masked as *** in build logs.
+              <code className="font-mono whitespace-nowrap">
+                {secretReference('NAME')}
+              </code>
+              . Values are masked as *** in build logs.
             </EmptyDescription>
           </EmptyHeader>
           {canWrite ? (

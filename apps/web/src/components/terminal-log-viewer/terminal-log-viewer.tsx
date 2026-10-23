@@ -189,10 +189,6 @@ export default function TerminalLogViewer({
     )
   }
 
-  const lineCountLabel = `${selectedLogs.length} ${
-    selectedLogs.length === 1 ? 'line' : 'lines'
-  }`
-
   function handleSearchQueryChange(query: string) {
     setSearchQuery(query)
     setActiveMatchOrdinal(0)
@@ -259,9 +255,6 @@ export default function TerminalLogViewer({
               Live
             </Badge>
           ) : null}
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {lineCountLabel}
-          </span>
         </div>
         <div className="min-w-0 flex-1 sm:ml-auto">
           <LogToolbar
