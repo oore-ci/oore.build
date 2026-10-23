@@ -132,3 +132,19 @@ export function detectInstallDevice(userAgent: string): InstallDevice {
   if (/Android/i.test(userAgent)) return 'android'
   return 'other'
 }
+
+const INSTALL_PLATFORMS = [
+  { type: 'apk', label: 'Android' },
+  { type: 'ipa', label: 'iOS' },
+] as const
+
+/** The newest installable file for each platform. */
+export function latestAppPerPlatform(artifacts: ReadonlyArray<Artifact>) {
+  const ready = artifacts
+    .filter((artifact) => artifactInstallReadiness(artifact).ready)
+    .sort((left, right) => right.created_at - left.created_at)
+  return INSTALL_PLATFORMS.flatMap(({ type, label }) => {
+    const artifact = ready.find((item) => item.artifact_type === type)
+    return artifact ? [{ artifact, label }] : []
+  })
+}

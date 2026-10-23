@@ -1,8 +1,8 @@
 import { lazy, Suspense, useState } from 'react'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate, useRouter } from '@tanstack/react-router'
 import { toast } from 'sonner'
 
-import type { Build } from '@oore/client/models'
+import type { Artifact, Build } from '@oore/client/models'
 import { DataTableRowActionsTrigger } from '@/components/data-table'
 import {
   DropdownMenu,
@@ -12,8 +12,10 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
+import { latestAppPerPlatform } from '@/lib/artifact-install'
 import {
   isTerminalStatus,
+  useArtifacts,
   useBuildApprovalDecision,
   useCancelBuild,
   useRerunBuild,
@@ -97,6 +99,46 @@ export default function BuildActionsMenu({ build }: { build: Build }) {
           />
         </Suspense>
       ) : null}
+    </>
+  )
+}
+
+function InstallLinkItems({ build }: { build: Build }) {
+  const router = useRouter()
+  const artifactsQuery = useArtifacts(build.id)
+  const apps = latestAppPerPlatform(artifactsQuery.data?.artifacts ?? [])
+
+  if (artifactsQuery.isLoading) {
+    return <DropdownMenuItem disabled>Checking install links…</DropdownMenuItem>
+  }
+  if (apps.length === 0) return null
+
+  function copyInstallLink(artifact: Artifact, label: string) {
+    const { href } = router.buildLocation({
+      to: '/builds/$buildId',
+      params: { buildId: build.id },
+      search: { install: artifact.id },
+    })
+    void navigator.clipboard
+      .writeText(new URL(href, window.location.origin).href)
+      .then(
+        () => toast.success(`${label} install link copied`),
+        () => toast.error('Could not copy link. Try again.'),
+      )
+  }
+
+  return (
+    <>
+      {apps.map(({ artifact, label }) => (
+        <DropdownMenuItem
+          key={artifact.id}
+          onClick={() => copyInstallLink(artifact, label)}
+        >
+          {apps.length === 1
+            ? 'Copy install link'
+            : `Copy ${label} install link`}
+        </DropdownMenuItem>
+      ))}
     </>
   )
 }
@@ -200,6 +242,7 @@ function BuildActionsMenuItems({
         <DropdownMenuSeparator />
       ) : null}
       <DropdownMenuGroup>
+        {isTerminal ? <InstallLinkItems build={build} /> : null}
         <DropdownMenuItem
           render={
             <Link
