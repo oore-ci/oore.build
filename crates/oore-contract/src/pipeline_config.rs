@@ -157,11 +157,30 @@ pub fn parse_repository_config(raw: &str) -> Result<RepositoryConfig, String> {
     #[derive(Deserialize)]
     struct VersionProbe {
         #[serde(default)]
-        version: Option<u64>,
+        version: Option<serde_yaml::Value>,
     }
-    let version = serde_yaml::from_str::<VersionProbe>(raw)
+    let declared = serde_yaml::from_str::<VersionProbe>(raw)
         .ok()
         .and_then(|probe| probe.version);
+    match &declared {
+        Some(serde_yaml::Value::String(text)) if matches!(text.trim(), "1" | "2") => {
+            return Err(format!(
+                "version must be a number; write `version: {}` without quotes",
+                text.trim()
+            ));
+        }
+        Some(serde_yaml::Value::Number(number))
+            if number.as_f64().is_some_and(|v| v == 1.0 || v == 2.0)
+                && number.as_u64().is_none() =>
+        {
+            return Err(format!(
+                "version must be a whole number; write `version: {}`",
+                number.as_f64().unwrap_or_default() as u64
+            ));
+        }
+        _ => {}
+    }
+    let version = declared.as_ref().and_then(serde_yaml::Value::as_u64);
     match version {
         Some(2) => ConfigV2::parse(raw).map(|config| RepositoryConfig::V2(Box::new(config))),
         // A missing or malformed version gets v1's own error.
@@ -837,15 +856,43 @@ enum FlavorScope<'a> {
     Outside,
 }
 
+/// Longest value a reference may expand to.
+pub const MAX_EXPANDED_BYTES: usize = 64 * 1024;
+/// Most var expansions one value may need. Bounds files whose vars refer to
+/// each other many times over, even when they expand to little text.
+const MAX_VAR_EXPANSIONS: usize = 100_000;
+
 struct Resolver<'a> {
     vars: &'a [(String, String)],
+    /// Var expansions spent by the value being resolved.
+    expansions: std::cell::Cell<usize>,
 }
 
-impl Resolver<'_> {
+impl<'a> Resolver<'a> {
+    fn new(vars: &'a [(String, String)]) -> Self {
+        Self {
+            vars,
+            expansions: std::cell::Cell::new(0),
+        }
+    }
+
     /// Substitute vars and the flavor. Secret references stay as written; the
     /// runner resolves them without splicing values into shell source.
     fn resolve(&self, text: &str, flavor: FlavorScope<'_>, path: &str) -> Result<String, String> {
-        self.resolve_inner(text, flavor, path, &mut Vec::new(), 0)
+        self.resolve_from(text, flavor, path, Vec::new())
+    }
+
+    /// Resolve with `chain` naming the var `path` is itself, for validating vars.
+    fn resolve_from(
+        &self,
+        text: &str,
+        flavor: FlavorScope<'_>,
+        path: &str,
+        mut chain: Vec<String>,
+    ) -> Result<String, String> {
+        self.expansions.set(0);
+        let base = chain.len();
+        self.resolve_inner(text, flavor, path, &mut chain, base)
     }
 
     fn resolve_inner(
@@ -912,6 +959,13 @@ impl Resolver<'_> {
                             through(chain)
                         ));
                     };
+                    let spent = self.expansions.get() + 1;
+                    self.expansions.set(spent);
+                    if spent > MAX_VAR_EXPANSIONS {
+                        return Err(format!(
+                            "{path} expands vars more than {MAX_VAR_EXPANSIONS} times"
+                        ));
+                    }
                     chain.push(name);
                     let resolved = self.resolve_inner(value, flavor, path, chain, base)?;
                     chain.pop();
@@ -919,10 +973,24 @@ impl Resolver<'_> {
                 }
             }
             cursor = end;
+            // Text written out in the file is not capped, only what vars add.
+            if out.len() > MAX_EXPANDED_BYTES && out.len() > text.len() {
+                return Err(too_long(path));
+            }
         }
         out.push_str(&text[cursor..]);
+        if out.len() > MAX_EXPANDED_BYTES && out.len() > text.len() {
+            return Err(too_long(path));
+        }
         Ok(out)
     }
+}
+
+fn too_long(path: &str) -> String {
+    format!(
+        "{path} expands to more than {} KiB through vars",
+        MAX_EXPANDED_BYTES / 1024
+    )
 }
 
 // ── v2 validation and lowering ──────────────────────────────────
@@ -999,6 +1067,12 @@ impl ConfigV2 {
 
     pub fn notices(&self) -> Vec<String> {
         let mut notices = Vec::new();
+        if self.workflows.0.len() > 1 {
+            notices.push(format!(
+                "this file defines workflows [{}], but pipelines cannot select a workflow yet, so every build from this file fails with `choose one for the pipeline`; keep one workflow until workflow selection lands",
+                self.workflow_names().join(", ")
+            ));
+        }
         let declares_on = self.on.is_some()
             || self
                 .workflows
@@ -1185,13 +1259,22 @@ impl ConfigV2 {
                 }
             }
         }
-        let resolver = Resolver { vars: &vars };
+        let resolver = Resolver::new(&vars);
         for ((name, value), path) in vars.iter().zip(&var_paths) {
-            let mut chain = vec![name.clone()];
-            if let Err(error) =
-                resolver.resolve_inner(value, FlavorScope::Value("flavor"), path, &mut chain, 1)
-            {
+            if let Err(error) = resolver.resolve_from(
+                value,
+                FlavorScope::Value("flavor"),
+                path,
+                vec![name.clone()],
+            ) {
+                // Vars built on an oversized var hit the limit again; one
+                // report is enough and stops the work early.
+                let over_limit =
+                    error.contains(" KiB through vars") || error.contains("expands vars more than");
                 push_unique(&mut errors, error);
+                if over_limit {
+                    break;
+                }
             }
         }
         if !errors.is_empty() {
@@ -1339,7 +1422,9 @@ impl ConfigV2 {
                             .iter()
                             .enumerate()
                             .find_map(|(i, entry)| match entry {
-                                StepEntry::Inline(step) if step.name == *name => Some((i, step)),
+                                StepEntry::Inline(step) if step.name.trim() == name.trim() => {
+                                    Some((i, step))
+                                }
                                 _ => None,
                             })
                     else {
@@ -1431,7 +1516,15 @@ impl ConfigV2 {
                     match resolver.resolve(pattern, *scope, &pattern_path) {
                         Ok(resolved) => {
                             let resolved = resolved.trim().to_string();
-                            if let Err(error) = validate_artifact_pattern(&resolved) {
+                            // Only secret references are left after resolving.
+                            if resolved.contains("${{") {
+                                push_unique(
+                                    &mut errors,
+                                    format!(
+                                        "{pattern_path} cannot use ${{{{ secrets.NAME }}}}; artifact patterns are matched as written"
+                                    ),
+                                );
+                            } else if let Err(error) = validate_artifact_pattern(&resolved) {
                                 push_unique(&mut errors, format!("{pattern_path} {error}"));
                             } else if !artifact_patterns.contains(&resolved) {
                                 artifact_patterns.push(resolved);
@@ -1568,12 +1661,12 @@ fn check_steps(
                 Some(shared) => {
                     let defined = shared
                         .iter()
-                        .any(|entry| matches!(entry, StepEntry::Inline(step) if step.name == *name));
+                        .any(|entry| matches!(entry, StepEntry::Inline(step) if step.name.trim() == name.trim()));
                     if !defined {
                         errors.push(format!(
                             "{entry_path} refers to step '{name}', which is not defined in the top-level steps"
                         ));
-                    } else if !names.insert(name.clone()) {
+                    } else if !names.insert(name.trim().to_string()) {
                         errors.push(format!("{entry_path}: step '{name}' appears more than once"));
                     }
                 }
@@ -1929,6 +2022,92 @@ mod tests {
             "{BASE}vars:\n  A: ${{{{ vars.B }}}}\n  B: x\nworkflows:\n  loop:\n    vars:\n      B: ${{{{ vars.A }}}}\n"
         ));
         assert_eq!(error, "vars form a cycle: vars.A -> vars.B -> vars.A");
+    }
+
+    fn doubling_vars(seed: &str, count: usize) -> String {
+        let mut yaml = format!("version: 2\nvars:\n  V0: '{seed}'\n");
+        for index in 1..count {
+            let previous = index - 1;
+            yaml.push_str(&format!(
+                "  V{index}: '${{{{ vars.V{previous} }}}}${{{{ vars.V{previous} }}}}'\n"
+            ));
+        }
+        yaml.push_str(&format!(
+            "targets:\n  android:\n    build: echo ${{{{ vars.V{} }}}}\n",
+            count - 1
+        ));
+        yaml
+    }
+
+    #[test]
+    fn var_expansion_is_bounded() {
+        let started = std::time::Instant::now();
+        // 23 doubling vars would expand to a 4 MiB command.
+        let error = errors(&doubling_vars("xxxxxxxx", 23));
+        assert_eq!(error, "vars.V14 expands to more than 64 KiB through vars");
+        // Empty values double the work without growing the text.
+        let error = errors(&doubling_vars("", 30));
+        assert!(
+            error.contains("expands vars more than 100000 times"),
+            "{error}"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+
+        // A long command written out in full is not a var expansion.
+        let long = "x".repeat(MAX_EXPANDED_BYTES + 10);
+        assert!(
+            parse_repository_config(&format!(
+                "version: 2\ntargets:\n  android:\n    build: echo {long}\n"
+            ))
+            .is_ok()
+        );
+        // Moderate reuse stays within both limits.
+        assert!(parse_repository_config(&doubling_vars("ab", 10)).is_ok());
+    }
+
+    #[test]
+    fn artifact_patterns_cannot_use_secrets() {
+        let error = errors(&format!(
+            "{BASE}    artifacts: ['build/${{{{ secrets.DIR }}}}/*.apk']\n"
+        ));
+        assert_eq!(
+            error,
+            "targets.android.artifacts[0] cannot use ${{ secrets.NAME }}; artifact patterns are matched as written"
+        );
+    }
+
+    #[test]
+    fn several_workflows_get_a_notice_until_pipelines_can_pick_one() {
+        let config = parse_repository_config(&format!(
+            "{BASE}workflows:\n  adhoc: {{}}\n  release: {{}}\n"
+        ))
+        .unwrap();
+        let notices = config.notices();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(notices[0].starts_with("this file defines workflows [adhoc, release]"));
+        let one = parse_repository_config(&format!("{BASE}workflows:\n  adhoc: {{}}\n")).unwrap();
+        assert!(one.notices().is_empty());
+    }
+
+    #[test]
+    fn step_references_ignore_surrounding_spaces() {
+        let yaml = format!(
+            "{BASE}steps:\n  - name: 'Get packages '\n    run: flutter pub get\nworkflows:\n  quick:\n    steps: [' Get packages', build]\n"
+        );
+        let quick = plan(&yaml, Some("quick"));
+        assert_eq!(quick.steps[0].name, "Get packages");
+    }
+
+    #[test]
+    fn quoted_or_decimal_versions_get_a_hint() {
+        assert_eq!(
+            errors("version: '2'\ntargets: {}\n"),
+            "version must be a number; write `version: 2` without quotes"
+        );
+        assert_eq!(
+            errors("version: 2.0\n"),
+            "version must be a whole number; write `version: 2`"
+        );
     }
 
     #[test]

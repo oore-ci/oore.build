@@ -68,7 +68,8 @@ workflow runs.
   fails at build time with `choose one for the pipeline`; a file with none or
   exactly one workflow builds as described here. `on` and `publish` are
   validated but not applied yet: triggers and store uploads still come from the
-  pipeline's settings in the UI.
+  pipeline's settings in the UI. `oore pipeline validate` prints a `note:` for
+  each of these.
 </Callout>
 
 ## Top-level fields
@@ -113,7 +114,8 @@ named `Build Android (free)`, `Build Android (pro)` and so on.
 | `publish`   | object   | No       | Store upload, validated only for now.                         |
 
 Targets build in the order the file lists them. Artifact patterns follow the
-[version 1 rules](/reference/config/oore-yaml#artifacts).
+[version 1 rules](/reference/config/oore-yaml#artifacts) and can use `vars` and
+`${{ flavor }}`, but not `${{ secrets.NAME }}`.
 
 `publish` accepts `play: { track, rollout, draft }` on `android`, where
 `rollout` is a fraction greater than 0 and at most 1, and
@@ -161,7 +163,8 @@ Any other `${{ }}` expression is an error. Vars are repository-owned text and
 are substituted into commands before the build starts, so do not put
 credentials in them. A var that refers back to itself, directly or through
 other vars, is rejected with the cycle it forms, such as
-`vars form a cycle: vars.A -> vars.B -> vars.A`.
+`vars form a cycle: vars.A -> vars.B -> vars.A`. A value may grow to at most
+64 KiB through vars and expand at most 100,000 var references.
 
 ## Workflows
 
