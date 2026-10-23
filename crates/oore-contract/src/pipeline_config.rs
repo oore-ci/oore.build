@@ -26,7 +26,7 @@ pub const MAX_STEP_NAME_LENGTH: usize = 100;
 
 /// Where a step sits relative to the platform builds. Android signing and the
 /// iOS export seam apply to `build` steps only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StepPhase {
     PreBuild,

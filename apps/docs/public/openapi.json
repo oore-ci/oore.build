@@ -4567,6 +4567,53 @@
         ]
       }
     },
+    "/v1/pipelines/plan": {
+      "post": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "Plan pipeline config",
+        "description": "Resolves the steps a build would run for a `.oore.yaml` or the\npipeline's form settings, with the same validation as\n`oore pipeline validate`. Environment values are never returned and\nsecret references stay as written.",
+        "operationId": "plan_pipeline",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanPipelineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Plan or validation errors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanPipelineResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Neither or both sources given, or the file is too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/pipelines/validate": {
       "post": {
         "tags": [
@@ -18158,6 +18205,229 @@
           }
         }
       },
+      "PipelinePlanPreview": {
+        "type": "object",
+        "description": "A resolved plan. Environment values are left out; only their keys are listed.",
+        "required": [
+          "platforms",
+          "steps",
+          "env_keys",
+          "artifact_patterns",
+          "build_number_offset",
+          "runs_on",
+          "isolation"
+        ],
+        "properties": {
+          "artifact_patterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "build_number_offset": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "env_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "flutter_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "isolation": {
+            "$ref": "#/components/schemas/BuildIsolation"
+          },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            }
+          },
+          "runs_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PipelinePlanStep"
+            }
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PipelinePlanStep": {
+        "type": "object",
+        "description": "One command a build runs. Secret references stay as written.",
+        "required": [
+          "name",
+          "phase",
+          "run",
+          "source"
+        ],
+        "properties": {
+          "flavor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/StepPhase"
+          },
+          "platform": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildPlatform"
+              }
+            ]
+          },
+          "run": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Where the command comes from in the configuration."
+          },
+          "test_report": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Test report the step writes, when it declares one."
+          }
+        }
+      },
+      "PlanPipelineRequest": {
+        "type": "object",
+        "description": "What to plan: a repository file or the pipeline's form settings, never both.",
+        "properties": {
+          "build_play_bundle": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Google Play upload is on, so the default Android build also produces an\nApp Bundle. Applies to form settings and version 1 files."
+          },
+          "execution_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PipelineExecutionConfig",
+                "description": "The pipeline's form settings, as `POST /v1/pipelines/validate` takes them."
+              }
+            ]
+          },
+          "platforms": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            },
+            "description": "Plan only these platforms, as a run that selects them would."
+          },
+          "repository_yaml": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A `.oore.yaml` of either version."
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version 2 workflow to plan. Defaults to the file's first workflow."
+          }
+        }
+      },
+      "PlanPipelineResponse": {
+        "type": "object",
+        "required": [
+          "valid",
+          "errors",
+          "notices",
+          "workflows",
+          "available_platforms"
+        ],
+        "properties": {
+          "available_platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            },
+            "description": "Platforms the planned workflow builds before any platform selection."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The errors `oore pipeline validate` reports, one per entry."
+          },
+          "notices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Settings the file declares that this release does not act on yet."
+          },
+          "plan": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PipelinePlanPreview"
+              }
+            ]
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "No errors: `plan` is set."
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`.oore.yaml` version, or none for form settings and unparseable files.",
+            "minimum": 0
+          },
+          "workflows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Workflows the file defines, in file order. Empty without workflows."
+          }
+        }
+      },
       "PlatformBuildArgs": {
         "type": "object",
         "required": [
@@ -20817,6 +21087,15 @@
               }
             }
           }
+        ]
+      },
+      "StepPhase": {
+        "type": "string",
+        "description": "Where a step sits relative to the platform builds. Android signing and the\niOS export seam apply to `build` steps only.",
+        "enum": [
+          "pre_build",
+          "build",
+          "post_build"
         ]
       },
       "StepResult": {

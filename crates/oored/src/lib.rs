@@ -2760,6 +2760,7 @@ pub async fn build_router_with_recovery(
                 .delete(pipelines::delete_pipeline),
         )
         .route("/v1/pipelines/validate", post(pipelines::validate_pipeline))
+        .route("/v1/pipelines/plan", post(pipelines::plan_pipeline))
         .route(
             "/v1/pipelines/{pipeline_id}/android-signing",
             get(pipeline_signing::get_pipeline_android_signing)

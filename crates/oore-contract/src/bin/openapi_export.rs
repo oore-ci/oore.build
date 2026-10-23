@@ -130,6 +130,7 @@ use utoipa::{
         operations::update_pipeline,
         operations::delete_pipeline,
         operations::validate_pipeline,
+        operations::plan_pipeline,
         // ── Pipeline Signing (Android) ──
         operations::get_pipeline_android_signing,
         operations::update_pipeline_android_signing,
@@ -396,6 +397,11 @@ use utoipa::{
         oore_contract::ListPipelinesResponse,
         oore_contract::ValidatePipelineRequest,
         oore_contract::ValidatePipelineResponse,
+        oore_contract::PlanPipelineRequest,
+        oore_contract::PlanPipelineResponse,
+        oore_contract::PipelinePlanPreview,
+        oore_contract::PipelinePlanStep,
+        oore_contract::StepPhase,
         // Publishing
         oore_contract::GooglePlayReleaseNotesSource,
         oore_contract::GooglePlayPublishConfig,
@@ -1931,6 +1937,22 @@ mod operations {
         )
     )]
     pub(super) fn validate_pipeline() {}
+
+    /// Plan pipeline config
+    ///
+    /// Resolves the steps a build would run for a `.oore.yaml` or the
+    /// pipeline's form settings, with the same validation as
+    /// `oore pipeline validate`. Environment values are never returned and
+    /// secret references stay as written.
+    #[utoipa::path(post, path = "/v1/pipelines/plan", tag = "Pipelines",
+        request_body = PlanPipelineRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Plan or validation errors", body = PlanPipelineResponse),
+            (status = 400, description = "Neither or both sources given, or the file is too large", body = ApiError),
+        )
+    )]
+    pub(super) fn plan_pipeline() {}
 
     // ── Pipeline Publishing ──
 

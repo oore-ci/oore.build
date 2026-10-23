@@ -3620,6 +3620,111 @@ pub struct ValidatePipelineResponse {
     pub errors: Vec<String>,
 }
 
+/// Longest `repository_yaml` the plan endpoint reads, the same cap workflow
+/// discovery applies to files in a repository.
+pub const MAX_PLAN_REPOSITORY_YAML_BYTES: usize = 128 * 1024;
+
+/// What to plan: a repository file or the pipeline's form settings, never both.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct PlanPipelineRequest {
+    /// A `.oore.yaml` of either version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_yaml: Option<String>,
+    /// The pipeline's form settings, as `POST /v1/pipelines/validate` takes them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_config: Option<PipelineExecutionConfig>,
+    /// The version 2 workflow to plan. Defaults to the file's first workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
+    /// Plan only these platforms, as a run that selects them would.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platforms: Option<Vec<BuildPlatform>>,
+    /// Google Play upload is on, so the default Android build also produces an
+    /// App Bundle. Applies to form settings and version 1 files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_play_bundle: Option<bool>,
+}
+
+/// One command a build runs. Secret references stay as written.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelinePlanStep {
+    pub name: String,
+    pub phase: StepPhase,
+    pub run: String,
+    /// Where the command comes from in the configuration.
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<BuildPlatform>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flavor: Option<String>,
+    /// Test report the step writes, when it declares one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_report: Option<String>,
+}
+
+/// A resolved plan. Environment values are left out; only their keys are listed.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelinePlanPreview {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
+    pub platforms: Vec<BuildPlatform>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flutter_version: Option<String>,
+    pub steps: Vec<PipelinePlanStep>,
+    pub env_keys: Vec<String>,
+    pub artifact_patterns: Vec<String>,
+    pub build_number_offset: i64,
+    pub runs_on: Vec<String>,
+    pub isolation: BuildIsolation,
+}
+
+impl From<PipelinePlan> for PipelinePlanPreview {
+    fn from(plan: PipelinePlan) -> Self {
+        Self {
+            workflow: plan.workflow,
+            platforms: plan.platforms,
+            flutter_version: plan.flutter_version,
+            steps: plan
+                .steps
+                .into_iter()
+                .map(|step| PipelinePlanStep {
+                    name: step.name,
+                    phase: step.phase,
+                    run: step.run,
+                    source: step.source,
+                    platform: step.platform,
+                    flavor: step.flavor,
+                    test_report: step.test_report,
+                })
+                .collect(),
+            env_keys: plan.env.into_iter().map(|entry| entry.key).collect(),
+            artifact_patterns: plan.artifact_patterns,
+            build_number_offset: plan.build_number_offset,
+            runs_on: plan.runs_on,
+            isolation: plan.isolation,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct PlanPipelineResponse {
+    /// No errors: `plan` is set.
+    pub valid: bool,
+    /// The errors `oore pipeline validate` reports, one per entry.
+    pub errors: Vec<String>,
+    /// Settings the file declares that this release does not act on yet.
+    pub notices: Vec<String>,
+    /// `.oore.yaml` version, or none for form settings and unparseable files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
+    /// Workflows the file defines, in file order. Empty without workflows.
+    pub workflows: Vec<String>,
+    /// Platforms the planned workflow builds before any platform selection.
+    pub available_platforms: Vec<BuildPlatform>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PipelinePlanPreview>,
+}
+
 // ── Secret types ────────────────────────────────────────────────
 
 /// Maximum secret value size. Large enough for a Google Play service account JSON.

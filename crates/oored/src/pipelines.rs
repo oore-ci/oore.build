@@ -7,10 +7,12 @@ use axum::http::StatusCode;
 use oore_contract::{
     ApiError, ApprovalPolicy, BuildPlatform, ConcurrencyPolicy, CreatePipelineRequest,
     CreatePipelineResponse, DEFAULT_BUILD_TIMEOUT_MINUTES, ListPipelinesResponse,
-    MAX_BUILD_TIMEOUT_MINUTES, OkResponse, Pipeline, PipelineDetailResponse,
-    PipelineExecutionConfig, TriggerConfig, UpdatePipelineRequest, ValidatePipelineRequest,
-    ValidatePipelineResponse, is_valid_pipeline_env_key, normalize_runner_labels,
-    parse_repository_config, secret_expression_errors, validate_artifact_pattern,
+    MAX_BUILD_TIMEOUT_MINUTES, MAX_PLAN_REPOSITORY_YAML_BYTES, OkResponse, Pipeline,
+    PipelineDetailResponse, PipelineExecutionConfig, PipelinePlanPreview, PlanPipelineRequest,
+    PlanPipelineResponse, PlanRequest, TriggerConfig, UpdatePipelineRequest,
+    ValidatePipelineRequest, ValidatePipelineResponse, is_valid_pipeline_env_key,
+    normalize_runner_labels, parse_repository_config, pipeline_config::select_v1_platforms,
+    plan_execution_config, secret_expression_errors, validate_artifact_pattern,
     validate_build_number_offset, validate_repository_config_path,
 };
 use serde::Deserialize;
@@ -1342,6 +1344,368 @@ pub async fn validate_pipeline(
     let valid = errors.is_empty();
 
     Ok(Json(ValidatePipelineResponse { valid, errors }))
+}
+
+/// `POST /v1/pipelines/plan` — the steps a build would run, without saving.
+pub async fn plan_pipeline(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<PlanPipelineRequest>,
+) -> ApiResult<PlanPipelineResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "pipelines", "read").await?;
+    Ok(Json(plan_request(req)?))
+}
+
+fn plan_request(
+    req: PlanPipelineRequest,
+) -> Result<PlanPipelineResponse, (StatusCode, Json<ApiError>)> {
+    let mut selected: Vec<BuildPlatform> = Vec::new();
+    for platform in req.platforms.unwrap_or_default() {
+        if !selected.contains(&platform) {
+            selected.push(platform);
+        }
+    }
+    let selected = (!selected.is_empty()).then_some(selected.as_slice());
+    let play = req.build_play_bundle.unwrap_or(false);
+    match (req.repository_yaml, req.execution_config) {
+        (Some(yaml), None) => {
+            if yaml.len() > MAX_PLAN_REPOSITORY_YAML_BYTES {
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "repository_yaml_too_large",
+                    format!(
+                        "repository_yaml must be at most {} KiB",
+                        MAX_PLAN_REPOSITORY_YAML_BYTES / 1024
+                    ),
+                ));
+            }
+            Ok(plan_repository_yaml(
+                &yaml,
+                req.workflow.as_deref(),
+                selected,
+                play,
+            ))
+        }
+        (None, Some(config)) => Ok(plan_form_config(
+            config,
+            req.workflow.as_deref(),
+            selected,
+            play,
+        )),
+        _ => Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_plan_request",
+            "Send exactly one of repository_yaml or execution_config",
+        )),
+    }
+}
+
+fn invalid_plan(errors: Vec<String>) -> PlanPipelineResponse {
+    PlanPipelineResponse {
+        valid: false,
+        errors,
+        notices: Vec::new(),
+        version: None,
+        workflows: Vec::new(),
+        available_platforms: Vec::new(),
+        plan: None,
+    }
+}
+
+fn error_lines(error: &str) -> Vec<String> {
+    error.lines().map(str::to_string).collect()
+}
+
+/// Plan a repository file the way the runner does. Parsing validates every
+/// workflow within the contract crate's limits; planning one workflow twice
+/// (all platforms, then the selection) stays within the same bounds.
+fn plan_repository_yaml(
+    raw: &str,
+    workflow: Option<&str>,
+    selected: Option<&[BuildPlatform]>,
+    build_play_bundle: bool,
+) -> PlanPipelineResponse {
+    let config = match parse_repository_config(raw) {
+        Ok(config) => config,
+        Err(error) => return invalid_plan(error_lines(&error)),
+    };
+    let workflows: Vec<String> = config
+        .workflow_names()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let workflow = workflow
+        .map(str::to_string)
+        .or_else(|| workflows.first().cloned());
+    let mut response = PlanPipelineResponse {
+        version: Some(config.version()),
+        notices: config.notices(),
+        workflows,
+        ..invalid_plan(Vec::new())
+    };
+    let request = PlanRequest {
+        workflow: workflow.as_deref(),
+        selected_platforms: None,
+        build_play_bundle,
+    };
+    let full = match config.plan(request) {
+        Ok(plan) => plan,
+        Err(error) => {
+            response.errors = error_lines(&error);
+            return response;
+        }
+    };
+    response.available_platforms = full.platforms.clone();
+    let plan = match selected {
+        None => full,
+        Some(selected) => match config.plan(PlanRequest {
+            selected_platforms: Some(selected),
+            ..request
+        }) {
+            Ok(plan) => plan,
+            Err(error) => {
+                response.errors = error_lines(&error);
+                return response;
+            }
+        },
+    };
+    response.valid = true;
+    response.plan = Some(PipelinePlanPreview::from(plan));
+    response
+}
+
+/// Plan the pipeline's form settings the way the runner does when the
+/// repository has no `.oore.yaml`: default commands included.
+fn plan_form_config(
+    config: PipelineExecutionConfig,
+    workflow: Option<&str>,
+    selected: Option<&[BuildPlatform]>,
+    build_play_bundle: bool,
+) -> PlanPipelineResponse {
+    let mut errors = validate_execution_config(&config);
+    if let Some(workflow) = workflow {
+        errors.push(format!(
+            "workflow '{workflow}' was requested, but workflows need a `version: 2` .oore.yaml"
+        ));
+    }
+    if !errors.is_empty() {
+        return invalid_plan(errors);
+    }
+    let available_platforms = config.platforms.clone();
+    let config = match selected {
+        None => config,
+        Some(selected) => match select_v1_platforms(config, selected) {
+            Ok(config) => config,
+            Err(error) => {
+                return PlanPipelineResponse {
+                    available_platforms,
+                    ..invalid_plan(error_lines(&error))
+                };
+            }
+        },
+    };
+    let plan = plan_execution_config(&config, true, build_play_bundle);
+    PlanPipelineResponse {
+        valid: true,
+        available_platforms,
+        plan: Some(PipelinePlanPreview::from(plan)),
+        ..invalid_plan(Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+    use oore_contract::StepPhase;
+
+    fn yaml_request(yaml: &str) -> PlanPipelineRequest {
+        PlanPipelineRequest {
+            repository_yaml: Some(yaml.to_string()),
+            execution_config: None,
+            workflow: None,
+            platforms: None,
+            build_play_bundle: None,
+        }
+    }
+
+    const V1: &str = r#"
+version: 1
+platforms: [android, ios]
+commands:
+  pre_build: ["dart run build_runner build"]
+env:
+  - key: API_URL
+    value: https://staging.example.com
+"#;
+
+    #[test]
+    fn plans_a_v1_file_with_defaults() {
+        let response = plan_request(yaml_request(V1)).unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        assert_eq!(response.version, Some(1));
+        assert!(response.workflows.is_empty());
+        assert_eq!(
+            response.available_platforms,
+            vec![BuildPlatform::Android, BuildPlatform::Ios]
+        );
+        let plan = response.plan.unwrap();
+        let runs: Vec<(&str, StepPhase)> = plan
+            .steps
+            .iter()
+            .map(|step| (step.run.as_str(), step.phase))
+            .collect();
+        assert_eq!(runs[0], ("flutter pub get", StepPhase::PreBuild));
+        assert_eq!(
+            runs[1],
+            ("dart run build_runner build", StepPhase::PreBuild)
+        );
+        assert!(
+            plan.steps
+                .iter()
+                .any(|step| step.platform == Some(BuildPlatform::Ios))
+        );
+        // Keys only: values never leave the daemon.
+        assert_eq!(plan.env_keys, vec!["API_URL".to_string()]);
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(!json.contains("staging.example.com"));
+    }
+
+    #[test]
+    fn narrows_a_v1_file_to_the_selected_platform() {
+        let mut request = yaml_request(V1);
+        request.platforms = Some(vec![BuildPlatform::Ios, BuildPlatform::Ios]);
+        let response = plan_request(request).unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        assert_eq!(response.available_platforms.len(), 2);
+        let plan = response.plan.unwrap();
+        assert_eq!(plan.platforms, vec![BuildPlatform::Ios]);
+        assert!(
+            plan.steps
+                .iter()
+                .all(|step| step.platform != Some(BuildPlatform::Android))
+        );
+    }
+
+    const V2: &str = r#"
+version: 2
+app:
+  flavors: [dev, prod]
+targets:
+  android:
+    build: flutter build apk --flavor ${{ flavor }}
+  ios:
+    build: flutter build ipa --flavor ${{ flavor }}
+env:
+  SIGNING_TOKEN: ${{ secrets.SIGNING_TOKEN }}
+steps:
+  - name: Test
+    run: flutter test --dart-define=TOKEN=${{ secrets.SIGNING_TOKEN }}
+  - build
+  - name: Notify
+    run: echo done
+workflows:
+  nightly:
+    flavors: [dev]
+  release:
+    targets: [android]
+    flavors: [prod]
+"#;
+
+    #[test]
+    fn plans_a_v2_workflow_and_keeps_secrets_literal() {
+        let response = plan_request(yaml_request(V2)).unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        assert_eq!(response.version, Some(2));
+        assert_eq!(response.workflows, vec!["nightly", "release"]);
+        // Several workflows: the first is planned and a notice says so.
+        assert!(!response.notices.is_empty());
+        let plan = response.plan.unwrap();
+        assert_eq!(plan.workflow.as_deref(), Some("nightly"));
+        let android = plan
+            .steps
+            .iter()
+            .find(|step| step.platform == Some(BuildPlatform::Android))
+            .unwrap();
+        assert_eq!(android.phase, StepPhase::Build);
+        assert_eq!(android.flavor.as_deref(), Some("dev"));
+        assert!(android.run.contains("--flavor dev"));
+        let test = plan.steps.iter().find(|step| step.name == "Test").unwrap();
+        assert!(test.run.contains("${{ secrets.SIGNING_TOKEN }}"));
+        assert_eq!(plan.env_keys, vec!["SIGNING_TOKEN".to_string()]);
+
+        let mut request = yaml_request(V2);
+        request.workflow = Some("release".to_string());
+        let response = plan_request(request).unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        assert_eq!(response.available_platforms, vec![BuildPlatform::Android]);
+        let plan = response.plan.unwrap();
+        assert_eq!(plan.workflow.as_deref(), Some("release"));
+        assert!(
+            plan.steps
+                .iter()
+                .filter(|step| step.platform.is_some())
+                .all(|step| step.flavor.as_deref() == Some("prod"))
+        );
+    }
+
+    #[test]
+    fn reports_the_same_errors_as_validate() {
+        let broken = "version: 2\ntargets:\n  android:\n    build: flutter build apk\nsteps:\n  - name: Test\n    run: echo ${{ vars.MISSING }}\n";
+        let expected = parse_repository_config(broken).unwrap_err();
+        let response = plan_request(yaml_request(broken)).unwrap();
+        assert!(!response.valid);
+        assert!(response.plan.is_none());
+        assert_eq!(response.errors, error_lines(&expected));
+        assert!(
+            response.errors.iter().any(|e| e.contains("vars.MISSING")),
+            "{:?}",
+            response.errors
+        );
+
+        let mut request = yaml_request(V2);
+        request.workflow = Some("missing".to_string());
+        let response = plan_request(request).unwrap();
+        assert!(!response.valid);
+        assert_eq!(response.version, Some(2));
+        assert!(!response.errors.is_empty());
+    }
+
+    #[test]
+    fn plans_form_settings_and_rejects_bad_requests() {
+        let config: PipelineExecutionConfig = serde_json::from_value(serde_json::json!({
+            "platforms": ["android"],
+            "commands": { "pre_build": [], "build": [], "post_build": ["echo ok"] },
+            "env": [{ "key": "TOKEN", "value": "hunter2" }],
+        }))
+        .unwrap();
+        let response = plan_request(PlanPipelineRequest {
+            repository_yaml: None,
+            execution_config: Some(config.clone()),
+            workflow: None,
+            platforms: None,
+            build_play_bundle: Some(true),
+        })
+        .unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        let plan = response.plan.unwrap();
+        assert!(plan.steps.iter().any(|step| step.run.contains("appbundle")));
+        assert_eq!(plan.steps.last().unwrap().phase, StepPhase::PostBuild);
+        assert!(!serde_json::to_string(&plan).unwrap().contains("hunter2"));
+
+        let both = PlanPipelineRequest {
+            repository_yaml: Some(V1.to_string()),
+            execution_config: Some(config),
+            workflow: None,
+            platforms: None,
+            build_play_bundle: None,
+        };
+        assert_eq!(plan_request(both).unwrap_err().0, StatusCode::BAD_REQUEST);
+        let large = "#".repeat(MAX_PLAN_REPOSITORY_YAML_BYTES + 1);
+        assert_eq!(
+            plan_request(yaml_request(&large)).unwrap_err().0,
+            StatusCode::BAD_REQUEST
+        );
+    }
 }
 
 #[cfg(test)]
