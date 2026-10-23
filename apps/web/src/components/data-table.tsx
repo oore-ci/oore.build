@@ -226,6 +226,14 @@ export function DataTable<TData extends RowData>({
   const [filtersOpen, setFiltersOpen] = useState(
     collapseFilters && activeFilterCount > 0,
   )
+  // Collapsed filters open when some start to apply, such as on navigation.
+  const [seenFilterCount, setSeenFilterCount] = useState(activeFilterCount)
+  if (seenFilterCount !== activeFilterCount) {
+    setSeenFilterCount(activeFilterCount)
+    if (collapseFilters && seenFilterCount === 0 && activeFilterCount > 0) {
+      setFiltersOpen(true)
+    }
+  }
   const visibleColumns = table.getVisibleLeafColumns()
   const stickyId = stickyColumnId(visibleColumns.map((column) => column.id))
   const rows = table.getRowModel().rows

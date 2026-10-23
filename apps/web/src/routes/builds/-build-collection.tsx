@@ -24,7 +24,10 @@ import {
 import type { Build } from '@oore/client/models'
 import { useTableDensity } from '@/stores/table-density-store'
 import BuildActionsMenu from './-build-actions-menu'
-import { BUILD_TRIGGER_FILTER_OPTIONS } from './-build-filter-controls'
+import {
+  BUILD_TRIGGER_FILTER_OPTIONS,
+  webhookEventTrigger,
+} from './-build-filter-controls'
 import type { BuildSort } from './-build-sort'
 import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
 
@@ -38,10 +41,8 @@ const BUILD_TABLE_SORTS = [
 /** The webhook event says more than "Webhook" does. */
 function buildTriggerLabel(build: Build) {
   if (build.trigger_type === 'webhook' && build.trigger_event) {
-    const option = Object.entries(BUILD_TRIGGER_FILTER_OPTIONS).find(
-      ([value]) => value === build.trigger_event,
-    )
-    if (option) return option[1]
+    const trigger = webhookEventTrigger(build.trigger_event)
+    if (trigger) return BUILD_TRIGGER_FILTER_OPTIONS[trigger]
   }
   return TRIGGER_TYPE_LABELS[build.trigger_type]
 }

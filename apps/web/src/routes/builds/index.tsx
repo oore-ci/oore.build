@@ -28,6 +28,7 @@ import { BuildFilters } from './-build-filters'
 import {
   BUILD_TRIGGER_FILTER_OPTIONS,
   isBuildTrigger,
+  MAX_ACTOR_FILTER_LENGTH,
   type BuildTrigger,
 } from './-build-filter-controls'
 import {
@@ -80,7 +81,9 @@ function parseSearch(search: SearchInput): BuildsSearch {
     statusValue && statusValue in BUILD_STATUS_FILTER_OPTIONS ? statusValue : ''
   const sort = searchChoice(search, 'sort', BUILD_SORT_VALUES)
   const branch = searchString(search, 'branch')?.trim() ?? ''
-  const actor = searchString(search, 'actor')?.trim() ?? ''
+  const actorValue = searchString(search, 'actor')?.trim() ?? ''
+  // The API rejects longer actors; drop them rather than show an error.
+  const actor = actorValue.length > MAX_ACTOR_FILTER_LENGTH ? '' : actorValue
   let from = validSearchDate(searchString(search, 'from'))
   let to = validSearchDate(searchString(search, 'to'))
   // `yyyy-MM-dd` sorts by date, so a reversed range just swaps.

@@ -814,6 +814,18 @@ fn build_search_condition(query: &str, bind_values: &mut Vec<String>) -> String 
 /// `schedule` are trigger types; the rest are webhook events.
 const TRIGGER_TYPE_FILTERS: &[&str] = &["manual", "api", "schedule"];
 const TRIGGER_EVENT_FILTERS: &[&str] = &["push", "pull_request", "tag_push"];
+
+/// The `trigger_event` values each event filter matches. Webhook builds store
+/// the provider's event name: GitHub's `push`/`pull_request`, GitLab's
+/// `Push Hook`/`Merge Request Hook`, and `tag_push` for any tag push.
+fn trigger_event_aliases(event: &str) -> &'static [&'static str] {
+    match event {
+        "push" => &["push", "Push Hook"],
+        "pull_request" => &["pull_request", "Merge Request Hook"],
+        "tag_push" => &["tag_push", "Tag Push Hook"],
+        _ => &[],
+    }
+}
 const MAX_ACTOR_FILTER_CHARS: usize = 320;
 
 type ApiErr = (StatusCode, Json<ApiError>);
@@ -916,9 +928,13 @@ fn build_list_conditions(
             ));
         }
         if !events.is_empty() {
+            let stored = events
+                .iter()
+                .flat_map(|event| trigger_event_aliases(event).iter().copied())
+                .collect::<Vec<_>>();
             clauses.push(format!(
                 "(builds.trigger_type = 'webhook' AND builds.trigger_event IN ({}))",
-                placeholders(&events, &mut bind_values)
+                placeholders(&stored, &mut bind_values)
             ));
         }
         conditions.push(if clauses.is_empty() {
@@ -971,6 +987,44 @@ fn build_list_conditions(
     }
 
     Ok((conditions, bind_values))
+}
+
+fn where_sql(conditions: &[String]) -> String {
+    if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    }
+}
+
+/// The `GET /v1/builds` page query: `bind_count` filter values, then the
+/// limit and offset.
+fn build_list_query(where_clause: &str, order_by: &str, bind_count: usize) -> String {
+    format!(
+        "SELECT builds.*, projects.name AS project_name, integration_repositories.id AS repository_id, integration_repositories.avatar_url AS project_avatar_url, \
+         integration_repositories.full_name AS repository_full_name, integrations.provider AS repository_provider, \
+         integrations.host_url AS repository_host_url, pipelines.name AS pipeline_name, runners.name AS runner_name, \
+         CASE \
+           WHEN builds.status != 'queued' THEN NULL \
+           WHEN integration_repositories.id IS NULL \
+             OR json_extract(builds.config_snapshot, '$.repository_id') IS NULL \
+             OR json_extract(builds.config_snapshot, '$.repository_id') != projects.repository_id \
+             THEN 'repository_unavailable' \
+           WHEN COALESCE(instance_preferences.direct_macos_runner_paused, 0) = 1 THEN 'instance_paused' \
+           ELSE NULL \
+         END AS runner_policy_block_reason \
+         FROM builds \
+         LEFT JOIN projects ON projects.id = builds.project_id \
+         LEFT JOIN integration_repositories ON integration_repositories.id = projects.repository_id \
+         LEFT JOIN integration_installations ON integration_installations.id = integration_repositories.installation_id \
+         LEFT JOIN integrations ON integrations.id = integration_installations.integration_id \
+         LEFT JOIN instance_preferences ON instance_preferences.id = 1 \
+         LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
+         LEFT JOIN runners ON runners.id = builds.runner_id \
+         {where_clause} ORDER BY {order_by} LIMIT ?{} OFFSET ?{}",
+        bind_count + 1,
+        bind_count + 2
+    )
 }
 
 fn build_order_clause(
@@ -1538,38 +1592,10 @@ pub async fn list_builds(
         (auth.0.role != "owner" && auth.0.role != "admin").then_some(auth.0.user_id.as_str());
     let (conditions, bind_values) = build_list_conditions(&params, viewer)?;
 
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
+    let where_clause = where_sql(&conditions);
 
     let count_query = format!("SELECT COUNT(*) FROM builds {where_clause}");
-    let list_query = format!(
-        "SELECT builds.*, projects.name AS project_name, integration_repositories.id AS repository_id, integration_repositories.avatar_url AS project_avatar_url, \
-         integration_repositories.full_name AS repository_full_name, integrations.provider AS repository_provider, \
-         integrations.host_url AS repository_host_url, pipelines.name AS pipeline_name, runners.name AS runner_name, \
-         CASE \
-           WHEN builds.status != 'queued' THEN NULL \
-           WHEN integration_repositories.id IS NULL \
-             OR json_extract(builds.config_snapshot, '$.repository_id') IS NULL \
-             OR json_extract(builds.config_snapshot, '$.repository_id') != projects.repository_id \
-             THEN 'repository_unavailable' \
-           WHEN COALESCE(instance_preferences.direct_macos_runner_paused, 0) = 1 THEN 'instance_paused' \
-           ELSE NULL \
-         END AS runner_policy_block_reason \
-         FROM builds \
-         LEFT JOIN projects ON projects.id = builds.project_id \
-         LEFT JOIN integration_repositories ON integration_repositories.id = projects.repository_id \
-         LEFT JOIN integration_installations ON integration_installations.id = integration_repositories.installation_id \
-         LEFT JOIN integrations ON integrations.id = integration_installations.integration_id \
-         LEFT JOIN instance_preferences ON instance_preferences.id = 1 \
-         LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
-         LEFT JOIN runners ON runners.id = builds.runner_id \
-         {where_clause} ORDER BY {order_by} LIMIT ?{} OFFSET ?{}",
-        bind_values.len() + 1,
-        bind_values.len() + 2
-    );
+    let list_query = build_list_query(&where_clause, &order_by, bind_values.len());
 
     // Execute count query
     let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_query));
@@ -3529,12 +3555,10 @@ mod tests {
         viewer: Option<&str>,
     ) -> Vec<String> {
         let (conditions, binds) = build_list_conditions(params, viewer).unwrap();
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
-        };
-        let sql = format!("SELECT id FROM builds {where_clause} ORDER BY created_at");
+        let sql = format!(
+            "SELECT id FROM builds {} ORDER BY created_at",
+            where_sql(&conditions)
+        );
         let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql));
         for bind in &binds {
             q = q.bind(bind);
@@ -3565,6 +3589,31 @@ mod tests {
             ["pr", "nightly"]
         );
         assert!(listed(&pool, &by(" , "), None).await.is_empty());
+
+        // GitLab builds store GitLab's event names.
+        for (id, number, event) in [
+            ("gl-push", 8, "Push Hook"),
+            ("gl-mr", 9, "Merge Request Hook"),
+        ] {
+            sqlx::query(
+                "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, trigger_event, queued_at, created_at, updated_at) \
+                 VALUES (?1, 'p1', 'pl1', ?2, 'succeeded', 'webhook', ?3, 800, 800, 800)",
+            )
+            .bind(id)
+            .bind(number)
+            .bind(event)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            listed(&pool, &by("push"), None).await,
+            ["push", "hidden", "gl-push"]
+        );
+        assert_eq!(
+            listed(&pool, &by("pull_request"), None).await,
+            ["pr", "gl-mr"]
+        );
 
         let error = build_list_conditions(&by("push,cron"), None).unwrap_err();
         assert_eq!(error.0, StatusCode::BAD_REQUEST);
@@ -3672,21 +3721,56 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn the_default_builds_page_reads_the_creation_time_index() {
-        let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
-        let rows = sqlx::query(
-            "EXPLAIN QUERY PLAN SELECT id FROM builds \
-             ORDER BY builds.created_at DESC, builds.id DESC LIMIT 20",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        let plan: Vec<String> = rows.iter().map(|row| row.get("detail")).collect();
-        assert!(
-            plan.iter()
-                .any(|detail| detail.contains("idx_builds_created_at")),
-            "{plan:?}"
+    /// The query plan of the handler's real page query for `params`.
+    async fn page_plan(pool: &sqlx::SqlitePool, params: &ListBuildsQuery) -> Vec<String> {
+        let (conditions, binds) = build_list_conditions(params, None).unwrap();
+        let order_by = build_order_clause(None, None).unwrap();
+        let sql = format!(
+            "EXPLAIN QUERY PLAN {}",
+            build_list_query(&where_sql(&conditions), &order_by, binds.len())
         );
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for bind in &binds {
+            query = query.bind(bind);
+        }
+        let rows = query
+            .bind(20_i64)
+            .bind(0_i64)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        rows.iter().map(|row| row.get("detail")).collect()
+    }
+
+    #[tokio::test]
+    async fn builds_pages_read_an_index_in_page_order() {
+        let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
+        for (params, index) in [
+            (list_params(), "idx_builds_created_at"),
+            (
+                ListBuildsQuery {
+                    trigger: Some("manual".to_string()),
+                    ..list_params()
+                },
+                "idx_builds_trigger_type",
+            ),
+            (
+                ListBuildsQuery {
+                    actor: Some("octocat".to_string()),
+                    ..list_params()
+                },
+                "idx_builds_trigger_actor",
+            ),
+        ] {
+            let plan = page_plan(&pool, &params).await;
+            assert!(
+                plan.iter().any(|detail| detail.contains(index)),
+                "{index}: {plan:?}"
+            );
+            assert!(
+                !plan.iter().any(|detail| detail.contains("TEMP B-TREE")),
+                "{index} sorts the whole set: {plan:?}"
+            );
+        }
     }
 }

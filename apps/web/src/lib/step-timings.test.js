@@ -3,8 +3,9 @@ import { test } from 'bun:test'
 
 import { stepMedians, stepTimingTrend } from './step-timings'
 
-const build = (id, steps) => ({
+const build = (id, steps, extra = {}) => ({
   id,
+  ...extra,
   step_results: steps.map(([name, seconds, status = 'succeeded']) => ({
     name,
     status,
@@ -29,6 +30,11 @@ test('step medians skip the current build, failed steps and thin samples', () =>
         ['test', 999, 'failed'],
       ]),
       build('d', [['build', 400]]),
+      build('retry', [['build', 5]], {
+        source_build_id: 'a',
+        retry_steps: ['build'],
+      }),
+      build('rerun', [['build', 5]], { source_build_id: 'b' }),
     ],
     'current',
   )

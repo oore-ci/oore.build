@@ -40,8 +40,25 @@ export const BUILD_TRIGGER_FILTER_OPTIONS = {
   tag_push: 'Tag push',
   manual: 'Manual',
   schedule: 'Schedule',
-  api: 'API',
 } as const
+
+/** Event names providers store for each webhook trigger, such as GitLab's. */
+const BUILD_TRIGGER_EVENT_ALIASES = new Map<string, BuildTrigger>([
+  ['push', 'push'],
+  ['Push Hook', 'push'],
+  ['pull_request', 'pull_request'],
+  ['Merge Request Hook', 'pull_request'],
+  ['tag_push', 'tag_push'],
+  ['Tag Push Hook', 'tag_push'],
+])
+
+/** The filter a webhook build's stored event belongs to. */
+export function webhookEventTrigger(event: string): BuildTrigger | undefined {
+  return BUILD_TRIGGER_EVENT_ALIASES.get(event)
+}
+
+/** Longest actor `GET /v1/builds` accepts. */
+export const MAX_ACTOR_FILTER_LENGTH = 320
 
 export type BuildTrigger = Exclude<
   keyof typeof BUILD_TRIGGER_FILTER_OPTIONS,
@@ -436,13 +453,13 @@ export function ActorFilter({
       allLabel="Anyone"
       className={className}
       emptyMessage={
-        actorsQuery.error ? 'People could not be loaded.' : 'No one found.'
+        actorsQuery.error ? 'Actors could not be loaded.' : 'No actors found.'
       }
       label="Filter by who triggered the build"
       loading={actorsQuery.isLoading}
       onSearch={updateSearch}
       onValueChange={(actor) => onChange({ actor, page: undefined })}
-      placeholder="Search people"
+      placeholder="Search actors"
       suggestions={actorsQuery.data?.actors ?? []}
       value={filters.actor}
     />

@@ -4,8 +4,8 @@ import type { Build } from '@oore/client/models'
 export const MIN_MEDIAN_SAMPLES = 3
 
 /**
- * Median duration of each step across `builds`, leaving out `excludeBuildId`
- * and steps that did not succeed. Steps with fewer than
+ * Median duration of each step across `builds`, leaving out `excludeBuildId`,
+ * reruns and step retries, and steps that did not succeed. Steps with fewer than
  * `MIN_MEDIAN_SAMPLES` runs are left out.
  */
 export function stepMedians(
@@ -14,7 +14,15 @@ export function stepMedians(
 ): Map<string, number> {
   const samples = new Map<string, Array<number>>()
   for (const build of builds) {
-    if (build.id === excludeBuildId) continue
+    // Reruns and step retries reuse earlier work, so their times are not
+    // typical runs.
+    if (
+      build.id === excludeBuildId ||
+      build.source_build_id ||
+      build.retry_steps?.length
+    ) {
+      continue
+    }
     for (const step of build.step_results ?? []) {
       if (step.status !== 'succeeded' || step.duration_ms < 0) continue
       const durations = samples.get(step.name) ?? []
