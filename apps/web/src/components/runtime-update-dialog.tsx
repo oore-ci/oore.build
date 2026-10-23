@@ -6,7 +6,10 @@ import {
   Download04Icon,
 } from '@hugeicons/core-free-icons'
 import { toast } from '@/lib/toast'
-import type { RuntimeReleaseStatus } from '@/hooks/use-runtime-updates'
+import type {
+  RuntimeReleaseEntry,
+  RuntimeReleaseStatus,
+} from '@/hooks/use-runtime-updates'
 import { useRuntimeUpdates } from '@/hooks/use-runtime-updates'
 import type { CoordinatedUpdateStep } from '@/stores/runtime-update-store'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -30,6 +33,7 @@ import {
 } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+import { RelativeTime } from '@/components/relative-time'
 import { formatReleaseNotes } from '@/components/runtime-update-utils'
 import {
   RuntimeUpdatePreflightChecks,
@@ -134,6 +138,123 @@ function RuntimeUpdateCard({
   )
 }
 
+interface Changelog {
+  installed: string
+  target: string
+  url: string
+  entries: Array<RuntimeReleaseEntry>
+}
+
+/**
+ * Everything the offered components would gain. A component that is further
+ * behind covers more releases, so its range and compare link win; entries from
+ * both are merged so split installs see the union.
+ */
+function changelogFor(statuses: Array<RuntimeReleaseStatus>): Changelog | null {
+  const widest = statuses.reduce<RuntimeReleaseStatus | null>(
+    (best, status) =>
+      !best || (status.releases?.length ?? 0) > (best.releases?.length ?? 0)
+        ? status
+        : best,
+    null,
+  )
+  if (!widest) return null
+  const entries = new Map<string, RuntimeReleaseEntry>()
+  for (const status of statuses) {
+    const list = status.releases?.length
+      ? status.releases
+      : [
+          {
+            version: status.latest_version,
+            tag: `v${status.latest_version}`,
+            published_at: '',
+            release_name: status.release_name,
+            release_notes: status.release_notes,
+            release_url: status.release_url,
+          },
+        ]
+    for (const entry of list) {
+      if (!entries.has(entry.version)) entries.set(entry.version, entry)
+    }
+  }
+  return {
+    installed: widest.version,
+    target: widest.latest_version,
+    url: widest.changelog_url,
+    entries: [...entries.values()].sort((a, b) =>
+      b.published_at.localeCompare(a.published_at),
+    ),
+  }
+}
+
+function publishedAt(entry: RuntimeReleaseEntry) {
+  const millis = Date.parse(entry.published_at)
+  return Number.isNaN(millis) ? null : Math.floor(millis / 1000)
+}
+
+function ReleaseChangelog({ changelog }: { changelog: Changelog }) {
+  const count = changelog.entries.length
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">What changed</p>
+          <p className="text-xs text-muted-foreground">
+            {count === 1
+              ? `1 release since ${changelog.installed}`
+              : `${count} releases since ${changelog.installed}`}
+          </p>
+        </div>
+        <Badge
+          variant="link"
+          render={
+            <a
+              href={changelog.url}
+              aria-label={`Open the full changelog from ${changelog.installed} to ${changelog.target}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            />
+          }
+        >
+          Full changelog
+          <HugeiconsIcon icon={ArrowUpRight01Icon} data-icon="inline-end" />
+        </Badge>
+      </div>
+      <ScrollArea className="max-h-72 rounded-lg bg-muted/30 ring-1 ring-foreground/10">
+        <div className="flex flex-col divide-y divide-foreground/10">
+          {changelog.entries.map((entry) => {
+            const notes = formatReleaseNotes(entry.release_notes)
+            const at = publishedAt(entry)
+            return (
+              <article key={entry.version} className="flex flex-col gap-1 p-4">
+                <div className="flex items-baseline justify-between gap-3">
+                  <a
+                    href={entry.release_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-xs font-medium hover:underline"
+                  >
+                    {entry.release_name}
+                  </a>
+                  {at === null ? null : (
+                    <RelativeTime
+                      at={at}
+                      className="shrink-0 text-xs text-muted-foreground"
+                    />
+                  )}
+                </div>
+                <p className="text-sm leading-6 whitespace-pre-wrap">
+                  {notes || 'No release notes were published for this version.'}
+                </p>
+              </article>
+            )
+          })}
+        </div>
+      </ScrollArea>
+    </section>
+  )
+}
+
 export default function RuntimeUpdateDialog({
   open,
   onOpenChange,
@@ -150,17 +271,12 @@ export default function RuntimeUpdateDialog({
   const step = updates.coordinatedStep
   const coordinatedRunning =
     updates.updateOore.isPending || (step !== 'idle' && step !== 'failed')
-  const releases = [
-    frontendAvailable ? frontend : null,
-    backendAvailable ? backend : null,
-  ]
-    .filter((release): release is RuntimeReleaseStatus => release !== null)
-    .filter(
-      (release, index, all) =>
-        all.findIndex(
-          (candidate) => candidate.release_url === release.release_url,
-        ) === index,
-    )
+  const changelog = changelogFor(
+    [
+      frontendAvailable ? frontend : null,
+      backendAvailable ? backend : null,
+    ].filter((release): release is RuntimeReleaseStatus => release !== null),
+  )
   const frontendPhase =
     updates.startFrontendUpdate.data?.phase ?? frontend?.phase
   const backendQueryIsCurrent =
@@ -289,51 +405,7 @@ export default function RuntimeUpdateDialog({
           ) : null}
         </div>
 
-        <div className="flex flex-col gap-4">
-          {releases.map((release) => {
-            const notes = formatReleaseNotes(release.release_notes)
-            return (
-              <section
-                key={release.release_url}
-                className="flex flex-col gap-2"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium">
-                      {release.release_name}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      What changed in {release.latest_version}
-                    </p>
-                  </div>
-                  <Badge
-                    variant="link"
-                    render={
-                      <a
-                        href={release.changelog_url}
-                        aria-label={`Open the full changelog for ${release.latest_version}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      />
-                    }
-                  >
-                    Full changelog
-                    <HugeiconsIcon
-                      icon={ArrowUpRight01Icon}
-                      data-icon="inline-end"
-                    />
-                  </Badge>
-                </div>
-                <ScrollArea className="max-h-52 rounded-lg bg-muted/30 ring-1 ring-foreground/10">
-                  <p className="p-4 text-sm leading-6 whitespace-pre-wrap">
-                    {notes ||
-                      'No release notes were published for this version.'}
-                  </p>
-                </ScrollArea>
-              </section>
-            )
-          })}
-        </div>
+        {changelog ? <ReleaseChangelog changelog={changelog} /> : null}
       </DialogContent>
     </Dialog>
   )

@@ -19,6 +19,51 @@ const demoRelease = {
   changelog_url: 'https://github.com/oore-ci/oore.build/releases',
 }
 
+function demoReleaseEntry(alpha: number, daysAgo: number, notes: string) {
+  const version = `0.1.0-alpha.${alpha}`
+  return {
+    version,
+    tag: `v${version}`,
+    published_at: new Date(Date.now() - daysAgo * 86_400_000).toISOString(),
+    release_name: `v${version}`,
+    release_notes: `# v${version}\n\nChanges since v0.1.0-alpha.${alpha - 1}:\n\n${notes}`,
+    release_url: `https://github.com/oore-ci/oore.build/releases/tag/v${version}`,
+  }
+}
+
+// The degraded scenario is three releases behind, so the update dialog shows
+// a changelog that spans more than the latest release.
+function demoReleaseStatus() {
+  if (demoState.scenario !== 'degraded') return demoRelease
+  const releases = [
+    demoReleaseEntry(
+      27,
+      0,
+      '- fix(release): pin the Bun launcher runtime hashes (#771)',
+    ),
+    demoReleaseEntry(
+      26,
+      1,
+      '- feat(web): filter builds by pipeline (#767)\n- fix(secrets): allow deleting a Play secret when a wider one takes over (#775)',
+    ),
+    demoReleaseEntry(
+      25,
+      2,
+      '- feat(daemon,web): test Google Play credentials from the Publishing tab (#770)\n- fix(web): keep build logs in a fixed panel (#777)',
+    ),
+  ]
+  return {
+    ...demoRelease,
+    latest_version: releases[0].version,
+    update_available: true,
+    release_name: releases[0].release_name,
+    release_notes: releases[0].release_notes,
+    release_url: releases[0].release_url,
+    changelog_url: `https://github.com/oore-ci/oore.build/compare/v${demoRelease.version}...${releases[0].tag}`,
+    releases,
+  }
+}
+
 export const setupHandlers = [
   demoApi.healthz(() =>
     HttpResponse.json({
@@ -39,7 +84,7 @@ export const setupHandlers = [
       github_repo: demoRelease.github_repo,
     }),
   ),
-  http.get('/__oore_web_update', () => HttpResponse.json(demoRelease)),
+  http.get('/__oore_web_update', () => HttpResponse.json(demoReleaseStatus())),
   http.post('/__oore_web_update', () =>
     HttpResponse.json(
       { error: READ_ONLY_REASON, code: 'demo_read_only' },
