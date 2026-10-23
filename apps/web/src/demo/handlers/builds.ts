@@ -20,6 +20,8 @@ const createBuildRequestSchema = z.toZod<CreateBuildRequest>()(
     trigger_ref: z.string().nullish(),
   }),
 )
+const DEMO_TRIGGER_TYPES = new Set(['manual', 'api', 'schedule'])
+const DEMO_TRIGGER_EVENTS = new Set(['push', 'pull_request', 'tag_push'])
 const artifactQuerySchema = z.object({ build_ids: z.array(z.string()) })
 
 function withBuildContext(build: (typeof demoState.builds)[number]) {
@@ -157,6 +159,44 @@ export const buildHandlers = [
     const branch = url.searchParams.get('branch')
     if (branch) builds = builds.filter((b) => b.branch === branch)
 
+    // Mirrors the daemon's `trigger`: trigger types, or webhook events.
+    if (url.searchParams.has('trigger')) {
+      const triggers = (url.searchParams.get('trigger') ?? '')
+        .split(',')
+        .map((trigger) => trigger.trim())
+        .filter(Boolean)
+      const unknown = triggers.find(
+        (trigger) =>
+          !DEMO_TRIGGER_TYPES.has(trigger) && !DEMO_TRIGGER_EVENTS.has(trigger),
+      )
+      if (unknown) {
+        return HttpResponse.json(
+          { error: `unknown trigger '${unknown}'`, code: 'invalid_input' },
+          { status: 400 },
+        )
+      }
+      builds = builds.filter((build) =>
+        triggers.some((trigger) =>
+          DEMO_TRIGGER_TYPES.has(trigger)
+            ? build.trigger_type === trigger
+            : build.trigger_type === 'webhook' &&
+              build.trigger_event === trigger,
+        ),
+      )
+    }
+
+    const actor = url.searchParams.get('actor')?.trim()
+    if (actor) builds = builds.filter((b) => b.trigger_actor === actor)
+
+    const createdAfter = url.searchParams.get('created_after')
+    if (createdAfter) {
+      builds = builds.filter((b) => b.created_at >= Number(createdAfter))
+    }
+    const createdBefore = url.searchParams.get('created_before')
+    if (createdBefore) {
+      builds = builds.filter((b) => b.created_at < Number(createdBefore))
+    }
+
     // Mirrors the daemon's `q`: build number, branch, commit prefix, pipeline
     // or project name.
     const q = url.searchParams.get('q')?.trim().toLowerCase()
@@ -216,6 +256,36 @@ export const buildHandlers = [
       builds: builds.slice(offset, offset + limit).map(withBuildContext),
       total: builds.length,
     })
+  }),
+
+  demoApi.listBuildActors(async ({ request }) => {
+    await delay(100)
+    const url = new URL(request.url)
+    const persona = getDemoPersonaFromRequest(request)
+    const projectId = url.searchParams.get('project_id')
+    const q = url.searchParams.get('q')?.trim().toLowerCase()
+    const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200)
+    const latest = new Map<string, number>()
+    for (const build of demoState.builds) {
+      const actor = build.trigger_actor
+      if (
+        !actor ||
+        !getDemoProjectRole(persona, build.project_id) ||
+        (projectId && build.project_id !== projectId) ||
+        (q && !actor.toLowerCase().includes(q))
+      ) {
+        continue
+      }
+      latest.set(actor, Math.max(latest.get(actor) ?? 0, build.created_at))
+    }
+    const actors = [...latest.entries()]
+      .sort(
+        ([leftActor, left], [rightActor, right]) =>
+          right - left || leftActor.localeCompare(rightActor),
+      )
+      .slice(0, limit)
+      .map(([actor]) => actor)
+    return HttpResponse.json({ actors })
   }),
 
   demoApi.getBuildInsights(async ({ request }) => {
@@ -298,7 +368,7 @@ export const buildHandlers = [
         ) + 1,
       status: 'queued',
       trigger_type: 'manual',
-      trigger_actor: persona.userId,
+      trigger_actor: persona.email,
       branch: body.branch ?? 'main',
       commit_sha: body.commit_sha,
       changelog: body.changelog,
@@ -442,6 +512,9 @@ export const buildHandlers = [
             .map((candidate) => candidate.build_number),
         ) + 1,
       status: 'queued',
+      trigger_type: 'manual',
+      trigger_event: 'rerun',
+      trigger_actor: getDemoPersonaFromRequest(request).email,
       source_build_id: build.id,
       runner_id: undefined,
       started_at: undefined,

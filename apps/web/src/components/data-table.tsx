@@ -27,6 +27,7 @@ import {
   DropdownMenuGroup,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -41,6 +42,7 @@ import {
 } from '@/components/ui/table'
 import { formatEnumLabel } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
+import type { TableDensity } from '@/stores/table-density-store'
 import {
   dataTableColumnSortDirection,
   features,
@@ -163,6 +165,8 @@ function stickyColumnId(columnIds: Array<string>) {
 // Tighter than the primitive's px-4 between columns so dense tables such as
 // Builds fit an 1100px window, with the outer edges kept at px-4.
 const CELL_INSET = 'px-3 first:pl-4 last:pr-4'
+// Compact rows trade vertical padding for more rows in view.
+const COMPACT_CELL = 'in-data-[density=compact]:py-0.5'
 // The trailing row-actions column hugs its trigger.
 const ACTIONS_CELL = 'w-px pl-0'
 
@@ -176,9 +180,12 @@ const STICKY_BODY_CELL = cn(
 export function DataTable<TData extends RowData>({
   actions,
   activeFilterCount = 0,
+  collapseFilters = false,
+  density,
   emptyMessage,
   filters,
   isLoading = false,
+  onDensityChange,
   onClearFilters,
   pagination,
   search,
@@ -188,6 +195,13 @@ export function DataTable<TData extends RowData>({
   actions?: ReactNode
   /** Filters in effect, shown on the compact Filters disclosure. */
   activeFilterCount?: number
+  /**
+   * Keep filters in the Filters disclosure at every width, for tables with
+   * more filters than one toolbar row holds. It opens while any apply.
+   */
+  collapseFilters?: boolean
+  /** Compact rows tighten padding; offered in the Columns menu. */
+  density?: TableDensity
   emptyMessage?: ReactNode
   /** Collapse into a Filters disclosure when the toolbar is narrow. */
   filters?: ReactNode
@@ -195,6 +209,7 @@ export function DataTable<TData extends RowData>({
   isLoading?: boolean
   /** Pass while search or filters narrow the results. */
   onClearFilters?: () => void
+  onDensityChange?: (density: TableDensity) => void
   pagination?: {
     onPageChange: (page: number) => void
     page: number
@@ -208,7 +223,9 @@ export function DataTable<TData extends RowData>({
   }
   table: DataTableInstance<TData>
 }) {
-  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [filtersOpen, setFiltersOpen] = useState(
+    collapseFilters && activeFilterCount > 0,
+  )
   const visibleColumns = table.getVisibleLeafColumns()
   const stickyId = stickyColumnId(visibleColumns.map((column) => column.id))
   const rows = table.getRowModel().rows
@@ -260,13 +277,15 @@ export function DataTable<TData extends RowData>({
             <div className="ml-auto flex shrink-0 items-center gap-2">
               {filters ? (
                 <>
-                  <div className="hidden items-center gap-2 @2xl:flex">
-                    {clearFiltersButton}
-                    {filters}
-                  </div>
+                  {collapseFilters ? null : (
+                    <div className="hidden items-center gap-2 @2xl:flex">
+                      {clearFiltersButton}
+                      {filters}
+                    </div>
+                  )}
                   <Button
                     variant={filtersOpen ? 'outline' : 'secondary'}
-                    className="@2xl:hidden"
+                    className={collapseFilters ? undefined : '@2xl:hidden'}
                     aria-expanded={filtersOpen}
                     onClick={() => setFiltersOpen((open) => !open)}
                   >
@@ -287,7 +306,7 @@ export function DataTable<TData extends RowData>({
                 clearFiltersButton
               )}
               {actions}
-              {hideableColumns.length > 0 ? (
+              {hideableColumns.length > 0 || onDensityChange ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={<Button variant="secondary" />}
@@ -319,6 +338,23 @@ export function DataTable<TData extends RowData>({
                         </DropdownMenuCheckboxItem>
                       ))}
                     </DropdownMenuGroup>
+                    {onDensityChange ? (
+                      <>
+                        {hideableColumns.length > 0 ? (
+                          <DropdownMenuSeparator />
+                        ) : null}
+                        <DropdownMenuGroup>
+                          <DropdownMenuCheckboxItem
+                            checked={density === 'compact'}
+                            onCheckedChange={(value) =>
+                              onDensityChange(value ? 'compact' : 'comfortable')
+                            }
+                          >
+                            Compact rows
+                          </DropdownMenuCheckboxItem>
+                        </DropdownMenuGroup>
+                      </>
+                    ) : null}
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : null}
@@ -326,7 +362,10 @@ export function DataTable<TData extends RowData>({
           </div>
           {filters && filtersOpen ? (
             <div
-              className="flex flex-wrap items-center gap-2 rounded-md border p-2 @2xl:hidden"
+              className={cn(
+                'flex flex-wrap items-center gap-2 rounded-md border p-2',
+                !collapseFilters && '@2xl:hidden',
+              )}
               role="group"
               aria-label="Filters"
             >
@@ -336,7 +375,10 @@ export function DataTable<TData extends RowData>({
           ) : null}
         </div>
       ) : null}
-      <div className="overflow-hidden rounded-md border">
+      <div
+        className="overflow-hidden rounded-md border"
+        data-density={density === 'compact' ? 'compact' : undefined}
+      >
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -387,6 +429,7 @@ export function DataTable<TData extends RowData>({
                       key={cell.id}
                       className={cn(
                         CELL_INSET,
+                        COMPACT_CELL,
                         cell.column.id === 'actions' && ACTIONS_CELL,
                         cell.column.id === stickyId && STICKY_BODY_CELL,
                       )}

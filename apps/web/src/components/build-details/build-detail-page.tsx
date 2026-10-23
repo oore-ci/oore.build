@@ -39,6 +39,7 @@ import {
   isTerminalStatus,
   useArtifacts,
   useBuild,
+  useBuilds,
   useBuildApprovalDecision,
   useBuildLogs,
   useBuildTests,
@@ -54,6 +55,7 @@ import {
 } from '@/hooks/use-permissions'
 import { useProject } from '@/hooks/use-projects'
 import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
+import { stepMedians } from '@/lib/step-timings'
 import { isOoreApiError } from '@oore/client/client'
 import { PageMeta } from '@/lib/seo'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
@@ -253,6 +255,21 @@ export function BuildDetailPage({
     return mergeBuildLogSnapshots(streamLogs, fullLogsData?.logs ?? [])
   }, [streamLogs, fullLogsData?.logs])
   const stepResults = data?.build.step_results
+  // Recent successful runs of this pipeline give each step a typical time.
+  const pipelineHistoryQuery = useBuilds(
+    {
+      pipeline_id: data?.build.pipeline_id,
+      status: 'succeeded',
+      sort: 'created_at',
+      direction: 'desc',
+      limit: 20,
+    },
+    { enabled: !!data?.build.step_results?.length },
+  )
+  const medians = useMemo(
+    () => stepMedians(pipelineHistoryQuery.data?.builds ?? [], buildId),
+    [pipelineHistoryQuery.data?.builds, buildId],
+  )
   const failureLine = useMemo(() => {
     if (buildStatus !== 'failed' && buildStatus !== 'timed_out') return null
     const { stepGroups, allVisibleLogs } = groupLogs(
@@ -815,6 +832,7 @@ export function BuildDetailPage({
             <TerminalLogViewer
               logs={mergedLogs}
               stepResults={build.step_results ?? NO_STEP_RESULTS}
+              stepMedians={medians}
               isStreaming={isStreaming && !isTerminal}
               fillAvailableHeight
               isLoading={isTerminal && fullLogsQuery.isLoading}

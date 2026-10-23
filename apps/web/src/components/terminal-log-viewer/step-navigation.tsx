@@ -13,9 +13,12 @@ import {
 } from '@/components/ui/item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { formatDuration } from '@/lib/format-utils'
+import { stepTimingTrend } from '@/lib/step-timings'
+import { cn } from '@/lib/utils'
 
 interface StepNavigationProps {
   groups: Array<StepGroup>
+  medians?: ReadonlyMap<string, number>
   selectedStep: string
   allLogCount: number
   onSelect: (step: string) => void
@@ -23,10 +26,19 @@ interface StepNavigationProps {
 
 export function StepNavigation({
   groups,
+  medians,
   selectedStep,
   allLogCount,
   onSelect,
 }: StepNavigationProps) {
+  // Bars share one scale, so the slowest step or median fills the track.
+  const longestMs = Math.max(
+    0,
+    ...groups.flatMap((group) => [
+      group.durationMs ?? 0,
+      medians?.get(group.name) ?? 0,
+    ]),
+  )
   return (
     <nav
       aria-label="Build steps"
@@ -52,6 +64,8 @@ export function StepNavigation({
               selected={selectedStep === group.name}
               onClick={() => onSelect(group.name)}
               group={group}
+              longestMs={longestMs}
+              medianMs={medians?.get(group.name)}
             />
           ))}
         </ItemGroup>
@@ -66,13 +80,18 @@ function StepItem({
   name,
   lineCount,
   group,
+  longestMs = 0,
+  medianMs,
 }: {
   selected: boolean
   onClick: () => void
   name?: string
   lineCount?: number
   group?: StepGroup
+  longestMs?: number
+  medianMs?: number
 }) {
+  const durationMs = group?.durationMs
   const label = group?.name ?? name ?? ''
   const count = group?.logs.length ?? lineCount ?? 0
 
@@ -100,10 +119,20 @@ function StepItem({
         <ItemDescription className="font-mono text-[10px]">
           {formatLineCount(count)}
         </ItemDescription>
+        {durationMs != null && longestMs > 0 ? (
+          <StepDurationBar
+            durationMs={durationMs}
+            longestMs={longestMs}
+            medianMs={medianMs}
+          />
+        ) : null}
       </ItemContent>
-      {group?.durationMs != null ? (
-        <ItemActions className="font-mono text-[10px] text-muted-foreground">
-          {formatDuration(group.durationMs / 1000)}
+      {durationMs != null ? (
+        <ItemActions className="flex-col items-end gap-0.5 self-start font-mono text-[10px] text-muted-foreground">
+          <span>{formatDuration(durationMs / 1000)}</span>
+          {medianMs != null ? (
+            <StepMedianDelta durationMs={durationMs} medianMs={medianMs} />
+          ) : null}
         </ItemActions>
       ) : null}
     </Item>
@@ -112,4 +141,70 @@ function StepItem({
 
 function formatLineCount(count: number) {
   return `${count} ${count === 1 ? 'line' : 'lines'}`
+}
+
+const TREND_FILL = {
+  slower: 'bg-warning',
+  faster: 'bg-success',
+  typical: 'bg-muted-foreground/40',
+} as const
+
+/** The step's time on a shared scale, with a tick at the pipeline median. */
+function StepDurationBar({
+  durationMs,
+  longestMs,
+  medianMs,
+}: {
+  durationMs: number
+  longestMs: number
+  medianMs?: number
+}) {
+  const trend =
+    medianMs != null ? stepTimingTrend(durationMs, medianMs) : 'typical'
+  return (
+    <div aria-hidden className="relative mt-1 h-1 w-full rounded-full bg-muted">
+      <div
+        className={cn('h-full rounded-full', TREND_FILL[trend])}
+        style={{ width: `${Math.max(2, (durationMs / longestMs) * 100)}%` }}
+      />
+      {medianMs != null ? (
+        <div
+          className="absolute -top-0.5 h-2 w-px bg-foreground/60"
+          style={{ left: `${Math.min(100, (medianMs / longestMs) * 100)}%` }}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function StepMedianDelta({
+  durationMs,
+  medianMs,
+}: {
+  durationMs: number
+  medianMs: number
+}) {
+  const trend = stepTimingTrend(durationMs, medianMs)
+  const delta = Math.round((durationMs - medianMs) / 1000)
+  const median = formatDuration(medianMs / 1000)
+  const label =
+    delta === 0
+      ? '±0s'
+      : `${delta > 0 ? '+' : '−'}${formatDuration(Math.abs(delta))}`
+  return (
+    <span
+      className={cn(
+        trend === 'slower' && 'text-warning',
+        trend === 'faster' && 'text-success',
+      )}
+      title={`Median ${median} over recent successful builds of this pipeline`}
+    >
+      {label}
+      <span className="sr-only">
+        {trend === 'typical'
+          ? `, about the median of ${median}`
+          : `, ${trend} than the median of ${median}`}
+      </span>
+    </span>
+  )
 }

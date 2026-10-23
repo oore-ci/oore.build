@@ -31,6 +31,7 @@ const StepSelect = lazy(() =>
 export default function TerminalLogViewer({
   logs,
   stepResults,
+  stepMedians,
   isStreaming,
   fillAvailableHeight = false,
   isLoading = false,
@@ -330,6 +331,7 @@ export default function TerminalLogViewer({
           ) : (
             <StepNavigation
               groups={stepGroups}
+              medians={stepMedians}
               selectedStep={selectedStep}
               allLogCount={allVisibleLogs.length}
               onSelect={handleSelectStep}

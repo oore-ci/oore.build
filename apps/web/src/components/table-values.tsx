@@ -53,6 +53,13 @@ export function CommitValue({
   )
 }
 
+/**
+ * A cell's primary value over its secondary detail, side by side in a
+ * compact table (`data-density="compact"`).
+ */
+export const CELL_STACK =
+  'flex flex-col in-data-[density=compact]:flex-row in-data-[density=compact]:items-baseline in-data-[density=compact]:gap-x-2'
+
 /** A build's branch with its commit underneath, one column for its source. */
 export function BuildSourceValue({
   branch,
@@ -65,7 +72,7 @@ export function BuildSourceValue({
 }) {
   if (!branch && !commitSha) return <EmptyValue />
   return (
-    <div className="flex flex-col">
+    <div className={CELL_STACK}>
       {branch ? <span>{branch}</span> : <EmptyValue />}
       {commitSha ? <CommitValue context={context} sha={commitSha} /> : null}
     </div>
