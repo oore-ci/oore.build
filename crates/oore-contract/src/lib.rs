@@ -4860,10 +4860,25 @@ pub struct NotificationChannel {
     /// reading one channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smtp_summary: Option<SmtpConfigSummary>,
+    /// Slack member IDs to mention, matched against the person behind each
+    /// event (Slack only). Checked before the bot token lookup.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub slack_mentions: Vec<SlackMention>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// Maps a person to the Slack member mentioned in their notifications.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SlackMention {
+    /// Oore sign-in email (manual and API builds, releases) or Git username
+    /// (push and merge request builds). Matched without regard to case.
+    pub identity: String,
+    /// Slack member ID, such as `U0123ABCD`.
+    pub member_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -4888,6 +4903,9 @@ pub struct CreateNotificationChannelRequest {
     /// SMTP configuration (required for email channel type).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub smtp_config: Option<SmtpConfig>,
+    /// Slack member IDs to mention (Slack only). Works without a bot token.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slack_mentions: Vec<SlackMention>,
 }
 
 fn default_true() -> bool {
@@ -4916,6 +4934,10 @@ pub struct UpdateNotificationChannelRequest {
     /// Partial SMTP configuration update (email only). Omit fields to keep existing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub smtp_config: Option<UpdateSmtpConfig>,
+    /// New Slack member mappings (Slack only). Omit to keep existing; pass an
+    /// empty list to clear.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slack_mentions: Option<Vec<SlackMention>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

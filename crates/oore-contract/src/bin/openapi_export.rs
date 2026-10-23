@@ -581,6 +581,7 @@ use utoipa::{
         oore_contract::SmtpTlsMode,
         oore_contract::SmtpConfig,
         oore_contract::UpdateSmtpConfig,
+        oore_contract::SlackMention,
         oore_contract::NotificationDeliveryStatus,
         oore_contract::NotificationChannel,
         oore_contract::CreateNotificationChannelRequest,

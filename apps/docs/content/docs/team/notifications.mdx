@@ -4,7 +4,7 @@ description: 'Post build failures, release uploads, and rollout changes to a Sla
 status: implemented
 ---
 
-Slack channels post a message when a build finishes, a runner goes offline, or a release or rollout changes state. Each message links to the build or release in Oore. When a bot token is set, the message mentions the person who triggered the build or release.
+Slack channels post a message when a build finishes, a runner goes offline, or a release or rollout changes state. Each message links to the build or release in Oore. The message can mention the person who triggered the build or release, from a list of Slack member IDs or a bot token lookup.
 
 Oore sends every request from the backend host. Slack never calls back into Oore, so the backend stays private.
 
@@ -26,11 +26,11 @@ Oore sends every request from the backend host. Slack never calls back into Oore
 1. Open **Settings > Notifications** and select **Add channel**.
 2. Set **Type** to **Slack**.
 3. Choose a **Project** to post only that project's events, or keep **All projects**. Runner alerts only go to channels for all projects.
-4. Paste the webhook URL and, if you have one, the bot token.
+4. Paste the webhook URL and, if you have one, the bot token. To mention people without a bot token, or to mention people who push to Git, list their Slack member IDs (see [Mentions](#mentions)).
 5. Pick the events to send, or leave them all unchecked to send every event.
 6. Save, then select **Test**.
 
-The test message says whether mentions work. Oore looks up the email you signed in with, so a mismatch between your Oore email and your Slack email shows up here.
+The test message says whether mentions work for the email you signed in with, so a missing mapping or a mismatch between your Oore email and your Slack email shows up here.
 
 ## Events
 
@@ -53,4 +53,12 @@ Messages post within a few seconds of the change. If Slack does not accept a mes
 
 ## Mentions
 
-Oore mentions the person whose Oore email triggered the build or release, using Slack's `users.lookupByEmail`. Builds triggered by a Git push carry the Git username rather than an email, so those messages do not mention anyone. Without a bot token, or when the lookup fails, the message names the person by email instead.
+Oore works out who to mention in this order:
+
+1. **Slack member IDs on the channel.** Each line maps an Oore sign-in email or a Git username to a Slack member ID, for example `dev@example.com U0123ABCD` or `octocat U0123ABCD`. Builds started from Oore or the API match the sign-in email. Builds triggered by a Git push or merge request match the Git username. Releases match the email of the person who acted. This needs no bot token, so it works with an incoming webhook alone.
+2. **The bot token.** If the email is not mapped, Oore looks it up with Slack's `users.lookupByEmail`. Git usernames cannot be looked up this way, so map them under Slack member IDs.
+3. **Plain text.** Otherwise the message names the person by email or Git username without a mention.
+
+To find a member ID in Slack, open the person's profile, select the **More** menu, and choose **Copy member ID**.
+
+The test message checks the mapping for your own sign-in email first, then the bot token.

@@ -75,6 +75,7 @@ export const NOTIFICATION_CHANNEL_IDS = {
   webhook: 'notif-demo-001',
   mattermost: 'notif-demo-002',
   email: 'notif-demo-003',
+  slack: 'notif-demo-004',
 } as const
 
 // ── User IDs ──────────────────────────────────────────────────────

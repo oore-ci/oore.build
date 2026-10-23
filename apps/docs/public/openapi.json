@@ -14046,6 +14046,13 @@
             ],
             "description": "Webhook: HMAC secret for signing payloads. Slack: bot token with\n`users:read.email`, used to mention the triggering user. Optional."
           },
+          "slack_mentions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SlackMention"
+            },
+            "description": "Slack member IDs to mention (Slack only). Works without a bot token."
+          },
           "smtp_config": {
             "oneOf": [
               {
@@ -15991,6 +15998,7 @@
           "has_url",
           "has_secret",
           "has_smtp_config",
+          "slack_mentions",
           "created_at",
           "updated_at"
         ],
@@ -16042,6 +16050,13 @@
               "null"
             ],
             "description": "Project this channel is scoped to. Absent means the channel receives\nevents from every project, plus instance-wide events such as runner\noffline."
+          },
+          "slack_mentions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SlackMention"
+            },
+            "description": "Slack member IDs to mention, matched against the person behind each\nevent (Slack only). Checked before the bot token lookup."
           },
           "smtp_summary": {
             "oneOf": [
@@ -19131,6 +19146,24 @@
           }
         }
       },
+      "SlackMention": {
+        "type": "object",
+        "description": "Maps a person to the Slack member mentioned in their notifications.",
+        "required": [
+          "identity",
+          "member_id"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "description": "Oore sign-in email (manual and API builds, releases) or Git username\n(push and merge request builds). Matched without regard to case."
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Slack member ID, such as `U0123ABCD`."
+          }
+        }
+      },
       "SmtpConfig": {
         "type": "object",
         "required": [
@@ -19949,6 +19982,16 @@
               "null"
             ],
             "description": "New HMAC secret (webhook) or bot token (slack). Omit to keep existing;\npass empty string to clear."
+          },
+          "slack_mentions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SlackMention"
+            },
+            "description": "New Slack member mappings (Slack only). Omit to keep existing; pass an\nempty list to clear."
           },
           "smtp_config": {
             "oneOf": [

@@ -11,7 +11,7 @@ use ipnet::IpNet;
 use lettre::message::{Mailbox, header::ContentType};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
-use oore_contract::{NotificationChannelType, SmtpConfig, SmtpTlsMode};
+use oore_contract::{NotificationChannelType, SlackMention, SmtpConfig, SmtpTlsMode};
 use ring::hmac;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
@@ -154,6 +154,10 @@ struct Notification {
     release_id: Option<String>,
     /// Email of the user to mention on Slack.
     actor_email: Option<String>,
+    /// Git username behind a push or merge request build, matched against a
+    /// Slack channel's member mappings.
+    #[serde(default)]
+    actor_login: Option<String>,
     /// Generic JSON payload sent to webhook channels.
     payload: serde_json::Value,
 }
@@ -225,6 +229,7 @@ pub fn start_notification_dispatcher(
                         runner_id: Some(event.runner_id.clone()),
                         release_id: None,
                         actor_email: None,
+                        actor_login: None,
                         payload: runner_notification_payload(&event),
                     };
                     match enqueue(&runner_pool, &notification).await {
@@ -390,6 +395,8 @@ async fn build_notification(
     };
 
     let trigger_actor: Option<String> = build_row.try_get("trigger_actor").ok().flatten();
+    let trigger_type: Option<String> = build_row.try_get("trigger_type").ok();
+    let (actor_email, actor_login) = build_actor(trigger_type.as_deref(), trigger_actor);
     Ok(Some(Notification {
         event_type: event_type.to_string(),
         category: "build".to_string(),
@@ -397,9 +404,25 @@ async fn build_notification(
         build_id: Some(event.build_id.clone()),
         runner_id: None,
         release_id: None,
-        actor_email: trigger_actor.filter(|actor| actor.contains('@')),
+        actor_email,
+        actor_login,
         payload: build_notification_payload(&build_row, event),
     }))
+}
+
+/// Who a build mentions: the signed-in email for manual and API builds, or
+/// the Git username for webhook builds. Scheduled builds have no person.
+fn build_actor(
+    trigger_type: Option<&str>,
+    trigger_actor: Option<String>,
+) -> (Option<String>, Option<String>) {
+    match trigger_actor {
+        Some(actor) if actor.contains('@') => (Some(actor), None),
+        Some(actor) if trigger_type == Some("webhook") && !actor.trim().is_empty() => {
+            (None, Some(actor))
+        }
+        _ => (None, None),
+    }
 }
 
 /// Record deliveries for a release or rollout event. Returns the deliveries
@@ -425,6 +448,7 @@ async fn dispatch_release_event(
         runner_id: None,
         release_id: Some(event.release_id.clone()),
         actor_email: event.actor.clone().filter(|actor| actor.contains('@')),
+        actor_login: None,
         payload: release_notification_payload(event, event_type, project_name.as_deref()),
     };
     enqueue(pool, &notification).await
@@ -1027,16 +1051,44 @@ async fn slack_lookup_mention(bot_token: &str, email: &str) -> anyhow::Result<St
     }
 }
 
-/// Mention for `email`: a Slack user mention when the bot token can resolve
-/// it, otherwise the plain email so the message still names the person.
-async fn slack_mention(bot_token: Option<&str>, email: &str) -> String {
-    if let Some(token) = bot_token {
+/// A channel's stored Slack member mappings. Unreadable JSON reads as none.
+pub(crate) fn parse_slack_mentions(json: Option<&str>) -> Vec<SlackMention> {
+    json.and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_default()
+}
+
+/// The mapped `<@U…>` mention for the first identity that has one.
+fn mapped_mention(mentions: &[SlackMention], identities: &[&str]) -> Option<String> {
+    identities.iter().find_map(|identity| {
+        mentions
+            .iter()
+            .find(|mention| mention.identity.eq_ignore_ascii_case(identity.trim()))
+            .map(|mention| &mention.member_id)
+            .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()))
+            .map(|id| format!("<@{id}>"))
+    })
+}
+
+/// Mention for the person behind an event. A channel mapping wins, then a
+/// bot token lookup by email; otherwise the plain email or Git username, so
+/// the message still names the person.
+async fn slack_mention(
+    mentions: &[SlackMention],
+    bot_token: Option<&str>,
+    email: Option<&str>,
+    login: Option<&str>,
+) -> Option<String> {
+    let identities: Vec<&str> = email.into_iter().chain(login).collect();
+    if let Some(mention) = mapped_mention(mentions, &identities) {
+        return Some(mention);
+    }
+    if let (Some(token), Some(email)) = (bot_token, email) {
         match slack_lookup_mention(token, email).await {
-            Ok(mention) => return mention,
+            Ok(mention) => return Some(mention),
             Err(e) => warn!(error = %e, "Slack mention lookup failed; using email"),
         }
     }
-    slack_escape(email)
+    email.or(login).map(slack_escape)
 }
 
 fn decrypt_channel_field(
@@ -1064,10 +1116,20 @@ async fn dispatch_slack(
     let bot_token = decrypt_channel_field(channel_row, "encrypted_secret", encryption_key)
         .map_err(|e| anyhow::anyhow!("failed to decrypt channel {channel_id} bot token: {e}"))?;
 
-    let mention = match &notification.actor_email {
-        Some(email) => Some(slack_mention(bot_token.as_deref(), email).await),
-        None => None,
-    };
+    let mentions = parse_slack_mentions(
+        channel_row
+            .try_get::<Option<String>, _>("slack_mentions_json")
+            .ok()
+            .flatten()
+            .as_deref(),
+    );
+    let mention = slack_mention(
+        &mentions,
+        bot_token.as_deref(),
+        notification.actor_email.as_deref(),
+        notification.actor_login.as_deref(),
+    )
+    .await;
     let body = slack_message(
         &notification.category,
         &notification.payload,
@@ -1082,17 +1144,22 @@ async fn dispatch_slack(
 pub async fn send_slack_test(
     url: &str,
     bot_token: Option<&str>,
+    mentions: &[SlackMention],
     requester_email: &str,
 ) -> anyhow::Result<()> {
-    let mention_line = match bot_token {
-        Some(token) => match slack_lookup_mention(token, requester_email).await {
+    let mention_line = match (mapped_mention(mentions, &[requester_email]), bot_token) {
+        (Some(mention), _) => format!("Mentions work: hello {mention}."),
+        (None, Some(token)) => match slack_lookup_mention(token, requester_email).await {
             Ok(mention) => format!("Mentions work: hello {mention}."),
             Err(e) => format!(
                 "Mentions are not working for {}: {e}. Check that the bot token has `users:read.email` and that this email matches a Slack account.",
                 slack_escape(requester_email)
             ),
         },
-        None => "Add a bot token with `users:read.email` to mention the person who triggered each build.".to_string(),
+        (None, None) => format!(
+            "To mention people, map {} to a Slack member ID, or add a bot token with `users:read.email`.",
+            slack_escape(requester_email)
+        ),
     };
     let body = serde_json::json!({
         "text": "Oore can post to this channel.",
@@ -1560,8 +1627,61 @@ mod tests {
             runner_id: None,
             release_id: release_id.map(String::from),
             actor_email: None,
+            actor_login: None,
             payload: serde_json::Value::Null,
         }
+    }
+
+    fn mention(identity: &str, member_id: &str) -> SlackMention {
+        SlackMention {
+            identity: identity.to_string(),
+            member_id: member_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn builds_mention_the_signed_in_email_or_the_git_username() {
+        let actor = |actor: &str| Some(actor.to_string());
+        assert_eq!(
+            build_actor(Some("manual"), actor("dev@example.com")),
+            (actor("dev@example.com"), None)
+        );
+        assert_eq!(
+            build_actor(Some("webhook"), actor("octocat")),
+            (None, actor("octocat"))
+        );
+        assert_eq!(
+            build_actor(Some("schedule"), actor("schedule: 0 * * * *")),
+            (None, None)
+        );
+        assert_eq!(build_actor(Some("webhook"), None), (None, None));
+    }
+
+    #[tokio::test]
+    async fn channel_mappings_mention_without_a_bot_token() {
+        let mentions = [
+            mention("dev@example.com", "U0DEV"),
+            mention("octocat", "W0OCTO"),
+        ];
+        assert_eq!(
+            slack_mention(&mentions, None, Some("Dev@Example.com"), None).await,
+            Some("<@U0DEV>".to_string())
+        );
+        assert_eq!(
+            slack_mention(&mentions, None, None, Some("OctoCat")).await,
+            Some("<@W0OCTO>".to_string())
+        );
+        // Unmapped people are still named, escaped for mrkdwn.
+        assert_eq!(
+            slack_mention(&mentions, None, None, Some("<!here>")).await,
+            Some("&lt;!here&gt;".to_string())
+        );
+        assert_eq!(slack_mention(&mentions, None, None, None).await, None);
+        // A stored ID that is not plain alphanumerics is never rendered.
+        assert_eq!(
+            mapped_mention(&[mention("x", "U1> <!channel")], &["x"]),
+            None
+        );
     }
 
     #[test]
@@ -1787,6 +1907,66 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn failed_push_build_posts_to_its_project_channel_with_logs_and_mention() {
+        let (base, received) = capture_server().await;
+        let key = vec![7u8; 32];
+        let pool = channel_pool(&[], &key).await;
+        sqlx::query(
+            "INSERT INTO projects (id, name, created_by, created_at, updated_at) \
+             VALUES ('p2', 'Coin', 'u1', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO external_access_network_settings (id, public_url, created_at, updated_at) \
+             VALUES (1, 'https://ci.example.com/', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mentions = r#"[{"identity":"octocat","member_id":"U0OCTO"}]"#;
+        for (id, project_id) in [("kite", "p1"), ("coin", "p2")] {
+            sqlx::query(
+                "INSERT INTO notification_channels \
+                 (id, name, channel_type, enabled, project_id, encrypted_url, slack_mentions_json, \
+                  created_at, updated_at) \
+                 VALUES (?1, ?1, 'slack', 1, ?2, ?3, ?4, 0, 0)",
+            )
+            .bind(id)
+            .bind(project_id)
+            .bind(crypto::encrypt(&format!("{base}/{id}"), &key).unwrap())
+            .bind(mentions)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, \
+                 trigger_actor, branch, config_snapshot, queued_at, created_at, updated_at) \
+             VALUES ('b1', 'p1', 'pl1', 7, 'failed', 'webhook', 'octocat', 'main', '{}', 0, 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let ids = notify_due_builds(&pool).await.unwrap();
+        deliver(pool.clone(), key.clone().into(), ids).await;
+
+        let received = received.lock().unwrap().clone();
+        assert_eq!(received.len(), 1, "only the project's channel posts");
+        let (hook, body) = &received[0];
+        assert_eq!(hook, "kite");
+        let blocks = body["blocks"].as_array().unwrap();
+        let headline = blocks[0]["text"]["text"].as_str().unwrap();
+        assert!(headline.contains("*Kite* / Android: build #7 *failed*"));
+        assert!(headline.ends_with("Triggered by <@U0OCTO>"));
+        let button = &blocks.last().unwrap()["elements"][0];
+        assert_eq!(button["text"]["text"], "View logs");
+        assert_eq!(button["url"], "https://ci.example.com/builds/b1");
     }
 
     async fn channel_pool(channels: &[(&str, String)], key: &[u8]) -> SqlitePool {

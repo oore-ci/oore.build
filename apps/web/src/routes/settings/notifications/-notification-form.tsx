@@ -25,11 +25,14 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { useProjects } from '@/hooks/use-projects'
 import { formatEnumLabel } from '@/lib/format-utils'
-import type {
-  CreateNotificationChannelRequest,
-  NotificationChannel,
-  NotificationChannelType,
-  UpdateNotificationChannelRequest,
+import {
+  formatSlackMentions,
+  parseSlackMentions,
+  type CreateNotificationChannelRequest,
+  type NotificationChannel,
+  type NotificationChannelType,
+  type SlackMention,
+  type UpdateNotificationChannelRequest,
 } from '@/lib/notification-channels'
 
 const CHANNEL_TYPES = {
@@ -93,6 +96,7 @@ export const notificationChannelSchema = z.object({
   url: z.string().optional(),
   secret: z.string().optional(),
   remove_secret: z.boolean(),
+  slack_mentions: z.string(),
   event_scope: z.enum(['all', 'selected']),
   events: z.array(z.string()),
   smtp_host: z.string().optional(),
@@ -117,6 +121,24 @@ function requireSelectedEvents(
       path: ['events'],
     })
   }
+  if (values.channel_type === 'slack') {
+    const parsed = parseSlackMentions(values.slack_mentions)
+    if (!parsed.ok) {
+      context.addIssue({
+        code: 'custom',
+        message: parsed.error,
+        path: ['slack_mentions'],
+      })
+    }
+  }
+}
+
+function slackMentions(
+  values: NotificationChannelFormValues,
+): Array<SlackMention> {
+  const parsed = parseSlackMentions(values.slack_mentions)
+  // The schema rejects unreadable mappings before submit.
+  return parsed.ok ? parsed.mentions : []
 }
 
 // Saved SMTP settings are prefilled when editing, so clearing a required
@@ -204,6 +226,7 @@ export const notificationChannelDefaults: NotificationChannelFormValues = {
   url: '',
   secret: '',
   remove_secret: false,
+  slack_mentions: '',
   event_scope: 'all',
   events: [],
   smtp_host: '',
@@ -225,6 +248,7 @@ export function notificationChannelEditValues(
     channel_type: channel.channel_type,
     enabled: channel.enabled,
     project_id: channel.project_id ?? ALL_PROJECTS,
+    slack_mentions: formatSlackMentions(channel.slack_mentions),
     event_scope: channel.events.length > 0 ? 'selected' : 'all',
     events: channel.events,
     smtp_host: smtp?.host ?? '',
@@ -261,6 +285,14 @@ export function createNotificationChannelRequest(
     project_id:
       values.project_id === ALL_PROJECTS ? undefined : values.project_id,
   }
+  if (values.channel_type === 'slack') {
+    return {
+      ...request,
+      url: values.url,
+      secret: values.secret || undefined,
+      slack_mentions: slackMentions(values),
+    }
+  }
   if (values.channel_type !== 'email') {
     return { ...request, url: values.url, secret: values.secret || undefined }
   }
@@ -285,6 +317,14 @@ export function updateNotificationChannelRequest(
     enabled: values.enabled,
     events: selectedEvents(values),
     project_id: values.project_id === ALL_PROJECTS ? '' : values.project_id,
+  }
+  if (values.channel_type === 'slack') {
+    return {
+      ...request,
+      url: values.url || undefined,
+      secret: values.remove_secret ? '' : values.secret || undefined,
+      slack_mentions: slackMentions(values),
+    }
   }
   if (values.channel_type !== 'email') {
     return {
@@ -788,7 +828,7 @@ export function NotificationChannelFormFields({
                         ? removeSecret
                           ? 'The bot token will be removed when you save.'
                           : 'Leave blank to keep the configured bot token.'
-                        : 'A bot token with the users:read.email scope lets Oore mention the person who triggered a build by matching their sign-in email. Without it, messages name them by email.'}
+                        : 'A bot token with the users:read.email scope lets Oore mention people by matching their sign-in email. Without it, use member IDs below; anyone unmapped is named by email or Git username.'}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -809,14 +849,39 @@ export function NotificationChannelFormFields({
                       <div className="space-y-0.5">
                         <FormLabel>Remove configured bot token</FormLabel>
                         <FormDescription>
-                          Messages will name people by email instead of
-                          mentioning them.
+                          Only people listed under member IDs will be mentioned.
                         </FormDescription>
                       </div>
                     </FormItem>
                   )}
                 />
               ) : null}
+              <FormField
+                control={form.control}
+                name="slack_mentions"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Slack member IDs (optional)</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        placeholder={
+                          'dev@example.com U0123ABCD\noctocat U0456EFGH'
+                        }
+                        rows={4}
+                        spellCheck={false}
+                        className="font-mono"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      One per line: a sign-in email or Git username, then the
+                      Slack member ID to mention. Push builds use the Git
+                      username. These take priority over the bot token lookup.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </>
           ) : null}
         </>
