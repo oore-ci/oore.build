@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  approverMode,
+  approversInput,
+  approversSummary,
   formatRolloutSteps,
   nextEnvironment,
   parseRolloutSteps,
@@ -100,5 +103,40 @@ describe('nextEnvironment', () => {
       'production',
     )
     expect(nextEnvironment(environments, environments[1])?.id).toBe('app-store')
+  })
+})
+
+describe('approvers', () => {
+  const ana = { user_id: 'u1', email: 'ana@example.com' }
+
+  test('summarises who can approve', () => {
+    expect(approversSummary(undefined)).toBe('Maintainers')
+    expect(approversSummary({ users: [] })).toBe('Maintainers')
+    expect(approversSummary({ role: 'developer', users: [ana] })).toBe(
+      'Developers and maintainers, ana@example.com',
+    )
+    expect(approversSummary({ role: 'maintainer', users: [ana] })).toBe(
+      'Maintainers, ana@example.com',
+    )
+    expect(approversSummary({ users: [ana] })).toBe('ana@example.com')
+  })
+
+  test('round-trips the dialog mode', () => {
+    expect(approverMode(undefined)).toBe('maintainer')
+    expect(approverMode({ role: 'maintainer', users: [ana] })).toBe(
+      'maintainer',
+    )
+    expect(approverMode({ role: 'developer', users: [] })).toBe('developer')
+    expect(approverMode({ users: [ana] })).toBe('named')
+    expect(approversInput('maintainer', [])).toEqual({})
+    expect(approversInput('maintainer', ['u1'])).toEqual({
+      role: 'maintainer',
+      user_ids: ['u1'],
+    })
+    expect(approversInput('developer', [])).toEqual({
+      role: 'developer',
+      user_ids: [],
+    })
+    expect(approversInput('named', ['u1'])).toEqual({ user_ids: ['u1'] })
   })
 })

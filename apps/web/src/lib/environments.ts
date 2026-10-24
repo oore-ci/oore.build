@@ -1,4 +1,6 @@
 import type {
+  EnvironmentApprovers,
+  EnvironmentApproversInput,
   EnvironmentPromotion,
   ProjectEnvironment,
   PromotionState,
@@ -129,4 +131,50 @@ export function nextEnvironment(
   return environments
     .slice(index + 1)
     .find((item) => item.promotable && item.store === environment.store)
+}
+
+/**
+ * Who approves promotions, as the environment dialog edits it: maintainers
+ * (the default), developers and maintainers, or only named people. Named
+ * people are added on top of the first two.
+ */
+export type ApproverMode = 'maintainer' | 'developer' | 'named'
+
+export function approverMode(
+  approvers: EnvironmentApprovers | undefined,
+): ApproverMode {
+  if (approvers?.role === 'developer') return 'developer'
+  if (approvers?.role == null && (approvers?.users?.length ?? 0) > 0) {
+    return 'named'
+  }
+  return 'maintainer'
+}
+
+/** The approvers to send for a mode and named user ids. */
+export function approversInput(
+  mode: ApproverMode,
+  userIds: ReadonlyArray<string>,
+): EnvironmentApproversInput {
+  const user_ids = [...userIds]
+  if (mode === 'named') return { user_ids }
+  if (mode === 'developer') return { role: 'developer', user_ids }
+  // Maintainers alone is the default; keep it stored as no approvers.
+  return user_ids.length > 0 ? { role: 'maintainer', user_ids } : {}
+}
+
+/**
+ * Who can approve, for a sentence: "Maintainers", "Developers and
+ * maintainers, ana@example.com", or "ana@example.com, sam@example.com".
+ */
+export function approversSummary(
+  approvers: EnvironmentApprovers | undefined,
+): string {
+  const emails = (approvers?.users ?? []).map((user) => user.email)
+  const role =
+    approvers?.role === 'developer'
+      ? 'Developers and maintainers'
+      : approvers?.role === 'maintainer' || emails.length === 0
+        ? 'Maintainers'
+        : undefined
+  return [role, ...emails].filter(Boolean).join(', ')
 }

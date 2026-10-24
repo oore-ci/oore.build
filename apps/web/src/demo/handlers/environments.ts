@@ -6,6 +6,7 @@ import type {
   ReleasePolicy,
   UpdateProjectEnvironmentRequest,
 } from '@oore/client/models'
+import { approversSummary } from '@/lib/environments'
 import { ago } from '../seed'
 import type { DemoEnvironment, DemoPromotion } from '../data/environments'
 import type { DemoRelease } from '../data/releases'
@@ -14,6 +15,11 @@ import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { demoState } from '../state'
 import { demoApi } from './api'
 import { withReleaseContext } from './releases'
+
+const approversSchema = z.object({
+  role: z.enum(['maintainer', 'developer', 'viewer']).nullish(),
+  user_ids: z.array(z.string()).optional(),
+})
 
 const policySchema = z.object({
   steps: z.array(z.number()).optional(),
@@ -31,6 +37,7 @@ const createSchema = z.toZod<CreateProjectEnvironmentRequest>()(
     approval_required: z.boolean().optional(),
     rollout_policy: policySchema.nullish(),
     submit_for_review: z.boolean().optional(),
+    approvers: approversSchema.nullish(),
   }),
 )
 
@@ -42,6 +49,7 @@ const updateSchema = z.toZod<UpdateProjectEnvironmentRequest>()(
     rollout_policy: policySchema.nullish(),
     submit_for_review: z.boolean().nullish(),
     position: z.number().nullish(),
+    approvers: approversSchema.nullish(),
   }),
 )
 
@@ -69,8 +77,55 @@ function environmentName(environmentId: string | null | undefined) {
   return demoState.environments.find((item) => item.id === environmentId)?.name
 }
 
+/** Mirrors the daemon: named approvers and an approver role, else maintainers. */
+function canApprove(
+  persona: DemoPersona,
+  environment: DemoEnvironment | undefined,
+) {
+  if (persona.role === 'owner' || persona.role === 'admin') return true
+  if (!environment) return false
+  const role = getDemoProjectRole(persona, environment.project_id)
+  if (!role || role === 'viewer') return false
+  const approvers = environment.approvers
+  const users = approvers?.users ?? []
+  if (!approvers?.role && users.length === 0) return role === 'maintainer'
+  if (approvers?.role === 'developer') return true
+  if (approvers?.role === 'maintainer' && role === 'maintainer') return true
+  return users.some((user) => user.user_id === persona.userId)
+}
+
+/** Validate approvers against the project's members, as the daemon does. */
+function resolveApprovers(
+  projectId: string,
+  input: z.infer<typeof approversSchema>,
+) {
+  if (input.role === 'viewer') {
+    return { error: 'approvers.role must be maintainer or developer' }
+  }
+  const members = demoState.projectRoles[projectId] ?? {}
+  const users = []
+  for (const userId of new Set(input.user_ids ?? [])) {
+    const role = members[userId]
+    const email = emailOf(userId)
+    if (!role || !email) {
+      return {
+        error: `approvers.user_ids: ${userId} is not a member of this project`,
+      }
+    }
+    if (role === 'viewer') {
+      return {
+        error: `approvers.user_ids: ${email} is a viewer; approvers must be developers or maintainers`,
+      }
+    }
+    users.push({ user_id: userId, email })
+  }
+  return { approvers: { role: input.role ?? undefined, users } }
+}
+
 function withPromotionContext(promotion: DemoPromotion, persona: DemoPersona) {
-  const role = getDemoProjectRole(persona, promotion.project_id)
+  const environment = demoState.environments.find(
+    (item) => item.id === promotion.environment_id,
+  )
   const source = demoState.releases.find(
     (release) => release.id === promotion.source_release_id,
   )
@@ -80,7 +135,8 @@ function withPromotionContext(promotion: DemoPromotion, persona: DemoPersona) {
     source_environment_name: environmentName(source?.environment_id),
     requested_by_email: emailOf(promotion.requested_by),
     decided_by_email: emailOf(promotion.decided_by),
-    can_decide: promotion.state === 'pending' && role === 'maintainer',
+    can_decide:
+      promotion.state === 'pending' && canApprove(persona, environment),
   }
 }
 
@@ -211,6 +267,8 @@ export const environmentHandlers = [
         'Another environment already uses this key, or this store and track',
       )
     }
+    const resolved = resolveApprovers(projectId, body.approvers ?? {})
+    if (resolved.error) return error(400, 'invalid_input', resolved.error)
     const environment: DemoEnvironment = {
       id: `env-demo-${Date.now()}`,
       project_id: projectId,
@@ -220,6 +278,7 @@ export const environmentHandlers = [
       store: body.store,
       track: body.track,
       approval_required: body.approval_required ?? false,
+      approvers: resolved.approvers,
       rollout_policy: body.rollout_policy ?? DEFAULT_POLICY,
       submit_for_review: body.submit_for_review ?? false,
       promotable: true,
@@ -257,6 +316,13 @@ export const environmentHandlers = [
         'invalid_input',
         `${environment.name} already has releases on the ${environment.track} track, so its track cannot change. Add a new environment for the ${body.track} track instead.`,
       )
+    }
+    if (body.approvers) {
+      const resolved = resolveApprovers(environment.project_id, body.approvers)
+      if (resolved.error) {
+        return error(400, 'invalid_input', resolved.error)
+      }
+      environment.approvers = resolved.approvers
     }
     environment.name = body.name ?? environment.name
     environment.track = body.track ?? environment.track
@@ -394,8 +460,15 @@ export const environmentHandlers = [
       if (!promotion || !getDemoProjectRole(persona, promotion.project_id)) {
         return error(404, 'not_found', 'Promotion not found')
       }
-      if (getDemoProjectRole(persona, promotion.project_id) !== 'maintainer') {
-        return error(403, 'permission_denied', 'Maintainer role required')
+      const target = demoState.environments.find(
+        (item) => item.id === promotion.environment_id,
+      )
+      if (!canApprove(persona, target)) {
+        return error(
+          403,
+          'permission_denied',
+          `Only ${approversSummary(target?.approvers).toLowerCase()} can approve or reject promotions into ${target?.name ?? 'this environment'}`,
+        )
       }
       if (promotion.state !== 'pending') {
         return error(409, 'promotion_not_pending', 'Not waiting for approval')

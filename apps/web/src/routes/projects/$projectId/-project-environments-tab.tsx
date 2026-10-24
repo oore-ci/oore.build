@@ -14,6 +14,7 @@ import type {
 } from '@oore/client/models'
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import {
+  approversSummary,
   environmentTargetLabel,
   getPromotionStateVariant,
   PROMOTION_STATE_LABEL,
@@ -203,10 +204,13 @@ function EnvironmentRow({
 }
 
 function PromotionRow({
+  approvers,
   onDecide,
   pending,
   promotion,
 }: {
+  /** Who can approve, shown while the promotion waits. */
+  approvers?: string
   onDecide: (approve: boolean) => void
   pending: boolean
   promotion: EnvironmentPromotion
@@ -243,6 +247,9 @@ function PromotionRow({
           {who} · {relativeTime(promotion.decided_at ?? promotion.created_at)}
           {note ? ` · ${note}` : ''}
         </ItemDescription>
+        {approvers ? (
+          <ItemDescription>Can approve: {approvers}</ItemDescription>
+        ) : null}
       </ItemContent>
       <ItemActions>
         {promotion.can_decide ? (
@@ -275,7 +282,7 @@ export function ProjectEnvironmentsTab({
   canOperate,
   projectId,
 }: {
-  /** Maintainers add environments, promote straight in and approve. */
+  /** Maintainers add environments and promote straight in. */
   canManage: boolean
   /** Developers may ask for promotions into environments that need approval. */
   canOperate: boolean
@@ -424,6 +431,12 @@ export function ProjectEnvironmentsTab({
               {pendingPromotions.map((promotion) => (
                 <PromotionRow
                   key={promotion.id}
+                  approvers={approversSummary(
+                    environments.find(
+                      (environment) =>
+                        environment.id === promotion.environment_id,
+                    )?.approvers,
+                  )}
                   promotion={promotion}
                   pending={
                     decideMutation.isPending &&

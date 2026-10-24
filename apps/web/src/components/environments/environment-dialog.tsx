@@ -5,6 +5,8 @@ import * as z from 'zod'
 import type { ProjectEnvironment } from '@oore/client/models'
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import {
+  approverMode,
+  approversInput,
   ENVIRONMENT_KEY_MAX_LENGTH,
   ENVIRONMENT_KEY_PATTERN,
   ENVIRONMENT_NAME_MAX_LENGTH,
@@ -18,9 +20,11 @@ import {
   useCreateEnvironment,
   useUpdateEnvironment,
 } from '@/hooks/use-environments'
+import { useProjectMembers } from '@/hooks/use-projects'
 import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -40,6 +44,13 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemMedia,
+  ItemTitle,
+} from '@/components/ui/item'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -53,6 +64,12 @@ const DEFAULT_STEPS = [0.01, 0.05, 0.2, 0.5, 1]
 /** Apple's phased release schedule, as rollout steps. */
 const APPLE_PHASED_STEPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1]
 const APP_STORE_TRACK = 'app_store'
+
+const APPROVER_MODE_LABEL = {
+  maintainer: 'Maintainers',
+  developer: 'Developers and maintainers',
+  named: 'Only named approvers',
+}
 
 const environmentFormSchema = z
   .object({
@@ -79,6 +96,8 @@ const environmentFormSchema = z
     store: z.enum(['google_play', 'app_store']),
     track: z.string().trim().min(1, 'Enter a track.'),
     approval_required: z.boolean(),
+    approver_mode: z.enum(['maintainer', 'developer', 'named']),
+    approver_user_ids: z.array(z.string()),
     phased_release: z.boolean(),
     submit_for_review: z.boolean(),
     steps: z.string(),
@@ -92,6 +111,17 @@ const environmentFormSchema = z
       .optional(),
   })
   .superRefine((values, context) => {
+    if (
+      values.approval_required &&
+      values.approver_mode === 'named' &&
+      values.approver_user_ids.length === 0
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['approver_user_ids'],
+        message: 'Choose at least one approver.',
+      })
+    }
     const parsed = parseRolloutSteps(values.steps)
     if ('error' in parsed) {
       context.addIssue({
@@ -114,6 +144,10 @@ function defaultValues(
     store: environment?.store ?? 'google_play',
     track: environment?.track ?? '',
     approval_required: environment?.approval_required ?? false,
+    approver_mode: approverMode(environment?.approvers),
+    approver_user_ids: (environment?.approvers?.users ?? []).map(
+      (user) => user.user_id,
+    ),
     phased_release: (policy?.steps ?? DEFAULT_STEPS).length > 1,
     submit_for_review: environment?.submit_for_review ?? false,
     steps: formatRolloutSteps(policy?.steps ?? DEFAULT_STEPS),
@@ -151,10 +185,15 @@ export function EnvironmentDialog({
     resolver: zodResolver(environmentFormSchema),
     values: defaultValues(environment),
   })
-  const [store, track] = useWatch({
+  const [store, track, approvalRequired, approverModeValue] = useWatch({
     control: form.control,
-    name: ['store', 'track'],
+    name: ['store', 'track', 'approval_required', 'approver_mode'],
   })
+  const membersQuery = useProjectMembers(projectId, open)
+  // Viewers cannot approve, so they are not offered.
+  const approverCandidates = (membersQuery.data?.members ?? []).filter(
+    (member) => member.role !== 'viewer',
+  )
   const staged = store === 'google_play' && track.trim() !== 'internal'
   const appStoreVersion =
     store === 'app_store' && track.trim() === APP_STORE_TRACK
@@ -191,6 +230,10 @@ export function EnvironmentDialog({
           ? APPLE_PHASED_STEPS
           : [1]
     const submit_for_review = versionTrack && values.submit_for_review
+    // Approvers only matter with approval on; otherwise keep what is stored.
+    const approvers = values.approval_required
+      ? approversInput(values.approver_mode, values.approver_user_ids)
+      : undefined
     const rollout_policy = {
       steps,
       interval_hours: values.interval_hours,
@@ -215,6 +258,7 @@ export function EnvironmentDialog({
             name: values.name,
             track: values.track,
             approval_required: values.approval_required,
+            approvers,
             rollout_policy,
             submit_for_review,
           },
@@ -235,6 +279,7 @@ export function EnvironmentDialog({
           store: values.store,
           track: values.track,
           approval_required: values.approval_required,
+          approvers,
           rollout_policy,
           submit_for_review,
         },
@@ -391,8 +436,8 @@ export function EnvironmentDialog({
                   <Stack gap={1}>
                     <FormLabel>Require approval</FormLabel>
                     <FormDescription>
-                      Developers can ask to promote; a maintainer approves
-                      before anything changes in the store.
+                      Developers can ask to promote; an approver approves before
+                      anything changes in the store.
                     </FormDescription>
                   </Stack>
                   <FormControl>
@@ -404,6 +449,116 @@ export function EnvironmentDialog({
                 </FormItem>
               )}
             />
+
+            {approvalRequired ? (
+              <Stack gap={4} className="rounded-lg border p-3">
+                <FormField
+                  control={form.control}
+                  name="approver_mode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Who can approve</FormLabel>
+                      <Select
+                        value={field.value}
+                        onValueChange={(next) => {
+                          if (
+                            next === 'maintainer' ||
+                            next === 'developer' ||
+                            next === 'named'
+                          ) {
+                            field.onChange(next)
+                          }
+                        }}
+                        items={APPROVER_MODE_LABEL}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {Object.entries(APPROVER_MODE_LABEL).map(
+                            ([value, label]) => (
+                              <SelectItem key={value} value={value}>
+                                {label}
+                              </SelectItem>
+                            ),
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="approver_user_ids"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Named approvers</FormLabel>
+                      <FormDescription>
+                        {approverModeValue === 'named'
+                          ? 'Only these members can approve. Instance admins can too.'
+                          : 'These members can approve as well, whatever their role.'}
+                      </FormDescription>
+                      {membersQuery.isLoading ? (
+                        <Spinner />
+                      ) : approverCandidates.length === 0 ? (
+                        <Text render={<span />}>
+                          No developers or maintainers in this project yet.
+                        </Text>
+                      ) : (
+                        <div
+                          role="group"
+                          aria-label="Named approvers"
+                          className="grid gap-2"
+                        >
+                          {approverCandidates.map((member) => (
+                            <Item
+                              key={member.user_id}
+                              render={<label />}
+                              variant="outline"
+                              size="sm"
+                              className="has-data-checked:border-primary has-data-checked:bg-accent"
+                            >
+                              <ItemMedia>
+                                <Checkbox
+                                  checked={field.value.includes(member.user_id)}
+                                  onCheckedChange={(checked) =>
+                                    field.onChange(
+                                      checked
+                                        ? [...field.value, member.user_id]
+                                        : field.value.filter(
+                                            (id) => id !== member.user_id,
+                                          ),
+                                    )
+                                  }
+                                />
+                              </ItemMedia>
+                              <ItemContent>
+                                <ItemTitle>
+                                  {member.user_display_name ??
+                                    member.user_email}
+                                </ItemTitle>
+                                <ItemDescription>
+                                  {member.user_display_name
+                                    ? `${member.user_email} · `
+                                    : ''}
+                                  {member.role === 'maintainer'
+                                    ? 'Maintainer'
+                                    : 'Developer'}
+                                </ItemDescription>
+                              </ItemContent>
+                            </Item>
+                          ))}
+                        </div>
+                      )}
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </Stack>
+            ) : null}
 
             {appStoreVersion ? (
               <>

@@ -48,6 +48,9 @@ export const demoEnvironments: Array<DemoEnvironment> = [
     store: 'google_play',
     track: 'open',
     approval_required: true,
+    approvers: {
+      users: [{ user_id: USER_IDS.admin, email: 'demo+admin@oore.build' }],
+    },
     rollout_policy: {
       steps: [0.5, 1],
       interval_hours: 12,
