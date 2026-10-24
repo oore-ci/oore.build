@@ -20,42 +20,8 @@ import { Input } from '@/components/ui/input'
 import { Text } from '@/components/layout/text'
 import { textVariants } from '@/lib/recipes'
 
-const ANDROID_GRADLE_GROOVY_SNIPPET = `android {
-    signingConfigs {
-        release {
-            storeFile file(System.getenv("OORE_ANDROID_KEYSTORE_PATH"))
-            storePassword System.getenv("OORE_ANDROID_KEYSTORE_PASSWORD")
-            keyAlias System.getenv("OORE_ANDROID_KEY_ALIAS")
-            keyPassword System.getenv("OORE_ANDROID_KEY_PASSWORD")
-        }
-    }
-    buildTypes {
-        release {
-            signingConfig signingConfigs.release
-        }
-    }
-}`
-
-const ANDROID_GRADLE_KOTLIN_SNIPPET = `android {
-    signingConfigs {
-        create("release") {
-            storeFile = file(System.getenv("OORE_ANDROID_KEYSTORE_PATH"))
-            storePassword = System.getenv("OORE_ANDROID_KEYSTORE_PASSWORD")
-            keyAlias = System.getenv("OORE_ANDROID_KEY_ALIAS")
-            keyPassword = System.getenv("OORE_ANDROID_KEY_PASSWORD")
-        }
-    }
-    buildTypes {
-        getByName("release") {
-            signingConfig = signingConfigs.getByName("release")
-        }
-    }
-}`
-
-const ANDROID_GRADLE_SNIPPETS = [
-  { label: 'build.gradle.kts', code: ANDROID_GRADLE_KOTLIN_SNIPPET },
-  { label: 'build.gradle', code: ANDROID_GRADLE_GROOVY_SNIPPET },
-]
+const ANDROID_GRADLE_DOCS_URL =
+  'https://docs.oore.build/build/sign/android/gradle'
 
 export function PipelineAndroidSigningSection({
   debugKeystoreFile,
@@ -113,11 +79,34 @@ export function PipelineAndroidSigningSection({
       {releaseEnabled || debugEnabled ? (
         <SetupHint
           title="Android project setup"
-          codeTabs={ANDROID_GRADLE_SNIPPETS}
           items={[
-            'For standard Flutter release builds, upload the keystore here and Oore prepares the signing files for the runner.',
-            'For custom Gradle flavors or signingConfigs, read the OORE_ANDROID_* environment variables as shown below. New Flutter projects use build.gradle.kts.',
-            'Oore also writes OORE_ANDROID_KEY_PROPERTIES_PATH if your Gradle setup prefers a generated key.properties file.',
+            <span key="post-build">
+              No Gradle changes needed. After each{' '}
+              <code>flutter build apk</code> or{' '}
+              <code>flutter build appbundle</code>, Oore re-signs its APKs or
+              App Bundle with your keystore in a separate{' '}
+              <code>android-sign</code> step. Output from other commands, such
+              as <code>./gradlew</code>, is not signed.
+            </span>,
+            <span key="variant">
+              Commands with <code>--debug</code> use the debug keystore, and all
+              others use the release keystore. A variant with signing turned off
+              keeps the Gradle signature. Build one variant per run.
+            </span>,
+            'Build commands never see the keystore or its passwords, so Gradle cannot read them.',
+            <span key="local-signing">
+              If Gradle loads a local <code>key.properties</code>, skip it when{' '}
+              <code>CI</code> is true. Oore sets <code>CI=true</code> for build
+              commands.{' '}
+              <a
+                href={ANDROID_GRADLE_DOCS_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-4"
+              >
+                Learn more
+              </a>
+            </span>,
           ]}
         />
       ) : null}
