@@ -57,6 +57,7 @@ const NOTIFICATION_EVENT_GROUPS = [
   {
     label: 'Builds',
     events: [
+      { value: 'build_approval_needed', label: 'Build approval needed' },
       { value: 'succeeded', label: 'Build succeeded' },
       { value: 'failed', label: 'Build failed' },
       { value: 'canceled', label: 'Build canceled' },

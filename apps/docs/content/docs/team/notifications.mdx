@@ -37,6 +37,7 @@ The test message says whether mentions work for the email you signed in with, so
 
 | Event                   | Sent when                                          |
 | ----------------------- | -------------------------------------------------- |
+| Build approval needed   | A build waits for a maintainer's approval          |
 | Build succeeded         | A build succeeds                                   |
 | Build failed            | A build fails. The message links to the build logs |
 | Build canceled          | A build is canceled                                |
@@ -51,11 +52,7 @@ The test message says whether mentions work for the email you signed in with, so
 | Tester feedback         | A tester sends feedback from the QA portal         |
 | Runner offline          | A runner stops reporting (all-projects channels)   |
 
-**All events** also sends events that have no box under **Selected events**,
-such as `build_approval_needed` when a build waits for a maintainer, and events
-added in later releases. To send only some events plus
-`build_approval_needed`, list them in `events` with
-[Update a notification channel](/openapi/operations/update_notification_channel).
+**All events** also sends events added in later releases.
 
 Messages post within a few seconds of the change. If Slack does not accept a message, Oore tries again up to four more times over the next eight minutes. The delivery shows as pending until then. Each channel's page shows its **Delivery history**.
 
@@ -119,5 +116,5 @@ eight minutes. After that, the delivery shows its last error.
 ## Next step
 
 [Require approval for builds](/build/pipelines/triggers#approval) and keep
-the channel on **All events**, so maintainers hear when a build waits for
-them.
+**All events** on, or tick **Build approval needed**, so maintainers hear
+when a build waits for them.
