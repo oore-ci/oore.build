@@ -22,11 +22,12 @@ the next page.
 If the app is already on Google Play, skip this step and use your existing
 upload keystore.
 
-Otherwise, create one. Android Studio's JDK is at
-`/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin`:
+Otherwise, create one with the JDK that comes with Android Studio. A fresh
+Mac has no Java on its `PATH`, so call the tools by their full path:
 
 ```bash
-keytool -genkeypair -v -keystore upload-keystore.jks \
+JAVA_BIN="/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin"
+"$JAVA_BIN/keytool" -genkeypair -v -keystore upload-keystore.jks \
   -keyalg RSA -keysize 2048 -validity 10000 \
   -alias upload
 ```
@@ -83,8 +84,9 @@ The build ends as **Succeeded**, and its log shows an `android-sign` step. Under
 **Artifacts**, download `app-release.aab`, then check its signature:
 
 ```bash
-jarsigner -verify app-release.aab
-keytool -printcert -jarfile app-release.aab
+JAVA_BIN="/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin"
+"$JAVA_BIN/jarsigner" -verify app-release.aab
+"$JAVA_BIN/keytool" -printcert -jarfile app-release.aab
 ```
 
 `jarsigner` prints `jar verified.` It also warns that the certificate is
@@ -96,13 +98,15 @@ self-signed. Upload keys are self-signed, so you can ignore that warning.
 **Oore rejects the signing profile when you save**
 
 The keystore file, alias, and passwords must all belong to the same keystore.
-Check the alias with `keytool -list -keystore upload-keystore.jks`.
+Check the alias with `"$JAVA_BIN/keytool" -list -keystore upload-keystore.jks`.
 
 **The build fails with "artifact patterns matched no files"**
 
 The command did not produce a bundle under `build/app/outputs/bundle/release`.
 Check that the override is exactly the command above, without a
-`--flavor`. For flavored apps, see
+`--flavor`. The template also keeps an APK pattern next to the `.aab`
+pattern. That is fine: a build fails only when every pattern matches
+nothing. For flavored apps, see
 [Add Android signing](/build/sign/android).
 
 **Gradle fails because it cannot find a local `key.properties`**

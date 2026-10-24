@@ -21,8 +21,9 @@ First, check the Xcode toolchain the runner will use:
 oore doctor --platform ios
 ```
 
-The command ends with `All selected required checks passed.` Warnings about
-signing are expected at this point.
+The command ends with `All selected required checks passed.` It checks the
+signing tools, not your certificates. Oore checks signing credentials in each
+build.
 
 ## 1. Create the project
 
@@ -70,8 +71,8 @@ Your app compiles for iOS on this Mac.
 
 **The build fails because CocoaPods is missing**
 
-Apps with plugins need CocoaPods. Install it with `brew install cocoapods`,
-then run the build again.
+Apps with plugins need CocoaPods. Install it with `sudo gem install cocoapods`,
+or `brew install cocoapods` if you use Homebrew. Then run the build again.
 
 **The build fails with "artifact patterns matched no files"**
 

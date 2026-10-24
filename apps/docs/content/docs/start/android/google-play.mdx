@@ -43,8 +43,10 @@ Google can take a few minutes to accept a newly invited service account.
 ## 3. Store the key in Oore
 
 1. In Oore, open **Settings > Store credentials**.
-2. Under **Google Play service account**, select **Add service account** and
-   choose the JSON key file.
+2. Under **Google Play service account**, select **Add service account**.
+3. Keep the name `PLAY_SERVICE_ACCOUNT`. Select **Load from file** and choose
+   the JSON key file.
+4. Select **Add secret**.
 
 Oore stores the key as an encrypted instance secret named
 `PLAY_SERVICE_ACCOUNT`. Nobody can read it back, and builds see it only as

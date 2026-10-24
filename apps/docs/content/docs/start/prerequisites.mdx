@@ -37,10 +37,10 @@ so Homebrew GNU coreutils earlier in your `PATH` do not affect it.
 
 ## 2. Install Flutter where the runner can find it
 
-The Oore runner runs as the macOS account that installs Oore. It looks for
-`flutter` and `dart` only in `/opt/homebrew/bin`, `/usr/local/bin`,
-`/usr/bin`, and `/bin`, so a Flutter on your shell's `PATH` alone is not
-enough.
+The Oore runner runs as the macOS account that installs Oore. Its `PATH` is
+`/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`, so a
+Flutter that only your shell's `PATH` finds is not enough. Link `flutter` and
+`dart` into one of those folders.
 
 Install the Flutter version your app uses. If the repository has an `.fvmrc`
 file, use the version in it. Replace `3.47.7` with your version:

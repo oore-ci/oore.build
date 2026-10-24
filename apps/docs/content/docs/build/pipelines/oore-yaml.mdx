@@ -91,6 +91,20 @@ If the file defines several `workflows`, open each pipeline's **Edit** page
 and pick one under **Workflow**. A file with several workflows fails builds of
 a pipeline that has not picked one.
 
+## Create a pipeline from an existing file
+
+When the repository already has `.oore.yaml` or `.oore.yml` on its default
+branch, create the pipeline from it:
+
+1. Open the project's **Pipelines** tab and select
+   **Use repository workflow**. With other pipelines in the project, select
+   **Add pipeline**.
+2. Under **Start from**, Oore shows **Repository workflow found** and a
+   summary of the platforms, Flutter version, commands, and artifacts. If it
+   found several files, select the one to use.
+3. If the file defines several workflows, pick one under **Workflow**.
+4. Enter a **Pipeline name** and select **Create pipeline**.
+
 ## Check the result
 
 Run a build. Its log contains a line like this:
