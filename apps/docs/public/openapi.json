@@ -6125,6 +6125,312 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/environments": {
+      "get": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "List project environments",
+        "description": "Environments in promotion order, each with its newest release, plus pending promotions and the most recent decided ones.",
+        "operationId": "list_project_environments",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Environments and promotions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListProjectEnvironmentsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Create environment",
+        "description": "Adds an environment at the end of the promotion path. Requires the project maintainer role. A release recorded on the environment's store and track belongs to it.",
+        "operationId": "create_project_environment",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectEnvironmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Created environment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectEnvironment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Key, or store and track, already used",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/environments/{environment_id}": {
+      "delete": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Delete environment",
+        "description": "Its releases stay without an environment; its promotions are removed. Requires the project maintainer role.",
+        "operationId": "delete_project_environment",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment_id",
+            "in": "path",
+            "description": "Environment ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A promotion is in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Update environment",
+        "description": "Changes the name, track, approval rule, rollout policy or position. Requires the project maintainer role.",
+        "operationId": "update_project_environment",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment_id",
+            "in": "path",
+            "description": "Environment ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectEnvironmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated environment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectEnvironment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Store and track already used",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects/{project_id}/members": {
       "get": {
         "tags": [
@@ -6557,6 +6863,292 @@
           },
           "400": {
             "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/promotions": {
+      "post": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Promote build",
+        "description": "Puts the version a build's live Google Play release already uploaded on the environment's track and records a release with the environment's rollout policy. Nothing is rebuilt. Promoting straight in requires the maintainer role; when the environment requires approval, a developer may ask and the promotion waits as `pending` without touching the store. Writes an audit log entry.",
+        "operationId": "promote_build",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePromotionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The promotion, completed or pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentPromotion"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project, environment or build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already in the environment, pending, unsupported store, or no live release to promote",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the promotion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/promotions/{promotion_id}/approve": {
+      "post": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Approve promotion",
+        "description": "Approves a pending promotion and makes the store change as the approver. Requires the maintainer role. Writes an audit log entry.",
+        "operationId": "approve_promotion",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "promotion_id",
+            "in": "path",
+            "description": "Promotion ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PromotionDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed promotion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentPromotion"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not pending, or the build changed while it waited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the promotion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/promotions/{promotion_id}/reject": {
+      "post": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Reject promotion",
+        "description": "Rejects a pending promotion; nothing changes at the store. Requires the maintainer role. Writes an audit log entry.",
+        "operationId": "reject_promotion",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "promotion_id",
+            "in": "path",
+            "description": "Promotion ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PromotionDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rejected promotion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentPromotion"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not pending",
             "content": {
               "application/json": {
                 "schema": {
@@ -14603,6 +15195,43 @@
           }
         }
       },
+      "CreateProjectEnvironmentRequest": {
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "store",
+          "track"
+        ],
+        "properties": {
+          "approval_required": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "rollout_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReleasePolicy",
+                "description": "Defaults to the standard schedule with no crash-rate halt."
+              }
+            ]
+          },
+          "store": {
+            "$ref": "#/components/schemas/ReleaseStore"
+          },
+          "track": {
+            "type": "string"
+          }
+        }
+      },
       "CreateProjectRequest": {
         "type": "object",
         "required": [
@@ -14646,6 +15275,28 @@
         "properties": {
           "project": {
             "$ref": "#/components/schemas/Project"
+          }
+        }
+      },
+      "CreatePromotionRequest": {
+        "type": "object",
+        "required": [
+          "build_id",
+          "environment_id"
+        ],
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "environment_id": {
+            "type": "string",
+            "description": "The environment to promote into."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -14885,6 +15536,134 @@
               {
                 "$ref": "#/components/schemas/ProjectRetentionOverride"
               }
+            ]
+          }
+        }
+      },
+      "EnvironmentPromotion": {
+        "type": "object",
+        "description": "A request to put an existing build into an environment.",
+        "required": [
+          "id",
+          "project_id",
+          "build_id",
+          "environment_id",
+          "environment_name",
+          "source_release_id",
+          "source_track",
+          "state",
+          "can_decide",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "build_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "can_decide": {
+            "type": "boolean",
+            "description": "Whether the caller may approve or reject this promotion now."
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "decided_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "decided_by_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environment_id": {
+            "type": "string"
+          },
+          "environment_name": {
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the promotion failed."
+          },
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release the promotion created, once completed."
+          },
+          "requested_by_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_environment_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the source release was, when it belongs to an environment."
+          },
+          "source_release_id": {
+            "type": "string",
+            "description": "The release the build is promoted from."
+          },
+          "source_track": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PromotionState"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "version_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "version_name": {
+            "type": [
+              "string",
+              "null"
             ]
           }
         }
@@ -16196,6 +16975,29 @@
           }
         }
       },
+      "ListProjectEnvironmentsResponse": {
+        "type": "object",
+        "required": [
+          "environments",
+          "promotions"
+        ],
+        "properties": {
+          "environments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectEnvironment"
+            },
+            "description": "Environments in promotion order."
+          },
+          "promotions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentPromotion"
+            },
+            "description": "Pending promotions and the most recent decided ones, newest first."
+          }
+        }
+      },
       "ListProjectMemberCandidatesResponse": {
         "type": "object",
         "required": [
@@ -17396,6 +18198,82 @@
           }
         }
       },
+      "ProjectEnvironment": {
+        "type": "object",
+        "description": "A release environment on a project, such as `internal` or `production`,\nwith its store target, rollout policy and approval rule.",
+        "required": [
+          "id",
+          "project_id",
+          "key",
+          "name",
+          "position",
+          "store",
+          "track",
+          "approval_required",
+          "rollout_policy",
+          "promotable",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "approval_required": {
+            "type": "boolean",
+            "description": "A promotion into this environment waits for a maintainer's approval\nbefore anything changes at the store."
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "description": "Stable identifier, unique in the project: lowercase letters, digits\nand dashes, starting with a letter."
+          },
+          "latest_release": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Release",
+                "description": "The newest release in this environment."
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Order on the promotion path, lowest first."
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "promotable": {
+            "type": "boolean",
+            "description": "Whether builds can be promoted into this environment. App Store\nenvironments only group the releases that uploads record for now."
+          },
+          "rollout_policy": {
+            "$ref": "#/components/schemas/ReleasePolicy",
+            "description": "Staged rollout policy for releases promoted into this environment.\nIts `approval` is always `none`; use `approval_required`."
+          },
+          "store": {
+            "$ref": "#/components/schemas/ReleaseStore"
+          },
+          "track": {
+            "type": "string",
+            "description": "Play track (`internal`, `closed`, `open`, `production` or a custom\ntrack), or the App Store release track a store upload records."
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ProjectMember": {
         "type": "object",
         "required": [
@@ -17555,6 +18433,27 @@
           "maintainer",
           "developer",
           "viewer"
+        ]
+      },
+      "PromotionDecisionRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PromotionState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "promoting",
+          "completed",
+          "rejected",
+          "failed"
         ]
       },
       "PublishStore": {
@@ -17805,6 +18704,19 @@
             "type": "integer",
             "format": "int64"
           },
+          "environment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The project environment this release belongs to. Absent for projects\nwithout environments."
+          },
+          "environment_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "health": {
             "$ref": "#/components/schemas/ReleaseHealth"
           },
@@ -17846,6 +18758,13 @@
               "string",
               "null"
             ]
+          },
+          "promoted_from_release_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release this one was promoted from, without a new build."
           },
           "rollout_fraction": {
             "type": "number",
@@ -20662,6 +21581,47 @@
           }
         }
       },
+      "UpdateProjectEnvironmentRequest": {
+        "type": "object",
+        "description": "Changes to an environment. The key and store are fixed once created.",
+        "properties": {
+          "approval_required": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "rollout_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReleasePolicy"
+              }
+            ]
+          },
+          "track": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "UpdateProjectMemberRequest": {
         "type": "object",
         "required": [
@@ -21230,6 +22190,10 @@
     {
       "name": "Releases",
       "description": "Store releases — staged rollout records with pause, halt, resume, complete and approval."
+    },
+    {
+      "name": "Environments",
+      "description": "Release environments on a project, such as internal, beta and production, and promotion of a build between them without a new build."
     },
     {
       "name": "Runners",

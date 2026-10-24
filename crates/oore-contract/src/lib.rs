@@ -5476,6 +5476,15 @@ pub struct Release {
     pub approved_by_email: Option<String>,
     /// Actions the caller may take now, from their project role and the state.
     pub allowed_actions: Vec<ReleaseAction>,
+    /// The project environment this release belongs to. Absent for projects
+    /// without environments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_name: Option<String>,
+    /// The release this one was promoted from, without a new build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub promoted_from_release_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -5564,6 +5573,173 @@ pub struct CreateReleaseRequest {
     pub rollout_fraction: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<ReleasePolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+// ── Project environments ────────────────────────────────────────
+
+/// A release environment on a project, such as `internal` or `production`,
+/// with its store target, rollout policy and approval rule.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProjectEnvironment {
+    pub id: String,
+    pub project_id: String,
+    /// Stable identifier, unique in the project: lowercase letters, digits
+    /// and dashes, starting with a letter.
+    pub key: String,
+    pub name: String,
+    /// Order on the promotion path, lowest first.
+    pub position: i64,
+    pub store: ReleaseStore,
+    /// Play track (`internal`, `closed`, `open`, `production` or a custom
+    /// track), or the App Store release track a store upload records.
+    pub track: String,
+    /// A promotion into this environment waits for a maintainer's approval
+    /// before anything changes at the store.
+    pub approval_required: bool,
+    /// Staged rollout policy for releases promoted into this environment.
+    /// Its `approval` is always `none`; use `approval_required`.
+    pub rollout_policy: ReleasePolicy,
+    /// The newest release in this environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_release: Option<Release>,
+    /// Whether builds can be promoted into this environment. App Store
+    /// environments only group the releases that uploads record for now.
+    pub promotable: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PromotionState {
+    /// Waiting for a maintainer's approval; nothing changed at the store.
+    Pending,
+    /// The store change is in flight.
+    Promoting,
+    Completed,
+    Rejected,
+    Failed,
+}
+
+impl PromotionState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Promoting => "promoting",
+            Self::Completed => "completed",
+            Self::Rejected => "rejected",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl FromStr for PromotionState {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "promoting" => Ok(Self::Promoting),
+            "completed" => Ok(Self::Completed),
+            "rejected" => Ok(Self::Rejected),
+            "failed" => Ok(Self::Failed),
+            other => Err(format!("unknown promotion state: {other}")),
+        }
+    }
+}
+
+/// A request to put an existing build into an environment.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EnvironmentPromotion {
+    pub id: String,
+    pub project_id: String,
+    pub build_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_number: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_code: Option<i64>,
+    pub environment_id: String,
+    pub environment_name: String,
+    /// The release the build is promoted from.
+    pub source_release_id: String,
+    /// Where the source release was, when it belongs to an environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_environment_name: Option<String>,
+    pub source_track: String,
+    /// The release the promotion created, once completed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_id: Option<String>,
+    pub state: PromotionState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_reason: Option<String>,
+    /// Why the promotion failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_by_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_by_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_at: Option<i64>,
+    /// Whether the caller may approve or reject this promotion now.
+    pub can_decide: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListProjectEnvironmentsResponse {
+    /// Environments in promotion order.
+    pub environments: Vec<ProjectEnvironment>,
+    /// Pending promotions and the most recent decided ones, newest first.
+    pub promotions: Vec<EnvironmentPromotion>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreateProjectEnvironmentRequest {
+    pub key: String,
+    pub name: String,
+    pub store: ReleaseStore,
+    pub track: String,
+    #[serde(default)]
+    pub approval_required: bool,
+    /// Defaults to the standard schedule with no crash-rate halt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_policy: Option<ReleasePolicy>,
+}
+
+/// Changes to an environment. The key and store are fixed once created.
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct UpdateProjectEnvironmentRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_policy: Option<ReleasePolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreatePromotionRequest {
+    pub build_id: String,
+    /// The environment to promote into.
+    pub environment_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct PromotionDecisionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }

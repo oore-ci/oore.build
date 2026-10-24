@@ -117,6 +117,27 @@ export const demoBuilds: Array<Build> = [
 
   // ── Succeeded builds ──────────────────────────────────────────
   {
+    id: BUILD_IDS.succeeded7,
+    project_id: PROJECT_IDS.flutterShop,
+    pipeline_id: PIPELINE_IDS.shopAndroid,
+    build_number: 145,
+    status: 'succeeded',
+    trigger_type: 'webhook',
+    trigger_event: 'push',
+    trigger_ref: 'refs/heads/main',
+    commit_sha: 'e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4',
+    branch: 'main',
+    changelog: 'Order tracking on the home screen and smaller app size.',
+    config_snapshot: {},
+    runner_id: RUNNER_IDS.macStudio,
+    exit_code: 0,
+    queued_at: ago(5400),
+    started_at: ago(5340),
+    finished_at: ago(4800),
+    created_at: ago(5400),
+    updated_at: ago(4800),
+  },
+  {
     id: BUILD_IDS.succeeded1,
     project_id: PROJECT_IDS.flutterShop,
     pipeline_id: PIPELINE_IDS.shopAndroid,

@@ -14,6 +14,7 @@ pub mod build_insights;
 pub mod builds;
 pub mod commit_checks;
 pub mod crypto;
+pub mod environments;
 pub mod events;
 pub mod extractors;
 pub mod frontend_pairing;
@@ -2364,6 +2365,18 @@ pub async fn build_router_with_recovery(
         if let Err(e) = sched.reload_pending(pool).await {
             tracing::error!(error = %e, "failed to reload pending builds into scheduler");
         }
+        match environments::fail_interrupted_promotions(pool).await {
+            Ok(0) => {}
+            Ok(count) => {
+                tracing::warn!(
+                    count,
+                    "marked promotions interrupted by the restart as failed"
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to mark interrupted promotions as failed");
+            }
+        }
     }
 
     let external_access_network =
@@ -2885,6 +2898,28 @@ pub async fn build_router_with_recovery(
             post(releases::release_action),
         )
         .route("/v1/release-events", get(releases::list_release_activity))
+        .route(
+            "/v1/projects/{project_id}/environments",
+            get(environments::list_project_environments)
+                .post(environments::create_project_environment),
+        )
+        .route(
+            "/v1/projects/{project_id}/environments/{environment_id}",
+            axum::routing::patch(environments::update_project_environment)
+                .delete(environments::delete_project_environment),
+        )
+        .route(
+            "/v1/projects/{project_id}/promotions",
+            post(environments::promote_build),
+        )
+        .route(
+            "/v1/projects/{project_id}/promotions/{promotion_id}/approve",
+            post(environments::approve_promotion),
+        )
+        .route(
+            "/v1/projects/{project_id}/promotions/{promotion_id}/reject",
+            post(environments::reject_promotion),
+        )
         // API token endpoints
         .route(
             "/v1/api-tokens",

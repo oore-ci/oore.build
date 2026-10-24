@@ -191,6 +191,14 @@ use utoipa::{
         operations::complete_release,
         operations::approve_release,
         operations::list_release_events,
+        // ── Environments ──
+        operations::list_project_environments,
+        operations::create_project_environment,
+        operations::update_project_environment,
+        operations::delete_project_environment,
+        operations::promote_build,
+        operations::approve_promotion,
+        operations::reject_promotion,
         // ── Audit Logs ──
         operations::list_audit_logs,
         // ── API Tokens ──
@@ -487,6 +495,15 @@ use utoipa::{
         oore_contract::ListReleaseActivityResponse,
         oore_contract::ReleaseActionRequest,
         oore_contract::CreateReleaseRequest,
+        // Environments
+        oore_contract::ProjectEnvironment,
+        oore_contract::PromotionState,
+        oore_contract::EnvironmentPromotion,
+        oore_contract::ListProjectEnvironmentsResponse,
+        oore_contract::CreateProjectEnvironmentRequest,
+        oore_contract::UpdateProjectEnvironmentRequest,
+        oore_contract::CreatePromotionRequest,
+        oore_contract::PromotionDecisionRequest,
         // Runners
         oore_contract::RunnerStatus,
         oore_contract::Runner,
@@ -629,6 +646,7 @@ use utoipa::{
         (name = "Pipeline Signing", description = "Code signing configuration — Android keystores, iOS certificates/profiles."),
         (name = "Builds", description = "Build lifecycle — queue, list, detail, cancel."),
         (name = "Releases", description = "Store releases — staged rollout records with pause, halt, resume, complete and approval."),
+        (name = "Environments", description = "Release environments on a project, such as internal, beta and production, and promotion of a build between them without a new build."),
         (name = "Runners", description = "Build runner management — register, heartbeat, job claim/status."),
         (name = "Build Logs", description = "Build log ingestion and retrieval — append, paginated fetch, SSE streaming."),
         (name = "Events", description = "Live build, runner and release changes over SSE."),
@@ -2665,6 +2683,132 @@ mod operations {
         )
     )]
     pub(super) fn list_release_events() {}
+
+    // ── Environments ──
+
+    /// List project environments
+    ///
+    /// Environments in promotion order, each with its newest release, plus pending promotions and the most recent decided ones.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/environments", tag = "Environments",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Environments and promotions", body = ListProjectEnvironmentsResponse),
+            (status = 404, description = "Project not found", body = ApiError),
+        )
+    )]
+    pub(super) fn list_project_environments() {}
+
+    /// Create environment
+    ///
+    /// Adds an environment at the end of the promotion path. Requires the project maintainer role. A release recorded on the environment's store and track belongs to it.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/environments", tag = "Environments",
+        params(("project_id" = String, Path, description = "Project ID")),
+        request_body = CreateProjectEnvironmentRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Created environment", body = ProjectEnvironment),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Project not found", body = ApiError),
+            (status = 409, description = "Key, or store and track, already used", body = ApiError),
+        )
+    )]
+    pub(super) fn create_project_environment() {}
+
+    /// Update environment
+    ///
+    /// Changes the name, track, approval rule, rollout policy or position. Requires the project maintainer role.
+    #[utoipa::path(patch, path = "/v1/projects/{project_id}/environments/{environment_id}", tag = "Environments",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("environment_id" = String, Path, description = "Environment ID"),
+        ),
+        request_body = UpdateProjectEnvironmentRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated environment", body = ProjectEnvironment),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Store and track already used", body = ApiError),
+        )
+    )]
+    pub(super) fn update_project_environment() {}
+
+    /// Delete environment
+    ///
+    /// Its releases stay without an environment; its promotions are removed. Requires the project maintainer role.
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/environments/{environment_id}", tag = "Environments",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("environment_id" = String, Path, description = "Environment ID"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Deleted", body = OkResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "A promotion is in progress", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_project_environment() {}
+
+    /// Promote build
+    ///
+    /// Puts the version a build's live Google Play release already uploaded on the environment's track and records a release with the environment's rollout policy. Nothing is rebuilt. Promoting straight in requires the maintainer role; when the environment requires approval, a developer may ask and the promotion waits as `pending` without touching the store. Writes an audit log entry.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/promotions", tag = "Environments",
+        params(("project_id" = String, Path, description = "Project ID")),
+        request_body = CreatePromotionRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "The promotion, completed or pending", body = EnvironmentPromotion),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Project, environment or build not found", body = ApiError),
+            (status = 409, description = "Already in the environment, pending, unsupported store, or no live release to promote", body = ApiError),
+            (status = 502, description = "The store rejected the promotion", body = ApiError),
+        )
+    )]
+    pub(super) fn promote_build() {}
+
+    /// Approve promotion
+    ///
+    /// Approves a pending promotion and makes the store change as the approver. Requires the maintainer role. Writes an audit log entry.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/promotions/{promotion_id}/approve", tag = "Environments",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("promotion_id" = String, Path, description = "Promotion ID"),
+        ),
+        request_body(content = Option<PromotionDecisionRequest>, description = "Optional reason"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Completed promotion", body = EnvironmentPromotion),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not pending, or the build changed while it waited", body = ApiError),
+            (status = 502, description = "The store rejected the promotion", body = ApiError),
+        )
+    )]
+    pub(super) fn approve_promotion() {}
+
+    /// Reject promotion
+    ///
+    /// Rejects a pending promotion; nothing changes at the store. Requires the maintainer role. Writes an audit log entry.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/promotions/{promotion_id}/reject", tag = "Environments",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("promotion_id" = String, Path, description = "Promotion ID"),
+        ),
+        request_body(content = Option<PromotionDecisionRequest>, description = "Optional reason"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Rejected promotion", body = EnvironmentPromotion),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not pending", body = ApiError),
+        )
+    )]
+    pub(super) fn reject_promotion() {}
 
     /// Re-run build
     ///

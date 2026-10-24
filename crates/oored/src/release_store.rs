@@ -12,7 +12,9 @@ use sqlx::SqlitePool;
 use zeroize::Zeroizing;
 
 use crate::pipeline_publish::load_google_play;
-use crate::releases::{BoxFuture, ReleaseStoreClient, StoreChange, StoreObservation};
+use crate::releases::{
+    BoxFuture, PromotionTarget, ReleaseStoreClient, StoreChange, StoreObservation,
+};
 use crate::secrets::resolve_secret_value;
 
 pub struct PlayReleaseStoreClient {
@@ -140,6 +142,53 @@ impl PlayReleaseStoreClient {
         result
     }
 
+    /// Assign the source release's version code to another track in one
+    /// edit, keeping the release name, notes and update priority it had.
+    async fn promote_play(
+        &self,
+        source: &Release,
+        target: PromotionTarget<'_>,
+    ) -> anyhow::Result<()> {
+        let play = self.target(source).await?;
+        let token = oore_google_play::access_token(&self.http, &play.service_account_json).await?;
+        let edits = PlayEdits::insert(&self.http, &token, &play.package_name).await?;
+        let to_track = oore_google_play::play_track_name(target.track);
+        let result = async {
+            let from = edits
+                .get_track(&oore_google_play::play_track_name(&source.track))
+                .await?;
+            let template = from
+                .releases
+                .into_iter()
+                .find(|release| release.version_codes.contains(&play.version_code));
+            let (status, user_fraction) = match target.fraction {
+                Some(fraction) if fraction < 1.0 => (ReleaseStatus::InProgress, Some(fraction)),
+                _ => (ReleaseStatus::Completed, None),
+            };
+            let release = TrackRelease {
+                name: template.as_ref().and_then(|release| release.name.clone()),
+                version_codes: vec![play.version_code],
+                status,
+                user_fraction,
+                release_notes: template
+                    .as_ref()
+                    .map(|release| release.release_notes.clone())
+                    .unwrap_or_default(),
+                in_app_update_priority: template.and_then(|release| release.in_app_update_priority),
+            };
+            edits.update_track(&to_track, &release).await
+        }
+        .await;
+        let result = match result {
+            Ok(()) => edits.commit().await,
+            Err(error) => Err(error),
+        };
+        if result.is_err() {
+            let _ = edits.delete().await;
+        }
+        result
+    }
+
     async fn observe_play(&self, release: &Release) -> anyhow::Result<StoreObservation> {
         let target = self.target(release).await?;
         let token =
@@ -247,6 +296,19 @@ impl ReleaseStoreClient for PlayReleaseStoreClient {
                 bail!("crash rate is only read for Google Play releases");
             }
             self.play_crash_rate(release).await
+        })
+    }
+
+    fn promote<'a>(
+        &'a self,
+        source: &'a Release,
+        target: PromotionTarget<'a>,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            if source.store != ReleaseStore::GooglePlay {
+                bail!("only Google Play releases can be promoted");
+            }
+            self.promote_play(source, target).await
         })
     }
 }

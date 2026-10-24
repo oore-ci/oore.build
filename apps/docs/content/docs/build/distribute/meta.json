@@ -3,6 +3,7 @@
   "pages": [
     "google-play",
     "app-store",
+    "environments",
     "ios-devices",
     "download",
     "install/android",

@@ -1,0 +1,125 @@
+---
+title: 'Promote builds between environments'
+status: implemented
+description: 'Define internal, beta and production environments on a project and promote a tested Google Play build between them without rebuilding it.'
+---
+
+An environment names where a project's releases go: a store, a track, the
+staged rollout for releases promoted into it, and whether a promotion needs a
+maintainer's approval. A build that passed internal testing is promoted to
+beta or production as the same version code. Nothing is rebuilt or uploaded
+again, so what users get is exactly what testers checked.
+
+Projects without environments keep working as before: each pipeline's
+publish settings decide where its uploads go.
+
+## What you need
+
+- Project maintainer, instance admin, or instance owner access to add
+  environments and to promote or approve. Developers can ask for a promotion
+  into an environment that requires approval.
+- Google Play publishing set up on the pipeline that builds the app. See
+  [Publish to Google Play](/build/distribute/google-play). Promotion uses the
+  same service account, from the daemon host.
+- A first upload of the build to a Play track, such as internal testing.
+
+## 1. Add environments
+
+On the project, open **Environments** and select **Add environment**. Add them
+in promotion order, for example:
+
+| Name       | Key          | Track        | Approval | Rollout                           |
+| ---------- | ------------ | ------------ | -------- | --------------------------------- |
+| Internal   | `internal`   | `internal`   | Off      | Full release                      |
+| Beta       | `beta`       | `open`       | On       | 50%, then 100% after 12 hours     |
+| Production | `production` | `production` | On       | 1, 5, 20, 50, 100% every 24 hours |
+
+The key is fixed once created; configuration files will refer to
+environments by key. Each store and track belongs to at most one environment.
+Play's internal track has no staged rollouts, so a promotion there is always a
+full release.
+
+From the API, use
+[Create environment](/openapi/operations/create_project_environment):
+
+```bash
+curl -X POST "$OORE_URL/v1/projects/$PROJECT_ID/environments" \
+  -H "Authorization: Bearer $OORE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "key": "production",
+    "name": "Production",
+    "store": "google_play",
+    "track": "production",
+    "approval_required": true,
+    "rollout_policy": {
+      "steps": [0.01, 0.05, 0.2, 0.5, 1],
+      "interval_hours": 24,
+      "crash_rate_threshold": 0.02
+    }
+  }'
+```
+
+A release that a pipeline uploads to an environment's track lands in that
+environment, so the first upload to `internal` shows under **Internal**.
+For now that upload keeps the pipeline's own rollout policy; the
+environment's policy applies to releases promoted into it.
+
+Once an environment has releases, its track is fixed. To move to another
+track, add a new environment.
+
+## 2. Promote a build
+
+Select **Promote** on the environment that holds the build, choose where it
+goes, and add a reason. The daemon assigns the release's version code to the
+target track in one Play edit, keeping its release name and notes, then
+records a release with the target environment's rollout policy. The rollout
+monitor raises it on schedule and halts it on a crash-rate breach like any
+other release.
+
+```bash
+curl -X POST "$OORE_URL/v1/projects/$PROJECT_ID/promotions" \
+  -H "Authorization: Bearer $OORE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"build_id": "'"$BUILD_ID"'", "environment_id": "'"$ENVIRONMENT_ID"'", "reason": "QA signed off"}'
+```
+
+The build is promoted from its newest Google Play release that is rolling
+out, paused or complete. A halted or failed release cannot be promoted.
+
+## 3. Approve a promotion
+
+When the target environment requires approval, the promotion waits under
+**Waiting for approval** and nothing changes in Play. A maintainer selects
+**Approve** to make the store change, or **Reject** to drop it. The approval
+is the release's approval, so the new release does not wait again.
+
+Approval applies to promotions only. A maintainer who records a release
+directly with [Create release](/openapi/operations/create_release)
+(`POST /v1/releases`) on an environment's track does not go through the
+environment's approval.
+
+Deleting an environment rejects its promotions that are waiting for approval,
+with the reason `environment deleted` in the audit log.
+
+## Verify the result
+
+- The environment shows the promoted version and its rollout.
+- Play Console shows the version code on the target track.
+- The audit log has `promotion_requested`, `promotion_approved` and
+  `promotion_completed` entries, and a `release_created` entry for the new
+  release.
+
+## Limits
+
+- Only Google Play builds can be promoted. App Store environments group the
+  releases that uploads record; promotion from TestFlight to the App Store
+  is planned.
+- A build cannot be promoted into an environment where it already has a
+  release, unless that release failed.
+- If the daemon stops during a promotion's store call, the promotion is
+  marked failed when it starts again ("interrupted by daemon restart"). Check
+  the track in Play Console before promoting again: the change may have
+  reached Play.
+- Per-environment approvers, notification channels, QA groups and secrets are
+  not configurable yet.
