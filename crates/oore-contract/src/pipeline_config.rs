@@ -84,8 +84,8 @@ pub struct PipelinePlan {
     /// where the pipeline's Publish settings decide.
     #[serde(skip_serializing_if = "PlanPublish::is_empty")]
     pub publish: PlanPublish,
-    /// Size budgets a v2 file sets on the planned targets. When any is set,
-    /// they replace the pipeline's size budget for the build's checks.
+    /// Size budgets a v2 file sets on the planned targets. Each platform's
+    /// check enforces its target's budget on top of the pipeline's.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub size_budgets: Vec<TargetSizeBudget>,
 }
@@ -791,8 +791,8 @@ pub struct TargetSpec {
     #[serde(default, deserialize_with = "deserialize_target_publish")]
     pub publish: Option<TargetPublish>,
     /// Artifact size limits for this target's commit check, in the shape of
-    /// a pipeline's `size_budget`. A workflow target without `budgets` keeps
-    /// the top-level target's.
+    /// a pipeline's `size_budget`, enforced on top of it. A workflow target
+    /// without `budgets` keeps the top-level target's.
     #[serde(default)]
     pub budgets: Option<SizeBudget>,
 }
@@ -1634,7 +1634,7 @@ impl ConfigV2 {
             .any(|target| target.budgets.is_some());
         if declares_budgets {
             notices.push(
-                "`budgets` replaces the pipeline's Size budget for builds whose planned targets set it: each platform's check uses its target's budgets, and a target without `budgets` has none"
+                "`budgets` adds to the pipeline's Size budget: each platform's check is held to both, and a file can tighten the pipeline's budget but never loosen it"
                     .to_string(),
             );
         }
@@ -2721,7 +2721,7 @@ mod tests {
         assert!(
             notices
                 .iter()
-                .any(|notice| notice.starts_with("`budgets` replaces the pipeline's Size budget")),
+                .any(|notice| notice.starts_with("`budgets` adds to the pipeline's Size budget")),
             "{notices:?}"
         );
     }

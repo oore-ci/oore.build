@@ -22255,7 +22255,7 @@
       },
       "TargetSizeBudget": {
         "type": "object",
-        "description": "A size budget a repository's `.oore.yaml` version 2 file sets on one\ntarget, after workflow overrides. When a build's file sets any, they\nreplace the pipeline's `size_budget` for that build's commit checks.",
+        "description": "A size budget a repository's `.oore.yaml` version 2 file sets on one\ntarget, after workflow overrides. That platform's commit check enforces it\non top of the pipeline's `size_budget`, which stays a floor.",
         "required": [
           "platform",
           "source",

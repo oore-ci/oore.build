@@ -178,8 +178,8 @@ struct BuildContext {
     steps: Vec<StepResult>,
     /// The pipeline's artifact size limits.
     size_budget: SizeBudget,
-    /// The size budgets the build's `.oore.yaml` sets, per target. When there
-    /// are any, they replace `size_budget` for every check of the build.
+    /// The size budgets the build's `.oore.yaml` sets, per target. Each is
+    /// checked alongside `size_budget`, which stays a floor.
     file_size_budgets: Vec<TargetSizeBudget>,
     provider: String,
     integration_id: String,
@@ -405,29 +405,58 @@ fn budget_belongs_to(artifact_type: &str, name: &str, platform: &str) -> bool {
     artifact_platform(artifact_type, name).is_none_or(|owner| owner == platform)
 }
 
-/// The size budget a platform's check enforces, with the `.oore.yaml` field
-/// it came from. The file's budgets, when it sets any, replace the
-/// pipeline's for every check of the build, so a target without `budgets`
-/// has none.
-fn platform_budget<'a>(
-    ctx: &'a BuildContext,
-    platform: &str,
-) -> Option<(&'a SizeBudget, Option<&'a str>)> {
-    if ctx.file_size_budgets.is_empty() {
-        return Some((&ctx.size_budget, None));
-    }
-    ctx.file_size_budgets
-        .iter()
-        .find(|target| platform_key(&target.platform) == platform)
-        .map(|target| (&target.budget, Some(target.source.as_str())))
+/// A size budget a platform's check enforces, with the `.oore.yaml` field it
+/// came from (`None` for the pipeline's).
+#[derive(Clone, Copy)]
+struct AppliedBudget<'a> {
+    budget: &'a SizeBudget,
+    source: Option<&'a str>,
 }
 
-/// Says where a budget from the build's `.oore.yaml` came from.
-fn budget_source_note(source: &str) -> String {
-    format!(
-        "\nSet by `{}` in the build's `.oore.yaml`, in place of the pipeline's size budget.\n",
-        source.replace('`', "")
-    )
+/// The size budgets a platform's check enforces. The pipeline's budget is a
+/// floor: a repository's `.oore.yaml` can add limits for its target, never
+/// remove the pipeline's.
+fn platform_budgets<'a>(ctx: &'a BuildContext, platform: &str) -> Vec<AppliedBudget<'a>> {
+    let mut budgets = vec![AppliedBudget {
+        budget: &ctx.size_budget,
+        source: None,
+    }];
+    budgets.extend(
+        ctx.file_size_budgets
+            .iter()
+            .filter(|target| platform_key(&target.platform) == platform)
+            .map(|target| AppliedBudget {
+                budget: &target.budget,
+                source: Some(target.source.as_str()),
+            }),
+    );
+    budgets
+}
+
+/// A limit an artifact went over, with the budget that set it.
+struct PlatformViolation<'a> {
+    violation: BudgetViolation,
+    budget: AppliedBudget<'a>,
+}
+
+/// Which budget a violation came from, for the summary table.
+fn budget_source_label(source: Option<&str>) -> String {
+    match source {
+        None => "Pipeline".to_string(),
+        Some(source) => format!("`{}`", source.replace('`', "")),
+    }
+}
+
+/// The strictest mode among the budgets that `violations` came from.
+fn strictest_mode(violations: &[PlatformViolation<'_>]) -> SizeBudgetMode {
+    if violations
+        .iter()
+        .any(|v| v.budget.budget.mode == SizeBudgetMode::Fail)
+    {
+        SizeBudgetMode::Fail
+    } else {
+        SizeBudgetMode::Warn
+    }
 }
 
 /// The size of each of a platform's artifacts and its change from the
@@ -514,23 +543,26 @@ fn budget_actual(violation: &BudgetViolation) -> String {
 }
 
 /// The size budget result for a platform's artifacts, as a Markdown
-/// section. `None` when no rule covers them.
+/// section. `None` when no rule of any budget covers them.
 fn budget_section(
     report: &BuildSizeReport,
-    budget: &SizeBudget,
-    source: Option<&str>,
-    violations: &[&BudgetViolation],
+    budgets: &[AppliedBudget<'_>],
+    violations: &[PlatformViolation<'_>],
     platform: &str,
 ) -> Option<String> {
     let covered: Vec<_> = report
         .artifacts
         .iter()
         .filter(|artifact| budget_belongs_to(&artifact.artifact_type, &artifact.name, platform))
-        .filter_map(|artifact| {
+        .flat_map(|artifact| {
             let kind =
                 crate::artifact_sizes::artifact_kind(&artifact.name, &artifact.artifact_type);
-            let rule = budget.rules.iter().find(|rule| rule.kind == kind)?;
-            Some((artifact, rule))
+            budgets
+                .iter()
+                .filter_map(move |applied| {
+                    applied.budget.rules.iter().find(|rule| rule.kind == kind)
+                })
+                .map(move |rule| (artifact, rule))
         })
         .collect();
     if covered.is_empty() {
@@ -538,7 +570,7 @@ fn budget_section(
     }
     // Artifacts whose increase limits could not apply: nothing in the
     // baseline build to compare them with, or no baseline build at all.
-    let unmatched: Vec<String> = covered
+    let mut unmatched: Vec<String> = covered
         .iter()
         .filter(|(artifact, rule)| {
             artifact.delta_bytes.is_none()
@@ -546,13 +578,36 @@ fn budget_section(
         })
         .map(|(artifact, _)| markdown_text(&artifact.name))
         .collect();
+    unmatched.dedup();
     let skipped_note = (!unmatched.is_empty()).then(|| {
         format!(
             "\nNothing to compare {} with, so only the max size was checked.\n",
             unmatched.join(", ")
         )
     });
-    let source_note = source.map(budget_source_note);
+    // Which budgets cover these artifacts, when the build's `.oore.yaml`
+    // adds one to the pipeline's.
+    let file_sources: Vec<String> = budgets
+        .iter()
+        .filter_map(|applied| applied.source)
+        .map(|source| format!("`{}`", source.replace('`', "")))
+        .collect();
+    let pipeline_has_rules = budgets
+        .iter()
+        .any(|applied| applied.source.is_none() && !applied.budget.rules.is_empty());
+    let source_note = (!file_sources.is_empty()).then(|| {
+        if pipeline_has_rules {
+            format!(
+                "\nChecked against the pipeline's size budget and {} in the build's `.oore.yaml`.\n",
+                file_sources.join(", ")
+            )
+        } else {
+            format!(
+                "\nSet by {} in the build's `.oore.yaml`.\n",
+                file_sources.join(", ")
+            )
+        }
+    });
     if violations.is_empty() {
         let mut section = String::from("\n**Size budget**: every artifact is within the budget.\n");
         if let Some(note) = &source_note {
@@ -563,7 +618,8 @@ fn budget_section(
         }
         return Some(section);
     }
-    let mut section = match budget.mode {
+    let mode = strictest_mode(violations);
+    let mut section = match mode {
         SizeBudgetMode::Fail => String::from("\n**Size budget exceeded**\n"),
         SizeBudgetMode::Warn => String::from(
             "\n**Size budget warning**\n\nThe budget only warns, so the check keeps its result.\n",
@@ -575,14 +631,29 @@ fn budget_section(
     if let Some(note) = &skipped_note {
         section.push_str(note);
     }
-    section.push_str("\n| Artifact | Limit | Actual |\n| --- | --- | ---: |\n");
-    for violation in violations {
+    // With more than one budget, each row says which one it broke.
+    let by_source = !file_sources.is_empty();
+    if by_source {
+        section.push_str("\n| Artifact | Limit | Actual | Budget |\n| --- | --- | ---: | --- |\n");
+    } else {
+        section.push_str("\n| Artifact | Limit | Actual |\n| --- | --- | ---: |\n");
+    }
+    for item in violations {
+        let violation = &item.violation;
         section.push_str(&format!(
-            "| {} | {} | {} |\n",
+            "| {} | {} | {} |",
             markdown_text(&violation.name),
             budget_limit_label(violation.limit),
             budget_actual(violation),
         ));
+        if by_source {
+            let mut label = budget_source_label(item.budget.source);
+            if mode == SizeBudgetMode::Fail && item.budget.budget.mode == SizeBudgetMode::Warn {
+                label.push_str(" (warns only)");
+            }
+            section.push_str(&format!(" {label} |"));
+        }
+        section.push('\n');
     }
     Some(section)
 }
@@ -741,9 +812,11 @@ fn analysis_section(response: &BuildAnalysisResponse, base: Option<&Url>) -> Opt
         let listed = analysis.diagnostics.len().min(MAX_LISTED_DIAGNOSTICS) as i64;
         match total - listed {
             more if more <= 0 => {}
-            1 => section.push_str("\n1 more diagnostic is listed with the build.\n"),
+            1 => section.push_str(
+                "\n1 more diagnostic is not shown. Run `dart analyze` on the commit to see them all.\n",
+            ),
             more => section.push_str(&format!(
-                "\n{more} more diagnostics are listed with the build.\n"
+                "\n{more} more diagnostics are not shown. Run `dart analyze` on the commit to see them all.\n"
             )),
         }
     }
@@ -882,21 +955,35 @@ fn platform_reports(
     ctx.platforms
         .iter()
         .map(|platform| {
-            let budget = platform_budget(ctx, platform);
-            let violations = match (sizes, budget) {
-                (Some(sizes), Some((budget, _))) => check_budget(sizes, budget),
-                _ => Vec::new(),
-            };
-            let platform_violations: Vec<&BudgetViolation> = violations
-                .iter()
-                .filter(|violation| {
-                    budget_belongs_to(&violation.artifact_type, &violation.name, platform)
+            let budgets = platform_budgets(ctx, platform);
+            let platform_violations: Vec<PlatformViolation<'_>> = sizes
+                .map(|sizes| {
+                    budgets
+                        .iter()
+                        .flat_map(|applied| {
+                            check_budget(sizes, applied.budget)
+                                .into_iter()
+                                .filter(|violation| {
+                                    budget_belongs_to(
+                                        &violation.artifact_type,
+                                        &violation.name,
+                                        platform,
+                                    )
+                                })
+                                .map(|violation| PlatformViolation {
+                                    violation,
+                                    budget: *applied,
+                                })
+                        })
+                        .collect()
                 })
-                .collect();
-            let mode = budget.map(|(budget, _)| budget.mode).unwrap_or_default();
+                .unwrap_or_default();
+            let mode = strictest_mode(&platform_violations);
             // The budget fails the check, never the build.
             let over_budget = mode == SizeBudgetMode::Fail && !platform_violations.is_empty();
-            let description = status_description(&title, mode, &platform_violations, analysis);
+            let violation_refs: Vec<&BudgetViolation> =
+                platform_violations.iter().map(|v| &v.violation).collect();
+            let description = status_description(&title, mode, &violation_refs, analysis);
             let title = if over_budget {
                 format!("{title} but is over the size budget")
             } else {
@@ -944,32 +1031,24 @@ fn platform_reports(
             {
                 summary.push_str(&section);
             }
-            match (sizes, budget) {
-                (Some(sizes), Some((budget, source))) => {
+            match sizes {
+                Some(sizes) => {
                     if let Some(section) =
-                        budget_section(sizes, budget, source, &platform_violations, platform)
+                        budget_section(sizes, &budgets, &platform_violations, platform)
                     {
                         summary.push_str(&section);
                     }
                 }
                 // The sizes could not be loaded. The check keeps its result,
                 // but says the budget went unchecked.
-                (None, Some((budget, _)))
-                    if ctx.status == BuildStatus::Succeeded && !budget.rules.is_empty() =>
+                None if ctx.status == BuildStatus::Succeeded
+                    && budgets
+                        .iter()
+                        .any(|applied| !applied.budget.rules.is_empty()) =>
                 {
                     summary.push_str("\n**The size budget could not be checked.**\n");
                 }
-                // The file sets budgets for other targets only, which turns
-                // the pipeline's budget off for this check too.
-                (_, None)
-                    if ctx.status == BuildStatus::Succeeded
-                        && !ctx.size_budget.rules.is_empty() =>
-                {
-                    summary.push_str(
-                        "\n**Size budget**: none for this platform. The build's `.oore.yaml` sets `budgets` on other targets, which replaces the pipeline's size budget.\n",
-                    );
-                }
-                _ => {}
+                None => {}
             }
 
             if let Some(section) = analysis.and_then(|analysis| analysis_section(analysis, base)) {
@@ -2327,10 +2406,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_budgets_replace_the_pipeline_budget_and_say_so() {
+    async fn the_pipeline_budget_is_a_floor_that_file_budgets_add_to() {
         let pool = seeded_pool("github", "https://github.com").await;
         grown_bundle(&pool).await;
-        // The pipeline's budget would fail the bundle.
+        // The pipeline's budget fails the bundle; the file's alone would not.
         set_budget(
             &pool,
             serde_json::json!({ "mode": "fail", "rules": [{ "kind": "aab", "max_bytes": 1 }] }),
@@ -2348,27 +2427,26 @@ mod tests {
         .await;
 
         let (android, ios) = report_checks(&pool).await;
-        assert_eq!(android["conclusion"], "success");
+        assert_eq!(android["conclusion"], "failure");
         let text = summary(&android);
-        assert!(
-            text.contains("**Size budget**: every artifact is within the budget."),
-            "{text}"
-        );
+        assert!(text.contains("**Size budget exceeded**"), "{text}");
         assert!(
             text.contains(
-                "Set by `workflows.release.targets.android.budgets` in the build's `.oore.yaml`, in place of the pipeline's size budget."
+                "Checked against the pipeline's size budget and `workflows.release.targets.android.budgets` in the build's `.oore.yaml`."
             ),
             "{text}"
         );
-        // The file sets no iOS budget, and the pipeline's no longer applies.
-        assert_eq!(ios["conclusion"], "success");
         assert!(
-            summary(&ios).contains("**Size budget**: none for this platform."),
-            "{}",
-            summary(&ios)
+            text.contains("| Artifact | Limit | Actual | Budget |"),
+            "{text}"
         );
+        assert!(text.contains(" | Pipeline |"), "{text}");
+        assert!(!text.contains("| `workflows.release"), "{text}");
+        // No budget covers the iOS check's artifacts.
+        assert_eq!(ios["conclusion"], "success");
+        assert!(!summary(&ios).contains("Size budget"), "{}", summary(&ios));
 
-        // A file budget that the bundle exceeds fails the check.
+        // With no pipeline budget, the file's budget alone applies.
         set_file_budgets(
             &pool,
             "b2",
@@ -2384,14 +2462,51 @@ mod tests {
         assert_eq!(android["conclusion"], "failure");
         let text = summary(&android);
         assert!(
-            text.contains("| app-release.aab | Grows at most 5% | +1.2 MB (+6.29%) |"),
+            text.contains(
+                "| app-release.aab | Grows at most 5% | +1.2 MB (+6.29%) | `targets.android.budgets` |"
+            ),
             "{text}"
         );
-        assert!(text.contains("Set by `targets.android.budgets`"), "{text}");
+        assert!(
+            text.contains("Set by `targets.android.budgets` in the build's `.oore.yaml`."),
+            "{text}"
+        );
+
+        // The strictest mode among the broken budgets decides: a warning
+        // pipeline budget does not soften a failing file budget.
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "warn", "rules": [{ "kind": "aab", "max_bytes": 1 }] }),
+        )
+        .await;
+        let (android, _) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "failure");
+        let text = summary(&android);
+        assert!(text.contains(" | Pipeline (warns only) |"), "{text}");
+        assert!(text.contains(" | `targets.android.budgets` |"), "{text}");
+
+        // A file budget the bundle is within leaves the pipeline's warning.
+        set_file_budgets(
+            &pool,
+            "b2",
+            serde_json::json!([{
+                "platform": "android",
+                "source": "targets.android.budgets",
+                "budget": { "mode": "fail", "rules": [{ "kind": "aab", "max_increase_percent": 50 }] },
+            }]),
+        )
+        .await;
+        let (android, _) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "success");
+        assert!(
+            summary(&android).contains("**Size budget warning**"),
+            "{}",
+            summary(&android)
+        );
     }
 
     #[tokio::test]
-    async fn file_budgets_for_other_targets_turn_the_pipeline_budget_off() {
+    async fn a_file_budget_on_another_target_keeps_the_pipeline_budget() {
         let pool = seeded_pool("github", "https://github.com").await;
         grown_bundle(&pool).await;
         set_budget(
@@ -2410,27 +2525,11 @@ mod tests {
         )
         .await;
         let (android, _) = report_checks(&pool).await;
-        assert_eq!(android["conclusion"], "success");
-        assert!(
-            summary(&android).contains("`.oore.yaml` sets `budgets` on other targets"),
-            "{}",
-            summary(&android)
-        );
-
-        // Without file budgets the pipeline's budget applies again.
-        sqlx::query(
-            "UPDATE builds SET config_snapshot = json_remove(config_snapshot, '$.file_size_budgets')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        let (android, _) = report_checks(&pool).await;
         assert_eq!(android["conclusion"], "failure");
-        assert!(
-            !summary(&android).contains("Set by"),
-            "{}",
-            summary(&android)
-        );
+        let text = summary(&android);
+        assert!(text.contains("**Size budget exceeded**"), "{text}");
+        assert!(!text.contains("targets.ios.budgets"), "{text}");
+        assert!(text.contains("| Artifact | Limit | Actual |\n"), "{text}");
     }
 
     async fn analyze(pool: &SqlitePool, build_id: &str, errors: i64, warnings: i64, infos: i64) {
@@ -2501,7 +2600,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("4 more diagnostics are listed with the build."),
+            text.contains("4 more diagnostics are not shown. Run `dart analyze` on the commit to see them all."),
             "{text}"
         );
         // The analysis covers the whole app, so every check shows it.

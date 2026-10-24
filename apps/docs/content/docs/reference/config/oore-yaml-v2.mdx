@@ -299,14 +299,15 @@ A rule needs at least one limit. A target takes at most 20 rules, each kind
 once. `aab` and `apk` rules belong on `android` and `ipa` rules on `ios`.
 Values are bytes, with no `${{ }}` references.
 
-When the planned workflow sets `budgets` on any of its targets, the file's
-budgets replace the pipeline's size budget for the build: each platform's
-check uses its own target's budgets, and a target without `budgets` has none.
-`budgets: { rules: [] }` turns the budget off for that target. The check
-summary names the field the budget came from, such as
-`workflows.release.targets.android.budgets`. Files without `budgets` and
-version 1 files keep the pipeline's size budget. The budget only changes the
-check; the build itself never fails because of it.
+The pipeline's size budget is a floor: a target's `budgets` add limits for
+that platform's check and can tighten the pipeline's, never loosen or remove
+them. Each platform's check is held to both the pipeline's size budget and its
+own target's `budgets`. An artifact over either is listed, with the budget it
+went over, and the check fails when any budget it went over has `mode: fail`.
+`budgets` on one target does not change another target's check, and
+`budgets: { rules: [] }` adds nothing. The check summary names the field the
+budget came from, such as `workflows.release.targets.android.budgets`. The
+budget only changes the check; the build itself never fails because of it.
 
 ## Triggers
 

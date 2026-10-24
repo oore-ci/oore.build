@@ -1123,10 +1123,10 @@ pub async fn update_job_status(
     // failed write never leaves a terminal build without its step results.
     let steps_json = (!req.steps.is_empty())
         .then(|| serde_json::to_string(&req.steps).unwrap_or_else(|_| "[]".to_string()));
-    let budgets_json = req
-        .size_budgets
-        .as_ref()
-        .map(|budgets| serde_json::to_string(budgets).unwrap_or_else(|_| "[]".to_string()));
+    let budgets_json = req.size_budgets.as_ref().map(|budgets| {
+        let budgets = checked_file_size_budgets(&job_id, budgets);
+        serde_json::to_string(&budgets).unwrap_or_else(|_| "[]".to_string())
+    });
     let results = (!req.steps.is_empty() || req.exit_code.is_some() || budgets_json.is_some())
         .then_some(RunnerResults {
             step_results: steps_json.as_deref(),
@@ -1671,6 +1671,42 @@ pub async fn delete_runner(
         "runner deleted"
     );
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Longest `source` kept for a runner-sent budget.
+const MAX_BUDGET_SOURCE_CHARS: usize = 128;
+
+/// The runner-sent `.oore.yaml` budgets worth keeping: valid ones, at most one
+/// per platform, with a short single-line `source`. The runner validated the
+/// file already; this guards the snapshot against a runner that did not.
+fn checked_file_size_budgets(
+    build_id: &str,
+    budgets: &[oore_contract::TargetSizeBudget],
+) -> Vec<oore_contract::TargetSizeBudget> {
+    let mut kept: Vec<oore_contract::TargetSizeBudget> = Vec::new();
+    for budget in budgets {
+        let source: String = budget
+            .source
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .take(MAX_BUDGET_SOURCE_CHARS)
+            .collect();
+        let errors = budget.budget.validate_at(&source);
+        if !errors.is_empty() {
+            warn!(build_id, errors = %errors.join("; "), "dropped an invalid size budget the runner sent");
+            continue;
+        }
+        if kept.iter().any(|seen| seen.platform == budget.platform) {
+            warn!(build_id, source = %source, "dropped a second size budget for one platform");
+            continue;
+        }
+        kept.push(oore_contract::TargetSizeBudget {
+            platform: budget.platform.clone(),
+            source,
+            budget: budget.budget.clone(),
+        });
+    }
+    kept
 }
 
 #[cfg(test)]
@@ -2351,6 +2387,32 @@ mod tests {
         assert_eq!(
             snapshot(pool.clone(), "b3").await["file_size_budgets"],
             serde_json::json!([1])
+        );
+    }
+
+    #[test]
+    fn runner_sent_budgets_are_checked_before_they_are_kept() {
+        let sent: Vec<oore_contract::TargetSizeBudget> = serde_json::from_value(serde_json::json!([
+            {"platform":"android","source":"targets.android.budgets\nforged line","budget":{"mode":"fail","rules":[{"kind":"aab","max_bytes":10}]}},
+            {"platform":"android","source":"second","budget":{"mode":"fail","rules":[{"kind":"apk","max_bytes":10}]}},
+            {"platform":"ios","source":"x".repeat(500),"budget":{"mode":"fail","rules":[{"kind":"ipa","max_bytes":0}]}},
+        ]))
+        .unwrap();
+        let kept = super::checked_file_size_budgets("b1", &sent);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0].source, "targets.android.budgets forged line");
+        assert_eq!(kept[0].budget.rules[0].max_bytes, Some(10));
+
+        let long: Vec<oore_contract::TargetSizeBudget> =
+            serde_json::from_value(serde_json::json!([
+                {"platform":"ios","source":"y".repeat(500),"budget":{"mode":"warn","rules":[]}},
+            ]))
+            .unwrap();
+        assert_eq!(
+            super::checked_file_size_budgets("b1", &long)[0]
+                .source
+                .len(),
+            128
         );
     }
 

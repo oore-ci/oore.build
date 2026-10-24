@@ -5772,10 +5772,13 @@ async fn execute_build_steps(
                         ),
                     )
                     .await;
-                    if exit_code != 0 {
-                        // Analysis shows what the failing change looks like,
-                        // so it runs here too; it never changes the result.
-                        run_analyzer_step(
+                    // Analysis shows what the failing change looks like, so
+                    // it runs here too; it never changes the result. After a
+                    // pre-build failure (dependencies, code generation) the
+                    // analyzer would only report the missing setup.
+                    if exit_code != 0
+                        && phase != StepPhase::PreBuild
+                        && let Err(error) = run_analyzer_step(
                             client,
                             daemon_url,
                             config,
@@ -5786,10 +5789,15 @@ async fn execute_build_steps(
                                 vm,
                                 env: &step_env,
                                 path_prefixes: &report_path_prefixes,
+                                authority: authority.clone(),
                             },
                             &mut steps,
                         )
-                        .await;
+                        .await
+                    {
+                        return (steps, Err(error));
+                    }
+                    if exit_code != 0 {
                         let err = if exit_code == 127 && vm.is_some() {
                             anyhow::anyhow!(
                                 "Step failed with exit code 127 (command not found). \
@@ -6065,7 +6073,7 @@ Install the required tooling on the runner, set isolation: vm, or override build
     }
 
     // While the toolchain (the VM, when there is one) is still up.
-    run_analyzer_step(
+    if let Err(error) = run_analyzer_step(
         client,
         daemon_url,
         config,
@@ -6076,10 +6084,14 @@ Install the required tooling on the runner, set isolation: vm, or override build
             vm,
             env: &step_env,
             path_prefixes: &report_path_prefixes,
+            authority: authority.clone(),
         },
         &mut steps,
     )
-    .await;
+    .await
+    {
+        return (steps, Err(error));
+    }
 
     // Every step has run; free the VM slot before the upload.
     if let Some(vm) = build_vm.take() {
@@ -7208,7 +7220,7 @@ async fn report_step_tests(
 
 /// Longest the analyzer may run. It is a report, so it never holds the build
 /// up for long.
-const ANALYZE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const ANALYZE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Analyzer stderr kept for the log.
 const ANALYZE_STDERR_BYTES: usize = 16 * 1024;
 /// Diagnostics also printed to the build log.
@@ -7221,6 +7233,22 @@ struct AnalyzeInputs<'a> {
     env: &'a [(String, String)],
     /// Workspace paths stripped from diagnostic file names.
     path_prefixes: &'a [PathBuf],
+    /// Watched while the analyzer runs, so canceling the build stops it.
+    authority: Arc<BuildAuthorityState>,
+}
+
+/// Why `collect_analysis` has no report.
+enum AnalysisSkip {
+    /// The step is skipped for this reason; the build carries on.
+    Reason(String),
+    /// The build was canceled or lost while the analyzer ran.
+    Terminated,
+}
+
+impl From<String> for AnalysisSkip {
+    fn from(reason: String) -> Self {
+        AnalysisSkip::Reason(reason)
+    }
 }
 
 /// Reads all of `reader`, keeping the first `cap` bytes. Reading past the cap
@@ -7248,9 +7276,10 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
 /// Runs the analyzer script. `Err` is why there is no analysis.
 async fn collect_analysis(
     inputs: &AnalyzeInputs<'_>,
+    cancel_fut: impl std::future::Future<Output = ()>,
     stderr_lines: &mut Vec<String>,
     mask: impl Fn(&str) -> String,
-) -> Result<(i32, oore_contract::RunnerAnalyzerReport), String> {
+) -> Result<(i32, oore_contract::RunnerAnalyzerReport), AnalysisSkip> {
     let script = analyzer::analyze_script();
     let spawned = match inputs.vm {
         Some(vm) => vm.vm.spawn_step(&script, inputs.env).await,
@@ -7270,20 +7299,30 @@ async fn collect_analysis(
     let mut child = spawned.map_err(|error| format!("could not start the analyzer: {error:#}"))?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let finished = tokio::time::timeout(ANALYZE_TIMEOUT, async {
-        let (stdout, stderr) = tokio::join!(
-            read_capped(stdout, analyzer::MAX_OUTPUT_BYTES),
-            read_capped(stderr, ANALYZE_STDERR_BYTES)
-        );
-        (stdout, stderr, child.wait().await)
-    })
-    .await;
-    let Ok(((stdout, stdout_over), (stderr, _), status)) = finished else {
+    let finished = tokio::select! {
+        finished = tokio::time::timeout(ANALYZE_TIMEOUT, async {
+            let (stdout, stderr) = tokio::join!(
+                read_capped(stdout, analyzer::MAX_OUTPUT_BYTES),
+                read_capped(stderr, ANALYZE_STDERR_BYTES)
+            );
+            (stdout, stderr, child.wait().await)
+        }) => finished.ok(),
+        () = cancel_fut => {
+            stop_process_group(&mut child).await;
+            return Err(AnalysisSkip::Terminated);
+        }
+    };
+    let Some(((stdout, stdout_over), (stderr, _), status)) = finished else {
+        // In a VM the child is the host's `tart exec`, which leads no process
+        // group, so this kills only that client. The analyzer may keep
+        // running in the guest until the VM stops, which follows right after
+        // this step (or the failed step that ran it).
         stop_process_group(&mut child).await;
         return Err(format!(
             "the analyzer ran longer than {} minutes",
             ANALYZE_TIMEOUT.as_secs() / 60
-        ));
+        )
+        .into());
     };
     stderr_lines.extend(
         String::from_utf8_lossy(&stderr)
@@ -7295,14 +7334,15 @@ async fn collect_analysis(
         .map_err(|error| format!("could not wait for the analyzer: {error}"))?
         .code();
     if let Some(reason) = analyzer::skip_reason(exit_code) {
-        return Err(reason.to_string());
+        return Err(reason.to_string().into());
     }
     let exit_code = exit_code.unwrap_or(-1);
     if stdout_over {
         return Err(format!(
             "the analyzer printed more than {} MiB",
             analyzer::MAX_OUTPUT_BYTES / (1024 * 1024)
-        ));
+        )
+        .into());
     }
     analyzer::parse_analyzer_output(
         &String::from_utf8_lossy(&stdout),
@@ -7310,12 +7350,13 @@ async fn collect_analysis(
         mask,
     )
     .map(|report| (exit_code, report))
-    .map_err(|error| format!("{error} (exit code {exit_code})"))
+    .map_err(|error| format!("{error} (exit code {exit_code})").into())
 }
 
 /// The `analyze` step: runs `dart analyze --format=json` in the app
 /// directory and reports its summary. It never fails the build; when there is
 /// nothing to analyze, or the analyzer cannot run, the step is skipped.
+/// `Err` means the build was canceled or lost while it ran.
 async fn run_analyzer_step(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -7324,7 +7365,7 @@ async fn run_analyzer_step(
     log_seq: &mut BuildLogCursor,
     inputs: AnalyzeInputs<'_>,
     steps: &mut Vec<StepResult>,
-) {
+) -> anyhow::Result<()> {
     if analyzer::analysis_disabled(inputs.env) {
         let _ = append_runner_log_line(
             client,
@@ -7339,7 +7380,7 @@ async fn run_analyzer_step(
             ),
         )
         .await;
-        return;
+        return Ok(());
     }
     let started = now_unix();
     let _ = append_runner_log_line(
@@ -7355,8 +7396,16 @@ async fn run_analyzer_step(
     let mut stderr_lines = Vec::new();
     let outcome = {
         let masker = &log_seq.masker;
-        collect_analysis(&inputs, &mut stderr_lines, |text| masker.mask(text)).await
+        let cancel = poll_cancellation(
+            client,
+            daemon_url,
+            config,
+            build_id,
+            inputs.authority.clone(),
+        );
+        collect_analysis(&inputs, cancel, &mut stderr_lines, |text| masker.mask(text)).await
     };
+    let terminated = matches!(outcome, Err(AnalysisSkip::Terminated));
     for line in stderr_lines.iter().take(20) {
         let _ = append_runner_log_line(
             client, daemon_url, config, build_id, log_seq, "stderr", line,
@@ -7396,8 +7445,12 @@ async fn run_analyzer_step(
             }
             ("succeeded", Some(*exit_code))
         }
-        Err(reason) => {
+        Err(AnalysisSkip::Reason(reason)) => {
             lines.push(format!("[oore-analyze] Skipped: {reason}"));
+            ("skipped", None)
+        }
+        Err(AnalysisSkip::Terminated) => {
+            lines.push("[oore-analyze] Stopped: the build is no longer active".to_string());
             ("skipped", None)
         }
     };
@@ -7427,6 +7480,10 @@ async fn run_analyzer_step(
         &step_end_marker(analyzer::ANALYZE_STEP, status, exit_code),
     )
     .await;
+    if terminated {
+        return Err(inputs.authority.terminated());
+    }
+    Ok(())
 }
 
 fn step_start_marker(name: &str, command: &str) -> String {
@@ -8317,6 +8374,42 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[tokio::test]
+    async fn canceling_the_build_stops_the_analyzer() {
+        use std::os::unix::fs::PermissionsExt;
+        let workspace = TempDir::new("oore-analyze-cancel");
+        let root = workspace.path();
+        std::fs::write(root.join("pubspec.yaml"), "name: app\n").unwrap();
+        std::fs::create_dir_all(root.join(".dart_tool")).unwrap();
+        std::fs::write(root.join(".dart_tool/package_config.json"), "{}").unwrap();
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let dart = bin.join("dart");
+        std::fs::write(&dart, "#!/bin/sh\nsleep 60\n").unwrap();
+        std::fs::set_permissions(&dart, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let env = vec![(
+            "PATH".to_string(),
+            format!("{}:/usr/bin:/bin", bin.display()),
+        )];
+        let inputs = super::AnalyzeInputs {
+            workspace: root,
+            vm: None,
+            env: &env,
+            path_prefixes: &[],
+            authority: std::sync::Arc::new(super::BuildAuthorityState::default()),
+        };
+        let started = std::time::Instant::now();
+        let outcome = super::collect_analysis(
+            &inputs,
+            tokio::time::sleep(std::time::Duration::from_millis(300)),
+            &mut Vec::new(),
+            str::to_string,
+        )
+        .await;
+        assert!(matches!(outcome, Err(super::AnalysisSkip::Terminated)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
     }
 
     fn plan_commands(plan: &super::ResolvedExecutionPlan, phase: StepPhase) -> Vec<String> {

@@ -200,11 +200,11 @@ never fails the build itself, and it does not change artifacts or releases.
 - Any growth from a 0-byte baseline is over a percent limit.
 - The budget applies when a build reports its result, so a change shows on the
   next build or re-run.
-- When the `.oore.yaml` version 2 file a build ran sets
-  [`budgets`](/reference/config/oore-yaml-v2#budgets) on any of its targets,
-  the file's budgets replace `size_budget` for that build. Each platform's
-  check uses its target's budgets, a target without `budgets` has none, and
-  the summary names the field the budget came from.
+- `size_budget` is a floor. When the `.oore.yaml` version 2 file a build ran
+  sets [`budgets`](/reference/config/oore-yaml-v2#budgets) on a target, that
+  platform's check is held to both, and the summary names the budget each
+  artifact went over. The check fails when any budget it went over has
+  `mode: fail`. A file cannot loosen or turn off `size_budget`.
 
 ### Modes
 

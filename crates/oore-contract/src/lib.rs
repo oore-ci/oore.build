@@ -1499,8 +1499,8 @@ impl SizeBudget {
 }
 
 /// A size budget a repository's `.oore.yaml` version 2 file sets on one
-/// target, after workflow overrides. When a build's file sets any, they
-/// replace the pipeline's `size_budget` for that build's commit checks.
+/// target, after workflow overrides. That platform's commit check enforces it
+/// on top of the pipeline's `size_budget`, which stays a floor.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct TargetSizeBudget {
     pub platform: BuildPlatform,
