@@ -1,5 +1,7 @@
 import type { Build } from '@oore/client/models'
 
+import { formatDuration } from './format-utils'
+
 /** Fewer finished runs than this make a median too noisy to compare with. */
 export const MIN_MEDIAN_SAMPLES = 3
 
@@ -58,4 +60,46 @@ export function stepTimingTrend(
     return 'typical'
   }
   return delta > 0 ? 'slower' : 'faster'
+}
+
+/**
+ * The length that fills a duration bar: the slowest step time or median, so
+ * every bar in one build shares a scale. Zero when nothing has a time.
+ */
+export function longestStepMs(
+  steps: ReadonlyArray<{ name: string; durationMs?: number }>,
+  medians?: ReadonlyMap<string, number>,
+): number {
+  return Math.max(
+    0,
+    ...steps.flatMap((step) => [
+      step.durationMs ?? 0,
+      medians?.get(step.name) ?? 0,
+    ]),
+  )
+}
+
+/** A step's difference from its median, to the second: `+38s`, `−1m 0s`, `±0s`. */
+export function formatStepDelta(durationMs: number, medianMs: number): string {
+  const delta = Math.round((durationMs - medianMs) / 1000)
+  if (delta === 0) return '±0s'
+  return `${delta > 0 ? '+' : '−'}${formatDuration(Math.abs(delta))}`
+}
+
+/**
+ * One line for a step: its time, then its difference from the median when
+ * there is one. Without a time it falls back to the line count.
+ */
+export function stepTimingSummary(
+  durationMs: number | undefined,
+  medianMs: number | undefined,
+  lineCount: number,
+): string {
+  if (durationMs == null) {
+    return `${lineCount} ${lineCount === 1 ? 'line' : 'lines'}`
+  }
+  const time = formatDuration(durationMs / 1000)
+  return medianMs == null
+    ? time
+    : `${time} (${formatStepDelta(durationMs, medianMs)})`
 }
