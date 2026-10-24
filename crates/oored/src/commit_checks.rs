@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, SecondsFormat};
-use oore_contract::{BuildSizeReport, BuildStatus};
+use oore_contract::{BuildSizeReport, BuildStatus, StepResult};
 use sqlx::{Row, SqlitePool};
 use tracing::{debug, warn};
 use url::Url;
@@ -165,6 +165,10 @@ struct BuildContext {
     started_at: Option<i64>,
     finished_at: Option<i64>,
     platforms: Vec<String>,
+    /// The `.oore.yaml` v2 workflow the pipeline builds, from the snapshot.
+    workflow: Option<String>,
+    /// The steps the runner reported, in the order they ran.
+    steps: Vec<StepResult>,
     provider: String,
     integration_id: String,
     host_url: String,
@@ -221,7 +225,7 @@ fn artifact_platform(artifact_type: &str, name: &str) -> Option<&'static str> {
 async fn load_context(pool: &SqlitePool, build_id: &str) -> anyhow::Result<Option<BuildContext>> {
     let Some(row) = sqlx::query(
         "SELECT b.id, b.build_number, b.status, b.commit_sha, b.branch, b.pipeline_id, \
-                b.config_snapshot, b.created_at, b.started_at, b.finished_at, pl.name AS pipeline_name, \
+                b.config_snapshot, b.step_results, b.created_at, b.started_at, b.finished_at, pl.name AS pipeline_name, \
                 i.id AS integration_id, i.provider, i.host_url, i.auth_mode, \
                 inst.external_id AS installation_external_id, \
                 r.external_id AS repository_external_id, r.full_name \
@@ -243,6 +247,10 @@ async fn load_context(pool: &SqlitePool, build_id: &str) -> anyhow::Result<Optio
     let status: String = row.get("status");
     let snapshot: String = row.get("config_snapshot");
     let snapshot = serde_json::from_str(&snapshot).unwrap_or(serde_json::Value::Null);
+    let steps = row
+        .get::<Option<String>, _>("step_results")
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
     Ok(Some(BuildContext {
         build_id: row.get("id"),
         build_number: row.get("build_number"),
@@ -257,6 +265,13 @@ async fn load_context(pool: &SqlitePool, build_id: &str) -> anyhow::Result<Optio
         started_at: row.get("started_at"),
         finished_at: row.get("finished_at"),
         platforms: snapshot_platforms(&snapshot),
+        workflow: snapshot
+            .get("workflow")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        steps,
         provider: row.get("provider"),
         integration_id: row.get("integration_id"),
         host_url: row.get("host_url"),
@@ -398,6 +413,123 @@ fn size_section(
     Some(section)
 }
 
+/// Steps the runner adds around any configuration's own steps.
+const RUNNER_STEPS: &[&str] = &[
+    "checkout",
+    "vm-start",
+    "flutter-version",
+    "android-sign",
+    "ios-sign",
+    "artifacts",
+    "publish-play",
+    "publish-app-store",
+];
+/// At most this many steps are listed, to stay well inside the check
+/// summary limit.
+const MAX_LISTED_STEPS: usize = 50;
+const MAX_TITLE_STEP_CHARS: usize = 60;
+
+/// A name the v1 file gives its unnamed commands, such as `pre_build-1`.
+fn is_v1_step_name(name: &str) -> bool {
+    ["pre_build-", "build-", "post_build-"]
+        .iter()
+        .any(|prefix| {
+            name.strip_prefix(prefix)
+                .is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()))
+        })
+}
+
+/// Whether the build ran a `.oore.yaml` v2 plan, whose steps have names worth
+/// showing. A pipeline that picks a workflow builds v2. Otherwise the runner's
+/// reports tell: v1 commands are named by stage and number, v2 steps by the
+/// file. Builds that stopped in the runner's own steps keep the v1 output.
+fn has_named_steps(ctx: &BuildContext) -> bool {
+    ctx.workflow.is_some()
+        || (!ctx.steps.iter().any(|step| is_v1_step_name(&step.name))
+            && ctx
+                .steps
+                .iter()
+                .any(|step| !RUNNER_STEPS.contains(&step.name.as_str())))
+}
+
+/// The step a failed build stopped at.
+fn failed_step(steps: &[StepResult]) -> Option<&StepResult> {
+    steps.iter().find(|step| step.status == "failed")
+}
+
+fn title_step_name(name: &str) -> String {
+    let name = name.trim();
+    if name.chars().count() <= MAX_TITLE_STEP_CHARS {
+        return name.to_string();
+    }
+    let mut short: String = name.chars().take(MAX_TITLE_STEP_CHARS - 1).collect();
+    short.push('…');
+    short
+}
+
+/// The check title: the build's state, and for a v2 build that failed, the
+/// step it failed at.
+fn check_title(ctx: &BuildContext, named_steps: bool) -> String {
+    let title = status_title(ctx.build_number, ctx.status);
+    if !named_steps || !matches!(ctx.status, BuildStatus::Failed | BuildStatus::TimedOut) {
+        return title;
+    }
+    match failed_step(&ctx.steps) {
+        Some(step) => format!("{title} at {}", title_step_name(&step.name)),
+        None => title,
+    }
+}
+
+fn format_duration(duration_ms: i64) -> String {
+    let secs = duration_ms.max(0) / 1000;
+    match secs {
+        0 if duration_ms < 1000 => "<1s".to_string(),
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m {:02}s", secs / 60, secs % 60),
+        _ => format!("{}h {:02}m", secs / 3600, (secs % 3600) / 60),
+    }
+}
+
+fn step_result_label(status: &str) -> String {
+    match status {
+        "succeeded" => "Passed".to_string(),
+        "failed" => "**Failed**".to_string(),
+        "skipped" => "Skipped".to_string(),
+        "canceled" | "cancelled" => "Canceled".to_string(),
+        other => markdown_text(other),
+    }
+}
+
+/// The build's steps by name, with their results, as a Markdown section.
+fn steps_section(steps: &[StepResult]) -> Option<String> {
+    if steps.is_empty() {
+        return None;
+    }
+    let failed = steps.iter().position(|step| step.status == "failed");
+    let mut section =
+        String::from("\n**Steps**\n\n| Step | Result | Duration |\n| --- | --- | ---: |\n");
+    for (index, step) in steps.iter().enumerate().take(MAX_LISTED_STEPS) {
+        let name = markdown_text(step.name.trim());
+        let name = if failed == Some(index) {
+            format!("**{name}**")
+        } else {
+            name
+        };
+        section.push_str(&format!(
+            "| {name} | {} | {} |\n",
+            step_result_label(&step.status),
+            format_duration(step.duration_ms),
+        ));
+    }
+    if steps.len() > MAX_LISTED_STEPS {
+        section.push_str(&format!(
+            "\n{} more steps are listed with the build.\n",
+            steps.len() - MAX_LISTED_STEPS
+        ));
+    }
+    Some(section)
+}
+
 fn platform_reports(
     ctx: &BuildContext,
     base: Option<&Url>,
@@ -405,7 +537,8 @@ fn platform_reports(
     sizes: Option<&BuildSizeReport>,
 ) -> Vec<PlatformReport> {
     let build_url = base.map(|base| web_url(base, &format!("/builds/{}", ctx.build_id), None));
-    let title = status_title(ctx.build_number, ctx.status);
+    let named_steps = has_named_steps(ctx);
+    let title = check_title(ctx, named_steps);
     let single_platform = ctx.platforms.len() == 1;
     ctx.platforms
         .iter()
@@ -427,6 +560,9 @@ fn platform_reports(
                 summary.push_str(&format!(" on `{}`", branch.replace('`', "")));
             }
             summary.push_str(".\n");
+            if let Some(workflow) = &ctx.workflow {
+                summary.push_str(&format!("\nWorkflow `{}`\n", workflow.replace('`', "")));
+            }
             if let Some(build_url) = &build_url {
                 summary.push_str(&format!("\n[View build and logs]({build_url})\n"));
             }
@@ -446,6 +582,10 @@ fn platform_reports(
             if let Some(section) =
                 sizes.and_then(|sizes| size_section(sizes, base, platform, single_platform))
             {
+                summary.push_str(&section);
+            }
+
+            if named_steps && let Some(section) = steps_section(&ctx.steps) {
                 summary.push_str(&section);
             }
 
@@ -872,6 +1012,208 @@ mod tests {
         assert_eq!(calls[4].1, "/repos/acme/app/check-runs/42");
         assert_eq!(calls[4].2["status"], "queued");
         assert_eq!(calls[4].2["external_id"], "b2");
+    }
+
+    fn step(name: &str, status: &str, duration_secs: i64) -> serde_json::Value {
+        serde_json::json!({
+            "name": name,
+            "status": status,
+            "exit_code": if status == "failed" { 1 } else { 0 },
+            "started_at": 10,
+            "finished_at": 10 + duration_secs,
+            "duration_ms": duration_secs * 1000,
+        })
+    }
+
+    /// Finishes a build with the runner's step results and, for a pipeline
+    /// that picks one, its v2 workflow in the snapshot.
+    async fn finish_with_steps(
+        pool: &SqlitePool,
+        id: &str,
+        status: &str,
+        workflow: Option<&str>,
+        steps: &[serde_json::Value],
+    ) {
+        let mut snapshot =
+            serde_json::json!({ "ui_execution_config": { "platforms": ["android", "ios"] } });
+        if let Some(workflow) = workflow {
+            snapshot["workflow"] = workflow.into();
+        }
+        sqlx::query("UPDATE builds SET config_snapshot = ?2, step_results = ?3 WHERE id = ?1")
+            .bind(id)
+            .bind(snapshot.to_string())
+            .bind(serde_json::Value::from(steps.to_vec()).to_string())
+            .execute(pool)
+            .await
+            .unwrap();
+        set_status(pool, id, status).await;
+    }
+
+    #[tokio::test]
+    async fn github_v2_check_lists_named_steps_and_the_failed_one() {
+        let (base, received) = capture_server().await;
+        let pool = seeded_pool("github", "https://github.com").await;
+        insert_build(&pool, "b1", 1, 100).await;
+        finish_with_steps(
+            &pool,
+            "b1",
+            "failed",
+            Some("release"),
+            &[
+                step("checkout", "succeeded", 3),
+                step("Get packages", "succeeded", 0),
+                step("Run tests", "failed", 65),
+            ],
+        )
+        .await;
+
+        report_github_build(&pool, &base, "b1").await;
+        let calls = received.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        let android = &calls[0].2;
+        // Branch protection requires checks by name, so it never changes.
+        assert_eq!(android["name"], "Release (Android)");
+        assert_eq!(calls[1].2["name"], "Release (iOS)");
+        assert_eq!(android["conclusion"], "failure");
+        assert_eq!(android["output"]["title"], "Build #1 failed at Run tests");
+        let summary = android["output"]["summary"].as_str().unwrap();
+        assert!(
+            summary.starts_with("**Build \\#1 failed at Run tests** for `abc123` on `main`.\n"),
+            "{summary}"
+        );
+        assert!(summary.contains("\nWorkflow `release`\n"), "{summary}");
+        assert!(
+            summary.contains(
+                "**Steps**\n\n| Step | Result | Duration |\n| --- | --- | ---: |\n\
+                 | checkout | Passed | 3s |\n\
+                 | Get packages | Passed | <1s |\n\
+                 | **Run tests** | **Failed** | 1m 05s |\n"
+            ),
+            "{summary}"
+        );
+        // Every platform's check shows the step the build stopped at.
+        let ios = calls[1].2["output"]["summary"].as_str().unwrap();
+        assert!(ios.contains("| **Run tests** | **Failed** |"), "{ios}");
+    }
+
+    #[tokio::test]
+    async fn github_v2_check_without_a_workflow_lists_steps_by_name() {
+        let (base, received) = capture_server().await;
+        let pool = seeded_pool("github", "https://github.com").await;
+        insert_build(&pool, "b1", 1, 100).await;
+        finish_with_steps(
+            &pool,
+            "b1",
+            "succeeded",
+            None,
+            &[
+                step("checkout", "succeeded", 2),
+                step("Build Android", "succeeded", 312),
+                step("Build iOS", "succeeded", 4000),
+                step("Upload [symbols]", "succeeded", 5),
+            ],
+        )
+        .await;
+
+        report_github_build(&pool, &base, "b1").await;
+        let calls = received.lock().unwrap();
+        let android = &calls[0].2;
+        assert_eq!(android["name"], "Release (Android)");
+        assert_eq!(android["output"]["title"], "Build #1 succeeded");
+        let summary = android["output"]["summary"].as_str().unwrap();
+        assert!(!summary.contains("Workflow"), "{summary}");
+        assert!(
+            summary.contains("| Build Android | Passed | 5m 12s |\n"),
+            "{summary}"
+        );
+        assert!(
+            summary.contains("| Build iOS | Passed | 1h 06m |\n"),
+            "{summary}"
+        );
+        assert!(
+            summary.contains("| Upload \\[symbols\\] | Passed | 5s |\n"),
+            "{summary}"
+        );
+    }
+
+    #[tokio::test]
+    async fn github_v1_check_output_is_unchanged() {
+        let (base, received) = capture_server().await;
+        let pool = seeded_pool("github", "https://github.com").await;
+        insert_build(&pool, "b1", 1, 100).await;
+        finish_with_steps(
+            &pool,
+            "b1",
+            "failed",
+            None,
+            &[
+                step("checkout", "succeeded", 3),
+                step("pre_build-1", "succeeded", 4),
+                step("build-1", "failed", 30),
+            ],
+        )
+        .await;
+
+        report_github_build(&pool, &base, "b1").await;
+        let calls = received.lock().unwrap();
+        let android = &calls[0].2;
+        assert_eq!(android["name"], "Release (Android)");
+        assert_eq!(android["output"]["title"], "Build #1 failed");
+        assert_eq!(
+            android["output"]["summary"],
+            "**Build \\#1 failed** for `abc123` on `main`.\n\
+             \n[View build and logs](https://oore.example.com/builds/b1)\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn gitlab_v2_status_names_the_failed_step_and_keeps_its_name() {
+        let (base, received) = capture_server().await;
+        let key = vec![7u8; 32];
+        let pool = gitlab_pool(&base, &key).await;
+        insert_build(&pool, "b1", 1, 100).await;
+        finish_with_steps(
+            &pool,
+            "b1",
+            "failed",
+            Some("adhoc"),
+            &[
+                step("checkout", "succeeded", 1),
+                step("Analyze", "failed", 9),
+            ],
+        )
+        .await;
+
+        report_due_builds(&pool, &key, &base).await.unwrap();
+        let calls = received.lock().unwrap();
+        assert_eq!(calls[0].2["name"], "Oore: Release (Android)");
+        assert_eq!(calls[0].2["description"], "Build #1 failed at Analyze");
+        assert_eq!(calls[0].2["state"], "failed");
+    }
+
+    #[test]
+    fn v1_step_names_are_told_from_v2_names() {
+        for name in ["pre_build-1", "build-2", "post_build-10"] {
+            assert!(is_v1_step_name(name), "{name}");
+        }
+        for name in [
+            "build",
+            "build-",
+            "build-x",
+            "Build Android",
+            "Run tests",
+            "checkout",
+        ] {
+            assert!(!is_v1_step_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn long_step_names_are_shortened_in_the_title() {
+        let name = "x".repeat(100);
+        let short = title_step_name(&name);
+        assert_eq!(short.chars().count(), MAX_TITLE_STEP_CHARS);
+        assert!(short.ends_with('…'));
     }
 
     #[tokio::test]
