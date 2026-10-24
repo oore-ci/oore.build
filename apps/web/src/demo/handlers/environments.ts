@@ -111,13 +111,17 @@ function promote(
   )
   if (!source) return
   const steps = environment.rollout_policy.steps ?? [1]
-  const first = environment.track === 'internal' ? 1 : (steps.at(0) ?? 1)
+  const appStore = environment.store === 'app_store'
+  // An App Store version waits for App Review; TestFlight testers have it at once.
+  const inReview = appStore && environment.track === 'app_store'
+  const first =
+    appStore || environment.track === 'internal' ? 1 : (steps.at(0) ?? 1)
   const release: DemoRelease = {
     ...source,
     id: `rel-demo-promoted-${Date.now()}`,
     track: environment.track,
-    state: first >= 1 ? 'complete' : 'rolling',
-    rollout_fraction: first,
+    state: inReview ? 'in_review' : first >= 1 ? 'complete' : 'rolling',
+    rollout_fraction: inReview ? 0 : first,
     next_fraction:
       first >= 1 ? null : (steps.find((step) => step > first) ?? null),
     next_step_at:
@@ -142,7 +146,15 @@ function promote(
       actor_email: persona.email,
       to_state: release.state,
       to_fraction: release.rollout_fraction,
-      reason: `Promoted from ${source.environment_name ?? `the ${source.track} track`} without a new build`,
+      reason: `Promoted from ${source.environment_name ?? `the ${source.track} track`} without a new build${
+        inReview
+          ? '. Build attached to version ' +
+            (source.version_name ?? '') +
+            '; submit it for review in App Store Connect'
+          : appStore
+            ? `. Available in TestFlight to ${environment.track}`
+            : ''
+      }`,
     },
   ]
   promotion.state = 'completed'
@@ -207,7 +219,7 @@ export const environmentHandlers = [
       track: body.track,
       approval_required: body.approval_required ?? false,
       rollout_policy: body.rollout_policy ?? DEFAULT_POLICY,
-      promotable: body.store === 'google_play',
+      promotable: true,
       created_at: ago(0),
       updated_at: ago(0),
     }
@@ -329,13 +341,20 @@ export const environmentHandlers = [
       .filter(
         (release) =>
           release.build_id === body.build_id &&
-          release.store === 'google_play' &&
+          release.store === environment.store &&
+          !(release.store === 'app_store' && release.track === 'app_store') &&
           ['rolling', 'paused', 'complete'].includes(release.state) &&
           release.environment_id !== environment.id,
       )
       .sort((left, right) => right.created_at - left.created_at)[0]
     if (!source) {
-      return error(409, 'no_source_release', 'No live Google Play release')
+      return error(
+        409,
+        'no_source_release',
+        environment.store === 'app_store'
+          ? 'This build has no TestFlight release to promote.'
+          : 'This build has no live Google Play release to promote.',
+      )
     }
     const promotion: DemoPromotion = {
       id: `promo-demo-${Date.now()}`,

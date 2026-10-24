@@ -74,10 +74,17 @@ import { TabsContent } from '@/components/ui/tabs'
 const ENVIRONMENTS_DOCS_URL =
   'https://docs.oore.build/build/distribute/environments'
 
-/** A release in this environment that can still be promoted elsewhere. */
+/**
+ * A release in this environment that can still be promoted elsewhere: a live
+ * Google Play release, or a TestFlight release testers have. A release on the
+ * App Store itself is the end of the path.
+ */
 function promotableRelease(environment: ProjectEnvironment) {
   const release = environment.latest_release
-  if (!release || release.store !== 'google_play') return undefined
+  if (!release) return undefined
+  if (release.store === 'app_store' && release.track === 'app_store') {
+    return undefined
+  }
   return ['rolling', 'paused', 'complete'].includes(release.state)
     ? release
     : undefined
@@ -300,6 +307,7 @@ export function ProjectEnvironmentsTab({
       .some(
         (target) =>
           target.promotable &&
+          target.store === environment.store &&
           (canManage || (canOperate && target.approval_required)),
       )
   }

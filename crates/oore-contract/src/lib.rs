@@ -5836,13 +5836,19 @@ pub struct ProjectEnvironment {
     /// before anything changes at the store.
     pub approval_required: bool,
     /// Staged rollout policy for releases promoted into this environment.
-    /// Its `approval` is always `none`; use `approval_required`.
+    /// Its `approval` is always `none`; use `approval_required`. On the App
+    /// Store track, a policy with more than one step turns on Apple's phased
+    /// release, which follows Apple's own seven-day schedule.
     pub rollout_policy: ReleasePolicy,
+    /// App Store track only: submit the App Store version for App Review
+    /// once a promotion attaches the build. Otherwise the version waits for
+    /// someone to submit it in App Store Connect.
+    #[serde(default)]
+    pub submit_for_review: bool,
     /// The newest release in this environment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_release: Option<Release>,
-    /// Whether builds can be promoted into this environment. App Store
-    /// environments only group the releases that uploads record for now.
+    /// Whether builds can be promoted into this environment.
     pub promotable: bool,
     pub created_at: i64,
     pub updated_at: i64,
@@ -5949,6 +5955,10 @@ pub struct CreateProjectEnvironmentRequest {
     /// Defaults to the standard schedule with no crash-rate halt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollout_policy: Option<ReleasePolicy>,
+    /// App Store track only: submit the version for App Review after a
+    /// promotion attaches the build.
+    #[serde(default)]
+    pub submit_for_review: bool,
 }
 
 /// Changes to an environment. The key and store are fixed once created.
@@ -5962,6 +5972,8 @@ pub struct UpdateProjectEnvironmentRequest {
     pub approval_required: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollout_policy: Option<ReleasePolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submit_for_review: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<i64>,
 }

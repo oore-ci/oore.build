@@ -340,7 +340,7 @@ export function EnvironmentDialog({
                 ? 'This environment has releases, so its track is fixed. Add a new environment for another track.'
                 : store === 'google_play'
                   ? 'internal, closed, open, production, or a custom track name.'
-                  : 'App Store environments group the releases uploads record; promotion into them comes later.'}
+                  : 'app_store for the App Store version, or a TestFlight group name.'}
             </Text>
 
             <FormField

@@ -13,7 +13,7 @@ use zeroize::Zeroizing;
 
 use crate::pipeline_publish::load_google_play;
 use crate::releases::{
-    BoxFuture, PromotionTarget, ReleaseStoreClient, StoreChange, StoreObservation,
+    BoxFuture, Promoted, PromotionTarget, ReleaseStoreClient, StoreChange, StoreObservation,
 };
 use crate::secrets::resolve_secret_value;
 
@@ -303,12 +303,13 @@ impl ReleaseStoreClient for PlayReleaseStoreClient {
         &'a self,
         source: &'a Release,
         target: PromotionTarget<'a>,
-    ) -> BoxFuture<'a, anyhow::Result<()>> {
+    ) -> BoxFuture<'a, anyhow::Result<Promoted>> {
         Box::pin(async move {
             if source.store != ReleaseStore::GooglePlay {
-                bail!("only Google Play releases can be promoted");
+                bail!("only Google Play releases can be promoted here");
             }
-            self.promote_play(source, target).await
+            self.promote_play(source, target).await?;
+            Ok(Promoted::default())
         })
     }
 }

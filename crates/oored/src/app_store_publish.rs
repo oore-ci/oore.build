@@ -24,15 +24,16 @@ use tracing::{error, info, warn};
 
 use crate::AppState;
 use crate::app_store_connect::{
-    AppStoreConnect, AscBetaDetail, AscError, BuildProcessing, phased_release_fraction,
+    AppStoreConnect, AscApi, AscBetaDetail, AscError, BuildProcessing, phased_release_fraction,
+    version_is_editable,
 };
 use crate::apple_api::AppleApiCredentials;
 use crate::crypto;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{ProjectPermission, require_pipeline_project_permission};
 use crate::releases::{
-    self, BoxFuture, NewRelease, ReleaseActor, ReleaseChange, ReleaseDeps, ReleaseError,
-    ReleaseStoreClient, StoreChange,
+    self, BoxFuture, NewRelease, Promoted, PromotionRefused, PromotionTarget, ReleaseActor,
+    ReleaseChange, ReleaseDeps, ReleaseError, ReleaseStoreClient, StoreChange,
 };
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -1004,7 +1005,7 @@ async fn advance(asc: &AppStoreConnect<'_>, link: &LinkRow) -> Result<Step, AscE
 }
 
 async fn distribute_testflight(
-    asc: &AppStoreConnect<'_>,
+    asc: &impl AscApi,
     app_id: &str,
     build_id: &str,
     beta: &AscBetaDetail,
@@ -1081,7 +1082,7 @@ async fn distribute_testflight(
 }
 
 async fn distribute_app_store(
-    asc: &AppStoreConnect<'_>,
+    asc: &impl AscApi,
     app_id: &str,
     build_id: &str,
     link: &LinkRow,
@@ -1524,6 +1525,302 @@ impl AppStoreReleaseClient {
     }
 }
 
+// ── Promotion ───────────────────────────────────────────────────
+
+/// The release track of App Store versions; any other App Store track names
+/// TestFlight groups.
+const APP_STORE_TRACK: &str = "app_store";
+
+/// The monitor link a promoted App Store release starts with. It points at
+/// the build the source release already handed out, so the monitor follows
+/// beta review, App Review and phased release for the new release.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromotedLink {
+    pipeline_id: String,
+    bundle_id: String,
+    version: String,
+    build_number: String,
+    config: String,
+    stage: Stage,
+    asc_app_id: String,
+    asc_build_id: String,
+    asc_version_id: Option<String>,
+    next_poll_in: i64,
+}
+
+/// Record a promoted release's monitor link in the transaction that inserts
+/// the release.
+pub(crate) async fn record_promoted_link(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    release_id: &str,
+    link: &PromotedLink,
+) -> Result<(), sqlx::Error> {
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO app_store_release_links (
+            release_id, pipeline_id, bundle_id, version, build_number, config, stage,
+            asc_app_id, asc_build_id, asc_version_id, next_poll_at, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+    )
+    .bind(release_id)
+    .bind(&link.pipeline_id)
+    .bind(&link.bundle_id)
+    .bind(&link.version)
+    .bind(&link.build_number)
+    .bind(&link.config)
+    .bind(link.stage.as_str())
+    .bind(&link.asc_app_id)
+    .bind(&link.asc_build_id)
+    .bind(&link.asc_version_id)
+    .bind(now + link.next_poll_in)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+#[derive(Debug, FromRow)]
+struct SourceLink {
+    pipeline_id: String,
+    bundle_id: String,
+    version: String,
+    build_number: String,
+    config: String,
+    asc_app_id: Option<String>,
+    asc_build_id: Option<String>,
+}
+
+fn refused(code: &'static str, message: impl Into<String>) -> anyhow::Error {
+    PromotionRefused {
+        code,
+        message: message.into(),
+    }
+    .into()
+}
+
+fn asc_failed(error: AscError) -> anyhow::Error {
+    anyhow::anyhow!(error.0)
+}
+
+/// TestFlight groups an environment's track names. Like the track an upload
+/// records, several groups are separated by ", ".
+fn track_groups(track: &str) -> Vec<String> {
+    track
+        .split(", ")
+        .map(str::trim)
+        .filter(|group| !group.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// A TestFlight build Apple no longer offers to testers.
+fn testflight_expired(beta: &AscBetaDetail) -> bool {
+    beta.internal.as_deref() == Some("EXPIRED") || beta.external.as_deref() == Some("EXPIRED")
+}
+
+/// The App Store version to attach a build of `version` to: the version with
+/// that string while Apple still lets it change, or else the app's editable
+/// version, renamed the way an upload's distribution renames it. Returns the
+/// version's id and the version string it had before a rename.
+async fn promotion_version(
+    asc: &impl AscApi,
+    app_id: &str,
+    version: &str,
+) -> anyhow::Result<(String, Option<String>)> {
+    if let Some(existing) = asc
+        .find_version(app_id, version)
+        .await
+        .map_err(asc_failed)?
+    {
+        let state = existing.state.as_deref().unwrap_or("UNKNOWN");
+        if version_is_editable(state) {
+            return Ok((existing.id, None));
+        }
+        return Err(refused(
+            "version_not_editable",
+            format!(
+                "App Store version {version} is {state} in App Store Connect, so no other build can be attached to it"
+            ),
+        ));
+    }
+    let Some(editable) = asc
+        .find_editable_version(app_id)
+        .await
+        .map_err(asc_failed)?
+    else {
+        return Err(refused(
+            "no_editable_version",
+            format!(
+                "App Store Connect has no editable App Store version for this app. Create version {version} in App Store Connect, then promote again."
+            ),
+        ));
+    };
+    asc.rename_version(&editable.id, version)
+        .await
+        .map_err(asc_failed)?;
+    Ok((editable.id, editable.version_string))
+}
+
+/// Hand the build an App Store release already put in TestFlight to more
+/// TestFlight groups or to the app's App Store version. Nothing is uploaded:
+/// the build Apple already processed is reused, through the same calls the
+/// upload's distribution makes.
+pub(crate) async fn promote_with(
+    pool: &SqlitePool,
+    asc: &impl AscApi,
+    source: &Release,
+    target: PromotionTarget<'_>,
+) -> anyhow::Result<Promoted> {
+    if source.track == APP_STORE_TRACK {
+        return Err(refused(
+            "promotion_unsupported",
+            "A release on the App Store cannot be promoted further; promote from a TestFlight release",
+        ));
+    }
+    let link = sqlx::query_as::<_, SourceLink>(
+        "SELECT pipeline_id, bundle_id, version, build_number, config, asc_app_id, asc_build_id
+         FROM app_store_release_links WHERE release_id = ?1",
+    )
+    .bind(&source.id)
+    .fetch_optional(pool)
+    .await?;
+    let Some(link) = link else {
+        return Err(refused(
+            "no_source_release",
+            "Oore did not upload this release to App Store Connect, so it cannot find its build there",
+        ));
+    };
+    let Some(build_id) = link.asc_build_id.clone() else {
+        return Err(refused(
+            "no_source_release",
+            "App Store Connect has not listed this build yet; promote it once it is in TestFlight",
+        ));
+    };
+    let label = format!("{} ({})", link.version, link.build_number);
+    let app_id = match link.asc_app_id.clone() {
+        Some(id) => id,
+        None => asc
+            .find_app_id(&link.bundle_id)
+            .await
+            .map_err(asc_failed)?
+            .ok_or_else(|| {
+                refused(
+                    "no_source_release",
+                    format!(
+                        "App Store Connect has no app with bundle ID {}",
+                        link.bundle_id
+                    ),
+                )
+            })?,
+    };
+    let beta = asc.beta_detail(&build_id).await.map_err(asc_failed)?;
+    if testflight_expired(&beta) {
+        return Err(refused(
+            "build_expired",
+            format!(
+                "Build {label} has expired in TestFlight, so it can no longer be promoted. Upload a new build."
+            ),
+        ));
+    }
+
+    let uploaded: AppStorePublishConfig = serde_json::from_str(&link.config).unwrap_or_default();
+    let mut config = AppStorePublishConfig {
+        enabled: true,
+        uses_non_exempt_encryption: uploaded.uses_non_exempt_encryption,
+        ..AppStorePublishConfig::default()
+    };
+    let mut new_link = LinkRow {
+        release_id: String::new(),
+        pipeline_id: link.pipeline_id.clone(),
+        bundle_id: link.bundle_id.clone(),
+        version: link.version.clone(),
+        build_number: link.build_number.clone(),
+        config: String::new(),
+        stage: Stage::Distribute.as_str().to_string(),
+        asc_app_id: Some(app_id.clone()),
+        asc_build_id: Some(build_id.clone()),
+        asc_version_id: None,
+        created_at: now_unix(),
+        release_state: ReleaseState::Processing.as_str().to_string(),
+        rollout_fraction: 0.0,
+    };
+    let mut renamed_from = None;
+    let step = if target.track == APP_STORE_TRACK {
+        let (version_id, previous) = promotion_version(asc, &app_id, &link.version).await?;
+        renamed_from = previous;
+        new_link.asc_version_id = Some(version_id);
+        config.destination = AppStoreDestination::AppStore;
+        // The notes the build went out with become the version's "What's New".
+        config.release_notes = uploaded.release_notes;
+        config.submit_for_review = target.submit_for_review;
+        config.phased_release = target.phased_release;
+        distribute_app_store(asc, &app_id, &build_id, &new_link, &config, Step::wait(0)).await
+    } else {
+        config.destination = AppStoreDestination::Testflight;
+        config.testflight_groups = track_groups(target.track);
+        // The build keeps the "What to Test" notes its upload set.
+        distribute_testflight(asc, &app_id, &build_id, &beta, &config, Step::wait(0)).await
+    }
+    .map_err(asc_failed)?;
+
+    let Some((state, fraction, detail)) = step.transition else {
+        anyhow::bail!("App Store Connect distribution returned no outcome");
+    };
+    if state == ReleaseState::Failed {
+        // Only a missing TestFlight group fails here, before any change.
+        return Err(refused("testflight_group_not_found", detail));
+    }
+    let detail = match renamed_from {
+        Some(previous) if previous != link.version => {
+            format!(
+                "{detail}. Renamed App Store version {previous} to {}",
+                link.version
+            )
+        }
+        _ => detail,
+    };
+    Ok(Promoted {
+        start: Some((state, fraction.unwrap_or(0.0))),
+        detail: Some(detail),
+        app_store_link: Some(PromotedLink {
+            pipeline_id: link.pipeline_id,
+            bundle_id: link.bundle_id,
+            version: link.version,
+            build_number: link.build_number,
+            config: serde_json::to_string(&config)?,
+            stage: step.stage.unwrap_or(Stage::Done),
+            asc_app_id: app_id,
+            asc_build_id: build_id,
+            asc_version_id: step.asc_version_id.or(new_link.asc_version_id),
+            next_poll_in: step.next_poll_in,
+        }),
+    })
+}
+
+impl AppStoreReleaseClient {
+    /// Promote with the App Store Connect key of the build's pipeline.
+    async fn promote(
+        &self,
+        source: &Release,
+        target: PromotionTarget<'_>,
+    ) -> anyhow::Result<Promoted> {
+        let pipeline_id: String =
+            sqlx::query_scalar("SELECT pipeline_id FROM builds WHERE id = ?1")
+                .bind(&source.build_id)
+                .fetch_optional(&self.pool)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("the release's build no longer exists"))?;
+        let row = load_signing_key_row(&self.pool, &pipeline_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("the build's pipeline has no iOS signing settings"))?;
+        let creds = decrypt_credentials(&row, &self.encryption_key)?.ok_or_else(|| {
+            anyhow::anyhow!("the build's pipeline has no App Store Connect API key")
+        })?;
+        let asc = AppStoreConnect::new(&self.client, &creds);
+        promote_with(&self.pool, &asc, source, target).await
+    }
+}
+
 /// Sends `app_store` releases to App Store Connect and every other store to
 /// `other`.
 pub struct StoreRouter {
@@ -1575,10 +1872,10 @@ impl ReleaseStoreClient for StoreRouter {
     fn promote<'a>(
         &'a self,
         source: &'a Release,
-        target: releases::PromotionTarget<'a>,
-    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        target: PromotionTarget<'a>,
+    ) -> BoxFuture<'a, anyhow::Result<Promoted>> {
         if source.store == ReleaseStore::AppStore {
-            Box::pin(async { anyhow::bail!("App Store builds cannot be promoted yet") })
+            Box::pin(self.app_store.promote(source, target))
         } else {
             self.other.promote(source, target)
         }
@@ -2170,5 +2467,625 @@ mod tests {
             uploaded_config(both.clone(), &reported("Internal, QA", None)),
             both
         );
+    }
+
+    // ── Promotion ───────────────────────────────────────────────
+
+    use std::sync::Mutex;
+
+    use oore_contract::{
+        CreateProjectEnvironmentRequest, CreatePromotionRequest, ProjectRole, PromotionState,
+    };
+
+    use crate::app_store_connect::{AscBetaGroup, AscResult, AscVersion};
+    use crate::environments::{self, EnvironmentError};
+    use crate::project_rbac::EffectiveProjectRole;
+
+    /// Stands in for App Store Connect and records every call.
+    #[derive(Default)]
+    struct FakeAsc {
+        calls: Mutex<Vec<String>>,
+        beta: Mutex<AscBetaDetail>,
+        version: Mutex<Option<AscVersion>>,
+        editable: Mutex<Option<AscVersion>>,
+    }
+
+    impl FakeAsc {
+        fn record(&self, call: String) {
+            self.calls.lock().unwrap().push(call);
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+
+        fn changes(&self) -> Vec<String> {
+            self.calls()
+                .into_iter()
+                .filter(|call| !call.starts_with("get "))
+                .collect()
+        }
+    }
+
+    impl AscApi for FakeAsc {
+        async fn find_app_id(&self, bundle_id: &str) -> AscResult<Option<String>> {
+            self.record(format!("get app {bundle_id}"));
+            Ok(Some("app1".into()))
+        }
+        async fn beta_detail(&self, build_id: &str) -> AscResult<AscBetaDetail> {
+            self.record(format!("get beta {build_id}"));
+            Ok(self.beta.lock().unwrap().clone())
+        }
+        async fn set_beta_whats_new(&self, build_id: &str, locale: &str, _: &str) -> AscResult<()> {
+            self.record(format!("beta notes {build_id} {locale}"));
+            Ok(())
+        }
+        async fn list_beta_groups(&self, app_id: &str) -> AscResult<Vec<AscBetaGroup>> {
+            self.record(format!("get groups {app_id}"));
+            let group = |id: &str, name: &str, internal: bool, all: bool| AscBetaGroup {
+                id: id.into(),
+                name: name.into(),
+                is_internal: internal,
+                has_access_to_all_builds: all,
+            };
+            Ok(vec![
+                group("g-internal", "Internal", true, true),
+                group("g-qa", "QA", true, false),
+                group("g-external", "External", false, false),
+            ])
+        }
+        async fn add_build_to_groups(&self, build_id: &str, group_ids: &[String]) -> AscResult<()> {
+            self.record(format!("add {build_id} to {}", group_ids.join(",")));
+            Ok(())
+        }
+        async fn submit_for_beta_review(&self, build_id: &str) -> AscResult<()> {
+            self.record(format!("beta review {build_id}"));
+            Ok(())
+        }
+        async fn find_or_create_version(&self, _: &str, version: &str) -> AscResult<String> {
+            self.record(format!("create version {version}"));
+            Ok("created".into())
+        }
+        async fn find_version(&self, app_id: &str, version: &str) -> AscResult<Option<AscVersion>> {
+            self.record(format!("get version {app_id} {version}"));
+            Ok(self.version.lock().unwrap().clone())
+        }
+        async fn find_editable_version(&self, app_id: &str) -> AscResult<Option<AscVersion>> {
+            self.record(format!("get editable {app_id}"));
+            Ok(self.editable.lock().unwrap().clone())
+        }
+        async fn rename_version(&self, version_id: &str, version: &str) -> AscResult<()> {
+            self.record(format!("rename {version_id} {version}"));
+            Ok(())
+        }
+        async fn attach_build_to_version(&self, version_id: &str, build_id: &str) -> AscResult<()> {
+            self.record(format!("attach {build_id} to {version_id}"));
+            Ok(())
+        }
+        async fn set_version_whats_new(
+            &self,
+            version_id: &str,
+            locale: &str,
+            _: &str,
+        ) -> AscResult<()> {
+            self.record(format!("version notes {version_id} {locale}"));
+            Ok(())
+        }
+        async fn enable_phased_release(&self, version_id: &str) -> AscResult<()> {
+            self.record(format!("phased on {version_id}"));
+            Ok(())
+        }
+        async fn disable_phased_release(&self, version_id: &str) -> AscResult<()> {
+            self.record(format!("phased off {version_id}"));
+            Ok(())
+        }
+        async fn submit_for_review(&self, app_id: &str, version_id: &str) -> AscResult<()> {
+            self.record(format!("review {app_id} {version_id}"));
+            Ok(())
+        }
+    }
+
+    /// The release store the daemon routes App Store promotions to, talking
+    /// to the fake App Store Connect.
+    struct AscStore {
+        pool: SqlitePool,
+        asc: FakeAsc,
+    }
+
+    impl ReleaseStoreClient for AscStore {
+        fn apply<'a>(
+            &'a self,
+            _: &'a Release,
+            _: StoreChange,
+        ) -> BoxFuture<'a, anyhow::Result<()>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn crash_rate<'a>(&'a self, _: &'a Release) -> BoxFuture<'a, anyhow::Result<Option<f64>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn promote<'a>(
+            &'a self,
+            source: &'a Release,
+            target: PromotionTarget<'a>,
+        ) -> BoxFuture<'a, anyhow::Result<Promoted>> {
+            Box::pin(promote_with(&self.pool, &self.asc, source, target))
+        }
+    }
+
+    fn maintainer() -> (EffectiveProjectRole, ReleaseActor) {
+        (
+            EffectiveProjectRole::Member(ProjectRole::Maintainer),
+            ReleaseActor::User {
+                user_id: "u2".into(),
+                email: "lead@example.com".into(),
+            },
+        )
+    }
+
+    fn developer() -> (EffectiveProjectRole, ReleaseActor) {
+        (
+            EffectiveProjectRole::Member(ProjectRole::Developer),
+            ReleaseActor::User {
+                user_id: "u1".into(),
+                email: "dev@example.com".into(),
+            },
+        )
+    }
+
+    /// A pool with build b1 handed to the Internal TestFlight group by an
+    /// Oore upload, and an App Store store backed by the fake.
+    async fn promotion_setup() -> (SqlitePool, AscStore) {
+        let pool = crate::releases::tests::pool().await;
+        sqlx::query(
+            "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+             VALUES ('u2', 'lead@example.com', 'sub2', 'developer', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let store = AscStore {
+            pool: pool.clone(),
+            asc: FakeAsc::default(),
+        };
+        *store.asc.version.lock().unwrap() = Some(AscVersion {
+            id: "v1".into(),
+            version_string: Some("1.2.0".into()),
+            state: Some("PREPARE_FOR_SUBMISSION".into()),
+        });
+        (pool, store)
+    }
+
+    async fn testflight_upload(deps: ReleaseDeps<'_>) -> Release {
+        let release = releases::create_release(
+            deps,
+            NewRelease {
+                store: ReleaseStore::AppStore,
+                state: ReleaseState::Complete,
+                rollout_fraction: 1.0,
+                ..releases::tests::new_release("Internal", ReleasePolicy::default())
+            },
+            &ReleaseActor::System,
+            Some("Available in TestFlight to Internal"),
+        )
+        .await
+        .unwrap();
+        let mut config = testflight(&["Internal"]);
+        config.release_notes = vec![AppStoreReleaseNote {
+            locale: "en-US".into(),
+            whats_new: "Faster sync".into(),
+        }];
+        sqlx::query(
+            "INSERT INTO app_store_release_links (release_id, pipeline_id, bundle_id, version, \
+             build_number, config, stage, asc_app_id, asc_build_id, next_poll_at, created_at, updated_at) \
+             VALUES (?1, 'pl1', 'com.example.app', '1.2.0', '120', ?2, 'done', 'app1', 'build1', 0, 0, 0)",
+        )
+        .bind(&release.id)
+        .bind(serde_json::to_string(&config).unwrap())
+        .execute(deps.pool)
+        .await
+        .unwrap();
+        release
+    }
+
+    fn app_store_environment(
+        key: &str,
+        track: &str,
+        approval_required: bool,
+        steps: Vec<f64>,
+        submit_for_review: bool,
+    ) -> CreateProjectEnvironmentRequest {
+        CreateProjectEnvironmentRequest {
+            key: key.into(),
+            name: format!("{}{}", key[..1].to_uppercase(), &key[1..]),
+            store: ReleaseStore::AppStore,
+            track: track.into(),
+            approval_required,
+            rollout_policy: Some(ReleasePolicy {
+                steps,
+                ..ReleasePolicy::default()
+            }),
+            submit_for_review,
+        }
+    }
+
+    fn promote_b1(environment_id: &str) -> CreatePromotionRequest {
+        CreatePromotionRequest {
+            build_id: "b1".into(),
+            environment_id: environment_id.into(),
+            reason: None,
+        }
+    }
+
+    async fn link_of(pool: &SqlitePool, release_id: &str) -> (String, String, Option<String>) {
+        sqlx::query_as(
+            "SELECT stage, asc_build_id, asc_version_id FROM app_store_release_links WHERE release_id = ?1",
+        )
+        .bind(release_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn history_reason(pool: &SqlitePool, release_id: &str) -> String {
+        sqlx::query_scalar("SELECT reason FROM release_history WHERE release_id = ?1")
+            .bind(release_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn promoting_between_testflight_groups_adds_the_build_without_an_upload() {
+        let (pool, store) = promotion_setup().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (role, actor) = maintainer();
+        let source = testflight_upload(deps).await;
+        let qa = environments::create_environment(
+            &pool,
+            "p1",
+            &actor,
+            app_store_environment("qa", "QA", false, vec![1.0], false),
+        )
+        .await
+        .unwrap();
+        let beta = environments::create_environment(
+            &pool,
+            "p1",
+            &actor,
+            app_store_environment("beta", "External", false, vec![1.0], false),
+        )
+        .await
+        .unwrap();
+        assert!(qa.promotable && beta.promotable);
+        let builds_before = count(&pool, "SELECT COUNT(*) FROM builds").await;
+
+        // An internal group: testers have it at once.
+        let promotion =
+            environments::request_promotion(deps, "p1", &role, &actor, promote_b1(&qa.id))
+                .await
+                .unwrap();
+        assert_eq!(promotion.state, PromotionState::Completed);
+        assert_eq!(store.asc.changes(), vec!["add build1 to g-qa"]);
+        let release = releases::load_release(&pool, promotion.release_id.as_deref().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(release.store, ReleaseStore::AppStore);
+        assert_eq!(release.track, "QA");
+        assert_eq!(
+            (release.state, release.rollout_fraction),
+            (ReleaseState::Complete, 1.0)
+        );
+        assert_eq!(release.environment_id.as_deref(), Some(qa.id.as_str()));
+        assert_eq!(
+            release.promoted_from_release_id.as_deref(),
+            Some(source.id.as_str())
+        );
+        assert_eq!(link_of(&pool, &release.id).await.0, "done");
+        assert!(
+            history_reason(&pool, &release.id)
+                .await
+                .contains("without a new build. Available in TestFlight to QA")
+        );
+
+        // An external group: Apple's beta review comes first, and the monitor
+        // follows it for the new release.
+        store.asc.calls.lock().unwrap().clear();
+        let promotion =
+            environments::request_promotion(deps, "p1", &role, &actor, promote_b1(&beta.id))
+                .await
+                .unwrap();
+        assert_eq!(
+            store.asc.changes(),
+            vec!["add build1 to g-external", "beta review build1"]
+        );
+        let release = releases::load_release(&pool, promotion.release_id.as_deref().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(release.state, ReleaseState::InReview);
+        assert_eq!(
+            link_of(&pool, &release.id).await,
+            ("beta_review".to_string(), "build1".to_string(), None)
+        );
+        // Nothing was uploaded or rebuilt.
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM builds").await,
+            builds_before
+        );
+        assert!(!store.asc.calls().iter().any(|call| call.contains("notes")));
+    }
+
+    #[tokio::test]
+    async fn an_approved_promotion_attaches_the_build_to_the_app_store_version() {
+        let (pool, store) = promotion_setup().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (lead_role, lead) = maintainer();
+        let (dev_role, dev) = developer();
+        testflight_upload(deps).await;
+        let production = environments::create_environment(
+            &pool,
+            "p1",
+            &lead,
+            app_store_environment("production", "app_store", true, vec![0.1, 0.5, 1.0], true),
+        )
+        .await
+        .unwrap();
+        assert!(production.submit_for_review);
+
+        let pending = environments::request_promotion(
+            deps,
+            "p1",
+            &dev_role,
+            &dev,
+            promote_b1(&production.id),
+        )
+        .await
+        .unwrap();
+        assert_eq!(pending.state, PromotionState::Pending);
+        assert!(store.asc.calls().is_empty());
+
+        let approved = environments::decide_promotion(
+            deps,
+            "p1",
+            &pending.id,
+            &lead_role,
+            &lead,
+            true,
+            Some("QA signed off"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(approved.state, PromotionState::Completed);
+        assert_eq!(
+            store.asc.changes(),
+            vec![
+                "attach build1 to v1",
+                "version notes v1 en-US",
+                "phased on v1",
+                "review app1 v1",
+            ]
+        );
+        let release = releases::load_release(&pool, approved.release_id.as_deref().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(release.track, "app_store");
+        assert_eq!(
+            (release.state, release.rollout_fraction),
+            (ReleaseState::InReview, 0.0)
+        );
+        assert_eq!(release.next_step_at, None);
+        assert_eq!(
+            link_of(&pool, &release.id).await,
+            (
+                "review".to_string(),
+                "build1".to_string(),
+                Some("v1".to_string())
+            )
+        );
+        let reason = history_reason(&pool, &release.id).await;
+        assert!(reason.contains("QA signed off"), "{reason}");
+        assert!(
+            reason.contains("Submitted version 1.2.0 for App Store review"),
+            "{reason}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_editable_version_is_renamed_and_review_waits_without_submit() {
+        let (pool, store) = promotion_setup().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (role, actor) = maintainer();
+        testflight_upload(deps).await;
+        *store.asc.version.lock().unwrap() = None;
+        *store.asc.editable.lock().unwrap() = Some(AscVersion {
+            id: "v2".into(),
+            version_string: Some("1.3.0".into()),
+            state: Some("PREPARE_FOR_SUBMISSION".into()),
+        });
+        let production = environments::create_environment(
+            &pool,
+            "p1",
+            &actor,
+            app_store_environment("production", "app_store", false, vec![1.0], false),
+        )
+        .await
+        .unwrap();
+        let promotion =
+            environments::request_promotion(deps, "p1", &role, &actor, promote_b1(&production.id))
+                .await
+                .unwrap();
+        assert_eq!(
+            store.asc.changes(),
+            vec![
+                "rename v2 1.2.0",
+                "attach build1 to v2",
+                "version notes v2 en-US",
+                "phased off v2",
+            ]
+        );
+        let release_id = promotion.release_id.unwrap();
+        let reason = history_reason(&pool, &release_id).await;
+        assert!(
+            reason.contains("submit it for review in App Store Connect"),
+            "{reason}"
+        );
+        assert!(
+            reason.contains("Renamed App Store version 1.3.0 to 1.2.0"),
+            "{reason}"
+        );
+    }
+
+    fn refused_code(
+        result: Result<oore_contract::EnvironmentPromotion, EnvironmentError>,
+    ) -> &'static str {
+        match result {
+            Err(EnvironmentError::Conflict { code, .. }) => code,
+            other => panic!("expected a conflict, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn builds_that_cannot_be_promoted_are_refused_with_a_reason() {
+        let (pool, store) = promotion_setup().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (role, actor) = maintainer();
+        let production = environments::create_environment(
+            &pool,
+            "p1",
+            &actor,
+            app_store_environment("production", "app_store", false, vec![1.0], true),
+        )
+        .await
+        .unwrap();
+        let missing = environments::create_environment(
+            &pool,
+            "p1",
+            &actor,
+            app_store_environment("partners", "Partners", false, vec![1.0], false),
+        )
+        .await
+        .unwrap();
+
+        // No TestFlight release yet.
+        let result =
+            environments::request_promotion(deps, "p1", &role, &actor, promote_b1(&production.id))
+                .await;
+        assert_eq!(refused_code(result), "no_source_release");
+        testflight_upload(deps).await;
+
+        // A live version takes no other build.
+        *store.asc.version.lock().unwrap() = Some(AscVersion {
+            id: "v0".into(),
+            version_string: Some("1.2.0".into()),
+            state: Some("READY_FOR_SALE".into()),
+        });
+        let result =
+            environments::request_promotion(deps, "p1", &role, &actor, promote_b1(&production.id))
+                .await;
+        assert_eq!(refused_code(result), "version_not_editable");
+
+        // No version Apple lets the developer edit.
+        *store.asc.version.lock().unwrap() = None;
+        let result =
+            environments::request_promotion(deps, "p1", &role, &actor, promote_b1(&production.id))
+                .await;
+        assert_eq!(refused_code(result), "no_editable_version");
+
+        // A group the app does not have.
+        let result =
+            environments::request_promotion(deps, "p1", &role, &actor, promote_b1(&missing.id))
+                .await;
+        assert_eq!(refused_code(result), "testflight_group_not_found");
+        assert!(store.asc.changes().is_empty(), "{:?}", store.asc.changes());
+
+        // Each refusal failed its promotion, with the reason and an audit entry.
+        let list = environments::list_environments(&pool, "p1", &role)
+            .await
+            .unwrap();
+        assert_eq!(list.promotions.len(), 3);
+        assert!(
+            list.promotions
+                .iter()
+                .all(|p| p.state == PromotionState::Failed)
+        );
+        assert!(list.promotions.iter().any(|p| {
+            p.error
+                .as_deref()
+                .is_some_and(|error| error.contains("Create version 1.2.0 in App Store Connect"))
+        }));
+        let codes: Vec<String> = sqlx::query_scalar(
+            "SELECT json_extract(details, '$.code') FROM audit_logs WHERE action = 'promotion_failed' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            codes,
+            vec![
+                "version_not_editable",
+                "no_editable_version",
+                "testflight_group_not_found"
+            ]
+        );
+        assert_eq!(count(&pool, "SELECT COUNT(*) FROM releases").await, 1);
+
+        // Expired in TestFlight: refused before anything changes.
+        *store.asc.editable.lock().unwrap() = Some(AscVersion {
+            id: "v2".into(),
+            version_string: Some("1.2.0".into()),
+            state: Some("PREPARE_FOR_SUBMISSION".into()),
+        });
+        *store.asc.beta.lock().unwrap() = AscBetaDetail {
+            internal: Some("EXPIRED".into()),
+            external: None,
+        };
+        let result =
+            environments::request_promotion(deps, "p1", &role, &actor, promote_b1(&production.id))
+                .await;
+        assert_eq!(refused_code(result), "build_expired");
+        assert!(store.asc.changes().is_empty());
+
+        // Once the cause is fixed, the promotion can run again.
+        *store.asc.beta.lock().unwrap() = AscBetaDetail::default();
+        let retried =
+            environments::request_promotion(deps, "p1", &role, &actor, promote_b1(&production.id))
+                .await
+                .unwrap();
+        assert_eq!(retried.state, PromotionState::Completed);
+    }
+
+    #[tokio::test]
+    async fn submit_for_review_is_only_for_the_app_store_track() {
+        let (pool, _) = promotion_setup().await;
+        let (_, actor) = maintainer();
+        let result = environments::create_environment(
+            &pool,
+            "p1",
+            &actor,
+            app_store_environment("beta", "External", false, vec![1.0], true),
+        )
+        .await;
+        assert!(matches!(result, Err(EnvironmentError::Invalid(_))));
     }
 }

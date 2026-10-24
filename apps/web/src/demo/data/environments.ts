@@ -77,6 +77,38 @@ export const demoEnvironments: Array<DemoEnvironment> = [
     created_at: ago(86400 * 30),
     updated_at: ago(86400 * 30),
   },
+  {
+    id: ENVIRONMENT_IDS.shopTestflight,
+    project_id: PROJECT_IDS.flutterShop,
+    key: 'testflight',
+    name: 'TestFlight',
+    position: 3,
+    store: 'app_store',
+    track: 'Internal',
+    approval_required: false,
+    rollout_policy: { steps: [1], interval_hours: 24, approval: 'none' },
+    promotable: true,
+    created_at: ago(86400 * 20),
+    updated_at: ago(86400 * 20),
+  },
+  {
+    id: ENVIRONMENT_IDS.shopAppStore,
+    project_id: PROJECT_IDS.flutterShop,
+    key: 'app-store',
+    name: 'App Store',
+    position: 4,
+    store: 'app_store',
+    track: 'app_store',
+    approval_required: true,
+    rollout_policy: {
+      steps: [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1],
+      interval_hours: 24,
+      approval: 'none',
+    },
+    promotable: true,
+    created_at: ago(86400 * 20),
+    updated_at: ago(86400 * 20),
+  },
 ]
 
 export const demoPromotions: Array<DemoPromotion> = [

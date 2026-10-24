@@ -51,16 +51,54 @@ describe('rolloutPolicySummary', () => {
       }),
     ).toBe('5% → 50% → 100% every 12h, halts at 2% crashes')
   })
+
+  test('App Store versions use phased release and TestFlight never stages', () => {
+    const steps = { steps: [0.1, 1] }
+    expect(
+      rolloutPolicySummary({
+        store: 'app_store',
+        track: 'app_store',
+        rollout_policy: steps,
+      }),
+    ).toBe("Phased release on Apple's 7-day schedule")
+    expect(
+      rolloutPolicySummary({
+        store: 'app_store',
+        track: 'app_store',
+        rollout_policy: { steps: [1] },
+      }),
+    ).toBe('Full release')
+    expect(
+      rolloutPolicySummary({
+        store: 'app_store',
+        track: 'External',
+        rollout_policy: steps,
+      }),
+    ).toBe('TestFlight, no staged rollout')
+  })
 })
 
 describe('nextEnvironment', () => {
   test('skips environments builds cannot be promoted into', () => {
     const environments = [
-      { id: 'a', promotable: true },
-      { id: 'b', promotable: false },
-      { id: 'c', promotable: true },
+      { id: 'a', promotable: true, store: 'google_play' },
+      { id: 'b', promotable: false, store: 'google_play' },
+      { id: 'c', promotable: true, store: 'google_play' },
     ]
     expect(nextEnvironment(environments, environments[0])?.id).toBe('c')
     expect(nextEnvironment(environments, environments[2])).toBeUndefined()
+  })
+
+  test('stays in the store the build was released to', () => {
+    const environments = [
+      { id: 'internal', promotable: true, store: 'google_play' },
+      { id: 'testflight', promotable: true, store: 'app_store' },
+      { id: 'production', promotable: true, store: 'google_play' },
+      { id: 'app-store', promotable: true, store: 'app_store' },
+    ]
+    expect(nextEnvironment(environments, environments[0])?.id).toBe(
+      'production',
+    )
+    expect(nextEnvironment(environments, environments[1])?.id).toBe('app-store')
   })
 })

@@ -36,8 +36,6 @@ const PROMOTION_ERRORS = {
   already_in_environment: 'This build already has a release there.',
   promotion_pending:
     'A promotion of this build there is already waiting for approval.',
-  no_source_release:
-    'This build has no live Google Play release to promote from.',
 }
 
 /**
@@ -66,6 +64,7 @@ export function PromoteDialog({
     (environment) =>
       environment.id !== source.id &&
       environment.promotable &&
+      environment.store === release.store &&
       (canPromoteDirectly || environment.approval_required),
   )
   const suggested = nextEnvironment(environments, source)

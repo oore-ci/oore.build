@@ -15466,6 +15466,10 @@
           "store": {
             "$ref": "#/components/schemas/ReleaseStore"
           },
+          "submit_for_review": {
+            "type": "boolean",
+            "description": "App Store track only: submit the version for App Review after a\npromotion attaches the build."
+          },
           "track": {
             "type": "string"
           }
@@ -18813,14 +18817,18 @@
           },
           "promotable": {
             "type": "boolean",
-            "description": "Whether builds can be promoted into this environment. App Store\nenvironments only group the releases that uploads record for now."
+            "description": "Whether builds can be promoted into this environment."
           },
           "rollout_policy": {
             "$ref": "#/components/schemas/ReleasePolicy",
-            "description": "Staged rollout policy for releases promoted into this environment.\nIts `approval` is always `none`; use `approval_required`."
+            "description": "Staged rollout policy for releases promoted into this environment.\nIts `approval` is always `none`; use `approval_required`. On the App\nStore track, a policy with more than one step turns on Apple's phased\nrelease, which follows Apple's own seven-day schedule."
           },
           "store": {
             "$ref": "#/components/schemas/ReleaseStore"
+          },
+          "submit_for_review": {
+            "type": "boolean",
+            "description": "App Store track only: submit the App Store version for App Review\nonce a promotion attaches the build. Otherwise the version waits for\nsomeone to submit it in App Store Connect."
           },
           "track": {
             "type": "string",
@@ -22208,6 +22216,12 @@
               {
                 "$ref": "#/components/schemas/ReleasePolicy"
               }
+            ]
+          },
+          "submit_for_review": {
+            "type": [
+              "boolean",
+              "null"
             ]
           },
           "track": {

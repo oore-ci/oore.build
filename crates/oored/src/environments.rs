@@ -7,6 +7,11 @@
 //! release with the environment's policy, so the rollout monitor drives it
 //! like any other release. Nothing is rebuilt or uploaded again.
 //!
+//! On Google Play the version code moves to another track. On the App Store
+//! the build a TestFlight release handed out goes to more TestFlight groups,
+//! or is attached to the app's App Store version, and the App Store monitor
+//! follows it from there.
+//!
 //! Projects without environments are unaffected: releases keep a NULL
 //! `environment_id` and the per-pipeline publish settings apply as before.
 //! A release recorded on a track that an environment targets is placed in
@@ -35,8 +40,9 @@ use crate::project_rbac::{
     EffectiveProjectRole, ProjectPermission, check_project_permission, require_project_permission,
 };
 use crate::releases::{
-    NewRelease, PromotionTarget, RELEASE_SELECT, ReleaseActor, ReleaseDeps, ReleaseError,
-    allowed_actions, finish_create, insert_release, project_role, row_to_release, user_actor,
+    NewRelease, PromotionRefused, PromotionTarget, RELEASE_SELECT, ReleaseActor, ReleaseDeps,
+    ReleaseError, allowed_actions, finish_create, insert_release, project_role, row_to_release,
+    user_actor,
 };
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -194,6 +200,24 @@ fn validate_track(store: ReleaseStore, track: &str) -> Result<String, Environmen
     }
 }
 
+/// The App Store track of App Store versions. Other App Store tracks name
+/// TestFlight groups.
+const APP_STORE_TRACK: &str = "app_store";
+
+fn validate_submit_for_review(
+    store: ReleaseStore,
+    track: &str,
+    submit_for_review: bool,
+) -> Result<(), EnvironmentError> {
+    if submit_for_review && (store != ReleaseStore::AppStore || track != APP_STORE_TRACK) {
+        return Err(EnvironmentError::Invalid(
+            "submit_for_review applies only to App Store environments on the app_store track"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_policy(policy: &ReleasePolicy) -> Result<(), EnvironmentError> {
     policy.validate().map_err(|message| {
         EnvironmentError::Invalid(message.replace("policy.", "rollout_policy."))
@@ -225,8 +249,9 @@ fn row_to_environment(row: &SqliteRow) -> Result<ProjectEnvironment, Environment
         track: row.get("track"),
         approval_required: row.get::<i64, _>("approval_required") != 0,
         rollout_policy,
+        submit_for_review: row.get::<i64, _>("submit_for_review") != 0,
         latest_release: None,
-        promotable: store == ReleaseStore::GooglePlay,
+        promotable: true,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })
@@ -366,6 +391,7 @@ pub(crate) async fn create_environment(
     let track = validate_track(request.store, &request.track)?;
     let policy = request.rollout_policy.unwrap_or_default();
     validate_policy(&policy)?;
+    validate_submit_for_review(request.store, &track, request.submit_for_review)?;
     let policy_json =
         serde_json::to_string(&policy).map_err(|error| EnvironmentError::Db(error.into()))?;
 
@@ -385,8 +411,9 @@ pub(crate) async fn create_environment(
     let now = now_unix();
     let inserted = sqlx::query(
         "INSERT INTO project_environments (id, project_id, env_key, name, position, store, track, \
-         approval_required, policy_json, created_by, updated_by, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?11)",
+         approval_required, policy_json, created_by, updated_by, created_at, updated_at, \
+         submit_for_review) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?11, ?12)",
     )
     .bind(&id)
     .bind(project_id)
@@ -399,6 +426,7 @@ pub(crate) async fn create_environment(
     .bind(&policy_json)
     .bind(actor_id(actor))
     .bind(now)
+    .bind(request.submit_for_review)
     .execute(&mut *tx)
     .await;
     if let Err(error) = inserted {
@@ -428,6 +456,7 @@ pub(crate) async fn create_environment(
             "track": environment.track,
             "approval_required": environment.approval_required,
             "rollout_policy": environment.rollout_policy,
+            "submit_for_review": environment.submit_for_review,
         }),
     )
     .await;
@@ -473,6 +502,10 @@ pub(crate) async fn update_environment(
     let approval_required = request
         .approval_required
         .unwrap_or(current.approval_required);
+    let submit_for_review = request
+        .submit_for_review
+        .unwrap_or(current.submit_for_review);
+    validate_submit_for_review(current.store, &track, submit_for_review)?;
     let position = request.position.unwrap_or(current.position);
     if position < 0 {
         return Err(EnvironmentError::Invalid(
@@ -483,7 +516,7 @@ pub(crate) async fn update_environment(
         serde_json::to_string(&policy).map_err(|error| EnvironmentError::Db(error.into()))?;
     let updated = sqlx::query(
         "UPDATE project_environments SET name = ?1, track = ?2, approval_required = ?3, \
-         policy_json = ?4, position = ?5, updated_by = ?6, updated_at = ?7 \
+         policy_json = ?4, position = ?5, updated_by = ?6, updated_at = ?7, submit_for_review = ?10 \
          WHERE id = ?8 AND project_id = ?9",
     )
     .bind(&name)
@@ -495,6 +528,7 @@ pub(crate) async fn update_environment(
     .bind(now_unix())
     .bind(environment_id)
     .bind(project_id)
+    .bind(submit_for_review)
     .execute(pool)
     .await;
     match updated {
@@ -523,6 +557,7 @@ pub(crate) async fn update_environment(
                 "track": current.track,
                 "approval_required": current.approval_required,
                 "rollout_policy": current.rollout_policy,
+                "submit_for_review": current.submit_for_review,
                 "position": current.position,
             },
             "after": {
@@ -530,6 +565,7 @@ pub(crate) async fn update_environment(
                 "track": environment.track,
                 "approval_required": environment.approval_required,
                 "rollout_policy": environment.rollout_policy,
+                "submit_for_review": environment.submit_for_review,
                 "position": environment.position,
             },
         }),
@@ -736,21 +772,32 @@ fn initial_rollout(environment: &ProjectEnvironment) -> (ReleaseState, f64, Opti
     }
 }
 
-/// The release a build is promoted from: its newest Google Play release
-/// outside the target environment that still holds a live version.
+/// The release a build is promoted from: its newest release in the target's
+/// store, outside the target environment, that still holds a live version.
+/// On Google Play that is any track with the version code. On the App Store
+/// it is a TestFlight release whose build Oore found in App Store Connect;
+/// an App Store version is the end of the path.
 async fn find_source_release(
     pool: &SqlitePool,
     build_id: &str,
-    environment_id: &str,
+    environment: &ProjectEnvironment,
 ) -> Result<Option<Release>, EnvironmentError> {
+    let store_filter = match environment.store {
+        ReleaseStore::GooglePlay => "r.store = 'google_play' AND r.version_code IS NOT NULL",
+        ReleaseStore::AppStore => {
+            "r.store = 'app_store' AND r.track <> 'app_store' AND EXISTS ( \
+             SELECT 1 FROM app_store_release_links l \
+             WHERE l.release_id = r.id AND l.asc_build_id IS NOT NULL)"
+        }
+    };
     let row = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "{RELEASE_SELECT} WHERE r.build_id = ?1 AND r.store = 'google_play' \
-         AND r.state IN ('rolling', 'paused', 'complete') AND r.version_code IS NOT NULL \
+        "{RELEASE_SELECT} WHERE r.build_id = ?1 AND {store_filter} \
+         AND r.state IN ('rolling', 'paused', 'complete') \
          AND (r.environment_id IS NULL OR r.environment_id <> ?2) \
          ORDER BY r.created_at DESC, r.id LIMIT 1"
     )))
     .bind(build_id)
-    .bind(environment_id)
+    .bind(&environment.id)
     .fetch_optional(pool)
     .await?;
     row.map(|row| row_to_release(&row).map_err(EnvironmentError::from))
@@ -766,6 +813,16 @@ async fn ensure_not_promoted(
     environment: &ProjectEnvironment,
     skip_promotion: Option<&str>,
 ) -> Result<(), EnvironmentError> {
+    // The environment may have been deleted while this call waited for the
+    // lock; a store change made now could not be recorded.
+    let still_there: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM project_environments WHERE id = ?1")
+            .bind(&environment.id)
+            .fetch_optional(pool)
+            .await?;
+    if still_there.is_none() {
+        return Err(EnvironmentError::NotFound("Environment not found"));
+    }
     let existing: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM releases WHERE build_id = ?1 AND environment_id = ?2 AND state <> 'failed'",
     )
@@ -806,10 +863,10 @@ async fn ensure_not_promoted(
 }
 
 const STALE_PROMOTING: &str =
-    "Oore stopped before it recorded the outcome; check the track in Play Console";
+    "Oore stopped before it recorded the outcome; check Play Console or App Store Connect";
 const ENVIRONMENT_DELETED: &str = "environment deleted";
 const INTERRUPTED_BY_RESTART: &str =
-    "Interrupted by daemon restart; check the track in Play Console before promoting again";
+    "Interrupted by daemon restart; check Play Console or App Store Connect before promoting again";
 
 /// Mark every `promoting` row failed. Called once at daemon start, before
 /// requests are served, when no promotion can be in flight.
@@ -880,12 +937,6 @@ pub(crate) async fn request_promotion(
             },
         ));
     }
-    if !environment.promotable {
-        return Err(EnvironmentError::conflict(
-            "promotion_unsupported",
-            "Builds cannot be promoted into App Store environments yet",
-        ));
-    }
     let build_status: String =
         sqlx::query_scalar("SELECT status FROM builds WHERE id = ?1 AND project_id = ?2")
             .bind(&request.build_id)
@@ -904,12 +955,19 @@ pub(crate) async fn request_promotion(
     let lock = promotion_lock(&request.build_id, &environment.id);
     let _guard = lock.lock().await;
     ensure_not_promoted(deps.pool, &request.build_id, &environment, None).await?;
-    let source = find_source_release(deps.pool, &request.build_id, &environment.id)
+    let source = find_source_release(deps.pool, &request.build_id, &environment)
         .await?
         .ok_or_else(|| {
             EnvironmentError::conflict(
                 "no_source_release",
-                "This build has no live Google Play release to promote. Publish it to a track first.",
+                match environment.store {
+                    ReleaseStore::GooglePlay => {
+                        "This build has no live Google Play release to promote. Publish it to a track first."
+                    }
+                    ReleaseStore::AppStore => {
+                        "This build has no TestFlight release to promote. Upload it to TestFlight with Oore and wait until testers have it."
+                    }
+                },
             )
         })?;
 
@@ -1104,35 +1162,58 @@ async fn execute_promotion(
     let target = PromotionTarget {
         track: &environment.track,
         fraction: store_fraction,
+        // Apple's phased release follows its own schedule; a policy with
+        // more than one step asks for it.
+        phased_release: environment
+            .rollout_policy
+            .steps
+            .first()
+            .is_some_and(|first| *first < 1.0),
+        submit_for_review: environment.submit_for_review,
     };
-    if let Err(error) = deps.store.promote(source, target).await {
-        let message = short(&error);
-        mark_failed(deps.pool, promotion_id, &message).await?;
-        audit(
-            deps.pool,
-            actor,
-            "promotion_failed",
-            "environment_promotion",
-            promotion_id,
-            serde_json::json!({
-                "actor_email": actor_email(actor),
-                "build_id": source.build_id,
-                "environment": environment.key,
-                "error": message,
-            }),
-        )
-        .await;
-        return Err(EnvironmentError::Store(error));
-    }
+    let promoted = match deps.store.promote(source, target).await {
+        Ok(promoted) => promoted,
+        Err(error) => {
+            let refusal = error.downcast_ref::<PromotionRefused>();
+            let message = match refusal {
+                Some(refusal) => refusal.message.clone(),
+                None => short(&error),
+            };
+            mark_failed(deps.pool, promotion_id, &message).await?;
+            audit(
+                deps.pool,
+                actor,
+                "promotion_failed",
+                "environment_promotion",
+                promotion_id,
+                serde_json::json!({
+                    "actor_email": actor_email(actor),
+                    "build_id": source.build_id,
+                    "environment": environment.key,
+                    "code": refusal.map(|refusal| refusal.code),
+                    "error": message,
+                }),
+            )
+            .await;
+            return Err(match refusal {
+                Some(refusal) => EnvironmentError::conflict(refusal.code, message),
+                None => EnvironmentError::Store(error),
+            });
+        }
+    };
+    let (state, fraction) = promoted.start.unwrap_or((state, fraction));
 
     let from = source
         .environment_name
         .clone()
         .unwrap_or_else(|| format!("the {} track", source.track));
-    let note = match reason {
+    let mut note = match reason {
         Some(reason) => format!("Promoted from {from} without a new build: {reason}"),
         None => format!("Promoted from {from} without a new build"),
     };
+    if let Some(detail) = &promoted.detail {
+        note = format!("{note}. {detail}");
+    }
     let recorded = async {
         let mut tx = deps.pool.begin_with("BEGIN IMMEDIATE").await?;
         let created = insert_release(
@@ -1156,6 +1237,10 @@ async fn execute_promotion(
             Some(&note),
         )
         .await?;
+        if let Some(link) = &promoted.app_store_link {
+            crate::app_store_publish::record_promoted_link(&mut tx, &created.release.id, link)
+                .await?;
+        }
         sqlx::query(
             "UPDATE environment_promotions SET state = 'completed', release_id = ?1, error = NULL, \
              updated_at = ?2 WHERE id = ?3",
@@ -1172,11 +1257,17 @@ async fn execute_promotion(
     let created = match recorded {
         Ok(created) => created,
         Err(error) => {
-            let message = format!(
-                "Play now has version code {} on the {} track, but Oore could not record the release",
-                source.version_code.unwrap_or_default(),
-                environment.track
-            );
+            let message = match source.store {
+                ReleaseStore::GooglePlay => format!(
+                    "Play now has version code {} on the {} track, but Oore could not record the release",
+                    source.version_code.unwrap_or_default(),
+                    environment.track
+                ),
+                ReleaseStore::AppStore => format!(
+                    "App Store Connect now has this build in {}, but Oore could not record the release",
+                    environment.name
+                ),
+            };
             mark_failed(deps.pool, promotion_id, &message).await?;
             return Err(error);
         }
@@ -1443,6 +1534,7 @@ mod tests {
                 interval_hours: 12.0,
                 ..ReleasePolicy::default()
             }),
+            submit_for_review: false,
         }
     }
 
@@ -2256,5 +2348,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(retracked.track, "closed");
+    }
+
+    #[tokio::test]
+    async fn a_promotion_that_waited_for_a_deleted_environment_stops_before_the_store() {
+        let pool = setup().await;
+        let (_, lead) = maintainer();
+        let production = create_environment(
+            &pool,
+            "p1",
+            &lead,
+            environment("production", "production", false),
+        )
+        .await
+        .unwrap();
+        delete_environment(&pool, "p1", &production.id, &lead)
+            .await
+            .unwrap();
+        // A call that loaded the environment before the delete, then took the lock.
+        assert!(matches!(
+            ensure_not_promoted(&pool, "b1", &production, None).await,
+            Err(EnvironmentError::NotFound(_))
+        ));
     }
 }

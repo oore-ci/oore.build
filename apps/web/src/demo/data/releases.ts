@@ -9,6 +9,7 @@ export const RELEASE_IDS = {
   shopInternal: 'rel-demo-004',
   shopBeta: 'rel-demo-005',
   shopInternalNext: 'rel-demo-006',
+  shopTestflight: 'rel-demo-007',
 } as const
 
 const DEFAULT_POLICY = {
@@ -22,6 +23,32 @@ const DEFAULT_POLICY = {
 export type DemoRelease = Omit<Release, 'allowed_actions' | 'project_name'>
 
 export const demoReleases: Array<DemoRelease> = [
+  {
+    id: RELEASE_IDS.shopTestflight,
+    project_id: PROJECT_IDS.flutterShop,
+    build_id: BUILD_IDS.succeeded7,
+    build_number: 145,
+    artifact_id: null,
+    platform: 'ios',
+    store: 'app_store',
+    track: 'Internal',
+    package_name: 'build.oore.demo.shop',
+    version_name: '2.5.0',
+    version_code: 145,
+    state: 'complete',
+    rollout_fraction: 1,
+    next_fraction: null,
+    next_step_at: null,
+    health: 'unknown',
+    crash_rate: null,
+    crash_rate_threshold: null,
+    policy: { ...DEFAULT_POLICY, steps: [1] },
+    awaiting_approval: false,
+    environment_id: ENVIRONMENT_IDS.shopTestflight,
+    environment_name: 'TestFlight',
+    created_at: ago(4300),
+    updated_at: ago(3900),
+  },
   {
     id: RELEASE_IDS.shopProduction,
     project_id: PROJECT_IDS.flutterShop,

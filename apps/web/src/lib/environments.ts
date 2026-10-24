@@ -90,11 +90,19 @@ export function parseRolloutSteps(
 
 /** One line describing how releases promoted into the environment roll out. */
 export function rolloutPolicySummary(
-  environment: Pick<ProjectEnvironment, 'rollout_policy' | 'track'>,
+  environment: Pick<ProjectEnvironment, 'rollout_policy' | 'track'> &
+    Partial<Pick<ProjectEnvironment, 'store'>>,
 ): string {
-  if (environment.track === 'internal') return 'Full release'
   const policy: ReleasePolicy = environment.rollout_policy
   const steps = policy.steps ?? [1]
+  if (environment.store === 'app_store') {
+    if (environment.track !== 'app_store')
+      return 'TestFlight, no staged rollout'
+    return steps.length > 1
+      ? "Phased release on Apple's 7-day schedule"
+      : 'Full release'
+  }
+  if (environment.track === 'internal') return 'Full release'
   if (steps.length <= 1) return 'Full release'
   const hours = Math.round((policy.interval_hours ?? 24) * 100) / 100
   const schedule = `${formatRolloutSteps(steps).replaceAll(', ', '% → ')}% every ${hours}h`
@@ -110,12 +118,15 @@ export function promotionSourceLabel(promotion: EnvironmentPromotion): string {
 
 /**
  * The environment a build in `environment` usually goes to next: the next
- * one on the promotion path that builds can be promoted into.
+ * one on the promotion path, in the same store, that builds can be promoted
+ * into.
  */
 export function nextEnvironment(
   environments: ReadonlyArray<ProjectEnvironment>,
   environment: ProjectEnvironment,
 ): ProjectEnvironment | undefined {
   const index = environments.findIndex((item) => item.id === environment.id)
-  return environments.slice(index + 1).find((item) => item.promotable)
+  return environments
+    .slice(index + 1)
+    .find((item) => item.promotable && item.store === environment.store)
 }

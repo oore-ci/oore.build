@@ -1,14 +1,15 @@
 ---
 title: 'Promote builds between environments'
 status: implemented
-description: 'Define internal, beta and production environments on a project and promote a tested Google Play build between them without rebuilding it.'
+description: 'Define internal, beta and production environments on a project and promote a tested Google Play or TestFlight build between them without rebuilding it.'
 ---
 
 An environment names where a project's releases go: a store, a track, the
 staged rollout for releases promoted into it, and whether a promotion needs a
 maintainer's approval. A build that passed internal testing is promoted to
-beta or production as the same version code. Nothing is rebuilt or uploaded
-again, so what users get is exactly what testers checked.
+beta or production as the same version code, or, on the App Store, as the
+same TestFlight build. Nothing is rebuilt or uploaded again, so what users
+get is exactly what testers checked.
 
 Projects without environments keep working as before: each pipeline's
 publish settings decide where its uploads go.
@@ -22,6 +23,10 @@ publish settings decide where its uploads go.
   [Publish to Google Play](/build/distribute/google-play). Promotion uses the
   same service account, from the daemon host.
 - A first upload of the build to a Play track, such as internal testing.
+- For the App Store: App Store publishing to TestFlight set up on the
+  pipeline. See [Publish to the App Store](/build/distribute/app-store).
+  Promotion uses the pipeline's App Store Connect API key, from the daemon
+  host. The build needs a TestFlight release that testers already have.
 
 ## 1. Add environments
 
@@ -38,6 +43,26 @@ The key is fixed once created; configuration files will refer to
 environments by key. Each store and track belongs to at most one environment.
 Play's internal track has no staged rollouts, so a promotion there is always a
 full release.
+
+App Store environments use the store **App Store** and one of two kinds of
+track:
+
+| Name       | Key          | Track                | Approval | Rollout                        |
+| ---------- | ------------ | -------------------- | -------- | ------------------------------ |
+| TestFlight | `testflight` | `Internal` (a group) | Off      | None                           |
+| External   | `external`   | `External` (a group) | Off      | None                           |
+| App Store  | `app-store`  | `app_store`          | On       | Phased release, or all at once |
+
+- A **TestFlight group** track is the group's name as App Store Connect shows
+  it. Several groups are separated by `, `, the same way an upload records
+  them. TestFlight has no staged rollout, so the rollout policy is not used.
+- The **`app_store`** track is the app's App Store version. A rollout policy
+  with more than one step turns on Apple's phased release, which follows
+  Apple's own seven-day schedule (1, 2, 5, 10, 20, 50, 100%); Oore's steps and
+  interval do not change it. A policy with one step releases to everyone at
+  once. Turn on **Submit for review** to submit the version for App Review
+  after the build is attached; otherwise it waits for you to submit it in App
+  Store Connect.
 
 From the API, use
 [Create environment](/openapi/operations/create_project_environment):
@@ -71,11 +96,31 @@ track, add a new environment.
 ## 2. Promote a build
 
 Select **Promote** on the environment that holds the build, choose where it
-goes, and add a reason. The daemon assigns the release's version code to the
-target track in one Play edit, keeping its release name and notes, then
-records a release with the target environment's rollout policy. The rollout
-monitor raises it on schedule and halts it on a crash-rate breach like any
-other release.
+goes, and add a reason. Builds are promoted within one store, so the list
+shows only environments in the store the build was released to.
+
+On Google Play, the daemon assigns the release's version code to the target
+track in one Play edit, keeping its release name and notes, then records a
+release with the target environment's rollout policy. The rollout monitor
+raises it on schedule and halts it on a crash-rate breach like any other
+release.
+
+On the App Store, the daemon reuses the build Apple already processed for the
+TestFlight release, with the same App Store Connect calls that upload
+distribution makes:
+
+- **TestFlight group to TestFlight group**: the build is added to the target
+  groups. An external group needs TestFlight beta review first; the daemon
+  submits the build unless Apple already reviewed it, and the release shows
+  **In review** until Apple decides.
+- **TestFlight to the App Store**: the build is attached to the app's App
+  Store version for that version string. If the app has no version with that
+  string, its editable version is renamed to it, as upload distribution does.
+  The notes the build was uploaded with become the version's "What's New".
+  Phased release is turned on or off from the environment's policy, and the
+  version is submitted for review when the environment says so. The release
+  shows **In review**, then follows App Review and phased release in App
+  Store Connect.
 
 ```bash
 curl -X POST "$OORE_URL/v1/projects/$PROJECT_ID/promotions" \
@@ -84,13 +129,26 @@ curl -X POST "$OORE_URL/v1/projects/$PROJECT_ID/promotions" \
   -d '{"build_id": "'"$BUILD_ID"'", "environment_id": "'"$ENVIRONMENT_ID"'", "reason": "QA signed off"}'
 ```
 
-The build is promoted from its newest Google Play release that is rolling
-out, paused or complete. A halted or failed release cannot be promoted.
+The build is promoted from its newest release in the target's store that is
+rolling out, paused or complete. A halted or failed release cannot be
+promoted. On the App Store, that is a TestFlight release Oore uploaded; a
+release on the App Store itself is the end of the path.
+
+When App Store Connect cannot take the build, the promotion fails with
+`409` and one of these codes, and nothing changes in App Store Connect:
+
+| Code                         | Meaning                                                                                        |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- |
+| `no_source_release`          | The build has no TestFlight release that testers have, or Oore did not upload it.              |
+| `build_expired`              | The build expired in TestFlight (after 90 days). Upload a new build.                           |
+| `no_editable_version`        | The app has no App Store version Apple lets you edit. Create the version in App Store Connect. |
+| `version_not_editable`       | The version for this version string is in review or live, so no other build can be attached.   |
+| `testflight_group_not_found` | App Store Connect has no TestFlight group with the environment's track name.                   |
 
 ## 3. Approve a promotion
 
 When the target environment requires approval, the promotion waits under
-**Waiting for approval** and nothing changes in Play. A maintainer selects
+**Waiting for approval** and nothing changes in the store. A maintainer selects
 **Approve** to make the store change, or **Reject** to drop it. The approval
 is the release's approval, so the new release does not wait again.
 
@@ -105,21 +163,25 @@ with the reason `environment deleted` in the audit log.
 ## Verify the result
 
 - The environment shows the promoted version and its rollout.
-- Play Console shows the version code on the target track.
+- Play Console shows the version code on the target track. For the App
+  Store, App Store Connect shows the build in the TestFlight group, or
+  attached to the App Store version.
 - The audit log has `promotion_requested`, `promotion_approved` and
   `promotion_completed` entries, and a `release_created` entry for the new
   release.
 
 ## Limits
 
-- Only Google Play builds can be promoted. App Store environments group the
-  releases that uploads record; promotion from TestFlight to the App Store
-  is planned.
+- A build is promoted within one store. App Store releases are promoted from
+  TestFlight only; an App Store version is not promoted further.
+- A promotion into the App Store never creates an App Store version. It uses
+  the version with the build's version string, or renames the app's editable
+  version.
 - A build cannot be promoted into an environment where it already has a
   release, unless that release failed.
 - If the daemon stops during a promotion's store call, the promotion is
   marked failed when it starts again ("interrupted by daemon restart"). Check
-  the track in Play Console before promoting again: the change may have
-  reached Play.
+  Play Console or App Store Connect before promoting again: the change may
+  have reached the store.
 - Per-environment approvers, notification channels, QA groups and secrets are
   not configurable yet.

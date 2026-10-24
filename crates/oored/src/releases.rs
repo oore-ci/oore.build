@@ -89,12 +89,14 @@ pub trait ReleaseStoreClient: Send + Sync {
     -> BoxFuture<'a, anyhow::Result<Option<f64>>>;
 
     /// Put the version `source` released on another track, without a new
-    /// upload. Stores that cannot promote refuse.
+    /// upload. Stores that cannot promote refuse. A refusal that names why the
+    /// build cannot be promoted, rather than a failed call, is a
+    /// [`PromotionRefused`] error.
     fn promote<'a>(
         &'a self,
         _source: &'a Release,
         _target: PromotionTarget<'a>,
-    ) -> BoxFuture<'a, anyhow::Result<()>> {
+    ) -> BoxFuture<'a, anyhow::Result<Promoted>> {
         Box::pin(async { anyhow::bail!("this store does not support promotion") })
     }
 }
@@ -105,7 +107,42 @@ pub struct PromotionTarget<'a> {
     pub track: &'a str,
     /// Staged rollout fraction, or `None` for a full release.
     pub fraction: Option<f64>,
+    /// App Store only: release the version in phases on Apple's schedule.
+    pub phased_release: bool,
+    /// App Store only: submit the version for App Review once the build is
+    /// attached.
+    pub submit_for_review: bool,
 }
+
+/// What the store did for a promotion.
+#[derive(Debug, Default)]
+pub struct Promoted {
+    /// The state and fraction the new release starts at when the store
+    /// decides them, such as an App Store version waiting for review. `None`
+    /// starts it from the environment's rollout policy.
+    pub start: Option<(ReleaseState, f64)>,
+    /// What happened at the store, for the release history.
+    pub detail: Option<String>,
+    /// The App Store monitor link to record with the new release, so the
+    /// monitor follows review and phased release for it.
+    pub app_store_link: Option<crate::app_store_publish::PromotedLink>,
+}
+
+/// The store refused a promotion for a reason the user can act on, such as
+/// an expired TestFlight build. Nothing changed at the store.
+#[derive(Debug)]
+pub struct PromotionRefused {
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl std::fmt::Display for PromotionRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for PromotionRefused {}
 
 /// Records changes without calling a store. Used until a store client is configured.
 pub struct NoopReleaseStoreClient;
@@ -123,8 +160,8 @@ impl ReleaseStoreClient for NoopReleaseStoreClient {
         &'a self,
         _: &'a Release,
         _: PromotionTarget<'a>,
-    ) -> BoxFuture<'a, anyhow::Result<()>> {
-        Box::pin(async { Ok(()) })
+    ) -> BoxFuture<'a, anyhow::Result<Promoted>> {
+        Box::pin(async { Ok(Promoted::default()) })
     }
 }
 
@@ -1756,7 +1793,7 @@ pub(crate) mod tests {
             &'a self,
             source: &'a Release,
             target: PromotionTarget<'a>,
-        ) -> BoxFuture<'a, anyhow::Result<()>> {
+        ) -> BoxFuture<'a, anyhow::Result<Promoted>> {
             let fails = *self.promote_fails.lock().unwrap();
             if !fails {
                 self.promotions.lock().unwrap().push((
@@ -1771,7 +1808,7 @@ pub(crate) mod tests {
                         "Play rejected the track update: version code 120 is lower than production"
                     );
                 }
-                Ok(())
+                Ok(Promoted::default())
             })
         }
 
