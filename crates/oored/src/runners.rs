@@ -1691,6 +1691,12 @@ fn checked_file_size_budgets(
             .map(|c| if c.is_control() { ' ' } else { c })
             .take(MAX_BUDGET_SOURCE_CHARS)
             .collect();
+        // The check's Budget column shows the source; never leave it empty.
+        let source = if source.trim().is_empty() {
+            ".oore.yaml".to_string()
+        } else {
+            source
+        };
         let errors = budget.budget.validate_at(&source);
         if !errors.is_empty() {
             warn!(build_id, errors = %errors.join("; "), "dropped an invalid size budget the runner sent");
@@ -2413,6 +2419,16 @@ mod tests {
                 .source
                 .len(),
             128
+        );
+
+        let blank: Vec<oore_contract::TargetSizeBudget> =
+            serde_json::from_value(serde_json::json!([
+                {"platform":"ios","source":" \n\t ","budget":{"mode":"warn","rules":[]}},
+            ]))
+            .unwrap();
+        assert_eq!(
+            super::checked_file_size_budgets("b1", &blank)[0].source,
+            ".oore.yaml"
         );
     }
 
