@@ -86,7 +86,7 @@
         "@hugeicons/core-free-icons": "^4.3.0",
         "@hugeicons/react": "^1.1.10",
         "@mswjs/interceptors": "^0.42.3",
-        "@oore/client": "^0.17.0",
+        "@oore/client": "^0.18.0",
         "@tanstack/react-hotkeys": "^0.10.0",
         "@tanstack/react-query": "^5.102.8",
         "@tanstack/react-router": "^1.170.32",
@@ -481,7 +481,7 @@
 
     "@nodelib/fs.walk": ["@nodelib/fs.walk@1.2.8", "", { "dependencies": { "@nodelib/fs.scandir": "2.1.5", "fastq": "^1.6.0" } }, "sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg=="],
 
-    "@oore/client": ["@oore/client@0.17.0", "", { "peerDependencies": { "@tanstack/react-query": "^5.101.0", "msw": "^2.15.0", "valibot": "^1.4.0" }, "optionalPeers": ["@tanstack/react-query", "msw", "valibot"], "bin": { "oore-dev": "dist/cli/main.js" } }, "sha512-G8wHy92WJ8sDwUs4Rv+p50FHPKCVTDQVIebzvNGlxzzyhxDQ+/cc/HcuPyiyDNwXlAjMwX9SGVcYCcqFpmtWBw=="],
+    "@oore/client": ["@oore/client@0.18.0", "", { "peerDependencies": { "@tanstack/react-query": "^5.101.0", "msw": "^2.15.0", "valibot": "^1.4.0" }, "optionalPeers": ["@tanstack/react-query", "msw", "valibot"], "bin": { "oore-dev": "dist/cli/main.js" } }, "sha512-VhhE36G5VGeOx5jFKCCNREZ/CrgFWoD3BJIsXXKTVRbIN4eEfWwdF7aEtxXDZZ7YzWUOwJjVEOZcg6cwqnkzyw=="],
 
     "@open-draft/deferred-promise": ["@open-draft/deferred-promise@3.0.0", "", {}, "sha512-XW375UK8/9SqUVNVa6M0yEy8+iTi4QN5VZ7aZuRFQmy76LRwI9wy5F4YIBU6T+eTe2/DNDo8tqu8RHlwLHM6RA=="],
 
