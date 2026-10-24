@@ -27,6 +27,7 @@ const yaml = demoExportYaml(request).yaml
 test('the demo pipeline reads back as its own settings', () => {
   const response = demoImportYaml({ yaml, ...request })
   expect(response.unsupported).toEqual([])
+  expect(response.notes).toEqual([])
   expect(response.representable).toBe(true)
   expect(response.execution_config).toMatchObject({
     platforms: ['android'],

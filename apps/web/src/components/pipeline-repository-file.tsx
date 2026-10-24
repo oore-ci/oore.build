@@ -337,7 +337,8 @@ function FileEditor({
         autoCapitalize="off"
         autoCorrect="off"
         rows={20}
-        className="max-h-[36rem] min-h-80 font-mono text-xs"
+        wrap="off"
+        className="max-h-[36rem] min-h-80 overflow-auto font-mono text-xs whitespace-pre"
       />
       <div id="repository-file-status" aria-live="polite">
         {outcome.kind === 'checking' ? (

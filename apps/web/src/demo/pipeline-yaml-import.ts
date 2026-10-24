@@ -38,6 +38,11 @@ const DEFAULT_ARTIFACTS = {
 
 const PLATFORMS: Array<BuildPlatform> = ['android', 'ios', 'macos']
 const PUB_GET = 'flutter pub get'
+const TITLES = {
+  android: 'Android',
+  ios: 'iOS',
+  macos: 'macOS',
+} satisfies Record<BuildPlatform, string>
 const KNOWN_STEPS = new Map([
   ['flutter pub get', 'Get packages'],
   ['flutter analyze', 'Analyze'],
@@ -487,9 +492,17 @@ export function demoImportYaml(
       "The pipeline's Build commands now run after the target builds, as the file runs them",
     )
   }
-  const runs = [PUB_GET, ...pre, ...after]
+  // Names the export gives: after the command, unique among the builds.
+  const taken = new Set(platforms.map((p) => `Build ${TITLES[p]}`))
+  const derivedNames = [PUB_GET, ...pre, ...after].map((run) => {
+    const base = stepName(run)
+    let name = base
+    for (let n = 2; taken.has(name); n++) name = `${base} (${n})`
+    taken.add(name)
+    return name
+  })
   const renamed = names.flatMap((name, index) => {
-    const derived = stepName(runs[index] ?? '')
+    const derived = derivedNames[index] ?? ''
     return name && name !== derived ? [`'${name}' becomes '${derived}'`] : []
   })
   if (renamed.length > 0) {
