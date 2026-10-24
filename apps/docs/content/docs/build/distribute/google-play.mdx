@@ -148,11 +148,18 @@ building again.
 
 ## Store health on Home
 
-After the first release, the daemon reads the app's user-perceived crash rate
-and ANR rate over the last 28 days from the Play Developer Reporting API, with
-the top crash and ANR clusters. Home shows them against Google Play's
-bad-behavior thresholds of 1.09% and 0.47%. The numbers refresh every six
-hours with the service account of the pipeline that made the newest release.
+Home lists every app a pipeline publishes to Google Play: each package named
+in a pipeline's **Expected package**, or reached by a passing **Test credentials**
+check, and each package Oore has released. A pipeline that sets neither and
+has not released yet does not name an app, so Home cannot list it; fill in
+**Expected package** to add it.
+
+For each app, the daemon reads the user-perceived crash rate and ANR rate over
+the last 28 days from the Play Developer Reporting API, with the top crash and
+ANR clusters. Home shows them against Google Play's bad-behavior thresholds of
+1.09% and 0.47%. The numbers refresh every six hours with the service account
+of the pipeline that made the newest release, or, before the first release,
+the pipeline whose Google Play settings were saved last.
 
 The service account needs **View app information** for the app in Play
 Console, and the daemon host needs outbound HTTPS to

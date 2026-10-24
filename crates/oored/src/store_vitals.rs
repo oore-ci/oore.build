@@ -1,8 +1,9 @@
 //! Store health for the Home dashboard: Google Play crash and ANR rates with
 //! their top issues, and App Store hang rate and launch time.
 //!
-//! The daemon discovers apps from releases, reads each store in the
-//! background with the releasing pipeline's publishing credentials, and keeps
+//! The daemon discovers apps from releases and from pipelines' Google Play
+//! settings, reads each store in the background with that pipeline's
+//! publishing credentials, and keeps
 //! the latest result so Home never waits on a store. Only the monitor reads
 //! stores; a manual refresh marks rows due and wakes it.
 
@@ -199,8 +200,22 @@ async fn load_vitals(state: &AppState, auth: &AuthUser) -> ApiResult<StoreVitals
     Ok(Json(StoreVitalsResponse { apps }))
 }
 
+/// Google Play apps named by a pipeline's saved settings: the expected
+/// package, else the package its last passing credentials check reached.
+macro_rules! configured_play_apps {
+    () => {
+        "SELECT p.project_id, t.pipeline_id, t.updated_at, \
+           COALESCE(NULLIF(TRIM(json_extract(t.config, '$.package_name')), ''), \
+             c.package_name) AS package_name \
+         FROM pipeline_publish_targets t JOIN pipelines p ON p.id = t.pipeline_id \
+         LEFT JOIN pipeline_google_play_checks c ON c.pipeline_id = t.pipeline_id AND c.ok = 1 \
+         WHERE t.store = 'google_play'"
+    };
+}
+
 /// Track every app a project has released, read through the pipeline of its
-/// newest release.
+/// newest release, and every Google Play app a pipeline is set up to publish,
+/// so an app shows before Oore has released it.
 async fn discover_apps(pool: &SqlitePool) -> sqlx::Result<()> {
     sqlx::query(
         "INSERT INTO store_app_vitals (project_id, store, app_identifier, pipeline_id) \
@@ -213,6 +228,33 @@ async fn discover_apps(pool: &SqlitePool) -> sqlx::Result<()> {
          ON CONFLICT (project_id, store, app_identifier) \
          DO UPDATE SET pipeline_id = excluded.pipeline_id",
     )
+    .execute(pool)
+    .await?;
+    // A released app keeps the pipeline of its newest release; among
+    // pipelines set up for the same app, the most recently saved one reads it.
+    sqlx::query(concat!(
+        "INSERT INTO store_app_vitals (project_id, store, app_identifier, pipeline_id) \
+         SELECT project_id, 'google_play', package_name, pipeline_id FROM (",
+        configured_play_apps!(),
+        ") WHERE package_name IS NOT NULL \
+         ORDER BY updated_at \
+         ON CONFLICT (project_id, store, app_identifier) \
+         DO UPDATE SET pipeline_id = excluded.pipeline_id \
+         WHERE NOT EXISTS (SELECT 1 FROM releases r \
+           WHERE r.project_id = excluded.project_id AND r.store = 'google_play' \
+             AND r.package_name = excluded.app_identifier)"
+    ))
+    .execute(pool)
+    .await?;
+    // An app that was only configured goes away once no pipeline names it.
+    sqlx::query(concat!(
+        "DELETE FROM store_app_vitals AS v WHERE v.store = 'google_play' \
+           AND NOT EXISTS (SELECT 1 FROM releases r WHERE r.project_id = v.project_id \
+             AND r.store = 'google_play' AND r.package_name = v.app_identifier) \
+           AND NOT EXISTS (SELECT 1 FROM (",
+        configured_play_apps!(),
+        ") c WHERE c.project_id = v.project_id AND c.package_name = v.app_identifier)"
+    ))
     .execute(pool)
     .await?;
     sqlx::query(
@@ -616,6 +658,81 @@ mod tests {
                     None
                 ),
             ]
+        );
+    }
+
+    async fn play_apps(pool: &SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as(
+            "SELECT app_identifier, pipeline_id FROM store_app_vitals \
+             WHERE store = 'google_play' ORDER BY app_identifier",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn discovers_google_play_apps_a_pipeline_is_set_up_for_before_their_first_release() {
+        let pool = pool().await;
+        for statement in [
+            "INSERT INTO pipelines (id, project_id, name, created_at, updated_at) VALUES \
+             ('pl4', 'p1', 'wear', 0, 0), ('pl5', 'p1', 'tv', 0, 0), \
+             ('pl6', 'p1', 'android-new', 0, 0), ('pl7', 'p1', 'android-unknown', 0, 0)",
+            "INSERT INTO pipeline_publish_targets (id, pipeline_id, store, enabled, config, \
+             created_at, updated_at) VALUES \
+             ('t4', 'pl4', 'google_play', 1, \
+              '{\"service_account_secret\":\"PLAY\",\"package_name\":\"com.shop.wear\",\"track\":\"internal\"}', 0, 0), \
+             ('t5', 'pl5', 'google_play', 0, \
+              '{\"service_account_secret\":\"PLAY\",\"track\":\"internal\"}', 0, 0), \
+             ('t6', 'pl6', 'google_play', 1, \
+              '{\"service_account_secret\":\"PLAY\",\"package_name\":\"com.shop\",\"track\":\"internal\"}', 0, 50), \
+             ('t7', 'pl7', 'google_play', 1, \
+              '{\"service_account_secret\":\"PLAY\",\"package_name\":\" \",\"track\":\"internal\"}', 0, 0)",
+            "INSERT INTO pipeline_google_play_checks (pipeline_id, service_account_secret, \
+             secret_version, ok, message, package_name, checked_at) VALUES \
+             ('pl5', 'PLAY', 'v1', 1, 'ok', 'com.shop.tv', 0), \
+             ('pl7', 'PLAY', 'v1', 0, 'denied', 'com.shop.denied', 0)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+
+        discover_apps(&pool).await.unwrap();
+        discover_apps(&pool).await.unwrap();
+
+        // The released app stays with its newest release's pipeline.
+        let expected = |rows: &[(&str, &str)]| {
+            rows.iter()
+                .map(|(app, pipeline)| (app.to_string(), pipeline.to_string()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            play_apps(&pool).await,
+            expected(&[
+                ("com.shop", "pl2"),
+                ("com.shop.tv", "pl5"),
+                ("com.shop.wear", "pl4")
+            ])
+        );
+
+        // Moving the app to another pipeline follows it; dropping the
+        // settings drops an app that was never released.
+        sqlx::query(
+            "UPDATE pipeline_publish_targets SET config = \
+             '{\"service_account_secret\":\"PLAY\",\"package_name\":\"com.shop.tv\",\"track\":\"internal\"}', \
+             updated_at = 60 WHERE id = 't6'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM pipeline_publish_targets WHERE id = 't4'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        discover_apps(&pool).await.unwrap();
+
+        assert_eq!(
+            play_apps(&pool).await,
+            expected(&[("com.shop", "pl2"), ("com.shop.tv", "pl6")])
         );
     }
 
