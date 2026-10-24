@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'bun:test'
 
-import { stepMedians, stepTimingTrend } from './step-timings'
+import {
+  formatStepDelta,
+  longestStepMs,
+  stepMedians,
+  stepTimingSummary,
+  stepTimingTrend,
+} from './step-timings'
 
 const build = (id, steps, extra = {}) => ({
   id,
@@ -51,4 +57,25 @@ test('a step is slower or faster only when the gap is meaningful', () => {
   assert.equal(stepTimingTrend(115_000, 100_000), 'typical')
   // 50% slower but only 3 seconds.
   assert.equal(stepTimingTrend(9_000, 6_000), 'typical')
+})
+
+test('bars share one scale set by the slowest step or median', () => {
+  const steps = [
+    { name: 'build', durationMs: 240_000 },
+    { name: 'test', durationMs: 90_000 },
+    { name: 'running' },
+  ]
+  assert.equal(longestStepMs(steps), 240_000)
+  assert.equal(longestStepMs(steps, new Map([['build', 300_000]])), 300_000)
+  assert.equal(longestStepMs([{ name: 'queued' }]), 0)
+})
+
+test('step summaries show time and median delta, or line count without a time', () => {
+  assert.equal(formatStepDelta(98_000, 60_000), '+38s')
+  assert.equal(formatStepDelta(180_000, 240_000), '−1m 0s')
+  assert.equal(formatStepDelta(60_400, 60_000), '±0s')
+  assert.equal(stepTimingSummary(240_000, 300_000, 11), '4m 0s (−1m 0s)')
+  assert.equal(stepTimingSummary(240_000, undefined, 11), '4m 0s')
+  assert.equal(stepTimingSummary(undefined, 300_000, 1), '1 line')
+  assert.equal(stepTimingSummary(undefined, undefined, 32), '32 lines')
 })

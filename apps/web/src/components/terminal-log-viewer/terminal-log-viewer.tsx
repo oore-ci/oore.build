@@ -331,6 +331,7 @@ export default function TerminalLogViewer({
             >
               <StepSelect
                 groups={stepGroups}
+                medians={stepMedians}
                 selectedStep={selectedStep}
                 allLogCount={allVisibleLogs.length}
                 onSelect={handleSelectStep}
