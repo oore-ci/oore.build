@@ -242,6 +242,16 @@ impl RepositoryConfig {
         }
     }
 
+    /// The `on` that decides when a pipeline building `workflow` runs: the
+    /// workflow's own `on`, else the top-level one. `None` for a v1 file or a
+    /// file without `on`, where the pipeline's trigger settings apply.
+    pub fn triggers(&self, workflow: Option<&str>) -> Option<&TriggerSpec> {
+        match self {
+            RepositoryConfig::V1(_) => None,
+            RepositoryConfig::V2(config) => config.triggers(workflow),
+        }
+    }
+
     /// Declared settings this release parses and validates but does not act on.
     pub fn notices(&self) -> Vec<String> {
         match self {
@@ -763,6 +773,72 @@ impl<'de> Deserialize<'de> for BranchTrigger {
     }
 }
 
+/// A webhook revision, as `on` sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TriggerEvent<'a> {
+    /// A push to `branch`.
+    Push { branch: &'a str },
+    /// A pull or merge request into `target_branch`.
+    PullRequest { target_branch: Option<&'a str> },
+    /// A pushed tag.
+    Tag { tag: &'a str },
+}
+
+impl BranchTrigger {
+    fn matches(&self, branch: Option<&str>) -> bool {
+        match self {
+            BranchTrigger::Off => false,
+            BranchTrigger::AllBranches => true,
+            BranchTrigger::Branches(patterns) => branch.is_some_and(|branch| {
+                patterns
+                    .iter()
+                    .any(|pattern| crate::TriggerConfig::glob_match(pattern.trim(), branch))
+            }),
+        }
+    }
+}
+
+impl TriggerSpec {
+    /// Whether the event's kind and ref start this workflow. Branch and tag
+    /// globs use the same `*` and `?` rules as the pipeline's trigger
+    /// settings; `pull_request.branches` names the branch the request
+    /// targets.
+    pub fn matches_ref(&self, event: TriggerEvent<'_>) -> bool {
+        match event {
+            TriggerEvent::Push { branch } => self
+                .push
+                .as_ref()
+                .is_some_and(|push| push.matches(Some(branch))),
+            TriggerEvent::PullRequest { target_branch } => self
+                .pull_request
+                .as_ref()
+                .is_some_and(|pull_request| pull_request.matches(target_branch)),
+            TriggerEvent::Tag { tag } => self
+                .tag
+                .iter()
+                .any(|pattern| crate::TriggerConfig::glob_match(pattern.trim(), tag)),
+        }
+    }
+
+    /// Whether `paths` narrows push and pull request events. Tags ignore it.
+    pub fn has_path_filters(&self) -> bool {
+        !self.paths.is_empty()
+    }
+
+    /// Whether a changed file matches `paths`. `None` means the change set is
+    /// unknown, which never suppresses a build.
+    pub fn paths_match(&self, changed_files: Option<&[String]>) -> bool {
+        let Some(files) = changed_files.filter(|_| self.has_path_filters()) else {
+            return true;
+        };
+        files.iter().any(|file| {
+            self.paths
+                .iter()
+                .any(|pattern| crate::changed_path_matches(pattern, file))
+        })
+    }
+}
+
 fn one_or_many<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
     struct OneOrMany;
 
@@ -807,6 +883,11 @@ fn platform_title(platform: &BuildPlatform) -> &'static str {
         BuildPlatform::Ios => "iOS",
         BuildPlatform::Macos => "macOS",
     }
+}
+
+/// Whether `name` can name a v2 workflow, before any file is checked.
+pub fn is_valid_workflow_name(name: &str) -> bool {
+    is_valid_identifier(name)
 }
 
 /// Workflow and flavor names end up in step names and shell commands.
@@ -1178,6 +1259,21 @@ impl ConfigV2 {
             .collect()
     }
 
+    /// See [`RepositoryConfig::triggers`]. Without a named workflow, the only
+    /// workflow's `on` applies; with several, only the top-level `on` can.
+    pub fn triggers(&self, workflow: Option<&str>) -> Option<&TriggerSpec> {
+        let selected = match workflow {
+            Some(name) => self.workflows.get(&name.to_string()),
+            None => match self.workflows.0.as_slice() {
+                [(_, only)] => Some(only),
+                _ => None,
+            },
+        };
+        selected
+            .and_then(|workflow| workflow.on.as_ref())
+            .or(self.on.as_ref())
+    }
+
     /// Plan one workflow. Errors are one per line.
     pub fn plan(
         &self,
@@ -1193,7 +1289,7 @@ impl ConfigV2 {
         let mut notices = Vec::new();
         if self.workflows.0.len() > 1 {
             notices.push(format!(
-                "this file defines workflows [{}], but pipelines cannot select a workflow yet, so every build from this file fails with `choose one for the pipeline`; keep one workflow until workflow selection lands",
+                "this file defines workflows [{}]; set the Workflow in each pipeline's settings, or its builds fail with `choose one for the pipeline`",
                 self.workflow_names().join(", ")
             ));
         }
@@ -1204,7 +1300,7 @@ impl ConfigV2 {
                 .any(|(_, workflow)| workflow.on.is_some());
         if declares_on {
             notices.push(
-                "`on` is validated but not applied yet; builds are still triggered by the pipeline's trigger settings"
+                "`on` replaces the pipeline's trigger settings for push, pull request and tag webhooks; schedules and manual builds still come from the pipeline"
                     .to_string(),
             );
         }
@@ -2457,7 +2553,7 @@ mod tests {
     }
 
     #[test]
-    fn several_workflows_get_a_notice_until_pipelines_can_pick_one() {
+    fn several_workflows_get_a_notice_to_pick_one() {
         let config = parse_repository_config(&format!(
             "{BASE}workflows:\n  adhoc: {{}}\n  release: {{}}\n"
         ))
@@ -2589,14 +2685,117 @@ mod tests {
     }
 
     #[test]
-    fn triggers_and_publish_are_validated_and_reported_as_not_applied() {
+    fn on_matches_pushes_pull_requests_and_tags() {
+        let config = parse_repository_config(&format!(
+            "{BASE}on:\n  push: {{ branches: [main, release/*] }}\n  pull_request: true\n  tag: v*\n  paths: [lib/, pubspec.*]\n"
+        ))
+        .unwrap();
+        let on = config.triggers(None).unwrap();
+        let push = |branch| TriggerEvent::Push { branch };
+        assert!(on.matches_ref(push("main")));
+        assert!(on.matches_ref(push("release/1.2")));
+        assert!(!on.matches_ref(push("feature/x")));
+        assert!(on.matches_ref(TriggerEvent::PullRequest {
+            target_branch: Some("anything")
+        }));
+        assert!(on.matches_ref(TriggerEvent::Tag { tag: "v1.0.0" }));
+        assert!(!on.matches_ref(TriggerEvent::Tag { tag: "nightly" }));
+
+        let files = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert!(on.paths_match(Some(&files(&["lib/src/app.dart"]))));
+        assert!(on.paths_match(Some(&files(&["README.md", "pubspec.yaml"]))));
+        assert!(!on.paths_match(Some(&files(&["README.md", "docs/a.md"]))));
+        // An unknown change set never suppresses a build.
+        assert!(on.paths_match(None));
+
+        // Fields left out, or `false`, never start a build.
+        let tags_only =
+            parse_repository_config(&format!("{BASE}on:\n  push: false\n  tag: [v*, rc-?]\n"))
+                .unwrap();
+        let on = tags_only.triggers(None).unwrap();
+        assert!(!on.matches_ref(push("main")));
+        assert!(!on.matches_ref(TriggerEvent::PullRequest {
+            target_branch: Some("main")
+        }));
+        assert!(on.matches_ref(TriggerEvent::Tag { tag: "rc-1" }));
+        assert!(!on.has_path_filters());
+        assert!(on.paths_match(Some(&files(&["anything"]))));
+    }
+
+    #[test]
+    fn pull_request_branches_name_the_target_branch() {
+        let config = parse_repository_config(&format!(
+            "{BASE}on:\n  pull_request: {{ branches: [main] }}\n"
+        ))
+        .unwrap();
+        let on = config.triggers(None).unwrap();
+        assert!(on.matches_ref(TriggerEvent::PullRequest {
+            target_branch: Some("main")
+        }));
+        assert!(!on.matches_ref(TriggerEvent::PullRequest {
+            target_branch: Some("develop")
+        }));
+        assert!(!on.matches_ref(TriggerEvent::PullRequest {
+            target_branch: None
+        }));
+        assert!(!on.matches_ref(TriggerEvent::Push { branch: "main" }));
+    }
+
+    #[test]
+    fn a_workflow_on_replaces_the_top_level_on() {
+        let yaml = format!(
+            "{BASE}on:\n  push: true\nworkflows:\n  adhoc:\n    on:\n      pull_request: true\n  release:\n    on:\n      tag: v*\n  nightly: {{}}\n"
+        );
+        let config = parse_repository_config(&yaml).unwrap();
+        let push = TriggerEvent::Push { branch: "main" };
+        let pull_request = TriggerEvent::PullRequest {
+            target_branch: Some("main"),
+        };
+        let tag = TriggerEvent::Tag { tag: "v2.0.0" };
+        let matches = |workflow, event| {
+            config
+                .triggers(workflow)
+                .is_some_and(|on| on.matches_ref(event))
+        };
+        assert!(matches(Some("adhoc"), pull_request));
+        assert!(!matches(Some("adhoc"), push));
+        assert!(matches(Some("release"), tag));
+        assert!(!matches(Some("release"), push));
+        // No `on` of its own: the top level applies.
+        assert!(matches(Some("nightly"), push));
+        // Several workflows and none named: only the top level can apply.
+        assert!(matches(None, push));
+        assert!(!matches(None, tag));
+
+        let single = parse_repository_config(&format!(
+            "{BASE}workflows:\n  release:\n    on:\n      tag: v*\n"
+        ))
+        .unwrap();
+        assert!(single.triggers(None).unwrap().matches_ref(tag));
+        // No `on` anywhere, and v1 files: the pipeline's settings apply.
+        assert!(
+            parse_repository_config(BASE)
+                .unwrap()
+                .triggers(None)
+                .is_none()
+        );
+        assert!(
+            parse_repository_config("version: 1\nplatforms: [android]\n")
+                .unwrap()
+                .triggers(None)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn triggers_and_publish_are_validated_and_reported() {
         let config = parse_repository_config(&format!(
             "{BASE}    publish:\n      play: {{ track: internal, rollout: 0.05 }}\non:\n  push: {{ branches: [main] }}\n  pull_request: true\n  tag: v*\n"
         ))
         .unwrap();
         let notices = config.notices();
         assert_eq!(notices.len(), 2, "{notices:?}");
-        assert!(notices[0].starts_with("`on` is validated but not applied yet"));
+        assert!(notices[0].starts_with("`on` replaces the pipeline's trigger settings"));
         assert!(notices[1].starts_with("`publish` is validated but not applied yet"));
 
         assert!(

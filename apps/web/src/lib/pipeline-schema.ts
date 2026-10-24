@@ -48,6 +48,8 @@ export const pipelineFormSchema = z
     name: z.string().min(1, 'Name is required'),
     config_mode: z.enum(['auto', 'explicit']),
     config_path: z.string().optional(),
+    /** A `.oore.yaml` version 2 workflow; empty builds the file's default. */
+    workflow: z.string().optional(),
     platform_android: z.boolean(),
     platform_ios: z.boolean(),
     platform_macos: z.boolean(),

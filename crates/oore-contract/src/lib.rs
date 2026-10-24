@@ -17,8 +17,8 @@ pub mod pipeline_config;
 pub mod runtime_update_preflight;
 
 pub use pipeline_config::{
-    PipelinePlan, PlanRequest, PlanStep, RepositoryConfig, StepPhase, parse_repository_config,
-    plan_execution_config,
+    PipelinePlan, PlanRequest, PlanStep, RepositoryConfig, StepPhase, TriggerEvent, TriggerSpec,
+    is_valid_workflow_name, parse_repository_config, plan_execution_config,
 };
 
 // ── Setup state machine ─────────────────────────────────────────
@@ -3117,6 +3117,12 @@ pub struct RepositoryWorkflowPreview {
     pub errors: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution: Option<RepositoryWorkflowExecutionPreview>,
+    /// Workflows a valid `version: 2` file defines, in file order, which a
+    /// pipeline can pick. Empty for version 1 files and files without
+    /// workflows.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub workflows: Vec<String>,
 }
 
 /// Pipeline behavior safe to show before import. Environment values are never returned.
@@ -3531,9 +3537,25 @@ pub struct Pipeline {
     #[serde(default)]
     #[schema(required = true)]
     pub approval: ApprovalPolicy,
+    /// The `.oore.yaml` version 2 workflow this pipeline builds. `null`
+    /// builds the file's only workflow, or its top level when it defines
+    /// none. That workflow's `on`, or the file's top-level `on`, replaces
+    /// `trigger_config` for webhook events.
+    #[serde(default)]
+    pub workflow: Option<String>,
     pub enabled: bool,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// Distinguishes a field sent as `null` (`Some(None)`) from one left out
+/// (`None`) in a partial update.
+fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3553,6 +3575,9 @@ pub struct CreatePipelineRequest {
     pub timeout_minutes: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval: Option<ApprovalPolicy>,
+    /// A workflow the repository's `version: 2` file defines.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3573,6 +3598,15 @@ pub struct UpdatePipelineRequest {
     pub timeout_minutes: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval: Option<ApprovalPolicy>,
+    /// A workflow the repository's `version: 2` file defines. `null` clears
+    /// it; leaving it out keeps the current one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present"
+    )]
+    #[schema(value_type = Option<String>, nullable)]
+    pub workflow: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
 }
@@ -3612,6 +3646,9 @@ pub struct ValidatePipelineRequest {
     pub approval: Option<ApprovalPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_yaml: Option<String>,
+    /// Checked against the workflows `repository_yaml` defines.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -5939,7 +5976,22 @@ pub struct RevokeApiTokenResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApprovalPolicy, TriggerConfig};
+    use super::{ApprovalPolicy, TriggerConfig, UpdatePipelineRequest};
+
+    #[test]
+    fn a_pipeline_update_tells_a_cleared_workflow_from_an_absent_one() {
+        let parse = |json: &str| {
+            serde_json::from_str::<UpdatePipelineRequest>(json)
+                .unwrap()
+                .workflow
+        };
+        assert_eq!(parse("{}"), None);
+        assert_eq!(parse(r#"{"workflow":null}"#), Some(None));
+        assert_eq!(
+            parse(r#"{"workflow":"release"}"#),
+            Some(Some("release".to_string()))
+        );
+    }
 
     fn triggers(json: &str) -> TriggerConfig {
         serde_json::from_str(json).unwrap()

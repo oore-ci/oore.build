@@ -4184,7 +4184,7 @@ fn resolve_execution_plan(
         let selected = selected_platforms(snapshot)?;
         let plan = file_config
             .plan(PlanRequest {
-                // Set once pipelines can name a v2 workflow.
+                // The pipeline's v2 workflow, when it names one.
                 workflow: snapshot.get("workflow").and_then(|v| v.as_str()),
                 selected_platforms: selected.as_deref(),
                 build_play_bundle,

@@ -1,4 +1,4 @@
-import { useFormContext } from 'react-hook-form'
+import { useFormContext, useWatch } from 'react-hook-form'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import {
@@ -16,6 +16,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Text } from '@/components/layout/text'
 import {
   Select,
   SelectContent,
@@ -36,6 +37,87 @@ const PLATFORM_FIELDS = [
   ['platform_macos', 'macOS'],
 ] as const
 
+/** The workflows a pipeline's `.oore.yaml` version 2 file defines. */
+export interface PipelineWorkflowSource {
+  path: string
+  workflows: Array<string>
+}
+
+// Base UI selects treat an empty value as unselected.
+const DEFAULT_WORKFLOW = '__default__'
+
+function WorkflowField({ source }: { source: PipelineWorkflowSource }) {
+  const form = useFormContext<PipelineFormValues>()
+  const current = useWatch({ control: form.control, name: 'workflow' }) ?? ''
+  // Keep a saved workflow the file no longer defines visible and selected.
+  const names =
+    current && !source.workflows.includes(current)
+      ? [...source.workflows, current]
+      : source.workflows
+  const items = {
+    [DEFAULT_WORKFLOW]:
+      source.workflows.length === 1
+        ? `File default (${source.workflows[0]})`
+        : 'Not set',
+    ...Object.fromEntries(names.map((name) => [name, name])),
+  }
+  return (
+    <FormField
+      control={form.control}
+      name="workflow"
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>Workflow</FormLabel>
+          <Select
+            value={field.value || DEFAULT_WORKFLOW}
+            onValueChange={(value) =>
+              field.onChange(value === DEFAULT_WORKFLOW ? '' : value)
+            }
+            items={items}
+          >
+            <FormControl>
+              <SelectTrigger className="w-full" aria-label="Workflow">
+                <SelectValue />
+              </SelectTrigger>
+            </FormControl>
+            <SelectContent>
+              <SelectGroup>
+                {Object.entries(items).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <FormDescription>
+            {source.workflows.length > 1 ? (
+              <>
+                <span className="font-mono">{source.path}</span> defines several
+                workflows; this pipeline builds the one picked here.
+              </>
+            ) : (
+              <>
+                This pipeline builds the workflow in{' '}
+                <span className="font-mono">{source.path}</span>.
+              </>
+            )}{' '}
+            When that workflow sets <span className="font-mono">on</span>, it
+            replaces the triggers below for pushes, pull requests and tags.
+          </FormDescription>
+          {current && !source.workflows.includes(current) ? (
+            <Text variant="caption" className="text-destructive">
+              {source.path} no longer defines {current}; builds will fail until
+              you pick another.
+            </Text>
+          ) : null}
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
 /**
  * Basics: what the pipeline is called, what it builds, and where its config
  * comes from. When a repository workflow owns execution, the workflow summary
@@ -44,10 +126,17 @@ const PLATFORM_FIELDS = [
 export function PipelineBasicsSection({
   configMode,
   repositoryWorkflow,
+  workflowSource,
 }: {
   configMode: PipelineFormValues['config_mode']
   repositoryWorkflow?: React.ReactNode
+  /** Shown as a Workflow selector when the file defines workflows. */
+  workflowSource?: PipelineWorkflowSource
 }) {
+  const workflowField =
+    workflowSource && workflowSource.workflows.length > 0 ? (
+      <WorkflowField source={workflowSource} />
+    ) : null
   const form = useFormContext<PipelineFormValues>()
   return (
     <PipelineFormSection id="basics" title="Basics">
@@ -73,6 +162,7 @@ export function PipelineBasicsSection({
           hint="Build settings come from the workflow checked into the repository."
         >
           {repositoryWorkflow}
+          {workflowField}
         </PipelineFormSubsection>
       ) : (
         <>
@@ -153,6 +243,8 @@ export function PipelineBasicsSection({
                 )}
               />
             ) : null}
+
+            {workflowField}
 
             <FormField
               control={form.control}

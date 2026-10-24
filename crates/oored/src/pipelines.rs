@@ -9,11 +9,11 @@ use oore_contract::{
     CreatePipelineResponse, DEFAULT_BUILD_TIMEOUT_MINUTES, ListPipelinesResponse,
     MAX_BUILD_TIMEOUT_MINUTES, MAX_PLAN_REPOSITORY_YAML_BYTES, OkResponse, Pipeline,
     PipelineDetailResponse, PipelineExecutionConfig, PipelinePlanPreview, PlanPipelineRequest,
-    PlanPipelineResponse, PlanRequest, TriggerConfig, UpdatePipelineRequest,
+    PlanPipelineResponse, PlanRequest, RepositoryConfig, TriggerConfig, UpdatePipelineRequest,
     ValidatePipelineRequest, ValidatePipelineResponse, is_valid_pipeline_env_key,
-    normalize_runner_labels, parse_repository_config, pipeline_config::select_v1_platforms,
-    plan_execution_config, secret_expression_errors, validate_artifact_pattern,
-    validate_build_number_offset, validate_repository_config_path,
+    is_valid_workflow_name, normalize_runner_labels, parse_repository_config,
+    pipeline_config::select_v1_platforms, plan_execution_config, secret_expression_errors,
+    validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -395,6 +395,84 @@ fn validate_concurrency(cp: &ConcurrencyPolicy) -> Vec<String> {
     errors
 }
 
+// ── Workflow selection ──────────────────────────────────────────
+
+fn normalize_workflow_name(name: &str) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let name = name.trim();
+    if !is_valid_workflow_name(name) {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_workflow",
+            "workflow must start with a letter or digit and use only letters, digits, '-' and '_' (max 64 chars)",
+        ));
+    }
+    Ok(name.to_string())
+}
+
+/// Why `workflow` cannot be planned from `config`, if it cannot.
+fn workflow_error(path: &str, config: &RepositoryConfig, workflow: &str) -> Option<String> {
+    let names = config.workflow_names();
+    if names.contains(&workflow) {
+        return None;
+    }
+    Some(match config {
+        RepositoryConfig::V1(_) => {
+            format!("{path} is a version 1 file; workflows need `version: 2`")
+        }
+        RepositoryConfig::V2(_) if names.is_empty() => {
+            format!("workflow '{workflow}' is not defined; {path} defines no workflows")
+        }
+        RepositoryConfig::V2(_) => format!(
+            "workflow '{workflow}' is not defined; {path} defines [{}]",
+            names.join(", ")
+        ),
+    })
+}
+
+/// Check `workflow` against the pipeline file on the project's default
+/// branch. A file that is missing, invalid or unreachable cannot be checked,
+/// so the name is accepted and a wrong one fails at build time.
+async fn check_workflow_in_repository(
+    state: &AppState,
+    project_id: &str,
+    config_path: &str,
+    config_path_explicit: bool,
+    workflow: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    use crate::repository_workflows::{PipelineFile, load_pipeline_file};
+    match load_pipeline_file(
+        &state.db,
+        &state.encryption_key,
+        project_id,
+        config_path,
+        config_path_explicit,
+        None,
+    )
+    .await
+    {
+        Ok(Some(PipelineFile::Parsed { path, config })) => {
+            match workflow_error(&path, &config, workflow) {
+                Some(message) => Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_workflow",
+                    message,
+                )),
+                None => Ok(()),
+            }
+        }
+        Ok(_) => Ok(()),
+        Err((status, body)) => {
+            warn!(
+                project_id,
+                status = %status,
+                error = %body.0.error,
+                "could not read the repository file to check the pipeline workflow"
+            );
+            Ok(())
+        }
+    }
+}
+
 // ── Row conversion ──────────────────────────────────────────────
 
 fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
@@ -435,6 +513,7 @@ fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
         concurrency,
         timeout_minutes,
         approval,
+        workflow: row.try_get("workflow").ok().flatten(),
         enabled: enabled_int != 0,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
@@ -611,6 +690,22 @@ pub async fn create_pipeline(
         ));
     }
 
+    let workflow = match req.workflow.as_deref() {
+        Some(name) => {
+            let name = normalize_workflow_name(name)?;
+            check_workflow_in_repository(
+                &state,
+                &project_id,
+                &config_path,
+                config_path_explicit,
+                &name,
+            )
+            .await?;
+            Some(name)
+        }
+        None => None,
+    };
+
     let now = now_unix();
     let pipeline_id = Uuid::new_v4().to_string();
 
@@ -619,8 +714,8 @@ pub async fn create_pipeline(
     let execution_config_json = serde_json::to_string(&execution_config).unwrap_or_default();
 
     sqlx::query(
-        "INSERT INTO pipelines (id, project_id, name, config_path, config_path_explicit, execution_config, trigger_config, concurrency, timeout_minutes, approval_policy, enabled, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?10, ?11, 1, ?9, ?9)",
+        "INSERT INTO pipelines (id, project_id, name, config_path, config_path_explicit, execution_config, trigger_config, concurrency, timeout_minutes, approval_policy, workflow, enabled, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?10, ?11, ?12, 1, ?9, ?9)",
     )
     .bind(&pipeline_id)
     .bind(&project_id)
@@ -633,6 +728,7 @@ pub async fn create_pipeline(
     .bind(now)
     .bind(timeout_minutes)
     .bind(serde_json::to_string(&approval).unwrap_or_default())
+    .bind(&workflow)
     .execute(&pool)
     .await
     .map_err(|e| {
@@ -669,6 +765,7 @@ pub async fn create_pipeline(
         concurrency,
         timeout_minutes,
         approval,
+        workflow,
         enabled: true,
         created_at: now,
         updated_at: now,
@@ -876,6 +973,7 @@ pub async fn update_pipeline(
         && req.concurrency.is_none()
         && req.timeout_minutes.is_none()
         && req.approval.is_none()
+        && req.workflow.is_none()
         && req.enabled.is_none()
     {
         return Ok(Json(CreatePipelineResponse {
@@ -1013,6 +1111,26 @@ pub async fn update_pipeline(
         pipeline.approval = approval;
     }
 
+    if let Some(workflow) = req.workflow {
+        pipeline.workflow = match workflow.as_deref() {
+            Some(name) => {
+                let name = normalize_workflow_name(name)?;
+                if pipeline.workflow.as_deref() != Some(name.as_str()) {
+                    check_workflow_in_repository(
+                        &state,
+                        &pipeline.project_id,
+                        &pipeline.config_path,
+                        pipeline.config_path_explicit,
+                        &name,
+                    )
+                    .await?;
+                }
+                Some(name)
+            }
+            None => None,
+        };
+    }
+
     if let Some(enabled) = req.enabled {
         pipeline.enabled = enabled;
     }
@@ -1021,7 +1139,7 @@ pub async fn update_pipeline(
     sqlx::query(
         "UPDATE pipelines \
          SET name = ?1, config_path = ?2, config_path_explicit = ?3, execution_config = ?4, trigger_config = ?5, concurrency = ?6, enabled = ?7, updated_at = ?8, \
-             timeout_minutes = ?10, approval_policy = ?11 \
+             timeout_minutes = ?10, approval_policy = ?11, workflow = ?12 \
          WHERE id = ?9",
     )
     .bind(&pipeline.name)
@@ -1035,6 +1153,7 @@ pub async fn update_pipeline(
     .bind(&pipeline_id)
     .bind(pipeline.timeout_minutes)
     .bind(serde_json::to_string(&pipeline.approval).unwrap_or_default())
+    .bind(&pipeline.workflow)
     .execute(pool)
     .await
     .map_err(|e| {
@@ -1335,10 +1454,28 @@ pub async fn validate_pipeline(
     if let Some(ref cfg) = req.execution_config {
         errors.extend(validate_execution_config(cfg));
     }
-    if let Some(ref yaml) = req.repository_yaml
-        && let Err(error) = parse_repository_config(yaml)
-    {
-        errors.extend(error.lines().map(str::to_string));
+    let workflow = match req.workflow.as_deref() {
+        Some(name) => match normalize_workflow_name(name) {
+            Ok(name) => Some(name),
+            Err((_, body)) => {
+                errors.push(body.0.error);
+                None
+            }
+        },
+        None => None,
+    };
+    if let Some(ref yaml) = req.repository_yaml {
+        match parse_repository_config(yaml) {
+            Ok(config) => {
+                if let Some(error) = workflow
+                    .as_deref()
+                    .and_then(|workflow| workflow_error("repository_yaml", &config, workflow))
+                {
+                    errors.push(error);
+                }
+            }
+            Err(error) => errors.extend(error.lines().map(str::to_string)),
+        }
     }
 
     let valid = errors.is_empty();
@@ -1708,6 +1845,40 @@ workflows:
             plan_request(yaml_request(&large)).unwrap_err().0,
             StatusCode::BAD_REQUEST
         );
+    }
+}
+
+#[cfg(test)]
+mod workflow_tests {
+    use super::*;
+
+    #[test]
+    fn a_workflow_must_be_defined_by_a_version_2_file() {
+        let v2 = parse_repository_config(
+            "version: 2\ntargets:\n  android:\n    build: flutter build apk\nworkflows:\n  adhoc: {}\n  release: {}\n",
+        )
+        .unwrap();
+        assert_eq!(workflow_error(".oore.yaml", &v2, "release"), None);
+        assert_eq!(
+            workflow_error(".oore.yaml", &v2, "nightly").as_deref(),
+            Some("workflow 'nightly' is not defined; .oore.yaml defines [adhoc, release]")
+        );
+        let none = parse_repository_config(
+            "version: 2\ntargets:\n  android:\n    build: flutter build apk\n",
+        )
+        .unwrap();
+        assert_eq!(
+            workflow_error(".oore.yaml", &none, "adhoc").as_deref(),
+            Some("workflow 'adhoc' is not defined; .oore.yaml defines no workflows")
+        );
+        let v1 = parse_repository_config("version: 1\nplatforms: [android]\n").unwrap();
+        assert_eq!(
+            workflow_error(".oore.yml", &v1, "adhoc").as_deref(),
+            Some(".oore.yml is a version 1 file; workflows need `version: 2`")
+        );
+        assert_eq!(normalize_workflow_name(" release ").unwrap(), "release");
+        assert!(normalize_workflow_name("bad name").is_err());
+        assert!(normalize_workflow_name("").is_err());
     }
 }
 

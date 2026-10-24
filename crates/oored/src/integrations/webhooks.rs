@@ -215,6 +215,8 @@ pub struct NormalizedWebhookEvent {
     pub changed_files: Option<Vec<String>>,
     /// Revision a pull request's changes are compared against.
     pub compare_base: Option<String>,
+    /// Branch a pull or merge request targets.
+    pub target_branch: Option<String>,
     pub actor: Option<String>,
     pub payload: serde_json::Value,
 }
@@ -583,6 +585,9 @@ fn normalize_github_event(
         compare_base: (event_type == "pull_request")
             .then(|| json_non_empty_string(payload.pointer("/pull_request/base/sha")))
             .flatten(),
+        target_branch: (event_type == "pull_request")
+            .then(|| json_non_empty_string(payload.pointer("/pull_request/base/ref")))
+            .flatten(),
         actor,
         payload: payload.clone(),
     }
@@ -906,6 +911,9 @@ fn normalize_gitlab_event(
             .flatten(),
         // Comparing from the target branch name diffs against the merge base.
         compare_base: (event_type == "Merge Request Hook")
+            .then(|| json_non_empty_string(payload.pointer("/object_attributes/target_branch")))
+            .flatten(),
+        target_branch: (event_type == "Merge Request Hook")
             .then(|| json_non_empty_string(payload.pointer("/object_attributes/target_branch")))
             .flatten(),
         actor,
@@ -1294,6 +1302,7 @@ async fn process_webhook_event(
                 event_type: &event.event_type,
                 branch: event.branch.as_deref(),
                 tag: event.tag.as_deref(),
+                target_branch: event.target_branch.as_deref(),
                 commit_sha: event.commit_sha.as_deref(),
                 actor: event.actor.as_deref(),
                 changes,
@@ -1375,6 +1384,29 @@ mod tests {
     }
 
     #[test]
+    fn github_pull_request_carries_its_target_branch() {
+        let payload = serde_json::json!({
+            "action": "opened",
+            "number": 3,
+            "repository": { "full_name": "acme/app", "id": 7 },
+            "pull_request": {
+                "head": { "ref": "feature/login", "sha": "abc123", "repo": { "id": 7 } },
+                "base": { "ref": "main", "sha": "def456", "repo": { "id": 7 } },
+            },
+        });
+        let event = normalize_github_event("pull_request", "d1", "i1", &payload);
+        assert_eq!(event.branch.as_deref(), Some("feature/login"));
+        assert_eq!(event.target_branch.as_deref(), Some("main"));
+        let push = normalize_github_event(
+            "push",
+            "d2",
+            "i1",
+            &serde_json::json!({ "ref": "refs/heads/main", "after": "abc123" }),
+        );
+        assert_eq!(push.target_branch, None);
+    }
+
+    #[test]
     fn push_changed_files_needs_the_full_commit_list() {
         let payload = serde_json::json!({
             "commits": [
@@ -1425,6 +1457,7 @@ mod tests {
             }),
         );
         assert_eq!(merge_request.compare_base.as_deref(), Some("main"));
+        assert_eq!(merge_request.target_branch.as_deref(), Some("main"));
         assert_eq!(merge_request.tag, None);
     }
 

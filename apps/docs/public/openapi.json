@@ -15376,6 +15376,13 @@
                 "$ref": "#/components/schemas/TriggerConfig"
               }
             ]
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A workflow the repository's `version: 2` file defines."
           }
         }
       },
@@ -17882,6 +17889,13 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `.oore.yaml` version 2 workflow this pipeline builds. `null`\nbuilds the file's only workflow, or its top level when it defines\nnone. That workflow's `on`, or the file's top-level `on`, replaces\n`trigger_config` for webhook events."
           }
         }
       },
@@ -19578,7 +19592,8 @@
         "required": [
           "path",
           "valid",
-          "errors"
+          "errors",
+          "workflows"
         ],
         "properties": {
           "errors": {
@@ -19602,6 +19617,13 @@
           },
           "valid": {
             "type": "boolean"
+          },
+          "workflows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Workflows a valid `version: 2` file defines, in file order, which a\npipeline can pick. Empty for version 1 files and files without\nworkflows."
           }
         }
       },
@@ -22005,6 +22027,13 @@
                 "$ref": "#/components/schemas/TriggerConfig"
               }
             ]
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A workflow the repository's `version: 2` file defines. `null` clears\nit; leaving it out keeps the current one."
           }
         }
       },
@@ -22500,6 +22529,13 @@
                 "$ref": "#/components/schemas/TriggerConfig"
               }
             ]
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Checked against the workflows `repository_yaml` defines."
           }
         }
       },

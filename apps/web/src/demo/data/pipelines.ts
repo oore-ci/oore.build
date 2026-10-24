@@ -123,6 +123,7 @@ export const demoPipelines: Array<Pipeline> = [
     concurrency: { cancel_previous: false, max_concurrent: 1 },
     timeout_minutes: 60,
     approval: { required: false, events: [] },
+    workflow: 'release',
     enabled: true,
     created_at: ago(86400 * 18),
     updated_at: ago(86400 * 2),

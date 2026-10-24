@@ -2,7 +2,9 @@ import { expect, test } from 'bun:test'
 import { pipelineFormSchema } from '@/lib/pipeline-schema'
 import {
   parseRunnerLabels,
+  pipelineRepositoryFile,
   pipelineRequestFromForm,
+  pipelineUpdateFromForm,
 } from '@/lib/pipeline-form-utils'
 
 const values = pipelineFormSchema.parse({
@@ -146,4 +148,45 @@ test('schema rejects bad timeouts, labels and cron expressions', () => {
       schedules: Array.from({ length: 11 }, () => ({ cron: '@daily' })),
     }).success,
   ).toBe(false)
+})
+
+test('the workflow is created when set and updated only when it changes', () => {
+  const options = { canChangeApproval: false, manualOnlyTriggers: false }
+  expect(pipelineRequestFromForm(values, options).workflow).toBeUndefined()
+  const release = { ...values, workflow: ' release ' }
+  expect(pipelineRequestFromForm(release, options).workflow).toBe('release')
+
+  expect('workflow' in pipelineUpdateFromForm(values, null, options)).toBe(
+    false,
+  )
+  expect(
+    'workflow' in pipelineUpdateFromForm(release, 'release', options),
+  ).toBe(false)
+  expect(pipelineUpdateFromForm(release, 'adhoc', options).workflow).toBe(
+    'release',
+  )
+  expect(pipelineUpdateFromForm(values, 'adhoc', options).workflow).toBeNull()
+})
+
+test('the repository file is the explicit path or the first auto path', () => {
+  const file = (path) => ({ path, valid: true, errors: [], workflows: [] })
+  const files = [file('.oore.yml'), file('.oore/release.yaml')]
+  expect(
+    pipelineRepositoryFile(files, {
+      config_path: '.oore.yaml',
+      config_path_explicit: false,
+    })?.path,
+  ).toBe('.oore.yml')
+  expect(
+    pipelineRepositoryFile(files, {
+      config_path: '.oore/release.yaml',
+      config_path_explicit: true,
+    })?.path,
+  ).toBe('.oore/release.yaml')
+  expect(
+    pipelineRepositoryFile(files, {
+      config_path: 'ci/missing.yaml',
+      config_path_explicit: true,
+    }),
+  ).toBeUndefined()
 })

@@ -45,7 +45,7 @@ struct ProjectSource {
     host_url: String,
     auth_mode: String,
     local_path: Option<String>,
-    default_reference: String,
+    default_reference: Option<String>,
 }
 
 fn validate_reference(reference: &str) -> Result<String, (StatusCode, Json<ApiError>)> {
@@ -105,11 +105,20 @@ fn preview_execution(config: RepositoryConfig) -> Result<PipelineExecutionConfig
 }
 
 fn preview(path: String, raw: &str) -> RepositoryWorkflowPreview {
-    match parse_repository_config(raw).and_then(preview_execution) {
-        Ok(config) => RepositoryWorkflowPreview {
+    let parsed = parse_repository_config(raw).and_then(|config| {
+        let workflows = config
+            .workflow_names()
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        preview_execution(config).map(|execution| (execution, workflows))
+    });
+    match parsed {
+        Ok((config, workflows)) => RepositoryWorkflowPreview {
             path,
             valid: true,
             errors: Vec::new(),
+            workflows,
             execution: Some(RepositoryWorkflowExecutionPreview {
                 platforms: config.platforms,
                 flutter_version: config.flutter_version,
@@ -138,6 +147,7 @@ fn preview(path: String, raw: &str) -> RepositoryWorkflowPreview {
                 error.lines().map(str::to_string).collect()
             },
             execution: None,
+            workflows: Vec::new(),
         },
     }
 }
@@ -256,13 +266,11 @@ async fn gitlab_request(
     })
 }
 
-async fn discover_gitlab(
+async fn gitlab_token(
     pool: &sqlx::SqlitePool,
     encryption_key: &[u8],
     source: &ProjectSource,
-    reference: &str,
-    explicit_path: Option<&str>,
-) -> Result<(Vec<RepositoryWorkflowPreview>, bool), (StatusCode, Json<ApiError>)> {
+) -> Result<String, (StatusCode, Json<ApiError>)> {
     let encrypted_token: Option<String> = sqlx::query_scalar(
         "SELECT encrypted_value FROM integration_credentials \
          WHERE integration_id = ?1 AND credential_type = 'access_token'",
@@ -296,7 +304,17 @@ async fn discover_gitlab(
             "Failed to decrypt source credentials",
         )
     })?;
+    Ok(token)
+}
 
+async fn discover_gitlab(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    source: &ProjectSource,
+    reference: &str,
+    explicit_path: Option<&str>,
+) -> Result<(Vec<RepositoryWorkflowPreview>, bool), (StatusCode, Json<ApiError>)> {
+    let token = gitlab_token(pool, encryption_key, source).await?;
     let client = source_client()?;
     let mut tree_url = gitlab_api_url(
         &source.host_url,
@@ -707,14 +725,7 @@ async fn load_project_source(
     let repository_default: Option<String> = row.get("repository_default_branch");
     let default_reference = project_default
         .or(repository_default)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            api_err(
-                StatusCode::CONFLICT,
-                "missing_default_branch",
-                "Set a project default branch before discovering repository workflows",
-            )
-        })?;
+        .filter(|value| !value.trim().is_empty());
     Ok(ProjectSource {
         provider,
         integration_id: row.get("integration_id"),
@@ -726,6 +737,155 @@ async fn load_project_source(
         local_path: (provider == ScmProvider::LocalGit).then_some(repository_external_id),
         default_reference,
     })
+}
+
+// ── Reading one pipeline file ───────────────────────────────────
+
+/// Paths the runner tries, in order, for a pipeline's repository file.
+fn pipeline_config_candidates(config_path: &str, config_path_explicit: bool) -> Vec<String> {
+    if config_path_explicit {
+        vec![config_path.trim().to_string()]
+    } else {
+        vec![".oore.yaml".to_string(), ".oore.yml".to_string()]
+    }
+}
+
+/// Read one repository file at `reference`. `Ok(None)` when it does not exist.
+async fn read_repository_file(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    source: &ProjectSource,
+    path: &str,
+    reference: &str,
+) -> Result<Option<String>, (StatusCode, Json<ApiError>)> {
+    let body = match source.provider {
+        ScmProvider::Github => {
+            let client = source_client()?;
+            let token = crate::integrations::github::load_installation_access_token(
+                client,
+                pool,
+                encryption_key,
+                &source.integration_id,
+                &source.installation_external_id,
+            )
+            .await?;
+            let response = github_get(client, source, &token, path, reference, true).await?;
+            if response.status() == StatusCode::NOT_FOUND {
+                return Ok(None);
+            }
+            if !response.status().is_success() {
+                return Err(provider_error("GitHub", response.status()));
+            }
+            response_bytes(response, MAX_WORKFLOW_BYTES).await?
+        }
+        ScmProvider::Gitlab => {
+            let token = gitlab_token(pool, encryption_key, source).await?;
+            let mut url = gitlab_api_url(
+                &source.host_url,
+                &[
+                    "projects",
+                    &source.repository_external_id,
+                    "repository",
+                    "files",
+                    path,
+                    "raw",
+                ],
+            )?;
+            url.query_pairs_mut().append_pair("ref", reference);
+            let response = gitlab_request(source_client()?, source, &token, url).await?;
+            if response.status() == StatusCode::NOT_FOUND {
+                return Ok(None);
+            }
+            if !response.status().is_success() {
+                return Err(provider_error("GitLab", response.status()));
+            }
+            response_bytes(response, MAX_WORKFLOW_BYTES).await?
+        }
+        ScmProvider::LocalGit => {
+            let repo_path = source.local_path.clone().unwrap_or_default();
+            let object = format!("{reference}:{path}");
+            let body = tokio::task::spawn_blocking(move || {
+                let mut cat = Command::new("git");
+                cat.args(["-C", repo_path.as_str(), "cat-file", "blob", &object]);
+                read_limited_stdout(cat, MAX_WORKFLOW_BYTES)
+            })
+            .await
+            .map_err(|e| {
+                error!(error = %e, "local repository file task failed");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "git_error",
+                    "Failed to inspect the local repository",
+                )
+            })?
+            .map_err(|_| {
+                api_err(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "workflow_too_large",
+                    format!("{path} exceeds the {MAX_WORKFLOW_BYTES} byte limit"),
+                )
+            })?;
+            match body {
+                Some(body) => body,
+                None => return Ok(None),
+            }
+        }
+    };
+    String::from_utf8(body).map(Some).map_err(|_| {
+        api_err(
+            StatusCode::BAD_GATEWAY,
+            "invalid_workflow_encoding",
+            format!("{path} must be UTF-8 text"),
+        )
+    })
+}
+
+/// A pipeline's repository file as the runner would find it at `reference`.
+pub(crate) enum PipelineFile {
+    /// No file, so the pipeline's UI configuration applies.
+    Missing,
+    /// The file exists but does not parse; builds fail with `error`.
+    Invalid { path: String, error: String },
+    Parsed {
+        path: String,
+        config: Box<RepositoryConfig>,
+    },
+}
+
+/// Read and parse a pipeline's repository file at `reference`, trying the
+/// same paths as the runner. `reference` defaults to the project's default
+/// branch; `Ok(None)` when there is none to read.
+pub(crate) async fn load_pipeline_file(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    project_id: &str,
+    config_path: &str,
+    config_path_explicit: bool,
+    reference: Option<&str>,
+) -> Result<Option<PipelineFile>, (StatusCode, Json<ApiError>)> {
+    let source = load_project_source(pool, project_id).await?;
+    let Some(reference) = reference.or(source.default_reference.as_deref()) else {
+        return Ok(None);
+    };
+    let reference = validate_reference(reference)?;
+    for path in pipeline_config_candidates(config_path, config_path_explicit) {
+        if validate_repository_config_path(&path).is_err() {
+            continue;
+        }
+        let Some(raw) =
+            read_repository_file(pool, encryption_key, &source, &path, &reference).await?
+        else {
+            continue;
+        };
+        return Ok(Some(match parse_repository_config(&raw) {
+            Ok(config) => PipelineFile::Parsed {
+                path,
+                config: Box::new(config),
+            },
+            Err(error) => PipelineFile::Invalid { path, error },
+        }));
+    }
+    Ok(Some(PipelineFile::Missing))
 }
 
 /// `GET /v1/projects/{project_id}/repository-workflows` — discover repository-owned configs.
@@ -747,12 +907,17 @@ pub async fn discover_repository_workflows(
     require_project_permission(&effective, ProjectPermission::ManagePipelines)?;
 
     let source = load_project_source(&pool, &project_id).await?;
-    let reference = validate_reference(
-        query
-            .reference
-            .as_deref()
-            .unwrap_or(&source.default_reference),
-    )?;
+    let reference = match query.reference.as_deref() {
+        Some(reference) => reference,
+        None => source.default_reference.as_deref().ok_or_else(|| {
+            api_err(
+                StatusCode::CONFLICT,
+                "missing_default_branch",
+                "Set a project default branch before discovering repository workflows",
+            )
+        })?,
+    };
+    let reference = validate_reference(reference)?;
     let explicit_path = query.path.as_deref().map(str::trim);
     if let Some(path) = explicit_path
         && let Err(error) = validate_repository_config_path(path)
@@ -851,6 +1016,8 @@ mod preview_tests {
             "version: 2\ntargets:\n  android:\n    build: flutter build apk --release\nsteps:\n  - name: Get packages\n    run: flutter pub get\n  - build\nenv:\n  TOKEN: ${{ secrets.TOKEN }}\nworkflows:\n  adhoc: {}\n  release:\n    targets:\n      android:\n        build: flutter build appbundle --release\n",
         );
         assert!(v2.valid, "{:?}", v2.errors);
+        assert_eq!(v2.workflows, ["adhoc", "release"]);
+        assert!(v1.workflows.is_empty());
         let execution = v2.execution.unwrap();
         assert_eq!(execution.commands.pre_build, ["flutter pub get"]);
         assert_eq!(

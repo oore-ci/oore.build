@@ -64,12 +64,8 @@ The schema rejects unknown fields. Run
 workflow runs.
 
 <Callout type="warn">
-  Pipelines cannot select a workflow yet. A file with more than one workflow
-  fails at build time with `choose one for the pipeline`; a file with none or
-  exactly one workflow builds as described here. `on` and `publish` are
-  validated but not applied yet: triggers and store uploads still come from the
-  pipeline's settings in the UI. `oore pipeline validate` prints a `note:` for
-  each of these.
+  `publish` is validated but not applied yet: store uploads still come from the
+  pipeline's Publish settings. `oore pipeline validate` prints a `note:` for it.
 </Callout>
 
 ## Top-level fields
@@ -171,7 +167,7 @@ other vars, is rejected with the cycle it forms, such as
 
 | Field     | Type        | Effect                                                                                             |
 | --------- | ----------- | -------------------------------------------------------------------------------------------------- |
-| `on`      | object      | When the workflow runs. Validated only for now.                                                    |
+| `on`      | object      | When the workflow runs. Replaces the top-level `on`.                                               |
 | `targets` | list or map | `[android]` picks top-level targets; a map overrides `build`, `artifacts` or `publish` per target. |
 | `flavors` | string[]    | A subset of `app.flavors`.                                                                         |
 | `steps`   | list        | Replaces the top-level steps. Entries can name top-level steps.                                    |
@@ -180,6 +176,12 @@ other vars, is rejected with the cycle it forms, such as
 
 A workflow target that has no top-level target of the same platform must set
 `build`. Workflow names use letters, digits, `-` and `_`.
+
+A pipeline builds one workflow, picked under **Workflow** in its settings (the
+API's `workflow` field). The selector appears when the pipeline's file defines
+workflows. Without a pick, a file with one workflow builds it, and a file with
+none builds the top level; a file with several fails the build with
+`choose one for the pipeline`.
 
 ## Triggers
 
@@ -191,6 +193,32 @@ A workflow target that has no top-level target of the same platform must set
 | `pull_request` | `true` or `{ branches: [] }` | `true`                            |
 | `tag`          | string or string[]           | `v*`                              |
 | `paths`        | string[]                     | `[lib/**, pubspec.*]`             |
+
+When a webhook arrives, Oore reads the pipeline's file at the pushed commit.
+If the pipeline's workflow sets `on`, or the file sets a top-level `on`, that
+decides whether the event starts a build, in place of the pipeline's trigger
+settings:
+
+- `push` matches pushes to a branch, `true` for any branch or `branches` for
+  the listed globs.
+- `pull_request` matches pull and merge requests that are opened, reopened or
+  updated. `branches` names the branch the request **targets**, so
+  `{ branches: [main] }` builds requests into `main`.
+- `tag` matches pushed tags.
+- `paths` narrows pushes and pull requests to changes that touch a matching
+  file, with the same rules as the trigger settings' path filters. Tag pushes
+  ignore it.
+- A field left out, or set to `false`, starts no builds for that event.
+
+Branch and tag globs use `*` and `?` as in the trigger settings. Schedules and
+manual builds still come from the pipeline. Version 1 files, files without
+`on`, and a file that is missing, invalid or cannot be read keep the
+pipeline's trigger settings.
+
+For example, with the file above a pipeline set to `adhoc` builds every pull
+request and a pipeline set to `release` builds pushes to `main` and
+`release/*` that touch `lib/` or `pubspec.*`, plus `v*` tags, with no trigger
+settings in the UI.
 
 ## Limits
 

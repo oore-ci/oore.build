@@ -20,6 +20,7 @@ import {
   usePipelineIosDevices,
   usePipelineIosSigning,
   useRegisterPipelineIosDevice,
+  useRepositoryWorkflows,
   useSyncPipelineIosSigning,
   useUpdatePipeline,
   useUpdatePipelineAndroidSigning,
@@ -34,7 +35,8 @@ import {
   buildNumberOffsetField,
   runsOnField,
   hasCustomFallback,
-  pipelineRequestFromForm,
+  pipelineRepositoryFile,
+  pipelineUpdateFromForm,
   selectedPlatforms,
   toMultiline,
 } from '@/lib/pipeline-form-utils'
@@ -132,6 +134,15 @@ function EditPipelinePage() {
     projectData?.project.current_user_role,
   )
   const { data, isLoading, error } = usePipeline(pipelineId)
+  // The Workflow selector needs the file's workflows; without them (no
+  // file, or the source is unreachable) it stays hidden.
+  const repositoryFilesQuery = useRepositoryWorkflows(
+    projectId,
+    data?.pipeline.config_path_explicit
+      ? { path: data.pipeline.config_path }
+      : undefined,
+    { enabled: !!data && !!projectData?.project.repository_id },
+  )
   const signingQuery = usePipelineAndroidSigning(pipelineId)
   const iosSigningQuery = usePipelineIosSigning(pipelineId)
   const iosDevicesQuery = usePipelineIosDevices(pipelineId)
@@ -198,10 +209,19 @@ function EditPipelinePage() {
   const platformSet = new Set(pipeline.execution_config.platforms)
   const custom = hasCustomFallback(pipeline)
 
+  const repositoryFile = pipelineRepositoryFile(
+    repositoryFilesQuery.data?.workflows ?? [],
+    pipeline,
+  )
+  const workflowSource = repositoryFile
+    ? { path: repositoryFile.path, workflows: repositoryFile.workflows }
+    : undefined
+
   const formInitialValues: PipelineFormValues = {
     name: pipeline.name,
     config_mode: pipeline.config_path_explicit ? 'explicit' : 'auto',
     config_path: pipeline.config_path,
+    workflow: pipeline.workflow ?? '',
     platform_android: platformSet.has('android'),
     platform_ios: platformSet.has('ios'),
     platform_macos: platformSet.has('macos'),
@@ -295,7 +315,7 @@ function EditPipelinePage() {
       setValidationErrors(['Pick at least one platform to build'])
       return
     }
-    const payload = pipelineRequestFromForm(values, {
+    const payload = pipelineUpdateFromForm(values, pipeline.workflow, {
       canChangeApproval,
       manualOnlyTriggers,
     })
@@ -483,6 +503,7 @@ function EditPipelinePage() {
         iosSigningActions={iosSigningActions}
         iosAppStorePublishing={iosAppStorePublishing}
         googlePlayUpload={!!googlePlayPublishQuery.data?.config?.enabled}
+        workflowSource={workflowSource}
       >
         {iosProfileSyncAvailable &&
           storedIosSigning.export_method === 'ad_hoc' && (

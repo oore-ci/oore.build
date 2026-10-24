@@ -87,6 +87,7 @@ const createPipelineSchema = z.toZod<CreatePipelineRequest>()(
     concurrency: concurrencySchema.nullish(),
     timeout_minutes: z.number().int().nullish(),
     approval: approvalPolicySchema.nullish(),
+    workflow: z.string().nullish(),
   }),
 )
 const updatePipelineSchema = z.toZod<UpdatePipelineRequest>()(
@@ -99,6 +100,7 @@ const updatePipelineSchema = z.toZod<UpdatePipelineRequest>()(
     concurrency: concurrencySchema.nullish(),
     timeout_minutes: z.number().int().nullish(),
     approval: approvalPolicySchema.nullish(),
+    workflow: z.string().nullish(),
     enabled: z.boolean().nullish(),
   }),
 )
@@ -492,6 +494,7 @@ export const pipelineHandlers = [
       },
       timeout_minutes: body.timeout_minutes ?? 60,
       approval: body.approval ?? { required: false, events: [] },
+      workflow: body.workflow ?? null,
       enabled: true,
       created_at: ago(0),
       updated_at: ago(0),

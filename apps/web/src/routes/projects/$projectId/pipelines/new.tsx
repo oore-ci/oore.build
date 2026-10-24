@@ -243,6 +243,8 @@ function workflowDefaults(
     macos_command_override: execution?.platform_commands.macos ?? '',
     artifact_patterns: execution?.artifact_patterns.join('\n') ?? '',
     isolation: execution?.isolation ?? 'host',
+    // A file with several workflows needs one picked, or builds fail.
+    workflow: workflow.workflows.length > 1 ? workflow.workflows[0] : '',
   }
 }
 
@@ -637,6 +639,14 @@ function NewPipelinePage() {
                   reference={workflowsQuery.data.reference}
                 />
               ) : undefined
+            }
+            workflowSource={
+              !manualSetup && selectedWorkflow !== undefined
+                ? {
+                    path: selectedWorkflow.path,
+                    workflows: selectedWorkflow.workflows,
+                  }
+                : undefined
             }
           />
         ) : null}

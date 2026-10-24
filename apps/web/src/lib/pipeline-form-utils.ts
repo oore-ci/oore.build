@@ -4,7 +4,9 @@ import type {
   Pipeline,
   PipelineExecutionConfig,
   RepositoryWorkflowExecutionPreview,
+  RepositoryWorkflowPreview,
   TriggerConfig,
+  UpdatePipelineRequest,
 } from '@oore/client/models'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 
@@ -244,7 +246,42 @@ export function pipelineRequestFromForm(
           events: data.approval_required ? data.approval_events : [],
         }
       : undefined,
+    workflow: trimToUndefined(data.workflow),
   }
+}
+
+/**
+ * An update request from the form. The workflow is sent only when it
+ * changed, so saving never clears one the selector did not show.
+ */
+export function pipelineUpdateFromForm(
+  data: PipelineFormValues,
+  savedWorkflow: string | null | undefined,
+  options: { canChangeApproval: boolean; manualOnlyTriggers: boolean },
+): UpdatePipelineRequest {
+  const { workflow, ...request } = pipelineRequestFromForm(data, options)
+  return (workflow ?? null) === (savedWorkflow ?? null)
+    ? request
+    : { ...request, workflow: workflow ?? null }
+}
+
+/**
+ * The discovered file a pipeline builds from: its explicit config path, or
+ * the first of `.oore.yaml` and `.oore.yml` that exists, as the runner
+ * picks it.
+ */
+export function pipelineRepositoryFile(
+  files: Array<RepositoryWorkflowPreview>,
+  pipeline: { config_path: string; config_path_explicit: boolean },
+): RepositoryWorkflowPreview | undefined {
+  const candidates = pipeline.config_path_explicit
+    ? [pipeline.config_path.trim()]
+    : ['.oore.yaml', '.oore.yml']
+  for (const path of candidates) {
+    const file = files.find((candidate) => candidate.path === path)
+    if (file) return file
+  }
+  return undefined
 }
 
 export function trimToUndefined(value?: string | null): string | undefined {

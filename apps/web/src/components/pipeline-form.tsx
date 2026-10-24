@@ -31,6 +31,7 @@ import {
   previewPlatformCommands,
 } from '@/lib/pipeline-form-utils'
 import { PipelineBasicsSection } from '@/components/pipeline-form-basic-sections'
+import type { PipelineWorkflowSource } from '@/components/pipeline-form-basic-sections'
 import { PipelineSectionIndex } from '@/components/pipeline-form-section-index'
 import { PipelineBuildSection } from '@/components/pipeline-form-build-sections'
 import { PipelineTriggersSection } from '@/components/pipeline-form-triggers-section'
@@ -79,6 +80,8 @@ interface PipelineFormProps {
   iosAppStorePublishing?: IosAppStorePublishing
   /** Google Play upload is on for this pipeline (unknown on new pipelines). */
   googlePlayUpload?: boolean
+  /** The pipeline file's v2 workflows, for the Workflow selector. */
+  workflowSource?: PipelineWorkflowSource
 }
 
 /** Fields with an error; an array field with several bad rows counts once. */
@@ -133,6 +136,7 @@ export default function PipelineForm({
   iosSigningActions,
   iosAppStorePublishing,
   googlePlayUpload = false,
+  workflowSource,
 }: PipelineFormProps) {
   const form = useForm<PipelineFormValues>({
     resolver: zodResolver(pipelineFormSchema),
@@ -235,6 +239,7 @@ export default function PipelineForm({
         <PipelineBasicsSection
           configMode={configMode}
           repositoryWorkflow={repositoryWorkflow}
+          workflowSource={workflowSource}
         />
         {repositoryWorkflow ? null : (
           <PipelineBuildSection
