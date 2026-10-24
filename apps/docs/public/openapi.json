@@ -15396,6 +15396,16 @@
           "name": {
             "type": "string"
           },
+          "size_budget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SizeBudget"
+              }
+            ]
+          },
           "timeout_minutes": {
             "type": [
               "integer",
@@ -17971,6 +17981,7 @@
           "concurrency",
           "timeout_minutes",
           "approval",
+          "size_budget",
           "enabled",
           "created_at",
           "updated_at"
@@ -18006,6 +18017,10 @@
           },
           "project_id": {
             "type": "string"
+          },
+          "size_budget": {
+            "$ref": "#/components/schemas/SizeBudget",
+            "description": "Artifact size limits the commit checks enforce."
           },
           "timeout_minutes": {
             "type": "integer",
@@ -21126,6 +21141,72 @@
           }
         }
       },
+      "SizeBudget": {
+        "type": "object",
+        "description": "Artifact size limits a pipeline's commit checks enforce. Increase limits\ncompare with the same baseline as the build's size report; without a\nbaseline only `max_bytes` applies. Empty `rules` turns the budget off.",
+        "required": [
+          "mode",
+          "rules"
+        ],
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/SizeBudgetMode"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SizeBudgetRule"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SizeBudgetMode": {
+        "type": "string",
+        "description": "What a pipeline's commit check does when an artifact is over its size\nbudget. The build itself never fails.",
+        "enum": [
+          "warn",
+          "fail"
+        ]
+      },
+      "SizeBudgetRule": {
+        "type": "object",
+        "description": "Size limits for one kind of artifact. A rule needs at least one limit.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "The artifact kind: its lowercase file extension, such as `aab`,\n`apk` or `ipa`."
+          },
+          "max_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Largest size allowed, in bytes."
+          },
+          "max_increase_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Largest growth allowed compared with the baseline build, in bytes."
+          },
+          "max_increase_percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Largest growth allowed compared with the baseline build, in percent."
+          }
+        },
+        "additionalProperties": false
+      },
       "SlackMention": {
         "type": "object",
         "description": "Maps a person to the Slack member mentioned in their notifications.",
@@ -22158,6 +22239,16 @@
               "null"
             ]
           },
+          "size_budget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SizeBudget"
+              }
+            ]
+          },
           "timeout_minutes": {
             "type": [
               "integer",
@@ -22664,6 +22755,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "size_budget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SizeBudget"
+              }
             ]
           },
           "timeout_minutes": {

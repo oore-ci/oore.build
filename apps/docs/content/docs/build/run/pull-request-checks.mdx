@@ -54,6 +54,35 @@ by name only. The build page shows the same comparison next to each artifact.
 Oore records sizes when an upload finishes and keeps them after retention
 deletes the files, so an old baseline still compares.
 
+### Size budget
+
+A pipeline can hold each kind of artifact to a size budget. Open the
+pipeline's settings and add a rule under **Size budget** for a kind, named by
+its file extension such as `aab`, `apk` or `ipa`. A rule sets any of:
+
+- **Max size**: the largest the artifact may be.
+- **Max increase**: how much it may grow compared with the baseline build
+  above, in MB, in percent, or both.
+
+Sizes are in binary units, like the rest of Oore: 1 MB is 1,048,576 bytes.
+Every artifact of that kind on the check's platform must stay within all the
+limits its rule sets. When the build has no baseline, or an artifact has no
+match in it, only the max size applies.
+
+The budget's mode decides what an artifact over its budget does:
+
+- **Fail the check**: the GitHub check concludes **failure**, its title says
+  the build is over the size budget, and the summary lists each artifact,
+  the limit it went over, and its size or change. On GitLab the commit status
+  fails and its description names the first artifact and its change.
+- **Warn**: the check keeps its result. The GitHub summary shows a warning
+  with the same table, and the GitLab status description mentions it.
+
+Either way the build itself still succeeds, and its artifacts and releases are
+unaffected. A required check that fails blocks merging like any other failed
+check. The budget applies when a build reports its result, so a change to it
+shows on the next build or re-run.
+
 A re-run, or a second build of the same pipeline and commit, updates the
 same check instead of adding another one. The newest build owns the check, so
 an older build that finishes late does not overwrite it.

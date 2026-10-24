@@ -10,9 +10,9 @@ use oore_contract::{
     ExportPipelineYamlResponse, ListPipelinesResponse, MAX_BUILD_TIMEOUT_MINUTES,
     MAX_PLAN_REPOSITORY_YAML_BYTES, OkResponse, Pipeline, PipelineDetailResponse,
     PipelineExecutionConfig, PipelinePlanPreview, PlanPipelineRequest, PlanPipelineResponse,
-    PlanRequest, RepositoryConfig, TriggerConfig, UpdatePipelineRequest, ValidatePipelineRequest,
-    ValidatePipelineResponse, is_valid_pipeline_env_key, is_valid_workflow_name,
-    normalize_runner_labels, parse_repository_config,
+    PlanRequest, RepositoryConfig, SizeBudget, TriggerConfig, UpdatePipelineRequest,
+    ValidatePipelineRequest, ValidatePipelineResponse, is_valid_pipeline_env_key,
+    is_valid_workflow_name, normalize_runner_labels, parse_repository_config,
     pipeline_config::select_v1_platforms,
     pipeline_export::{FormSettings, export_form_settings},
     plan_execution_config, secret_expression_errors, validate_artifact_pattern,
@@ -504,6 +504,11 @@ fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default();
+    let size_budget: SizeBudget = row
+        .try_get::<String, _>("size_budget")
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
 
     Pipeline {
         id: row.get("id"),
@@ -516,6 +521,7 @@ fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
         concurrency,
         timeout_minutes,
         approval,
+        size_budget,
         workflow: row.try_get("workflow").ok().flatten(),
         enabled: enabled_int != 0,
         created_at: row.get("created_at"),
@@ -680,9 +686,11 @@ pub async fn create_pipeline(
 
     let timeout_minutes = req.timeout_minutes.unwrap_or(DEFAULT_BUILD_TIMEOUT_MINUTES);
     let approval = req.approval.unwrap_or_default();
+    let size_budget = req.size_budget.unwrap_or_default();
     let gate_errors = [
         validate_timeout_minutes(timeout_minutes),
         validate_approval_policy(&approval),
+        size_budget.validate(),
     ]
     .concat();
     if !gate_errors.is_empty() {
@@ -717,8 +725,8 @@ pub async fn create_pipeline(
     let execution_config_json = serde_json::to_string(&execution_config).unwrap_or_default();
 
     sqlx::query(
-        "INSERT INTO pipelines (id, project_id, name, config_path, config_path_explicit, execution_config, trigger_config, concurrency, timeout_minutes, approval_policy, workflow, enabled, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?10, ?11, ?12, 1, ?9, ?9)",
+        "INSERT INTO pipelines (id, project_id, name, config_path, config_path_explicit, execution_config, trigger_config, concurrency, timeout_minutes, approval_policy, workflow, size_budget, enabled, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?10, ?11, ?12, ?13, 1, ?9, ?9)",
     )
     .bind(&pipeline_id)
     .bind(&project_id)
@@ -732,6 +740,7 @@ pub async fn create_pipeline(
     .bind(timeout_minutes)
     .bind(serde_json::to_string(&approval).unwrap_or_default())
     .bind(&workflow)
+    .bind(serde_json::to_string(&size_budget).unwrap_or_default())
     .execute(&pool)
     .await
     .map_err(|e| {
@@ -768,6 +777,7 @@ pub async fn create_pipeline(
         concurrency,
         timeout_minutes,
         approval,
+        size_budget,
         workflow,
         enabled: true,
         created_at: now,
@@ -1114,6 +1124,18 @@ pub async fn update_pipeline(
         pipeline.approval = approval;
     }
 
+    if let Some(size_budget) = req.size_budget {
+        let errors = size_budget.validate();
+        if !errors.is_empty() {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                errors.join("; "),
+            ));
+        }
+        pipeline.size_budget = size_budget;
+    }
+
     if let Some(workflow) = req.workflow {
         pipeline.workflow = match workflow.as_deref() {
             Some(name) => {
@@ -1142,7 +1164,7 @@ pub async fn update_pipeline(
     sqlx::query(
         "UPDATE pipelines \
          SET name = ?1, config_path = ?2, config_path_explicit = ?3, execution_config = ?4, trigger_config = ?5, concurrency = ?6, enabled = ?7, updated_at = ?8, \
-             timeout_minutes = ?10, approval_policy = ?11, workflow = ?12 \
+             timeout_minutes = ?10, approval_policy = ?11, workflow = ?12, size_budget = ?13 \
          WHERE id = ?9",
     )
     .bind(&pipeline.name)
@@ -1157,6 +1179,7 @@ pub async fn update_pipeline(
     .bind(pipeline.timeout_minutes)
     .bind(serde_json::to_string(&pipeline.approval).unwrap_or_default())
     .bind(&pipeline.workflow)
+    .bind(serde_json::to_string(&pipeline.size_budget).unwrap_or_default())
     .execute(pool)
     .await
     .map_err(|e| {
@@ -1446,6 +1469,10 @@ pub async fn validate_pipeline(
 
     if let Some(ref approval) = req.approval {
         errors.extend(validate_approval_policy(approval));
+    }
+
+    if let Some(ref size_budget) = req.size_budget {
+        errors.extend(size_budget.validate());
     }
 
     if let Some(ref path) = req.config_path {

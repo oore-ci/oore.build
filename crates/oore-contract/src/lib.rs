@@ -1386,6 +1386,114 @@ impl ApprovalPolicy {
     }
 }
 
+/// What a pipeline's commit check does when an artifact is over its size
+/// budget. The build itself never fails.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SizeBudgetMode {
+    /// The check keeps its conclusion and shows a warning.
+    #[default]
+    Warn,
+    /// The check concludes `failure`.
+    Fail,
+}
+
+/// Size limits for one kind of artifact. A rule needs at least one limit.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SizeBudgetRule {
+    /// The artifact kind: its lowercase file extension, such as `aab`,
+    /// `apk` or `ipa`.
+    pub kind: String,
+    /// Largest size allowed, in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<i64>,
+    /// Largest growth allowed compared with the baseline build, in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_increase_bytes: Option<i64>,
+    /// Largest growth allowed compared with the baseline build, in percent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_increase_percent: Option<f64>,
+}
+
+impl SizeBudgetRule {
+    pub fn has_limit(&self) -> bool {
+        self.max_bytes.is_some()
+            || self.max_increase_bytes.is_some()
+            || self.max_increase_percent.is_some()
+    }
+}
+
+/// Artifact size limits a pipeline's commit checks enforce. Increase limits
+/// compare with the same baseline as the build's size report; without a
+/// baseline only `max_bytes` applies. Empty `rules` turns the budget off.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SizeBudget {
+    #[serde(default)]
+    #[schema(required = true)]
+    pub mode: SizeBudgetMode,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub rules: Vec<SizeBudgetRule>,
+}
+
+impl SizeBudget {
+    pub const MAX_RULES: usize = 20;
+    pub const MAX_KIND_CHARS: usize = 16;
+
+    /// Problems that make the budget invalid, one message each.
+    pub fn validate(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        if self.rules.len() > Self::MAX_RULES {
+            errors.push(format!(
+                "size_budget allows at most {} rules",
+                Self::MAX_RULES
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for rule in &self.rules {
+            let kind = rule.kind.as_str();
+            let valid_kind = !kind.is_empty()
+                && kind.chars().count() <= Self::MAX_KIND_CHARS
+                && kind
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+            if !valid_kind {
+                errors.push(format!(
+                    "size_budget kind '{kind}' must be a lowercase file extension such as aab, apk or ipa"
+                ));
+                continue;
+            }
+            if !seen.insert(kind) {
+                errors.push(format!("size_budget lists kind '{kind}' more than once"));
+            }
+            if !rule.has_limit() {
+                errors.push(format!("size_budget rule for '{kind}' needs a limit"));
+            }
+            if rule.max_bytes.is_some_and(|bytes| bytes <= 0) {
+                errors.push(format!(
+                    "size_budget max_bytes for '{kind}' must be greater than 0"
+                ));
+            }
+            if rule.max_increase_bytes.is_some_and(|bytes| bytes < 0) {
+                errors.push(format!(
+                    "size_budget max_increase_bytes for '{kind}' must be 0 or more"
+                ));
+            }
+            if rule
+                .max_increase_percent
+                .is_some_and(|percent| !percent.is_finite() || percent < 0.0)
+            {
+                errors.push(format!(
+                    "size_budget max_increase_percent for '{kind}' must be 0 or more"
+                ));
+            }
+        }
+        errors
+    }
+}
+
 /// Build approval state. Pending builds stay `queued` but no runner claims them.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -3549,6 +3657,10 @@ pub struct Pipeline {
     #[serde(default)]
     #[schema(required = true)]
     pub approval: ApprovalPolicy,
+    /// Artifact size limits the commit checks enforce.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub size_budget: SizeBudget,
     /// The `.oore.yaml` version 2 workflow this pipeline builds. `null`
     /// builds the file's only workflow, or its top level when it defines
     /// none. That workflow's `on`, or the file's top-level `on`, replaces
@@ -3587,6 +3699,8 @@ pub struct CreatePipelineRequest {
     pub timeout_minutes: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval: Option<ApprovalPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_budget: Option<SizeBudget>,
     /// A workflow the repository's `version: 2` file defines.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<String>,
@@ -3610,6 +3724,8 @@ pub struct UpdatePipelineRequest {
     pub timeout_minutes: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval: Option<ApprovalPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_budget: Option<SizeBudget>,
     /// A workflow the repository's `version: 2` file defines. `null` clears
     /// it; leaving it out keeps the current one.
     #[serde(
@@ -3656,6 +3772,8 @@ pub struct ValidatePipelineRequest {
     pub timeout_minutes: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval: Option<ApprovalPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_budget: Option<SizeBudget>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_yaml: Option<String>,
     /// Checked against the workflows `repository_yaml` defines.
@@ -6044,7 +6162,7 @@ pub struct RevokeApiTokenResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApprovalPolicy, TriggerConfig, UpdatePipelineRequest};
+    use super::{ApprovalPolicy, SizeBudget, SizeBudgetMode, TriggerConfig, UpdatePipelineRequest};
 
     #[test]
     fn a_pipeline_update_tells_a_cleared_workflow_from_an_absent_one() {
@@ -6114,6 +6232,34 @@ mod tests {
         let all: ApprovalPolicy = serde_json::from_str(r#"{"required":true}"#).unwrap();
         assert!(all.applies_to("manual"));
         assert!(!ApprovalPolicy::default().applies_to("tag_push"));
+    }
+
+    #[test]
+    fn size_budget_defaults_to_warn_and_rejects_bad_rules() {
+        let empty: SizeBudget = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty.mode, SizeBudgetMode::Warn);
+        assert!(empty.rules.is_empty());
+        assert!(empty.validate().is_empty());
+
+        let valid: SizeBudget = serde_json::from_str(
+            r#"{"mode":"fail","rules":[{"kind":"aab","max_increase_bytes":0},{"kind":"ipa","max_bytes":1,"max_increase_percent":2.5}]}"#,
+        )
+        .unwrap();
+        assert!(valid.validate().is_empty(), "{:?}", valid.validate());
+
+        let invalid: SizeBudget = serde_json::from_str(
+            r#"{"rules":[{"kind":"AAB","max_bytes":1},{"kind":"apk"},{"kind":"ipa","max_bytes":0,"max_increase_bytes":-1,"max_increase_percent":-1},{"kind":"ipa","max_bytes":5}]}"#,
+        )
+        .unwrap();
+        let errors = invalid.validate();
+        assert_eq!(errors.len(), 6, "{errors:?}");
+        assert!(errors[0].contains("'AAB'"), "{errors:?}");
+        assert!(errors[1].contains("'apk' needs a limit"), "{errors:?}");
+        assert!(
+            errors.iter().any(|e| e.contains("more than once")),
+            "{errors:?}"
+        );
+        assert!(serde_json::from_str::<SizeBudget>(r#"{"limit":1}"#).is_err());
     }
 
     #[test]

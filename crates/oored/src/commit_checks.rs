@@ -7,12 +7,14 @@
 use std::time::Duration;
 
 use chrono::{DateTime, SecondsFormat};
-use oore_contract::{BuildSizeReport, BuildStatus, StepResult};
+use oore_contract::{BuildSizeReport, BuildStatus, SizeBudget, SizeBudgetMode, StepResult};
 use sqlx::{Row, SqlitePool};
 use tracing::{debug, warn};
 use url::Url;
 
-use crate::artifact_sizes::{format_delta, format_size, load_size_report};
+use crate::artifact_sizes::{
+    BudgetLimit, BudgetViolation, check_budget, format_delta, format_size, load_size_report,
+};
 use crate::instance_settings::{
     DEFAULT_ALLOWED_ORIGINS, load_effective_external_access_network_settings,
 };
@@ -169,6 +171,8 @@ struct BuildContext {
     workflow: Option<String>,
     /// The steps the runner reported, in the order they ran.
     steps: Vec<StepResult>,
+    /// The pipeline's artifact size limits.
+    size_budget: SizeBudget,
     provider: String,
     integration_id: String,
     host_url: String,
@@ -189,8 +193,13 @@ struct PlatformReport {
     platform: String,
     name: String,
     title: String,
+    /// The GitLab status description: the title, and any size budget
+    /// overrun.
+    description: String,
     summary: String,
     details_url: Option<String>,
+    /// An artifact is over a size budget that fails the check.
+    over_budget: bool,
 }
 
 /// Platforms the build was asked to produce, from its config snapshot.
@@ -226,6 +235,7 @@ async fn load_context(pool: &SqlitePool, build_id: &str) -> anyhow::Result<Optio
     let Some(row) = sqlx::query(
         "SELECT b.id, b.build_number, b.status, b.commit_sha, b.branch, b.pipeline_id, \
                 b.config_snapshot, b.step_results, b.created_at, b.started_at, b.finished_at, pl.name AS pipeline_name, \
+                pl.size_budget, \
                 i.id AS integration_id, i.provider, i.host_url, i.auth_mode, \
                 inst.external_id AS installation_external_id, \
                 r.external_id AS repository_external_id, r.full_name \
@@ -272,6 +282,10 @@ async fn load_context(pool: &SqlitePool, build_id: &str) -> anyhow::Result<Optio
             .filter(|value| !value.is_empty())
             .map(str::to_string),
         steps,
+        size_budget: row
+            .get::<Option<String>, _>("size_budget")
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default(),
         provider: row.get("provider"),
         integration_id: row.get("integration_id"),
         host_url: row.get("host_url"),
@@ -354,6 +368,15 @@ fn markdown_text(value: &str) -> String {
     escaped
 }
 
+/// Whether an artifact belongs to a platform's check. Artifacts of no known
+/// platform belong to a single-platform build's only check.
+fn belongs_to(artifact_type: &str, name: &str, platform: &str, single_platform: bool) -> bool {
+    match artifact_platform(artifact_type, name) {
+        Some(owner) => owner == platform,
+        None => single_platform,
+    }
+}
+
 /// The size of each of a platform's artifacts and its change from the
 /// baseline build, as a Markdown section.
 fn size_section(
@@ -365,12 +388,14 @@ fn size_section(
     let rows: Vec<_> = report
         .artifacts
         .iter()
-        .filter(
-            |artifact| match artifact_platform(&artifact.artifact_type, &artifact.name) {
-                Some(owner) => owner == platform,
-                None => single_platform,
-            },
-        )
+        .filter(|artifact| {
+            belongs_to(
+                &artifact.artifact_type,
+                &artifact.name,
+                platform,
+                single_platform,
+            )
+        })
         .collect();
     if rows.is_empty() {
         return None;
@@ -411,6 +436,116 @@ fn size_section(
         ));
     }
     Some(section)
+}
+
+fn budget_limit_label(limit: BudgetLimit) -> String {
+    match limit {
+        BudgetLimit::Bytes(bytes) => format!("At most {}", format_size(bytes)),
+        BudgetLimit::IncreaseBytes(bytes) => format!("Grows at most {}", format_size(bytes)),
+        BudgetLimit::IncreasePercent(percent) => format!("Grows at most {percent}%"),
+    }
+}
+
+/// What went over the limit: the size for a size limit, the change for an
+/// increase limit.
+fn budget_actual(violation: &BudgetViolation) -> String {
+    match (violation.limit, violation.change) {
+        (BudgetLimit::Bytes(_), _) | (_, None) => format_size(violation.size_bytes),
+        (_, Some((delta, baseline))) => format_delta(delta, baseline),
+    }
+}
+
+/// The size budget result for a platform's artifacts, as a Markdown
+/// section. `None` when no rule covers them.
+fn budget_section(
+    report: &BuildSizeReport,
+    budget: &SizeBudget,
+    violations: &[&BudgetViolation],
+    platform: &str,
+    single_platform: bool,
+) -> Option<String> {
+    let covered: Vec<_> = report
+        .artifacts
+        .iter()
+        .filter(|artifact| {
+            belongs_to(
+                &artifact.artifact_type,
+                &artifact.name,
+                platform,
+                single_platform,
+            )
+        })
+        .filter_map(|artifact| {
+            let kind =
+                crate::artifact_sizes::artifact_kind(&artifact.name, &artifact.artifact_type);
+            budget.rules.iter().find(|rule| rule.kind == kind)
+        })
+        .collect();
+    if covered.is_empty() {
+        return None;
+    }
+    let increase_limits_skipped = report.baseline.is_none()
+        && covered
+            .iter()
+            .any(|rule| rule.max_increase_bytes.is_some() || rule.max_increase_percent.is_some());
+    let skipped_note = "\nThere is no baseline build, so only the maximum sizes were checked.\n";
+    if violations.is_empty() {
+        let mut section = String::from("\n**Size budget**: every artifact is within the budget.\n");
+        if increase_limits_skipped {
+            section.push_str(skipped_note);
+        }
+        return Some(section);
+    }
+    let mut section = match budget.mode {
+        SizeBudgetMode::Fail => String::from("\n**Size budget exceeded**\n"),
+        SizeBudgetMode::Warn => String::from(
+            "\n**Size budget warning**\n\nThe budget only warns, so the check keeps its result.\n",
+        ),
+    };
+    if increase_limits_skipped {
+        section.push_str(skipped_note);
+    }
+    section.push_str("\n| Artifact | Limit | Actual |\n| --- | --- | ---: |\n");
+    for violation in violations {
+        section.push_str(&format!(
+            "| {} | {} | {} |\n",
+            markdown_text(&violation.name),
+            budget_limit_label(violation.limit),
+            budget_actual(violation),
+        ));
+    }
+    Some(section)
+}
+
+/// The longest description GitLab keeps for a commit status.
+const MAX_GITLAB_DESCRIPTION_CHARS: usize = 255;
+
+/// The GitLab status description: the title, and the first artifact over
+/// the size budget.
+fn status_description(
+    title: &str,
+    mode: SizeBudgetMode,
+    violations: &[&BudgetViolation],
+) -> String {
+    let Some(first) = violations.first() else {
+        return title.to_string();
+    };
+    let label = match mode {
+        SizeBudgetMode::Fail => "over the size budget",
+        SizeBudgetMode::Warn => "size budget warning",
+    };
+    let mut description = format!("{title} · {label}: {} {}", first.name, budget_actual(first));
+    if violations.len() > 1 {
+        description.push_str(&format!(" and {} more", violations.len() - 1));
+    }
+    if description.chars().count() > MAX_GITLAB_DESCRIPTION_CHARS {
+        description = description
+            .chars()
+            .take(MAX_GITLAB_DESCRIPTION_CHARS - 1)
+            .collect();
+        description.push('…');
+    }
+    description
 }
 
 /// Steps the runner adds around any configuration's own steps.
@@ -540,9 +675,34 @@ fn platform_reports(
     let named_steps = has_named_steps(ctx);
     let title = check_title(ctx, named_steps);
     let single_platform = ctx.platforms.len() == 1;
+    let violations = sizes
+        .map(|sizes| check_budget(sizes, &ctx.size_budget))
+        .unwrap_or_default();
     ctx.platforms
         .iter()
         .map(|platform| {
+            let platform_violations: Vec<&BudgetViolation> = violations
+                .iter()
+                .filter(|violation| {
+                    belongs_to(
+                        &violation.artifact_type,
+                        &violation.name,
+                        platform,
+                        single_platform,
+                    )
+                })
+                .collect();
+            // The budget fails the check, never the build.
+            let over_budget =
+                ctx.size_budget.mode == SizeBudgetMode::Fail && !platform_violations.is_empty();
+            let description =
+                status_description(&title, ctx.size_budget.mode, &platform_violations);
+            let title = if over_budget {
+                format!("{title} but is over the size budget")
+            } else {
+                title.clone()
+            };
+
             let platform_artifacts: Vec<&ArtifactLink> = artifacts
                 .iter()
                 .filter(|artifact| match artifact.platform {
@@ -584,6 +744,17 @@ fn platform_reports(
             {
                 summary.push_str(&section);
             }
+            if let Some(section) = sizes.and_then(|sizes| {
+                budget_section(
+                    sizes,
+                    &ctx.size_budget,
+                    &platform_violations,
+                    platform,
+                    single_platform,
+                )
+            }) {
+                summary.push_str(&section);
+            }
 
             if named_steps && let Some(section) = steps_section(&ctx.steps) {
                 summary.push_str(&section);
@@ -603,9 +774,11 @@ fn platform_reports(
             PlatformReport {
                 platform: platform.clone(),
                 name: format!("{} ({})", ctx.pipeline_name, platform_label(platform)),
-                title: title.clone(),
+                description,
+                title,
                 summary,
                 details_url,
+                over_budget,
             }
         })
         .collect()
@@ -635,6 +808,7 @@ fn github_check_run(ctx: &BuildContext, report: &PlatformReport) -> serde_json::
         Phase::Done(status) => {
             run["status"] = "completed".into();
             run["conclusion"] = match status {
+                BuildStatus::Succeeded if report.over_budget => "failure",
                 BuildStatus::Succeeded => "success",
                 BuildStatus::TimedOut => "timed_out",
                 BuildStatus::Failed => "failure",
@@ -652,10 +826,11 @@ fn github_check_run(ctx: &BuildContext, report: &PlatformReport) -> serde_json::
     run
 }
 
-fn gitlab_state(status: BuildStatus) -> &'static str {
+fn gitlab_state(status: BuildStatus, over_budget: bool) -> &'static str {
     match phase(status) {
         Phase::Queued => "pending",
         Phase::Running => "running",
+        Phase::Done(BuildStatus::Succeeded) if over_budget => "failed",
         Phase::Done(BuildStatus::Succeeded) => "success",
         Phase::Done(BuildStatus::Failed | BuildStatus::TimedOut) => "failed",
         Phase::Done(_) => "canceled",
@@ -733,11 +908,11 @@ async fn report_build(
                     &ctx.repository_external_id,
                     &gitlab::CommitStatus {
                         sha: &ctx.commit_sha,
-                        state: gitlab_state(ctx.status),
+                        state: gitlab_state(ctx.status, report.over_budget),
                         name: &name,
                         git_ref: ctx.branch.as_deref(),
                         target_url: report.details_url.as_deref(),
-                        description: &report.title,
+                        description: &report.description,
                     },
                 )
                 .await?;
@@ -1425,5 +1600,304 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(reported.as_deref(), Some("failed"));
+    }
+
+    const MB: i64 = 1024 * 1024;
+
+    /// An artifact's name, type and size in bytes.
+    type SizedArtifact<'a> = (&'a str, &'a str, i64);
+
+    /// Finished, successful builds on `main` with their artifacts' sizes, as
+    /// `(build, number, artifacts)`.
+    async fn sized_builds(pool: &SqlitePool, builds: &[(&str, i64, &[SizedArtifact<'_>])]) {
+        sqlx::query("UPDATE projects SET default_branch = 'main'")
+            .execute(pool)
+            .await
+            .unwrap();
+        for (build, number, artifacts) in builds {
+            insert_build(pool, build, *number, number * 100).await;
+            set_status(pool, build, "succeeded").await;
+            for (name, artifact_type, bytes) in *artifacts {
+                let artifact_id = format!("{build}-{name}");
+                sqlx::query(
+                    "INSERT INTO artifacts (id, build_id, name, artifact_type, file_path, file_size, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, 'k', ?5, 0)",
+                )
+                .bind(&artifact_id)
+                .bind(build)
+                .bind(name)
+                .bind(artifact_type)
+                .bind(bytes)
+                .execute(pool)
+                .await
+                .unwrap();
+                crate::artifact_sizes::record_artifact_size(pool, &artifact_id).await;
+            }
+        }
+    }
+
+    async fn set_budget(pool: &SqlitePool, budget: serde_json::Value) {
+        sqlx::query("UPDATE pipelines SET size_budget = ?1 WHERE id = 'pl1'")
+            .bind(budget.to_string())
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// An app bundle that grew by 1.2 MB (+6.3%) from build #1 to #2.
+    async fn grown_bundle(pool: &SqlitePool) {
+        sized_builds(
+            pool,
+            &[
+                ("b1", 1, &[("app-release.aab", "aab", 20_000_000)]),
+                ("b2", 2, &[("app-release.aab", "aab", 21_258_291)]),
+            ],
+        )
+        .await;
+    }
+
+    /// The Android and iOS check runs reported for build #2.
+    async fn report_checks(pool: &SqlitePool) -> (serde_json::Value, serde_json::Value) {
+        let (base, received) = capture_server().await;
+        report_github_build(pool, &base, "b2").await;
+        let calls = received.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        (calls[0].2.clone(), calls[1].2.clone())
+    }
+
+    fn summary(check: &serde_json::Value) -> &str {
+        check["output"]["summary"].as_str().unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_build_within_its_size_budget_passes_the_check() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        grown_bundle(&pool).await;
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "fail", "rules": [
+                { "kind": "aab", "max_bytes": 30 * MB, "max_increase_bytes": 2 * MB, "max_increase_percent": 10 }
+            ] }),
+        )
+        .await;
+
+        let (android, ios) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "success");
+        assert_eq!(android["output"]["title"], "Build #2 succeeded");
+        assert!(
+            summary(&android).contains("**Size budget**: every artifact is within the budget."),
+            "{}",
+            summary(&android)
+        );
+        // No rule covers the iOS check's artifacts.
+        assert!(!summary(&ios).contains("Size budget"), "{}", summary(&ios));
+    }
+
+    #[tokio::test]
+    async fn a_failing_size_budget_fails_the_check_with_the_delta() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        grown_bundle(&pool).await;
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "fail", "rules": [
+                { "kind": "aab", "max_bytes": 30 * MB, "max_increase_bytes": MB }
+            ] }),
+        )
+        .await;
+
+        let (android, ios) = report_checks(&pool).await;
+        // Branch protection requires checks by name, so it never changes.
+        assert_eq!(android["name"], "Release (Android)");
+        assert_eq!(android["status"], "completed");
+        assert_eq!(android["conclusion"], "failure");
+        assert_eq!(
+            android["output"]["title"],
+            "Build #2 succeeded but is over the size budget"
+        );
+        let text = summary(&android);
+        assert!(text.contains("**Size budget exceeded**"), "{text}");
+        assert!(
+            text.contains("| app-release.aab | Grows at most 1.0 MB | +1.2 MB (+6.3%) |"),
+            "{text}"
+        );
+        // The size limit holds, so only the increase is listed.
+        assert!(!text.contains("At most"), "{text}");
+        // The app bundle is Android's, so the iOS check still passes.
+        assert_eq!(ios["name"], "Release (iOS)");
+        assert_eq!(ios["conclusion"], "success");
+        // The build itself still succeeded.
+        let status: String = sqlx::query_scalar("SELECT status FROM builds WHERE id = 'b2'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "succeeded");
+    }
+
+    #[tokio::test]
+    async fn a_warning_size_budget_keeps_the_check_result() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        grown_bundle(&pool).await;
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "warn", "rules": [
+                { "kind": "aab", "max_increase_percent": 5 }
+            ] }),
+        )
+        .await;
+
+        let (android, _) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "success");
+        assert_eq!(android["output"]["title"], "Build #2 succeeded");
+        let text = summary(&android);
+        assert!(text.contains("**Size budget warning**"), "{text}");
+        assert!(
+            text.contains("| app-release.aab | Grows at most 5% | +1.2 MB (+6.3%) |"),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn without_a_baseline_only_maximum_sizes_apply() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        sized_builds(&pool, &[("b2", 2, &[("app-release.aab", "aab", 25 * MB)])]).await;
+
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "fail", "rules": [
+                { "kind": "aab", "max_increase_bytes": 0, "max_increase_percent": 0 }
+            ] }),
+        )
+        .await;
+        let (android, _) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "success");
+        assert!(
+            summary(&android).contains("only the maximum sizes were checked"),
+            "{}",
+            summary(&android)
+        );
+
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "fail", "rules": [
+                { "kind": "aab", "max_bytes": 20 * MB, "max_increase_bytes": 0 }
+            ] }),
+        )
+        .await;
+        let (android, _) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "failure");
+        let text = summary(&android);
+        assert!(
+            text.contains("| app-release.aab | At most 20.0 MB | 25.0 MB |"),
+            "{text}"
+        );
+        assert!(!text.contains("Grows at most"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn each_artifact_is_held_to_the_rule_for_its_kind() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        sized_builds(
+            &pool,
+            &[
+                (
+                    "b1",
+                    1,
+                    &[
+                        ("app-release.aab", "aab", 20 * MB),
+                        ("app-release.apk", "apk", 30 * MB),
+                        ("Runner.ipa", "ipa", 40 * MB),
+                    ],
+                ),
+                (
+                    "b2",
+                    2,
+                    &[
+                        ("app-release.aab", "aab", 21 * MB),
+                        ("app-release.apk", "apk", 33 * MB),
+                        ("Runner.ipa", "ipa", 45 * MB),
+                    ],
+                ),
+            ],
+        )
+        .await;
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "fail", "rules": [
+                { "kind": "aab", "max_increase_percent": 10 },
+                { "kind": "apk", "max_increase_percent": 5, "max_bytes": 32 * MB },
+                { "kind": "ipa", "max_bytes": 44 * MB }
+            ] }),
+        )
+        .await;
+
+        let (android, ios) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "failure");
+        let text = summary(&android);
+        assert!(
+            text.contains("| app-release.apk | At most 32.0 MB | 33.0 MB |"),
+            "{text}"
+        );
+        assert!(
+            text.contains("| app-release.apk | Grows at most 5% | +3.0 MB (+10.0%) |"),
+            "{text}"
+        );
+        assert!(!text.contains("| app-release.aab | Grows"), "{text}");
+        assert_eq!(ios["conclusion"], "failure");
+        assert!(
+            summary(&ios).contains("| Runner.ipa | At most 44.0 MB | 45.0 MB |"),
+            "{}",
+            summary(&ios)
+        );
+    }
+
+    #[tokio::test]
+    async fn gitlab_statuses_describe_the_size_budget() {
+        let (base, received) = capture_server().await;
+        let key = vec![7u8; 32];
+        let pool = gitlab_pool(&base, &key).await;
+        grown_bundle(&pool).await;
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "fail", "rules": [{ "kind": "aab", "max_increase_bytes": MB }] }),
+        )
+        .await;
+        sqlx::query("UPDATE builds SET scm_reported_status = status WHERE id = 'b1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        report_due_builds(&pool, &key, &base).await.unwrap();
+        assert_eq!(
+            gitlab_states(&received),
+            [
+                (
+                    "Build #2 succeeded · over the size budget: app-release.aab +1.2 MB (+6.3%)"
+                        .to_string(),
+                    "failed".to_string()
+                ),
+                ("Build #2 succeeded".to_string(), "success".to_string()),
+            ]
+        );
+
+        // A warning keeps the status and still says so.
+        received.lock().unwrap().clear();
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "warn", "rules": [{ "kind": "aab", "max_increase_bytes": MB }] }),
+        )
+        .await;
+        sqlx::query("UPDATE builds SET scm_reported_status = NULL WHERE id = 'b2'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        report_due_builds(&pool, &key, &base).await.unwrap();
+        assert_eq!(
+            gitlab_states(&received)[0],
+            (
+                "Build #2 succeeded · size budget warning: app-release.aab +1.2 MB (+6.3%)"
+                    .to_string(),
+                "success".to_string()
+            )
+        );
     }
 }
