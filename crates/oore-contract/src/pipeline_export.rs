@@ -125,11 +125,15 @@ pub fn export_form_settings(settings: FormSettings<'_>) -> Result<FormExport, St
             }
             play = Some(PlayPublishSpec {
                 track: upload.track.trim().to_string(),
-                rollout: upload
-                    .rollout_percent
-                    .filter(|percent| *percent < 100.0)
-                    // A fraction, rounded so 33.3% is 0.333 and not 0.33299999999999996.
-                    .map(|percent| (percent * 10_000.0).round() / 1_000_000.0),
+                // Always explicit, so the committed file keeps this rollout
+                // whatever the settings hold later; unset is everyone. A
+                // fraction, rounded so 33.3% is 0.333 and not 0.33299999999999996.
+                rollout: Some(
+                    upload
+                        .rollout_percent
+                        .filter(|percent| *percent < 100.0)
+                        .map_or(1.0, |percent| (percent * 10_000.0).round() / 1_000_000.0),
+                ),
                 draft: Some(upload.draft),
             });
         }
@@ -142,9 +146,10 @@ pub fn export_form_settings(settings: FormSettings<'_>) -> Result<FormExport, St
                         group: group.trim().to_string(),
                     });
                 }
-                (AppStoreDestination::Testflight, _) => notes.push(
-                    "App Store Connect uploads stay in the pipeline's Publish settings: they name several TestFlight groups, and publish.testflight names one".to_string(),
-                ),
+                (AppStoreDestination::Testflight, groups) => notes.push(format!(
+                    "App Store Connect uploads stay in the pipeline's Publish settings: they name {} TestFlight groups, and publish.testflight names exactly one",
+                    if groups.is_empty() { "no" } else { "several" }
+                )),
                 (AppStoreDestination::AppStore, _) => notes.push(
                     "App Store Connect uploads stay in the pipeline's Publish settings: they submit to the App Store, and publish.testflight only uploads to TestFlight".to_string(),
                 ),
@@ -173,7 +178,7 @@ pub fn export_form_settings(settings: FormSettings<'_>) -> Result<FormExport, St
         .any(|t| t.play.is_some() || t.testflight.is_some())
     {
         notes.push(
-            "Store credentials and release notes stay in the pipeline's Publish settings; the file's publish says where each build uploads".to_string(),
+            "Store credentials and release notes stay in the pipeline's Publish settings; the file's publish says where each build uploads. Keep the store's \"Upload after each build\" on: turned off later, the publish step fails".to_string(),
         );
     }
 
@@ -1025,10 +1030,14 @@ mod tests {
                 build: Vec::new(),
                 post_build: Vec::new(),
             },
-            env: vec![PipelineEnvVar {
-                key: "GREETING".to_string(),
-                value: "yes".to_string(),
-            }],
+            env: ["yes", "Off", "~", "null", ".inf", "on"]
+                .iter()
+                .enumerate()
+                .map(|(index, value)| PipelineEnvVar {
+                    key: format!("VALUE_{index}"),
+                    value: value.to_string(),
+                })
+                .collect(),
             artifact_patterns: Vec::new(),
             ..PipelineExecutionConfig::default()
         };
@@ -1039,9 +1048,171 @@ mod tests {
             .unwrap()
             .plan(PlanRequest::default())
             .unwrap();
-        assert_eq!(file.env[0].value, "yes");
+        // YAML 1.1 keywords are quoted and read back as the same strings.
+        assert!(export.yaml.contains("VALUE_0: 'yes'"), "{}", export.yaml);
+        let values: Vec<&str> = file.env.iter().map(|entry| entry.value.as_str()).collect();
+        assert_eq!(values, ["yes", "Off", "~", "null", ".inf", "on"]);
         // A duplicate step name gets a suffix.
         let names: Vec<&str> = file.steps.iter().map(|step| step.name.as_str()).collect();
         assert!(names.contains(&"Get packages (2)"), "{names:?}");
+    }
+
+    fn android_with_play(
+        config: &PipelineExecutionConfig,
+        upload: &GooglePlayPublishConfig,
+    ) -> (FormExport, PipelinePlan) {
+        let export = export_form_settings(FormSettings {
+            execution: config,
+            triggers: None,
+            google_play: Some(upload),
+            app_store: None,
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+        let plan = parse_repository_config(&export.yaml)
+            .unwrap()
+            .plan(PlanRequest::default())
+            .unwrap();
+        (export, plan)
+    }
+
+    #[test]
+    fn an_android_override_gets_no_bundle() {
+        let config = execution(serde_json::json!({
+            "platforms": ["android"],
+            "platform_commands": { "android": "flutter build appbundle --release" },
+            "artifact_patterns": ["build/app/outputs/bundle/**/*.aab"],
+        }));
+        let (export, plan) = android_with_play(&config, &play("internal", None, false));
+        assert!(
+            !export.yaml.contains("&& flutter build appbundle"),
+            "{}",
+            export.yaml
+        );
+        let builds: Vec<&str> = plan
+            .steps_in(StepPhase::Build)
+            .map(|step| step.run.as_str())
+            .collect();
+        assert_eq!(builds, ["flutter build appbundle --release"]);
+        assert_eq!(plan.publish.play.unwrap().spec.track, "internal");
+    }
+
+    #[test]
+    fn a_full_or_unset_rollout_is_written_as_everyone() {
+        let config = execution(serde_json::json!({
+            "platforms": ["android"],
+            "artifact_patterns": ["build/app/outputs/flutter-apk/*.apk"],
+        }));
+        for rollout in [None, Some(100.0)] {
+            let (export, plan) = android_with_play(&config, &play("production", rollout, false));
+            assert!(
+                export.yaml.contains("        rollout: 1\n"),
+                "{}",
+                export.yaml
+            );
+            assert_eq!(plan.publish.play.unwrap().spec.rollout, Some(1.0));
+        }
+        let (export, _) = android_with_play(&config, &play("production", Some(33.3), false));
+        assert!(
+            export.yaml.contains("        rollout: 0.333\n"),
+            "{}",
+            export.yaml
+        );
+    }
+
+    #[test]
+    fn targets_keep_the_form_order_and_share_one_artifact_list() {
+        let config = execution(serde_json::json!({
+            "platforms": ["ios", "android"],
+            "artifact_patterns": ["build/ios/ipa/*.ipa", "build/app/outputs/flutter-apk/*.apk"],
+        }));
+        let export = export(&config);
+        let ios = export.yaml.find("  ios:\n").unwrap();
+        let android = export.yaml.find("  android:\n").unwrap();
+        assert!(ios < android, "{}", export.yaml);
+        let anchor = export.yaml.find("artifacts: &artifacts").unwrap();
+        let alias = export.yaml.find("artifacts: *artifacts").unwrap();
+        assert!(
+            ios < anchor && anchor < android && android < alias,
+            "{}",
+            export.yaml
+        );
+        let plan = parse_repository_config(&export.yaml)
+            .unwrap()
+            .plan(PlanRequest::default())
+            .unwrap();
+        assert_eq!(plan.platforms, [BuildPlatform::Ios, BuildPlatform::Android]);
+        assert_eq!(
+            plan.artifact_patterns,
+            ["build/ios/ipa/*.ipa", "build/app/outputs/flutter-apk/*.apk"]
+        );
+    }
+
+    #[test]
+    fn every_event_with_a_branch_filter_keeps_the_trigger_settings() {
+        let config = execution(serde_json::json!({
+            "platforms": ["android"],
+            "artifact_patterns": ["build/app/outputs/flutter-apk/*.apk"],
+        }));
+        // An empty event list includes pull requests, whose branch filter
+        // matches the source branch.
+        let settings = triggers(serde_json::json!({ "events": [], "branches": ["main"] }));
+        let export = export_form_settings(FormSettings {
+            execution: &config,
+            triggers: Some(&settings),
+            google_play: None,
+            app_store: None,
+        })
+        .unwrap();
+        assert!(!export.yaml.contains("\non:"), "{}", export.yaml);
+        assert!(
+            export
+                .notes
+                .iter()
+                .any(|note| note.contains("source branch"))
+        );
+    }
+
+    #[test]
+    fn tag_pushes_without_tag_patterns_start_nothing() {
+        let config = execution(serde_json::json!({
+            "platforms": ["android"],
+            "artifact_patterns": ["build/app/outputs/flutter-apk/*.apk"],
+        }));
+        let settings =
+            triggers(serde_json::json!({ "events": ["tag_push"], "branches": ["main"] }));
+        let export = export_form_settings(FormSettings {
+            execution: &config,
+            triggers: Some(&settings),
+            google_play: None,
+            app_store: None,
+        })
+        .unwrap();
+        assert!(export.yaml.contains("on: {}"), "{}", export.yaml);
+        assert_same_triggers(&settings, &export.yaml);
+    }
+
+    #[test]
+    fn testflight_without_groups_stays_in_settings() {
+        let config = execution(serde_json::json!({
+            "platforms": ["ios"],
+            "artifact_patterns": ["build/ios/ipa/*.ipa"],
+        }));
+        let store = app_store(AppStoreDestination::Testflight, &[]);
+        let export = export_form_settings(FormSettings {
+            execution: &config,
+            triggers: None,
+            google_play: None,
+            app_store: Some(&store),
+        })
+        .unwrap();
+        assert!(!export.yaml.contains("publish:"));
+        assert!(
+            export
+                .notes
+                .iter()
+                .any(|note| note.contains("no TestFlight groups")),
+            "{:?}",
+            export.notes
+        );
     }
 }

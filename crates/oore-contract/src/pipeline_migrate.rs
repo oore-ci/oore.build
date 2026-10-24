@@ -534,11 +534,25 @@ pub(crate) fn scalar(value: &str, indent: usize) -> String {
     }
 }
 
+/// Words a YAML 1.1 reader (and many editors and linters) takes as a
+/// boolean, null or special float. This crate reads YAML 1.2, where they are
+/// strings, but they are quoted so the file means the same everywhere.
+const YAML_11_KEYWORDS: [&str; 14] = [
+    "true", "false", "yes", "no", "y", "n", "on", "off", "null", "~", ".inf", "-.inf", "+.inf",
+    ".nan",
+];
+
 /// A plain (unquoted) scalar that reads back as the same string.
 fn is_plain_safe(value: &str) -> bool {
     let Some(first) = value.chars().next() else {
         return false;
     };
+    if YAML_11_KEYWORDS
+        .iter()
+        .any(|keyword| keyword.eq_ignore_ascii_case(value))
+    {
+        return false;
+    }
     (first.is_ascii_alphabetic() || matches!(first, '_' | '.' | '/' | '$'))
         && value.trim() == value
         && !value.contains(|c: char| c.is_control())
@@ -696,11 +710,27 @@ mod tests {
             "ends with colon:",
             "*star",
             "",
+            "yes",
+            "No",
+            "ON",
+            "off",
+            "y",
+            "Null",
+            "~",
+            ".inf",
+            "-.Inf",
+            ".NaN",
         ] {
             let yaml = format!("value:{}\n", scalar(value, 0));
             let parsed: std::collections::BTreeMap<String, String> =
                 serde_yaml::from_str(&yaml).unwrap_or_else(|error| panic!("{yaml}: {error}"));
             assert_eq!(parsed["value"], value, "{yaml}");
+        }
+        // YAML 1.1 booleans, nulls and special floats are quoted.
+        for value in [
+            "yes", "No", "ON", "off", "y", "Null", "~", ".inf", "-.Inf", ".NaN",
+        ] {
+            assert!(scalar(value, 0).starts_with(" '"), "{value}");
         }
     }
 

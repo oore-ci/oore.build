@@ -1512,12 +1512,38 @@ fn export_yaml_request(req: &ExportPipelineYamlRequest) -> ExportPipelineYamlRes
     if let Some(triggers) = &req.trigger_config {
         errors.extend(validate_trigger_config(triggers));
     }
+    // The Publish settings get the checks their own endpoints apply, so a
+    // bad value comes back as that error instead of a generated file that
+    // fails to validate.
+    if let Some(play) = &req.google_play {
+        errors.extend(
+            oore_contract::validate_google_play_publish_config(play)
+                .into_iter()
+                .map(|error| format!("google_play: {error}")),
+        );
+    }
+    let app_store = match req
+        .app_store
+        .clone()
+        .map(crate::app_store_publish::normalize_config)
+    {
+        None => None,
+        Some(Ok(config)) => Some(config),
+        Some(Err(store_errors)) => {
+            errors.extend(
+                store_errors
+                    .into_iter()
+                    .map(|error| format!("app_store: {error}")),
+            );
+            None
+        }
+    };
     let result = if errors.is_empty() {
         export_form_settings(FormSettings {
             execution: &req.execution_config,
             triggers: req.trigger_config.as_ref(),
             google_play: req.google_play.as_ref(),
-            app_store: req.app_store.as_ref(),
+            app_store: app_store.as_ref(),
         })
     } else {
         Err(errors.join("\n"))
@@ -2114,6 +2140,29 @@ mod export_tests {
                 .errors
                 .iter()
                 .any(|error| error.contains("Invalid event")),
+            "{:?}",
+            response.errors
+        );
+
+        // Publish settings get their own endpoints' checks.
+        let mut req = form_request();
+        req.google_play.as_mut().unwrap().track = "no spaces allowed".to_string();
+        req.app_store.as_mut().unwrap().testflight_groups.clear();
+        let response = export_yaml_request(&req);
+        assert!(!response.valid);
+        assert!(
+            response
+                .errors
+                .iter()
+                .any(|error| error.starts_with("google_play: track")),
+            "{:?}",
+            response.errors
+        );
+        assert!(
+            response
+                .errors
+                .iter()
+                .any(|error| error.starts_with("app_store: TestFlight publishing needs")),
             "{:?}",
             response.errors
         );

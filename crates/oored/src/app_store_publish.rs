@@ -69,7 +69,7 @@ fn is_valid_locale(locale: &str) -> bool {
 
 /// Trims and checks a config before it is stored. Returns every problem so
 /// the form can show them together.
-fn normalize_config(
+pub(crate) fn normalize_config(
     mut config: AppStorePublishConfig,
 ) -> Result<AppStorePublishConfig, Vec<String>> {
     let mut errors = Vec::new();
