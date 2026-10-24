@@ -30,6 +30,8 @@ const base = {
   cancel_previous: false,
   approval_required: false,
   approval_events: [],
+  size_budget_mode: 'warn',
+  size_budget_rules: [],
 }
 const parsed = pipelineFormSchema.parse(base)
 // Mid-edit, before the form validates the field.
