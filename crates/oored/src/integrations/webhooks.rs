@@ -1560,6 +1560,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_unreadable_file_retries_only_pipelines_with_a_workflow() {
+        // No GitHub credentials, so reading the pipeline file fails.
+        let pool = pool("github").await;
+        let payload = serde_json::json!({
+            "ref": "refs/heads/main",
+            "after": "abc123",
+            "repository": { "full_name": "acme/app", "id": 7 },
+            "commits": [],
+        });
+
+        // Without a workflow, the trigger settings apply as before.
+        receive(&pool, "wh1").await;
+        let event = normalize_github_event("push", "wh1", "i1", &payload);
+        process_webhook_event(&pool, &[0; 32], "wh1", &event)
+            .await
+            .unwrap();
+        assert_eq!(webhook_status(&pool, "wh1").await, "processed");
+        assert_eq!(
+            builds_per_pipeline(&pool).await,
+            [("pl1".to_string(), 1), ("pl2".to_string(), 1)]
+        );
+
+        // A pipeline with a workflow builds from a v2 file whose `on` is
+        // unknown, so the delivery fails and is retried.
+        sqlx::query("UPDATE pipelines SET workflow = 'release' WHERE id = 'pl2'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        receive(&pool, "wh2").await;
+        let event = normalize_github_event("push", "wh2", "i1", &payload);
+        let error = process_webhook_event(&pool, &[0; 32], "wh2", &event)
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Could not read the pipeline file"),
+            "{error:#}"
+        );
+        record_webhook_processing_error(&pool, "wh2", &error)
+            .await
+            .unwrap();
+        assert_eq!(webhook_status(&pool, "wh2").await, "received");
+        let pl2_builds: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM builds WHERE pipeline_id = 'pl2'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(pl2_builds, 1, "no build from the failed delivery");
+    }
+
+    #[tokio::test]
     async fn a_failed_build_insert_is_retried_without_duplicating_builds() {
         let pool = pool("github").await;
         receive(&pool, "wh1").await;

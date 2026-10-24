@@ -15,7 +15,7 @@ use oore_contract::{
 };
 use serde::Deserialize;
 use sqlx::Row;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::AppState;
@@ -2475,10 +2475,10 @@ pub struct WebhookBuildTrigger<'a> {
     pub changes: ChangeSet<'a>,
 }
 
-/// A pipeline's repository file at a webhook revision, for its `on`. A file
-/// that is missing, invalid or unreadable leaves the pipeline's trigger
-/// settings in charge, as before `on` was applied; an invalid file then
-/// fails the build with its error.
+/// A pipeline's repository file at a webhook revision, for its `on`. A
+/// missing or invalid file leaves the pipeline's trigger settings in charge,
+/// as before `on` was applied; an invalid file then fails the build with its
+/// error. `Err` carries why the provider could not be read.
 async fn pipeline_file_at(
     pool: &sqlx::SqlitePool,
     encryption_key: &[u8],
@@ -2486,7 +2486,7 @@ async fn pipeline_file_at(
     config_path: &str,
     config_path_explicit: bool,
     commit_sha: &str,
-) -> Option<RepositoryConfig> {
+) -> Result<Option<RepositoryConfig>, String> {
     use crate::repository_workflows::{PipelineFile, load_pipeline_file};
     match load_pipeline_file(
         pool,
@@ -2498,7 +2498,7 @@ async fn pipeline_file_at(
     )
     .await
     {
-        Ok(Some(PipelineFile::Parsed { config, .. })) => Some(*config),
+        Ok(Some(PipelineFile::Parsed { config, .. })) => Ok(Some(*config)),
         Ok(Some(PipelineFile::Invalid { path, error })) => {
             info!(
                 project_id,
@@ -2506,18 +2506,10 @@ async fn pipeline_file_at(
                 error = %error,
                 "pipeline file is invalid; its trigger settings apply"
             );
-            None
+            Ok(None)
         }
-        Ok(_) => None,
-        Err((status, body)) => {
-            warn!(
-                project_id,
-                status = %status,
-                error = %body.0.error,
-                "could not read the pipeline file; its trigger settings apply"
-            );
-            None
-        }
+        Ok(_) => Ok(None),
+        Err((status, body)) => Err(format!("{status}: {}", body.0.error)),
     }
 }
 
@@ -2586,8 +2578,10 @@ pub async fn trigger_build_from_webhook(
     // Fetched at most once, and only when a pipeline filters on paths.
     let mut compared_files: Option<Option<Vec<String>>> = None;
     // Pipeline files at this revision, read once per project and path.
-    let mut pipeline_files: HashMap<(String, Option<String>), Option<RepositoryConfig>> =
-        HashMap::new();
+    let mut pipeline_files: HashMap<
+        (String, Option<String>),
+        Result<Option<RepositoryConfig>, String>,
+    > = HashMap::new();
     let file_event = match (canonical_event.as_str(), tag, branch) {
         (_, Some(tag), _) => Some(TriggerEvent::Tag { tag }),
         ("push", None, Some(branch)) => Some(TriggerEvent::Push { branch }),
@@ -2673,13 +2667,48 @@ pub async fn trigger_build_from_webhook(
                         .await;
                         pipeline_files.insert(key.clone(), config);
                     }
-                    pipeline_files[&key]
-                        .as_ref()
-                        .and_then(|config| config.triggers(workflow.as_deref()))
-                        .cloned()
+                    match &pipeline_files[&key] {
+                        Ok(config) => config
+                            .as_ref()
+                            .and_then(|config| config.triggers(workflow.as_deref()))
+                            .cloned(),
+                        // A pipeline that picks a workflow builds from a v2
+                        // file, whose `on` may be far narrower than its
+                        // trigger settings. Retry the delivery rather than
+                        // guess.
+                        Err(error) if workflow.is_some() => {
+                            warn!(
+                                pipeline_id = %pipeline_id,
+                                error = %error,
+                                "could not read the pipeline file for a pipeline with a workflow; retrying the delivery"
+                            );
+                            return Err(api_err(
+                                StatusCode::BAD_GATEWAY,
+                                "source_unavailable",
+                                format!(
+                                    "Could not read the pipeline file to match its triggers: {error}"
+                                ),
+                            ));
+                        }
+                        Err(error) => {
+                            warn!(
+                                pipeline_id = %pipeline_id,
+                                error = %error,
+                                "could not read the pipeline file; its trigger settings apply"
+                            );
+                            None
+                        }
+                    }
                 }
                 None => None,
             };
+            if file_on.is_some() && file_event.is_none() {
+                debug!(
+                    pipeline_id = %pipeline_id,
+                    event_type = %event_type,
+                    "the file's on applies but the event is not a push, pull request or tag"
+                );
+            }
 
             let ref_matches = match &file_on {
                 Some(on) => file_event.is_some_and(|event| on.matches_ref(event)),
