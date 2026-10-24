@@ -57,7 +57,7 @@ type OnResult =
   | { ok: true; lines: Array<string> }
   | { ok: false; reason: string }
 
-function onLines(triggers: TriggerConfig): OnResult {
+export function onLines(triggers: TriggerConfig): OnResult {
   const listed = (event: string) =>
     triggers.events.length === 0 || triggers.events.includes(event)
   const branches = triggers.branches

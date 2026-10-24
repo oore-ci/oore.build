@@ -171,12 +171,14 @@ export function PipelinePlanPanel({
           {showExport ? (
             <div className="min-w-0 lg:sticky lg:top-24">
               <PipelineRepositoryFile
+                manualOnlyTriggers={manualOnlyTriggers}
                 path={filePath}
                 request={yamlExportRequest(values, {
                   manualOnlyTriggers,
                   publish,
                 })}
                 sharedWith={pipelinesReadingPath(filePath, otherPipelines)}
+                values={values}
               />
             </div>
           ) : null}

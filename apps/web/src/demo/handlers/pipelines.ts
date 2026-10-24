@@ -9,6 +9,7 @@ import {
 } from '../authorization'
 import { demoState } from '../state'
 import { demoExportYaml } from '../pipeline-yaml'
+import { demoImportYaml } from '../pipeline-yaml-import'
 import { parseDemoJsonObject } from '../request'
 import {
   DEMO_SHARED_KEY_ID,
@@ -21,6 +22,7 @@ import type {
   BuildPlatform,
   CreatePipelineRequest,
   ExportPipelineYamlRequest,
+  ImportPipelineYamlRequest,
   Pipeline,
   PipelineExecutionConfig,
   PipelinePlanStep,
@@ -610,6 +612,15 @@ export const pipelineHandlers = [
     // SAFETY: demo requests come from the app's own typed client.
     const body = (await request.json()) as ExportPipelineYamlRequest
     return HttpResponse.json(demoExportYaml(body))
+  }),
+
+  demoApi.importPipelineYaml(async ({ request }) => {
+    await delay(150)
+    const forbidden = requireDemoInstancePermission(request, 'pipelines:read')
+    if (forbidden) return forbidden
+    // SAFETY: demo requests come from the app's own typed client.
+    const body = (await request.json()) as ImportPipelineYamlRequest
+    return HttpResponse.json(demoImportYaml(body))
   }),
 
   demoApi.getPipelineAndroidSigning(async ({ params }) => {

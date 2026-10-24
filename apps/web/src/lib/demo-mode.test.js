@@ -7,6 +7,9 @@ test('the hosted demo allows dry runs and blocks writes', () => {
   expect(isDemoMutationAllowed('POST', '/v1/pipelines/export-yaml', host)).toBe(
     true,
   )
+  expect(isDemoMutationAllowed('POST', '/v1/pipelines/import-yaml', host)).toBe(
+    true,
+  )
   expect(isDemoMutationAllowed('POST', '/v1/projects/p/pipelines', host)).toBe(
     false,
   )
