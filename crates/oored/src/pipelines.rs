@@ -1124,17 +1124,7 @@ pub async fn update_pipeline(
         pipeline.approval = approval;
     }
 
-    if let Some(size_budget) = req.size_budget {
-        let errors = size_budget.validate();
-        if !errors.is_empty() {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_input",
-                errors.join("; "),
-            ));
-        }
-        pipeline.size_budget = size_budget;
-    }
+    pipeline.size_budget = updated_size_budget(pipeline.size_budget, req.size_budget)?;
 
     if let Some(workflow) = req.workflow {
         pipeline.workflow = match workflow.as_deref() {
@@ -1444,6 +1434,26 @@ async fn delete_pipeline_rows(
     })
 }
 
+/// The budget after an update: the requested one when valid, otherwise the
+/// current one. Leaving the field out or sending `null` keeps it.
+fn updated_size_budget(
+    current: SizeBudget,
+    requested: Option<SizeBudget>,
+) -> Result<SizeBudget, (StatusCode, Json<ApiError>)> {
+    let Some(requested) = requested else {
+        return Ok(current);
+    };
+    let errors = requested.validate();
+    if !errors.is_empty() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            errors.join("; "),
+        ));
+    }
+    Ok(requested)
+}
+
 /// `POST /v1/pipelines/validate` — dry-run validation of pipeline config.
 pub async fn validate_pipeline(
     State(state): State<Arc<AppState>>,
@@ -1451,7 +1461,10 @@ pub async fn validate_pipeline(
     Json(req): Json<ValidatePipelineRequest>,
 ) -> ApiResult<ValidatePipelineResponse> {
     check_permission(&state.enforcer, &auth.0.role, "pipelines", "read").await?;
+    Ok(Json(validate_request(&req)))
+}
 
+fn validate_request(req: &ValidatePipelineRequest) -> ValidatePipelineResponse {
     let mut errors = Vec::new();
     let config_path_explicit = req.config_path_explicit.unwrap_or(false);
 
@@ -1510,7 +1523,7 @@ pub async fn validate_pipeline(
 
     let valid = errors.is_empty();
 
-    Ok(Json(ValidatePipelineResponse { valid, errors }))
+    ValidatePipelineResponse { valid, errors }
 }
 
 /// `POST /v1/pipelines/plan` — the steps a build would run, without saving.
@@ -2193,6 +2206,64 @@ mod export_tests {
             "{:?}",
             response.errors
         );
+    }
+}
+
+#[cfg(test)]
+mod size_budget_tests {
+    use super::*;
+
+    fn budget(raw: &str) -> SizeBudget {
+        serde_json::from_str(raw).unwrap()
+    }
+
+    #[test]
+    fn an_update_without_a_size_budget_keeps_the_current_one() {
+        let current = budget(r#"{"mode":"fail","rules":[{"kind":"aab","max_bytes":10}]}"#);
+        for raw in [r#"{"size_budget":null}"#, "{}"] {
+            let req: UpdatePipelineRequest = serde_json::from_str(raw).unwrap();
+            assert_eq!(
+                updated_size_budget(current.clone(), req.size_budget).unwrap(),
+                current,
+                "{raw}"
+            );
+        }
+
+        let req: UpdatePipelineRequest =
+            serde_json::from_str(r#"{"size_budget":{"rules":[]}}"#).unwrap();
+        assert_eq!(
+            updated_size_budget(current.clone(), req.size_budget).unwrap(),
+            SizeBudget::default()
+        );
+        let req: UpdatePipelineRequest =
+            serde_json::from_str(r#"{"size_budget":{"rules":[{"kind":"apk"}]}}"#).unwrap();
+        let (status, body) = updated_size_budget(current, req.size_budget).unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body.0.error.contains("'apk' needs a limit"),
+            "{}",
+            body.0.error
+        );
+    }
+
+    #[test]
+    fn validate_reports_size_budget_errors() {
+        let req: ValidatePipelineRequest = serde_json::from_str(
+            r#"{"size_budget":{"mode":"fail","rules":[{"kind":"aab","max_bytes":0}]}}"#,
+        )
+        .unwrap();
+        let response = validate_request(&req);
+        assert!(!response.valid);
+        assert_eq!(
+            response.errors,
+            ["size_budget max_bytes for 'aab' must be greater than 0"]
+        );
+
+        let req: ValidatePipelineRequest = serde_json::from_str(
+            r#"{"size_budget":{"mode":"fail","rules":[{"kind":"aab","max_bytes":1}]}}"#,
+        )
+        .unwrap();
+        assert!(validate_request(&req).valid);
     }
 }
 

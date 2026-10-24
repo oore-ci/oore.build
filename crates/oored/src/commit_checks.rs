@@ -13,7 +13,8 @@ use tracing::{debug, warn};
 use url::Url;
 
 use crate::artifact_sizes::{
-    BudgetLimit, BudgetViolation, check_budget, format_delta, format_size, load_size_report,
+    BudgetLimit, BudgetViolation, check_budget, format_delta, format_delta_with, format_size,
+    load_size_report,
 };
 use crate::instance_settings::{
     DEFAULT_ALLOWED_ORIGINS, load_effective_external_access_network_settings,
@@ -226,8 +227,16 @@ fn artifact_platform(artifact_type: &str, name: &str) -> Option<&'static str> {
     match artifact_type {
         "apk" | "aab" => Some("android"),
         "ipa" => Some("ios"),
-        _ if name.ends_with(".aab") => Some("android"),
-        _ => None,
+        _ => {
+            let name = name.to_ascii_lowercase();
+            if name.ends_with(".aab") || name.ends_with(".apk") {
+                Some("android")
+            } else if name.ends_with(".ipa") {
+                Some("ios")
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -377,6 +386,13 @@ fn belongs_to(artifact_type: &str, name: &str, platform: &str, single_platform: 
     }
 }
 
+/// Whether a platform's check enforces the budget on an artifact. An
+/// artifact of no known platform could hold back any of them, so every
+/// check enforces it.
+fn budget_belongs_to(artifact_type: &str, name: &str, platform: &str) -> bool {
+    artifact_platform(artifact_type, name).is_none_or(|owner| owner == platform)
+}
+
 /// The size of each of a platform's artifacts and its change from the
 /// baseline build, as a Markdown section.
 fn size_section(
@@ -451,6 +467,11 @@ fn budget_limit_label(limit: BudgetLimit) -> String {
 fn budget_actual(violation: &BudgetViolation) -> String {
     match (violation.limit, violation.change) {
         (BudgetLimit::Bytes(_), _) | (_, None) => format_size(violation.size_bytes),
+        // Two decimals, so a change just over a limit such as 5% does not
+        // read as exactly 5.0%.
+        (BudgetLimit::IncreasePercent(_), Some((delta, baseline))) => {
+            format_delta_with(delta, baseline, 2)
+        }
         (_, Some((delta, baseline))) => format_delta(delta, baseline),
     }
 }
@@ -462,37 +483,41 @@ fn budget_section(
     budget: &SizeBudget,
     violations: &[&BudgetViolation],
     platform: &str,
-    single_platform: bool,
 ) -> Option<String> {
     let covered: Vec<_> = report
         .artifacts
         .iter()
-        .filter(|artifact| {
-            belongs_to(
-                &artifact.artifact_type,
-                &artifact.name,
-                platform,
-                single_platform,
-            )
-        })
+        .filter(|artifact| budget_belongs_to(&artifact.artifact_type, &artifact.name, platform))
         .filter_map(|artifact| {
             let kind =
                 crate::artifact_sizes::artifact_kind(&artifact.name, &artifact.artifact_type);
-            budget.rules.iter().find(|rule| rule.kind == kind)
+            let rule = budget.rules.iter().find(|rule| rule.kind == kind)?;
+            Some((artifact, rule))
         })
         .collect();
     if covered.is_empty() {
         return None;
     }
-    let increase_limits_skipped = report.baseline.is_none()
-        && covered
-            .iter()
-            .any(|rule| rule.max_increase_bytes.is_some() || rule.max_increase_percent.is_some());
-    let skipped_note = "\nThere is no baseline build, so only the maximum sizes were checked.\n";
+    // Artifacts whose increase limits could not apply: nothing in the
+    // baseline build to compare them with, or no baseline build at all.
+    let unmatched: Vec<String> = covered
+        .iter()
+        .filter(|(artifact, rule)| {
+            artifact.delta_bytes.is_none()
+                && (rule.max_increase_bytes.is_some() || rule.max_increase_percent.is_some())
+        })
+        .map(|(artifact, _)| markdown_text(&artifact.name))
+        .collect();
+    let skipped_note = (!unmatched.is_empty()).then(|| {
+        format!(
+            "\nNothing to compare {} with, so only the max size was checked.\n",
+            unmatched.join(", ")
+        )
+    });
     if violations.is_empty() {
         let mut section = String::from("\n**Size budget**: every artifact is within the budget.\n");
-        if increase_limits_skipped {
-            section.push_str(skipped_note);
+        if let Some(note) = &skipped_note {
+            section.push_str(note);
         }
         return Some(section);
     }
@@ -502,8 +527,8 @@ fn budget_section(
             "\n**Size budget warning**\n\nThe budget only warns, so the check keeps its result.\n",
         ),
     };
-    if increase_limits_skipped {
-        section.push_str(skipped_note);
+    if let Some(note) = &skipped_note {
+        section.push_str(note);
     }
     section.push_str("\n| Artifact | Limit | Actual |\n| --- | --- | ---: |\n");
     for violation in violations {
@@ -684,12 +709,7 @@ fn platform_reports(
             let platform_violations: Vec<&BudgetViolation> = violations
                 .iter()
                 .filter(|violation| {
-                    belongs_to(
-                        &violation.artifact_type,
-                        &violation.name,
-                        platform,
-                        single_platform,
-                    )
+                    budget_belongs_to(&violation.artifact_type, &violation.name, platform)
                 })
                 .collect();
             // The budget fails the check, never the build.
@@ -744,16 +764,22 @@ fn platform_reports(
             {
                 summary.push_str(&section);
             }
-            if let Some(section) = sizes.and_then(|sizes| {
-                budget_section(
-                    sizes,
-                    &ctx.size_budget,
-                    &platform_violations,
-                    platform,
-                    single_platform,
-                )
-            }) {
-                summary.push_str(&section);
+            match sizes {
+                Some(sizes) => {
+                    if let Some(section) =
+                        budget_section(sizes, &ctx.size_budget, &platform_violations, platform)
+                    {
+                        summary.push_str(&section);
+                    }
+                }
+                // The sizes could not be loaded. The check keeps its result,
+                // but says the budget went unchecked.
+                None if ctx.status == BuildStatus::Succeeded
+                    && !ctx.size_budget.rules.is_empty() =>
+                {
+                    summary.push_str("\n**The size budget could not be checked.**\n");
+                }
+                None => {}
             }
 
             if named_steps && let Some(section) = steps_section(&ctx.steps) {
@@ -1106,6 +1132,15 @@ mod tests {
         .unwrap();
     }
 
+    async fn set_commit(pool: &SqlitePool, id: &str, sha: &str) {
+        sqlx::query("UPDATE builds SET commit_sha = ?2 WHERE id = ?1")
+            .bind(id)
+            .bind(sha)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
     async fn set_status(pool: &SqlitePool, id: &str, status: &str) {
         sqlx::query(
             "UPDATE builds SET status = ?2, started_at = 10, finished_at = 20 WHERE id = ?1",
@@ -1428,6 +1463,7 @@ mod tests {
             .unwrap();
         for (build, number, bytes) in [("b1", 1, 20_000_000_i64), ("b2", 2, 21_258_291)] {
             insert_build(&pool, build, number, number * 100).await;
+            set_commit(&pool, build, &format!("sha-{build}")).await;
             set_status(&pool, build, "succeeded").await;
             let artifact_id = format!("{build}-aab");
             sqlx::query(
@@ -1616,6 +1652,7 @@ mod tests {
             .unwrap();
         for (build, number, artifacts) in builds {
             insert_build(pool, build, *number, number * 100).await;
+            set_commit(pool, build, &format!("sha-{build}")).await;
             set_status(pool, build, "succeeded").await;
             for (name, artifact_type, bytes) in *artifacts {
                 let artifact_id = format!("{build}-{name}");
@@ -1751,7 +1788,7 @@ mod tests {
         let text = summary(&android);
         assert!(text.contains("**Size budget warning**"), "{text}");
         assert!(
-            text.contains("| app-release.aab | Grows at most 5% | +1.2 MB (+6.3%) |"),
+            text.contains("| app-release.aab | Grows at most 5% | +1.2 MB (+6.29%) |"),
             "{text}"
         );
     }
@@ -1771,7 +1808,9 @@ mod tests {
         let (android, _) = report_checks(&pool).await;
         assert_eq!(android["conclusion"], "success");
         assert!(
-            summary(&android).contains("only the maximum sizes were checked"),
+            summary(&android).contains(
+                "Nothing to compare app-release.aab with, so only the max size was checked."
+            ),
             "{}",
             summary(&android)
         );
@@ -1838,7 +1877,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("| app-release.apk | Grows at most 5% | +3.0 MB (+10.0%) |"),
+            text.contains("| app-release.apk | Grows at most 5% | +3.0 MB (+10.00%) |"),
             "{text}"
         );
         assert!(!text.contains("| app-release.aab | Grows"), "{text}");
@@ -1899,5 +1938,161 @@ mod tests {
                 "success".to_string()
             )
         );
+    }
+
+    #[tokio::test]
+    async fn artifacts_of_no_platform_count_against_every_check() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        sized_builds(
+            &pool,
+            &[(
+                "b2",
+                2,
+                &[
+                    ("symbols.zip", "generic", 50 * MB),
+                    // The name tells an untyped APK's platform.
+                    ("app-release.apk", "generic", 40 * MB),
+                ],
+            )],
+        )
+        .await;
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "fail", "rules": [
+                { "kind": "zip", "max_bytes": 10 * MB },
+                { "kind": "apk", "max_bytes": 10 * MB }
+            ] }),
+        )
+        .await;
+
+        let (android, ios) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "failure");
+        assert_eq!(ios["conclusion"], "failure");
+        let android = summary(&android);
+        assert!(
+            android.contains("| symbols.zip | At most 10.0 MB |"),
+            "{android}"
+        );
+        assert!(
+            android.contains("| app-release.apk | At most 10.0 MB |"),
+            "{android}"
+        );
+        let ios = summary(&ios);
+        assert!(ios.contains("| symbols.zip | At most 10.0 MB |"), "{ios}");
+        assert!(!ios.contains("app-release.apk"), "{ios}");
+    }
+
+    #[tokio::test]
+    async fn a_rerun_of_the_same_commit_is_not_its_own_baseline() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        grown_bundle(&pool).await;
+        // b3 reruns b2's commit on main.
+        sized_builds(
+            &pool,
+            &[("b3", 3, &[("app-release.aab", "aab", 21_258_291)])],
+        )
+        .await;
+        set_commit(&pool, "b3", "sha-b2").await;
+
+        let report = load_size_report(&pool, "b3").await.unwrap().unwrap();
+        let baseline = report.baseline.unwrap();
+        assert_eq!(baseline.build_id, "b1");
+        assert_eq!(report.artifacts[0].delta_bytes, Some(1_258_291));
+    }
+
+    #[tokio::test]
+    async fn an_unavailable_size_report_leaves_the_check_result_and_says_so() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        grown_bundle(&pool).await;
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "fail", "rules": [{ "kind": "aab", "max_increase_bytes": 0 }] }),
+        )
+        .await;
+        sqlx::query("DROP TABLE build_artifact_sizes")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let ctx = load_context(&pool, "b2").await.unwrap().unwrap();
+        // The reporter passes no sizes when loading them fails.
+        let reports = platform_reports(&ctx, None, &[], None);
+        let android = github_check_run(&ctx, &reports[0]);
+        assert_eq!(android["conclusion"], "success");
+        assert_eq!(android["output"]["title"], "Build #2 succeeded");
+        assert!(
+            summary(&android).contains("**The size budget could not be checked.**"),
+            "{}",
+            summary(&android)
+        );
+    }
+
+    #[tokio::test]
+    async fn any_growth_from_an_empty_baseline_exceeds_a_percent_limit() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        sized_builds(
+            &pool,
+            &[
+                ("b1", 1, &[("app-release.aab", "aab", 0)]),
+                ("b2", 2, &[("app-release.aab", "aab", 2_048)]),
+            ],
+        )
+        .await;
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "fail", "rules": [{ "kind": "aab", "max_increase_percent": 1000 }] }),
+        )
+        .await;
+
+        let (android, _) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "failure");
+        assert!(
+            summary(&android).contains("| app-release.aab | Grows at most 1000% | +2.0 KB |"),
+            "{}",
+            summary(&android)
+        );
+    }
+
+    #[tokio::test]
+    async fn only_the_split_apk_over_its_budget_is_listed() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        sized_builds(
+            &pool,
+            &[
+                (
+                    "b1",
+                    1,
+                    &[
+                        ("app-arm64-v8a-release.apk", "apk", 20 * MB),
+                        ("app-x86_64-release.apk", "apk", 20 * MB),
+                    ],
+                ),
+                (
+                    "b2",
+                    2,
+                    &[
+                        ("app-arm64-v8a-release.apk", "apk", 22 * MB),
+                        ("app-x86_64-release.apk", "apk", 20 * MB + 512 * 1024),
+                    ],
+                ),
+            ],
+        )
+        .await;
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "fail", "rules": [{ "kind": "apk", "max_increase_bytes": MB }] }),
+        )
+        .await;
+
+        let (android, _) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "failure");
+        let text = summary(&android);
+        assert!(
+            text.contains(
+                "| app-arm64-v8a-release.apk | Grows at most 1.0 MB | +2.0 MB (+10.0%) |"
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("x86\\_64-release.apk | Grows"), "{text}");
     }
 }

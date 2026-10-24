@@ -48,8 +48,13 @@ export const MAX_SIZE_BUDGET_RULES = 20
 
 const SIZE_BUDGET_KIND = /^[a-z0-9]{1,16}$/
 
-/** Empty, or a number at least `min` (and above it when `exclusive`). */
-function optionalAmount(min: number, exclusive: boolean, message: string) {
+/** 1 TB: far above any app, and well inside a safe integer of bytes. */
+export const MAX_SIZE_BUDGET_MB = 1_048_576
+export const MAX_SIZE_BUDGET_PERCENT = 100_000
+const MEBIBYTE = 1024 * 1024
+
+/** Empty, or a number that passes `valid`. */
+function optionalAmount(valid: (amount: number) => boolean, message: string) {
   return z
     .string()
     .optional()
@@ -57,9 +62,7 @@ function optionalAmount(min: number, exclusive: boolean, message: string) {
       const trimmed = value?.trim()
       if (!trimmed) return true
       const amount = Number(trimmed)
-      return (
-        Number.isFinite(amount) && (exclusive ? amount > min : amount >= min)
-      )
+      return Number.isFinite(amount) && valid(amount)
     }, message)
 }
 
@@ -70,9 +73,19 @@ export const sizeBudgetRuleSchema = z
       .string()
       .trim()
       .regex(SIZE_BUDGET_KIND, 'Use a lowercase file extension, such as aab'),
-    max_mb: optionalAmount(0, true, 'Must be more than 0'),
-    max_increase_mb: optionalAmount(0, false, 'Must be 0 or more'),
-    max_increase_percent: optionalAmount(0, false, 'Must be 0 or more'),
+    // The server stores bytes, so a size must round to at least one byte.
+    max_mb: optionalAmount(
+      (mb) => Math.round(mb * MEBIBYTE) >= 1 && mb <= MAX_SIZE_BUDGET_MB,
+      `Must be more than 0 and at most ${MAX_SIZE_BUDGET_MB.toLocaleString('en-US')}`,
+    ),
+    max_increase_mb: optionalAmount(
+      (mb) => mb >= 0 && mb <= MAX_SIZE_BUDGET_MB,
+      `Must be 0 to ${MAX_SIZE_BUDGET_MB.toLocaleString('en-US')}`,
+    ),
+    max_increase_percent: optionalAmount(
+      (percent) => percent >= 0 && percent <= MAX_SIZE_BUDGET_PERCENT,
+      `Must be 0 to ${MAX_SIZE_BUDGET_PERCENT.toLocaleString('en-US')}`,
+    ),
   })
   .refine(
     (rule) =>

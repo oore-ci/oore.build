@@ -44,7 +44,8 @@ When a build succeeds, the GitHub check summary also shows the size of each
 artifact for that platform and how much it changed. Oore compares with the
 latest earlier successful build of the same pipeline on the base branch: the
 pull request's target branch, or the project's default branch for a push. A
-build on the default branch therefore compares with the one before it.
+build on the default branch therefore compares with the one before it. Builds
+of the same commit are skipped, so a re-run never compares with itself.
 
 Artifacts pair up by file name. When the name changes between builds, for
 example because it carries a version, an artifact pairs with the only file of
@@ -66,8 +67,11 @@ its file extension such as `aab`, `apk` or `ipa`. A rule sets any of:
 
 Sizes are in binary units, like the rest of Oore: 1 MB is 1,048,576 bytes.
 Every artifact of that kind on the check's platform must stay within all the
-limits its rule sets. When the build has no baseline, or an artifact has no
-match in it, only the max size applies.
+limits its rule sets. An artifact Oore cannot tie to a platform, such as a
+`.zip`, counts against every check of the build. When the build has no
+baseline, or an artifact has no match in it, only the max size applies, and
+the summary says so. Any growth from a 0-byte baseline is over a percent
+limit.
 
 The budget's mode decides what an artifact over its budget does:
 
@@ -77,6 +81,9 @@ The budget's mode decides what an artifact over its budget does:
   fails and its description names the first artifact and its change.
 - **Warn**: the check keeps its result. The GitHub summary shows a warning
   with the same table, and the GitLab status description mentions it.
+
+If Oore cannot load the sizes, the check keeps the build's result and its
+summary says the size budget could not be checked.
 
 Either way the build itself still succeeds, and its artifacts and releases are
 unaffected. A required check that fails blocks merging like any other failed

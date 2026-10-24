@@ -161,7 +161,7 @@ pub(crate) async fn load_size_report(
     build_id: &str,
 ) -> Result<Option<BuildSizeReport>, sqlx::Error> {
     let Some(build) = sqlx::query(
-        "SELECT b.pipeline_id, b.build_number, \
+        "SELECT b.pipeline_id, b.build_number, b.commit_sha, \
                 p.default_branch AS project_default_branch, \
                 r.default_branch AS repository_default_branch \
          FROM builds b \
@@ -196,12 +196,20 @@ pub(crate) async fn load_size_report(
              WHERE b.pipeline_id = ?1 AND b.branch = ?2 AND b.build_number < ?3 \
                AND (b.status = 'succeeded' OR (b.status = 'expired' AND b.expired_from = 'succeeded')) \
                AND EXISTS (SELECT 1 FROM build_artifact_sizes s WHERE s.build_id = b.id) \
+               AND (?5 IS NULL OR b.commit_sha IS NOT ?5) \
              ORDER BY b.build_number DESC LIMIT ?4",
         )
         .bind(build.get::<String, _>("pipeline_id"))
         .bind(branch)
         .bind(build.get::<i64, _>("build_number"))
         .bind(MAX_BASELINE_CANDIDATES)
+        // A rerun of the same commit, for example on the default branch, is
+        // the same code and would compare with itself.
+        .bind(
+            build
+                .get::<Option<String>, _>("commit_sha")
+                .filter(|sha| !sha.is_empty()),
+        )
         .fetch_all(pool)
         .await?;
         // A pull request whose head branch has the base branch's name, for
@@ -293,10 +301,11 @@ pub(crate) fn check_budget(report: &BuildSizeReport, budget: &SizeBudget) -> Vec
         {
             over(BudgetLimit::IncreaseBytes(max));
         }
+        // Any growth from an empty baseline is beyond every percent limit.
         if let Some((delta, baseline)) = change
             && let Some(max) = rule.max_increase_percent
-            && baseline > 0
-            && delta as f64 / baseline as f64 * 100.0 > max
+            && delta > 0
+            && (baseline <= 0 || delta as f64 / baseline as f64 * 100.0 > max)
         {
             over(BudgetLimit::IncreasePercent(max));
         }
@@ -376,6 +385,11 @@ pub(crate) fn format_size(bytes: i64) -> String {
 
 /// `+1.2 MB (+5.1%)`, `-300 B (-0.1%)` or `No change`.
 pub(crate) fn format_delta(delta: i64, baseline: i64) -> String {
+    format_delta_with(delta, baseline, 1)
+}
+
+/// [`format_delta`] with the percent to `decimals` places.
+pub(crate) fn format_delta_with(delta: i64, baseline: i64, decimals: usize) -> String {
     if delta == 0 {
         return "No change".to_string();
     }
@@ -383,7 +397,7 @@ pub(crate) fn format_delta(delta: i64, baseline: i64) -> String {
     let size = format_size(delta);
     if baseline > 0 {
         let percent = delta as f64 / baseline as f64 * 100.0;
-        format!("{sign}{size} ({percent:+.1}%)")
+        format!("{sign}{size} ({percent:+.decimals$}%)")
     } else {
         format!("{sign}{size}")
     }

@@ -141,6 +141,7 @@ export function PipelineSizeBudgetSection() {
                     <FormControl>
                       <Input
                         placeholder="aab"
+                        maxLength={16}
                         className="font-mono"
                         aria-label={`Rule ${index + 1} kind`}
                         {...field}

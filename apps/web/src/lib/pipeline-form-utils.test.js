@@ -260,9 +260,25 @@ test('schema rejects size budget rules without a limit, bad kinds and duplicates
         'size_budget_rules.1.kind',
         'Use a lowercase file extension, such as aab',
       ],
-      ['size_budget_rules.2.max_mb', 'Must be more than 0'],
-      ['size_budget_rules.2.max_increase_percent', 'Must be 0 or more'],
+      [
+        'size_budget_rules.2.max_mb',
+        'Must be more than 0 and at most 1,048,576',
+      ],
+      ['size_budget_rules.2.max_increase_percent', 'Must be 0 to 100,000'],
       ['size_budget_rules.3.kind', 'Another rule already covers this kind'],
     ]),
   )
+})
+
+test('schema rejects sizes that round to no bytes or exceed the cap', () => {
+  const rule = { kind: 'aab', max_increase_mb: '', max_increase_percent: '' }
+  const parse = (max_mb) =>
+    pipelineFormSchema.safeParse({
+      ...values,
+      size_budget_rules: [{ ...rule, max_mb }],
+    }).success
+  expect(parse('0.0000001')).toBe(false)
+  expect(parse('2000000')).toBe(false)
+  expect(parse('0.000001')).toBe(true)
+  expect(parse('30')).toBe(true)
 })
