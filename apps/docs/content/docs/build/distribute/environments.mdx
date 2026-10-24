@@ -56,13 +56,14 @@ track:
 - A **TestFlight group** track is the group's name as App Store Connect shows
   it. Several groups are separated by `, `, the same way an upload records
   them. TestFlight has no staged rollout, so the rollout policy is not used.
-- The **`app_store`** track is the app's App Store version. A rollout policy
-  with more than one step turns on Apple's phased release, which follows
-  Apple's own seven-day schedule (1, 2, 5, 10, 20, 50, 100%); Oore's steps and
-  interval do not change it. A policy with one step releases to everyone at
-  once. Turn on **Submit for review** to submit the version for App Review
-  after the build is attached; otherwise it waits for you to submit it in App
-  Store Connect.
+- The **`app_store`** track is the app's App Store version. Turn on
+  **Phased release** to release over seven days on Apple's schedule (1, 2, 5,
+  10, 20, 50, 100%); off releases to everyone once Apple approves the version.
+  From the API, a rollout policy with more than one step turns on phased
+  release; Oore's steps and interval do not change Apple's schedule. Turn on
+  **Submit for review** (`submit_for_review`) to submit the version for App
+  Review after the build is attached; otherwise it waits for you to submit it
+  in App Store Connect. Submit for review is only available on this track.
 
 From the API, use
 [Create environment](/openapi/operations/create_project_environment):
@@ -114,13 +115,18 @@ distribution makes:
   submits the build unless Apple already reviewed it, and the release shows
   **In review** until Apple decides.
 - **TestFlight to the App Store**: the build is attached to the app's App
-  Store version for that version string. If the app has no version with that
-  string, its editable version is renamed to it, as upload distribution does.
-  The notes the build was uploaded with become the version's "What's New".
-  Phased release is turned on or off from the environment's policy, and the
-  version is submitted for review when the environment says so. The release
-  shows **In review**, then follows App Review and phased release in App
-  Store Connect.
+  Store version with the same version string, which must be one Apple still
+  lets you edit. Create the version and prepare its "What's New" and other
+  metadata in App Store Connect first: promotion does not change the
+  version's release notes, so TestFlight "What to Test" notes never reach the
+  public listing. Phased release is turned on or off from the environment,
+  and the version is submitted for review when the environment says so. The
+  release shows **In review**, then follows App Review and phased release in
+  App Store Connect.
+
+Promotions into the App Store version are serialised per environment, and
+only one build at a time can hold the version: while another build's release
+is in review or releasing on it, a second build is refused.
 
 ```bash
 curl -X POST "$OORE_URL/v1/projects/$PROJECT_ID/promotions" \
@@ -137,13 +143,19 @@ release on the App Store itself is the end of the path.
 When App Store Connect cannot take the build, the promotion fails with
 `409` and one of these codes, and nothing changes in App Store Connect:
 
-| Code                         | Meaning                                                                                        |
-| ---------------------------- | ---------------------------------------------------------------------------------------------- |
-| `no_source_release`          | The build has no TestFlight release that testers have, or Oore did not upload it.              |
-| `build_expired`              | The build expired in TestFlight (after 90 days). Upload a new build.                           |
-| `no_editable_version`        | The app has no App Store version Apple lets you edit. Create the version in App Store Connect. |
-| `version_not_editable`       | The version for this version string is in review or live, so no other build can be attached.   |
-| `testflight_group_not_found` | App Store Connect has no TestFlight group with the environment's track name.                   |
+| Code                          | Meaning                                                                                                                                  |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `no_source_release`           | The build has no TestFlight release that testers have, or Oore did not upload it.                                                        |
+| `build_expired`               | The build expired in TestFlight (after 90 days). Upload a new build.                                                                     |
+| `no_editable_version`         | The app has no App Store version Apple lets you edit. Create the version in App Store Connect.                                           |
+| `version_mismatch`            | The editable version has another version string, such as 1.3.0 for a 1.2.0 build. Oore never renames it; change it in App Store Connect. |
+| `version_not_editable`        | The version for this version string is in review or live, so no other build can be attached.                                             |
+| `version_held_by_other_build` | Another build's release is in review or releasing on this version. Wait until it finishes or fails.                                      |
+| `testflight_group_not_found`  | App Store Connect has no TestFlight group with the environment's track name.                                                             |
+
+Other App Store Connect errors fail the promotion with `502 store_rejected`.
+A step may already have happened, such as attaching the build; the calls are
+safe to repeat, so promote again once the cause is fixed.
 
 ## 3. Approve a promotion
 
@@ -174,9 +186,9 @@ with the reason `environment deleted` in the audit log.
 
 - A build is promoted within one store. App Store releases are promoted from
   TestFlight only; an App Store version is not promoted further.
-- A promotion into the App Store never creates an App Store version. It uses
-  the version with the build's version string, or renames the app's editable
-  version.
+- A promotion into the App Store never creates or renames an App Store
+  version, and never sets its release notes. Uploads that publish straight to
+  the App Store keep doing both.
 - A build cannot be promoted into an environment where it already has a
   release, unless that release failed.
 - If the daemon stops during a promotion's store call, the promotion is

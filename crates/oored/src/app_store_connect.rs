@@ -476,11 +476,46 @@ impl<'a> AppStoreConnect<'a> {
     /// `ensure_version!`, an editable version with another version string is
     /// renamed rather than a second one created, which Apple would refuse.
     pub async fn find_or_create_version(&self, app_id: &str, version: &str) -> AscResult<String> {
-        if let Some(existing) = self.find_version(app_id, version).await? {
+        let versions: ListEnvelope = self
+            .get(
+                "App Store version lookup",
+                &format!("/v1/apps/{app_id}/appStoreVersions"),
+                &[
+                    ("filter[versionString]", version),
+                    ("filter[platform]", "IOS"),
+                    ("fields[appStoreVersions]", "versionString"),
+                    ("limit", "1"),
+                ],
+            )
+            .await?;
+        if let Some(existing) = versions.data.into_iter().next() {
             return Ok(existing.id);
         }
-        if let Some(existing) = self.find_editable_version(app_id).await? {
-            self.rename_version(&existing.id, version).await?;
+        let editable: ListEnvelope = self
+            .get(
+                "Editable App Store version lookup",
+                &format!("/v1/apps/{app_id}/appStoreVersions"),
+                &[
+                    ("filter[appVersionState]", EDITABLE_VERSION_STATES),
+                    ("filter[platform]", "IOS"),
+                    ("fields[appStoreVersions]", "versionString"),
+                    ("limit", "1"),
+                ],
+            )
+            .await?;
+        if let Some(existing) = editable.data.into_iter().next() {
+            self.patch(
+                "App Store version rename",
+                &format!("/v1/appStoreVersions/{}", existing.id),
+                json!({
+                    "data": {
+                        "type": "appStoreVersions",
+                        "id": existing.id,
+                        "attributes": { "versionString": version }
+                    }
+                }),
+            )
+            .await?;
             return Ok(existing.id);
         }
         let created = self
@@ -503,7 +538,9 @@ impl<'a> AppStoreConnect<'a> {
             .ok_or_else(|| AscError("App Store version creation returned no version".to_string()))
     }
 
-    /// The app's App Store version with this version string, in any state.
+    /// The app's App Store version with this version string, in any state,
+    /// with its state. Promotion only; upload distribution keeps
+    /// `find_or_create_version`.
     pub async fn find_version(&self, app_id: &str, version: &str) -> AscResult<Option<AscVersion>> {
         let versions: ListEnvelope = self
             .get(
@@ -514,7 +551,7 @@ impl<'a> AppStoreConnect<'a> {
                     ("filter[platform]", "IOS"),
                     (
                         "fields[appStoreVersions]",
-                        "versionString,appStoreState,appVersionState",
+                        "versionString,appVersionState,appStoreState",
                     ),
                     ("limit", "1"),
                 ],
@@ -527,7 +564,8 @@ impl<'a> AppStoreConnect<'a> {
             .map(AscVersion::from_resource))
     }
 
-    /// The app's version that Apple still lets the developer edit, if any.
+    /// The app's version that Apple still lets the developer edit, if any,
+    /// with its version string and state. Promotion only.
     pub async fn find_editable_version(&self, app_id: &str) -> AscResult<Option<AscVersion>> {
         let editable: ListEnvelope = self
             .get(
@@ -538,7 +576,7 @@ impl<'a> AppStoreConnect<'a> {
                     ("filter[platform]", "IOS"),
                     (
                         "fields[appStoreVersions]",
-                        "versionString,appStoreState,appVersionState",
+                        "versionString,appVersionState,appStoreState",
                     ),
                     ("limit", "1"),
                 ],
@@ -549,21 +587,6 @@ impl<'a> AppStoreConnect<'a> {
             .into_iter()
             .next()
             .map(AscVersion::from_resource))
-    }
-
-    pub async fn rename_version(&self, version_id: &str, version: &str) -> AscResult<()> {
-        self.patch(
-            "App Store version rename",
-            &format!("/v1/appStoreVersions/{version_id}"),
-            json!({
-                "data": {
-                    "type": "appStoreVersions",
-                    "id": version_id,
-                    "attributes": { "versionString": version }
-                }
-            }),
-        )
-        .await
     }
 
     pub async fn attach_build_to_version(&self, version_id: &str, build_id: &str) -> AscResult<()> {
@@ -832,7 +855,6 @@ pub(crate) trait AscApi {
     async fn find_or_create_version(&self, app_id: &str, version: &str) -> AscResult<String>;
     async fn find_version(&self, app_id: &str, version: &str) -> AscResult<Option<AscVersion>>;
     async fn find_editable_version(&self, app_id: &str) -> AscResult<Option<AscVersion>>;
-    async fn rename_version(&self, version_id: &str, version: &str) -> AscResult<()>;
     async fn attach_build_to_version(&self, version_id: &str, build_id: &str) -> AscResult<()>;
     async fn set_version_whats_new(
         &self,
@@ -877,9 +899,6 @@ impl AscApi for AppStoreConnect<'_> {
     }
     async fn find_editable_version(&self, app_id: &str) -> AscResult<Option<AscVersion>> {
         AppStoreConnect::find_editable_version(self, app_id).await
-    }
-    async fn rename_version(&self, version_id: &str, version: &str) -> AscResult<()> {
-        AppStoreConnect::rename_version(self, version_id, version).await
     }
     async fn attach_build_to_version(&self, version_id: &str, build_id: &str) -> AscResult<()> {
         AppStoreConnect::attach_build_to_version(self, version_id, build_id).await

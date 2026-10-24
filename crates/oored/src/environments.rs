@@ -741,9 +741,21 @@ pub(crate) async fn list_environments(
 /// the store call to the recorded outcome, so a build is never promoted into
 /// one environment twice at once.
 fn promotion_lock(build_id: &str, environment_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    keyed_lock(format!("{build_id}\n{environment_id}"))
+}
+
+/// One lock per environment whose builds share a single store slot: the App
+/// Store version an `app_store` environment attaches builds to. Held around
+/// the store call and the recorded outcome, after the build's promotion lock,
+/// so two builds are never attached to the version at once.
+fn store_slot_lock(environment: &ProjectEnvironment) -> Option<Arc<tokio::sync::Mutex<()>>> {
+    (environment.store == ReleaseStore::AppStore && environment.track == APP_STORE_TRACK)
+        .then(|| keyed_lock(format!("slot\n{}", environment.id)))
+}
+
+fn keyed_lock(key: String) -> Arc<tokio::sync::Mutex<()>> {
     static LOCKS: LazyLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> =
         LazyLock::new(Mutex::default);
-    let key = format!("{build_id}\n{environment_id}");
     let mut locks = LOCKS
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1158,6 +1170,11 @@ async fn execute_promotion(
     actor: &ReleaseActor,
     reason: Option<&str>,
 ) -> Result<Release, EnvironmentError> {
+    let slot = store_slot_lock(environment);
+    let _slot = match &slot {
+        Some(lock) => Some(lock.lock().await),
+        None => None,
+    };
     let (state, fraction, store_fraction) = initial_rollout(environment);
     let target = PromotionTarget {
         track: &environment.track,
