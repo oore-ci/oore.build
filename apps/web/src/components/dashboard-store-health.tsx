@@ -260,16 +260,12 @@ function IssueRow({ issue }: { issue: StoreErrorIssue }) {
   )
 }
 
-function AppRow({ app }: { app: StoreAppVitals }) {
+function AppRow({ app, anchor }: { app: StoreAppVitals; anchor?: string }) {
   const status = appStatus(app)
   const issues = app.issues.slice(0, 3)
   const storeLabel = RELEASE_STORE_LABEL[app.store]
   return (
-    <Stack
-      id={storeHealthAnchor(app.project_id, app.store)}
-      gap={3}
-      className="scroll-mt-20 p-4"
-    >
+    <Stack id={anchor} gap={3} className="scroll-mt-20 p-4">
       <Stack gap={3} className="@3xl/main:flex-row @3xl/main:items-center">
         <div className="flex min-w-0 items-start justify-between gap-3 @3xl/main:w-64 @3xl/main:shrink-0">
           <div className="flex min-w-0 flex-col">
@@ -298,8 +294,7 @@ function AppRow({ app }: { app: StoreAppVitals }) {
           </div>
         ) : !app.error ? (
           <Text variant="caption" className="flex-1">
-            Oore reads this app's numbers within a few minutes of its first
-            release.
+            Oore reads this app's numbers within a few minutes.
           </Text>
         ) : (
           <div className="flex-1" />
@@ -373,7 +368,7 @@ function AppRow({ app }: { app: StoreAppVitals }) {
   )
 }
 
-/** Crash, ANR, hang and launch numbers from the stores, one row per released app. */
+/** Crash, ANR, hang and launch numbers from the stores, one row per released or configured app. */
 export function DashboardStoreHealth() {
   const vitalsQuery = useStoreVitals()
   const refresh = useRefreshStoreVitals()
@@ -420,10 +415,19 @@ export function DashboardStoreHealth() {
         <Skeleton className="h-36 w-full" />
       ) : (
         <DashboardList>
-          {apps.map((app) => ({
-            key: `${app.project_id}-${app.store}-${app.app_identifier}`,
-            node: <AppRow app={app} />,
-          }))}
+          {apps.map((app, index) => {
+            const anchor = storeHealthAnchor(app.project_id, app.store)
+            // A project can have several apps in one store; links land on its first.
+            const first =
+              apps.findIndex(
+                (other) =>
+                  storeHealthAnchor(other.project_id, other.store) === anchor,
+              ) === index
+            return {
+              key: `${app.project_id}-${app.store}-${app.app_identifier}`,
+              node: <AppRow app={app} anchor={first ? anchor : undefined} />,
+            }
+          })}
         </DashboardList>
       )}
     </DashboardSection>

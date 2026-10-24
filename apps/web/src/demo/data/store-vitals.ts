@@ -152,6 +152,16 @@ const demoStoreApps: Array<Omit<StoreAppVitals, 'project_name'>> = [
       'Google Play refused the request: the service account needs View app information for this app.',
     refreshed_at: null,
   },
+  {
+    // Set up to publish in a pipeline, not released through Oore yet.
+    project_id: PROJECT_IDS.nativePayments,
+    store: 'google_play',
+    app_identifier: 'build.oore.demo.payments.merchant',
+    vitals: [],
+    issues: [],
+    error: null,
+    refreshed_at: null,
+  },
 ]
 
 /** Mirrors `GET /v1/store-vitals` for the projects a persona can see. */
