@@ -5,8 +5,8 @@ description: 'Define internal, beta and production environments on a project and
 ---
 
 An environment names where a project's releases go: a store, a track, the
-staged rollout for releases promoted into it, and whether a promotion needs a
-maintainer's approval. A build that passed internal testing is promoted to
+staged rollout for releases promoted into it, and whether a promotion needs an
+approval, and from whom. A build that passed internal testing is promoted to
 beta or production as the same version code, or, on the App Store, as the
 same TestFlight build. Nothing is rebuilt or uploaded again, so what users
 get is exactly what testers checked.
@@ -17,8 +17,9 @@ publish settings decide where its uploads go.
 ## What you need
 
 - Project maintainer, instance admin, or instance owner access to add
-  environments and to promote or approve. Developers can ask for a promotion
-  into an environment that requires approval.
+  environments and to promote. Developers can ask for a promotion into an
+  environment that requires approval. Who approves is set per environment;
+  by default it is any maintainer.
 - Google Play publishing set up on the pipeline that builds the app. See
   [Publish to Google Play](/build/distribute/google-play). Promotion uses the
   same service account, from the daemon host.
@@ -32,7 +33,8 @@ publish settings decide where its uploads go.
 
 On the project, open the **Environments** tab and select **Add environment**.
 Set **Name**, **Key**, **Store**, and **Track**, turn on **Require approval**
-where a maintainer must sign off, and set the rollout. Add them in promotion
+where someone must sign off (see [Choose who approves](#choose-who-approves)),
+and set the rollout. Add them in promotion
 order, for example:
 
 | Name       | Key          | Track        | Approval | Rollout                           |
@@ -103,7 +105,7 @@ track, add a new environment.
    environments in the store the build was released to.
 3. In **Reason**, say why, such as `QA signed off on 2.4.0`.
 4. Select **Promote**. When the target requires approval, the button reads
-   **Ask to promote** and the promotion waits for a maintainer.
+   **Ask to promote** and the promotion waits for an approver.
 
 On Google Play, the daemon assigns the release's version code to the target
 track in one Play edit, keeping its release name and notes, then records a
@@ -151,9 +153,50 @@ dialog shows why. See [Troubleshooting](#troubleshooting).
 ## 3. Approve a promotion
 
 When the target environment requires approval, the promotion waits under
-**Waiting for approval** and nothing changes in the store. A maintainer selects
-**Approve** to make the store change, or **Reject** to drop it. The approval
-is the release's approval, so the new release does not wait again.
+**Waiting for approval** and nothing changes in the store. Each waiting
+promotion says who can approve it. One of them selects **Approve** to make the
+store change, or **Reject** to drop it. The approval is the release's
+approval, so the new release does not wait again.
+
+### Choose who approves
+
+By default any project maintainer approves. To narrow or widen that, edit the
+environment and, with **Require approval** on, set:
+
+- **Who can approve**: Maintainers, Developers and maintainers, or Only named
+  approvers.
+- **Named approvers**: project members who are developers or maintainers. A
+  named developer can approve even when developers as a whole cannot.
+
+Someone may approve when their role is allowed, or when they are named. With
+only named approvers, other maintainers cannot approve or reject; they get
+`403 permission_denied`. Instance owners and admins can always approve.
+Approvals are interactive: an API token cannot approve or reject a promotion,
+whatever its role, and gets `403 permission_denied`. Maintainers can still
+edit the environment, including its approvers, and the audit log records each
+change.
+
+From the API, set `approvers` when you create or update the environment. It
+replaces the whole set; leaving it out, or sending `null`, keeps the current
+set, and `{}` goes back to any maintainer (so does `"role": "maintainer"` with
+nobody named). Only project members who are developers or maintainers can be
+named (otherwise `400 invalid_input`), at most 20.
+
+```bash
+curl -X PATCH "$OORE_URL/v1/projects/$PROJECT_ID/environments/$ENVIRONMENT_ID" \
+  -H "Authorization: Bearer $OORE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{ "approvers": { "role": "maintainer", "user_ids": ["'"$QA_LEAD_ID"'"] } }'
+```
+
+Someone removed from the project, or changed to the viewer role, stops being
+an approver. If no named approvers are left and no role is set, any
+maintainer approves again.
+
+The person who asked for a promotion can approve it when they are an
+approver. The `promotion_approved` audit entry records `self_approval`,
+`decided_as` (`maintainer`, `approver_role`, `named_approver` or
+`instance_admin`) and the environment's approvers at that moment.
 
 Approval applies to promotions only. A maintainer who records a release
 directly with [Create release](/openapi/operations/create_release)
@@ -193,8 +236,14 @@ release, unless that release failed.
 
 ### The dialog says a promotion is already waiting for approval
 
-Someone already asked to promote this build there. A maintainer approves or
-rejects it under **Waiting for approval**.
+Someone already asked to promote this build there. One of the environment's
+approvers approves or rejects it under **Waiting for approval**.
+
+### Approve says only certain people can approve
+
+The environment names its approvers. The message and the waiting promotion
+say who they are. Ask one of them, or have a maintainer change the
+environment's approvers.
 
 ### An App Store promotion fails
 
@@ -233,8 +282,8 @@ Store version for release. Follow the review in App Store Connect.
 - A promotion into the App Store never creates or renames an App Store
   version, and never sets its release notes. Uploads that publish straight to
   the App Store keep doing both.
-- Per-environment approvers, notification channels, QA groups and secrets are
-  not configurable yet.
+- Per-environment notification channels, QA groups and secrets are not
+  configurable yet.
 
 ## Next step
 
