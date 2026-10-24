@@ -1,0 +1,14 @@
+# Cloudflare Pages redirects for pages that moved. Keep old URLs working:
+# add a line here whenever a page under content/docs moves or is removed.
+/start/first-build /start/android/first-build 301
+/operate/deploy /concepts/which-setup 301
+/operate/known-limitations /reference/known-limitations 301
+/understand /concepts 301
+/understand/architecture /concepts/architecture 301
+/understand/artifact-delivery /concepts/artifact-delivery 301
+/understand/build-lifecycle /concepts/build-lifecycle 301
+/understand/multiple-instances /concepts/multiple-instances 301
+/understand/pipeline-configuration /concepts/pipeline-configuration 301
+/understand/runner-trust /concepts/runner-trust 301
+/understand/security /concepts/security 301
+/understand/signing /concepts/signing 301

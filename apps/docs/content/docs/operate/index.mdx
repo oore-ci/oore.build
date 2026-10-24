@@ -1,36 +1,59 @@
 ---
 title: 'Operate Oore'
 status: implemented
-description: 'Choose a supported topology, maintain your installation, and recover from operational problems.'
+description: 'Task guides for browser clients, runners, storage, deployment, maintenance, and troubleshooting.'
 ---
 
-Start with Oore's complete one-Mac installation. It keeps `oored`, the local
-web client, a managed Direct macOS runner, and automatic local artifact storage
-on one Mac. Add network, identity, or storage infrastructure only when your
-team needs it.
+These guides keep an Oore instance running and grow it when your team needs
+more. Start from the one-Mac Complete install. Add one piece at a time, and
+check it works before you add the next. To decide what to add, read
+[Which setup do I need?](/concepts/which-setup).
 
-## Choose an operating path
+## Reach Oore from other devices
 
-- [Choose a supported deployment](/operate/deploy) before exposing Oore beyond
-  loopback or splitting roles across hosts.
-- [Connect the hosted UI](/operate/access/hosted-ui) or
-  [self-host the static UI](/operate/access/self-hosted-ui) when you need a
-  different browser client.
-- [Add a Direct macOS runner](/operate/runners/direct) when builds should run
-  on another Mac.
-- [Configure artifact storage](/operate/storage/artifacts) when the automatic
-  local provider no longer fits.
+- [Connect the hosted UI](/operate/access/hosted-ui) at `ci.oore.build`.
+- [Connect Cloudflare Tunnel and Access](/operate/access/cloudflare-access)
+  to put a loopback backend behind HTTPS.
+- [Self-host the static UI](/operate/access/self-hosted-ui).
+- [Add another Oore instance](/operate/instances/add) to the same browser, and
+  [switch between instances](/operate/instances/switch).
 
-## Maintain and recover
+## Build on more Macs
 
-- [Monitor Oore](/operate/maintain/monitor), then
-  [create and verify a backup](/operate/maintain/backups/create) before an
-  upgrade.
-- [Upgrade Oore](/operate/maintain/upgrade) on the installation's current
-  channel.
-- Start with [Troubleshoot Oore](/operate/troubleshoot) when behavior changes.
-  Use [Reset an Oore installation](/operate/recover/reset) only after you have
-  exhausted the narrower recovery path.
+- [Add a Direct macOS runner](/operate/runners/direct) on another Mac.
+- [Route builds with runner labels](/operate/runners/labels).
+- [Run builds in VMs](/operate/runners/vm-isolation) for a clean machine per
+  build.
+- [Manage dependency caches](/operate/runners/caches).
+- [Split Oore across Macs](/operate/deploy/split-roles), or
+  [run a Web node on Linux](/operate/deploy/linux-web-node).
 
-For current product boundaries, see
-[Review known limitations](/operate/known-limitations).
+## Store artifacts
+
+[Configure artifact storage](/operate/storage/artifacts) on the Mac or in S3
+or R2.
+
+## Maintain
+
+1. [Monitor Oore](/operate/maintain/monitor).
+2. [Create and verify a backup](/operate/maintain/backups/create) before every
+   upgrade.
+3. [Upgrade Oore](/operate/maintain/upgrade) on the current channel, or
+   [choose a release channel](/operate/releases).
+4. [Restore a backup](/operate/maintain/backups/restore) when you need to.
+
+## Fix problems
+
+- [Troubleshoot Oore](/operate/troubleshoot) routes each symptom to the right
+  check.
+- [Reset an Oore installation](/operate/recover/reset) only after narrower
+  fixes fail.
+- [Report an issue](/operate/support/report-an-issue) with the details
+  maintainers need.
+- [Known limitations](/reference/known-limitations) lists what Oore does not
+  support.
+
+## Next step
+
+[Monitor Oore](/operate/maintain/monitor), then
+[create and verify a backup](/operate/maintain/backups/create).

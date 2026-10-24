@@ -1,0 +1,117 @@
+---
+title: 'Sign an Android release'
+status: implemented
+description: 'Create an upload key, add it to a release pipeline, and build a signed App Bundle.'
+---
+
+On this page you create a second pipeline that builds a release App Bundle
+(`.aab`) and signs it with your upload key. Google Play accepts only App
+Bundles signed with that key, so this is the build you deliver to testers on
+the next page.
+
+## What you need
+
+- The project from [Build your first Android app](/start/android/first-build),
+  with one successful build.
+- A JDK for `keytool`. Android Studio includes one.
+- Your app's application ID, such as `com.example.app`, from
+  `android/app/build.gradle` or `android/app/build.gradle.kts`.
+
+## 1. Create an upload key
+
+If the app is already on Google Play, skip this step and use your existing
+upload keystore.
+
+Otherwise, create one. Android Studio's JDK is at
+`/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin`:
+
+```bash
+keytool -genkeypair -v -keystore upload-keystore.jks \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -alias upload
+```
+
+`keytool` asks for a store password, your name and organization, and a key
+password. Write down both passwords and the alias `upload`.
+
+<Callout type="warning" title="Keep a backup">
+
+Store the keystore and its passwords in a password manager or another secure
+place outside Oore. If you lose the upload key, you must ask Google to reset
+it before you can publish updates.
+
+</Callout>
+
+## 2. Create the release pipeline
+
+1. Open the project and its **Pipelines** tab, then select **Add pipeline**.
+2. Under **Start from**, select **Release Android**. The pipeline is named
+   `Release Android`, and **Enable release signing** is already turned on
+   under **Signing > Android**.
+3. Under **Signing > Android**, select the keystore file for
+   **Release keystore (.jks)**. Enter **Release key alias**,
+   **Release store password**, and **Release key password**.
+4. Under **Build > Commands**, open
+   **Per-platform arguments and overrides**. In
+   **Android command override**, enter:
+
+   ```bash
+   flutter build appbundle --release --build-number=$OORE_VERSION_CODE
+   ```
+
+   Oore's default Android command builds an APK. This command builds the App
+   Bundle that Google Play needs instead. `$OORE_VERSION_CODE` gives every
+   build a higher version code than the last, which Google Play requires.
+
+5. Select **Create pipeline**.
+
+Oore uploads the keystore, then opens **Run build** with the new pipeline
+selected.
+
+## 3. Run the release build
+
+Check the **Branch**, then select **Run build**.
+
+Your repository's commands never see the keystore or its passwords. After
+Flutter builds the bundle, the runner signs it with your upload key in a
+separate step named `android-sign`, outside the repository checkout. Any
+signature the Gradle build added is replaced.
+
+## Check the result
+
+The build ends as **Succeeded**, and its log shows an `android-sign` step. Under
+**Artifacts**, download `app-release.aab`, then check its signature:
+
+```bash
+jarsigner -verify app-release.aab
+keytool -printcert -jarfile app-release.aab
+```
+
+`jarsigner` prints `jar verified.` It also warns that the certificate is
+self-signed. Upload keys are self-signed, so you can ignore that warning.
+`keytool` prints an `Owner` line with the name you entered in step 1.
+
+## Troubleshooting
+
+**Oore rejects the signing profile when you save**
+
+The keystore file, alias, and passwords must all belong to the same keystore.
+Check the alias with `keytool -list -keystore upload-keystore.jks`.
+
+**The build fails with "artifact patterns matched no files"**
+
+The command did not produce a bundle under `build/app/outputs/bundle/release`.
+Check that the override is exactly the command above, without a
+`--flavor`. For flavored apps, see
+[Add Android signing](/build/sign/android).
+
+**Gradle fails because it cannot find a local `key.properties`**
+
+The repository's Gradle file loads signing details that exist only on
+developer machines. Make it skip local signing when `CI` is true, as in
+[Configure Gradle for Android signing](/build/sign/android/gradle). Oore sets
+`CI=true` for repository commands.
+
+## Next step
+
+[Deliver the release to testers on Google Play](/start/android/google-play).

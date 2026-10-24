@@ -8,9 +8,24 @@ A pipeline's triggers decide which source events start a build. Its timeout
 caps how long a running build may take, and its approval policy can hold a
 build until a project maintainer releases it.
 
-These settings live on the pipeline, not in `.oore.yaml`, so a commit cannot
-loosen them. Set them with
-[Update a pipeline](/openapi/operations/update_pipeline).
+Set them on the pipeline's **Edit** page, under **Triggers**: **Events**,
+branch and tag patterns, **Changed paths**, **Schedules**, **Limits**, and
+**Approval**. For automation, use
+[Update a pipeline](/openapi/operations/update_pipeline). The sections below
+use the API field names.
+
+Timeouts and approvals live only on the pipeline, so a commit cannot loosen
+them. A `.oore.yaml` version 2 file can set `on`, which replaces the trigger
+settings for events. See
+[Triggers in version 2](/reference/config/oore-yaml-v2#triggers).
+
+## What you need
+
+- Project developer, maintainer, instance admin, or instance owner access.
+  Changing the approval policy needs maintainer access or higher.
+- For push, tag, and pull request triggers, a project connected to
+  [GitHub](/build/sources/github) or [GitLab](/build/sources/gitlab).
+  A repository on the Oore Mac builds from the UI, the API, or a schedule.
 
 ## Branches and tags
 
@@ -104,3 +119,14 @@ A waiting build that is canceled or superseded stops waiting for approval.
 Only project maintainers, instance admins and the instance owner can change
 the approval policy. To approve or reject a waiting build, see
 [Approve a build](/build/run/approve).
+
+## Verify the result
+
+Push a commit or tag that should match, and confirm that a build starts with
+the expected event and ref. Push one that should not match, and confirm that
+no build starts.
+
+## Next step
+
+[Approve a build](/build/run/approve) that waits for a maintainer, or
+[see builds on pull requests](/build/run/pull-request-checks).

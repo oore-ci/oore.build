@@ -12,7 +12,7 @@ profiles.
 
 - Project developer, maintainer, instance admin, or instance owner access.
 - [App Store Connect signing](/build/sign/ios/app-store-connect) in API or
-  hybrid mode for the pipeline.
+  hybrid mode for the pipeline, with **Distribution** set to **Ad hoc**.
 - The device name and UDID.
 
 ## 1. Find the UDID
@@ -27,9 +27,9 @@ On a Mac, use either method:
 ## 2. Register the device
 
 1. Open the project and edit the pipeline.
-2. Find **Registered iOS Devices**.
+2. Find **Registered iOS devices**.
 3. Enter **Device name** and **UDID**.
-4. Select **Register Device**.
+4. Select **Register device**.
 
 Oore registers the device through App Store Connect. In API or hybrid mode it
 also attempts to synchronize provisioning profiles after registration.
@@ -39,13 +39,13 @@ operation.
 
 ## 3. Synchronize when needed
 
-If the result says only **Device registered**, select **Sync Profiles** and
+If the result says only **Device registered**, select **Sync profiles** and
 note the warning count. A successful automatic path reports
 **Device registered and profiles synced**.
 
 ## Verify the result
 
-The device appears under **Registered iOS Devices** with its name, normalized
+The device appears under **Registered iOS devices** with its name, normalized
 UDID, and Apple status. The signing summary contains an updated profile for
 each bundle identifier that the device must install.
 
@@ -63,7 +63,7 @@ Apple team.
 
 **Registration succeeds but profile sync reports warnings**
 
-Run **Sync Profiles** again after confirming the bundle identifiers,
+Run **Sync profiles** again after confirming the bundle identifiers,
 certificate, and profile access. Do not use an older profile that omits the new
 device.
 

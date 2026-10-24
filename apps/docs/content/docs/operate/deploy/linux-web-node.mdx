@@ -133,3 +133,8 @@ If the update fails, Oore keeps the previous release and shows the failure after
 If Oore says that only the instance owner can manage updates, read the reason it gives. Behind a Trusted Proxy, `oore-web` forwards the identity header only when the upstream proxy also sends the upstream proof. Without `--upstream-trusted-proxy-secret-file`, it strips the header and the control plane does not recognize the session.
 
 Containers and process managers such as pm2 are not supported for updates from the web UI. Replace the container image or archive instead.
+
+## Next step
+
+[Monitor Oore](/operate/maintain/monitor) and include the Web node in your
+[upgrade plan](/operate/maintain/upgrade).

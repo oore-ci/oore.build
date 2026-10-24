@@ -1,0 +1,44 @@
+---
+title: 'How Oore works'
+status: implemented
+description: 'Short explanations of the choices and boundaries behind Oore, linked from the tasks that need them.'
+---
+
+These pages explain why Oore behaves the way it does. Read one when a task
+raises a question. You do not need them before your first build.
+
+## Before you install
+
+- [Which setup do I need?](/concepts/which-setup) compares Local Only and
+  External Access, local and connected repositories, browser clients, and one
+  Mac against several.
+- [How Oore is structured](/concepts/architecture) shows what the browser
+  client, `oore`, `oored`, and the Direct macOS runner each do.
+
+## While you build
+
+- [How a build moves from queue to artifact](/concepts/build-lifecycle)
+  follows one build through selection, execution, signing, and delivery.
+- [How Oore chooses pipeline configuration](/concepts/pipeline-configuration)
+  explains when `.oore.yaml` wins over the settings saved in the UI.
+- [How Oore trusts Direct macOS runners](/concepts/runner-trust) explains why
+  creating a project is a trust decision, not a sandbox.
+
+## While you ship
+
+- [How signing works in Oore](/concepts/signing) explains how the runner signs
+  builds without giving keys to repository code.
+- [How artifact delivery works](/concepts/artifact-delivery) connects storage,
+  short-lived download links, and installs on phones.
+
+## As the team grows
+
+- [Oore's security model](/concepts/security) separates sign-in, roles,
+  repository trust, and secrets.
+- [How multiple instances stay separate](/concepts/multiple-instances)
+  explains what happens when one browser connects to several backends.
+
+## Next step
+
+Start with [Which setup do I need?](/concepts/which-setup) if you have not
+installed Oore yet.

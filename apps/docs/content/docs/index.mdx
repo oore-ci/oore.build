@@ -1,50 +1,66 @@
 ---
 status: implemented
 title: Oore documentation
-description: 'Build and distribute Flutter apps from your own Mac with Oore.'
+description: 'Build, sign, and ship Flutter apps from Macs you control.'
 ---
 
-Oore is for Flutter teams that want builds and artifacts to stay on hardware
-they control. Start on one Mac, build a debug APK from a local Git repository,
-and expand only when your team needs more.
+Oore builds Flutter apps on your own Macs and delivers them to testers, Google
+Play, and the App Store. Builds, signing keys, and artifacts stay on hardware
+you operate. Pick the goal closest to yours.
 
-## Start on one Mac
+## Start from nothing
 
 <Cards>
-  <Card title="Build your first debug APK" href="/start">
-    Install Oore in Local Only, create a project from a repository on your Mac,
-    and run **Quick Debug APK**.
+  <Card title="Install Oore on one Mac" href="/start">
+    Check the Mac, install Oore in Local Only, and open the web UI.
+  </Card>
+  <Card
+    title="Ship an Android app to testers"
+    href="/start/android/first-build"
+  >
+    Build a debug APK, sign a release, and send it to testers on Google Play.
+  </Card>
+  <Card title="Ship an iOS app to TestFlight" href="/start/ios/first-build">
+    Build for iOS, sign with an App Store Connect key, and deliver through
+    TestFlight and the App Store.
+  </Card>
+  <Card title="Decide which setup you need" href="/concepts/which-setup">
+    Compare Local Only and External Access, local and connected repositories,
+    and one Mac against several.
   </Card>
 </Cards>
-
-The default install includes `oored`, the `oore` operator CLI, a local web
-client, a managed Direct macOS runner, and automatic local artifact storage.
 
 ![Oore dashboard showing system status, active builds, and recent build activity](/demo-dashboard.png)
 
-## After your first build
+## Do one thing with an existing install
 
 <Cards>
-  <Card title="Build and distribute" href="/build">
-    Create projects and pipelines, connect Sources, sign builds, and deliver
-    artifacts.
+  <Card
+    title="Build on every push and check pull requests"
+    href="/build/sources/github"
+  >
+    Connect GitHub or GitLab, then let pushes and pull requests start builds.
   </Card>
-  <Card title="Team and access" href="/team">
-    Invite people, manage access, and configure External Access.
+  <Card
+    title="Keep the pipeline in the repository"
+    href="/build/pipelines/oore-yaml"
+  >
+    Move a pipeline from the UI into `.oore.yaml` so it changes with the code.
   </Card>
-  <Card title="Operate Oore" href="/operate">
-    Choose a deployment, manage runners and storage, update, back up, and
-    troubleshoot.
+  <Card title="Let the team sign in" href="/team/access">
+    Turn on External Access, then invite people and give them project roles.
   </Card>
-  <Card title="Understand Oore" href="/understand">
-    Learn how builds, runners, signing, artifacts, and instance security fit
-    together.
-  </Card>
-  <Card title="Reference" href="/reference">
-    Look up commands, configuration, states, roles, and generated API
-    operations.
+  <Card title="Keep Oore running" href="/operate">
+    Add runners, upgrade, back up, and troubleshoot.
   </Card>
 </Cards>
+
+## Look something up
+
+- [How Oore works](/concepts) explains the architecture, build lifecycle,
+  repository trust, signing, and artifact delivery.
+- [Reference](/reference) lists every command, configuration field, state,
+  role, error code, and API operation.
 
 <Callout title="Hosted UI">
   `ci.oore.build` is an optional browser client for an Oore backend that is

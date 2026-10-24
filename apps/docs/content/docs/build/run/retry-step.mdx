@@ -55,3 +55,20 @@ The new build shows `succeeded` and links back to the original build. Its
 
 The HTTP contract is available in
 [Retry a build step](/openapi/operations/retry_build_step).
+
+## Troubleshooting
+
+**The retry action is missing**
+
+The upload already succeeded, the artifact expired, or publishing for that
+store is off. Run a new build with **Re-run**.
+
+**The retry fails with the same error**
+
+The retry uses the pipeline's current publish settings and secrets. Fix the
+setting or permission named in the error first, then retry again.
+
+## Next step
+
+[Promote builds between environments](/build/distribute/environments) once
+the upload succeeds.

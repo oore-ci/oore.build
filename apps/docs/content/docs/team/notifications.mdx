@@ -69,3 +69,15 @@ Oore works out who to mention in this order:
 To find a member ID in Slack, open the person's profile, select the **More** menu, and choose **Copy member ID**.
 
 The test message checks the mapping for your own sign-in email first, then the bot token.
+
+## Verify the result
+
+Send the channel's test message from **Settings > Notifications**. Slack shows
+it in the channel, with a mention when the mapping or bot token resolves your
+email.
+
+## Next step
+
+[Require approval for builds](/build/pipelines/triggers#approval) and
+subscribe the channel to `build_approval_needed`, so maintainers hear when a
+build waits for them.

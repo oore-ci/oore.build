@@ -36,12 +36,11 @@ Record the store password, alias, and key password when prompted.
 ## 2. Add the signing profile
 
 1. Open the project, then open the pipeline for editing.
-2. Expand **Android Signing**.
-3. Turn on **Enable release signing**.
-4. Select the **Release keystore (.jks)** file.
-5. Enter **Release key alias**, **Release store password**, and
+2. Under **Signing > Android**, turn on **Enable release signing**.
+3. Select the **Release keystore (.jks)** file.
+4. Enter **Release key alias**, **Release store password**, and
    **Release key password**.
-6. Select **Save**.
+5. Select **Save changes**.
 
 Use **Enable debug signing** only when that pipeline's supported Flutter build
 command produces a debug artifact that needs a specific key.
@@ -69,8 +68,12 @@ apksigner verify --print-certs my-app-release.apk
 For an App Bundle, use:
 
 ```bash
-jarsigner -verify -strict my-app-release.aab
+jarsigner -verify my-app-release.aab
 ```
+
+The output includes `jar verified.` Do not add `-strict`. Upload keys are
+self-signed and App Bundles are not timestamped, which `-strict` reports as
+errors even for a correctly signed bundle.
 
 ## Troubleshooting
 

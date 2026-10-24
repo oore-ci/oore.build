@@ -1,9 +1,9 @@
 {
-  "title": "Build and distribute",
+  "title": "Build and ship",
   "pagesIndex": "index",
   "pages": [
     "index",
-    "projects",
+    "...projects",
     "pipelines",
     "run",
     "sources",

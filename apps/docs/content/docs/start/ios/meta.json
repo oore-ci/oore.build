@@ -1,0 +1,4 @@
+{
+  "title": "Ship an iOS app",
+  "pages": ["first-build", "signing", "testflight"]
+}

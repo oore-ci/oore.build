@@ -198,7 +198,7 @@ The runner reads the file from the pinned checkout used for the build. A
 configuration source is active. The version picks the VM image for
 `isolation: vm`. A host build uses the Runner's installed Flutter and fails
 when a pinned release does not match it; see
-[Install a pinned Flutter for host builds](/start/prerequisites#install-a-pinned-flutter-for-host-builds).
+[Install Flutter where the runner can find it](/start/prerequisites#2-install-flutter-where-the-runner-can-find-it).
 A repository file replaces the UI execution
 configuration for that run.
 
@@ -208,6 +208,6 @@ Validate the file before committing:
 oore pipeline validate .oore.yaml
 ```
 
-See [Configure a repository pipeline](/build/pipelines/oore-yaml) for the task
+See [Move a pipeline into `.oore.yaml`](/build/pipelines/oore-yaml) for the task
 and [`oore pipeline validate`](/reference/cli/oore-pipeline-validate) for the
 command contract.

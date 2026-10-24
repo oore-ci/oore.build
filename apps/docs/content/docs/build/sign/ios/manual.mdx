@@ -20,20 +20,22 @@ Oore signing capability token.
 
 ## 1. Open iOS signing
 
-Open the project, edit the pipeline, and expand **iOS Signing**.
+Open the pipeline, select **Edit**, and find **Signing > iOS**.
 
 ## 2. Add the manual assets
 
-1. Turn on **Enable iOS ad hoc signing**.
-2. For **Signing mode**, select
+1. Turn on **Enable iOS signing**.
+2. For **Distribution**, keep **Ad hoc** for installs on registered devices,
+   or choose **App Store** for TestFlight and the App Store.
+3. For **Signing mode**, select
    **Manual (.p12 + provisioning profiles)**.
-3. Enter **Apple Team ID**.
-4. Enter **Bundle identifiers**, with the main application first and one
+4. Enter **Apple Team ID**.
+5. Enter **Bundle identifiers**, with the main application first and one
    extension bundle ID per line.
-5. Upload **Distribution certificate (.p12)** and enter **P12 password**.
-6. Under **Provisioning profiles by bundle ID**, upload the matching
+6. Upload **Distribution certificate (.p12)** and enter **P12 password**.
+7. Under **Provisioning profiles by bundle ID**, upload the matching
    `.mobileprovision` file for each bundle.
-7. Select **Save**.
+8. Select **Save changes**.
 
 For automation, use the generated
 [Update iOS signing configuration](/openapi/operations/update_pipeline_ios_signing)

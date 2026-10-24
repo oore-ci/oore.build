@@ -1,15 +1,16 @@
 {
-  "title": "Understand Oore",
+  "title": "Concepts",
   "pagesIndex": "index",
   "pages": [
     "index",
+    "which-setup",
     "architecture",
     "build-lifecycle",
     "pipeline-configuration",
+    "runner-trust",
     "signing",
     "artifact-delivery",
     "security",
-    "multiple-instances",
-    "runner-trust"
+    "multiple-instances"
   ]
 }

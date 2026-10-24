@@ -1,158 +1,98 @@
 ---
 title: 'Complete first-run setup'
 status: implemented
-description: 'Use the automatic browser or terminal journey to prepare your selected device role.'
+description: 'Start the Oore services, create the owner account in Local Only, and confirm the runner is online.'
 ---
 
-After component installation, run `oore setup`. Oore shows the service plan before it starts.
+On this page you finish setup: Oore starts its services, you create the owner
+account in **Local Only**, and you confirm that the local runner is online.
+Local Only signs you in without a password, but only from this Mac.
 
-Interactive `oore install` starts this step automatically.
+## What you need
 
-## Automatic interface choice
+- Oore installed with the Complete role, from [Install Oore](/start/install).
+- A browser on this Mac.
 
-Oore selects the setup interface from the session and device role.
+## 1. Start setup
 
-| Situation                        | Interface |
-| -------------------------------- | --------- |
-| Any SSH session                  | Terminal  |
-| Local interactive Complete setup | Browser   |
-| Every other setup                | Terminal  |
-
-To override the choice, use `--interface terminal` or `--interface browser`.
-
-Browser setup requires the Complete role. It supports **This device** and **Identity provider** access.
-
-Use terminal setup for **Trusted proxy** access. Over SSH, the automatic interface is the terminal.
+If `oore install` is still running in your terminal, it has already started
+setup. Otherwise, run:
 
 ```bash
-oore setup --interface browser
+oore setup
 ```
 
-## Complete the role journey
+On a local desktop session, Oore picks browser setup for the Complete role. It
+shows the service plan, then asks for your macOS password to install the
+services. The prompt expires after 60 seconds.
 
-Each role asks only for its required information.
+Over SSH, Oore picks terminal setup instead. The choices are the same, and
+setup prints the SSH tunnel command to run on your own computer before you
+sign in.
 
-| Role          | Setup result                                                                          |
-| ------------- | ------------------------------------------------------------------------------------- |
-| Complete      | Starts the control plane and web UI, creates the owner, and enrolls the local runner. |
-| Control plane | Starts the control plane and creates the owner in the terminal.                       |
-| Runner        | Connects to a ready control plane, registers the runner, and starts its service.      |
-| Web node      | Connects to a ready control plane, pairs the web node, and starts its service.        |
-| CLI only      | Connects the CLI to a ready control plane and verifies login.                         |
+## 2. Choose Local Only
 
-The Complete role always keeps its web listener on loopback in this release.
+In the browser, under **How will you use Oore?**, choose
+**Use Oore on this Mac**. This is Local Only: sign-in is passwordless and
+works only over loopback.
 
-Use a Web node behind protected ingress when the web listener must use a non-loopback address.
+You can turn on External Access later from **Settings**, without reinstalling.
+Setup itself does not change the access choice after the owner exists.
 
-Complete and Control plane setup offer three access choices:
+## 3. Create the owner
 
-- **This device** uses passwordless sign-in over loopback. Use it on the backend Mac or through an SSH tunnel.
-- **Identity provider** configures OIDC and verifies the first owner in a browser.
-- **Trusted proxy** accepts identity from an existing access proxy. This choice uses terminal setup.
+Under **Owner account**, enter an account label such as `owner@local`. In
+Local Only the label is only a name on this Mac. Oore does not send email or
+ask for a password.
 
-**This device** is the default choice.
+Setup then starts the control plane and web UI, creates the owner, and
+enrolls the local runner.
 
-If setup stops at `idp_configured` before owner creation, terminal setup can select **This device** or **Trusted proxy** instead.
+## Check the result
 
-Setup does not replace access after owner creation. Use Oore Settings after the instance becomes ready.
-
-For terminal OIDC setup, add this exact callback URL to the identity provider:
+The terminal ends with this line:
 
 ```text
-http://localhost:4174/auth/callback
+Complete setup is ready.
 ```
 
-Keep this callback registered for setup retries. Over SSH, Oore prints the tunnel command for port `4174` before sign-in.
+Oore prints it only after it has verified every service. The browser opens
+the Oore web UI on **Home**.
 
-For Complete Trusted Proxy setup, Oore generates the private proof between its web service and control plane.
+Then confirm two things:
 
-Oore also generates the upstream proof when you do not supply one. It prints the file path and this required proxy header:
+1. Run `oore status` in a terminal. It reports the setup status as `ready`
+   and the access as **this device**.
+2. In the web UI, open **Settings > Runners**. One runner shows **Online**.
 
-```text
-x-oore-web-trusted-proxy-secret
-```
+## Troubleshooting
 
-Configure the access proxy to send that proof and the signed-in email header selected during setup.
+**Setup stops before it changes anything**
 
-For a Control plane role, the access proxy connects directly to `oored`.
+The administrator prompt timed out or was declined. Run `oore setup` again.
+Without an interactive terminal, Oore never prompts for a password; run
+`sudo -v` first, then `oore setup`.
 
-Oore stores a generated direct proof at `<install-root>/secrets/control-plane-proxy-proof`.
+**The browser does not open**
 
-It prints the direct proof header, selected email header, and the exact command that reads the proof file.
+Open the local web URL that setup printed. Over SSH, start the printed tunnel
+command on your computer first and keep it open.
 
-## Administrator access
+**You need team sign-in from day one**
 
-Service roles need administrator access to install and start macOS services.
+Choose **Let people sign in with an identity provider** instead, and follow
+[Configure External Access (OIDC)](/team/access/oidc). Read
+[Which setup do I need?](/concepts/which-setup) if you are unsure. Every other
+page in this path works the same with either choice.
 
-In an interactive terminal, Oore requests access after you review the plan. The request expires after 60 seconds.
+**You want repeatable, scripted setup**
 
-Without an interactive terminal, Oore uses non-interactive `sudo`. It never opens a password prompt.
-
-For headless setup, activate administrator access first:
-
-```bash
-sudo -v
-oore setup --config ./oore-setup.yaml
-```
-
-For CLI only setup, omit `sudo -v`.
-
-If access fails, Oore stops before it changes setup state.
-
-## Use a configuration file
-
-For repeatable setup, put values in a YAML or JSON file:
-
-```yaml
-interface: terminal
-access: this-device
-owner_email: owner@example.com
-daemon_listen: 127.0.0.1:8787
-web_listen: 127.0.0.1:4173
-```
-
-Review the plan first:
-
-```bash
-chmod 600 ./oore-setup.yaml
-oore setup --config ./oore-setup.yaml --plan
-```
-
-Then apply it:
-
-```bash
-sudo -v
-oore setup --config ./oore-setup.yaml
-```
-
-## Verify the result
-
-Setup must end with `<Profile> setup is ready.` Oore prints this message only after final service verification.
-
-For This device and Identity provider access, Complete setup prints the local web URL.
-
-Over SSH, it prints the exact tunnel command to run on your computer.
-
-For Trusted Proxy access, setup hides the loopback URL. Finish the HTTPS proxy route, then open the proxy's HTTPS address.
-
-If setup prints an SSH tunnel, keep it open before you use the printed URL. Local Only sign-in remains passwordless through loopback.
-
-For Complete, Control plane, or CLI only, run:
-
-```bash
-oore status
-```
-
-For a remote Runner or Web node, run:
-
-```bash
-oore status --daemon-url https://oore.example.com
-```
-
-For local browser setup, the web UI opens the ready instance.
-
-For every setup option, read the [`oore setup` reference](/reference/cli/oore-setup).
+Put the answers in a YAML file and run `oore setup --config <file>`. See the
+[`oore setup` reference](/reference/cli/oore-setup) for every field.
 
 ## Next step
 
-[Build your first debug APK](/start/first-build).
+Pick the platform you ship first:
+
+- [Build your first Android app](/start/android/first-build).
+- [Build your first iOS app](/start/ios/first-build).

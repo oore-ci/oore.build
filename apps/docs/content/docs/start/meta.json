@@ -1,5 +1,5 @@
 {
-  "title": "Start with Oore",
+  "title": "Get started",
   "pagesIndex": "index",
-  "pages": ["index", "prerequisites", "install", "first-run", "first-build"]
+  "pages": ["index", "prerequisites", "install", "first-run", "android", "ios"]
 }

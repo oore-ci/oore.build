@@ -12,11 +12,13 @@ daemon.
 ## What you need
 
 - Project developer, maintainer, instance admin, or instance owner access.
-- An app that already exists in Play Console. Google Play does not let
-  the API create an app or upload its first release, so upload the first
-  bundle by hand.
-- A pipeline that runs `flutter build appbundle` and signs the bundle with
-  your upload key. See [Add Android signing](/build/sign/android).
+  Storing a shared instance secret needs instance admin or owner access.
+- An app that already exists in Play Console, with one release uploaded by
+  hand. Google Play does not let the API create an app or upload its first
+  release. [Deliver to testers on Google Play](/start/android/google-play)
+  walks through that first upload.
+- A pipeline that builds a release App Bundle and signs it with your upload
+  key. See [Add Android signing](/build/sign/android).
 - A Google Cloud service account with a JSON key, invited in Play Console
   under **Users and permissions** with release permissions for the app.
 - Outbound HTTPS from the runner host to `oauth2.googleapis.com` and
@@ -26,12 +28,13 @@ daemon.
 ## 1. Store the service account key as a secret
 
 Store the whole JSON key file as a secret named `PLAY_SERVICE_ACCOUNT`. When
-all your apps are in one Play Console developer account, store it once in
-**Settings → Store credentials** as an instance secret. New pipelines then
-choose it on the Publishing tab without another upload. A project or pipeline
-secret with the same name overrides it.
+all your apps are in one Play Console developer account, store it once as an
+instance secret: open **Settings > Store credentials** and, under
+**Google Play service account**, select **Add service account**. New
+pipelines then choose it on the **Publishing** tab without another upload. A
+project or pipeline secret with the same name overrides it.
 
-From the API, any scope works; a project secret is shared by all of the
+From the API, any scope works. A project secret is shared by all of the
 project's pipelines:
 
 ```bash
@@ -48,7 +51,24 @@ rotation.
 
 ## 2. Configure publishing
 
-Send the settings with the
+1. Open the pipeline and its **Publishing** tab.
+2. Under **Google Play**, turn on
+   **Upload to Google Play after each successful build**.
+3. Under **Credentials**, choose the secret for **Service account key**.
+4. Under **Release**, choose the **Track** and the **Rollout**:
+   **Full rollout**, **Staged rollout** with an **Initial rollout (%)**, or
+   **Draft**. Choose the **Release notes** source.
+5. Under **Advanced**, enter the app's application ID in **Expected package**.
+6. Select **Turn on Google Play publishing**, or **Save changes** when
+   publishing was already on.
+
+The readiness list at the top of the section shows what is still missing,
+such as release signing or an App Bundle build. While uploads are on and the
+Android command is Oore's default, Oore builds an App Bundle as well as the
+APK. An **Android command override** must build the bundle itself, such as
+`flutter build appbundle --release`.
+
+For automation, send the same settings with the
 [Update Google Play publish settings](/openapi/operations/update_pipeline_google_play_publish)
 operation:
 
@@ -111,7 +131,7 @@ the key's `service_account_email`.
 
 Oore keeps the pipeline's latest check, and the Publishing tab shows it with
 when it ran. It is returned as `last_credentials_check` with the Google Play
-publish settings until the key behind its secret name changes: rotating the
+publish settings until the key behind its secret name changes. Rotating the
 secret, deleting it, or adding a narrower secret with the same name clears it.
 
 ## 4. Run a build
@@ -167,9 +187,32 @@ Console, and the daemon host needs outbound HTTPS to
 numbers could not be read. A failed read is retried after 15 minutes; after
 fixing access, choose **Refresh** in Store health to read the store at once.
 
+## Troubleshooting
+
+**`publish-play` fails because the version code is not higher**
+
+The message names both numbers. Set **Build number offset** above the
+highest version code on Google Play, and pass
+`--build-number=$OORE_VERSION_CODE` to Flutter.
+
+**`publish-play` fails with a Play API error**
+
+Fix the cause, such as a missing Play Console permission, then
+[retry the upload](/build/run/retry-step). The stored bundle is uploaded
+again without rebuilding.
+
+**Test credentials fails**
+
+The message gives Google's reason. Invite the service account for this app in
+Play Console, wait a few minutes for Google to process the invitation, and
+test again.
+
 ## Limits
 
 - One App Bundle per publish. A pipeline that builds several release flavors
   fails with a list of the bundles it found.
-- Raising, halting and completing a staged rollout after the upload are done
-  in Play Console for now.
+
+## Next step
+
+[Promote builds between environments](/build/distribute/environments) to move
+a tested version from internal testing to production without rebuilding it.

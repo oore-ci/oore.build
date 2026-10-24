@@ -1,38 +1,44 @@
 ---
-title: 'Reference'
+title: 'Reference overview'
 status: implemented
-description: 'Exact Oore command, configuration, state, permissions, and HTTP API contracts.'
+description: 'Exact commands, configuration fields, product values, limits, and API operations.'
 ---
 
-Use these pages when you need an exact value, field, command, or machine
-contract. For an outcome-driven walkthrough, start with a task or tutorial
-instead.
+Use these pages to look up an exact value, field, command, or API contract.
+To get something done, start from [Get started](/start) or a
+[how-to guide](/build) instead.
 
-## Product contracts
+## Commands
 
-- [Error codes](/reference/errors) explains the API error envelope and how to
-  interpret operation-specific codes.
-- [Build states](/reference/build-states) defines every build status and valid
-  transition.
-- [Setup states](/reference/setup-states) defines the setup status returned by
-  an Oore backend.
-- [Roles and permissions](/reference/roles) maps instance and project roles to
-  their effective access.
+- [`oore` command reference](/reference/cli) covers the operator CLI, from
+  `oore install` to `oore pipeline migrate`.
 
-## Commands and configuration
+## Configuration
 
-- [`oore` command reference](/reference/cli) covers the operator CLI.
-- [`.oore.yaml`](/reference/config/oore-yaml) defines repository pipeline
-  configuration.
+- [`.oore.yaml` version 2](/reference/config/oore-yaml-v2) and
+  [version 1](/reference/config/oore-yaml) define repository pipelines.
+  [Move a pipeline into `.oore.yaml`](/build/pipelines/oore-yaml) says which
+  one to use.
 - [Daemon configuration](/reference/config/daemon) and
   [environment variables](/reference/config/environment) cover runtime
-  configuration.
-- [Installer configuration](/reference/config/installer) covers release,
-  install-role, and automation inputs.
+  settings.
+- [Installer configuration](/reference/config/installer) covers release
+  channels, install roles, and automation inputs.
 
 ## HTTP API
 
-[HTTP API](/reference/api) is the authored entry point to the generated
-OpenAPI reference. The generated category and operation pages are the
-authoritative inventory of paths, authentication, request bodies, and
-responses.
+[HTTP API](/reference/api) is the entry point to the generated OpenAPI
+reference. The generated category and operation pages list every path,
+authentication rule, request body, and response.
+
+## Product values
+
+- [Error codes](/reference/errors) describes the API error envelope.
+- [Build states](/reference/build-states) defines every build status and
+  transition.
+- [Setup states](/reference/setup-states) defines the setup status a backend
+  returns.
+- [Roles and permissions](/reference/roles) maps instance and project roles
+  to what they can do.
+- [Known limitations](/reference/known-limitations) lists the current
+  platform, trust, browser, storage, and backup boundaries.

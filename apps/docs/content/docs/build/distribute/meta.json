@@ -1,12 +1,12 @@
 {
-  "title": "Distribute builds",
+  "title": "Deliver builds",
   "pages": [
-    "google-play",
-    "app-store",
-    "environments",
-    "ios-devices",
     "download",
     "install/android",
-    "install/ios"
+    "ios-devices",
+    "install/ios",
+    "google-play",
+    "app-store",
+    "environments"
   ]
 }
