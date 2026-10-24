@@ -20,6 +20,24 @@ installable APK or IPA for that platform, the check links straight to its
 install page instead. The GitHub check summary also lists every artifact
 with an install link.
 
+The check's name stays the pipeline and platform, so a required status check
+in branch protection keeps matching.
+
+## Steps
+
+For a build that runs a version 2 [`.oore.yaml`](/reference/config/oore-yaml-v2),
+the check shows the steps by the names the file gives them:
+
+- The GitHub check summary names the workflow the pipeline builds, when it
+  picks one, and ends with a table of the steps the runner ran, with each
+  step's result and duration. The step that failed is in bold.
+- When the build fails or times out, the check title, and on GitLab the
+  status description, names the step it stopped at, for example
+  `Build #12 failed at Run tests`.
+
+Builds from a version 1 file or the pipeline form show the same check as
+before, without steps.
+
 ## App size
 
 When a build succeeds, the GitHub check summary also shows the size of each
