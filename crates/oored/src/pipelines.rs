@@ -6,14 +6,17 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
     ApiError, ApprovalPolicy, BuildPlatform, ConcurrencyPolicy, CreatePipelineRequest,
-    CreatePipelineResponse, DEFAULT_BUILD_TIMEOUT_MINUTES, ListPipelinesResponse,
-    MAX_BUILD_TIMEOUT_MINUTES, MAX_PLAN_REPOSITORY_YAML_BYTES, OkResponse, Pipeline,
-    PipelineDetailResponse, PipelineExecutionConfig, PipelinePlanPreview, PlanPipelineRequest,
-    PlanPipelineResponse, PlanRequest, RepositoryConfig, TriggerConfig, UpdatePipelineRequest,
-    ValidatePipelineRequest, ValidatePipelineResponse, is_valid_pipeline_env_key,
-    is_valid_workflow_name, normalize_runner_labels, parse_repository_config,
-    pipeline_config::select_v1_platforms, plan_execution_config, secret_expression_errors,
-    validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
+    CreatePipelineResponse, DEFAULT_BUILD_TIMEOUT_MINUTES, ExportPipelineYamlRequest,
+    ExportPipelineYamlResponse, ListPipelinesResponse, MAX_BUILD_TIMEOUT_MINUTES,
+    MAX_PLAN_REPOSITORY_YAML_BYTES, OkResponse, Pipeline, PipelineDetailResponse,
+    PipelineExecutionConfig, PipelinePlanPreview, PlanPipelineRequest, PlanPipelineResponse,
+    PlanRequest, RepositoryConfig, TriggerConfig, UpdatePipelineRequest, ValidatePipelineRequest,
+    ValidatePipelineResponse, is_valid_pipeline_env_key, is_valid_workflow_name,
+    normalize_runner_labels, parse_repository_config,
+    pipeline_config::select_v1_platforms,
+    pipeline_export::{FormSettings, export_form_settings},
+    plan_execution_config, secret_expression_errors, validate_artifact_pattern,
+    validate_build_number_offset, validate_repository_config_path,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -1493,6 +1496,50 @@ pub async fn plan_pipeline(
     Ok(Json(plan_request(req)?))
 }
 
+/// `POST /v1/pipelines/export-yaml` — the pipeline's form settings as a
+/// `version: 2` `.oore.yaml`, checked to plan the same as the settings.
+pub async fn export_pipeline_yaml(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<ExportPipelineYamlRequest>,
+) -> ApiResult<ExportPipelineYamlResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "pipelines", "read").await?;
+    Ok(Json(export_yaml_request(&req)))
+}
+
+fn export_yaml_request(req: &ExportPipelineYamlRequest) -> ExportPipelineYamlResponse {
+    let mut errors = validate_execution_config(&req.execution_config);
+    if let Some(triggers) = &req.trigger_config {
+        errors.extend(validate_trigger_config(triggers));
+    }
+    let result = if errors.is_empty() {
+        export_form_settings(FormSettings {
+            execution: &req.execution_config,
+            triggers: req.trigger_config.as_ref(),
+            google_play: req.google_play.as_ref(),
+            app_store: req.app_store.as_ref(),
+        })
+    } else {
+        Err(errors.join("\n"))
+    };
+    match result {
+        Ok(export) => ExportPipelineYamlResponse {
+            valid: true,
+            errors: Vec::new(),
+            yaml: Some(export.yaml),
+            warnings: export.warnings,
+            notes: export.notes,
+        },
+        Err(error) => ExportPipelineYamlResponse {
+            valid: false,
+            errors: error_lines(&error),
+            yaml: None,
+            warnings: Vec::new(),
+            notes: Vec::new(),
+        },
+    }
+}
+
 fn plan_request(
     req: PlanPipelineRequest,
 ) -> Result<PlanPipelineResponse, (StatusCode, Json<ApiError>)> {
@@ -1867,6 +1914,208 @@ workflows:
         assert_eq!(
             plan_request(yaml_request(&large)).unwrap_err().0,
             StatusCode::BAD_REQUEST
+        );
+    }
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    use oore_contract::StepPhase;
+
+    fn request(json: serde_json::Value) -> ExportPipelineYamlRequest {
+        serde_json::from_value(json).unwrap()
+    }
+
+    fn form_request() -> ExportPipelineYamlRequest {
+        request(serde_json::json!({
+            "execution_config": {
+                "platforms": ["android", "ios"],
+                "flutter_version": "3.24.5",
+                "commands": {
+                    "pre_build": ["dart run build_runner build"],
+                    "build": ["./scripts/upload-symbols.sh"],
+                    "post_build": ["flutter test --dart-define=DSN=${{ secrets.SENTRY_DSN }}"],
+                },
+                "platform_build_args": { "android": ["--split-per-abi"], "ios": [], "macos": [] },
+                "platform_commands": {},
+                "env": [
+                    { "key": "API_URL", "value": "https://staging.example.com" },
+                    { "key": "SIGNING_TOKEN", "value": "${{ secrets.SIGNING_TOKEN }}" },
+                ],
+                "artifact_patterns": ["build/app/outputs/flutter-apk/*.apk", "build/ios/ipa/*.ipa"],
+                "build_number_offset": 7,
+                "runs_on": ["xcode-16"],
+            },
+            "trigger_config": {
+                "events": ["push", "tag_push"],
+                "branches": ["main"],
+                "tags": ["v*"],
+                "schedules": [{ "cron": "@daily" }],
+            },
+            "google_play": {
+                "enabled": true,
+                "service_account_secret": "PLAY_SERVICE_ACCOUNT_JSON",
+                "package_name": "com.example.shop",
+                "track": "beta",
+                "rollout_percent": 25.0,
+                "draft": false,
+            },
+            "app_store": {
+                "enabled": true,
+                "destination": "testflight",
+                "testflight_groups": ["Internal QA"],
+                "release_notes": [{ "locale": "en-US", "whats_new": "Private notes" }],
+            },
+        }))
+    }
+
+    /// The plan of the generated file, through the plan endpoint.
+    fn plan_yaml(yaml: &str) -> PlanPipelineResponse {
+        plan_request(PlanPipelineRequest {
+            repository_yaml: Some(yaml.to_string()),
+            execution_config: None,
+            workflow: None,
+            platforms: None,
+            build_play_bundle: None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn the_generated_file_plans_like_the_form() {
+        let req = form_request();
+        let response = export_yaml_request(&req);
+        assert!(response.valid, "{:?}", response.errors);
+        let yaml = response.yaml.unwrap();
+
+        let form = plan_request(PlanPipelineRequest {
+            repository_yaml: None,
+            execution_config: Some(req.execution_config),
+            workflow: None,
+            platforms: None,
+            build_play_bundle: Some(true),
+        })
+        .unwrap()
+        .plan
+        .unwrap();
+        let file = plan_yaml(&yaml);
+        assert!(file.valid, "{:?}\n{yaml}", file.errors);
+        assert_eq!(file.version, Some(2));
+        let file = file.plan.unwrap();
+
+        // Same commands in the same order. The Play bundle joins the Android
+        // build, and the Build commands run right after the target builds.
+        let runs = |plan: &PipelinePlanPreview| -> Vec<(String, Option<BuildPlatform>)> {
+            plan.steps
+                .iter()
+                .map(|step| (step.run.clone(), step.platform.clone()))
+                .collect()
+        };
+        let mut expected = runs(&form);
+        let bundle = expected.remove(3);
+        expected[2].0 = format!("{} && {}", expected[2].0, bundle.0);
+        assert_eq!(runs(&file), expected);
+        let phases: Vec<StepPhase> = file.steps.iter().map(|step| step.phase).collect();
+        assert_eq!(
+            phases,
+            [
+                StepPhase::PreBuild,
+                StepPhase::PreBuild,
+                StepPhase::Build,
+                StepPhase::Build,
+                StepPhase::PostBuild,
+                StepPhase::PostBuild,
+            ]
+        );
+        assert_eq!(file.env_keys, form.env_keys);
+        assert_eq!(file.platforms, form.platforms);
+        assert_eq!(file.flutter_version, form.flutter_version);
+        assert_eq!(file.artifact_patterns, form.artifact_patterns);
+        assert_eq!(file.build_number_offset, 7);
+        assert_eq!(file.runs_on, form.runs_on);
+        assert_eq!(file.isolation, form.isolation);
+    }
+
+    #[test]
+    fn secret_values_and_credentials_stay_out_of_the_file() {
+        let response = export_yaml_request(&form_request());
+        let yaml = response.yaml.unwrap();
+        for leaked in [
+            "PLAY_SERVICE_ACCOUNT_JSON",
+            "com.example.shop",
+            "Private notes",
+        ] {
+            assert!(!yaml.contains(leaked), "{leaked} in\n{yaml}");
+        }
+        assert!(
+            yaml.contains("SIGNING_TOKEN: ${{ secrets.SIGNING_TOKEN }}"),
+            "{yaml}"
+        );
+        assert!(yaml.contains("${{ secrets.SENTRY_DSN }}"), "{yaml}");
+    }
+
+    #[test]
+    fn triggers_and_publish_map_onto_on_and_publish() {
+        let response = export_yaml_request(&form_request());
+        let yaml = response.yaml.unwrap();
+        let config = parse_repository_config(&yaml).unwrap();
+        let on = config.triggers(None).unwrap();
+        use oore_contract::pipeline_config::TriggerEvent;
+        assert!(on.matches_ref(TriggerEvent::Push { branch: "main" }));
+        assert!(!on.matches_ref(TriggerEvent::Push { branch: "dev" }));
+        assert!(on.matches_ref(TriggerEvent::Tag { tag: "v1.2.0" }));
+        assert!(!on.matches_ref(TriggerEvent::PullRequest {
+            target_branch: Some("main")
+        }));
+        // Schedules stay with the pipeline.
+        assert!(
+            response.notes.iter().any(|note| note.contains("Schedules")),
+            "{:?}",
+            response.notes
+        );
+
+        let plan = config.plan(oore_contract::PlanRequest::default()).unwrap();
+        let play = plan.publish.play.unwrap();
+        assert_eq!(play.spec.track, "beta");
+        assert_eq!(play.spec.rollout, Some(0.25));
+        assert_eq!(play.spec.draft, Some(false));
+        assert!(play.error.is_none());
+        assert_eq!(plan.publish.testflight.unwrap().spec.group, "Internal QA");
+
+        // Without the publish settings the file publishes nothing and the
+        // Android build makes no bundle.
+        let mut req = form_request();
+        req.google_play = None;
+        req.app_store = None;
+        let yaml = export_yaml_request(&req).yaml.unwrap();
+        assert!(!yaml.contains("publish:"), "{yaml}");
+        assert!(!yaml.contains("appbundle"), "{yaml}");
+    }
+
+    #[test]
+    fn invalid_settings_return_the_validation_errors() {
+        let mut req = form_request();
+        req.execution_config.platforms.clear();
+        req.trigger_config.as_mut().unwrap().events = vec!["release".to_string()];
+        let response = export_yaml_request(&req);
+        assert!(!response.valid);
+        assert!(response.yaml.is_none());
+        assert!(
+            response
+                .errors
+                .iter()
+                .any(|error| error.contains("at least one platform")),
+            "{:?}",
+            response.errors
+        );
+        assert!(
+            response
+                .errors
+                .iter()
+                .any(|error| error.contains("Invalid event")),
+            "{:?}",
+            response.errors
         );
     }
 }

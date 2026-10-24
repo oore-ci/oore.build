@@ -4567,6 +4567,43 @@
         ]
       }
     },
+    "/v1/pipelines/export-yaml": {
+      "post": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "Export pipeline settings as `.oore.yaml`",
+        "description": "Writes the pipeline's form settings as a `version: 2` `.oore.yaml`,\nwith `on` from the trigger settings and `publish` from the Publish\nsettings where they map exactly. The file is planned before it is\nreturned and runs what the settings run. Secret values and store\ncredentials never appear in it; secret references stay as written.",
+        "operationId": "export_pipeline_yaml",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportPipelineYamlRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The file, or why the settings cannot be exported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportPipelineYamlResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/pipelines/plan": {
       "post": {
         "tags": [
@@ -15898,6 +15935,95 @@
         "properties": {
           "reason": {
             "type": "string"
+          }
+        }
+      },
+      "ExportPipelineYamlRequest": {
+        "type": "object",
+        "description": "The pipeline settings to write out as a `version: 2` `.oore.yaml`.",
+        "required": [
+          "execution_config"
+        ],
+        "properties": {
+          "app_store": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AppStorePublishConfig",
+                "description": "The pipeline's App Store Connect settings, for `publish.testflight`.\nOnly the TestFlight group reaches the file."
+              }
+            ]
+          },
+          "execution_config": {
+            "$ref": "#/components/schemas/PipelineExecutionConfig",
+            "description": "The pipeline's form settings, as `POST /v1/pipelines/validate` takes them."
+          },
+          "google_play": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GooglePlayPublishConfig",
+                "description": "The pipeline's Google Play settings, for `publish.play`. Only the\ntrack, rollout and draft setting reach the file."
+              }
+            ]
+          },
+          "trigger_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TriggerConfig",
+                "description": "The pipeline's trigger settings, for the file's `on`. Left out, the\nfile has no `on` and the trigger settings keep applying."
+              }
+            ]
+          }
+        }
+      },
+      "ExportPipelineYamlResponse": {
+        "type": "object",
+        "required": [
+          "valid",
+          "errors",
+          "warnings",
+          "notes"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why the settings cannot be exported, one per entry."
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Settings that stay with the pipeline instead of moving to the file."
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "No errors: `yaml` is set."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Behaviour the file cannot reproduce exactly; each is also a\n`WARNING:` comment in the file."
+          },
+          "yaml": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The generated file. Planned, it runs what the settings run. Secret\nvalues never appear in it; secret references stay as written."
           }
         }
       },

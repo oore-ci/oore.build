@@ -131,6 +131,7 @@ use utoipa::{
         operations::delete_pipeline,
         operations::validate_pipeline,
         operations::plan_pipeline,
+        operations::export_pipeline_yaml,
         // ── Pipeline Signing (Android) ──
         operations::get_pipeline_android_signing,
         operations::update_pipeline_android_signing,
@@ -399,6 +400,8 @@ use utoipa::{
         oore_contract::ValidatePipelineResponse,
         oore_contract::PlanPipelineRequest,
         oore_contract::PlanPipelineResponse,
+        oore_contract::ExportPipelineYamlRequest,
+        oore_contract::ExportPipelineYamlResponse,
         oore_contract::PipelinePlanPreview,
         oore_contract::PipelinePlanStep,
         oore_contract::StepPhase,
@@ -1953,6 +1956,22 @@ mod operations {
         )
     )]
     pub(super) fn plan_pipeline() {}
+
+    /// Export pipeline settings as `.oore.yaml`
+    ///
+    /// Writes the pipeline's form settings as a `version: 2` `.oore.yaml`,
+    /// with `on` from the trigger settings and `publish` from the Publish
+    /// settings where they map exactly. The file is planned before it is
+    /// returned and runs what the settings run. Secret values and store
+    /// credentials never appear in it; secret references stay as written.
+    #[utoipa::path(post, path = "/v1/pipelines/export-yaml", tag = "Pipelines",
+        request_body = ExportPipelineYamlRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "The file, or why the settings cannot be exported", body = ExportPipelineYamlResponse),
+        )
+    )]
+    pub(super) fn export_pipeline_yaml() {}
 
     // ── Pipeline Publishing ──
 

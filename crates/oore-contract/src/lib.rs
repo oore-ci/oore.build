@@ -14,6 +14,7 @@ use utoipa::ToSchema;
 pub mod data_paths;
 pub mod install_root;
 pub mod pipeline_config;
+pub mod pipeline_export;
 pub mod pipeline_migrate;
 pub mod runtime_update_preflight;
 
@@ -3771,6 +3772,42 @@ pub struct PlanPipelineResponse {
     pub available_platforms: Vec<BuildPlatform>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<PipelinePlanPreview>,
+}
+
+/// The pipeline settings to write out as a `version: 2` `.oore.yaml`.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ExportPipelineYamlRequest {
+    /// The pipeline's form settings, as `POST /v1/pipelines/validate` takes them.
+    pub execution_config: PipelineExecutionConfig,
+    /// The pipeline's trigger settings, for the file's `on`. Left out, the
+    /// file has no `on` and the trigger settings keep applying.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_config: Option<TriggerConfig>,
+    /// The pipeline's Google Play settings, for `publish.play`. Only the
+    /// track, rollout and draft setting reach the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google_play: Option<GooglePlayPublishConfig>,
+    /// The pipeline's App Store Connect settings, for `publish.testflight`.
+    /// Only the TestFlight group reaches the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_store: Option<AppStorePublishConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ExportPipelineYamlResponse {
+    /// No errors: `yaml` is set.
+    pub valid: bool,
+    /// Why the settings cannot be exported, one per entry.
+    pub errors: Vec<String>,
+    /// The generated file. Planned, it runs what the settings run. Secret
+    /// values never appear in it; secret references stay as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yaml: Option<String>,
+    /// Behaviour the file cannot reproduce exactly; each is also a
+    /// `WARNING:` comment in the file.
+    pub warnings: Vec<String>,
+    /// Settings that stay with the pipeline instead of moving to the file.
+    pub notes: Vec<String>,
 }
 
 // ── Secret types ────────────────────────────────────────────────

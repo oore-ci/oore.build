@@ -70,10 +70,10 @@ struct Target {
     comments: Vec<String>,
 }
 
-struct Step {
-    name: String,
-    run: String,
-    comments: Vec<String>,
+pub(crate) struct Step {
+    pub(crate) name: String,
+    pub(crate) run: String,
+    pub(crate) comments: Vec<String>,
 }
 
 struct Converted {
@@ -422,7 +422,7 @@ pub fn join_shared_build(commands: &[String]) -> String {
     }
 }
 
-fn step_name(run: &str) -> String {
+pub(crate) fn step_name(run: &str) -> String {
     if let Some((_, name)) = KNOWN_STEP_NAMES.iter().find(|(command, _)| *command == run) {
         return (*name).to_string();
     }
@@ -439,7 +439,7 @@ fn step_name(run: &str) -> String {
     }
 }
 
-fn unique_name(names: &mut HashSet<String>, base: &str) -> String {
+pub(crate) fn unique_name(names: &mut HashSet<String>, base: &str) -> String {
     let mut name = base.to_string();
     let mut counter = 2;
     while !names.insert(name.clone()) {
@@ -449,7 +449,7 @@ fn unique_name(names: &mut HashSet<String>, base: &str) -> String {
     name
 }
 
-fn isolation_name(isolation: BuildIsolation) -> &'static str {
+pub(crate) fn isolation_name(isolation: BuildIsolation) -> &'static str {
     match isolation {
         BuildIsolation::Host => "host",
         BuildIsolation::Vm => "vm",
@@ -463,7 +463,7 @@ const COMMENT_WIDTH: usize = 78;
 
 /// Write `text` as `#` comment lines. Each `\n` starts a new line, and a
 /// line that starts with spaces, such as a command to copy, is kept as is.
-fn push_comment(out: &mut String, indent: usize, text: &str) {
+pub(crate) fn push_comment(out: &mut String, indent: usize, text: &str) {
     let pad = " ".repeat(indent);
     for paragraph in text.split('\n') {
         if paragraph.starts_with(' ') {
@@ -492,14 +492,14 @@ fn push_wrapped_comment(out: &mut String, pad: &str, text: &str) {
     }
 }
 
-fn push_list(out: &mut String, indent: usize, items: &[String]) {
+pub(crate) fn push_list(out: &mut String, indent: usize, items: &[String]) {
     let pad = " ".repeat(indent);
     for item in items {
         out.push_str(&format!("{pad}-{}\n", scalar(item, indent + 2)));
     }
 }
 
-fn push_step(out: &mut String, step: &Step) {
+pub(crate) fn push_step(out: &mut String, step: &Step) {
     for comment in &step.comments {
         push_comment(out, 2, comment);
     }
@@ -509,7 +509,7 @@ fn push_step(out: &mut String, step: &Step) {
 
 /// `value` as a YAML scalar that follows a `key:` or `-`, with its leading
 /// space. `indent` is the indentation of the key, for block scalars.
-fn scalar(value: &str, indent: usize) -> String {
+pub(crate) fn scalar(value: &str, indent: usize) -> String {
     if is_plain_safe(value) {
         format!(" {value}")
     } else if is_literal_safe(value) {
@@ -558,7 +558,7 @@ fn is_literal_safe(value: &str) -> bool {
 }
 
 /// A plain scalar that is also safe inside `[...]`.
-fn is_flow_safe(value: &str) -> bool {
+pub(crate) fn is_flow_safe(value: &str) -> bool {
     is_plain_safe(value) && !value.contains([',', '[', ']', '{', '}'])
 }
 
@@ -567,19 +567,19 @@ fn is_flow_safe(value: &str) -> bool {
 /// What a build depends on, from a plan: step names and sources differ
 /// between the versions by design and are left out.
 #[derive(Debug, PartialEq)]
-struct Behaviour {
-    platforms: Vec<BuildPlatform>,
-    flutter_version: Option<String>,
-    steps: Vec<(StepPhase, String, Option<BuildPlatform>)>,
-    env: Vec<(String, String)>,
-    artifact_patterns: Vec<String>,
-    build_number_offset: i64,
-    runs_on: Vec<String>,
-    isolation: BuildIsolation,
+pub(crate) struct Behaviour {
+    pub(crate) platforms: Vec<BuildPlatform>,
+    pub(crate) flutter_version: Option<String>,
+    pub(crate) steps: Vec<(StepPhase, String, Option<BuildPlatform>)>,
+    pub(crate) env: Vec<(String, String)>,
+    pub(crate) artifact_patterns: Vec<String>,
+    pub(crate) build_number_offset: i64,
+    pub(crate) runs_on: Vec<String>,
+    pub(crate) isolation: BuildIsolation,
 }
 
 impl Behaviour {
-    fn of(plan: &PipelinePlan) -> Self {
+    pub(crate) fn of(plan: &PipelinePlan) -> Self {
         let mut artifact_patterns: Vec<String> = Vec::new();
         for pattern in &plan.artifact_patterns {
             let pattern = pattern.trim().to_string();

@@ -2762,6 +2762,10 @@ pub async fn build_router_with_recovery(
         .route("/v1/pipelines/validate", post(pipelines::validate_pipeline))
         .route("/v1/pipelines/plan", post(pipelines::plan_pipeline))
         .route(
+            "/v1/pipelines/export-yaml",
+            post(pipelines::export_pipeline_yaml),
+        )
+        .route(
             "/v1/pipelines/{pipeline_id}/android-signing",
             get(pipeline_signing::get_pipeline_android_signing)
                 .put(pipeline_signing::update_pipeline_android_signing),
