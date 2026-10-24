@@ -14,8 +14,12 @@ import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import { useDebouncedJson } from '@/hooks/use-debounced-json'
 import { usePipelinePlan } from '@/hooks/use-pipelines'
 import { selectedPlatforms } from '@/lib/pipeline-form-utils'
-import type { PipelinePublishSettings } from '@/lib/pipeline-yaml-export'
+import type {
+  PipelineConfigSource,
+  PipelinePublishSettings,
+} from '@/lib/pipeline-yaml-export'
 import {
+  pipelinesReadingPath,
   planConfigFromForm,
   repositoryFilePath,
   yamlExportRequest,
@@ -65,6 +69,7 @@ type PlanSource = 'form' | 'file'
  */
 export function PipelinePlanPanel({
   manualOnlyTriggers = false,
+  otherPipelines = [],
   playBundle,
   publish,
   repositoryConfig,
@@ -72,6 +77,8 @@ export function PipelinePlanPanel({
 }: {
   /** The repository only builds manually, so the exported file has no `on`. */
   manualOnlyTriggers?: boolean
+  /** The project's other pipelines, to warn when they read the same file. */
+  otherPipelines?: ReadonlyArray<PipelineConfigSource>
   /** Google Play upload is on, so the default Android build adds a bundle. */
   playBundle: boolean
   /** The pipeline's Publish settings, for the exported file's `publish`. */
@@ -122,6 +129,7 @@ export function PipelinePlanPanel({
   // Form settings show the file they would make next to their plan, unless
   // the repository's own file already owns execution.
   const showExport = source === 'form' && !repositoryConfig
+  const filePath = repositoryFilePath(values)
 
   function changeSource(next: PlanSource) {
     setSource(next)
@@ -163,11 +171,12 @@ export function PipelinePlanPanel({
           {showExport ? (
             <div className="min-w-0 lg:sticky lg:top-24">
               <PipelineRepositoryFile
-                path={repositoryFilePath(values)}
+                path={filePath}
                 request={yamlExportRequest(values, {
                   manualOnlyTriggers,
                   publish,
                 })}
+                sharedWith={pipelinesReadingPath(filePath, otherPipelines)}
               />
             </div>
           ) : null}

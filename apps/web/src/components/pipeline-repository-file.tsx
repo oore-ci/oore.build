@@ -11,7 +11,10 @@ import type { ExportPipelineYamlRequest } from '@oore/client/models'
 import { useDebouncedJson } from '@/hooks/use-debounced-json'
 import { usePipelineYamlExport } from '@/hooks/use-pipelines'
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
-import { downloadFileName } from '@/lib/pipeline-yaml-export'
+import {
+  downloadFileName,
+  repositoryFileView,
+} from '@/lib/pipeline-yaml-export'
 import { toast } from '@/lib/toast'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -31,7 +34,8 @@ function downloadYaml(yaml: string, path: string) {
   anchor.href = url
   anchor.download = downloadFileName(path)
   anchor.click()
-  URL.revokeObjectURL(url)
+  // Some browsers start the download after `click` returns.
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 /**
@@ -41,16 +45,20 @@ function downloadYaml(yaml: string, path: string) {
 export function PipelineRepositoryFile({
   path,
   request,
+  sharedWith = [],
 }: {
   /** Where the runner looks for the file in the repository. */
   path: string
   request: ExportPipelineYamlRequest
+  /** Other pipelines in the project that read the same path. */
+  sharedWith?: ReadonlyArray<string>
 }) {
   const [body, setBody] = useState<ExportPipelineYamlRequest | null>(null)
   useDebouncedJson(request, EXPORT_DEBOUNCE_MS, setBody)
   const exportQuery = usePipelineYamlExport(body)
   const result = body ? exportQuery.data : undefined
-  const yaml = result?.yaml
+  const view = repositoryFileView({ isError: exportQuery.isError, result })
+  const yaml = view.kind === 'ready' ? view.yaml : undefined
 
   function copyYaml() {
     if (!yaml) return
@@ -90,7 +98,7 @@ export function PipelineRepositoryFile({
           </Button>
         </Row>
       </Row>
-      {exportQuery.isError ? (
+      {view.kind === 'error' ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={AlertCircleIcon} size={16} />
           <AlertDescription>
@@ -98,18 +106,18 @@ export function PipelineRepositoryFile({
             {getApiErrorMessage(exportQuery.error, {})}
           </AlertDescription>
         </Alert>
-      ) : !result ? (
+      ) : view.kind === 'loading' ? (
         <Stack gap={2} aria-busy="true">
           <Skeleton className="h-4 w-40" />
           <Skeleton className="h-48 w-full" />
         </Stack>
-      ) : result.errors.length > 0 ? (
+      ) : view.kind === 'invalid' ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={AlertCircleIcon} size={16} />
           <AlertDescription>
             Fix these settings to generate the file:
             <ul className="mt-1 list-disc space-y-1 pl-4">
-              {result.errors.map((message, index) => (
+              {view.errors.map((message, index) => (
                 <li key={index}>{message}</li>
               ))}
             </ul>
@@ -126,12 +134,12 @@ export function PipelineRepositoryFile({
           >
             {yaml}
           </Mono>
-          {result.warnings.length > 0 ? (
+          {view.warnings.length > 0 ? (
             <Alert>
               <HugeiconsIcon icon={Alert02Icon} size={16} />
               <AlertDescription>
                 <ul className="list-disc space-y-1 pl-4">
-                  {result.warnings.map((message, index) => (
+                  {view.warnings.map((message, index) => (
                     <li key={index}>{message}</li>
                   ))}
                 </ul>
@@ -141,11 +149,22 @@ export function PipelineRepositoryFile({
         </>
       )}
       <Text variant="caption">
-        Commit it as <Mono>{path}</Mono>. From the next build, the pipeline
-        reads its steps from the repository and these Build settings stop
-        applying. Secret values are never included, only references such as{' '}
+        Commit it as <Mono>{path}</Mono>. From the next build, every pipeline
+        that reads <Mono>{path}</Mono> builds from this file and follows its{' '}
+        <Mono>on</Mono>, and these Build settings stop applying. Env values are
+        copied as written: keep secrets in Secrets and reference them as{' '}
         <Mono>{'${{ secrets.NAME }}'}</Mono>.
       </Text>
+      {sharedWith.length > 0 ? (
+        <Alert>
+          <HugeiconsIcon icon={Alert02Icon} size={16} />
+          <AlertDescription>
+            {sharedWith.length === 1 ? 'Another pipeline' : 'Other pipelines'}{' '}
+            in this project also read <Mono>{path}</Mono> and will switch to
+            this file too: {sharedWith.join(', ')}.
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {result && result.notes.length > 0 ? (
         <ul className="list-disc space-y-1 pl-4">
           {result.notes.map((note, index) => (

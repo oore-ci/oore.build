@@ -1,6 +1,7 @@
 import type {
   AppStorePublishConfig,
   ExportPipelineYamlRequest,
+  ExportPipelineYamlResponse,
   GooglePlayPublishConfig,
 } from '@oore/client/models'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
@@ -60,4 +61,60 @@ export function repositoryFilePath(values: PipelineFormValues): string {
 /** The name a downloaded copy gets: the file name without its folders. */
 export function downloadFileName(path: string): string {
   return path.split('/').filter(Boolean).at(-1) ?? '.oore.yaml'
+}
+
+/** Where another pipeline in the project reads its repository file from. */
+export interface PipelineConfigSource {
+  name: string
+  config_path: string
+  config_path_explicit: boolean
+}
+
+/**
+ * The other pipelines that would read a file committed at `path`: those with
+ * that explicit path, and, for the default names, those that look for
+ * `.oore.yaml` or `.oore.yml` themselves.
+ */
+export function pipelinesReadingPath(
+  path: string,
+  others: ReadonlyArray<PipelineConfigSource>,
+): Array<string> {
+  const defaultName = path === '.oore.yaml' || path === '.oore.yml'
+  return others
+    .filter((other) =>
+      other.config_path_explicit
+        ? other.config_path.trim() === path
+        : defaultName,
+    )
+    .map((other) => other.name)
+}
+
+/**
+ * What the Repository file pane shows. A request error wins over a stale
+ * file, and a file the daemon could not generate shows its errors, never an
+ * earlier file.
+ */
+export function repositoryFileView({
+  isError,
+  result,
+}: {
+  isError: boolean
+  result: ExportPipelineYamlResponse | undefined
+}):
+  | { kind: 'error' }
+  | { kind: 'loading' }
+  | { kind: 'invalid'; errors: Array<string> }
+  | { kind: 'ready'; yaml: string; warnings: Array<string> } {
+  if (isError) return { kind: 'error' }
+  if (!result) return { kind: 'loading' }
+  if (!result.valid || !result.yaml) {
+    return {
+      kind: 'invalid',
+      errors:
+        result.errors.length > 0
+          ? result.errors
+          : ['The daemon returned no file for these settings.'],
+    }
+  }
+  return { kind: 'ready', yaml: result.yaml, warnings: result.warnings }
 }

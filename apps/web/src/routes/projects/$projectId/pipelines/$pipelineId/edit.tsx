@@ -16,6 +16,7 @@ import {
 import { requireProjectPermissionOrRedirect } from '@/lib/project-route-guard'
 import {
   usePipeline,
+  usePipelines,
   usePipelineAndroidSigning,
   usePipelineIosDevices,
   usePipelineIosSigning,
@@ -134,6 +135,11 @@ function EditPipelinePage() {
     projectData?.project.current_user_role,
   )
   const { data, isLoading, error } = usePipeline(pipelineId)
+  // The other pipelines that would read a committed repository file too.
+  const projectPipelinesQuery = usePipelines(projectId, { limit: 200 })
+  const otherPipelines = (projectPipelinesQuery.data?.pipelines ?? []).filter(
+    (pipeline) => pipeline.id !== pipelineId,
+  )
   // The Workflow selector needs the file's workflows; without them (no
   // file, or the source is unreachable) it stays hidden.
   const repositoryFilesQuery = useRepositoryWorkflows(
@@ -503,6 +509,7 @@ function EditPipelinePage() {
         iosSigningActions={iosSigningActions}
         iosAppStorePublishing={iosAppStorePublishing}
         googlePlayUpload={!!googlePlayPublishQuery.data?.config?.enabled}
+        otherPipelines={otherPipelines}
         publishSettings={{
           googlePlay: googlePlayPublishQuery.data?.config ?? undefined,
           appStore: appStorePublishQuery.data?.config,

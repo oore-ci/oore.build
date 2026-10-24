@@ -2,7 +2,9 @@ import { expect, test } from 'bun:test'
 import { pipelineFormSchema } from '@/lib/pipeline-schema'
 import {
   downloadFileName,
+  pipelinesReadingPath,
   repositoryFilePath,
+  repositoryFileView,
   yamlExportRequest,
 } from '@/lib/pipeline-yaml-export'
 
@@ -88,4 +90,48 @@ test('names the file where the runner looks for it', () => {
   expect(repositoryFilePath(explicit)).toBe('ci/pipelines/release.yaml')
   expect(downloadFileName('ci/pipelines/release.yaml')).toBe('release.yaml')
   expect(downloadFileName('.oore.yaml')).toBe('.oore.yaml')
+})
+
+test('warns about the other pipelines that read the same file', () => {
+  const others = [
+    { name: 'Nightly', config_path: '.oore.yaml', config_path_explicit: false },
+    { name: 'iOS', config_path: ' ci/ios.yaml ', config_path_explicit: true },
+    { name: 'Docs', config_path: 'ci/docs.yaml', config_path_explicit: true },
+  ]
+  expect(pipelinesReadingPath('.oore.yaml', others)).toEqual(['Nightly'])
+  expect(pipelinesReadingPath('ci/ios.yaml', others)).toEqual(['iOS'])
+  expect(pipelinesReadingPath('ci/other.yaml', others)).toEqual([])
+})
+
+test('the pane shows errors, never a stale or missing file', () => {
+  const ready = {
+    valid: true,
+    errors: [],
+    yaml: 'version: 2\n',
+    warnings: ['w'],
+    notes: [],
+  }
+  expect(repositoryFileView({ isError: true, result: ready })).toEqual({
+    kind: 'error',
+  })
+  expect(repositoryFileView({ isError: false, result: undefined })).toEqual({
+    kind: 'loading',
+  })
+  expect(
+    repositoryFileView({
+      isError: false,
+      result: { valid: false, errors: ['bad'], warnings: [], notes: [] },
+    }),
+  ).toEqual({ kind: 'invalid', errors: ['bad'] })
+  expect(
+    repositoryFileView({
+      isError: false,
+      result: { valid: false, errors: [], warnings: [], notes: [] },
+    }).kind,
+  ).toBe('invalid')
+  expect(repositoryFileView({ isError: false, result: ready })).toEqual({
+    kind: 'ready',
+    yaml: 'version: 2\n',
+    warnings: ['w'],
+  })
 })

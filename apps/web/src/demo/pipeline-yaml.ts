@@ -41,7 +41,10 @@ const KNOWN_STEPS = new Map([
 function scalar(value: string): string {
   const plain =
     /^[A-Za-z_./$]/.test(value) &&
-    !/: | #|:$|^(true|false|yes|no|null|on|off)$/i.test(value) &&
+    // YAML 1.1 booleans, nulls and special floats are quoted, as the daemon does.
+    !/: | #|:$|^(true|false|yes|no|y|n|on|off|null|~|[-+]?\.inf|\.nan)$/i.test(
+      value,
+    ) &&
     value.trim() === value
   return plain ? value : `'${value.replaceAll("'", "''")}'`
 }
@@ -173,9 +176,9 @@ export function demoExportYaml(
         '      play:',
         `        track: ${scalar(play.track)}`,
       )
-      if (play.rollout_percent != null && play.rollout_percent < 100) {
-        out.push(`        rollout: ${play.rollout_percent / 100}`)
-      }
+      const percent = play.rollout_percent ?? 100
+      // Always explicit, so the file keeps this rollout; 1 is everyone.
+      out.push(`        rollout: ${percent < 100 ? percent / 100 : 1}`)
       out.push(`        draft: ${play.draft ?? false}`)
     }
     if (platform === 'ios' && store) {
@@ -188,14 +191,14 @@ export function demoExportYaml(
         )
       } else {
         notes.push(
-          "App Store Connect uploads stay in the pipeline's Publish settings: publish.testflight names one TestFlight group",
+          `App Store Connect uploads stay in the pipeline's Publish settings: they name ${groups.length === 0 ? 'no' : 'several'} TestFlight groups, and publish.testflight names exactly one`,
         )
       }
     }
   })
   if (play || store) {
     notes.push(
-      "Store credentials and release notes stay in the pipeline's Publish settings; the file's publish says where each build uploads",
+      "Store credentials and release notes stay in the pipeline's Publish settings; the file's publish says where each build uploads. Keep the store's \"Upload after each build\" on: turned off later, the publish step fails",
     )
   }
 
