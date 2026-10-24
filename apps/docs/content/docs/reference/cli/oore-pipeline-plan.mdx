@@ -42,7 +42,7 @@ workflow release
   artifacts:
     build/app/outputs/bundle/proRelease/*.aab
   publish:
-    android publishes to the Google Play production track to 1% of users (targets.android.publish.play)
+    android publishes to the Google Play production track to 1% of users with the draft setting from the pipeline's Google Play settings (targets.android.publish.play)
 ```
 
 Secret references are printed as written; the runner resolves them during the

@@ -20316,6 +20316,16 @@
           "store": {
             "$ref": "#/components/schemas/PublishStore"
           },
+          "testflight_groups": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "App Store uploads to TestFlight: the groups the build was uploaded\nfor, which the daemon records instead of reading the settings again."
+          },
           "track": {
             "type": "string",
             "description": "Store track as sent to the store (for Play: internal, alpha, beta, production or custom)."
@@ -21147,6 +21157,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "publish_from_file": {
+            "type": "boolean",
+            "description": "Publish steps only: where to upload came from the repository's\n`.oore.yaml` `publish`, so a retry of the step reads the file at the\nbuild's commit again."
           },
           "started_at": {
             "type": "integer",

@@ -67,7 +67,6 @@
     "play": {
       "track": "production",
       "rollout": 0.01,
-      "draft": false,
       "source": "targets.android.publish.play"
     },
     "testflight": {

@@ -4703,17 +4703,33 @@ async fn execute_step_retry(
         }
     }
 
-    // The build's commit decides where the uploads go: a v2 file's `publish`
-    // replaces the Publish settings' targets, and release notes kept in the
-    // repository are read from it. Retrying without the file could upload
-    // to the settings' track instead of the file's.
-    run_checkout(
-        job, client, daemon_url, config, log_seq, workspace, authority, steps,
-    )
-    .await?;
-    let file_publish = resolve_execution_plan(workspace, &job.config_snapshot, false)
-        .map(|plan| plan.publish)
-        .context("Failed to read the pipeline file at the build's commit")?;
+    // When the build took a retried upload's destination from `.oore.yaml`,
+    // the file at the build's commit decides it again; retrying without it
+    // could upload to the settings' track instead of the file's. Otherwise
+    // only release notes kept in the repository need the source.
+    let publish_from_file = job
+        .config_snapshot
+        .get(oore_contract::RETRY_PUBLISH_FROM_FILE)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let needs_source = publish_from_file
+        || (retry_steps.iter().any(|step| step == PUBLISH_PLAY_STEP)
+            && publish_plan.google_play.as_ref().is_some_and(|play| {
+                play.release_notes == oore_contract::GooglePlayReleaseNotesSource::RepoFiles
+            }));
+    if needs_source {
+        run_checkout(
+            job, client, daemon_url, config, log_seq, workspace, authority, steps,
+        )
+        .await?;
+    }
+    let file_publish = if publish_from_file {
+        resolve_execution_plan(workspace, &job.config_snapshot, false)
+            .map(|plan| plan.publish)
+            .context("Failed to read the pipeline file at the build's commit")?
+    } else {
+        PlanPublish::default()
+    };
 
     let step_name = "artifacts";
     let started = now_unix();
@@ -4797,6 +4813,7 @@ async fn execute_step_retry(
         started_at: started,
         finished_at: finished,
         duration_ms: (finished - started) * 1000,
+        publish_from_file: false,
     });
     if let Err(error) = &restore {
         let _ = append_runner_log_line(
@@ -4945,6 +4962,7 @@ async fn run_checkout(
                 started_at: start,
                 finished_at: finished,
                 duration_ms: (finished - start) * 1000,
+                publish_from_file: false,
             });
             let _ = append_runner_log_line(
                 client,
@@ -4968,6 +4986,7 @@ async fn run_checkout(
                 started_at: start,
                 finished_at: finished,
                 duration_ms: (finished - start) * 1000,
+                publish_from_file: false,
             });
             let _ = append_runner_log_line(
                 client,
@@ -5383,6 +5402,7 @@ async fn execute_build_steps(
                     started_at: started,
                     finished_at: finished,
                     duration_ms: (finished - started) * 1000,
+                    publish_from_file: false,
                 });
                 return (steps, Err(anyhow::anyhow!(message)));
             }
@@ -5444,6 +5464,7 @@ async fn execute_build_steps(
                 started_at: started,
                 finished_at: finished,
                 duration_ms: (finished - started) * 1000,
+                publish_from_file: false,
             });
             let _ = append_runner_log_line(
                 client,
@@ -5632,6 +5653,7 @@ async fn execute_build_steps(
                         started_at: start,
                         finished_at: finished,
                         duration_ms: (finished - start) * 1000,
+                        publish_from_file: false,
                     });
                     let _ = append_runner_log_line(
                         client,
@@ -5717,6 +5739,7 @@ async fn execute_build_steps(
                         started_at: start,
                         finished_at: finished,
                         duration_ms: (finished - start) * 1000,
+                        publish_from_file: false,
                     });
                     let step_name = plan_step.name.clone();
                     let _ = append_runner_log_line(
@@ -5805,6 +5828,7 @@ Install the required tooling on the runner, set isolation: vm, or override build
                             started_at: signing_started,
                             finished_at: signing_finished,
                             duration_ms: (signing_finished - signing_started) * 1000,
+                            publish_from_file: false,
                         });
                         match signing_result {
                             Ok(artifacts) => {
@@ -5906,6 +5930,7 @@ Install the required tooling on the runner, set isolation: vm, or override build
                             started_at: signing_started,
                             finished_at: signing_finished,
                             duration_ms: (signing_finished - signing_started) * 1000,
+                            publish_from_file: false,
                         });
                         match signing_result {
                             Ok(signed_archive) => {
@@ -6048,6 +6073,7 @@ Install the required tooling on the runner, set isolation: vm, or override build
         started_at: artifacts_started,
         finished_at: artifacts_finished,
         duration_ms: (artifacts_finished - artifacts_started) * 1000,
+        publish_from_file: false,
     });
     if let Err(error) = artifact_result {
         return (steps, Err(error));
@@ -6104,6 +6130,7 @@ async fn fail_publish_step(
     steps: &mut Vec<StepResult>,
     (step_name, title): (&str, &str),
     error: String,
+    from_file: bool,
 ) -> anyhow::Error {
     let now = now_unix();
     for (stream, line) in [
@@ -6129,6 +6156,7 @@ async fn fail_publish_step(
         started_at: now,
         finished_at: now,
         duration_ms: 0,
+        publish_from_file: from_file,
     });
     anyhow::anyhow!(error).context(format!("{step_name} failed"))
 }
@@ -6169,6 +6197,18 @@ async fn run_publish_steps(
         }
     };
     let publish_plan = file_publish.apply(settings);
+    for note in &publish_plan.notes {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stdout",
+            &format!("[oore-publish] {note}"),
+        )
+        .await;
+    }
     const PLAY_TITLE: &str = "Upload the App Bundle to Google Play";
     const APP_STORE_TITLE: &str = "Upload the IPA to App Store Connect";
     let google_play = match publish_plan.google_play {
@@ -6183,6 +6223,7 @@ async fn run_publish_steps(
                 steps,
                 (PUBLISH_PLAY_STEP, PLAY_TITLE),
                 error,
+                file_publish.play.is_some(),
             )
             .await);
         }
@@ -6256,6 +6297,7 @@ async fn run_publish_steps(
             started_at: started,
             finished_at: finished,
             duration_ms: (finished - started) * 1000,
+            publish_from_file: file_publish.play.is_some(),
         });
         match result {
             Ok(published) => {
@@ -6333,6 +6375,7 @@ async fn run_publish_steps(
                 steps,
                 (PUBLISH_APP_STORE_STEP, APP_STORE_TITLE),
                 error,
+                file_publish.testflight.is_some(),
             )
             .await);
         }
@@ -6394,6 +6437,7 @@ async fn run_publish_steps(
             started_at: started,
             finished_at: finished,
             duration_ms: (finished - started) * 1000,
+            publish_from_file: file_publish.testflight.is_some(),
         });
         match result {
             Ok((message, published)) => {
@@ -8621,6 +8665,7 @@ mod publish_report_tests {
             version_name: None,
             rollout_fraction: Some(0.1),
             status: "in_progress".into(),
+            testflight_groups: None,
         };
         report_publish_result(
             &reqwest::Client::new(),
@@ -9252,6 +9297,8 @@ mod file_publish_tests {
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].name, PUBLISH_PLAY_STEP);
         assert_eq!(steps[0].status, "failed");
+        // A retry of this step reads the file again.
+        assert!(steps[0].publish_from_file);
         let seen = server.await.unwrap();
         assert!(
             seen[0].starts_with("GET /v1/runners/r1/jobs/b1/publish "),
@@ -9264,5 +9311,112 @@ mod file_publish_tests {
             "{seen:?}"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Answers by path: the job's secrets, a publish plan with Google Play
+    /// on, no stored artifacts, and `{}` for everything else.
+    async fn retry_daemon() -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            while let Ok(Ok((mut socket, _))) =
+                tokio::time::timeout(Duration::from_millis(500), listener.accept()).await
+            {
+                let mut buf = vec![0u8; 16 * 1024];
+                let read = socket.read(&mut buf).await.unwrap();
+                let head = String::from_utf8_lossy(&buf[..read]).to_string();
+                let line = head.lines().next().unwrap_or_default().to_string();
+                let body = if line.contains("/secrets ") {
+                    r#"{"secrets":[]}"#
+                } else if line.contains("/publish ") {
+                    r#"{"google_play":{"enabled":true,"service_account_secret":"PLAY","track":"internal"}}"#
+                } else if line.contains("/retry-artifacts ") {
+                    r#"{"artifacts":[]}"#
+                } else {
+                    "{}"
+                };
+                seen.push(line);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            seen
+        });
+        (url, server)
+    }
+
+    async fn retry_play(snapshot: serde_json::Value) -> (String, Vec<StepResult>) {
+        let dir = workspace(
+            &format!("retry-{}", snapshot.as_object().unwrap().len()),
+            None,
+        );
+        let (url, server) = retry_daemon().await;
+        let config = RunnerConfig {
+            runner_id: "r1".to_string(),
+            runner_token: "token".to_string(),
+            daemon_url: url.clone(),
+            name: "test".to_string(),
+        };
+        let job = ClaimedJob {
+            build_id: "b2".to_string(),
+            project_id: "p1".to_string(),
+            pipeline_id: "pl1".to_string(),
+            build_number: 2,
+            // No repo_url, so a checkout fails.
+            config_snapshot: snapshot,
+            commit_sha: None,
+            branch: None,
+            lease_expires_at: 0,
+            signing_token: "signing".to_string(),
+            retry_steps: Some(vec![PUBLISH_PLAY_STEP.to_string()]),
+        };
+        let authority = Arc::new(BuildAuthorityState::with_grace(Duration::from_secs(60)));
+        let mut steps = Vec::new();
+        let error = execute_step_retry(
+            &job,
+            &reqwest::Client::new(),
+            &url,
+            &config,
+            &mut BuildLogCursor::default(),
+            RetryWorkspace {
+                workspace: &dir,
+                signing_workspace: &dir,
+                authority: &authority,
+            },
+            &[PUBLISH_PLAY_STEP.to_string()],
+            &mut steps,
+        )
+        .await
+        .unwrap_err();
+        server.abort();
+        std::fs::remove_dir_all(&dir).ok();
+        (format!("{error:#}"), steps)
+    }
+
+    #[tokio::test]
+    async fn a_retry_of_a_settings_publish_does_not_need_the_source() {
+        // A v1 or form build: checking out would fail, and is not tried.
+        let (error, steps) = retry_play(json!({ "retry_steps": ["publish-play"] })).await;
+        assert!(
+            error.contains("the source build has no stored artifacts"),
+            "{error}"
+        );
+        assert!(!error.contains("repo_url"), "{error}");
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].name, "artifacts");
+    }
+
+    #[tokio::test]
+    async fn a_retry_of_a_file_publish_reads_the_file_at_the_commit() {
+        let (error, steps) = retry_play(json!({
+            "retry_steps": ["publish-play"],
+            oore_contract::RETRY_PUBLISH_FROM_FILE: true,
+        }))
+        .await;
+        assert!(error.contains("no repo_url"), "{error}");
+        assert!(steps.is_empty());
     }
 }

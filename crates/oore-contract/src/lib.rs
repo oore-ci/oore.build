@@ -1830,6 +1830,10 @@ pub const PUBLISH_APP_STORE_STEP: &str = "publish-app-store";
 /// They only read artifacts the build already stored; every other step
 /// depends on workspace state that is gone once the build ends.
 pub const RETRYABLE_BUILD_STEPS: [&str; 2] = [PUBLISH_PLAY_STEP, PUBLISH_APP_STORE_STEP];
+/// Config snapshot key a retry build carries when a retried publish step
+/// took its destination from the repository's `.oore.yaml`, so the retry
+/// reads the file at the build's commit again.
+pub const RETRY_PUBLISH_FROM_FILE: &str = "retry_publish_from_file";
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct RetryBuildStepRequest {
@@ -2178,6 +2182,11 @@ pub struct StepResult {
     pub started_at: i64,
     pub finished_at: i64,
     pub duration_ms: i64,
+    /// Publish steps only: where to upload came from the repository's
+    /// `.oore.yaml` `publish`, so a retry of the step reads the file at the
+    /// build's commit again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub publish_from_file: bool,
 }
 
 // ── Test results ────────────────────────────────────────────────
@@ -4213,6 +4222,10 @@ pub struct RunnerPublishResult {
     pub rollout_fraction: Option<f64>,
     /// `completed`, `in_progress` or `draft`.
     pub status: String,
+    /// App Store uploads to TestFlight: the groups the build was uploaded
+    /// for, which the daemon records instead of reading the settings again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub testflight_groups: Option<Vec<String>>,
 }
 
 // ── Pipeline Android signing types ──────────────────────────────

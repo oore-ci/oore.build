@@ -36,7 +36,7 @@ steps:
     reports: { tests: build/tests.json }
   - build # the targets run here
   - name: Size report
-    run: flutter build apk --analyze-size --target-platform android-arm64 --flavor free
+    run: flutter build apk --analyze-size --target-platform android-arm64 --flavor pro
 
 env:
   BUILD_FLAVOR: staging
@@ -171,6 +171,7 @@ A workflow target that has no top-level target of the same platform must set
 top-level target's applies. `publish` works the same way, except that a
 workflow target that sets its own `build` publishes only if it also sets
 `publish`: the top-level `publish` uploads what the top-level build makes.
+`publish: false` drops it without replacing `build`.
 Workflow names use letters, digits, `-` and `_`.
 
 A pipeline builds one workflow, picked under **Workflow** in its settings (the
@@ -183,19 +184,35 @@ none builds the top level; a file with several fails the build with
 
 `publish` on a target says where a build is uploaded after it succeeds:
 
-| Field              | Target    | Description                                                                                    |
-| ------------------ | --------- | ---------------------------------------------------------------------------------------------- |
-| `play.track`       | `android` | `internal`, `closed`, `open`, `production`, or a custom track name.                            |
-| `play.rollout`     | `android` | Staged rollout as a fraction greater than 0 and at most 1, such as `0.05` for 5%. Default `1`. |
-| `play.draft`       | `android` | Create a draft release in Play Console instead of rolling out. Default `false`.                |
-| `testflight.group` | `ios`     | The TestFlight group to add the build to. One name, without commas.                            |
+| Field              | Target    | Description                                                                                                                  |
+| ------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `play.track`       | `android` | `internal`, `closed`, `open`, `production`, or a custom track name.                                                          |
+| `play.rollout`     | `android` | Staged rollout as a fraction greater than 0 and at most 1, such as `0.05` for 5%. Left out, the Google Play settings decide. |
+| `play.draft`       | `android` | `true` creates a draft release in Play Console instead of rolling out. Left out, the Google Play settings decide.            |
+| `testflight.group` | `ios`     | The TestFlight group to add the build to: one name, without commas, at most 128 characters, and not `app_store`.             |
+
+`track` and `group` can use `${{ vars.NAME }}`, so a workflow can change them
+by overriding a var. Secrets and `${{ flavor }}` are not available there.
+
+`publish: false` (or `null`) publishes nowhere. On a workflow target it drops
+the `publish` the target would otherwise take from the top level, while
+keeping the top-level `build`:
+
+```yaml
+workflows:
+  qa:
+    targets:
+      android:
+        publish: false # builds the release bundle, uploads nothing
+```
 
 The file says where; credentials stay in the pipeline. When the planned
 workflow publishes to a store, the file replaces the pipeline's Publish
 settings for that store:
 
-- **Google Play**: the file's track, rollout and draft replace the settings'
-  own. The service account secret, expected package, release notes, mapping
+- **Google Play**: the file's track replaces the settings' track, and its
+  `rollout` and `draft` replace the settings' own where the file sets them.
+  The service account secret, expected package, release notes, mapping
   upload, in-app update priority and rollout policy still come from the
   pipeline's Google Play settings, and **Upload after each build** must be on.
 - **TestFlight**: the file's group replaces the settings' destination and
@@ -204,17 +221,31 @@ settings for that store:
   must be on. Release notes and the export compliance answer still come from
   the settings.
 
-If the store is not set up in the pipeline, the build's `publish-play` or
-`publish-app-store` step fails and names the settings to turn on; the build's
-artifacts are kept. Stores the file does not name, version 1 files and files
-without `publish` keep the pipeline's Publish settings exactly. Retrying a
-failed upload reads the file at the build's commit again, so it uploads where
-the build would have.
+Stores the file does not name, version 1 files and files without `publish`
+keep the pipeline's Publish settings exactly.
 
-The same rules as the Publish settings apply: the `internal` track has no
-staged rollouts, and a draft cannot have one. A store takes one build, so a
-publishing target must build one flavor; with `app.flavors`, publish from a
-workflow that sets `flavors: [<one flavor>]`.
+Problems with `publish` never stop the build: it runs and keeps its
+artifacts, and only its `publish-play` or `publish-app-store` step fails, with
+a message saying what to fix. That happens when:
+
+- the store is not set up in the pipeline (the message names the settings to
+  turn on);
+- the target builds more than one flavor, since a store takes one build
+  (narrow it with `flavors: [<one flavor>]` on the workflow);
+- `track` or `group`, once vars are resolved, is not a valid name, or refers
+  to an undefined var.
+
+`oore pipeline validate` prints a `note:` for each of these that it can see in
+the file.
+
+Google Play's rules apply to the combined result. The `internal` track has no
+staged rollouts, so a rollout below 1 there releases to every internal tester,
+and a draft ignores `rollout`. The upload logs the adjustment, and
+`oore pipeline validate` notes it when the file itself sets the combination.
+
+Retrying a failed upload that took its destination from the file reads the
+file at the build's commit again, so it uploads where the build would have.
+Retrying any other upload works as before and does not check out the source.
 
 Google Play takes App Bundles, and Oore runs `build` as written. When a
 workflow publishes to Google Play but its Android build does not appear to

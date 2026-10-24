@@ -16,6 +16,7 @@ use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
     ApiError, Build, PUBLISH_APP_STORE_STEP, PUBLISH_PLAY_STEP, RETRYABLE_BUILD_STEPS,
     RerunBuildResponse, RetryBuildStepRequest, RunnerRetryArtifact, RunnerRetryArtifactsResponse,
+    StepResult,
 };
 use serde_json::Value;
 use sqlx::{FromRow, Row, SqlitePool};
@@ -54,6 +55,20 @@ pub(crate) fn retry_steps_from_snapshot(snapshot: &Value) -> Option<Vec<String>>
         .filter_map(|step| step.as_str().map(str::to_string))
         .collect();
     (!steps.is_empty()).then_some(steps)
+}
+
+pub(crate) use oore_contract::RETRY_PUBLISH_FROM_FILE;
+
+/// Whether any of `steps` took its destination from the repository file in
+/// the build whose `step_results` these are.
+pub(crate) fn published_from_file(step_results: Option<&str>, steps: &[String]) -> bool {
+    step_results
+        .and_then(|raw| serde_json::from_str::<Vec<StepResult>>(raw).ok())
+        .is_some_and(|results| {
+            results
+                .iter()
+                .any(|step| step.publish_from_file && steps.contains(&step.name))
+        })
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -537,6 +552,25 @@ mod tests {
                 .is_empty(),
             "publishing turned off"
         );
+    }
+
+    #[test]
+    fn a_retry_reads_the_file_only_for_steps_that_published_from_it() {
+        let mut from_file = step("publish-play", "failed");
+        from_file["publish_from_file"] = serde_json::json!(true);
+        let steps = serde_json::json!([
+            step("artifacts", "succeeded"),
+            from_file,
+            step("publish-app-store", "failed"),
+        ])
+        .to_string();
+        let play = [PUBLISH_PLAY_STEP.to_string()];
+        let app_store = [PUBLISH_APP_STORE_STEP.to_string()];
+        assert!(published_from_file(Some(&steps), &play));
+        assert!(!published_from_file(Some(&steps), &app_store));
+        let settings = serde_json::json!([step("publish-play", "failed")]).to_string();
+        assert!(!published_from_file(Some(&settings), &play));
+        assert!(!published_from_file(None, &play));
     }
 
     #[tokio::test]
