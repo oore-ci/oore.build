@@ -6,6 +6,7 @@ import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { requireDemoProjectPermission } from '../authorization'
 import { demoState } from '../state'
 import { demoBuildInsights } from '../data/build-insights'
+import { demoBuildAnalyses } from '../data/build-analyses'
 import { demoSizeBaselines } from '../data/build-sizes'
 import type {
   ArtifactSizeComparison,
@@ -705,6 +706,26 @@ export const buildHandlers = [
     }
     return HttpResponse.json(
       demoState.buildTests[buildId] ?? { failures: [], history_window: 20 },
+    )
+  }),
+
+  demoApi.getBuildAnalysis(async ({ params, request }) => {
+    await delay(150)
+    const buildId = String(params.build_id)
+    const persona = getDemoPersonaFromRequest(request)
+    const build = demoState.builds.find((candidate) => candidate.id === buildId)
+    if (!build || !getDemoProjectRole(persona, build.project_id)) {
+      return HttpResponse.json(
+        { error: 'Build not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    return HttpResponse.json(
+      demoBuildAnalyses.get(buildId) ?? {
+        analysis: null,
+        base_branch: 'main',
+        baseline: null,
+      },
     )
   }),
 

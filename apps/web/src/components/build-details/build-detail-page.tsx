@@ -29,6 +29,7 @@ import { usePageCommands, type PageCommand } from '@/stores/command-store'
 import { retryStepLabel } from '@/lib/build-steps'
 import { BuildSummary, buildSourceRef } from './build-summary'
 import { EventTimeline } from './event-timeline'
+import { AnalyzerPanel } from './analyzer-panel'
 import { TestsPanel } from './tests-panel'
 import type {
   BuildFeedback,
@@ -47,6 +48,7 @@ import {
   useBuildApprovalDecision,
   useBuildLogs,
   useBuildSizeReport,
+  useBuildAnalysis,
   useBuildTests,
   useCancelBuild,
   useRetryBuildStep,
@@ -103,6 +105,7 @@ import { Row } from '@/components/layout/row'
 import { SplitRow } from '@/components/layout/split-row'
 import { Text } from '@/components/layout/text'
 import { splitRowVariants, textVariants } from '@/lib/recipes'
+import { analyzerTabCount } from '@/lib/analyzer-format'
 import { cn } from '@/lib/utils'
 
 const loadCancelBuildDialog = () => import('./cancel-build-dialog')
@@ -120,9 +123,11 @@ function missingTabMessage(
   const reason =
     tab === 'tests'
       ? 'This build has no test results'
-      : tab === 'release'
-        ? 'This build has not been sent to a store'
-        : `This build has no “${tab}” view`
+      : tab === 'analyzer'
+        ? 'This build has no analyzer results'
+        : tab === 'release'
+          ? 'This build has not been sent to a store'
+          : `This build has no “${tab}” view`
   return `${reason}, so ${shownTab === 'tests' ? 'Tests' : 'Logs'} is shown instead.`
 }
 
@@ -197,6 +202,14 @@ export function BuildDetailPage({
   const testsQuery = useBuildTests(buildId, {
     refetchInterval: isTerminal ? false : 5000,
   })
+  const analysisQuery = useBuildAnalysis(buildId, {
+    refetchInterval: isTerminal ? false : 5000,
+  })
+  const analysisCounts = analysisQuery.data?.analysis?.counts
+  const hasAnalyzerTab =
+    !!analysisCounts ||
+    analysisQuery.isError ||
+    (initialTab === 'analyzer' && analysisQuery.isLoading)
   const testSummary = testsQuery.data?.summary
   const hasTestsTab =
     !!testSummary ||
@@ -219,6 +232,7 @@ export function BuildDetailPage({
     'artifacts',
   ])
   if (hasTestsTab) availableTabs.add('tests')
+  if (hasAnalyzerTab) availableTabs.add('analyzer')
   if (hasReleaseTab) availableTabs.add('release')
   const requestedTab = chosenTab ?? initialTab ?? null
   // A finished build with failing tests opens on Tests until the user picks a tab.
@@ -830,6 +844,14 @@ export function BuildDetailPage({
                   : ''}
             </TabsTrigger>
           ) : null}
+          {hasAnalyzerTab ? (
+            <TabsTrigger value="analyzer">
+              Analyzer
+              {analysisCounts && analyzerTabCount(analysisCounts)
+                ? ` (${analyzerTabCount(analysisCounts)})`
+                : ''}
+            </TabsTrigger>
+          ) : null}
           <TabsTrigger value="artifacts">
             Artifacts{artifacts.length ? ` (${artifacts.length})` : ''}
           </TabsTrigger>
@@ -893,6 +915,16 @@ export function BuildDetailPage({
               error={testsQuery.error}
               isLoading={testsQuery.isLoading}
               onRetry={() => void testsQuery.refetch()}
+            />
+          </TabsContent>
+        ) : null}
+        {hasAnalyzerTab ? (
+          <TabsContent value="analyzer">
+            <AnalyzerPanel
+              data={analysisQuery.data}
+              error={analysisQuery.error}
+              isLoading={analysisQuery.isLoading}
+              onRetry={() => void analysisQuery.refetch()}
             />
           </TabsContent>
         ) : null}

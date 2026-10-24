@@ -34,6 +34,7 @@ import {
   getBuildOptions,
   getBuildLogsQueryKey,
   getBuildQueryKey,
+  getBuildAnalysisOptions,
   getBuildSizeReportOptions,
   getBuildTestResultsOptions,
   listBuildActorsOptions,
@@ -412,6 +413,24 @@ export function useBuildTests(
   const query = scopeOoreQueryOptions(
     instanceId,
     getBuildTestResultsOptions({ client, path: { build_id: buildId } }),
+  )
+
+  return useQuery({
+    ...query,
+    enabled: !!baseUrl && !!token && !!buildId,
+    staleTime: 5_000,
+    refetchInterval: options?.refetchInterval,
+  })
+}
+
+export function useBuildAnalysis(
+  buildId: string,
+  options?: { refetchInterval?: number | false },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    getBuildAnalysisOptions({ client, path: { build_id: buildId } }),
   )
 
   return useQuery({
