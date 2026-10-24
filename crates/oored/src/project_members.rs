@@ -14,6 +14,7 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::AppState;
+use crate::environments::forget_approver;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{
     ProjectPermission, require_project_permission, resolve_effective_project_role,
@@ -378,6 +379,15 @@ pub async fn update_project_member(
         }
     }
 
+    let update_failed = |e: sqlx::Error| {
+        error!(error = %e, "failed to update project member");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to update project member",
+        )
+    };
+    let mut tx = pool.begin().await.map_err(update_failed)?;
     let result = sqlx::query(
         "UPDATE project_members SET role = ?1, updated_at = ?2 WHERE project_id = ?3 AND user_id = ?4",
     )
@@ -385,12 +395,9 @@ pub async fn update_project_member(
     .bind(now)
     .bind(&project_id)
     .bind(&user_id)
-    .execute(&pool)
+    .execute(&mut *tx)
     .await
-    .map_err(|e| {
-        error!(error = %e, "failed to update project member");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to update project member")
-    })?;
+    .map_err(update_failed)?;
 
     if result.rows_affected() == 0 {
         return Err(api_err(
@@ -399,6 +406,14 @@ pub async fn update_project_member(
             "Project member not found",
         ));
     }
+    // Viewers cannot approve promotions, so a demoted member stops being a
+    // named approver.
+    if req.role == ProjectRole::Viewer {
+        forget_approver(&mut tx, &project_id, &user_id)
+            .await
+            .map_err(update_failed)?;
+    }
+    tx.commit().await.map_err(update_failed)?;
 
     let details = serde_json::json!({
         "target_user_id": user_id,
@@ -504,19 +519,21 @@ pub async fn remove_project_member(
         }
     }
 
+    let remove_failed = |e: sqlx::Error| {
+        error!(error = %e, "failed to remove project member");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to remove project member",
+        )
+    };
+    let mut tx = pool.begin().await.map_err(remove_failed)?;
     let result = sqlx::query("DELETE FROM project_members WHERE project_id = ?1 AND user_id = ?2")
         .bind(&project_id)
         .bind(&user_id)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
-        .map_err(|e| {
-            error!(error = %e, "failed to remove project member");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to remove project member",
-            )
-        })?;
+        .map_err(remove_failed)?;
 
     if result.rows_affected() == 0 {
         return Err(api_err(
@@ -525,6 +542,11 @@ pub async fn remove_project_member(
             "Project member not found",
         ));
     }
+    // A former member no longer approves promotions here.
+    forget_approver(&mut tx, &project_id, &user_id)
+        .await
+        .map_err(remove_failed)?;
+    tx.commit().await.map_err(remove_failed)?;
 
     let details = serde_json::json!({
         "removed_user_id": user_id,

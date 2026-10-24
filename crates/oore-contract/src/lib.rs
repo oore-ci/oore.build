@@ -6020,9 +6020,12 @@ pub struct ProjectEnvironment {
     /// Play track (`internal`, `closed`, `open`, `production` or a custom
     /// track), or the App Store release track a store upload records.
     pub track: String,
-    /// A promotion into this environment waits for a maintainer's approval
-    /// before anything changes at the store.
+    /// A promotion into this environment waits for an approval before
+    /// anything changes at the store. `approvers` says who may give it.
     pub approval_required: bool,
+    /// Who may approve or reject promotions into this environment. With no
+    /// role and no users, any project maintainer may.
+    pub approvers: EnvironmentApprovers,
     /// Staged rollout policy for releases promoted into this environment.
     /// Its `approval` is always `none`; use `approval_required`. On the App
     /// Store track, a policy with more than one step turns on Apple's phased
@@ -6042,10 +6045,77 @@ pub struct ProjectEnvironment {
     pub updated_at: i64,
 }
 
+/// The lowest project role that may approve promotions into an environment.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ApproverRole {
+    /// Maintainers.
+    Maintainer,
+    /// Developers and maintainers.
+    Developer,
+}
+
+impl ApproverRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Maintainer => "maintainer",
+            Self::Developer => "developer",
+        }
+    }
+}
+
+impl FromStr for ApproverRole {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "maintainer" => Ok(Self::Maintainer),
+            "developer" => Ok(Self::Developer),
+            other => Err(format!("unknown approver role: {other}")),
+        }
+    }
+}
+
+/// Who may approve or reject promotions into an environment.
+///
+/// A member may decide when their project role is at least `role`, or when
+/// they are one of `users` (developers and maintainers only). With no role
+/// and no users, any project maintainer may decide, as before approvers
+/// existed. Instance owners and admins may always decide. API tokens never
+/// decide: approvals are interactive.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EnvironmentApprovers {
+    /// A developer role lets developers and maintainers approve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ApproverRole>,
+    /// Project members named as approvers. A user who leaves the project,
+    /// or becomes a viewer, stops counting.
+    pub users: Vec<EnvironmentApprover>,
+}
+
+/// A project member named as an approver.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EnvironmentApprover {
+    pub user_id: String,
+    pub email: String,
+}
+
+/// Approvers to set on an environment. Replaces the whole set; send an empty
+/// object to go back to "any maintainer".
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EnvironmentApproversInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ApproverRole>,
+    /// User ids of project members who are developers or maintainers. At
+    /// most 20.
+    #[serde(default)]
+    pub user_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PromotionState {
-    /// Waiting for a maintainer's approval; nothing changed at the store.
+    /// Waiting for an approval; nothing changed at the store.
     Pending,
     /// The store change is in flight.
     Promoting,
@@ -6147,6 +6217,9 @@ pub struct CreateProjectEnvironmentRequest {
     /// promotion attaches the build.
     #[serde(default)]
     pub submit_for_review: bool,
+    /// Who may approve promotions. Defaults to any project maintainer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approvers: Option<EnvironmentApproversInput>,
 }
 
 /// Changes to an environment. The key and store are fixed once created.
@@ -6164,6 +6237,10 @@ pub struct UpdateProjectEnvironmentRequest {
     pub submit_for_review: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<i64>,
+    /// Replaces who may approve promotions; leave out (or send null) to keep
+    /// them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approvers: Option<EnvironmentApproversInput>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

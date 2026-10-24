@@ -2756,6 +2756,7 @@ mod tests {
                 ..ReleasePolicy::default()
             }),
             submit_for_review,
+            approvers: None,
         }
     }
 
@@ -3009,9 +3010,16 @@ mod tests {
         };
         assert!(matches!(error, EnvironmentError::Store(_)));
         assert_eq!(error.into_api().0, axum::http::StatusCode::BAD_GATEWAY);
-        let list = environments::list_environments(&pool, "p1", &role)
-            .await
-            .unwrap();
+        let list = environments::list_environments(
+            &pool,
+            "p1",
+            environments::Viewer {
+                role: &role,
+                user_id: None,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(list.promotions[0].state, PromotionState::Failed);
         assert!(
             list.promotions[0]
@@ -3237,9 +3245,16 @@ mod tests {
         assert!(store.asc.changes().is_empty(), "{:?}", store.asc.changes());
 
         // Each refusal failed its promotion, with the reason and an audit entry.
-        let list = environments::list_environments(&pool, "p1", &role)
-            .await
-            .unwrap();
+        let list = environments::list_environments(
+            &pool,
+            "p1",
+            environments::Viewer {
+                role: &role,
+                user_id: None,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(list.promotions.len(), 4);
         assert!(
             list.promotions

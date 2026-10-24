@@ -7152,7 +7152,7 @@
           "Environments"
         ],
         "summary": "Approve promotion",
-        "description": "Approves a pending promotion and makes the store change as the approver. Requires the maintainer role. Writes an audit log entry.",
+        "description": "Approves a pending promotion and makes the store change as the approver. Requires one of the environment's approvers (by default any maintainer). API tokens cannot decide promotions. Writes an audit log entry.",
         "operationId": "approve_promotion",
         "parameters": [
           {
@@ -7203,7 +7203,7 @@
             }
           },
           "403": {
-            "description": "Permission denied",
+            "description": "Not one of the environment's approvers, or an API token",
             "content": {
               "application/json": {
                 "schema": {
@@ -7256,7 +7256,7 @@
           "Environments"
         ],
         "summary": "Reject promotion",
-        "description": "Rejects a pending promotion; nothing changes at the store. Requires the maintainer role. Writes an audit log entry.",
+        "description": "Rejects a pending promotion; nothing changes at the store. Requires one of the environment's approvers (by default any maintainer). API tokens cannot decide promotions. Writes an audit log entry.",
         "operationId": "reject_promotion",
         "parameters": [
           {
@@ -7307,7 +7307,7 @@
             }
           },
           "403": {
-            "description": "Permission denied",
+            "description": "Not one of the environment's approvers, or an API token",
             "content": {
               "application/json": {
                 "schema": {
@@ -13499,6 +13499,14 @@
         },
         "additionalProperties": false
       },
+      "ApproverRole": {
+        "type": "string",
+        "description": "The lowest project role that may approve promotions into an environment.",
+        "enum": [
+          "maintainer",
+          "developer"
+        ]
+      },
       "Artifact": {
         "type": "object",
         "required": [
@@ -15503,6 +15511,17 @@
           "approval_required": {
             "type": "boolean"
           },
+          "approvers": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentApproversInput",
+                "description": "Who may approve promotions. Defaults to any project maintainer."
+              }
+            ]
+          },
           "key": {
             "type": "string"
           },
@@ -15837,6 +15856,72 @@
                 "$ref": "#/components/schemas/ProjectRetentionOverride"
               }
             ]
+          }
+        }
+      },
+      "EnvironmentApprover": {
+        "type": "object",
+        "description": "A project member named as an approver.",
+        "required": [
+          "user_id",
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        }
+      },
+      "EnvironmentApprovers": {
+        "type": "object",
+        "description": "Who may approve or reject promotions into an environment.\n\nA member may decide when their project role is at least `role`, or when\nthey are one of `users` (developers and maintainers only). With no role\nand no users, any project maintainer may decide, as before approvers\nexisted. Instance owners and admins may always decide. API tokens never\ndecide: approvals are interactive.",
+        "required": [
+          "users"
+        ],
+        "properties": {
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApproverRole",
+                "description": "A developer role lets developers and maintainers approve."
+              }
+            ]
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentApprover"
+            },
+            "description": "Project members named as approvers. A user who leaves the project,\nor becomes a viewer, stops counting."
+          }
+        }
+      },
+      "EnvironmentApproversInput": {
+        "type": "object",
+        "description": "Approvers to set on an environment. Replaces the whole set; send an empty\nobject to go back to \"any maintainer\".",
+        "properties": {
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApproverRole"
+              }
+            ]
+          },
+          "user_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "User ids of project members who are developers or maintainers. At\nmost 20."
           }
         }
       },
@@ -18999,6 +19084,7 @@
           "store",
           "track",
           "approval_required",
+          "approvers",
           "rollout_policy",
           "promotable",
           "created_at",
@@ -19007,7 +19093,11 @@
         "properties": {
           "approval_required": {
             "type": "boolean",
-            "description": "A promotion into this environment waits for a maintainer's approval\nbefore anything changes at the store."
+            "description": "A promotion into this environment waits for an approval before\nanything changes at the store. `approvers` says who may give it."
+          },
+          "approvers": {
+            "$ref": "#/components/schemas/EnvironmentApprovers",
+            "description": "Who may approve or reject promotions into this environment. With no\nrole and no users, any project maintainer may."
           },
           "created_at": {
             "type": "integer",
@@ -22496,6 +22586,17 @@
             "type": [
               "boolean",
               "null"
+            ]
+          },
+          "approvers": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentApproversInput",
+                "description": "Replaces who may approve promotions; leave out (or send null) to keep\nthem."
+              }
             ]
           },
           "name": {

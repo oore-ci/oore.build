@@ -12,6 +12,10 @@
 //! or is attached to the app's App Store version, and the App Store monitor
 //! follows it from there.
 //!
+//! An environment can name who approves promotions into it: members with at
+//! least a project role, named project members, or both. Without either, any
+//! maintainer approves, as before approvers existed.
+//!
 //! Projects without environments are unaffected: releases keep a NULL
 //! `environment_id` and the per-pipeline publish settings apply as before.
 //! A release recorded on a track that an environment targets is placed in
@@ -24,10 +28,11 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use oore_contract::{
-    ApiError, CreateProjectEnvironmentRequest, CreatePromotionRequest, EnvironmentPromotion,
-    ListProjectEnvironmentsResponse, OkResponse, ProjectEnvironment, PromotionDecisionRequest,
-    PromotionState, Release, ReleaseApprovalGate, ReleasePolicy, ReleaseState, ReleaseStore,
-    UpdateProjectEnvironmentRequest,
+    ApiError, ApproverRole, CreateProjectEnvironmentRequest, CreatePromotionRequest,
+    EnvironmentApprover, EnvironmentApprovers, EnvironmentApproversInput, EnvironmentPromotion,
+    ListProjectEnvironmentsResponse, OkResponse, ProjectEnvironment, ProjectRole,
+    PromotionDecisionRequest, PromotionState, Release, ReleaseApprovalGate, ReleasePolicy,
+    ReleaseState, ReleaseStore, UpdateProjectEnvironmentRequest,
 };
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
@@ -44,6 +49,7 @@ use crate::releases::{
     ReleaseError, allowed_actions, finish_create, insert_release, project_role, row_to_release,
     user_actor,
 };
+use crate::session::AuthSource;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
@@ -54,6 +60,8 @@ const MAX_ENVIRONMENTS: i64 = 12;
 const MAX_REASON_LEN: usize = 500;
 const MAX_NAME_LEN: usize = 64;
 const MAX_KEY_LEN: usize = 32;
+/// Named approvers one environment may have.
+const MAX_APPROVERS: usize = 20;
 /// Decided promotions listed with the environments, after every pending one.
 const RECENT_PROMOTIONS: i64 = 20;
 
@@ -230,6 +238,202 @@ fn validate_policy(policy: &ReleasePolicy) -> Result<(), EnvironmentError> {
     Ok(())
 }
 
+/// Approvers to store, after checking their shape: the role and the
+/// deduplicated user ids. Maintainers with nobody named is the default, so it
+/// is stored as no approvers. Membership is checked separately, inside the
+/// transaction that stores them.
+fn normalize_approvers(
+    input: &EnvironmentApproversInput,
+) -> Result<(Option<ApproverRole>, Vec<String>), EnvironmentError> {
+    let mut user_ids: Vec<String> = Vec::with_capacity(input.user_ids.len());
+    for user_id in &input.user_ids {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err(EnvironmentError::Invalid(
+                "approvers.user_ids must not contain empty ids".into(),
+            ));
+        }
+        if !user_ids.iter().any(|seen| seen == user_id) {
+            user_ids.push(user_id.to_string());
+        }
+    }
+    if user_ids.len() > MAX_APPROVERS {
+        return Err(EnvironmentError::Invalid(format!(
+            "an environment can name at most {MAX_APPROVERS} approvers"
+        )));
+    }
+    let role = match input.role {
+        Some(ApproverRole::Maintainer) if user_ids.is_empty() => None,
+        role => role,
+    };
+    Ok((role, user_ids))
+}
+
+/// Check that every named approver is a developer or maintainer of the
+/// project.
+async fn check_approver_members(
+    conn: &mut sqlx::SqliteConnection,
+    project_id: &str,
+    user_ids: &[String],
+) -> Result<(), EnvironmentError> {
+    for user_id in user_ids {
+        let member: Option<(String, String)> = sqlx::query_as(
+            "SELECT pm.role, u.email FROM project_members pm JOIN users u ON u.id = pm.user_id \
+             WHERE pm.project_id = ?1 AND pm.user_id = ?2",
+        )
+        .bind(project_id)
+        .bind(user_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+        match member {
+            None => {
+                return Err(EnvironmentError::Invalid(format!(
+                    "approvers.user_ids: {user_id} is not a member of this project"
+                )));
+            }
+            Some((role, email)) if role == ProjectRole::Viewer.to_string() => {
+                return Err(EnvironmentError::Invalid(format!(
+                    "approvers.user_ids: {email} is a viewer; approvers must be developers or maintainers"
+                )));
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Stop counting a user as a named approver anywhere in the project, when
+/// they leave it or become a viewer.
+pub(crate) async fn forget_approver(
+    conn: &mut sqlx::SqliteConnection,
+    project_id: &str,
+    user_id: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM environment_approvers WHERE user_id = ?1 AND environment_id IN \
+         (SELECT id FROM project_environments WHERE project_id = ?2)",
+    )
+    .bind(user_id)
+    .bind(project_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn store_approvers(
+    conn: &mut sqlx::SqliteConnection,
+    environment_id: &str,
+    user_ids: &[String],
+) -> Result<(), EnvironmentError> {
+    sqlx::query("DELETE FROM environment_approvers WHERE environment_id = ?1")
+        .bind(environment_id)
+        .execute(&mut *conn)
+        .await?;
+    let now = now_unix();
+    for user_id in user_ids {
+        sqlx::query(
+            "INSERT INTO environment_approvers (environment_id, user_id, created_at) \
+             VALUES (?1, ?2, ?3)",
+        )
+        .bind(environment_id)
+        .bind(user_id)
+        .bind(now)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Why a caller may decide a promotion, recorded in the audit log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApprovalBasis {
+    InstanceAdmin,
+    /// No approvers are set, and the caller is a maintainer.
+    Maintainer,
+    /// The caller's project role meets the environment's approver role.
+    ApproverRole,
+    /// The caller is one of the environment's named approvers.
+    NamedApprover,
+}
+
+impl ApprovalBasis {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::InstanceAdmin => "instance_admin",
+            Self::Maintainer => "maintainer",
+            Self::ApproverRole => "approver_role",
+            Self::NamedApprover => "named_approver",
+        }
+    }
+}
+
+fn role_meets(role: ProjectRole, min: ApproverRole) -> bool {
+    match min {
+        ApproverRole::Maintainer => role == ProjectRole::Maintainer,
+        ApproverRole::Developer => {
+            matches!(role, ProjectRole::Maintainer | ProjectRole::Developer)
+        }
+    }
+}
+
+fn approvers_set(approvers: &EnvironmentApprovers) -> bool {
+    approvers.role.is_some() || !approvers.users.is_empty()
+}
+
+/// Whether the caller may approve or reject promotions into an environment
+/// with these approvers, and why.
+fn approval_basis(
+    role: &EffectiveProjectRole,
+    user_id: Option<&str>,
+    approvers: &EnvironmentApprovers,
+) -> Option<ApprovalBasis> {
+    let member_role = match role {
+        EffectiveProjectRole::InstanceAdmin => return Some(ApprovalBasis::InstanceAdmin),
+        EffectiveProjectRole::None => return None,
+        EffectiveProjectRole::Member(member_role) => *member_role,
+    };
+    if !approvers_set(approvers) {
+        return check_project_permission(role, ProjectPermission::ManageReleases)
+            .then_some(ApprovalBasis::Maintainer);
+    }
+    if approvers
+        .role
+        .is_some_and(|min| role_meets(member_role, min))
+    {
+        return Some(ApprovalBasis::ApproverRole);
+    }
+    let named = user_id.is_some_and(|user_id| {
+        approvers
+            .users
+            .iter()
+            .any(|approver| approver.user_id == user_id)
+    });
+    (named && check_project_permission(role, ProjectPermission::OperateRelease))
+        .then_some(ApprovalBasis::NamedApprover)
+}
+
+/// Who approves, for messages: "maintainers", or "developers and
+/// maintainers, or ana@example.com".
+fn describe_approvers(approvers: &EnvironmentApprovers) -> String {
+    let mut parts = Vec::new();
+    match approvers.role {
+        None if approvers.users.is_empty() => parts.push("maintainers".to_string()),
+        None => {}
+        Some(ApproverRole::Maintainer) => parts.push("maintainers".to_string()),
+        Some(ApproverRole::Developer) => parts.push("developers and maintainers".to_string()),
+    }
+    parts.extend(approvers.users.iter().map(|user| user.email.clone()));
+    parts.join(", or ")
+}
+
+fn approvers_audit(approvers: &EnvironmentApprovers) -> serde_json::Value {
+    serde_json::json!({
+        "role": approvers.role,
+        "user_ids": approvers.users.iter().map(|user| &user.user_id).collect::<Vec<_>>(),
+        "emails": approvers.users.iter().map(|user| &user.email).collect::<Vec<_>>(),
+    })
+}
+
 // ── Rows ────────────────────────────────────────────────────────
 
 fn row_to_environment(row: &SqliteRow) -> Result<ProjectEnvironment, EnvironmentError> {
@@ -239,6 +443,11 @@ fn row_to_environment(row: &SqliteRow) -> Result<ProjectEnvironment, Environment
         .map_err(|message: String| EnvironmentError::Db(anyhow::anyhow!(message)))?;
     let rollout_policy: ReleasePolicy = serde_json::from_str(&row.get::<String, _>("policy_json"))
         .map_err(|error| EnvironmentError::Db(error.into()))?;
+    let approver_role = row
+        .get::<Option<String>, _>("approver_role")
+        .map(|role| role.parse::<ApproverRole>())
+        .transpose()
+        .map_err(|message| EnvironmentError::Db(anyhow::anyhow!(message)))?;
     Ok(ProjectEnvironment {
         id: row.get("id"),
         project_id: row.get("project_id"),
@@ -248,6 +457,10 @@ fn row_to_environment(row: &SqliteRow) -> Result<ProjectEnvironment, Environment
         store,
         track: row.get("track"),
         approval_required: row.get::<i64, _>("approval_required") != 0,
+        approvers: EnvironmentApprovers {
+            role: approver_role,
+            users: Vec::new(),
+        },
         rollout_policy,
         submit_for_review: row.get::<i64, _>("submit_for_review") != 0,
         latest_release: None,
@@ -255,6 +468,29 @@ fn row_to_environment(row: &SqliteRow) -> Result<ProjectEnvironment, Environment
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })
+}
+
+/// Fill in the named approvers who are still members of the project.
+async fn fill_approvers(
+    pool: &SqlitePool,
+    environment: &mut ProjectEnvironment,
+) -> Result<(), EnvironmentError> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT ea.user_id, u.email FROM environment_approvers ea \
+         JOIN users u ON u.id = ea.user_id \
+         JOIN project_members pm ON pm.user_id = ea.user_id AND pm.project_id = ?2 \
+           AND pm.role IN ('maintainer', 'developer') \
+         WHERE ea.environment_id = ?1 ORDER BY u.email",
+    )
+    .bind(&environment.id)
+    .bind(&environment.project_id)
+    .fetch_all(pool)
+    .await?;
+    environment.approvers.users = rows
+        .into_iter()
+        .map(|(user_id, email)| EnvironmentApprover { user_id, email })
+        .collect();
+    Ok(())
 }
 
 pub(crate) async fn load_environment(
@@ -268,7 +504,16 @@ pub(crate) async fn load_environment(
         .fetch_optional(pool)
         .await?
         .ok_or(EnvironmentError::NotFound("Environment not found"))?;
-    row_to_environment(&row)
+    let mut environment = row_to_environment(&row)?;
+    fill_approvers(pool, &mut environment).await?;
+    Ok(environment)
+}
+
+/// The caller a promotion is shown to, for `can_decide`.
+#[derive(Clone, Copy)]
+pub(crate) struct Viewer<'a> {
+    pub role: &'a EffectiveProjectRole,
+    pub user_id: Option<&'a str>,
 }
 
 const PROMOTION_SELECT: &str = "SELECT pr.*, e.name AS environment_name, b.build_number AS build_number, \
@@ -284,7 +529,8 @@ const PROMOTION_SELECT: &str = "SELECT pr.*, e.name AS environment_name, b.build
 
 fn row_to_promotion(
     row: &SqliteRow,
-    role: &EffectiveProjectRole,
+    viewer: Viewer<'_>,
+    approvers: Option<&EnvironmentApprovers>,
 ) -> Result<EnvironmentPromotion, EnvironmentError> {
     let state: PromotionState = row
         .get::<String, _>("state")
@@ -311,7 +557,9 @@ fn row_to_promotion(
         decided_by_email: row.get("decided_by_email"),
         decided_at: row.get("decided_at"),
         can_decide: state == PromotionState::Pending
-            && check_project_permission(role, ProjectPermission::ManageReleases),
+            && approvers.is_some_and(|approvers| {
+                approval_basis(viewer.role, viewer.user_id, approvers).is_some()
+            }),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })
@@ -321,8 +569,22 @@ async fn load_promotion(
     pool: &SqlitePool,
     project_id: &str,
     promotion_id: &str,
-    role: &EffectiveProjectRole,
+    viewer: Viewer<'_>,
 ) -> Result<EnvironmentPromotion, EnvironmentError> {
+    Ok(
+        load_promotion_with_environment(pool, project_id, promotion_id, viewer)
+            .await?
+            .0,
+    )
+}
+
+/// A promotion and the environment it targets, loaded once.
+async fn load_promotion_with_environment(
+    pool: &SqlitePool,
+    project_id: &str,
+    promotion_id: &str,
+    viewer: Viewer<'_>,
+) -> Result<(EnvironmentPromotion, ProjectEnvironment), EnvironmentError> {
     let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{PROMOTION_SELECT} WHERE pr.id = ?1 AND pr.project_id = ?2"
     )))
@@ -331,7 +593,10 @@ async fn load_promotion(
     .fetch_optional(pool)
     .await?
     .ok_or(EnvironmentError::NotFound("Promotion not found"))?;
-    row_to_promotion(&row, role)
+    let environment_id: String = row.get("environment_id");
+    let environment = load_environment(pool, project_id, &environment_id).await?;
+    let promotion = row_to_promotion(&row, viewer, Some(&environment.approvers))?;
+    Ok((promotion, environment))
 }
 
 async fn audit(
@@ -392,6 +657,10 @@ pub(crate) async fn create_environment(
     let policy = request.rollout_policy.unwrap_or_default();
     validate_policy(&policy)?;
     validate_submit_for_review(request.store, &track, request.submit_for_review)?;
+    let (approver_role, approver_ids) = match &request.approvers {
+        Some(approvers) => normalize_approvers(approvers)?,
+        None => (None, Vec::new()),
+    };
     let policy_json =
         serde_json::to_string(&policy).map_err(|error| EnvironmentError::Db(error.into()))?;
 
@@ -407,13 +676,14 @@ pub(crate) async fn create_environment(
             "a project can have at most {MAX_ENVIRONMENTS} environments"
         )));
     }
+    check_approver_members(&mut tx, project_id, &approver_ids).await?;
     let id = Uuid::new_v4().to_string();
     let now = now_unix();
     let inserted = sqlx::query(
         "INSERT INTO project_environments (id, project_id, env_key, name, position, store, track, \
          approval_required, policy_json, created_by, updated_by, created_at, updated_at, \
-         submit_for_review) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?11, ?12)",
+         submit_for_review, approver_role) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?11, ?12, ?13)",
     )
     .bind(&id)
     .bind(project_id)
@@ -427,6 +697,7 @@ pub(crate) async fn create_environment(
     .bind(actor_id(actor))
     .bind(now)
     .bind(request.submit_for_review)
+    .bind(approver_role.map(ApproverRole::as_str))
     .execute(&mut *tx)
     .await;
     if let Err(error) = inserted {
@@ -439,6 +710,7 @@ pub(crate) async fn create_environment(
             error.into()
         });
     }
+    store_approvers(&mut tx, &id, &approver_ids).await?;
     tx.commit().await?;
 
     let environment = load_environment(pool, project_id, &id).await?;
@@ -455,6 +727,7 @@ pub(crate) async fn create_environment(
             "store": environment.store,
             "track": environment.track,
             "approval_required": environment.approval_required,
+            "approvers": approvers_audit(&environment.approvers),
             "rollout_policy": environment.rollout_policy,
             "submit_for_review": environment.submit_for_review,
         }),
@@ -512,11 +785,24 @@ pub(crate) async fn update_environment(
             "position must not be negative".into(),
         ));
     }
+    let approvers = match &request.approvers {
+        Some(approvers) => Some(normalize_approvers(approvers)?),
+        None => None,
+    };
+    let approver_role = match &approvers {
+        Some((role, _)) => *role,
+        None => current.approvers.role,
+    };
     let policy_json =
         serde_json::to_string(&policy).map_err(|error| EnvironmentError::Db(error.into()))?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if let Some((_, user_ids)) = &approvers {
+        check_approver_members(&mut tx, project_id, user_ids).await?;
+    }
     let updated = sqlx::query(
         "UPDATE project_environments SET name = ?1, track = ?2, approval_required = ?3, \
-         policy_json = ?4, position = ?5, updated_by = ?6, updated_at = ?7, submit_for_review = ?10 \
+         policy_json = ?4, position = ?5, updated_by = ?6, updated_at = ?7, submit_for_review = ?10, \
+         approver_role = ?11 \
          WHERE id = ?8 AND project_id = ?9",
     )
     .bind(&name)
@@ -529,7 +815,8 @@ pub(crate) async fn update_environment(
     .bind(environment_id)
     .bind(project_id)
     .bind(submit_for_review)
-    .execute(pool)
+    .bind(approver_role.map(ApproverRole::as_str))
+    .execute(&mut *tx)
     .await;
     match updated {
         Err(error) if unique_violation(&error) => {
@@ -541,6 +828,10 @@ pub(crate) async fn update_environment(
         Err(error) => return Err(error.into()),
         Ok(_) => {}
     }
+    if let Some((_, user_ids)) = &approvers {
+        store_approvers(&mut tx, environment_id, user_ids).await?;
+    }
+    tx.commit().await?;
     let environment = load_environment(pool, project_id, environment_id).await?;
     audit(
         pool,
@@ -556,6 +847,7 @@ pub(crate) async fn update_environment(
                 "name": current.name,
                 "track": current.track,
                 "approval_required": current.approval_required,
+                "approvers": approvers_audit(&current.approvers),
                 "rollout_policy": current.rollout_policy,
                 "submit_for_review": current.submit_for_review,
                 "position": current.position,
@@ -564,6 +856,7 @@ pub(crate) async fn update_environment(
                 "name": environment.name,
                 "track": environment.track,
                 "approval_required": environment.approval_required,
+                "approvers": approvers_audit(&environment.approvers),
                 "rollout_policy": environment.rollout_policy,
                 "submit_for_review": environment.submit_for_review,
                 "position": environment.position,
@@ -688,8 +981,9 @@ pub(crate) async fn delete_environment(
 pub(crate) async fn list_environments(
     pool: &SqlitePool,
     project_id: &str,
-    role: &EffectiveProjectRole,
+    viewer: Viewer<'_>,
 ) -> Result<ListProjectEnvironmentsResponse, EnvironmentError> {
+    let role = viewer.role;
     let rows = sqlx::query(
         "SELECT * FROM project_environments WHERE project_id = ?1 ORDER BY position, created_at",
     )
@@ -699,6 +993,7 @@ pub(crate) async fn list_environments(
     let mut environments = Vec::with_capacity(rows.len());
     for row in &rows {
         let mut environment = row_to_environment(row)?;
+        fill_approvers(pool, &mut environment).await?;
         let latest = sqlx::query(sqlx::AssertSqlSafe(format!(
             "{RELEASE_SELECT} WHERE r.environment_id = ?1 ORDER BY r.created_at DESC, r.id LIMIT 1"
         )))
@@ -725,9 +1020,16 @@ pub(crate) async fn list_environments(
     .bind(RECENT_PROMOTIONS)
     .fetch_all(pool)
     .await?;
+    let approvers: HashMap<&str, &EnvironmentApprovers> = environments
+        .iter()
+        .map(|environment| (environment.id.as_str(), &environment.approvers))
+        .collect();
     let promotions = rows
         .iter()
-        .map(|row| row_to_promotion(row, role))
+        .map(|row| {
+            let environment_id: String = row.get("environment_id");
+            row_to_promotion(row, viewer, approvers.get(environment_id.as_str()).copied())
+        })
         .collect::<Result<_, _>>()?;
     Ok(ListProjectEnvironmentsResponse {
         environments,
@@ -1028,11 +1330,17 @@ pub(crate) async fn request_promotion(
     if state == PromotionState::Promoting {
         execute_promotion(deps, &id, &environment, &source, actor, reason.as_deref()).await?;
     }
-    load_promotion(deps.pool, project_id, &id, role).await
+    let viewer = Viewer {
+        role,
+        user_id: actor_id(actor),
+    };
+    load_promotion(deps.pool, project_id, &id, viewer).await
 }
 
 /// Approve or reject a pending promotion. Approving makes the store change
-/// as the approver.
+/// as the approver. Only the environment's approvers may decide; without
+/// any set, that is every maintainer. The requester may decide their own
+/// request when they are an approver, and the audit entry says so.
 pub(crate) async fn decide_promotion(
     deps: ReleaseDeps<'_>,
     project_id: &str,
@@ -1042,13 +1350,25 @@ pub(crate) async fn decide_promotion(
     approve: bool,
     reason: Option<&str>,
 ) -> Result<EnvironmentPromotion, EnvironmentError> {
-    if !check_project_permission(role, ProjectPermission::ManageReleases) {
+    let viewer = Viewer {
+        role,
+        user_id: actor_id(actor),
+    };
+    // Viewers can never be approvers; refuse them before loading anything.
+    if !check_project_permission(role, ProjectPermission::OperateRelease) {
         return Err(EnvironmentError::Forbidden(
-            "Approving a promotion takes the maintainer role".into(),
+            "You do not have permission to approve promotions in this project".into(),
         ));
     }
-    let promotion = load_promotion(deps.pool, project_id, promotion_id, role).await?;
-    let environment = load_environment(deps.pool, project_id, &promotion.environment_id).await?;
+    let (promotion, environment) =
+        load_promotion_with_environment(deps.pool, project_id, promotion_id, viewer).await?;
+    let Some(basis) = approval_basis(role, viewer.user_id, &environment.approvers) else {
+        return Err(EnvironmentError::Forbidden(format!(
+            "Only {} can approve or reject promotions into {}",
+            describe_approvers(&environment.approvers),
+            environment.name
+        )));
+    };
     let lock = promotion_lock(&promotion.build_id, &environment.id);
     let _guard = lock.lock().await;
     let reason = clean_reason(reason);
@@ -1103,6 +1423,8 @@ pub(crate) async fn decide_promotion(
             "decided_by_id": decided_by,
             "self_approval": approve && self_decided,
             "self_decided": self_decided,
+            "decided_as": basis.as_str(),
+            "approvers": approvers_audit(&environment.approvers),
             "reason": reason,
         }),
     )
@@ -1157,7 +1479,7 @@ pub(crate) async fn decide_promotion(
         )
         .await?;
     }
-    load_promotion(deps.pool, project_id, promotion_id, role).await
+    load_promotion(deps.pool, project_id, promotion_id, viewer).await
 }
 
 /// Make the store change for a `promoting` promotion, then record the new
@@ -1359,7 +1681,11 @@ pub async fn list_project_environments(
     Path(project_id): Path<String>,
 ) -> ApiResult<ListProjectEnvironmentsResponse> {
     let role = role_with(&state, &auth, &project_id, ProjectPermission::Read).await?;
-    list_environments(&state.db, &project_id, &role)
+    let viewer = Viewer {
+        role: &role,
+        user_id: Some(&auth.0.user_id),
+    };
+    list_environments(&state.db, &project_id, viewer)
         .await
         .map(Json)
         .map_err(EnvironmentError::into_api)
@@ -1470,6 +1796,17 @@ pub async fn reject_promotion(
     decide(state, auth, project_id, promotion_id, body, false).await
 }
 
+/// Approvals are interactive, as build approvals are: an API token cannot
+/// approve or reject a promotion.
+fn refuse_api_token(auth_source: &AuthSource) -> Result<(), EnvironmentError> {
+    match auth_source {
+        AuthSource::ApiToken => Err(EnvironmentError::Forbidden(
+            "API tokens cannot approve or reject promotions. Sign in to Oore to decide.".into(),
+        )),
+        AuthSource::Session => Ok(()),
+    }
+}
+
 async fn decide(
     state: Arc<AppState>,
     auth: AuthUser,
@@ -1479,6 +1816,7 @@ async fn decide(
     approve: bool,
 ) -> ApiResult<EnvironmentPromotion> {
     let role = role_with(&state, &auth, &project_id, ProjectPermission::Read).await?;
+    refuse_api_token(&auth.0.auth_source).map_err(EnvironmentError::into_api)?;
     let request = body.map(|Json(request)| request).unwrap_or_default();
     decide_promotion(
         ReleaseDeps::from(&*state),
@@ -1552,6 +1890,7 @@ mod tests {
                 ..ReleasePolicy::default()
             }),
             submit_for_review: false,
+            approvers: None,
         }
     }
 
@@ -1857,7 +2196,16 @@ mod tests {
         .await;
         assert!(matches!(result, Err(EnvironmentError::Forbidden(_))));
         let viewer = EffectiveProjectRole::Member(ProjectRole::Viewer);
-        let list = list_environments(&pool, "p1", &viewer).await.unwrap();
+        let list = list_environments(
+            &pool,
+            "p1",
+            Viewer {
+                role: &viewer,
+                user_id: None,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(list.environments.len(), 1);
         assert!(list.promotions.is_empty());
     }
@@ -1899,7 +2247,16 @@ mod tests {
         *store.promote_fails.lock().unwrap() = true;
         let failed = request_promotion(deps, "p1", &role, &actor, request()).await;
         assert!(matches!(failed, Err(EnvironmentError::Store(_))));
-        let list = list_environments(&pool, "p1", &role).await.unwrap();
+        let list = list_environments(
+            &pool,
+            "p1",
+            Viewer {
+                role: &role,
+                user_id: None,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(list.promotions.len(), 1);
         assert_eq!(list.promotions[0].state, PromotionState::Failed);
         assert!(
@@ -2387,5 +2744,531 @@ mod tests {
             ensure_not_promoted(&pool, "b1", &production, None).await,
             Err(EnvironmentError::NotFound(_))
         ));
+    }
+
+    // ── Approvers ───────────────────────────────────────────────
+
+    /// Project members: dev (u1, developer), lead (u2, maintainer), qa (u3,
+    /// developer), ops (u4, maintainer) and guest (u5, viewer).
+    async fn add_members(pool: &SqlitePool) {
+        for (id, email) in [
+            ("u3", "qa@example.com"),
+            ("u4", "ops@example.com"),
+            ("u5", "guest@example.com"),
+        ] {
+            sqlx::query(
+                "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+                 VALUES (?1, ?2, ?1, 'developer', 0, 0)",
+            )
+            .bind(id)
+            .bind(email)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        for (user_id, role) in [
+            ("u1", "developer"),
+            ("u2", "maintainer"),
+            ("u3", "developer"),
+            ("u4", "maintainer"),
+            ("u5", "viewer"),
+        ] {
+            sqlx::query(
+                "INSERT INTO project_members (id, project_id, user_id, role, created_by, created_at, updated_at) \
+                 VALUES (?1, 'p1', ?2, ?3, 'u1', 0, 0)",
+            )
+            .bind(format!("m-{user_id}"))
+            .bind(user_id)
+            .bind(role)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    fn member(
+        role: ProjectRole,
+        user_id: &str,
+        email: &str,
+    ) -> (EffectiveProjectRole, ReleaseActor) {
+        (
+            EffectiveProjectRole::Member(role),
+            ReleaseActor::User {
+                user_id: user_id.into(),
+                email: email.into(),
+            },
+        )
+    }
+
+    fn approvers(role: Option<ApproverRole>, user_ids: &[&str]) -> EnvironmentApproversInput {
+        EnvironmentApproversInput {
+            role,
+            user_ids: user_ids.iter().map(|id| id.to_string()).collect(),
+        }
+    }
+
+    /// A gated production environment with these approvers, a source release
+    /// for b1, and a pending promotion the developer asked for.
+    async fn pending_with(
+        deps: ReleaseDeps<'_>,
+        input: Option<EnvironmentApproversInput>,
+    ) -> (ProjectEnvironment, EnvironmentPromotion) {
+        let (_, lead) = maintainer();
+        let production = create_environment(
+            deps.pool,
+            "p1",
+            &lead,
+            CreateProjectEnvironmentRequest {
+                approvers: input,
+                ..environment("production", "production", true)
+            },
+        )
+        .await
+        .unwrap();
+        internal_upload(deps).await;
+        let (dev_role, dev) = developer();
+        let pending = request_promotion(
+            deps,
+            "p1",
+            &dev_role,
+            &dev,
+            CreatePromotionRequest {
+                build_id: "b1".into(),
+                environment_id: production.id.clone(),
+                reason: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(pending.state, PromotionState::Pending);
+        (production, pending)
+    }
+
+    async fn can_decide(pool: &SqlitePool, role: &EffectiveProjectRole, user_id: &str) -> bool {
+        let list = list_environments(
+            pool,
+            "p1",
+            Viewer {
+                role,
+                user_id: Some(user_id),
+            },
+        )
+        .await
+        .unwrap();
+        list.promotions[0].can_decide
+    }
+
+    #[tokio::test]
+    async fn only_named_approvers_decide_and_other_maintainers_are_refused() {
+        let pool = setup().await;
+        add_members(&pool).await;
+        let scheduler = Scheduler::new(16);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (production, pending) = pending_with(deps, Some(approvers(None, &["u3"]))).await;
+        assert_eq!(
+            production.approvers.users,
+            vec![EnvironmentApprover {
+                user_id: "u3".into(),
+                email: "qa@example.com".into(),
+            }]
+        );
+        assert_eq!(production.approvers.role, None);
+
+        let (lead_role, lead) = maintainer();
+        let (qa_role, qa) = member(ProjectRole::Developer, "u3", "qa@example.com");
+        assert!(!can_decide(&pool, &lead_role, "u2").await);
+        assert!(can_decide(&pool, &qa_role, "u3").await);
+        assert!(can_decide(&pool, &EffectiveProjectRole::InstanceAdmin, "admin").await);
+
+        // A maintainer who is not an approver gets a 403 naming the approvers,
+        // for approving and for rejecting, and the promotion keeps waiting.
+        for approve in [true, false] {
+            let refused =
+                decide_promotion(deps, "p1", &pending.id, &lead_role, &lead, approve, None).await;
+            let Err(error) = refused else {
+                panic!("a maintainer who is not an approver decided");
+            };
+            let (status, Json(body)) = error.into_api();
+            assert_eq!(status, StatusCode::FORBIDDEN);
+            assert!(body.error.contains("qa@example.com"), "{}", body.error);
+            assert!(body.error.contains("Production"), "{}", body.error);
+        }
+        assert!(store.promotions.lock().unwrap().is_empty());
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT COUNT(*) FROM audit_logs WHERE action = 'promotion_approved'"
+            )
+            .await,
+            0
+        );
+
+        // The named approver, a developer, approves.
+        let approved = decide_promotion(deps, "p1", &pending.id, &qa_role, &qa, true, None)
+            .await
+            .unwrap();
+        assert_eq!(approved.state, PromotionState::Completed);
+        assert_eq!(approved.decided_by_email.as_deref(), Some("qa@example.com"));
+        let details = audit_details(&pool, "promotion_approved", &pending.id).await;
+        assert_eq!(details["decided_as"], "named_approver");
+        assert_eq!(details["decided_by_id"], "u3");
+        assert_eq!(details["self_approval"], false);
+        assert_eq!(details["approvers"]["user_ids"], serde_json::json!(["u3"]));
+    }
+
+    #[tokio::test]
+    async fn an_approver_role_lets_developers_decide_but_not_viewers() {
+        let pool = setup().await;
+        add_members(&pool).await;
+        let scheduler = Scheduler::new(16);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (_, pending) =
+            pending_with(deps, Some(approvers(Some(ApproverRole::Developer), &[]))).await;
+
+        let (guest_role, guest) = member(ProjectRole::Viewer, "u5", "guest@example.com");
+        let refused =
+            decide_promotion(deps, "p1", &pending.id, &guest_role, &guest, false, None).await;
+        assert!(matches!(refused, Err(EnvironmentError::Forbidden(_))));
+
+        // The developer who asked may approve it, as maintainers may today,
+        // and the audit entry says it was their own request.
+        let (dev_role, dev) = developer();
+        assert!(can_decide(&pool, &dev_role, "u1").await);
+        let approved = decide_promotion(deps, "p1", &pending.id, &dev_role, &dev, true, None)
+            .await
+            .unwrap();
+        assert_eq!(approved.state, PromotionState::Completed);
+        let details = audit_details(&pool, "promotion_approved", &pending.id).await;
+        assert_eq!(details["decided_as"], "approver_role");
+        assert_eq!(details["self_approval"], true);
+        assert_eq!(details["approvers"]["role"], "developer");
+    }
+
+    #[tokio::test]
+    async fn without_approvers_any_maintainer_decides_as_before() {
+        let pool = setup().await;
+        add_members(&pool).await;
+        let scheduler = Scheduler::new(16);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (production, pending) = pending_with(deps, None).await;
+        assert_eq!(production.approvers, EnvironmentApprovers::default());
+
+        let (dev_role, dev) = developer();
+        assert!(!can_decide(&pool, &dev_role, "u1").await);
+        let refused = decide_promotion(deps, "p1", &pending.id, &dev_role, &dev, true, None).await;
+        let Err(error) = refused else {
+            panic!("a developer approved without being an approver");
+        };
+        let (status, Json(body)) = error.into_api();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(body.error.starts_with("Only maintainers"), "{}", body.error);
+
+        let (ops_role, ops) = member(ProjectRole::Maintainer, "u4", "ops@example.com");
+        assert!(can_decide(&pool, &ops_role, "u4").await);
+        let approved = decide_promotion(deps, "p1", &pending.id, &ops_role, &ops, true, None)
+            .await
+            .unwrap();
+        assert_eq!(approved.state, PromotionState::Completed);
+        let details = audit_details(&pool, "promotion_approved", &pending.id).await;
+        assert_eq!(details["decided_as"], "maintainer");
+        assert_eq!(details["approvers"]["role"], serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn approvers_must_be_developers_or_maintainers_of_the_project() {
+        let pool = setup().await;
+        add_members(&pool).await;
+        sqlx::query(
+            "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+             VALUES ('u9', 'outsider@example.com', 'sub9', 'developer', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (_, lead) = maintainer();
+        let create = |input: EnvironmentApproversInput| CreateProjectEnvironmentRequest {
+            approvers: Some(input),
+            ..environment("production", "production", true)
+        };
+        let too_many: Vec<String> = (0..=MAX_APPROVERS).map(|n| format!("x{n}")).collect();
+        for (input, expected) in [
+            (approvers(None, &["u9"]), "not a member"),
+            (approvers(None, &["missing"]), "not a member"),
+            (approvers(None, &["u5"]), "viewer"),
+            (approvers(None, &[" "]), "empty"),
+            (
+                EnvironmentApproversInput {
+                    role: None,
+                    user_ids: too_many.clone(),
+                },
+                "at most",
+            ),
+        ] {
+            let Err(error) = create_environment(&pool, "p1", &lead, create(input)).await else {
+                panic!("invalid approvers were accepted");
+            };
+            let (status, Json(body)) = error.into_api();
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert!(body.error.contains(expected), "{}", body.error);
+        }
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM project_environments").await,
+            0
+        );
+
+        // Duplicates collapse; an update replaces the set and is audited.
+        let production = create_environment(
+            &pool,
+            "p1",
+            &lead,
+            create(approvers(None, &["u3", "u3", "u4"])),
+        )
+        .await
+        .unwrap();
+        assert_eq!(production.approvers.users.len(), 2);
+        let refused = update_environment(
+            &pool,
+            "p1",
+            &production.id,
+            &lead,
+            UpdateProjectEnvironmentRequest {
+                approvers: Some(approvers(None, &["u9"])),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(matches!(refused, Err(EnvironmentError::Invalid(_))));
+        let updated = update_environment(
+            &pool,
+            "p1",
+            &production.id,
+            &lead,
+            UpdateProjectEnvironmentRequest {
+                approvers: Some(approvers(Some(ApproverRole::Maintainer), &["u1"])),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.approvers.role, Some(ApproverRole::Maintainer));
+        assert_eq!(
+            updated
+                .approvers
+                .users
+                .iter()
+                .map(|user| user.email.as_str())
+                .collect::<Vec<_>>(),
+            vec!["dev@example.com"]
+        );
+        let details = audit_details(&pool, "environment_updated", &production.id).await;
+        assert_eq!(
+            details["before"]["approvers"]["emails"],
+            serde_json::json!(["ops@example.com", "qa@example.com"])
+        );
+        assert_eq!(details["after"]["approvers"]["role"], "maintainer");
+        assert_eq!(
+            details["after"]["approvers"]["user_ids"],
+            serde_json::json!(["u1"])
+        );
+        let created = audit_details(&pool, "environment_created", &production.id).await;
+        assert_eq!(
+            created["approvers"]["user_ids"],
+            serde_json::json!(["u4", "u3"])
+        );
+
+        // Other changes keep the approvers; an empty object resets them.
+        let renamed = update_environment(
+            &pool,
+            "p1",
+            &production.id,
+            &lead,
+            UpdateProjectEnvironmentRequest {
+                name: Some("Prod".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(renamed.approvers, updated.approvers);
+        let reset = update_environment(
+            &pool,
+            "p1",
+            &production.id,
+            &lead,
+            UpdateProjectEnvironmentRequest {
+                approvers: Some(EnvironmentApproversInput::default()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(reset.approvers, EnvironmentApprovers::default());
+
+        // Maintainers with nobody named is the default, stored as such.
+        let maintainers = update_environment(
+            &pool,
+            "p1",
+            &production.id,
+            &lead,
+            UpdateProjectEnvironmentRequest {
+                approvers: Some(approvers(Some(ApproverRole::Maintainer), &[])),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(maintainers.approvers, EnvironmentApprovers::default());
+    }
+
+    #[tokio::test]
+    async fn a_named_approver_who_leaves_the_project_stops_counting() {
+        let pool = setup().await;
+        add_members(&pool).await;
+        let (_, lead) = maintainer();
+        let production = create_environment(
+            &pool,
+            "p1",
+            &lead,
+            CreateProjectEnvironmentRequest {
+                approvers: Some(approvers(None, &["u3", "u4"])),
+                ..environment("production", "production", true)
+            },
+        )
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM project_members WHERE user_id = 'u3'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let reloaded = load_environment(&pool, "p1", &production.id).await.unwrap();
+        assert_eq!(
+            reloaded
+                .approvers
+                .users
+                .iter()
+                .map(|user| user.user_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["u4"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_named_approver_demoted_to_viewer_stops_counting() {
+        let pool = setup().await;
+        add_members(&pool).await;
+        let scheduler = Scheduler::new(16);
+        let store = FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (production, pending) = pending_with(deps, Some(approvers(None, &["u3"]))).await;
+        assert_eq!(production.approvers.users.len(), 1);
+
+        // Even before the member update cleans up, a viewer is not listed,
+        // so the environment falls back to maintainers instead of wedging.
+        sqlx::query("UPDATE project_members SET role = 'viewer' WHERE user_id = 'u3'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let reloaded = load_environment(&pool, "p1", &production.id).await.unwrap();
+        assert_eq!(reloaded.approvers, EnvironmentApprovers::default());
+        let (ops_role, ops) = member(ProjectRole::Maintainer, "u4", "ops@example.com");
+        assert!(can_decide(&pool, &ops_role, "u4").await);
+
+        // The member update removes the row, so promoting them back does not
+        // quietly restore it.
+        let mut conn = pool.acquire().await.unwrap();
+        forget_approver(&mut conn, "p1", "u3").await.unwrap();
+        drop(conn);
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM environment_approvers").await,
+            0
+        );
+        sqlx::query("UPDATE project_members SET role = 'developer' WHERE user_id = 'u3'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let reloaded = load_environment(&pool, "p1", &production.id).await.unwrap();
+        assert_eq!(reloaded.approvers, EnvironmentApprovers::default());
+
+        let approved = decide_promotion(deps, "p1", &pending.id, &ops_role, &ops, true, None)
+            .await
+            .unwrap();
+        assert_eq!(approved.state, PromotionState::Completed);
+    }
+
+    #[test]
+    fn api_tokens_cannot_decide_promotions() {
+        let Err(error) = refuse_api_token(&AuthSource::ApiToken) else {
+            panic!("an API token was allowed to decide");
+        };
+        let (status, Json(body)) = error.into_api();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(body.error.contains("API tokens"), "{}", body.error);
+        assert!(refuse_api_token(&AuthSource::Session).is_ok());
+    }
+
+    #[test]
+    fn approval_basis_follows_the_rules() {
+        let named = EnvironmentApprovers {
+            role: None,
+            users: vec![EnvironmentApprover {
+                user_id: "u3".into(),
+                email: "qa@example.com".into(),
+            }],
+        };
+        let developer = EffectiveProjectRole::Member(ProjectRole::Developer);
+        let maintainer = EffectiveProjectRole::Member(ProjectRole::Maintainer);
+        let viewer = EffectiveProjectRole::Member(ProjectRole::Viewer);
+        assert_eq!(approval_basis(&maintainer, Some("u2"), &named), None);
+        assert_eq!(
+            approval_basis(&developer, Some("u3"), &named),
+            Some(ApprovalBasis::NamedApprover)
+        );
+        // A named user whose role dropped to viewer (or an API token capped
+        // to viewer) cannot decide.
+        assert_eq!(approval_basis(&viewer, Some("u3"), &named), None);
+        assert_eq!(
+            approval_basis(&EffectiveProjectRole::InstanceAdmin, None, &named),
+            Some(ApprovalBasis::InstanceAdmin)
+        );
+        assert_eq!(
+            approval_basis(&EffectiveProjectRole::None, Some("u3"), &named),
+            None
+        );
+        let maintainers = EnvironmentApprovers {
+            role: Some(ApproverRole::Maintainer),
+            users: Vec::new(),
+        };
+        assert_eq!(approval_basis(&developer, Some("u1"), &maintainers), None);
+        assert_eq!(
+            approval_basis(&maintainer, Some("u2"), &maintainers),
+            Some(ApprovalBasis::ApproverRole)
+        );
+        assert_eq!(describe_approvers(&named), "qa@example.com");
+        assert_eq!(
+            describe_approvers(&EnvironmentApprovers {
+                role: Some(ApproverRole::Developer),
+                ..named
+            }),
+            "developers and maintainers, or qa@example.com"
+        );
     }
 }

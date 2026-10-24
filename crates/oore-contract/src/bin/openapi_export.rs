@@ -514,6 +514,10 @@ use utoipa::{
         oore_contract::CreateReleaseRequest,
         // Environments
         oore_contract::ProjectEnvironment,
+        oore_contract::ApproverRole,
+        oore_contract::EnvironmentApprovers,
+        oore_contract::EnvironmentApprover,
+        oore_contract::EnvironmentApproversInput,
         oore_contract::PromotionState,
         oore_contract::EnvironmentPromotion,
         oore_contract::ListProjectEnvironmentsResponse,
@@ -2844,7 +2848,7 @@ mod operations {
 
     /// Approve promotion
     ///
-    /// Approves a pending promotion and makes the store change as the approver. Requires the maintainer role. Writes an audit log entry.
+    /// Approves a pending promotion and makes the store change as the approver. Requires one of the environment's approvers (by default any maintainer). API tokens cannot decide promotions. Writes an audit log entry.
     #[utoipa::path(post, path = "/v1/projects/{project_id}/promotions/{promotion_id}/approve", tag = "Environments",
         params(
             ("project_id" = String, Path, description = "Project ID"),
@@ -2854,7 +2858,7 @@ mod operations {
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Completed promotion", body = EnvironmentPromotion),
-            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 403, description = "Not one of the environment's approvers, or an API token", body = ApiError),
             (status = 404, description = "Not found", body = ApiError),
             (status = 409, description = "Not pending, or the build changed while it waited", body = ApiError),
             (status = 502, description = "The store rejected the promotion", body = ApiError),
@@ -2864,7 +2868,7 @@ mod operations {
 
     /// Reject promotion
     ///
-    /// Rejects a pending promotion; nothing changes at the store. Requires the maintainer role. Writes an audit log entry.
+    /// Rejects a pending promotion; nothing changes at the store. Requires one of the environment's approvers (by default any maintainer). API tokens cannot decide promotions. Writes an audit log entry.
     #[utoipa::path(post, path = "/v1/projects/{project_id}/promotions/{promotion_id}/reject", tag = "Environments",
         params(
             ("project_id" = String, Path, description = "Project ID"),
@@ -2874,7 +2878,7 @@ mod operations {
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Rejected promotion", body = EnvironmentPromotion),
-            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 403, description = "Not one of the environment's approvers, or an API token", body = ApiError),
             (status = 404, description = "Not found", body = ApiError),
             (status = 409, description = "Not pending", body = ApiError),
         )
