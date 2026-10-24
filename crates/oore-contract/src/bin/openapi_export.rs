@@ -132,6 +132,7 @@ use utoipa::{
         operations::validate_pipeline,
         operations::plan_pipeline,
         operations::export_pipeline_yaml,
+        operations::import_pipeline_yaml,
         // ── Pipeline Signing (Android) ──
         operations::get_pipeline_android_signing,
         operations::update_pipeline_android_signing,
@@ -405,6 +406,9 @@ use utoipa::{
         oore_contract::PlanPipelineResponse,
         oore_contract::ExportPipelineYamlRequest,
         oore_contract::ExportPipelineYamlResponse,
+        oore_contract::ImportPipelineYamlRequest,
+        oore_contract::ImportPipelineYamlResponse,
+        oore_contract::ImportedPlayPublish,
         oore_contract::PipelinePlanPreview,
         oore_contract::PipelinePlanStep,
         oore_contract::StepPhase,
@@ -1975,6 +1979,24 @@ mod operations {
         )
     )]
     pub(super) fn export_pipeline_yaml() {}
+
+    /// Import `.oore.yaml` into pipeline settings
+    ///
+    /// Reads a `version: 2` `.oore.yaml` back into the pipeline's form
+    /// settings: the inverse of the export. The file is validated as
+    /// `oore pipeline validate` does. Settings are returned only when the
+    /// form can hold the whole file; exported again, they plan the same as
+    /// the file. Everything else is listed in `unsupported`. Nothing is
+    /// saved, and secret references stay as written.
+    #[utoipa::path(post, path = "/v1/pipelines/import-yaml", tag = "Pipelines",
+        request_body = ImportPipelineYamlRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "The form settings, or why the file cannot become them", body = ImportPipelineYamlResponse),
+            (status = 400, description = "The file is too large", body = ApiError),
+        )
+    )]
+    pub(super) fn import_pipeline_yaml() {}
 
     // ── Pipeline Publishing ──
 

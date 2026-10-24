@@ -4604,6 +4604,53 @@
         ]
       }
     },
+    "/v1/pipelines/import-yaml": {
+      "post": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "Import `.oore.yaml` into pipeline settings",
+        "description": "Reads a `version: 2` `.oore.yaml` back into the pipeline's form\nsettings: the inverse of the export. The file is validated as\n`oore pipeline validate` does. Settings are returned only when the\nform can hold the whole file; exported again, they plan the same as\nthe file. Everything else is listed in `unsupported`. Nothing is\nsaved, and secret references stay as written.",
+        "operationId": "import_pipeline_yaml",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportPipelineYamlRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The form settings, or why the file cannot become them",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportPipelineYamlResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The file is too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/pipelines/plan": {
       "post": {
         "tags": [
@@ -16615,6 +16662,171 @@
             "type": "string"
           },
           "version": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportPipelineYamlRequest": {
+        "type": "object",
+        "description": "A `version: 2` `.oore.yaml` to read back into the pipeline editor's form,\nwith the settings the editor holds now.",
+        "required": [
+          "yaml"
+        ],
+        "properties": {
+          "app_store": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AppStorePublishConfig",
+                "description": "The pipeline's App Store Connect settings. The file's\n`publish.testflight` must match them."
+              }
+            ]
+          },
+          "execution_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PipelineExecutionConfig",
+                "description": "The form settings the editor holds now. They decide between\nequivalent ways of holding the file: the pipeline's Build commands\n(which the file runs as steps after the targets), build arguments or\na build command override."
+              }
+            ]
+          },
+          "google_play": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GooglePlayPublishConfig",
+                "description": "The pipeline's Google Play settings. The form does not edit them, so\nthe file's `publish.play` must match them."
+              }
+            ]
+          },
+          "trigger_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TriggerConfig",
+                "description": "The pipeline's trigger settings, whose schedules are kept. Left out\nfor repositories that only build manually, where the file's `on`\ncannot be held."
+              }
+            ]
+          },
+          "yaml": {
+            "type": "string",
+            "description": "The file's text."
+          }
+        }
+      },
+      "ImportPipelineYamlResponse": {
+        "type": "object",
+        "required": [
+          "valid",
+          "representable",
+          "errors",
+          "unsupported",
+          "notes"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The file's validation errors, one per entry."
+          },
+          "execution_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PipelineExecutionConfig",
+                "description": "The form settings. Exported again, they plan the same as the file."
+              }
+            ]
+          },
+          "google_play": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportedPlayPublish",
+                "description": "The file's `publish.play`."
+              }
+            ]
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the form drops without changing what runs, such as step names."
+          },
+          "representable": {
+            "type": "boolean",
+            "description": "Valid, and the form can hold all of it: `execution_config` is set."
+          },
+          "testflight_group": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file's `publish.testflight.group`."
+          },
+          "trigger_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TriggerConfig",
+                "description": "The trigger settings the file's `on` maps to, with the pipeline's\nschedules kept. Left out when the file has no `on`, so the pipeline's\ntrigger settings stay as they are."
+              }
+            ]
+          },
+          "unsupported": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the form cannot hold, one per entry, such as workflows, vars,\nflavors or an `on` the trigger settings cannot express."
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "The file parses and validates as `oore pipeline validate` checks it."
+          }
+        }
+      },
+      "ImportedPlayPublish": {
+        "type": "object",
+        "description": "A file's `publish.play`, as written.",
+        "required": [
+          "track"
+        ],
+        "properties": {
+          "draft": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Left out, the Publish settings decide."
+          },
+          "rollout_percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The staged rollout as a percentage. Left out, the Publish settings\ndecide."
+          },
+          "track": {
             "type": "string"
           }
         }

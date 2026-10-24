@@ -15,6 +15,7 @@ pub mod data_paths;
 pub mod install_root;
 pub mod pipeline_config;
 pub mod pipeline_export;
+pub mod pipeline_import;
 pub mod pipeline_migrate;
 pub mod runtime_update_preflight;
 
@@ -3926,6 +3927,75 @@ pub struct ExportPipelineYamlResponse {
     pub warnings: Vec<String>,
     /// Settings that stay with the pipeline instead of moving to the file.
     pub notes: Vec<String>,
+}
+
+/// A `version: 2` `.oore.yaml` to read back into the pipeline editor's form,
+/// with the settings the editor holds now.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ImportPipelineYamlRequest {
+    /// The file's text.
+    pub yaml: String,
+    /// The form settings the editor holds now. They decide between
+    /// equivalent ways of holding the file: the pipeline's Build commands
+    /// (which the file runs as steps after the targets), build arguments or
+    /// a build command override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_config: Option<PipelineExecutionConfig>,
+    /// The pipeline's trigger settings, whose schedules are kept. Left out
+    /// for repositories that only build manually, where the file's `on`
+    /// cannot be held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_config: Option<TriggerConfig>,
+    /// The pipeline's Google Play settings. The form does not edit them, so
+    /// the file's `publish.play` must match them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google_play: Option<GooglePlayPublishConfig>,
+    /// The pipeline's App Store Connect settings. The file's
+    /// `publish.testflight` must match them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_store: Option<AppStorePublishConfig>,
+}
+
+/// A file's `publish.play`, as written.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ImportedPlayPublish {
+    pub track: String,
+    /// The staged rollout as a percentage. Left out, the Publish settings
+    /// decide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_percent: Option<f64>,
+    /// Left out, the Publish settings decide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ImportPipelineYamlResponse {
+    /// The file parses and validates as `oore pipeline validate` checks it.
+    pub valid: bool,
+    /// Valid, and the form can hold all of it: `execution_config` is set.
+    pub representable: bool,
+    /// The file's validation errors, one per entry.
+    pub errors: Vec<String>,
+    /// What the form cannot hold, one per entry, such as workflows, vars,
+    /// flavors or an `on` the trigger settings cannot express.
+    pub unsupported: Vec<String>,
+    /// What the form drops without changing what runs, such as step names.
+    pub notes: Vec<String>,
+    /// The form settings. Exported again, they plan the same as the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_config: Option<PipelineExecutionConfig>,
+    /// The trigger settings the file's `on` maps to, with the pipeline's
+    /// schedules kept. Left out when the file has no `on`, so the pipeline's
+    /// trigger settings stay as they are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_config: Option<TriggerConfig>,
+    /// The file's `publish.play`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google_play: Option<ImportedPlayPublish>,
+    /// The file's `publish.testflight.group`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub testflight_group: Option<String>,
 }
 
 // ── Secret types ────────────────────────────────────────────────

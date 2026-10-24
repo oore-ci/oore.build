@@ -2766,6 +2766,10 @@ pub async fn build_router_with_recovery(
             post(pipelines::export_pipeline_yaml),
         )
         .route(
+            "/v1/pipelines/import-yaml",
+            post(pipelines::import_pipeline_yaml),
+        )
+        .route(
             "/v1/pipelines/{pipeline_id}/android-signing",
             get(pipeline_signing::get_pipeline_android_signing)
                 .put(pipeline_signing::update_pipeline_android_signing),

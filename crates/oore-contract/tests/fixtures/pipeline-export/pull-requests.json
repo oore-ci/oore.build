@@ -1,0 +1,13 @@
+{
+  "execution_config": {
+    "platforms": ["macos"],
+    "platform_build_args": { "android": [], "ios": [], "macos": ["--dart-define=CHANNEL=beta"] },
+    "commands": { "pre_build": ["flutter analyze"], "build": [], "post_build": [] },
+    "artifact_patterns": ["build/macos/Build/Products/Release/*.app"]
+  },
+  "trigger_config": {
+    "events": [],
+    "branches": [],
+    "paths": ["lib/**"]
+  }
+}

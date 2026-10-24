@@ -53,12 +53,12 @@ const ARTIFACTS_ANCHOR: &str = "artifacts";
 
 /// The `on` a pipeline's trigger settings map to.
 #[derive(Debug, Clone, Default, PartialEq)]
-struct OnSpec {
+pub(crate) struct OnSpec {
     /// `Some(empty)` is every branch.
-    push: Option<Vec<String>>,
-    pull_request: bool,
-    tag: Vec<String>,
-    paths: Vec<String>,
+    pub(crate) push: Option<Vec<String>>,
+    pub(crate) pull_request: bool,
+    pub(crate) tag: Vec<String>,
+    pub(crate) paths: Vec<String>,
 }
 
 struct Target {
@@ -435,7 +435,7 @@ pub fn export_form_settings(settings: FormSettings<'_>) -> Result<FormExport, St
     Ok(export)
 }
 
-fn platform_inputs<'a>(
+pub(crate) fn platform_inputs<'a>(
     config: &'a PipelineExecutionConfig,
     platform: &BuildPlatform,
 ) -> (Option<&'a String>, &'a [String]) {
@@ -455,7 +455,7 @@ fn platform_inputs<'a>(
     }
 }
 
-fn default_artifacts(platforms: &[BuildPlatform]) -> Vec<String> {
+pub(crate) fn default_artifacts(platforms: &[BuildPlatform]) -> Vec<String> {
     let mut patterns: Vec<String> = Vec::new();
     for platform in platforms {
         for pattern in default_artifact_patterns_for_platforms(std::slice::from_ref(platform)) {
@@ -472,7 +472,7 @@ fn default_artifacts(platforms: &[BuildPlatform]) -> Vec<String> {
 /// The `on` that starts builds for exactly the webhooks the trigger settings
 /// do, or why there is none. Without `on` the trigger settings keep applying,
 /// so leaving it out never changes which builds start.
-fn map_triggers(triggers: &TriggerConfig) -> Result<OnSpec, String> {
+pub(crate) fn map_triggers(triggers: &TriggerConfig) -> Result<OnSpec, String> {
     let listed = |event: &str| {
         triggers.events.is_empty()
             || triggers
@@ -650,7 +650,7 @@ fn expected_behaviour(
     Ok(expected)
 }
 
-fn on_of(spec: &TriggerSpec) -> OnSpec {
+pub(crate) fn on_of(spec: &TriggerSpec) -> OnSpec {
     use crate::pipeline_config::BranchTrigger;
     let branches = |trigger: &Option<BranchTrigger>| match trigger {
         Some(BranchTrigger::AllBranches) => Some(Vec::new()),

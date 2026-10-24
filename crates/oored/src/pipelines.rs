@@ -7,7 +7,8 @@ use axum::http::StatusCode;
 use oore_contract::{
     ApiError, ApprovalPolicy, BuildPlatform, ConcurrencyPolicy, CreatePipelineRequest,
     CreatePipelineResponse, DEFAULT_BUILD_TIMEOUT_MINUTES, ExportPipelineYamlRequest,
-    ExportPipelineYamlResponse, ListPipelinesResponse, MAX_BUILD_TIMEOUT_MINUTES,
+    ExportPipelineYamlResponse, ImportPipelineYamlRequest, ImportPipelineYamlResponse,
+    ImportedPlayPublish, ListPipelinesResponse, MAX_BUILD_TIMEOUT_MINUTES,
     MAX_PLAN_REPOSITORY_YAML_BYTES, OkResponse, Pipeline, PipelineDetailResponse,
     PipelineExecutionConfig, PipelinePlanPreview, PlanPipelineRequest, PlanPipelineResponse,
     PlanRequest, RepositoryConfig, SizeBudget, TriggerConfig, UpdatePipelineRequest,
@@ -15,6 +16,7 @@ use oore_contract::{
     is_valid_workflow_name, normalize_runner_labels, parse_repository_config,
     pipeline_config::select_v1_platforms,
     pipeline_export::{FormSettings, export_form_settings},
+    pipeline_import::{ImportContext, import_form_settings},
     plan_execution_config, secret_expression_errors, validate_artifact_pattern,
     validate_build_number_offset, validate_repository_config_path,
 };
@@ -1606,6 +1608,94 @@ fn export_yaml_request(req: &ExportPipelineYamlRequest) -> ExportPipelineYamlRes
     }
 }
 
+/// `POST /v1/pipelines/import-yaml` — a `version: 2` `.oore.yaml` read back
+/// into the pipeline's form settings, checked to plan the same as the file.
+pub async fn import_pipeline_yaml(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<ImportPipelineYamlRequest>,
+) -> ApiResult<ImportPipelineYamlResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "pipelines", "read").await?;
+    if req.yaml.len() > MAX_PLAN_REPOSITORY_YAML_BYTES {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "repository_yaml_too_large",
+            format!(
+                "yaml must be at most {} KiB",
+                MAX_PLAN_REPOSITORY_YAML_BYTES / 1024
+            ),
+        ));
+    }
+    Ok(Json(import_yaml_request(&req)))
+}
+
+fn import_yaml_request(req: &ImportPipelineYamlRequest) -> ImportPipelineYamlResponse {
+    // The App Store settings are compared as their endpoint stores them.
+    let app_store = req
+        .app_store
+        .clone()
+        .map(|config| crate::app_store_publish::normalize_config(config.clone()).unwrap_or(config));
+    let result = import_form_settings(
+        &req.yaml,
+        ImportContext {
+            execution: req.execution_config.as_ref(),
+            triggers: req.trigger_config.as_ref(),
+            google_play: req.google_play.as_ref(),
+            app_store: app_store.as_ref(),
+        },
+    );
+    let mut import = match result {
+        Ok(import) => import,
+        Err(error) => {
+            return ImportPipelineYamlResponse {
+                valid: false,
+                representable: false,
+                errors: error_lines(&error),
+                unsupported: Vec::new(),
+                notes: Vec::new(),
+                execution_config: None,
+                trigger_config: None,
+                google_play: None,
+                testflight_group: None,
+            };
+        }
+    };
+    // The form saves through the same checks as the settings endpoints.
+    let mut save_errors = Vec::new();
+    if let Some(config) = &import.execution {
+        save_errors.extend(validate_execution_config(config));
+    }
+    if let Some(triggers) = &import.triggers {
+        save_errors.extend(validate_trigger_config(triggers));
+    }
+    if !save_errors.is_empty() {
+        import.unsupported.extend(
+            save_errors
+                .into_iter()
+                .map(|error| format!("The form cannot save these settings: {error}")),
+        );
+        import.execution = None;
+        import.triggers = None;
+    }
+    ImportPipelineYamlResponse {
+        valid: true,
+        representable: import.execution.is_some(),
+        errors: Vec::new(),
+        unsupported: import.unsupported,
+        notes: import.notes,
+        execution_config: import.execution,
+        trigger_config: import.triggers,
+        google_play: import.play.map(|play| ImportedPlayPublish {
+            track: play.track,
+            rollout_percent: play
+                .rollout
+                .map(oore_contract::pipeline_config::play_rollout_percent),
+            draft: play.draft,
+        }),
+        testflight_group: import.testflight.map(|testflight| testflight.group),
+    }
+}
+
 fn plan_request(
     req: PlanPipelineRequest,
 ) -> Result<PlanPipelineResponse, (StatusCode, Json<ApiError>)> {
@@ -2205,6 +2295,110 @@ mod export_tests {
                 .any(|error| error.starts_with("app_store: TestFlight publishing needs")),
             "{:?}",
             response.errors
+        );
+    }
+
+    fn import_request(yaml: &str, from: &ExportPipelineYamlRequest) -> ImportPipelineYamlRequest {
+        ImportPipelineYamlRequest {
+            yaml: yaml.to_string(),
+            execution_config: Some(from.execution_config.clone()),
+            trigger_config: from.trigger_config.clone(),
+            google_play: from.google_play.clone(),
+            app_store: from.app_store.clone(),
+        }
+    }
+
+    #[test]
+    fn the_exported_file_imports_back_to_the_settings() {
+        let req = form_request();
+        let yaml = export_yaml_request(&req).yaml.unwrap();
+        let response = import_yaml_request(&import_request(&yaml, &req));
+        assert!(
+            response.valid && response.representable,
+            "{:?}",
+            response.unsupported
+        );
+        assert!(response.errors.is_empty() && response.unsupported.is_empty());
+        assert_eq!(
+            serde_json::to_value(response.execution_config.as_ref().unwrap()).unwrap(),
+            serde_json::to_value(&req.execution_config).unwrap()
+        );
+        // `on` maps back, and the schedule stays with the pipeline.
+        let triggers = response.trigger_config.clone().unwrap();
+        assert_eq!(triggers.events, ["push", "tag_push"]);
+        assert_eq!(triggers.schedules.len(), 1);
+        assert_eq!(
+            response.google_play,
+            Some(ImportedPlayPublish {
+                track: "beta".to_string(),
+                rollout_percent: Some(25.0),
+                draft: Some(false),
+            })
+        );
+        assert_eq!(response.testflight_group.as_deref(), Some("Internal QA"));
+
+        // Exported again from what came back, the file is the same.
+        let again = export_yaml_request(&ExportPipelineYamlRequest {
+            execution_config: response.execution_config.unwrap(),
+            trigger_config: response.trigger_config,
+            google_play: req.google_play,
+            app_store: req.app_store,
+        });
+        assert_eq!(again.yaml.as_deref(), Some(yaml.as_str()));
+    }
+
+    #[test]
+    fn import_keeps_secret_references_and_returns_no_credentials() {
+        let req = form_request();
+        let yaml = export_yaml_request(&req).yaml.unwrap();
+        let response = import_yaml_request(&import_request(&yaml, &req));
+        let body = serde_json::to_string(&response).unwrap();
+        assert!(body.contains("${{ secrets.SIGNING_TOKEN }}"), "{body}");
+        assert!(body.contains("${{ secrets.SENTRY_DSN }}"), "{body}");
+        for private in [
+            "PLAY_SERVICE_ACCOUNT_JSON",
+            "com.example.shop",
+            "Private notes",
+        ] {
+            assert!(!body.contains(private), "{private} in {body}");
+        }
+    }
+
+    #[test]
+    fn import_reports_errors_and_what_the_form_cannot_hold() {
+        let req = form_request();
+        let invalid = import_yaml_request(&import_request(
+            "version: 2
+targets: [",
+            &req,
+        ));
+        assert!(!invalid.valid && !invalid.representable);
+        assert!(!invalid.errors.is_empty());
+        assert!(invalid.execution_config.is_none());
+
+        let workflows = "version: 2\ntargets:\n  android:\n    build: flutter build apk --release\nsteps:\n  - name: Get packages\n    run: flutter pub get\n  - build\nworkflows:\n  release: {}\n  adhoc: {}\n";
+        let response = import_yaml_request(&import_request(workflows, &req));
+        assert!(response.valid, "{:?}", response.errors);
+        assert!(!response.representable);
+        assert!(response.execution_config.is_none());
+        assert!(
+            response.unsupported[0].starts_with("workflows (release, adhoc)"),
+            "{:?}",
+            response.unsupported
+        );
+
+        // A changed publish target belongs to the Publish settings.
+        let yaml = export_yaml_request(&req)
+            .yaml
+            .unwrap()
+            .replace("track: beta", "track: production");
+        let response = import_yaml_request(&import_request(&yaml, &req));
+        assert!(response.valid && !response.representable);
+        assert_eq!(response.google_play.unwrap().track, "production");
+        assert!(
+            response.unsupported[0].starts_with("publish.play"),
+            "{:?}",
+            response.unsupported
         );
     }
 }

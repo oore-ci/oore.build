@@ -1,0 +1,17 @@
+{
+  "execution_config": {
+    "platforms": ["ios", "macos"],
+    "commands": { "pre_build": [], "build": [], "post_build": ["flutter build web"] },
+    "artifact_patterns": []
+  },
+  "trigger_config": {
+    "events": ["push", "pull_request"],
+    "branches": [],
+    "paths_ignore": ["docs/**"]
+  },
+  "app_store": {
+    "enabled": true,
+    "destination": "testflight",
+    "testflight_groups": ["QA", "External"]
+  }
+}
