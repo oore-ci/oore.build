@@ -22,6 +22,9 @@ export function isDemoMutationAllowed(
   return (
     path.startsWith('/v1/auth/') ||
     path === '/v1/artifacts/query' ||
+    // Dry runs: they plan or generate, and store nothing.
+    path === '/v1/pipelines/plan' ||
+    path === '/v1/pipelines/export-yaml' ||
     path.includes('/validate') ||
     path.endsWith('/download-link') ||
     path.endsWith('/install-link')

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   AlertCircleIcon,
@@ -11,16 +11,21 @@ import type {
   StepPhase,
 } from '@oore/client/models'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import { useDebouncedJson } from '@/hooks/use-debounced-json'
 import { usePipelinePlan } from '@/hooks/use-pipelines'
+import { selectedPlatforms } from '@/lib/pipeline-form-utils'
+import type { PipelinePublishSettings } from '@/lib/pipeline-yaml-export'
 import {
-  executionConfigFromForm,
-  selectedPlatforms,
-} from '@/lib/pipeline-form-utils'
+  planConfigFromForm,
+  repositoryFilePath,
+  yamlExportRequest,
+} from '@/lib/pipeline-yaml-export'
 import { ALL_PLATFORMS, effectivePlanSelection } from '@/lib/pipeline-plan'
 import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import { textVariants } from '@/lib/recipes'
 import { PipelineFormSection } from '@/components/pipeline-form-section'
+import { PipelineRepositoryFile } from '@/components/pipeline-repository-file'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
@@ -55,51 +60,22 @@ const PHASES: Array<StepPhase> = ['pre_build', 'build', 'post_build']
 type PlanSource = 'form' | 'file'
 
 /**
- * Hands `value` to `apply` once edits settle. The first value goes out at
- * once so the panel does not start empty. Values are compared by their JSON,
- * so a new but equal object does not restart the timer.
- */
-function useDebouncedJson<T>(
-  value: T,
-  delay: number,
-  apply: (value: T) => void,
-) {
-  const key = JSON.stringify(value)
-  const first = useRef(true)
-  const applyRef = useRef(apply)
-  useEffect(() => {
-    applyRef.current = apply
-  }, [apply])
-  useEffect(() => {
-    const wait = first.current ? 0 : delay
-    first.current = false
-    // SAFETY: `key` is the JSON of a `T` built in this render.
-    const timer = setTimeout(() => applyRef.current(JSON.parse(key) as T), wait)
-    return () => clearTimeout(timer)
-  }, [key, delay])
-}
-
-function formPlanConfig(values: PipelineFormValues) {
-  const config = executionConfigFromForm(values)
-  return {
-    ...config,
-    build_number_offset: Number.isFinite(config.build_number_offset)
-      ? config.build_number_offset
-      : 0,
-  }
-}
-
-/**
  * "What will run": the steps a build resolves to, from the daemon's own
  * validator and planner, for the form's settings or a pasted `.oore.yaml`.
  */
 export function PipelinePlanPanel({
+  manualOnlyTriggers = false,
   playBundle,
+  publish,
   repositoryConfig,
   values,
 }: {
+  /** The repository only builds manually, so the exported file has no `on`. */
+  manualOnlyTriggers?: boolean
   /** Google Play upload is on, so the default Android build adds a bundle. */
   playBundle: boolean
+  /** The pipeline's Publish settings, for the exported file's `publish`. */
+  publish?: PipelinePublishSettings
   /** The repository's `.oore.yaml` owns execution, so start on the file. */
   repositoryConfig: boolean
   values: PipelineFormValues
@@ -133,7 +109,7 @@ export function PipelinePlanPanel({
 
   const request: PlanPipelineRequest | null =
     source === 'form'
-      ? { execution_config: formPlanConfig(values) }
+      ? { execution_config: planConfigFromForm(values) }
       : yaml.trim()
         ? { repository_yaml: yaml, workflow: selection.workflow }
         : null
@@ -142,6 +118,10 @@ export function PipelinePlanPanel({
     if (selection.platform) request.platforms = [selection.platform]
   }
   useDebouncedJson(request, PLAN_DEBOUNCE_MS, setBody)
+
+  // Form settings show the file they would make next to their plan, unless
+  // the repository's own file already owns execution.
+  const showExport = source === 'form' && !repositoryConfig
 
   function changeSource(next: PlanSource) {
     setSource(next)
@@ -175,9 +155,22 @@ export function PipelinePlanPanel({
 
         <div
           className={
-            source === 'file' ? 'grid items-start gap-4 lg:grid-cols-2' : ''
+            source === 'file' || showExport
+              ? 'grid items-start gap-4 lg:grid-cols-2'
+              : ''
           }
         >
+          {showExport ? (
+            <div className="min-w-0 lg:sticky lg:top-24">
+              <PipelineRepositoryFile
+                path={repositoryFilePath(values)}
+                request={yamlExportRequest(values, {
+                  manualOnlyTriggers,
+                  publish,
+                })}
+              />
+            </div>
+          ) : null}
           {source === 'file' ? (
             <Stack gap={2} className="lg:sticky lg:top-24">
               <Label htmlFor="plan-yaml">Repository file</Label>

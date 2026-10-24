@@ -503,6 +503,10 @@ function EditPipelinePage() {
         iosSigningActions={iosSigningActions}
         iosAppStorePublishing={iosAppStorePublishing}
         googlePlayUpload={!!googlePlayPublishQuery.data?.config?.enabled}
+        publishSettings={{
+          googlePlay: googlePlayPublishQuery.data?.config ?? undefined,
+          appStore: appStorePublishQuery.data?.config,
+        }}
         workflowSource={workflowSource}
       >
         {iosProfileSyncAvailable &&

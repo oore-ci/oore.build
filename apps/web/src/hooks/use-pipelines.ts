@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-query'
 import type {
   CreatePipelineRequest,
+  ExportPipelineYamlRequest,
   PlanPipelineRequest,
   RegisterIosDeviceRequest,
   UpdatePipelineAndroidSigningRequest,
@@ -17,6 +18,7 @@ import type {
 import {
   createPipeline,
   deletePipeline,
+  exportPipelineYaml,
   planPipeline,
   updatePipeline,
   validatePipeline,
@@ -289,6 +291,28 @@ export function usePipelinePlan(body: PlanPipelineRequest | null) {
     queryFn: ({ signal }) =>
       // SAFETY: the query is disabled while `body` is null.
       planPipeline({ body: body as PlanPipelineRequest, client, signal }),
+    enabled: !!baseUrl && !!token && body !== null,
+    placeholderData: keepPreviousData,
+    staleTime: Infinity,
+  })
+}
+
+/**
+ * The form's settings as a `version: 2` `.oore.yaml`, from the daemon. Pass
+ * `null` to pause. The previous file stays on screen while a new one loads.
+ */
+export function usePipelineYamlExport(body: ExportPipelineYamlRequest | null) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useQuery({
+    queryKey: scopeOoreQueryKey(instanceId, ['exportPipelineYaml', body]),
+    queryFn: ({ signal }) =>
+      // SAFETY: the query is disabled while `body` is null.
+      exportPipelineYaml({
+        body: body as ExportPipelineYamlRequest,
+        client,
+        signal,
+      }),
     enabled: !!baseUrl && !!token && body !== null,
     placeholderData: keepPreviousData,
     staleTime: Infinity,

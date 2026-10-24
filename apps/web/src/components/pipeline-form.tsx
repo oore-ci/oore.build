@@ -14,6 +14,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { AlertCircleIcon } from '@hugeicons/core-free-icons'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import type { PipelinePublishSettings } from '@/lib/pipeline-yaml-export'
 import type {
   PipelineAndroidSigningResponse,
   PipelineIosSigningResponse,
@@ -80,6 +81,8 @@ interface PipelineFormProps {
   iosAppStorePublishing?: IosAppStorePublishing
   /** Google Play upload is on for this pipeline (unknown on new pipelines). */
   googlePlayUpload?: boolean
+  /** Publish settings, for the generated repository file's `publish`. */
+  publishSettings?: PipelinePublishSettings
   /** The pipeline file's v2 workflows, for the Workflow selector. */
   workflowSource?: PipelineWorkflowSource
 }
@@ -136,6 +139,7 @@ export default function PipelineForm({
   iosSigningActions,
   iosAppStorePublishing,
   googlePlayUpload = false,
+  publishSettings,
   workflowSource,
 }: PipelineFormProps) {
   const form = useForm<PipelineFormValues>({
@@ -251,7 +255,9 @@ export default function PipelineForm({
           />
         )}
         <PipelinePlanPanel
+          manualOnlyTriggers={manualOnlyTriggers}
           playBundle={googlePlayUpload}
+          publish={publishSettings}
           repositoryConfig={!!repositoryWorkflow}
           values={values}
         />
