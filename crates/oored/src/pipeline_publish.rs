@@ -535,7 +535,12 @@ pub async fn report_job_publish_result(
             record_play_release(ReleaseDeps::from(&*state), &job_id, &pipeline_id, &result).await
         }
         PublishStore::AppStore => {
-            crate::app_store_publish::record_upload(ReleaseDeps::from(&*state), &job_id).await
+            crate::app_store_publish::record_upload(
+                ReleaseDeps::from(&*state),
+                &job_id,
+                &result.track,
+            )
+            .await
         }
     };
     let release_id = match recorded {

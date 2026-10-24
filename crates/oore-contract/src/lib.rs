@@ -17,8 +17,9 @@ pub mod pipeline_config;
 pub mod runtime_update_preflight;
 
 pub use pipeline_config::{
-    PipelinePlan, PlanRequest, PlanStep, RepositoryConfig, StepPhase, TriggerEvent, TriggerSpec,
-    is_valid_workflow_name, parse_repository_config, plan_execution_config,
+    EffectivePublish, PipelinePlan, PlanPublish, PlanRequest, PlanStep, RepositoryConfig,
+    StepPhase, TriggerEvent, TriggerSpec, is_valid_workflow_name, parse_repository_config,
+    plan_execution_config,
 };
 
 // ── Setup state machine ─────────────────────────────────────────
@@ -4036,6 +4037,15 @@ fn default_release_notes_locale() -> String {
     "en-US".to_string()
 }
 
+/// `internal`, `closed`, `open`, `production` or a custom track name.
+pub(crate) fn is_valid_play_track(track: &str) -> bool {
+    !track.is_empty()
+        && track.len() <= 128
+        && track
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':'))
+}
+
 /// Validate Google Play publish settings, returning every problem found.
 pub fn validate_google_play_publish_config(config: &GooglePlayPublishConfig) -> Vec<String> {
     let mut errors = Vec::new();
@@ -4058,12 +4068,7 @@ pub fn validate_google_play_publish_config(config: &GooglePlayPublishConfig) -> 
         }
     }
     let track = config.track.trim();
-    if track.is_empty()
-        || track.len() > 128
-        || !track
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':'))
-    {
+    if !is_valid_play_track(track) {
         errors.push(
             "track must be internal, closed, open, production, or a custom track name".to_string(),
         );

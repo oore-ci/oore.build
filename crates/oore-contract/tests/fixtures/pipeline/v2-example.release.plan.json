@@ -20,28 +20,12 @@
       "test_report": "build/tests.json"
     },
     {
-      "name": "Build Android (free)",
-      "phase": "build",
-      "run": "flutter build appbundle --release --flavor free",
-      "source": "targets.android.build",
-      "platform": "android",
-      "flavor": "free"
-    },
-    {
       "name": "Build Android (pro)",
       "phase": "build",
       "run": "flutter build appbundle --release --flavor pro",
       "source": "targets.android.build",
       "platform": "android",
       "flavor": "pro"
-    },
-    {
-      "name": "Build iOS (free)",
-      "phase": "build",
-      "run": "flutter build ipa --release --flavor free --export-method app-store-connect",
-      "source": "targets.ios.build",
-      "platform": "ios",
-      "flavor": "free"
     },
     {
       "name": "Build iOS (pro)",
@@ -73,11 +57,22 @@
     }
   ],
   "artifact_patterns": [
-    "build/app/outputs/bundle/freeRelease/*.aab",
     "build/app/outputs/bundle/proRelease/*.aab",
     "build/ios/ipa/*.ipa"
   ],
   "build_number_offset": 4000,
   "runs_on": [],
-  "isolation": "host"
+  "isolation": "host",
+  "publish": {
+    "play": {
+      "track": "production",
+      "rollout": 0.01,
+      "draft": false,
+      "source": "targets.android.publish.play"
+    },
+    "testflight": {
+      "group": "Internal",
+      "source": "targets.ios.publish.testflight"
+    }
+  }
 }

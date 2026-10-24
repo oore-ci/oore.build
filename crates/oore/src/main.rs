@@ -1001,6 +1001,13 @@ fn render_pipeline_plan(plan: &oore_contract::PipelinePlan) -> String {
     for pattern in &plan.artifact_patterns {
         out.push_str(&format!("    {pattern}\n"));
     }
+    let publish = plan.publish.describe();
+    if !publish.is_empty() {
+        out.push_str("  publish:\n");
+        for line in publish {
+            out.push_str(&format!("    {line}\n"));
+        }
+    }
     out
 }
 

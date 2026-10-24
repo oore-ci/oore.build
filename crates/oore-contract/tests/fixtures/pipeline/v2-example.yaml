@@ -14,7 +14,7 @@ targets:
     build: ${{ vars.ANDROID_BUILD }}
     artifacts: ['${{ vars.BUNDLE_DIR }}/${{ flavor }}Release/*.aab']
     publish:
-      play: { track: internal, rollout: 0.01 }
+      play: { track: production, rollout: 0.01 }
   ios:
     build: flutter build ipa --release --flavor ${{ flavor }} --export-method app-store-connect
     artifacts: [build/ios/ipa/*.ipa]
@@ -56,5 +56,6 @@ workflows:
       push: { branches: [main, release/*] }
       tag: v*
       paths: [lib/**, pubspec.*]
+    flavors: [pro]
     env:
       RELEASE_CHANNEL: production

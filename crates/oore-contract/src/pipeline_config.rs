@@ -13,10 +13,12 @@ use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BuildIsolation, BuildPlatform, PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig,
-    PlatformBuildArgs, PlatformBuildCommands, default_artifact_patterns_for_platforms,
-    is_valid_pipeline_env_key, normalize_runner_labels, parse_repository_pipeline_yaml,
-    validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
+    AppStoreDestination, BuildIsolation, BuildPlatform, GooglePlayPublishConfig,
+    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
+    PlatformBuildCommands, RunnerAppStorePublishPlan, RunnerPublishPlan,
+    default_artifact_patterns_for_platforms, is_valid_pipeline_env_key, normalize_runner_labels,
+    parse_repository_pipeline_yaml, validate_artifact_pattern, validate_build_number_offset,
+    validate_repository_config_path,
 };
 
 /// Longest step name a v2 file may use.
@@ -78,6 +80,141 @@ pub struct PipelinePlan {
     pub build_number_offset: i64,
     pub runs_on: Vec<String>,
     pub isolation: BuildIsolation,
+    /// Store uploads a v2 file asks for. Empty for v1 files and form settings,
+    /// where the pipeline's Publish settings decide.
+    #[serde(skip_serializing_if = "PlanPublish::is_empty")]
+    pub publish: PlanPublish,
+}
+
+/// A store upload from a v2 file, with the field it came from.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PlannedPublish<T> {
+    #[serde(flatten)]
+    pub spec: T,
+    /// Such as `workflows.release.targets.android.publish.play`.
+    pub source: String,
+}
+
+/// Where a v2 workflow publishes, after workflow overrides and the run's
+/// platform selection. A store that is set here replaces the pipeline's
+/// Publish settings for that store; credentials still come from them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct PlanPublish {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub play: Option<PlannedPublish<PlayPublishSpec>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub testflight: Option<PlannedPublish<TestflightPublishSpec>>,
+}
+
+impl PlanPublish {
+    pub fn is_empty(&self) -> bool {
+        self.play.is_none() && self.testflight.is_none()
+    }
+
+    /// One line per upload, for plan output.
+    pub fn describe(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some(play) = &self.play {
+            let release = if play.spec.draft {
+                "as a draft".to_string()
+            } else {
+                match play.spec.rollout {
+                    Some(rollout) if rollout < 1.0 => {
+                        format!("to {}% of users", play_rollout_percent(rollout))
+                    }
+                    _ => "to all users".to_string(),
+                }
+            };
+            lines.push(format!(
+                "android publishes to the Google Play {} track {release} ({})",
+                play.spec.track.trim(),
+                play.source
+            ));
+        }
+        if let Some(testflight) = &self.testflight {
+            lines.push(format!(
+                "ios publishes to the TestFlight group {} ({})",
+                testflight.spec.group.trim(),
+                testflight.source
+            ));
+        }
+        lines
+    }
+}
+
+/// The store uploads a build runs once a v2 file's `publish` is applied to
+/// the pipeline's Publish settings.
+#[derive(Debug, Clone)]
+pub struct EffectivePublish {
+    pub changelog: Option<String>,
+    /// `Err` names the pipeline settings to turn on.
+    pub google_play: Result<Option<GooglePlayPublishConfig>, String>,
+    pub app_store: Result<Option<RunnerAppStorePublishPlan>, String>,
+}
+
+impl PlanPublish {
+    /// Apply the file's uploads to the pipeline's Publish settings, as the
+    /// runner fetched them. A store the file names replaces where the
+    /// settings upload to and turns the upload on; the settings still supply
+    /// credentials, the expected package, release notes and rollout policy,
+    /// and must be on. Stores the file does not name keep the settings as
+    /// they are.
+    pub fn apply(&self, settings: RunnerPublishPlan) -> EffectivePublish {
+        let RunnerPublishPlan {
+            changelog,
+            google_play,
+            app_store,
+        } = settings;
+        let google_play = match &self.play {
+            None => Ok(google_play),
+            Some(play) => match google_play {
+                Some(mut config) => {
+                    config.enabled = true;
+                    config.track = play.spec.track.trim().to_string();
+                    config.rollout_percent = play
+                        .spec
+                        .rollout
+                        .map(play_rollout_percent)
+                        .filter(|percent| *percent < 100.0);
+                    config.draft = play.spec.draft;
+                    Ok(Some(config))
+                }
+                None => Err(format!(
+                    "{} publishes with the pipeline's Google Play settings, which are off. In the pipeline's Publish settings, turn on Google Play's \"Upload after each build\" and set its service account secret; the file's track, rollout and draft replace the settings' own",
+                    play.source
+                )),
+            },
+        };
+        let app_store = match &self.testflight {
+            None => Ok(app_store),
+            Some(testflight) => match app_store {
+                Some(mut plan) => {
+                    plan.config.enabled = true;
+                    plan.config.destination = AppStoreDestination::Testflight;
+                    plan.config.testflight_groups = vec![testflight.spec.group.trim().to_string()];
+                    // App Store review settings don't apply to TestFlight.
+                    plan.config.submit_for_review = false;
+                    plan.config.phased_release = false;
+                    Ok(Some(plan))
+                }
+                None => Err(format!(
+                    "{} publishes with the pipeline's App Store Connect settings, which are not set up. In the pipeline's Publish settings, turn on App Store Connect, and in its iOS signing settings export App Store IPAs with an App Store Connect API key; the file's group replaces the settings' destination and groups",
+                    testflight.source
+                )),
+            },
+        };
+        EffectivePublish {
+            changelog,
+            google_play,
+            app_store,
+        }
+    }
+}
+
+/// A `publish.play.rollout` fraction as the percent Play settings use,
+/// rounded so 0.07 is 7 and not 7.000000000000001.
+pub fn play_rollout_percent(rollout: f64) -> f64 {
+    (rollout * 100.0 * 1_000_000.0).round() / 1_000_000.0
 }
 
 impl PipelinePlan {
@@ -422,6 +559,7 @@ pub fn plan_execution_config(
         build_number_offset: config.build_number_offset,
         runs_on: config.runs_on.clone(),
         isolation: config.isolation,
+        publish: PlanPublish::default(),
     }
 }
 
@@ -574,18 +712,18 @@ pub struct PublishSpec {
     pub testflight: Option<TestflightPublishSpec>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlayPublishSpec {
     pub track: String,
     /// Initial staged rollout fraction, 0 < rollout <= 1.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollout: Option<f64>,
     #[serde(default)]
     pub draft: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TestflightPublishSpec {
     pub group: String,
@@ -1183,6 +1321,8 @@ struct EffectiveTarget<'a> {
     build: &'a str,
     build_source: String,
     artifacts: Option<(&'a [String], String)>,
+    /// With the path of the `publish` it came from.
+    publish: Option<(&'a PublishSpec, String)>,
 }
 
 /// Most errors reported for one file; the rest repeat the same mistakes.
@@ -1317,11 +1457,45 @@ impl ConfigV2 {
             .any(|target| target.publish.is_some());
         if declares_publish {
             notices.push(
-                "`publish` is validated but not applied yet; uploads still follow the pipeline's Publish settings"
+                "`publish` replaces the pipeline's Publish settings for the stores it names: the file sets the Google Play track, rollout and draft, and the TestFlight group; turn the store on in the pipeline's Publish settings for its credentials and release notes, or the publish step fails"
                     .to_string(),
             );
+            notices.extend(self.play_bundle_notices());
         }
         notices
+    }
+
+    /// Google Play takes App Bundles, and v2 runs `build` as written, so warn
+    /// where a workflow publishes to Play without an Android build that
+    /// looks like it makes a bundle. A notice, not an error: the command may
+    /// run a script that builds one.
+    fn play_bundle_notices(&self) -> Vec<String> {
+        let workflows: Vec<Option<&str>> = if self.workflows.is_empty() {
+            vec![None]
+        } else {
+            self.workflow_names().into_iter().map(Some).collect()
+        };
+        workflows
+            .into_iter()
+            .filter_map(|workflow| {
+                let plan = self.plan(workflow, None).ok()?;
+                let play = plan.publish.play.as_ref()?;
+                let builds_bundle = plan
+                    .steps_in(StepPhase::Build)
+                    .filter(|step| step.platform == Some(BuildPlatform::Android))
+                    .any(|step| step.run.to_ascii_lowercase().contains("bundle"));
+                if builds_bundle {
+                    return None;
+                }
+                let scope = workflow
+                    .map(|name| format!("workflow {name}: "))
+                    .unwrap_or_default();
+                Some(format!(
+                    "{scope}{} uploads an App Bundle, but the android build does not run `flutter build appbundle`; Oore runs `build` as written, so the upload fails with `No release App Bundle found` unless the command builds one under build/app/outputs/bundle",
+                    play.source
+                ))
+            })
+            .collect()
     }
 
     /// Counts and lengths over the limits that keep validation cheap.
@@ -1663,11 +1837,23 @@ impl ConfigV2 {
                         }
                         (None, None) => None,
                     };
+                    // The top-level publish uploads what the top-level build
+                    // makes, so it applies only while the workflow keeps it.
+                    let publish = match (&spec.publish, base.and_then(|b| b.publish.as_ref())) {
+                        (Some(publish), _) => {
+                            Some((publish, format!("{prefix}targets.{key}.publish")))
+                        }
+                        (None, Some(publish)) if spec.build.is_none() => {
+                            Some((publish, format!("targets.{key}.publish")))
+                        }
+                        _ => None,
+                    };
                     targets.push(EffectiveTarget {
                         platform: platform.clone(),
                         build,
                         build_source,
                         artifacts,
+                        publish,
                     });
                 }
             }
@@ -1684,6 +1870,10 @@ impl ConfigV2 {
                         artifacts: spec.artifacts.as_ref().map(|patterns| {
                             (patterns.as_slice(), format!("targets.{key}.artifacts"))
                         }),
+                        publish: spec
+                            .publish
+                            .as_ref()
+                            .map(|publish| (publish, format!("targets.{key}.publish"))),
                     });
                 }
             }
@@ -1718,6 +1908,43 @@ impl ConfigV2 {
                 .map(|flavor| (Some(flavor.as_str()), FlavorScope::Value(flavor)))
                 .collect()
         };
+
+        // Store uploads. Each store takes one build, so a publishing target
+        // must build one flavor.
+        let mut publish = PlanPublish::default();
+        for target in &targets {
+            let Some((spec, path)) = &target.publish else {
+                continue;
+            };
+            if flavors.len() > 1 {
+                let flavors_path = if workflow_spec.is_some_and(|spec| spec.flavors.is_some()) {
+                    format!("{prefix}flavors")
+                } else {
+                    "app.flavors".to_string()
+                };
+                push_unique(
+                    &mut errors,
+                    format!(
+                        "{path} uploads one build, but {flavors_path} builds {} flavors ({}); publish from a workflow with `flavors: [<one flavor>]`",
+                        flavors.len(),
+                        flavors.join(", ")
+                    ),
+                );
+                continue;
+            }
+            if let Some(play) = &spec.play {
+                publish.play = Some(PlannedPublish {
+                    spec: play.clone(),
+                    source: format!("{path}.play"),
+                });
+            }
+            if let Some(testflight) = &spec.testflight {
+                publish.testflight = Some(PlannedPublish {
+                    spec: testflight.clone(),
+                    source: format!("{path}.testflight"),
+                });
+            }
+        }
 
         // Target builds, one per platform and flavor.
         let mut build_steps = Vec::new();
@@ -1922,6 +2149,7 @@ impl ConfigV2 {
             build_number_offset: self.build_number_offset,
             runs_on: normalize_runner_labels(&self.runs_on).unwrap_or_default(),
             isolation: self.isolation,
+            publish,
         })
     }
 }
@@ -1980,15 +2208,26 @@ fn check_target(
         if *platform != BuildPlatform::Android {
             errors.push(format!("{path}.publish.play is only available for android"));
         }
-        if play.track.trim().is_empty() {
+        let track = play.track.trim();
+        if track.is_empty() {
             errors.push(format!("{path}.publish.play.track must not be empty"));
-        }
-        if let Some(rollout) = play.rollout
-            && !(rollout > 0.0 && rollout <= 1.0)
-        {
+        } else if !crate::is_valid_play_track(track) {
             errors.push(format!(
-                "{path}.publish.play.rollout must be greater than 0 and at most 1 (0.05 is 5%)"
+                "{path}.publish.play.track must be internal, closed, open, production, or a custom track name"
             ));
+        }
+        // The same rules as the pipeline's Google Play settings.
+        match play.rollout {
+            Some(rollout) if !(rollout > 0.0 && rollout <= 1.0) => errors.push(format!(
+                "{path}.publish.play.rollout must be greater than 0 and at most 1 (0.05 is 5%)"
+            )),
+            Some(rollout) if rollout < 1.0 && track == "internal" => errors.push(format!(
+                "{path}.publish.play.rollout: the internal track does not support staged rollouts"
+            )),
+            Some(rollout) if rollout < 1.0 && play.draft => errors.push(format!(
+                "{path}.publish.play.rollout: a draft release cannot have a staged rollout"
+            )),
+            _ => {}
         }
     }
     if let Some(testflight) = &publish.testflight {
@@ -1997,8 +2236,14 @@ fn check_target(
                 "{path}.publish.testflight is only available for ios"
             ));
         }
-        if testflight.group.trim().is_empty() {
+        let group = testflight.group.trim();
+        if group.is_empty() {
             errors.push(format!("{path}.publish.testflight.group must not be empty"));
+        } else if group.contains(',') || group.len() > 256 {
+            // Reported uploads list groups joined by ", ".
+            errors.push(format!(
+                "{path}.publish.testflight.group must be one group name, without commas"
+            ));
         }
     }
     if publish.play.is_none() && publish.testflight.is_none() {
@@ -2790,13 +3035,17 @@ mod tests {
     #[test]
     fn triggers_and_publish_are_validated_and_reported() {
         let config = parse_repository_config(&format!(
-            "{BASE}    publish:\n      play: {{ track: internal, rollout: 0.05 }}\non:\n  push: {{ branches: [main] }}\n  pull_request: true\n  tag: v*\n"
+            "{BASE}    publish:\n      play: {{ track: closed, rollout: 0.05 }}\non:\n  push: {{ branches: [main] }}\n  pull_request: true\n  tag: v*\n"
         ))
         .unwrap();
         let notices = config.notices();
-        assert_eq!(notices.len(), 2, "{notices:?}");
+        assert_eq!(notices.len(), 3, "{notices:?}");
         assert!(notices[0].starts_with("`on` replaces the pipeline's trigger settings"));
-        assert!(notices[1].starts_with("`publish` is validated but not applied yet"));
+        assert!(notices[1].starts_with("`publish` replaces the pipeline's Publish settings"));
+        assert!(
+            notices[2].starts_with("targets.android.publish.play uploads an App Bundle"),
+            "{notices:?}"
+        );
 
         assert!(
             errors(&format!(
@@ -2850,5 +3099,256 @@ mod tests {
             })
             .unwrap_err();
         assert!(error.contains("shared commands.build cannot be filtered safely"));
+    }
+
+    const PUBLISHING: &str = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle --release\n    publish:\n      play: { track: internal }\n  ios:\n    build: flutter build ipa --release\n    publish:\n      testflight: { group: QA }\n";
+
+    fn publish_of(yaml: &str, workflow: Option<&str>) -> PlanPublish {
+        plan(yaml, workflow).publish
+    }
+
+    fn tracks(publish: &PlanPublish) -> (Option<String>, Option<String>) {
+        (
+            publish.play.as_ref().map(|play| play.source.clone()),
+            publish
+                .testflight
+                .as_ref()
+                .map(|testflight| testflight.source.clone()),
+        )
+    }
+
+    #[test]
+    fn publish_resolves_per_workflow() {
+        let top = publish_of(PUBLISHING, None);
+        assert_eq!(
+            top.play.as_ref().unwrap().spec,
+            PlayPublishSpec {
+                track: "internal".to_string(),
+                rollout: None,
+                draft: false,
+            }
+        );
+        assert_eq!(
+            tracks(&top),
+            (
+                Some("targets.android.publish.play".to_string()),
+                Some("targets.ios.publish.testflight".to_string())
+            )
+        );
+
+        let yaml = format!(
+            "{PUBLISHING}workflows:\n  all: {{}}\n  listed:\n    targets: [ios]\n  artifacts_only:\n    targets:\n      android:\n        artifacts: [build/app/outputs/bundle/**/*.aab]\n  apk:\n    targets:\n      android:\n        build: flutter build apk --release\n  own:\n    targets:\n      android:\n        build: flutter build appbundle --release\n        publish:\n          play: {{ track: production, rollout: 0.1 }}\n"
+        );
+        // No targets, or a list: the top-level targets as they are.
+        assert_eq!(tracks(&publish_of(&yaml, Some("all"))), tracks(&top));
+        assert_eq!(
+            tracks(&publish_of(&yaml, Some("listed"))),
+            (None, Some("targets.ios.publish.testflight".to_string()))
+        );
+        // Keeping the top-level build keeps its publish.
+        assert_eq!(
+            tracks(&publish_of(&yaml, Some("artifacts_only"))),
+            (Some("targets.android.publish.play".to_string()), None)
+        );
+        // A new build command does not inherit where the old one published.
+        assert!(publish_of(&yaml, Some("apk")).is_empty());
+        let own = publish_of(&yaml, Some("own"));
+        assert_eq!(
+            own.play.as_ref().unwrap().source,
+            "workflows.own.targets.android.publish.play"
+        );
+        assert_eq!(own.play.unwrap().spec.rollout, Some(0.1));
+    }
+
+    #[test]
+    fn publish_follows_the_platform_selection() {
+        let config = parse_repository_config(PUBLISHING).unwrap();
+        let android_only = config
+            .plan(PlanRequest {
+                selected_platforms: Some(&[BuildPlatform::Android]),
+                ..PlanRequest::default()
+            })
+            .unwrap()
+            .publish;
+        assert!(android_only.play.is_some());
+        assert!(android_only.testflight.is_none());
+        // Platforms without publish keep the pipeline's Publish settings.
+        assert!(publish_of(BASE, None).is_empty());
+    }
+
+    #[test]
+    fn publish_needs_one_flavor() {
+        let flavored = "version: 2\napp:\n  flavors: [free, pro]\ntargets:\n  android:\n    build: flutter build appbundle --flavor ${{ flavor }}\n    publish:\n      play: { track: internal }\n";
+        assert!(errors(flavored).contains(
+            "targets.android.publish uploads one build, but app.flavors builds 2 flavors (free, pro); publish from a workflow with `flavors: [<one flavor>]`"
+        ));
+        let narrowed = format!("{flavored}workflows:\n  release:\n    flavors: [pro]\n");
+        let publish = publish_of(&narrowed, Some("release"));
+        assert_eq!(publish.play.unwrap().source, "targets.android.publish.play");
+        let widened = format!("{flavored}workflows:\n  release:\n    flavors: [free, pro]\n");
+        assert!(errors(&widened).contains("but workflows.release.flavors builds 2 flavors"));
+    }
+
+    #[test]
+    fn publish_follows_the_play_settings_rules() {
+        for (publish, error) in [
+            (
+                "play: { track: internal, rollout: 0.5 }",
+                "the internal track does not support staged rollouts",
+            ),
+            (
+                "play: { track: production, rollout: 0.5, draft: true }",
+                "a draft release cannot have a staged rollout",
+            ),
+            (
+                "play: { track: 'my track' }",
+                "track must be internal, closed, open, production, or a custom track name",
+            ),
+        ] {
+            let yaml = format!(
+                "version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n    publish:\n      {publish}\n"
+            );
+            assert!(errors(&yaml).contains(error), "{publish}");
+        }
+        assert!(
+            errors("version: 2\ntargets:\n  ios:\n    build: flutter build ipa\n    publish:\n      testflight: { group: 'QA, Beta' }\n")
+                .contains("must be one group name, without commas")
+        );
+    }
+
+    #[test]
+    fn publish_to_play_without_a_bundle_build_is_noticed() {
+        let notices = |yaml: &str| parse_repository_config(yaml).unwrap().notices();
+        assert_eq!(notices(PUBLISHING).len(), 1);
+        let yaml = format!(
+            "{PUBLISHING}workflows:\n  apk:\n    targets:\n      android:\n        build: flutter build apk\n        publish:\n          play: {{ track: internal }}\n  release: {{}}\n"
+        );
+        let notices = notices(&yaml);
+        assert_eq!(notices.len(), 3, "{notices:?}");
+        assert!(notices[2].starts_with(
+            "workflow apk: workflows.apk.targets.android.publish.play uploads an App Bundle, but the android build does not run `flutter build appbundle`"
+        ));
+    }
+
+    fn play_settings() -> GooglePlayPublishConfig {
+        serde_json::from_value(serde_json::json!({
+            "enabled": true,
+            "service_account_secret": "PLAY_KEY",
+            "package_name": "com.example.app",
+            "track": "production",
+            "rollout_percent": 20.0,
+            "release_notes": "changelog",
+        }))
+        .unwrap()
+    }
+
+    fn app_store_settings() -> RunnerAppStorePublishPlan {
+        RunnerAppStorePublishPlan {
+            config: crate::AppStorePublishConfig {
+                enabled: true,
+                destination: AppStoreDestination::AppStore,
+                submit_for_review: true,
+                uses_non_exempt_encryption: true,
+                ..Default::default()
+            },
+            credentials: crate::RunnerAppStoreUploadCredentials {
+                key_id: "KEY".to_string(),
+                issuer_id: "ISSUER".to_string(),
+                private_key_pem: "PEM".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn file_publish_replaces_where_the_settings_upload() {
+        let settings = RunnerPublishPlan {
+            changelog: Some("Fixes".to_string()),
+            google_play: Some(play_settings()),
+            app_store: Some(app_store_settings()),
+        };
+        let yaml = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n    publish:\n      play: { track: closed, rollout: 0.07 }\n  ios:\n    build: flutter build ipa\n    publish:\n      testflight: { group: Beta }\n";
+        let effective = publish_of(yaml, None).apply(settings.clone());
+        assert_eq!(effective.changelog.as_deref(), Some("Fixes"));
+        let play = effective.google_play.unwrap().unwrap();
+        assert_eq!(
+            play,
+            GooglePlayPublishConfig {
+                track: "closed".to_string(),
+                rollout_percent: Some(7.0),
+                ..play_settings()
+            }
+        );
+        let app_store = effective.app_store.unwrap().unwrap();
+        assert_eq!(
+            app_store.config.destination,
+            AppStoreDestination::Testflight
+        );
+        assert_eq!(app_store.config.testflight_groups, vec!["Beta"]);
+        assert!(!app_store.config.submit_for_review);
+        assert!(app_store.config.uses_non_exempt_encryption);
+        assert_eq!(app_store.credentials.key_id, "KEY");
+
+        // A full rollout and a draft read like the settings form saves them.
+        let full = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n    publish:\n      play: { track: production, rollout: 1, draft: false }\n";
+        let play = publish_of(full, None)
+            .apply(settings.clone())
+            .google_play
+            .unwrap()
+            .unwrap();
+        assert_eq!(play.rollout_percent, None);
+        assert!(!play.draft);
+
+        // Stores the file does not name keep the settings as they are.
+        let android = publish_of(full, None).apply(settings.clone());
+        assert_eq!(
+            android.app_store.unwrap().unwrap().config,
+            settings.app_store.as_ref().unwrap().config
+        );
+        let none = PlanPublish::default().apply(settings);
+        assert_eq!(none.google_play.unwrap(), Some(play_settings()));
+    }
+
+    #[test]
+    fn file_publish_without_store_settings_fails_with_the_settings_to_set() {
+        let settings = RunnerPublishPlan {
+            changelog: None,
+            google_play: None,
+            app_store: None,
+        };
+        let effective = publish_of(PUBLISHING, None).apply(settings);
+        let play = effective.google_play.unwrap_err();
+        assert!(
+            play.starts_with(
+                "targets.android.publish.play publishes with the pipeline's Google Play settings, which are off"
+            ),
+            "{play}"
+        );
+        assert!(play.contains("\"Upload after each build\""), "{play}");
+        let app_store = effective.app_store.unwrap_err();
+        assert!(
+            app_store.contains("turn on App Store Connect")
+                && app_store.contains("App Store Connect API key"),
+            "{app_store}"
+        );
+        // Without a file publish, missing settings just mean no upload.
+        let none = PlanPublish::default().apply(RunnerPublishPlan {
+            changelog: None,
+            google_play: None,
+            app_store: None,
+        });
+        assert_eq!(none.google_play.unwrap(), None);
+        assert!(none.app_store.unwrap().is_none());
+    }
+
+    #[test]
+    fn plan_output_describes_each_upload() {
+        let yaml = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n    publish:\n      play: { track: production, rollout: 0.05 }\n  ios:\n    build: flutter build ipa\n    publish:\n      testflight: { group: QA }\n";
+        assert_eq!(
+            publish_of(yaml, None).describe(),
+            vec![
+                "android publishes to the Google Play production track to 5% of users (targets.android.publish.play)",
+                "ios publishes to the TestFlight group QA (targets.ios.publish.testflight)",
+            ]
+        );
     }
 }

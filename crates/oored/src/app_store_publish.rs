@@ -524,6 +524,7 @@ async fn load_uploaded_ipa(pool: &SqlitePool, build_id: &str) -> anyhow::Result<
 pub(crate) async fn record_upload(
     deps: ReleaseDeps<'_>,
     build_id: &str,
+    reported_track: &str,
 ) -> anyhow::Result<Option<String>> {
     let (project_id, pipeline_id): (String, String) =
         sqlx::query_as("SELECT project_id, pipeline_id FROM builds WHERE id = ?1")
@@ -533,11 +534,9 @@ pub(crate) async fn record_upload(
     let (config, _) = load_config(deps.pool, &pipeline_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("pipeline has no App Store publish settings"))?;
+    let config = uploaded_config(config, reported_track);
     let ipa = load_uploaded_ipa(deps.pool, build_id).await?;
-    let track = match config.destination {
-        AppStoreDestination::Testflight => config.testflight_groups.join(", "),
-        AppStoreDestination::AppStore => "app_store".to_string(),
-    };
+    let track = settings_track(&config);
     let config_json = serde_json::to_string(&config)?;
 
     let mut tx = deps.pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -589,6 +588,40 @@ pub(crate) async fn record_upload(
         "recorded App Store Connect upload"
     );
     Ok(Some(release.id))
+}
+
+/// The release track the settings produce: the TestFlight groups, or
+/// `app_store`.
+fn settings_track(config: &AppStorePublishConfig) -> String {
+    match config.destination {
+        AppStoreDestination::Testflight => config.testflight_groups.join(", "),
+        AppStoreDestination::AppStore => "app_store".to_string(),
+    }
+}
+
+/// The settings an upload went out with. The runner reports the TestFlight
+/// groups it uploaded for; when they are not what the saved settings say, a
+/// `.oore.yaml` `publish.testflight` chose them (or the settings changed
+/// during the build), so the release and its monitor use the reported
+/// groups. Credentials and release notes stay the saved ones.
+fn uploaded_config(
+    mut config: AppStorePublishConfig,
+    reported_track: &str,
+) -> AppStorePublishConfig {
+    let reported = reported_track.trim();
+    if reported.is_empty() || reported == "app_store" || reported == settings_track(&config) {
+        return config;
+    }
+    config.destination = AppStoreDestination::Testflight;
+    config.testflight_groups = reported
+        .split(", ")
+        .map(str::trim)
+        .filter(|group| !group.is_empty())
+        .map(str::to_string)
+        .collect();
+    config.submit_for_review = false;
+    config.phased_release = false;
+    config
 }
 
 async fn insert_release_link(
@@ -1997,7 +2030,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(record_upload(deps, "b1").await.is_err());
+        assert!(record_upload(deps, "b1", "").await.is_err());
         assert_eq!(count(&pool, "SELECT COUNT(*) FROM releases").await, 0);
         assert_eq!(
             count(&pool, "SELECT COUNT(*) FROM release_history").await,
@@ -2008,8 +2041,8 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let release_id = record_upload(deps, "b1").await.unwrap().unwrap();
-        assert_eq!(record_upload(deps, "b1").await.unwrap(), None);
+        let release_id = record_upload(deps, "b1", "").await.unwrap().unwrap();
+        assert_eq!(record_upload(deps, "b1", "").await.unwrap(), None);
 
         assert_eq!(count(&pool, "SELECT COUNT(*) FROM releases").await, 1);
         let linked: String = sqlx::query_scalar("SELECT release_id FROM app_store_release_links")
@@ -2017,5 +2050,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(linked, release_id);
+    }
+
+    #[tokio::test]
+    async fn an_upload_for_a_file_testflight_group_records_that_group() {
+        let pool = upload_pool().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let store = crate::releases::tests::FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        // The saved settings say QA; the runner uploaded for the file's Beta.
+        record_upload(deps, "b1", "Beta").await.unwrap().unwrap();
+        let track: String = sqlx::query_scalar("SELECT track FROM releases")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(track, "Beta");
+        let config: String = sqlx::query_scalar("SELECT config FROM app_store_release_links")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let config: AppStorePublishConfig = serde_json::from_str(&config).unwrap();
+        assert_eq!(config.destination, AppStoreDestination::Testflight);
+        assert_eq!(config.testflight_groups, vec!["Beta"]);
+    }
+
+    #[test]
+    fn the_reported_track_keeps_matching_settings_as_they_are() {
+        let saved = AppStorePublishConfig {
+            destination: AppStoreDestination::AppStore,
+            submit_for_review: true,
+            ..testflight(&["QA"])
+        };
+        assert_eq!(uploaded_config(saved.clone(), "app_store"), saved);
+        assert_eq!(uploaded_config(saved.clone(), ""), saved);
+        let file = uploaded_config(saved, "Beta");
+        assert_eq!(file.destination, AppStoreDestination::Testflight);
+        assert_eq!(file.testflight_groups, vec!["Beta"]);
+        assert!(!file.submit_for_review);
+        let both = testflight(&["Internal", "QA"]);
+        assert_eq!(uploaded_config(both.clone(), "Internal, QA"), both);
     }
 }

@@ -1607,6 +1607,8 @@ fn plan_repository_yaml(
         },
     };
     response.valid = true;
+    // Where this workflow publishes, until the plan preview has a field for it.
+    response.notices.extend(plan.publish.describe());
     response.plan = Some(PipelinePlanPreview::from(plan));
     response
 }
@@ -1783,6 +1785,27 @@ workflows:
                 .filter(|step| step.platform.is_some())
                 .all(|step| step.flavor.as_deref() == Some("prod"))
         );
+    }
+
+    #[test]
+    fn notes_where_the_planned_workflow_publishes() {
+        let yaml = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n    publish:\n      play: { track: production, draft: true }\nworkflows:\n  release: {}\n  adhoc:\n    targets:\n      android:\n        build: flutter build apk\n";
+        let line = "android publishes to the Google Play production track as a draft (targets.android.publish.play)";
+        let mut request = yaml_request(yaml);
+        request.workflow = Some("release".to_string());
+        let response = plan_request(request).unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        assert!(
+            response.notices.iter().any(|notice| notice == line),
+            "{:?}",
+            response.notices
+        );
+
+        let mut request = yaml_request(yaml);
+        request.workflow = Some("adhoc".to_string());
+        let response = plan_request(request).unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        assert!(!response.notices.iter().any(|notice| notice == line));
     }
 
     #[test]

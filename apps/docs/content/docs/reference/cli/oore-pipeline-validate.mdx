@@ -29,9 +29,11 @@ platform list, a duplicate environment key, an invalid artifact pattern, or an
 undefined or cyclic reference returns a non-zero exit and a specific
 validation message. Shape errors include the line and column.
 
-For a version 2 file that declares settings Oore does not act on yet, such as
-`on` or `publish`, the command prints a `note:` line for each on standard
-error and still exits successfully.
+For a version 2 file, the command prints `note:` lines on standard error for
+settings that change how the pipeline behaves, such as `on` replacing the
+trigger settings, `publish` replacing the Publish settings, or a workflow that
+publishes to Google Play without an Android build that makes an App Bundle. It
+still exits successfully.
 
 The command validates only the selected file. It does not contact the backend,
 create a pipeline, or verify whether every command-line tool used by the

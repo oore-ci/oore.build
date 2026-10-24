@@ -11,8 +11,8 @@ oore pipeline plan [PATH] [--workflow NAME] [--platform PLATFORM]... [--json]
 `PATH` defaults to `.oore.yaml`. The command validates the file like
 [`oore pipeline validate`](/reference/cli/oore-pipeline-validate), then prints
 what a build runs: the step names, their commands after `vars` and `flavor`
-references are resolved, the env, and the artifact patterns. It reads only the
-file and contacts no backend.
+references are resolved, the env, the artifact patterns, and for version 2
+where each platform publishes. It reads only the file and contacts no backend.
 
 | Option                | Effect                                                                                       |
 | --------------------- | -------------------------------------------------------------------------------------------- |
@@ -37,10 +37,12 @@ workflow release
   steps:
     1. Get packages [pre_build]
        $ flutter pub get
-    2. Build Android (free) [build, android]
-       $ flutter build appbundle --release --flavor free
+    2. Build Android (pro) [build, android]
+       $ flutter build appbundle --release --flavor pro
   artifacts:
-    build/app/outputs/bundle/freeRelease/*.aab
+    build/app/outputs/bundle/proRelease/*.aab
+  publish:
+    android publishes to the Google Play production track to 1% of users (targets.android.publish.play)
 ```
 
 Secret references are printed as written; the runner resolves them during the
@@ -52,4 +54,6 @@ command; the printed plan leaves it out.
 
 The pipeline editor's **What will run** section shows the same plan from the
 daemon, for the form's settings or a pasted `.oore.yaml`, with the same errors.
-It lists env keys without their values.
+It lists env keys without their values, and where the workflow publishes as a
+note. The `--json` output has a `publish` object per plan with `play` and
+`testflight` entries.
