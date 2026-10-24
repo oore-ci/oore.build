@@ -148,9 +148,7 @@ fn generate(rng: &mut Rng, build_commands: bool) -> Case {
                 .clone(),
         );
     }
-    if rng.chance() {
-        platforms.reverse();
-    }
+    // The form builds targets in a fixed order, so generated settings use it.
     let commands = [
         "dart run build_runner build",
         "echo ${{ secrets.SENTRY_DSN }} > dsn.txt",
@@ -431,6 +429,16 @@ fn migrate_goldens_import_or_say_why_not() {
                     .any(|item| item.contains("targets.android.build spans several lines")),
                 "{:?}",
                 import.unsupported
+            );
+            continue;
+        }
+        if name == "v1-platform-commands" {
+            // It builds iOS before Android, an order the form cannot keep.
+            assert_eq!(
+                import.unsupported,
+                [
+                    "targets: the form builds targets in the order android, ios, macos; list them in that order"
+                ]
             );
             continue;
         }

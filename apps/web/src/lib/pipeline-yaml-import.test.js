@@ -148,13 +148,6 @@ test('a file the form cannot hold leaves the form alone and says why', () => {
     unsupported: ['workflows (release, adhoc): …'],
     notes: ['Step names are not kept'],
   })
-  // Targets in another order build in another sequence.
-  const reordered = outcome({
-    ...response,
-    execution_config: { ...imported, platforms: ['ios', 'android'] },
-  })
-  expect(reordered.kind).toBe('unsupported')
-  expect(reordered.unsupported[0]).toContain('android, ios')
   // A manual-only repository has no trigger fields for `on`.
   const manual = outcome(
     { ...response, trigger_config: { events: ['push'], branches: [] } },

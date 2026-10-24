@@ -90,10 +90,14 @@ export function PipelineRepositoryFile({
 
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
+  // The settings an edit is read against, taken when the text changes, so
+  // the form changing (by an import or by hand) does not re-read the file.
+  const [importBase, setImportBase] =
+    useState<ExportPipelineYamlRequest | null>(null)
   const [importBody, setImportBody] =
     useState<ImportPipelineYamlRequest | null>(null)
   useDebouncedJson(
-    editing ? yamlImportRequest(draft, request) : null,
+    editing && importBase ? yamlImportRequest(draft, importBase) : null,
     IMPORT_DEBOUNCE_MS,
     setImportBody,
   )
@@ -154,12 +158,14 @@ export function PipelineRepositoryFile({
     if (!generated) return
     appliedYaml.current = generated
     setDraft(generated)
+    setImportBase(request)
     setEditing(true)
   }
 
   function stopEditing() {
     setEditing(false)
     setDraft('')
+    setImportBase(null)
     setImportBody(null)
     appliedYaml.current = null
   }
@@ -231,6 +237,7 @@ export function PipelineRepositoryFile({
           error={importQuery.error}
           onChange={(next) => {
             setDraft(next)
+            setImportBase(request)
           }}
           outcome={outcome}
         />

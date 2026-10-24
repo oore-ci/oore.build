@@ -24,9 +24,6 @@ export function yamlImportRequest(
   return { yaml, ...exportRequest }
 }
 
-/** The order the form builds targets in. */
-const FORM_PLATFORM_ORDER = ['android', 'ios', 'macos'] as const
-
 /** The form fields that hold execution and trigger settings. */
 const IMPORTED_FIELDS = [
   'platform_android',
@@ -191,18 +188,6 @@ export function importOutcome({
   }
   const config = result.execution_config
   const unsupported = [...result.unsupported]
-  if (config) {
-    // The form keeps targets in a fixed order; another order builds them
-    // in a different sequence.
-    const order = FORM_PLATFORM_ORDER.filter((p) =>
-      config.platforms.includes(p),
-    )
-    if (order.join() !== config.platforms.join()) {
-      unsupported.push(
-        `targets: the form builds targets in the order ${order.join(', ')}; list them in that order`,
-      )
-    }
-  }
   if (result.trigger_config && manualOnlyTriggers) {
     unsupported.push(
       'on: this repository only builds manually, so the form has no trigger settings for it',

@@ -137,6 +137,23 @@ pub fn import_form_settings(yaml: &str, context: ImportContext<'_>) -> Result<Fo
             "steps: the form always runs `{PUB_GET}` before its own commands; keep a `{PUB_GET}` step first"
         ));
     }
+    // The form builds targets in a fixed order; another order would build
+    // them in a different sequence.
+    let canonical: Vec<BuildPlatform> = [
+        BuildPlatform::Android,
+        BuildPlatform::Ios,
+        BuildPlatform::Macos,
+    ]
+    .into_iter()
+    .filter(|platform| plan.platforms.contains(platform))
+    .collect();
+    if canonical != plan.platforms {
+        let keys: Vec<&str> = canonical.iter().map(platform_key).collect();
+        unsupported.push(format!(
+            "targets: the form builds targets in the order {}; list them in that order",
+            keys.join(", ")
+        ));
+    }
     let after_build = plan.commands(StepPhase::PostBuild);
     let base_build: Vec<String> = context
         .execution
@@ -148,7 +165,11 @@ pub fn import_form_settings(yaml: &str, context: ImportContext<'_>) -> Result<Fo
         let rest = after_build[base_build.len()..].to_vec();
         (base_build, rest)
     } else {
-        if !base_build.is_empty() {
+        // Only when the file still runs them, now as plain steps.
+        if base_build
+            .iter()
+            .any(|command| after_build.contains(command))
+        {
             notes.push(
                     "The pipeline's Build commands now run after the target builds, as the file runs them".to_string(),
                 );
@@ -305,7 +326,14 @@ pub fn import_form_settings(yaml: &str, context: ImportContext<'_>) -> Result<Fo
                 "on: this repository only builds manually, so the form has no trigger settings for it".to_string(),
             ),
             Some(base) => match unmap_triggers(on, base) {
-                Ok(config) => triggers = Some(config),
+                Ok(config) => {
+                    if !trimmed(&base.paths_ignore).is_empty() && config.paths_ignore.is_empty() {
+                        notes.push(
+                            "The trigger settings' ignored paths (paths_ignore) are removed: `on` cannot ignore paths, so push and pull request builds no longer skip those changes".to_string(),
+                        );
+                    }
+                    triggers = Some(config);
+                }
                 Err(reason) => unsupported.push(format!("on: {reason}")),
             },
         }
@@ -388,7 +416,14 @@ pub fn import_form_settings(yaml: &str, context: ImportContext<'_>) -> Result<Fo
             ));
         }
     };
-    let replan = regenerated.plan(None, None)?;
+    let replan = match regenerated.plan(None, None) {
+        Ok(replan) => replan,
+        Err(error) => {
+            return Ok(check(format!(
+                "The form cannot hold this file: its settings do not plan; please report this.\n{error}"
+            )));
+        }
+    };
     if let Some(error) = differences(&plan, &replan, file_on.as_ref(), &regenerated) {
         return Ok(check(format!("The form cannot hold this file: {error}")));
     }
@@ -890,6 +925,62 @@ mod tests {
     }
 
     #[test]
+    fn targets_out_of_the_form_order_are_unsupported() {
+        let yaml = "version: 2\ntargets:\n  ios:\n    build: flutter build ios --release --no-codesign\n  android:\n    build: flutter build apk --release\nsteps:\n  - name: Get packages\n    run: flutter pub get\n  - build\n";
+        unsupported(yaml, "in the order android, ios");
+        let ordered = yaml.replace("  ios:\n    build: flutter build ios --release --no-codesign\n  android:\n    build: flutter build apk --release\n", "  android:\n    build: flutter build apk --release\n  ios:\n    build: flutter build ios --release --no-codesign\n");
+        assert!(import(&ordered).execution.is_some());
+    }
+
+    #[test]
+    fn deleted_build_commands_need_no_note() {
+        let config = execution(serde_json::json!({
+            "platforms": ["android"],
+            "commands": { "pre_build": [], "build": ["./scripts/sign.sh"], "post_build": [] },
+            "artifact_patterns": ["build/app/outputs/flutter-apk/*.apk"],
+        }));
+        let context = ImportContext {
+            execution: Some(&config),
+            ..ImportContext::default()
+        };
+        let import = import_form_settings(TARGET, context).unwrap();
+        let imported = import.execution.unwrap();
+        assert!(imported.commands.build.is_empty());
+        assert!(
+            import
+                .notes
+                .iter()
+                .all(|note| !note.contains("Build commands")),
+            "{:?}",
+            import.notes
+        );
+    }
+
+    #[test]
+    fn a_new_on_says_ignored_paths_are_removed() {
+        let base = triggers(
+            serde_json::json!({ "events": ["push"], "branches": [], "paths_ignore": ["docs/**"] }),
+        );
+        let import = import_form_settings(
+            &format!("{TARGET}on:\n  push: true\n"),
+            ImportContext {
+                triggers: Some(&base),
+                ..ImportContext::default()
+            },
+        )
+        .unwrap();
+        assert!(import.triggers.unwrap().paths_ignore.is_empty());
+        assert!(
+            import
+                .notes
+                .iter()
+                .any(|note| note.contains("paths_ignore")),
+            "{:?}",
+            import.notes
+        );
+    }
+
+    #[test]
     fn invalid_files_return_the_validator_errors() {
         let error = import_form_settings(
             "version: 2\ntargets:\n  android:\n    bild: x\n",
@@ -1029,14 +1120,18 @@ mod tests {
         assert_eq!(imported.commands.build, ["./scripts/sign.sh"]);
         assert_eq!(imported.commands.post_build, ["flutter test"]);
 
-        // Edited in the file, they become what the file runs: post-build steps.
-        let edited = yaml.replace("run: ./scripts/sign.sh", "run: ./scripts/sign.sh --strict");
+        // With a step put before them, they become what the file runs:
+        // post-build steps, and the note says so.
+        let edited = yaml.replace(
+            "  - name: ./scripts/sign.sh\n",
+            "  - name: Analyze\n    run: flutter analyze\n  - name: ./scripts/sign.sh\n",
+        );
         let import = import_form_settings(&edited, context).unwrap();
         let imported = import.execution.unwrap();
         assert!(imported.commands.build.is_empty());
         assert_eq!(
             imported.commands.post_build,
-            ["./scripts/sign.sh --strict", "flutter test"]
+            ["flutter analyze", "./scripts/sign.sh", "flutter test"]
         );
         assert!(
             import

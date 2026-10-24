@@ -341,6 +341,8 @@ export function usePipelineYamlImport(body: ImportPipelineYamlRequest | null) {
     enabled: !!baseUrl && !!token && body !== null,
     placeholderData: keepPreviousData,
     staleTime: Infinity,
+    // Keys carry the whole file, so old answers are dropped soon.
+    gcTime: 30_000,
   })
 }
 
