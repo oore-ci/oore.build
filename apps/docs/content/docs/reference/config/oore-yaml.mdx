@@ -10,7 +10,9 @@ with the code they build. `.oore.yml` is also recognized.
 This page describes `version: 1`. Files that declare `version: 2` use
 workflows, targets with full build commands, named steps, and `vars`, `secrets`
 and `flavor` references; see [`.oore.yaml` version 2](/reference/config/oore-yaml-v2).
-Both versions are accepted, and a version 1 file runs exactly as before.
+Both versions are accepted, and a version 1 file runs exactly as before. To
+move a file to version 2, run
+[`oore pipeline migrate`](/reference/cli/oore-pipeline-migrate).
 
 ```yaml
 version: 1

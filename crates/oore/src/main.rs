@@ -859,6 +859,8 @@ enum PipelineSubcommand {
     Validate(PipelineValidateArgs),
     /// Print the steps a build runs for each workflow and platform.
     Plan(PipelinePlanArgs),
+    /// Rewrite a version 1 pipeline file as version 2.
+    Migrate(PipelineMigrateArgs),
 }
 
 #[derive(Debug, Args)]
@@ -882,6 +884,22 @@ struct PipelinePlanArgs {
     /// Print the plans as JSON.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct PipelineMigrateArgs {
+    /// Version 1 pipeline file to migrate.
+    #[arg(default_value = ".oore.yaml")]
+    path: PathBuf,
+    /// Write the version 2 file to FILE instead of printing it.
+    #[arg(long, short = 'o', value_name = "FILE", conflicts_with_all = ["write", "check"])]
+    output: Option<PathBuf>,
+    /// Replace PATH with the version 2 file.
+    #[arg(long, conflicts_with = "check")]
+    write: bool,
+    /// Print no file; fail while PATH is still version 1.
+    #[arg(long)]
+    check: bool,
 }
 
 fn read_pipeline_config(path: &Path) -> anyhow::Result<oore_contract::RepositoryConfig> {
@@ -942,6 +960,50 @@ fn handle_pipeline_plan(args: PipelinePlanArgs) -> anyhow::Result<()> {
     }
     for notice in config.notices() {
         eprintln!("note: {notice}");
+    }
+    Ok(())
+}
+
+fn handle_pipeline_migrate(args: PipelineMigrateArgs) -> anyhow::Result<()> {
+    use oore_contract::pipeline_migrate::{MigrateOutcome, migrate_pipeline_config};
+
+    let path = args.path.display();
+    let raw = fs::read_to_string(&args.path).with_context(|| format!("failed to read {path}"))?;
+    let migration = match migrate_pipeline_config(&raw).map_err(anyhow::Error::msg)? {
+        MigrateOutcome::AlreadyV2 => {
+            eprintln!("{path} is already version 2; nothing to migrate");
+            return Ok(());
+        }
+        MigrateOutcome::Migrated(migration) => migration,
+    };
+    if args.check {
+        anyhow::bail!(
+            "{path} is version 1; run `oore pipeline migrate --write {path}` to migrate it"
+        );
+    }
+    for warning in &migration.warnings {
+        eprintln!("warning: {warning}");
+    }
+    for note in &migration.notes {
+        eprintln!("note: {note}");
+    }
+    let destination = match (&args.output, args.write) {
+        (Some(output), _) => output.as_path(),
+        (None, true) => args.path.as_path(),
+        (None, false) => {
+            print!("{}", migration.yaml);
+            return Ok(());
+        }
+    };
+    fs::write(destination, &migration.yaml)
+        .with_context(|| format!("failed to write {}", destination.display()))?;
+    if args.write {
+        eprintln!("Migrated {path} to version 2. Review it before committing.");
+    } else {
+        eprintln!(
+            "Wrote the version 2 file to {}. Review it before committing.",
+            destination.display()
+        );
     }
     Ok(())
 }
@@ -13214,6 +13276,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Pipeline(pipeline) => match pipeline.command {
             PipelineSubcommand::Validate(args) => handle_pipeline_validate(args)?,
             PipelineSubcommand::Plan(args) => handle_pipeline_plan(args)?,
+            PipelineSubcommand::Migrate(args) => handle_pipeline_migrate(args)?,
         },
         Commands::Version => {
             let install_root = resolve_install_root()?;

@@ -519,7 +519,7 @@ fn build_default_command_with_args(base: &str, args: &[String]) -> String {
     format!("{base} {}", args.join(" "))
 }
 
-fn default_platform_command(
+pub(crate) fn default_platform_command(
     platform: &BuildPlatform,
     overrides: &PlatformBuildCommands,
     args: &PlatformBuildArgs,
@@ -540,7 +540,7 @@ fn default_platform_command(
 /// Google Play only accepts App Bundles. When the pipeline uploads to Play
 /// and keeps the default Android command, build a bundle after the APK so
 /// the upload has something to send and QA installs still get an APK.
-fn default_play_bundle_command(args: &PlatformBuildArgs) -> String {
+pub(crate) fn default_play_bundle_command(args: &PlatformBuildArgs) -> String {
     // `--split-per-abi` is APK-only; `flutter build appbundle` rejects it.
     let args = args
         .android
@@ -1156,7 +1156,7 @@ pub fn platform_key(platform: &BuildPlatform) -> &'static str {
     }
 }
 
-fn platform_title(platform: &BuildPlatform) -> &'static str {
+pub(crate) fn platform_title(platform: &BuildPlatform) -> &'static str {
     match platform {
         BuildPlatform::Android => "Android",
         BuildPlatform::Ios => "iOS",

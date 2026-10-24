@@ -14,6 +14,7 @@ use utoipa::ToSchema;
 pub mod data_paths;
 pub mod install_root;
 pub mod pipeline_config;
+pub mod pipeline_migrate;
 pub mod runtime_update_preflight;
 
 pub use pipeline_config::{

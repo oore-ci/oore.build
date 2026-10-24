@@ -16,6 +16,7 @@
     "oore-login",
     "oore-pipeline-validate",
     "oore-pipeline-plan",
+    "oore-pipeline-migrate",
     "oore-version"
   ],
   "pagesIndex": "index"

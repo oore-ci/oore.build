@@ -8,6 +8,8 @@ description: 'Workflows, targets with full build commands, named steps, and vars
 steps around those builds, and the inputs they read. Each target's `build` is
 the complete command. Oore adds no hidden default and appends no arguments.
 [Version 1](/reference/config/oore-yaml) files keep working unchanged.
+[`oore pipeline migrate`](/reference/cli/oore-pipeline-migrate) rewrites a
+version 1 file as version 2 that runs the same commands.
 
 ```yaml
 version: 2
@@ -111,7 +113,8 @@ Targets build in the order the file lists them. Artifact patterns follow the
 
 Unlike version 1, a Google Play upload does not add a
 `flutter build appbundle` step. Write the App Bundle build into
-`targets.android.build`.
+`targets.android.build`; `oore pipeline migrate` leaves a comment with the
+command version 1 would have added.
 
 ## Steps
 
