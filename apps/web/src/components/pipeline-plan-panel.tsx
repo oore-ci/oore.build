@@ -126,7 +126,8 @@ export function PipelinePlanPanel({
   const selection = effectivePlanSelection({
     platform,
     platforms,
-    workflow,
+    // Until one is picked here, plan the workflow the pipeline builds.
+    workflow: workflow ?? (values.workflow || null),
     workflows,
   })
 
