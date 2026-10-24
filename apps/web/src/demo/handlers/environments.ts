@@ -17,7 +17,7 @@ import { demoApi } from './api'
 import { withReleaseContext } from './releases'
 
 const approversSchema = z.object({
-  role: z.enum(['maintainer', 'developer', 'viewer']).nullish(),
+  role: z.enum(['maintainer', 'developer']).nullish(),
   user_ids: z.array(z.string()).optional(),
 })
 
@@ -99,9 +99,6 @@ function resolveApprovers(
   projectId: string,
   input: z.infer<typeof approversSchema>,
 ) {
-  if (input.role === 'viewer') {
-    return { error: 'approvers.role must be maintainer or developer' }
-  }
   const members = demoState.projectRoles[projectId] ?? {}
   const users = []
   for (const userId of new Set(input.user_ids ?? [])) {
@@ -119,7 +116,10 @@ function resolveApprovers(
     }
     users.push({ user_id: userId, email })
   }
-  return { approvers: { role: input.role ?? undefined, users } }
+  // Maintainers with nobody named is the default, as the daemon stores it.
+  const role =
+    input.role === 'maintainer' && users.length === 0 ? undefined : input.role
+  return { approvers: { role: role ?? undefined, users } }
 }
 
 function withPromotionContext(promotion: DemoPromotion, persona: DemoPersona) {
@@ -268,7 +268,9 @@ export const environmentHandlers = [
       )
     }
     const resolved = resolveApprovers(projectId, body.approvers ?? {})
-    if (resolved.error) return error(400, 'invalid_input', resolved.error)
+    if (!resolved.approvers) {
+      return error(400, 'invalid_input', resolved.error)
+    }
     const environment: DemoEnvironment = {
       id: `env-demo-${Date.now()}`,
       project_id: projectId,
@@ -319,7 +321,7 @@ export const environmentHandlers = [
     }
     if (body.approvers) {
       const resolved = resolveApprovers(environment.project_id, body.approvers)
-      if (resolved.error) {
+      if (!resolved.approvers) {
         return error(400, 'invalid_input', resolved.error)
       }
       environment.approvers = resolved.approvers
@@ -467,7 +469,7 @@ export const environmentHandlers = [
         return error(
           403,
           'permission_denied',
-          `Only ${approversSummary(target?.approvers).toLowerCase()} can approve or reject promotions into ${target?.name ?? 'this environment'}`,
+          `Only these people can approve or reject promotions into ${target?.name ?? 'this environment'}: ${approversSummary(target?.approvers)}`,
         )
       }
       if (promotion.state !== 'pending') {

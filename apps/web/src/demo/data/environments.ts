@@ -34,6 +34,7 @@ export const demoEnvironments: Array<DemoEnvironment> = [
     store: 'google_play',
     track: 'internal',
     approval_required: false,
+    approvers: { users: [] },
     rollout_policy: { steps: [1], interval_hours: 24, approval: 'none' },
     promotable: true,
     created_at: ago(86400 * 30),
@@ -70,6 +71,7 @@ export const demoEnvironments: Array<DemoEnvironment> = [
     store: 'google_play',
     track: 'production',
     approval_required: true,
+    approvers: { users: [] },
     rollout_policy: {
       steps: [0.01, 0.05, 0.2, 0.5, 1],
       interval_hours: 24,
@@ -89,6 +91,7 @@ export const demoEnvironments: Array<DemoEnvironment> = [
     store: 'app_store',
     track: 'Internal',
     approval_required: false,
+    approvers: { users: [] },
     rollout_policy: { steps: [1], interval_hours: 24, approval: 'none' },
     promotable: true,
     created_at: ago(86400 * 20),
@@ -103,6 +106,7 @@ export const demoEnvironments: Array<DemoEnvironment> = [
     store: 'app_store',
     track: 'app_store',
     approval_required: true,
+    approvers: { users: [] },
     rollout_policy: {
       steps: [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1],
       interval_hours: 24,
