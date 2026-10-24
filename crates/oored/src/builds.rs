@@ -2582,6 +2582,9 @@ pub async fn trigger_build_from_webhook(
         (String, Option<String>),
         Result<Option<RepositoryConfig>, String>,
     > = HashMap::new();
+    // The first pipeline that could not be matched for want of its file;
+    // returned after every other pipeline had its chance to build.
+    let mut deferred: Option<(StatusCode, Json<ApiError>)> = None;
     let file_event = match (canonical_event.as_str(), tag, branch) {
         (_, Some(tag), _) => Some(TriggerEvent::Tag { tag }),
         ("push", None, Some(branch)) => Some(TriggerEvent::Push { branch }),
@@ -2649,7 +2652,20 @@ pub async fn trigger_build_from_webhook(
             // revision there is no file to read, and the build is skipped
             // below anyway.
             let workflow: Option<String> = pipeline_row.try_get("workflow").ok().flatten();
-            let file_on: Option<TriggerSpec> = match commit_sha.filter(|sha| !sha.is_empty()) {
+            let sha = commit_sha.filter(|sha| !sha.is_empty());
+            if sha.is_some() && file_event.is_none() && workflow.is_some() {
+                // No `on` can match an event that is not a push, pull request
+                // or tag, so the file is not read. A pipeline with a workflow
+                // builds from a v2 file and must not fall back to its trigger
+                // settings.
+                debug!(
+                    pipeline_id = %pipeline_id,
+                    event_type = %event_type,
+                    "event is not a push, pull request or tag; skipping a pipeline with a workflow"
+                );
+                continue;
+            }
+            let file_on: Option<TriggerSpec> = match sha.filter(|_| file_event.is_some()) {
                 Some(sha) => {
                     let key = (
                         project_id.clone(),
@@ -2674,21 +2690,25 @@ pub async fn trigger_build_from_webhook(
                             .cloned(),
                         // A pipeline that picks a workflow builds from a v2
                         // file, whose `on` may be far narrower than its
-                        // trigger settings. Retry the delivery rather than
-                        // guess.
+                        // trigger settings. Skip it and fail the delivery
+                        // once every other pipeline has had its chance, so
+                        // the retry builds it without guessing.
                         Err(error) if workflow.is_some() => {
                             warn!(
                                 pipeline_id = %pipeline_id,
                                 error = %error,
-                                "could not read the pipeline file for a pipeline with a workflow; retrying the delivery"
+                                "could not read the pipeline file for a pipeline with a workflow; the delivery will be retried"
                             );
-                            return Err(api_err(
-                                StatusCode::BAD_GATEWAY,
-                                "source_unavailable",
-                                format!(
-                                    "Could not read the pipeline file to match its triggers: {error}"
-                                ),
-                            ));
+                            deferred.get_or_insert_with(|| {
+                                api_err(
+                                    StatusCode::BAD_GATEWAY,
+                                    "source_unavailable",
+                                    format!(
+                                        "Could not read the pipeline file to match its triggers: {error}"
+                                    ),
+                                )
+                            });
+                            continue;
                         }
                         Err(error) => {
                             warn!(
@@ -2702,13 +2722,6 @@ pub async fn trigger_build_from_webhook(
                 }
                 None => None,
             };
-            if file_on.is_some() && file_event.is_none() {
-                debug!(
-                    pipeline_id = %pipeline_id,
-                    event_type = %event_type,
-                    "the file's on applies but the event is not a push, pull request or tag"
-                );
-            }
 
             let ref_matches = match &file_on {
                 Some(on) => file_event.is_some_and(|event| on.matches_ref(event)),
@@ -2883,6 +2896,9 @@ pub async fn trigger_build_from_webhook(
         }
     }
 
+    if let Some(error) = deferred {
+        return Err(error);
+    }
     Ok(created_builds)
 }
 

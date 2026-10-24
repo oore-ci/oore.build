@@ -212,8 +212,13 @@ settings:
 
 Branch and tag globs use `*` and `?` as in the trigger settings. Schedules and
 manual builds still come from the pipeline. Version 1 files, files without
-`on`, and a file that is missing, invalid or cannot be read keep the
-pipeline's trigger settings.
+`on`, and a missing or invalid file keep the pipeline's trigger settings.
+
+If Oore cannot read the file from GitHub or GitLab, for example during an
+outage, a pipeline without a workflow keeps its trigger settings. A pipeline
+with a workflow is skipped and the webhook delivery is retried (up to five
+times), so it never builds from trigger settings its `on` would not allow.
+Other pipelines still build on the first attempt.
 
 For example, with the file above a pipeline set to `adhoc` builds every pull
 request and a pipeline set to `release` builds pushes to `main` and

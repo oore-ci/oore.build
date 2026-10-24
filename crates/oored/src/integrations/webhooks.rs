@@ -1583,8 +1583,9 @@ mod tests {
         );
 
         // A pipeline with a workflow builds from a v2 file whose `on` is
-        // unknown, so the delivery fails and is retried.
-        sqlx::query("UPDATE pipelines SET workflow = 'release' WHERE id = 'pl2'")
+        // unknown, so it is skipped and the delivery fails for a retry. The
+        // workflow-less pipeline after it still builds on this attempt.
+        sqlx::query("UPDATE pipelines SET workflow = 'release' WHERE id = 'pl1'")
             .execute(&pool)
             .await
             .unwrap();
@@ -1603,12 +1604,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(webhook_status(&pool, "wh2").await, "received");
-        let pl2_builds: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM builds WHERE pipeline_id = 'pl2'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(pl2_builds, 1, "no build from the failed delivery");
+        assert_eq!(
+            builds_per_pipeline(&pool).await,
+            [("pl1".to_string(), 1), ("pl2".to_string(), 2)]
+        );
+
+        // Once the pipeline no longer needs its file, the retry builds it
+        // without building the other pipeline twice.
+        sqlx::query("UPDATE pipelines SET workflow = NULL WHERE id = 'pl1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        process_webhook_event(&pool, &[0; 32], "wh2", &event)
+            .await
+            .unwrap();
+        assert_eq!(webhook_status(&pool, "wh2").await, "processed");
+        assert_eq!(
+            builds_per_pipeline(&pool).await,
+            [("pl1".to_string(), 2), ("pl2".to_string(), 2)]
+        );
     }
 
     #[tokio::test]
