@@ -30,6 +30,7 @@ const createSchema = z.toZod<CreateProjectEnvironmentRequest>()(
     track: z.string(),
     approval_required: z.boolean().optional(),
     rollout_policy: policySchema.nullish(),
+    submit_for_review: z.boolean().optional(),
   }),
 )
 
@@ -39,6 +40,7 @@ const updateSchema = z.toZod<UpdateProjectEnvironmentRequest>()(
     track: z.string().nullish(),
     approval_required: z.boolean().nullish(),
     rollout_policy: policySchema.nullish(),
+    submit_for_review: z.boolean().nullish(),
     position: z.number().nullish(),
   }),
 )
@@ -148,9 +150,9 @@ function promote(
       to_fraction: release.rollout_fraction,
       reason: `Promoted from ${source.environment_name ?? `the ${source.track} track`} without a new build${
         inReview
-          ? '. Build attached to version ' +
-            (source.version_name ?? '') +
-            '; submit it for review in App Store Connect'
+          ? environment.submit_for_review
+            ? `. Submitted version ${source.version_name ?? ''} for App Store review`
+            : `. Build attached to version ${source.version_name ?? ''}; submit it for review in App Store Connect`
           : appStore
             ? `. Available in TestFlight to ${environment.track}`
             : ''
@@ -219,6 +221,7 @@ export const environmentHandlers = [
       track: body.track,
       approval_required: body.approval_required ?? false,
       rollout_policy: body.rollout_policy ?? DEFAULT_POLICY,
+      submit_for_review: body.submit_for_review ?? false,
       promotable: true,
       created_at: ago(0),
       updated_at: ago(0),
@@ -257,6 +260,8 @@ export const environmentHandlers = [
     }
     environment.name = body.name ?? environment.name
     environment.track = body.track ?? environment.track
+    environment.submit_for_review =
+      body.submit_for_review ?? environment.submit_for_review
     environment.approval_required =
       body.approval_required ?? environment.approval_required
     environment.rollout_policy =

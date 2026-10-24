@@ -105,6 +105,7 @@ export const demoEnvironments: Array<DemoEnvironment> = [
       interval_hours: 24,
       approval: 'none',
     },
+    submit_for_review: true,
     promotable: true,
     created_at: ago(86400 * 20),
     updated_at: ago(86400 * 20),

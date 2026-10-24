@@ -50,6 +50,9 @@ import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 
 const DEFAULT_STEPS = [0.01, 0.05, 0.2, 0.5, 1]
+/** Apple's phased release schedule, as rollout steps. */
+const APPLE_PHASED_STEPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1]
+const APP_STORE_TRACK = 'app_store'
 
 const environmentFormSchema = z
   .object({
@@ -76,6 +79,8 @@ const environmentFormSchema = z
     store: z.enum(['google_play', 'app_store']),
     track: z.string().trim().min(1, 'Enter a track.'),
     approval_required: z.boolean(),
+    phased_release: z.boolean(),
+    submit_for_review: z.boolean(),
     steps: z.string(),
     interval_hours: z
       .number({ error: 'Enter a number of hours.' })
@@ -109,6 +114,8 @@ function defaultValues(
     store: environment?.store ?? 'google_play',
     track: environment?.track ?? '',
     approval_required: environment?.approval_required ?? false,
+    phased_release: (policy?.steps ?? DEFAULT_STEPS).length > 1,
+    submit_for_review: environment?.submit_for_review ?? false,
     steps: formatRolloutSteps(policy?.steps ?? DEFAULT_STEPS),
     interval_hours: policy?.interval_hours ?? 24,
     crash_rate_percent:
@@ -149,6 +156,18 @@ export function EnvironmentDialog({
     name: ['store', 'track'],
   })
   const staged = store === 'google_play' && track.trim() !== 'internal'
+  const appStoreVersion =
+    store === 'app_store' && track.trim() === APP_STORE_TRACK
+
+  /** Submit for review only applies to the App Store version's track. */
+  function clearSubmitUnlessAppStoreVersion(
+    nextStore: string,
+    nextTrack: string,
+  ) {
+    if (nextStore !== 'app_store' || nextTrack.trim() !== APP_STORE_TRACK) {
+      form.setValue('submit_for_review', false, { shouldDirty: true })
+    }
+  }
 
   function handleOpenChange(next: boolean) {
     if (!next) {
@@ -161,8 +180,19 @@ export function EnvironmentDialog({
   function onSubmit(values: EnvironmentFormValues) {
     const parsed = parseRolloutSteps(values.steps)
     if ('error' in parsed) return
+    const versionTrack =
+      values.store === 'app_store' && values.track.trim() === APP_STORE_TRACK
+    // App Store releases follow Apple's schedule: phased, or all at once.
+    // TestFlight has no staged rollout.
+    const steps =
+      values.store === 'google_play'
+        ? parsed.steps
+        : versionTrack && values.phased_release
+          ? APPLE_PHASED_STEPS
+          : [1]
+    const submit_for_review = versionTrack && values.submit_for_review
     const rollout_policy = {
-      steps: parsed.steps,
+      steps,
       interval_hours: values.interval_hours,
       crash_rate_threshold:
         values.crash_rate_percent == null
@@ -186,6 +216,7 @@ export function EnvironmentDialog({
             track: values.track,
             approval_required: values.approval_required,
             rollout_policy,
+            submit_for_review,
           },
         },
         {
@@ -205,6 +236,7 @@ export function EnvironmentDialog({
           track: values.track,
           approval_required: values.approval_required,
           rollout_policy,
+          submit_for_review,
         },
         {
           onSuccess: (saved) => {
@@ -288,6 +320,7 @@ export function EnvironmentDialog({
                       onValueChange={(next) => {
                         if (next === 'google_play' || next === 'app_store') {
                           field.onChange(next)
+                          clearSubmitUnlessAppStoreVersion(next, track)
                         }
                       }}
                       items={RELEASE_STORE_LABEL}
@@ -328,6 +361,13 @@ export function EnvironmentDialog({
                         }
                         disabled={trackLocked}
                         {...field}
+                        onChange={(event) => {
+                          field.onChange(event)
+                          clearSubmitUnlessAppStoreVersion(
+                            store,
+                            event.target.value,
+                          )
+                        }}
                       />
                     </FormControl>
                     <FormMessage />
@@ -364,6 +404,54 @@ export function EnvironmentDialog({
                 </FormItem>
               )}
             />
+
+            {appStoreVersion ? (
+              <>
+                <FormField
+                  control={form.control}
+                  name="phased_release"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-start justify-between gap-4 rounded-lg border p-3">
+                      <Stack gap={1}>
+                        <FormLabel>Phased release</FormLabel>
+                        <FormDescription>
+                          Release over 7 days on Apple&apos;s schedule. Off
+                          releases to everyone once Apple approves it.
+                        </FormDescription>
+                      </Stack>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="submit_for_review"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-start justify-between gap-4 rounded-lg border p-3">
+                      <Stack gap={1}>
+                        <FormLabel>Submit for review</FormLabel>
+                        <FormDescription>
+                          Submit the version for App Review once a promotion
+                          attaches the build. Off leaves it for you to submit in
+                          App Store Connect.
+                        </FormDescription>
+                      </Stack>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              </>
+            ) : null}
 
             {staged ? (
               <>
