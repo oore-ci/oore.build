@@ -39,6 +39,7 @@ import type { PipelineWorkflowSource } from '@/components/pipeline-form-basic-se
 import { PipelineSectionIndex } from '@/components/pipeline-form-section-index'
 import { PipelineBuildSection } from '@/components/pipeline-form-build-sections'
 import { PipelineTriggersSection } from '@/components/pipeline-form-triggers-section'
+import { PipelineSizeBudgetSection } from '@/components/pipeline-form-size-budget-section'
 import { PipelinePlanPanel } from '@/components/pipeline-plan-panel'
 import { PipelineSigningSection } from '@/components/pipeline-form-signing-section'
 import type { IosAppStorePublishing } from '@/components/pipeline-form-ios-signing-section'
@@ -214,6 +215,7 @@ export default function PipelineForm({
       ? [{ id: 'signing', label: 'Signing' }]
       : []),
     { id: 'triggers', label: 'Triggers' },
+    { id: 'size-budget', label: 'Size budget' },
   ]
 
   // Deep links such as `edit#ios-signing` land on their section once the
@@ -290,6 +292,7 @@ export default function PipelineForm({
           canChangeApproval={canChangeApproval}
           manualOnlyTriggers={manualOnlyTriggers}
         />
+        <PipelineSizeBudgetSection />
 
         {validationErrors.length > 0 ? (
           <div>

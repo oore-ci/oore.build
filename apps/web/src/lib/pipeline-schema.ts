@@ -43,6 +43,45 @@ export const scheduleSchema = z.object({
   branch: z.string().optional(),
 })
 
+export const SIZE_BUDGET_MODES = ['warn', 'fail'] as const
+export const MAX_SIZE_BUDGET_RULES = 20
+
+const SIZE_BUDGET_KIND = /^[a-z0-9]{1,16}$/
+
+/** Empty, or a number at least `min` (and above it when `exclusive`). */
+function optionalAmount(min: number, exclusive: boolean, message: string) {
+  return z
+    .string()
+    .optional()
+    .refine((value) => {
+      const trimmed = value?.trim()
+      if (!trimmed) return true
+      const amount = Number(trimmed)
+      return (
+        Number.isFinite(amount) && (exclusive ? amount > min : amount >= min)
+      )
+    }, message)
+}
+
+/** One size budget rule. Sizes are in MB (1,048,576 bytes), as Oore shows them. */
+export const sizeBudgetRuleSchema = z
+  .object({
+    kind: z
+      .string()
+      .trim()
+      .regex(SIZE_BUDGET_KIND, 'Use a lowercase file extension, such as aab'),
+    max_mb: optionalAmount(0, true, 'Must be more than 0'),
+    max_increase_mb: optionalAmount(0, false, 'Must be 0 or more'),
+    max_increase_percent: optionalAmount(0, false, 'Must be 0 or more'),
+  })
+  .refine(
+    (rule) =>
+      [rule.max_mb, rule.max_increase_mb, rule.max_increase_percent].some(
+        (value) => value?.trim(),
+      ),
+    { message: 'Set at least one limit', path: ['max_mb'] },
+  )
+
 export const pipelineFormSchema = z
   .object({
     name: z.string().min(1, 'Name is required'),
@@ -125,6 +164,10 @@ export const pipelineFormSchema = z
       .max(MAX_SCHEDULES, `At most ${MAX_SCHEDULES} schedules`),
     approval_required: z.boolean(),
     approval_events: z.array(z.string()),
+    size_budget_mode: z.enum(SIZE_BUDGET_MODES),
+    size_budget_rules: z
+      .array(sizeBudgetRuleSchema)
+      .max(MAX_SIZE_BUDGET_RULES, `At most ${MAX_SIZE_BUDGET_RULES} rules`),
     cancel_previous: z.boolean(),
     branches: z.string().optional(),
     max_concurrent: z
@@ -136,6 +179,18 @@ export const pipelineFormSchema = z
       ),
   })
   .superRefine((data, ctx) => {
+    const kinds = new Set<string>()
+    data.size_budget_rules.forEach((rule, index) => {
+      const kind = rule.kind.trim()
+      if (kinds.has(kind)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Another rule already covers this kind',
+          path: ['size_budget_rules', index, 'kind'],
+        })
+      }
+      kinds.add(kind)
+    })
     if (data.config_mode === 'explicit' && !data.config_path?.trim()) {
       ctx.addIssue({
         code: 'custom',

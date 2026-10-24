@@ -5,6 +5,7 @@ import type {
   PipelineExecutionConfig,
   RepositoryWorkflowExecutionPreview,
   RepositoryWorkflowPreview,
+  SizeBudget,
   TriggerConfig,
   UpdatePipelineRequest,
 } from '@oore/client/models'
@@ -215,6 +216,57 @@ export function triggerConfigFromForm(
   }
 }
 
+const MEBIBYTE = 1024 * 1024
+
+/**
+ * A byte count as MB for the form. Seven decimals round-trip any byte count
+ * exactly, and whole sizes such as 25 MB still show as `25`.
+ */
+export function bytesToMegabytes(bytes?: number | null): string {
+  if (bytes === undefined || bytes === null) return ''
+  return String(Number((bytes / MEBIBYTE).toFixed(7)))
+}
+
+function megabytesToBytes(value?: string): number | undefined {
+  const trimmed = value?.trim()
+  return trimmed ? Math.round(Number(trimmed) * MEBIBYTE) : undefined
+}
+
+function optionalNumber(value?: string): number | undefined {
+  const trimmed = value?.trim()
+  return trimmed ? Number(trimmed) : undefined
+}
+
+export function sizeBudgetFromForm(data: PipelineFormValues): SizeBudget {
+  return {
+    mode: data.size_budget_mode,
+    rules: data.size_budget_rules.map((rule) => ({
+      kind: rule.kind.trim(),
+      max_bytes: megabytesToBytes(rule.max_mb),
+      max_increase_bytes: megabytesToBytes(rule.max_increase_mb),
+      max_increase_percent: optionalNumber(rule.max_increase_percent),
+    })),
+  }
+}
+
+export function sizeBudgetFormFields(
+  budget?: SizeBudget | null,
+): Pick<PipelineFormValues, 'size_budget_mode' | 'size_budget_rules'> {
+  return {
+    size_budget_mode: budget?.mode ?? 'warn',
+    size_budget_rules: (budget?.rules ?? []).map((rule) => ({
+      kind: rule.kind,
+      max_mb: bytesToMegabytes(rule.max_bytes),
+      max_increase_mb: bytesToMegabytes(rule.max_increase_bytes),
+      max_increase_percent:
+        rule.max_increase_percent === undefined ||
+        rule.max_increase_percent === null
+          ? ''
+          : String(rule.max_increase_percent),
+    })),
+  }
+}
+
 export function pipelineRequestFromForm(
   data: PipelineFormValues,
   {
@@ -246,6 +298,7 @@ export function pipelineRequestFromForm(
           events: data.approval_required ? data.approval_events : [],
         }
       : undefined,
+    size_budget: sizeBudgetFromForm(data),
     workflow: trimToUndefined(data.workflow),
   }
 }

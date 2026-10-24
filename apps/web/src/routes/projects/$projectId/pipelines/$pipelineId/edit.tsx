@@ -39,6 +39,7 @@ import {
   pipelineRepositoryFile,
   pipelineUpdateFromForm,
   selectedPlatforms,
+  sizeBudgetFormFields,
   toMultiline,
 } from '@/lib/pipeline-form-utils'
 import {
@@ -309,6 +310,7 @@ function EditPipelinePage() {
       : undefined,
     approval_required: pipeline.approval.required,
     approval_events: pipeline.approval.events ?? [],
+    ...sizeBudgetFormFields(pipeline.size_budget),
   }
 
   async function handleSubmit(

@@ -75,6 +75,17 @@ const approvalPolicySchema = z.object({
   events: stringListSchema.optional(),
   expires_after_hours: z.number().int().min(0).nullish(),
 })
+const sizeBudgetSchema = z.object({
+  mode: z.enum(['warn', 'fail']),
+  rules: z.array(
+    z.object({
+      kind: z.string(),
+      max_bytes: z.number().nullish(),
+      max_increase_bytes: z.number().nullish(),
+      max_increase_percent: z.number().nullish(),
+    }),
+  ),
+})
 const concurrencySchema = z.object({
   cancel_previous: z.boolean(),
   max_concurrent: z.number().nullish(),
@@ -89,6 +100,7 @@ const createPipelineSchema = z.toZod<CreatePipelineRequest>()(
     concurrency: concurrencySchema.nullish(),
     timeout_minutes: z.number().int().nullish(),
     approval: approvalPolicySchema.nullish(),
+    size_budget: sizeBudgetSchema.nullish(),
     workflow: z.string().nullish(),
   }),
 )
@@ -102,6 +114,7 @@ const updatePipelineSchema = z.toZod<UpdatePipelineRequest>()(
     concurrency: concurrencySchema.nullish(),
     timeout_minutes: z.number().int().nullish(),
     approval: approvalPolicySchema.nullish(),
+    size_budget: sizeBudgetSchema.nullish(),
     workflow: z.string().nullish(),
     enabled: z.boolean().nullish(),
   }),
@@ -496,6 +509,7 @@ export const pipelineHandlers = [
       },
       timeout_minutes: body.timeout_minutes ?? 60,
       approval: body.approval ?? { required: false, events: [] },
+      size_budget: body.size_budget ?? { mode: 'warn', rules: [] },
       workflow: body.workflow ?? null,
       enabled: true,
       created_at: ago(0),

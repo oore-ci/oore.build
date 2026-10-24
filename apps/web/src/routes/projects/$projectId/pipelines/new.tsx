@@ -131,6 +131,8 @@ const emptyDefaults: PipelineFormValues = {
   max_concurrent: undefined,
   approval_required: false,
   approval_events: [],
+  size_budget_mode: 'warn',
+  size_budget_rules: [],
 }
 
 const PIPELINE_TEMPLATES = [
