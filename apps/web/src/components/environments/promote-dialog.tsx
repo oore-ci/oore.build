@@ -10,6 +10,8 @@ import {
 import { releaseVersionLabel } from '@/lib/releases'
 import { toast } from '@/lib/toast'
 import { usePromoteBuild } from '@/hooks/use-environments'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -124,8 +126,8 @@ export function PromoteDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-2">
+        <Stack gap={4}>
+          <Stack gap={2}>
             <Label htmlFor="promote-target">Promote to</Label>
             <Select
               value={target?.id ?? null}
@@ -144,17 +146,17 @@ export function PromoteDialog({
               </SelectContent>
             </Select>
             {target ? (
-              <p className="text-sm text-muted-foreground">
+              <Text>
                 {environmentTargetLabel(target)}. {rolloutPolicySummary(target)}
                 .
                 {target.approval_required
                   ? ' Waits for a maintainer to approve before the store changes.'
                   : ''}
-              </p>
+              </Text>
             ) : null}
-          </div>
+          </Stack>
 
-          <div className="space-y-2">
+          <Stack gap={2}>
             <Label htmlFor="promote-reason">Reason</Label>
             <Textarea
               id="promote-reason"
@@ -164,14 +166,14 @@ export function PromoteDialog({
               value={reason}
               onChange={(event) => setReason(event.target.value)}
             />
-          </div>
+          </Stack>
 
           {promote.error ? (
             <p role="alert" className="text-sm text-destructive">
               {getApiErrorMessage(promote.error, PROMOTION_ERRORS)}
             </p>
           ) : null}
-        </div>
+        </Stack>
 
         <DialogFooter>
           <Button

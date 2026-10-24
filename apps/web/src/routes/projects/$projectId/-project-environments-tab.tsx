@@ -37,6 +37,8 @@ import {
   SettingsSection,
   SettingsSurface,
 } from '@/components/settings/settings-section'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -134,7 +136,7 @@ function EnvironmentRow({
       <ItemContent className="min-w-48 basis-64">
         {release ? (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <div className="flex min-w-0 flex-col">
+            <Stack className="min-w-0">
               <Link
                 to="/releases/$releaseId"
                 params={{ releaseId: release.id }}
@@ -142,20 +144,20 @@ function EnvironmentRow({
               >
                 {releaseVersionLabel(release)}
               </Link>
-              <span className="text-xs text-muted-foreground">
+              <Text variant="caption" render={<span />}>
                 {release.build_number
                   ? `Build #${release.build_number} · `
                   : ''}
                 {release.promoted_from_release_id ? 'Promoted' : 'Uploaded'}{' '}
                 {relativeTime(release.created_at)}
-              </span>
-            </div>
+              </Text>
+            </Stack>
             {isLiveRelease(release) || release.state === 'complete' ? (
               <ReleaseRollout release={release} className="w-40" />
             ) : null}
           </div>
         ) : (
-          <span className="text-sm text-muted-foreground">No release yet</span>
+          <Text render={<span />}>No release yet</Text>
         )}
       </ItemContent>
       {/* A fixed width keeps the release column aligned across rows. */}
@@ -330,7 +332,7 @@ export function ProjectEnvironmentsTab({
 
   return (
     <TabsContent value="environments">
-      <div className="flex flex-col gap-8 pt-2">
+      <Stack gap={8} className="pt-2">
         <SettingsSection
           title="Environments"
           hint="Promoting a build reuses the version the store already has; nothing is rebuilt."
@@ -440,7 +442,7 @@ export function ProjectEnvironmentsTab({
             </RowList>
           </SettingsSection>
         ) : null}
-      </div>
+      </Stack>
 
       <EnvironmentDialog
         open={createOpen}

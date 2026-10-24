@@ -11,12 +11,15 @@ import {
   formatRolloutSteps,
   parseRolloutSteps,
 } from '@/lib/environments'
+import { stackVariants } from '@/lib/recipes'
 import { RELEASE_STORE_LABEL } from '@/lib/releases'
 import { toast } from '@/lib/toast'
 import {
   useCreateEnvironment,
   useUpdateEnvironment,
 } from '@/hooks/use-environments'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -230,7 +233,7 @@ export function EnvironmentDialog({
         <Form {...form}>
           <form
             onSubmit={(event) => void form.handleSubmit(onSubmit)(event)}
-            className="space-y-4"
+            className={stackVariants({ gap: 4 })}
           >
             <div className="grid gap-4 sm:grid-cols-2">
               <FormField
@@ -332,26 +335,26 @@ export function EnvironmentDialog({
                 )}
               />
             </div>
-            <p className="-mt-2 text-sm text-muted-foreground">
+            <Text className="-mt-2">
               {trackLocked
                 ? 'This environment has releases, so its track is fixed. Add a new environment for another track.'
                 : store === 'google_play'
                   ? 'internal, closed, open, production, or a custom track name.'
                   : 'App Store environments group the releases uploads record; promotion into them comes later.'}
-            </p>
+            </Text>
 
             <FormField
               control={form.control}
               name="approval_required"
               render={({ field }) => (
                 <FormItem className="flex flex-row items-start justify-between gap-4 rounded-lg border p-3">
-                  <div className="flex flex-col gap-1">
+                  <Stack gap={1}>
                     <FormLabel>Require approval</FormLabel>
                     <FormDescription>
                       Developers can ask to promote; a maintainer approves
                       before anything changes in the store.
                     </FormDescription>
-                  </div>
+                  </Stack>
                   <FormControl>
                     <Switch
                       checked={field.value}
