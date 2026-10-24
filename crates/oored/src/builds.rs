@@ -2279,19 +2279,12 @@ pub(crate) async fn queue_rerun(
             "timeout_secs".to_string(),
             serde_json::json!(i64::from(timeout_minutes) * 60),
         );
-        // A full re-run of a retry builds everything again.
-        snapshot.remove("retry_steps");
-        snapshot.remove(crate::step_retry::RETRY_PUBLISH_FROM_FILE);
-        if let Some(steps) = &retry_steps {
-            snapshot.insert("retry_steps".to_string(), serde_json::json!(steps));
-            let step_results: Option<String> = source_row.get("step_results");
-            if crate::step_retry::published_from_file(step_results.as_deref(), steps) {
-                snapshot.insert(
-                    crate::step_retry::RETRY_PUBLISH_FROM_FILE.to_string(),
-                    serde_json::Value::Bool(true),
-                );
-            }
-        }
+        let step_results: Option<String> = source_row.get("step_results");
+        crate::step_retry::set_retry_snapshot(
+            snapshot,
+            retry_steps.as_deref(),
+            step_results.as_deref(),
+        );
     }
     let event_type = if retry_steps.is_some() {
         "retry"

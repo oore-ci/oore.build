@@ -4806,15 +4806,12 @@ async fn execute_step_retry(
     };
     let finished = now_unix();
     let succeeded = restore.is_ok();
-    steps.push(StepResult {
-        name: step_name.to_string(),
-        status: if succeeded { "succeeded" } else { "failed" }.to_string(),
-        exit_code: Some(if succeeded { 0 } else { 1 }),
-        started_at: started,
-        finished_at: finished,
-        duration_ms: (finished - started) * 1000,
-        publish_from_file: false,
-    });
+    steps.push(artifacts_step_result(
+        succeeded,
+        Some(if succeeded { 0 } else { 1 }),
+        (started, finished),
+        &file_publish,
+    ));
     if let Err(error) = &restore {
         let _ = append_runner_log_line(
             client,
@@ -6061,20 +6058,12 @@ Install the required tooling on the runner, set isolation: vm, or override build
     )
     .await;
     let artifacts_finished = now_unix();
-    steps.push(StepResult {
-        name: "artifacts".to_string(),
-        status: if artifact_result.is_ok() {
-            "succeeded"
-        } else {
-            "failed"
-        }
-        .to_string(),
-        exit_code: artifact_result.as_ref().err().map(|_| 1),
-        started_at: artifacts_started,
-        finished_at: artifacts_finished,
-        duration_ms: (artifacts_finished - artifacts_started) * 1000,
-        publish_from_file: false,
-    });
+    steps.push(artifacts_step_result(
+        artifact_result.is_ok(),
+        artifact_result.as_ref().err().map(|_| 1),
+        (artifacts_started, artifacts_finished),
+        &execution_plan.publish,
+    ));
     if let Err(error) = artifact_result {
         return (steps, Err(error));
     }
@@ -6101,6 +6090,26 @@ Install the required tooling on the runner, set isolation: vm, or override build
     )
     .await;
     (steps, result)
+}
+
+/// The `artifacts` step's result. It always exists once publishing can run,
+/// so it carries the build-level `publish_from_file`: a retry of any publish
+/// step, including one that never ran, then reads the file again.
+fn artifacts_step_result(
+    succeeded: bool,
+    exit_code: Option<i32>,
+    (started, finished): (i64, i64),
+    file_publish: &PlanPublish,
+) -> StepResult {
+    StepResult {
+        name: "artifacts".to_string(),
+        status: if succeeded { "succeeded" } else { "failed" }.to_string(),
+        exit_code,
+        started_at: started,
+        finished_at: finished,
+        duration_ms: (finished - started) * 1000,
+        publish_from_file: !file_publish.is_empty(),
+    }
 }
 
 /// What the store uploads read: the build's outputs and the job's secrets.
@@ -9418,5 +9427,26 @@ mod file_publish_tests {
         .await;
         assert!(error.contains("no repo_url"), "{error}");
         assert!(steps.is_empty());
+    }
+
+    #[test]
+    fn the_artifacts_result_carries_the_build_level_file_flag() {
+        let dir = workspace("artifacts-flag", Some(V2));
+        let plan = resolve_execution_plan(&dir, &json!({}), false).unwrap();
+        let from_file = artifacts_step_result(true, None, (0, 1), &plan.publish);
+        assert_eq!(from_file.name, "artifacts");
+        assert!(from_file.publish_from_file);
+        let settings = artifacts_step_result(true, None, (0, 1), &PlanPublish::default());
+        assert!(!settings.publish_from_file);
+        // The flag survives the round trip the daemon stores it through.
+        let stored = serde_json::to_value(&from_file).unwrap();
+        assert_eq!(stored["publish_from_file"], json!(true));
+        assert!(
+            serde_json::to_value(&settings)
+                .unwrap()
+                .get("publish_from_file")
+                .is_none()
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
