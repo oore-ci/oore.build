@@ -327,6 +327,10 @@ export function PipelineTriggersSection({
                     {...field}
                   />
                 </FormControl>
+                <FormDescription>
+                  Builds over the limit wait in the queue and start in order as
+                  running builds finish.
+                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}

@@ -514,8 +514,10 @@ async fn record_disk_pressure(
 /// Atomically linearize a direct-runner claim against the operational pause.
 ///
 /// The initial queue lookup chooses the oldest eligible build. Rechecking the
-/// pause and source identity in the queued -> scheduled update closes races
-/// with an operator change while a claim request is in flight. The build
+/// pause, source identity and the pipeline's `max_concurrent` limit in the
+/// queued -> scheduled update closes races with an operator change, or with
+/// another runner's claim, while a claim request is in flight. SQLite runs
+/// one writer at a time, so two claims cannot both see the last free slot. The build
 /// moves on to assigned, bound to the runner and its signing grant, in the
 /// same transaction, so an interrupted claim never strands it in scheduled.
 pub(crate) async fn claim_eligible_direct_runner_build(
@@ -538,6 +540,16 @@ pub(crate) async fn claim_eligible_direct_runner_build(
         "UPDATE builds SET status = 'scheduled', updated_at = ?1 \
          WHERE id = ?2 AND status = 'queued' \
            AND (approval_state IS NULL OR approval_state != 'pending') \
+           AND NOT EXISTS ( \
+             SELECT 1 FROM pipelines pl \
+             WHERE pl.id = builds.pipeline_id \
+               AND json_extract(pl.concurrency, '$.max_concurrent') > 0 \
+               AND ( \
+                 SELECT COUNT(*) FROM builds active \
+                 WHERE active.pipeline_id = pl.id \
+                   AND active.status IN ('scheduled', 'assigned', 'running') \
+               ) >= json_extract(pl.concurrency, '$.max_concurrent') \
+           ) \
            AND EXISTS ( \
              SELECT 1 FROM runners runner WHERE runner.id = ?3 \
                AND NOT EXISTS ( \
@@ -748,8 +760,9 @@ async fn fail_credential_blocked_builds(
 ///
 /// A missing repository remains ineligible. Missing preferences means the
 /// ordinary running state. Filtering before ordering prevents blocked work,
-/// and work that needs labels this runner lacks, from starving later eligible
-/// builds.
+/// work that needs labels this runner lacks, and work from a pipeline already
+/// at its `max_concurrent` limit, from starving later eligible builds. A
+/// pipeline with no limit runs as many builds as there are runners.
 async fn next_eligible_build(
     pool: &sqlx::SqlitePool,
     runner_id: &str,
@@ -763,6 +776,16 @@ async fn next_eligible_build(
          LEFT JOIN instance_preferences pref ON pref.id = 1 \
          WHERE b.status = 'queued' \
            AND (b.approval_state IS NULL OR b.approval_state != 'pending') \
+           AND NOT EXISTS ( \
+             SELECT 1 FROM pipelines pl \
+             WHERE pl.id = b.pipeline_id \
+               AND json_extract(pl.concurrency, '$.max_concurrent') > 0 \
+               AND ( \
+                 SELECT COUNT(*) FROM builds active \
+                 WHERE active.pipeline_id = pl.id \
+                   AND active.status IN ('scheduled', 'assigned', 'running') \
+               ) >= json_extract(pl.concurrency, '$.max_concurrent') \
+           ) \
            AND NOT EXISTS ( \
              SELECT 1 FROM json_each(b.config_snapshot, '$.runs_on') required \
              WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
@@ -1755,6 +1778,105 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(next_build_id(&pool, "linux").await.as_deref(), Some("old"));
+    }
+
+    async fn limit_pipeline(pool: &sqlx::SqlitePool, pipeline_id: &str, max_concurrent: u32) {
+        sqlx::query("UPDATE pipelines SET concurrency = ?1 WHERE id = ?2")
+            .bind(
+                serde_json::json!({ "cancel_previous": false, "max_concurrent": max_concurrent })
+                    .to_string(),
+            )
+            .bind(pipeline_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn claim(pool: &sqlx::SqlitePool, runner_id: &str) -> Option<String> {
+        let build_id = next_build_id(pool, runner_id).await?;
+        let actor = format!("runner:{runner_id}");
+        claim_eligible_direct_runner_build(pool, &build_id, runner_id, &actor, "h")
+            .await
+            .unwrap()
+            .then_some(build_id)
+    }
+
+    #[tokio::test]
+    async fn max_concurrent_holds_extra_builds_in_the_queue_in_order() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac1", "macos").await;
+        insert_runner(&pool, "mac2", "macos").await;
+        limit_pipeline(&pool, "pl1", 1).await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        queue_build(&pool, "b3", 3, &[]).await;
+
+        assert_eq!(claim(&pool, "mac1").await.as_deref(), Some("b1"));
+        // A free runner leaves the next build queued while the slot is taken.
+        assert_eq!(claim(&pool, "mac2").await, None);
+        assert_eq!(
+            build_status(&pool, "b2").await,
+            ("queued".to_string(), None)
+        );
+        // A claim that raced the first one is refused when it writes.
+        assert!(
+            !claim_eligible_direct_runner_build(&pool, "b2", "mac2", "runner:mac2", "h")
+                .await
+                .unwrap()
+        );
+
+        // Running still holds the slot; finishing frees it for the oldest build.
+        set_build(&pool, "b1", "running", Some("mac1")).await;
+        assert_eq!(claim(&pool, "mac2").await, None);
+        set_build(&pool, "b1", "succeeded", Some("mac1")).await;
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("b2"));
+        assert_eq!(claim(&pool, "mac1").await, None);
+    }
+
+    #[tokio::test]
+    async fn max_concurrent_counts_only_its_own_pipeline() {
+        let pool = pool().await;
+        sqlx::query(
+            "INSERT INTO pipelines (id, project_id, name, created_at, updated_at) \
+             VALUES ('pl2', 'p1', 'nightly', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for runner in ["mac1", "mac2", "mac3"] {
+            insert_runner(&pool, runner, "macos").await;
+        }
+        limit_pipeline(&pool, "pl1", 1).await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        sqlx::query(
+            "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, config_snapshot, queued_at, created_at, updated_at) \
+             VALUES ('other', 'p1', 'pl2', 3, 'queued', 'manual', '{\"repository_id\":\"repo1\"}', 3, 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(claim(&pool, "mac1").await.as_deref(), Some("b1"));
+        // The full pipeline's older build does not block the other pipeline.
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("other"));
+        assert_eq!(claim(&pool, "mac3").await, None);
+    }
+
+    #[tokio::test]
+    async fn a_pipeline_without_max_concurrent_is_unlimited() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac1", "macos").await;
+        insert_runner(&pool, "mac2", "macos").await;
+        sqlx::query("UPDATE pipelines SET concurrency = '{\"cancel_previous\":true,\"max_concurrent\":null}'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+
+        assert_eq!(claim(&pool, "mac1").await.as_deref(), Some("b1"));
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("b2"));
     }
 
     fn metrics(disk_free_bytes: u64) -> RunnerMetrics {

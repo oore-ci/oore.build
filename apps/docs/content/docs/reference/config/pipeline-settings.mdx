@@ -1,7 +1,7 @@
 ---
 title: 'Pipeline settings'
 status: implemented
-description: 'Triggers, schedules, timeout, approval, and size budget fields on a pipeline, with their UI labels, API fields, and limits.'
+description: 'Triggers, schedules, concurrency, timeout, approval, and size budget fields on a pipeline, with their UI labels, API fields, and limits.'
 ---
 
 These settings live on the pipeline, not in the repository. The pipeline's
@@ -19,6 +19,7 @@ version 2 file can replace the events, as described in
 | **Only these paths (optional)**                                | `trigger_config.paths`        |
 | **Ignore these paths (optional)**                              | `trigger_config.paths_ignore` |
 | **Schedules**                                                  | `trigger_config.schedules`    |
+| **Max concurrent builds (optional)**                           | `concurrency.max_concurrent`  |
 | **Timeout (minutes)**                                          | `timeout_minutes`             |
 | **Builds wait for a maintainer before a runner picks them up** | `approval.required`           |
 | **Which builds**                                               | `approval.events`             |
@@ -100,6 +101,25 @@ Oore builds instead of skipping. Path filters do not apply to tag pushes.
 - A new or edited schedule starts counting from when Oore first sees it.
 - When the daemon was down at a due time, Oore still starts the run if it is
   less than five minutes late. Older runs are skipped.
+
+## Max concurrent builds
+
+`concurrency.max_concurrent` caps how many of the pipeline's builds run at
+once.
+
+| Property | Value             |
+| -------- | ----------------- |
+| Range    | 1 to 100          |
+| Default  | No limit (`null`) |
+
+- Builds that are assigned to a runner or running count against the limit.
+- A build over the limit stays **Queued**. When a running build finishes, the
+  oldest queued build of the pipeline starts next.
+- A pipeline at its limit does not hold up other pipelines' builds; a free
+  runner takes the oldest build it can run.
+- A lower limit does not stop builds that are already running.
+- Without a limit, the pipeline runs as many builds at once as there are free
+  runners that match.
 
 ## Timeout
 
