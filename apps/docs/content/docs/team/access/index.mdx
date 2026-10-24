@@ -1,52 +1,78 @@
 ---
 title: 'Configure External Access'
-description: 'Choose OIDC or Trusted Proxy authentication when people need to reach Oore beyond the backend Mac.'
+description: 'Let people sign in from their own devices over HTTPS, with OIDC or an existing authentication proxy.'
 status: implemented
 ---
 
-Keep **Local Only** when one operator uses Oore from the backend Mac over loopback. Configure **External Access** only when another person or device must reach the instance.
+Let other people and devices sign in to Oore over HTTPS. Keep **Local Only**
+while one operator uses Oore from the backend Mac. Turn on External Access when
+a second person, or a phone that installs builds, needs to reach the instance.
 
-External Access changes the network and identity boundary. It does not move the backend, runners, repositories, signing material, or artifacts off your infrastructure.
+For what External Access changes and how the two identity modes compare, read
+[How External Access works](/concepts/external-access).
 
-## Choose an identity mode
+## What you need
 
-| Mode                                                          | Use it when                                                                 | Support   |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------- | --------- |
-| [External Access (OIDC)](/team/access/oidc)                   | Your team signs in directly with an OpenID Connect provider                 | Supported |
-| [External Access (Trusted Proxy)](/team/access/trusted-proxy) | An existing authentication proxy verifies users before traffic reaches Oore | Advanced  |
+- The Oore Owner account on a ready macOS backend.
+- A protected HTTPS path that browsers can reach, such as a reverse proxy or a
+  [Cloudflare Tunnel](/operate/access/cloudflare-access). Oore does not set up
+  DNS, certificates, proxies, tunnels, or firewalls.
+- The exact origin of each browser client you will use, such as
+  `https://ci.oore.build` for the hosted UI.
+- Terminal access to the backend Mac, in case you need to recover.
 
-Use OIDC unless an identity-aware proxy is already part of your deployment and you operate its trust boundary.
+## 1. Choose how people sign in
 
-There is no ordinary loopback-login bypass after an instance uses External Access. Host-authorized recovery is a separate break-glass flow.
+- **OIDC** with Google, Microsoft Entra ID, Okta, Auth0, or Keycloak. Choose
+  this unless an access proxy already checks identity in your deployment. You
+  can turn it on for a ready Local Only instance.
+- **Trusted Proxy** when an existing authentication proxy verifies people
+  before traffic reaches Oore. It is set when the instance is first
+  initialized and cannot convert a ready instance.
 
-## Network requirements
+## 2. Follow the guide for that mode
 
-Both modes require:
+- [Configure External Access (OIDC)](/team/access/oidc): set the network,
+  connect the provider, pass the technical checks, and turn it on.
+- [Configure External Access (Trusted Proxy)](/team/access/trusted-proxy):
+  initialize the backend behind the proxy.
 
-- a customer-operated macOS backend;
-- a protected, browser-reachable path to that backend;
-- a non-loopback HTTPS **Public URL**;
-- every browser client origin in **Allowed frontend origins**; and
-- successful External Access technical checks.
+For the hosted UI behind Cloudflare, follow
+[Connect Cloudflare Tunnel and Access](/operate/access/cloudflare-access),
+which uses OIDC.
 
-If you use `ci.oore.build`, add `https://ci.oore.build` as an allowed frontend origin and register `https://ci.oore.build/auth/callback` for OIDC. The hosted site serves only the browser client. The browser still calls your backend directly, so the backend must be reachable over HTTPS and allow that origin.
+## Verify the result
 
-## Trust boundaries
+1. In **Settings > General**, the **External access** badge names the sign-in
+   mode instead of **Local only**, and the button reads **Turn off**.
+2. From a second device or a private window, open the browser client and sign
+   in. Oore opens as the expected user.
+3. The backend Mac still answers `oore status`.
 
-With OIDC, the provider authenticates the person through discovery, authorization code flow, and PKCE. Oore receives the callback in the browser client, establishes its own session, and applies Oore roles.
+## Troubleshooting
 
-With Trusted Proxy, Oore accepts an identity only when the request comes from an allowed immediate peer, contains the configured identity header, and supplies the configured shared proof. A forwarded email header by itself is not authentication.
+### **Turn on** stays unavailable
 
-In both modes, Oore—not the provider or proxy—enforces instance roles and project access. Proxy groups do not become Oore roles automatically.
+A setup step or technical check has not passed. Open **Technical checks** and
+fix each failed check. The **Public URL (HTTPS)** must be a non-loopback HTTPS
+URL, and its origin must be under **Allowed frontend origins**.
 
-## Before you turn it on
+### Everyone is signed out after the change
 
-Confirm that a second browser can reach the intended HTTPS URL and that you can still operate the backend Mac. Enabling or disabling External Access revokes current sessions, so expect to sign in again.
+Turning External Access on or off revokes every session. Sign in again through
+the new mode.
 
-Oore does not configure your DNS, TLS certificate, reverse proxy, VPN, tunnel, mesh, or firewall. Establish and protect those paths before enabling access.
+### A person signs in at the provider but Oore rejects them
+
+Oore knows only invited or active users. [Invite them](/team/invite) with the
+exact email their provider returns.
+
+### You are locked out
+
+Use host-authorized recovery on the backend Mac. See
+[`oore recovery`](/reference/cli/oore-recovery).
 
 ## Next step
 
-[Configure External Access (OIDC)](/team/access/oidc), or
-[Trusted Proxy](/team/access/trusted-proxy) if an access proxy already checks
-identity. Then [invite a team member](/team/invite).
+[Invite a team member](/team/invite), then
+[manage roles and project access](/team/roles).

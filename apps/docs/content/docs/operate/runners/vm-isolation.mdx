@@ -1,33 +1,46 @@
 ---
 title: 'Run builds in VMs'
 status: implemented
-description: 'Give every build a clean macOS VM with Tart, picked by the Flutter version.'
+description: 'Give every build of a pipeline a clean macOS VM with Tart, picked by the Flutter version.'
 ---
 
-A pipeline with `isolation: vm` runs each build in a new [Tart](https://github.com/openai/tart)
-VM. The Runner clones the VM from an image, shares the build workspace into it,
+Run each build of a pipeline in a new [Tart](https://github.com/openai/tart)
+VM. The runner clones the VM from an image for the build's Flutter version,
 runs every step inside it, and deletes it when the build ends. Nothing a build
-installs or changes survives into the next one, and the Runner Mac only needs
-Tart and the images.
+installs survives into the next one, and apps pinned to different Flutter
+versions can share one Runner Mac.
+
+Image names, base images, environment variables, `oore.image.yaml` fields,
+and the full build sequence are in
+[Runner settings](/reference/config/runner#vm-images).
 
 ## What you need
 
-- Tart 2.41.1 or newer on the Runner Mac. Homebrew's `openai/tools/tart` can
-  lag behind, so check `tart --version` after installing it. If it is older,
-  install the release directly (see [Install Tart from the release](#install-tart-from-the-release)).
-- The Runner account logged in to macOS. Apple's Virtualization framework
-  needs that login session, the same one iOS signing uses, so turn on
-  automatic login for the Runner account on a dedicated build Mac.
-- Disk space for the images: the Runner builds one per Flutter version on
-  first use (see below).
+- Tart 2.41.1 or newer on the Runner Mac.
+- The runner account logged in to macOS. Apple's Virtualization framework
+  needs that login session, the same one iOS signing uses. On a dedicated
+  build Mac, turn on automatic login for the runner account.
+- Disk space for the images. An image for iOS builds starts from a download of
+  about 69 GB, and an Android-only image from about 26 GB. Budget well over
+  100 GB on a Runner Mac that builds iOS, and more for each further Flutter
+  version.
+- Xcode on the host too, if the pipeline uploads to TestFlight or the App
+  Store. The upload runs on the host.
+- Project developer, maintainer, instance admin, or instance owner access to
+  edit the pipeline.
 
-`oore doctor` reports the installed Tart version.
+## 1. Install Tart
 
-### Install Tart from the release
+Install Tart with Homebrew, then check the version. Homebrew's formula can lag
+behind Tart releases:
 
-The Runner looks for `/opt/homebrew/bin/tart` first, then `/usr/local/bin/tart`,
-then the service `PATH`. To install a release that Homebrew does not have yet,
-remove the Homebrew copy and link the release's app bundle:
+```bash
+brew install openai/tools/tart
+tart --version
+```
+
+If Homebrew installs a version older than 2.41.1, remove it and install the
+release directly:
 
 ```bash
 brew uninstall openai/tools/tart
@@ -39,11 +52,21 @@ sudo ln -sf /Applications/tart.app/Contents/MacOS/tart /usr/local/bin/tart
 /usr/local/bin/tart --version
 ```
 
-The Runner checks for Tart at the start of every VM build, so it needs no restart.
+The runner looks for `tart` in `/opt/homebrew/bin`, then `/usr/local/bin`,
+then its service `PATH`. It checks at the start of every VM build, so it needs
+no restart. Run `oore doctor` on the Runner Mac to confirm that it finds Tart.
 
-## Turn it on
+## 2. Turn on VM isolation
 
-Set `isolation` in the repository's `.oore.yaml`:
+In the pipeline editor:
+
+1. Open the pipeline and select **Edit**.
+2. Under **Build > Runner**, set **Isolation** to
+   **In a fresh macOS VM for the pipeline's Flutter version**.
+3. Select **Save changes**.
+
+If the repository has a `.oore.yaml`, set `isolation` there instead. The file
+wins over the editor when it exists:
 
 ```yaml
 version: 1
@@ -51,154 +74,80 @@ platforms: [android, ios]
 isolation: vm
 ```
 
-## Images
+The Flutter version comes from a checked-in `.fvmrc`, then the pipeline's
+Flutter version, then `stable`.
 
-The Runner resolves the Flutter version the same way as for host builds: a
-checked-in `.fvmrc` wins, then `flutter_version` from the pipeline, then
-`stable`. It turns that version into an image name with the template in
-`OORE_TART_IMAGE` on the Runner, where `{flutter}` stands for the version. The
-default template is `oore-flutter-{flutter}`, so a repository that pins
-`3.47.7` in `.fvmrc` builds in the local VM `oore-flutter-3.47.7`.
+## 3. Build the image
 
-### Built on first use
+Start a build of the pipeline. If the runner has no image for that Flutter
+version yet, it builds one before the build runs and keeps it for later
+builds. The download and setup stream into the build log under `vm-start`.
+The first image from a base can take an hour or more, depending on the
+connection.
 
-When the Runner does not have the image yet, it builds it before the first
-build that needs it and keeps it for every later one:
+To build an image ahead of time, start any VM build that uses the Flutter
+version.
 
-1. It downloads and clones a base image, picked by the pipeline's platforms
-   unless `OORE_TART_BASE_IMAGE` on the Runner names one for every build:
-   - Builds for iOS or macOS use `ghcr.io/cirruslabs/macos-tahoe-xcode:26.5`,
-     about 69 GB. It already has Xcode, CocoaPods, a JDK, the Android SDK,
-     Flutter at `~/flutter` and the Tart Guest Agent.
-   - Android-only builds use `ghcr.io/cirruslabs/macos-tahoe-base`, about
-     26 GB, with no Xcode. The Runner installs a JDK and the Android SDK into
-     it, and names the image with an `-android` suffix, such as
-     `oore-flutter-3.47.7-android`.
-2. It checks Flutter out at the requested tag (or channel), precaches the
-   artifacts for the platforms the image serves and accepts the Android
-   licenses.
-3. It saves the result as the local image and deletes nothing else.
+## 4. Add tools the base image lacks
 
-A Runner downloads only the bases its pipelines need, so a Runner that never
-builds for iOS never downloads Xcode. The output, including the download's
-progress, streams into the build log under `vm-start`. The first image from
-a base can take an hour or more depending on the connection. Two builds that
-need the same missing image build it once: the second waits for the first.
-
-To build an image ahead of time, start any `isolation: vm` build that uses the
-version. To rebuild one, delete it with `tart delete oore-flutter-3.47.7`. To
-free a base you no longer need, find it with `tart list --source oci` and
-delete it with `tart delete`.
-
-Between builds the Runner deletes the `oore-flutter-*` images it built that no
-build used for 30 days, so old Flutter versions and customised images do not
-fill the disk. Set `OORE_TART_IMAGE_MAX_AGE_DAYS` on the Runner to change the
-age, or to `0` to keep every image. Images it did not build, such as one
-`OORE_TART_IMAGE` names, are never deleted.
-
-### Customise an app's image
-
-Add `oore.image.yaml` to the repository root when an app needs more than the
-base provides:
+If the app needs Android SDK packages, Homebrew formulae, or setup commands
+that the image does not have, add `oore.image.yaml` to the repository root:
 
 ```yaml
 version: 1
-base: ghcr.io/cirruslabs/macos-tahoe-xcode:26.5 # optional
 android_packages:
   - 'platforms;android-36'
-  - 'ndk;28.2.13676358'
 brew:
   - graphicsmagick
 setup:
   - gem install bundler
 ```
 
-| Field              | Meaning                                               |
-| ------------------ | ----------------------------------------------------- |
-| `version`          | Must be `1`                                           |
-| `base`             | Tart image to start from instead of the Runner's base |
-| `android_packages` | Extra `sdkmanager` packages                           |
-| `brew`             | Extra Homebrew formulae                               |
-| `setup`            | Shell commands run last, after Flutter is installed   |
+The next build creates a new image for that project. Each edit to the file
+creates another one, and the runner deletes images that no build used for
+30 days.
 
-The Flutter version still comes from `.fvmrc` or the pipeline. With this file
-the image belongs to that project alone: its name adds a hash of the project,
-base, Flutter version and file, such as `oore-flutter-3.47.7-1a2b3c4d5e6f`, so
-editing the file builds a fresh image on the next build. The old image is
-deleted once no build has used it for 30 days.
+## Verify the result
 
-### Use a prebuilt image
+- The build log has a `vm-start` step. It records how long the VM took to
+  start, usually 10 to 30 seconds, and lists the caches it restored.
+- `tart list` on the Runner Mac shows the local image, such as
+  `oore-flutter-3.47.7`, and no leftover VM after the build ends.
+- A second build of the same pipeline skips the image build.
 
-`OORE_TART_IMAGE` can also name an OCI reference such as
-`ghcr.io/acme/flutter:{flutter}-xcode26`. Tart pulls it on first use and keeps
-it cached; the Runner does not build it. Such an image must:
+## Troubleshooting
 
-- run the [Tart Guest Agent](https://github.com/cirruslabs/tart-guest-agent)
-  as a launchd global agent
-- log in its build user automatically
-- have Flutter on the `PATH` of a zsh login shell, along with Xcode,
-  CocoaPods, a JDK and the Android SDK your apps need
+### The build fails because Tart is not installed
 
-Each image carries exactly one Flutter SDK.
+The log says the pipeline runs in a VM but Tart is not installed on this
+runner. Install Tart 2.41.1 or newer as in step 1, then re-run the build.
 
-## How a build runs
+### The VM does not boot
 
-1. The Runner checks out the repository on the host and resolves the image,
-   building it first if this Runner does not have it.
-2. It waits for a free VM slot. Apple allows two macOS VMs per host, so a Mac
-   runs at most two VM builds at a time across all of its Runners; a third
-   build waits and its log says so.
-3. It clones the image, boots it headless, shares the workspace into the
-   guest and copies it to `~/oore-workspace` on the guest's disk, where the
-   steps run. The `vm-start` step records how long this took, usually 10 to
-   30 seconds.
-   The Runner's [dependency caches](/operate/runners/caches) are shared too:
-   pub and CocoaPods under `~/oore-cache`, with `PUB_CACHE`, `CP_CACHE_DIR`
-   and `CP_HOME_DIR` pointing there. Tools that need a local disk get a copy
-   that goes back to the shared cache when the build ends:
-   - Gradle runs from `~/.gradle` on the guest's disk. Its downloaded
-     dependencies, transformed artifacts, build cache and wrapper
-     distributions are copied in and back out. Its `gradle.properties` is the
-     Runner's, with `org.gradle.caching=true` added unless that file sets
-     `org.gradle.caching` itself.
-   - Xcode's DerivedData is kept per project and copied to its default folder,
-     so resolved Swift packages and build products carry over. The Runner
-     keeps the last complete copy while it saves a new one, so a save that is
-     cut off never leaves a half-written copy for the next build.
-   - Android SDK packages a build installs that the image does not have, such
-     as `platforms;android-34` or `cmake;3.22.1`, are saved and copied into
-     later VMs. To put them in the image instead, list them under
-     `android_packages` in `oore.image.yaml`.
+The runner account is not logged in to macOS. Log in, or turn on automatic
+login for that account, then re-run the build.
 
-   The `vm-start` step lists what it restored.
+### The build waits for a VM slot
 
-4. Every pipeline step runs in the guest through `tart exec`, with the same
-   environment and secrets as a host build. Secrets travel over the guest
-   agent's channel and are never written to the shared workspace. After each
-   step the guest workspace is copied back to the host, which collects test
-   reports and artifacts from there.
-5. Android signing runs in the guest with the image's Android SDK and JDK.
-   The keystore is written only to a private directory on the VM's disk.
-   iOS signing and artifact upload run on the host against the shared
-   workspace, using tools that ship with macOS.
-6. The Runner copies the caches back to the host and logs how long each took.
-   It stops the guest's Gradle and Kotlin daemons first, so the Gradle cache
-   is saved only once nothing writes to it. A canceled or timed-out build
-   saves no caches. Then the VM is stopped and deleted. Every copy and Tart
-   command has a time limit, so a VM that stops answering cannot hold the
-   Runner. Between builds the Runner deletes any VM it left behind.
+Apple allows two macOS VMs per Mac, so a Mac runs at most two VM builds at a
+time across all of its runners. A third build waits, and its log says so. Add
+another Runner Mac for more VM builds at once.
 
-## Limits
+### The first build takes an hour
 
-- The Xcode base is about 69 GB to download and unpacks to a 140 GB VM
-  disk; the Android-only base is about 26 GB and 50 GB. APFS stores disks
-  sparsely, so actual use is lower, but budget well over 100 GB on a Runner
-  Mac that builds iOS, and more for each further Flutter version or
-  customised image.
-- Android emulators have no hardware acceleration inside a macOS guest, so
-  keep instrumented tests on a host pipeline.
-- App Store Connect upload uses `xcrun altool`, so a Runner Mac that
-  uploads to TestFlight still needs Xcode installed on the host.
+The runner is downloading and building the image. Later builds of the same
+Flutter version reuse it.
+
+### The disk fills up
+
+Delete images you no longer need with `tart delete <image>`. To find base
+images, run `tart list --source oci`. To rebuild an image from scratch, delete
+it, such as `tart delete oore-flutter-3.47.7`, and start a build.
+
+### Instrumented Android tests fail
+
+Android emulators have no hardware acceleration inside a macOS guest. Keep
+instrumented tests in a pipeline that runs on the host.
 
 ## Next step
 

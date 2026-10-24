@@ -1,5 +1,5 @@
 ---
-title: 'Send Notifications to Slack'
+title: 'Send notifications to Slack'
 description: 'Post build failures, release uploads, and rollout changes to a Slack channel and mention the person who triggered them.'
 status: implemented
 ---
@@ -12,7 +12,7 @@ Oore sends every request from the backend host. Slack never calls back into Oore
 
 - A Slack app with an incoming webhook for the target channel
 - Optionally, a bot token from the same app with the `users:read.email` scope
-- A **Public URL (HTTPS)** set to the browser-visible Oore URL under **Settings > General > Network settings**, so messages can link to the build or release
+- A **Public URL (HTTPS)** set to the browser-visible Oore URL in the **External access** network settings under **Settings > General**, so messages can link to the build or release
 - The Owner or Admin role in Oore
 
 ## 1. Create the Slack app
@@ -24,33 +24,40 @@ Oore sends every request from the backend host. Slack never calls back into Oore
 ## 2. Add the channel in Oore
 
 1. Open **Settings > Notifications** and select **Add channel**.
-2. Set **Type** to **Slack**.
+2. Enter a **Name** and set **Type** to **Slack**.
 3. Choose a **Project** to post only that project's events, or keep **All projects**. Runner alerts only go to channels for all projects.
-4. Paste the webhook URL and, if you have one, the bot token. To mention people without a bot token, or to mention people who push to Git, list their Slack member IDs (see [Mentions](#mentions)).
-5. Pick the events to send, or leave them all unchecked to send every event.
-6. Save, then select **Test**.
+4. Paste the webhook URL into **Incoming webhook URL** and, if you have one, the bot token into **Bot token (optional)**. To mention people without a bot token, or to mention people who push to Git, list them under **Slack member IDs (optional)** (see [Mentions](#mentions)).
+5. Under **Events**, keep **All events**, or choose **Selected events** and tick the ones to send.
+6. Select **Create channel**.
+7. Open the channel and select **Test**.
 
 The test message says whether mentions work for the email you signed in with, so a missing mapping or a mismatch between your Oore email and your Slack email shows up here.
 
 ## Events
 
-| Event            | Sent when                                          |
-| ---------------- | -------------------------------------------------- |
-| Succeeded        | A build succeeds                                   |
-| Failed           | A build fails; the message links to the build logs |
-| Canceled         | A build is canceled                                |
-| Timed out        | A build exceeds its timeout                        |
-| Expired          | A queued build expires                             |
-| Runner offline   | A runner stops reporting (all-projects channels)   |
-| Release uploaded | A release is uploaded to a store track             |
-| Rollout raised   | A staged rollout moves to a higher percentage      |
-| Rollout halted   | A staged rollout is halted                         |
-| Rollout complete | A rollout reaches 100%                             |
-| Approval needed  | A release waits for approval                       |
-| Release failed   | A release fails                                    |
-| Tester feedback  | A tester sends feedback from the QA portal         |
+| Event                   | Sent when                                          |
+| ----------------------- | -------------------------------------------------- |
+| Build succeeded         | A build succeeds                                   |
+| Build failed            | A build fails. The message links to the build logs |
+| Build canceled          | A build is canceled                                |
+| Build timed out         | A build exceeds its timeout                        |
+| Build expired in queue  | A queued build expires                             |
+| Release uploaded        | A release is uploaded to a store track             |
+| Release approval needed | A release waits for approval                       |
+| Rollout increased       | A staged rollout moves to a higher percentage      |
+| Rollout halted          | A staged rollout is halted                         |
+| Rollout complete        | A rollout reaches 100%                             |
+| Release failed          | A release fails                                    |
+| Tester feedback         | A tester sends feedback from the QA portal         |
+| Runner offline          | A runner stops reporting (all-projects channels)   |
 
-Messages post within a few seconds of the change. If Slack does not accept a message, Oore tries again up to four more times over the next eight minutes; the delivery shows as pending until then. Delivery history for each channel is on its settings page.
+**All events** also sends events that have no box under **Selected events**,
+such as `build_approval_needed` when a build waits for a maintainer, and events
+added in later releases. To send only some events plus
+`build_approval_needed`, list them in `events` with
+[Update a notification channel](/openapi/operations/update_notification_channel).
+
+Messages post within a few seconds of the change. If Slack does not accept a message, Oore tries again up to four more times over the next eight minutes. The delivery shows as pending until then. Each channel's page shows its **Delivery history**.
 
 ## Tester feedback
 
@@ -72,12 +79,45 @@ The test message checks the mapping for your own sign-in email first, then the b
 
 ## Verify the result
 
-Send the channel's test message from **Settings > Notifications**. Slack shows
-it in the channel, with a mention when the mapping or bot token resolves your
-email.
+1. Open the channel in **Settings > Notifications** and select **Test**. Slack
+   shows the message in the channel, with a mention when the mapping or bot
+   token resolves your email.
+2. Run a build that matches the channel's events. A message links to the
+   build within a few seconds.
+3. Check **Delivery history** on the channel's page. Each delivery shows its
+   event and whether Slack accepted it.
+
+## Troubleshooting
+
+### The test message does not arrive
+
+The webhook URL is wrong, or the Slack app was removed from the channel. Open
+**Delivery history** for the error, then add a new incoming webhook in Slack
+and enter it under **Replace URL** on the channel's page.
+
+### Messages have no link to Oore
+
+The **Public URL (HTTPS)** is not set. Set it in the **External access**
+network settings under **Settings > General**.
+
+### The message names a person instead of mentioning them
+
+Oore could not map the person to a Slack member. The test message says why for
+your own email. Add a line under **Slack member IDs (optional)**, or add a bot
+token with the `users:read.email` scope. A push from Git needs a member ID
+line for the Git username, because the bot token can look up only emails.
+
+### Runner alerts do not arrive
+
+Runner offline alerts go only to channels set to **All projects**.
+
+### A delivery stays pending
+
+Slack did not accept the message. Oore retries up to four more times over
+eight minutes. After that, the delivery shows its last error.
 
 ## Next step
 
-[Require approval for builds](/build/pipelines/triggers#approval) and
-subscribe the channel to `build_approval_needed`, so maintainers hear when a
-build waits for them.
+[Require approval for builds](/build/pipelines/triggers#approval) and keep
+the channel on **All events**, so maintainers hear when a build waits for
+them.

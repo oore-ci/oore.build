@@ -106,8 +106,9 @@ The command did not produce a bundle under `build/app/outputs/bundle/release`.
 Check that the override is exactly the command above, without a
 `--flavor`. The template also keeps an APK pattern next to the `.aab`
 pattern. That is fine: a build fails only when every pattern matches
-nothing. For flavored apps, see
-[Add Android signing](/build/sign/android).
+nothing. A flavored app writes its bundle to a folder named after the flavor
+instead. See [Flavored apps](/build/sign/android#flavored-apps) for the
+artifact pattern to use.
 
 **Gradle fails because it cannot find a local `key.properties`**
 

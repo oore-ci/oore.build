@@ -1,48 +1,107 @@
 ---
-title: 'Dependency caches'
+title: 'Manage dependency caches'
 status: implemented
-description: 'How a runner keeps pub, Gradle, CocoaPods and Xcode caches between builds.'
+description: 'Check that builds reuse pub, Gradle, CocoaPods and Xcode caches, change where they live and how large they grow, and purge them.'
 ---
 
-Every build starts from a fresh clone. The runner keeps package manager caches between builds so a second build with the same lockfiles skips dependency downloads.
+Every build starts from a fresh clone, but the runner keeps package manager
+caches between builds. A second build with the same lockfiles skips the
+dependency downloads. Use this guide to confirm that caching works, to give
+the caches more room or another disk, and to clear them when a cache goes bad.
 
-## What is cached
+The cache directories, variables, and limits are listed in
+[Runner settings](/reference/config/runner#dependency-caches).
 
-The runner owns one directory per tool and points build steps at it:
+## What you need
 
-| Cache                | Directory         | Variable           |
-| -------------------- | ----------------- | ------------------ |
-| pub                  | `pub`             | `PUB_CACHE`        |
-| Gradle               | `gradle`          | `GRADLE_USER_HOME` |
-| CocoaPods downloads  | `cocoapods`       | `CP_CACHE_DIR`     |
-| CocoaPods spec repos | `cocoapods-specs` | `CP_HOME_DIR`      |
+- A runner that has finished at least one successful build.
+- Owner or Admin access to purge caches. Developers can view
+  **Settings > Runners**.
+- Administrator access on the Runner Mac to change the runner's environment.
 
-The directories live under `~/Library/Caches/build.oore/runner-caches/<runner>/` on the Runner Mac. A pipeline variable with the same name overrides the runner's value.
+## Check that builds hit the cache
 
-Xcode keeps DerivedData in its default location. Each project builds from the same workspace path on a runner, so Xcode reuses one DerivedData folder per project.
+1. Run the same pipeline twice without changing `pubspec.lock`,
+   `Podfile.lock`, or the Gradle wrapper and settings files.
+2. Open the second build's log and find the cache lines after checkout.
 
-Builds that run in a VM also use `derived-data`, one folder per project, and `android-sdk`, which holds Android SDK packages the VM image lacks. See [VM isolation](/operate/runners/vm-isolation).
+Each cache shows **hit** or **miss** with the hash of its lockfiles. A miss on
+the first build is expected. The runner records the hash only when a build
+succeeds, so a failed first build leaves the next one on a miss too.
 
-Builds use the runner's Gradle home, so before each build the runner copies `~/.gradle/gradle.properties` into it. Proxy settings such as `systemProp.https.proxyHost` and JVM settings there keep applying. Edit the file in `~/.gradle`, not the copy.
+## Change the size limit or location
 
-## Hits and misses
+The runner keeps its caches under 50 GiB by default and deletes the least
+recently used entries above that. It reads two variables from its own process
+environment:
 
-After checkout, the build log lists each cache with the hash of its lockfiles: `pubspec.lock` for pub, the Gradle wrapper and settings files for Gradle, and `Podfile.lock` for CocoaPods.
+- `OORE_RUNNER_CACHE_MAX_GB` changes the limit, for example to `120`.
+- `OORE_RUNNER_CACHE_DIR` moves the caches, for example to a larger volume.
 
-- **hit**: a successful build with the same lockfiles has run on this runner, so the dependencies are already on disk.
-- **miss**: the lockfiles are new to this runner, so the tools download what they need and the runner records the hash when the build succeeds.
+A runner that the Complete or Runner profile manages runs as a launchd service
+with a fixed environment. `oore setup` and `oore update` verify that service
+definition and refuse to manage it when it has extra variables, so do not add
+these variables there. Set them only for a runner that you start yourself:
 
-## Size and eviction
+```bash
+OORE_RUNNER_CACHE_MAX_GB=120 \
+OORE_RUNNER_CACHE_DIR=/Volumes/Builds/oore-caches \
+oore runner start
+```
 
-The runner measures its caches after each build and reports the total in **Settings → Runners**. Above the cap it deletes the least recently used entries until the total is below 90% of the cap.
+To free space on a managed runner, purge the caches instead.
 
-The cap is 50 GB. To change it, set `OORE_RUNNER_CACHE_MAX_GB` in the runner's environment. To move the caches, set `OORE_RUNNER_CACHE_DIR`.
+A pipeline variable with the same name as a cache variable, such as
+`PUB_CACHE`, overrides the runner's directory for that pipeline only.
+
+## Keep Gradle proxy settings
+
+Builds use the runner's own Gradle home. Before each build, the runner copies
+`~/.gradle/gradle.properties` into it. Edit proxy settings such as
+`systemProp.https.proxyHost`, and JVM settings, in `~/.gradle/gradle.properties`
+on the Runner Mac, not in the copy.
 
 ## Purge the caches
 
-In **Settings → Runners**, open the runner's actions and choose **Purge cache**. The runner deletes its caches and its DerivedData folders before its next build. The next build of each project downloads its dependencies again.
+Purge the caches when a build fails on a corrupt download or a stale
+DerivedData folder.
+
+1. Open **Settings > Runners**.
+2. Open the runner's actions menu and select **Purge cache**.
+3. Confirm **Purge cache**.
+
+The runner shows **Purge pending** until its next build. It deletes its pub,
+Gradle, and CocoaPods caches and its Xcode DerivedData folders before that
+build starts.
+
+## Verify the result
+
+- **Settings > Runners** shows the runner's cache size in the **Cache**
+  column after each build.
+- After a purge, the next build of each project shows **miss** for every cache
+  and downloads its dependencies again. The build after that shows **hit**.
+
+## Troubleshooting
+
+### Every build shows a miss
+
+The lockfiles change on every build, or the builds fail. Commit
+`pubspec.lock` and `Podfile.lock`, and check that a build succeeds once. The
+runner records a hash only after a successful build.
+
+### The cache size keeps growing
+
+The runner trims the caches only above the limit. Lower
+`OORE_RUNNER_CACHE_MAX_GB`, or purge the caches. VM builds also keep Xcode
+DerivedData and Android SDK packages in the cache directory.
+
+### Disk space is low on the runner
+
+**Settings > Runners** shows **Runner disk space is low** when a runner has
+less than 20 GiB free. Purge the caches, delete old Tart images if the runner
+builds in VMs, or move the caches with `OORE_RUNNER_CACHE_DIR`.
 
 ## Next step
 
-[Route builds with runner labels](/operate/runners/labels) and watch each
-runner's cache size and free disk space.
+[Route builds with runner labels](/operate/runners/labels) so each pipeline
+lands on a runner with the right tools and disk space.

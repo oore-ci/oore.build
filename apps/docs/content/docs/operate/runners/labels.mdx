@@ -1,74 +1,93 @@
 ---
 title: 'Route builds with runner labels'
 status: implemented
-description: 'Give runners labels, pick them with runs_on, and watch runner utilisation and disk space.'
+description: 'Send a pipeline to the runners that have the tools it needs, by giving runners labels and listing them in the pipeline.'
 ---
 
-Each runner advertises labels. A pipeline lists the labels it needs in
-`runs_on`, and a runner claims a build only when it has every one of them.
+Send a pipeline's builds to the runners that can build it, such as the Mac
+with Xcode 16 or the Mac reserved for release builds. Each runner advertises
+labels, and a build goes only to a runner that has every label the pipeline
+asks for.
 
-## Detected labels
+Label rules, the detected labels, and the disk-space thresholds are listed in
+[Runner settings](/reference/config/runner#labels).
 
-Runners report their host on every heartbeat, and Oore derives labels from it:
+## What you need
 
-| Label               | From                |
-| ------------------- | ------------------- |
-| `macos` or `linux`  | Operating system    |
-| `macos-15`          | macOS major version |
-| `xcode-16`          | Xcode major version |
-| `arm64` or `x86_64` | CPU architecture    |
+- At least one runner that is online in **Settings > Runners**.
+- Owner or Admin access to change a runner's custom labels.
+- Project developer, maintainer, instance admin, or instance owner access to
+  edit the pipeline.
 
-Upgrading Xcode or macOS updates these labels on the next heartbeat.
+## 1. See the labels a runner has
 
-## Custom labels
+Open **Settings > Runners**. The **Labels** column shows each runner's labels.
+Every runner reports detected labels such as `macos`, `macos-15`, `xcode-16`,
+and `arm64`. They update on the next heartbeat after a macOS or Xcode upgrade.
 
-Add your own labels when registering a runner:
+If the detected labels already tell your runners apart, skip to step 3.
 
-```bash
-oore runner register --token "$OORE_SESSION_TOKEN" --label release --label gpu
-```
+## 2. Add custom labels
 
-To change them later, send the full list to the runner. Detected labels are
-kept:
+1. In **Settings > Runners**, open the runner's actions menu and select
+   **Edit**.
+2. In **Custom labels**, enter labels separated by commas, such as
+   `release, gpu`. Use lowercase letters, digits, `.`, `_`, and `-`.
+3. Select **Save changes**.
 
-```bash
-curl -X PATCH "$OORE_URL/v1/runners/$RUNNER_ID" \
-  -H "Authorization: Bearer $OORE_SESSION_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"custom_labels": ["release", "gpu"]}'
-```
+The dialog lists the runner's detected labels under the field. Custom labels
+are added to them, not put in their place.
 
-Labels are lowercase and use letters, digits, `.`, `_` and `-`.
+To label a runner when you register it by hand, pass `--label` to
+[`oore runner register`](/reference/cli/oore-runner#oore-runner-register).
 
-## Select runners with `runs_on`
+## 3. Set the labels on the pipeline
 
-Set `runs_on` on the pipeline's execution settings, either as one label or as a
-list. A pipeline without `runs_on` runs on `macos`.
+1. Open the pipeline and select **Edit**.
+2. Under **Build > Runner**, enter the labels in **Runner labels (optional)**,
+   separated by commas, such as `macos, xcode-16`. The field description lists
+   the labels that connected runners report.
+3. Select **Save changes**.
 
-```yaml
-runs_on: [macos, xcode-16]
-```
+An empty field means `macos`.
 
-The scheduler reads `runs_on` from the pipeline, so a build never lands on a
-runner without those labels. A repository `.oore.yaml` can also set `runs_on`;
-the runner checks it after checkout and fails the build before any command runs
-when it lacks a label the file asks for. Keep the two in step so the scheduler
-picks the right runner in the first place.
+If the repository has a `.oore.yaml` with `runs_on`, set the same labels in
+both places. The scheduler reads only the pipeline's labels. The runner checks
+the file's `runs_on` after checkout and fails the build before any command
+runs when it lacks one of those labels.
 
-Builds that wait because no online runner has their labels are counted on
-**Settings → Runners**.
+## Verify the result
 
-## Utilisation and disk space
+1. Start a build of the pipeline.
+2. Open the build. It runs on a runner that has every label you set.
 
-Every heartbeat carries CPU load, memory use, free disk space on the volume
-that holds build workspaces, and the size of the runner's
-[dependency caches](/operate/runners/caches). **Settings → Runners** shows these
-with the queue depth.
+While no online runner has the labels, the build stays `queued`, and
+**Settings > Runners** counts it under the builds that need labels no online
+runner has.
 
-When free disk space drops below 20 GiB, Oore opens a warning operator incident
-for the runner, and raises it to critical below 10 GiB. Owners and Admins are
-notified. The incident resolves on its own once free space is back above
-20 GiB.
+## Troubleshooting
+
+### The build stays queued
+
+No online runner has every label. Compare the pipeline's
+**Runner labels (optional)** with the **Labels** column in
+**Settings > Runners**. A typo, or a detected label that changed after an Xcode
+upgrade, such as `xcode-16` becoming `xcode-26`, leaves the build waiting.
+
+### The build fails right after checkout
+
+The repository's `.oore.yaml` asks for a label that the claiming runner lacks.
+Add the label to the pipeline as well, so the scheduler picks a runner that has
+it.
+
+### Oore rejects the custom labels
+
+A label uses a character outside `a`–`z`, `0`–`9`, `.`, `_`, and `-`, is
+longer than 64 characters, or the runner has more than 32 labels.
+
+### **Edit** is missing from the runner's actions
+
+Only Owners and Admins can edit runners.
 
 ## Next step
 

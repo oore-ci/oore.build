@@ -1,126 +1,143 @@
 ---
 title: 'See builds on pull requests'
 status: implemented
-description: 'Oore reports each build to GitHub as a check run and to GitLab as a commit status, with links to the logs and installs.'
+description: 'Report each build to GitHub as a check run and to GitLab as a commit status, with links to logs and installs, app size, and an optional size budget.'
 ---
 
-Every build of a GitHub or GitLab commit shows up on that commit, and so on
-its pull request or merge request. Oore reports one check per platform the
-build produces, for example `Release (Android)` and `Release (iOS)`.
+Show every build of a GitHub or GitLab commit on that commit, and so on its
+pull request or merge request. Oore reports one check per platform the build
+produces, such as `Release (Android)` and `Release (iOS)`, with links to the
+build and its installs. You can also hold the app to a size budget that fails
+the check when the app grows too much.
 
-## What you see
-
-- **Queued** as soon as the build is created, so a push shows a pending check
-  within a few seconds.
-- **In progress** while a runner builds it.
-- **Success**, **failure**, **timed out** or **cancelled** when it ends.
-
-Each check links to the build in Oore. When a build succeeds with one
-installable APK or IPA for that platform, the check links straight to its
-install page instead. The GitHub check summary also lists every artifact
-with an install link.
-
-The check's name stays the pipeline and platform, so a required status check
-in branch protection keeps matching.
-
-## Steps
-
-For a build that runs a version 2 [`.oore.yaml`](/reference/config/oore-yaml-v2),
-the check shows the steps by the names the file gives them:
-
-- The GitHub check summary names the workflow the pipeline builds, when it
-  picks one, and ends with a table of the steps the runner ran, with each
-  step's result and duration. The step that failed is in bold.
-- When the build fails or times out, the check title, and on GitLab the
-  status description, names the step it stopped at, for example
-  `Build #12 failed at Run tests`.
-
-Builds from a version 1 file or the pipeline form show the same check as
-before, without steps.
-
-## App size
-
-When a build succeeds, the GitHub check summary also shows the size of each
-artifact for that platform and how much it changed. Oore compares with the
-latest earlier successful build of the same pipeline on the base branch: the
-pull request's target branch, or the project's default branch for a push. A
-build on the default branch therefore compares with the one before it. Builds
-of the same commit are skipped, so a re-run never compares with itself.
-
-Artifacts pair up by file name. When the name changes between builds, for
-example because it carries a version, an artifact pairs with the only file of
-the same kind in the baseline build, such as the only `.aab`. Split APKs pair
-by name only. The build page shows the same comparison next to each artifact.
-
-Oore records sizes when an upload finishes and keeps them after retention
-deletes the files, so an old baseline still compares.
-
-### Size budget
-
-A pipeline can hold each kind of artifact to a size budget. Open the
-pipeline's settings and add a rule under **Size budget** for a kind, named by
-its file extension such as `aab`, `apk` or `ipa`. A rule sets any of:
-
-- **Max size**: the largest the artifact may be.
-- **Max increase**: how much it may grow compared with the baseline build
-  above, in MB, in percent, or both.
-
-Sizes are in binary units, like the rest of Oore: 1 MB is 1,048,576 bytes.
-Every artifact of that kind on the check's platform must stay within all the
-limits its rule sets. An artifact Oore cannot tie to a platform, such as a
-`.zip`, counts against every check of the build. When the build has no
-baseline, or an artifact has no match in it, only the max size applies, and
-the summary says so. Any growth from a 0-byte baseline is over a percent
-limit.
-
-The budget's mode decides what an artifact over its budget does:
-
-- **Fail the check**: the GitHub check concludes **failure**, its title says
-  the build is over the size budget, and the summary lists each artifact,
-  the limit it went over, and its size or change. On GitLab the commit status
-  fails and its description names the first artifact and its change.
-- **Warn**: the check keeps its result. The GitHub summary shows a warning
-  with the same table, and the GitLab status description mentions it.
-
-If Oore cannot load the sizes, the check keeps the build's result and its
-summary says the size budget could not be checked.
-
-Either way the build itself still succeeds, and its artifacts and releases are
-unaffected. A required check that fails blocks merging like any other failed
-check. The budget applies when a build reports its result, so a change to it
-shows on the next build or re-run.
-
-A re-run, or a second build of the same pipeline and commit, updates the
-same check instead of adding another one. The newest build owns the check, so
-an older build that finishes late does not overwrite it.
+The size budget fields, modes, and baseline rules are in
+[Pipeline settings](/reference/config/pipeline-settings#size-budget).
 
 ## What you need
 
-- Your web UI's origin under **Allowed frontend origins** in **Settings >
-  General > External access**, so the links point at it. Without one, checks
-  still show their state but carry no links. People who open a link sign in
-  as usual; the links do not grant access on their own.
-- **GitHub:** the Oore GitHub App already asks for the `checks` permission.
-  Nothing else to configure.
-- **GitLab:** commit statuses need a credential with the `api` scope. A
-  personal access token with only `read_api` still builds, but GitLab refuses
-  the status and Oore skips it. An OAuth application source requests
-  read-only scopes, so it does not report statuses. See
-  [Connect GitLab](/build/sources/gitlab).
+- A project connected to [GitHub](/build/sources/github) or
+  [GitLab](/build/sources/gitlab).
+- **GitHub:** the Oore GitHub App, which already asks for the `checks`
+  permission.
+- **GitLab:** a personal access token with the `api` scope. A token with only
+  `read_api` still builds, but GitLab refuses the status and Oore skips it. An
+  OAuth application source requests read-only scopes, so it does not report
+  statuses.
+- Owner access to set **Allowed frontend origins**, so the check links point at
+  your web UI.
+- Project developer, maintainer, instance admin, or instance owner access to
+  set a size budget.
+
+## 1. Point the check links at your web UI
+
+1. Open **Settings > General**.
+2. Under **External access**, select **1. Network**, or **Network settings**
+   once External Access is on.
+3. Add your web UI's origin under **Allowed frontend origins**, such as
+   `https://ci.example.com`.
+4. Select **Save network settings**.
+
+Without an allowed origin, checks still show their state but carry no links.
+The links do not grant access. People who open one sign in as usual.
+
+## 2. Run a build of a pull request
+
+Push to a branch that has an open pull request or merge request, or re-run a
+build of its latest commit. The check appears as soon as Oore creates the
+build. You do not need to configure anything else for GitHub.
+
+## 3. Require the check before merging
+
+In the repository's branch protection rules on GitHub or GitLab, add the check
+as a required status check. Its name is the pipeline and the platform, such as
+`Release (Android)`, and it stays the same on every build, so the rule keeps
+matching.
+
+A re-run, or a second build of the same pipeline and commit, updates the same
+check. The newest build owns it, so an older build that finishes late does not
+overwrite it.
+
+## Set a size budget [#size-budget]
+
+A size budget fails or warns on the check when an artifact is too large or
+grows too much compared with the last build on the base branch. It never fails
+the build itself, and the artifacts and releases are unaffected.
+
+1. Open the pipeline and select **Edit**.
+2. Under **Size budget**, select **Add rule**.
+3. In **Kind**, enter the file extension, such as `aab`, `apk`, or `ipa`.
+4. Set one or more limits:
+   - **Max size (MB)**: the largest the artifact may be.
+   - **Max increase (MB)**: how much it may grow compared with the baseline.
+   - **Max increase (%)**: the same growth limit, in percent.
+5. In **When an artifact is over budget**, choose **Fail the check**, or
+   **Warn on the check and keep its result** to try a budget out first.
+6. Select **Save changes**.
+
+Sizes are in binary units: 1 MB is 1,048,576 bytes. A pipeline can have up to
+20 rules. The budget applies when a build reports its result, so re-run the
+latest build to see it on an open pull request.
+
+## Verify the result
+
+On the pull request or merge request:
+
+- The check shows **Queued** within a few seconds of the push, **In progress**
+  while a runner builds, then **Success**, **failure**, **timed out**, or
+  **cancelled**.
+- The check links to the build in Oore. When the build succeeds with one
+  installable APK or IPA for that platform, it links straight to the install
+  page instead.
+- On GitHub, the check summary lists every artifact with an install link and
+  shows each artifact's size and how much it changed since the baseline build.
+  The build page shows the same comparison next to each artifact.
+- For a version 2 [`.oore.yaml`](/reference/config/oore-yaml-v2), the GitHub
+  summary names the workflow and ends with a table of the steps, with each
+  step's result and duration. A failed build's check title names the step it
+  stopped at, such as `Build #12 failed at Run tests`. On GitLab, the status
+  description names that step.
+- With a size budget, an artifact over budget turns the check to **failure**
+  and its title says the build is over the size budget, or the summary shows a
+  warning in warn mode.
 
 ## Troubleshooting
 
-**A build has no check on GitHub**
+### A build has no check on GitHub
 
-Open the GitHub App's installation settings and accept any pending
-permission request, then re-run the build.
+The GitHub App's installation has a pending permission request. Open the
+installation settings on GitHub, accept the request, then re-run the build.
 
-**A GitLab merge request has no status**
+### A GitLab merge request has no status
 
-Replace the source's token with one that has the `api` scope.
+The source's token lacks the `api` scope, or the source uses an OAuth
+application. Replace the token with one that has the `api` scope. See
+[Connect GitLab](/build/sources/gitlab).
+
+### The check has no links
+
+No web UI origin is listed under **Allowed frontend origins**. Add it as in
+step 1.
+
+### The app size shows no change
+
+The build has no baseline yet. Oore compares with the latest earlier
+successful build of the same pipeline on the base branch, so build the base
+branch once. Until then, only **Max size (MB)** applies, and the summary says
+so.
+
+### The summary says the size budget could not be checked
+
+Oore could not load the artifact sizes. The check keeps the build's result.
+Re-run the build.
+
+### An artifact never pairs with the baseline
+
+Artifacts pair by file name. When the name changes on every build, an artifact
+pairs only with the one file of the same kind in the baseline build. Split
+APKs pair by name only.
 
 ## Next step
 
-[Set a size budget](#size-budget) so a pull request fails its check when the
-app grows too much, or [require approval](/build/pipelines/triggers#approval)
-before pull request builds run.
+[Require approval](/build/pipelines/triggers#approval) before pull request
+builds run, or [promote a tested build](/build/distribute/environments)
+between environments.

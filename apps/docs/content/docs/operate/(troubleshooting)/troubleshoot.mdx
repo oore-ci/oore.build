@@ -1,12 +1,32 @@
 ---
 title: 'Troubleshoot Oore'
 status: implemented
-description: 'Route daemon, runner, access, build, and artifact symptoms to the narrowest verified check.'
+description: 'Route daemon, runner, access, build, and artifact symptoms to the narrowest check that finds the cause.'
 ---
 
-Start with the user-visible symptom, then check the nearest boundary. Preserve
-the first error code and relevant log lines before restarting or resetting
-anything.
+Start with the symptom people see, then check the nearest boundary. Save the
+first error code and the relevant log lines before you restart or reset
+anything. A restart often hides the cause.
+
+## What you need
+
+- Terminal access to the backend Mac, and to the Runner Mac if builds run on
+  another one.
+- Owner or Admin access in the web UI, for **Settings > Runners** and the
+  audit log.
+
+## Collect the evidence first
+
+On the backend Mac, run:
+
+```bash
+oore status
+oore doctor
+```
+
+`oore status` shows whether the backend answers and its setup status.
+`oore doctor` checks Git, Flutter, Tart, and the managed runner service. Note
+any `missing` check and the first error in the logs under `~/.oore/logs/`.
 
 ## The backend is unavailable
 
@@ -17,29 +37,51 @@ tail -n 200 "$HOME/.oore/logs/oored.log"
 ```
 
 - No liveness response: check the managed service and whether another process
-  owns port `8787`.
-- Liveness succeeds but readiness returns `503`: inspect the response's
-  database, migration, and encryption fields.
+  owns port `8787`. After an update, see
+  [Upgrade Oore](/operate/maintain/upgrade#when-an-in-place-update-fails).
+- Liveness succeeds but readiness returns `503`: read the response's
+  `database`, `migrations`, and `encryption` fields.
 - A database-open or locked error: make sure only one `oored` uses that state
   file.
 
-## A build remains queued
+## A build stays queued
 
-Open the build and **Settings > Runners**.
+Open the build. A notice says why it waits, and **Settings > Runners** shows
+the runners and the queue.
 
-- **Direct runner paused** (`instance_paused`): turn on **Allow approved
-  repositories** when you are ready to accept new work.
+- **Direct runner paused** (`instance_paused`): runners are paused. In
+  **Settings > Runners**, turn on **Accept builds from approved repositories**,
+  or select **Resume runners** on the build's notice.
 - **Source unavailable** (`repository_unavailable`): reconnect or relink the
-  repository. Pausing does not revoke source trust.
-- Runner offline: inspect `~/.oore/logs/oore-runner.log` and follow
-  [Add a Direct macOS runner](/operate/runners/direct).
+  repository in the project's **Settings** tab. Pausing does not revoke source
+  trust.
+- **No runner is online**: inspect `~/.oore/logs/oore-runner.log` on the
+  Runner Mac and follow [Add a Direct macOS runner](/operate/runners/direct).
+- The runners page says builds need labels no online runner has: compare the
+  pipeline's labels with the runners'. See
+  [Route builds with runner labels](/operate/runners/labels#the-build-stays-queued).
+- **Awaiting approval**: a maintainer must decide. See
+  [Approve a build](/build/run/approve).
 
-Run the platform-specific doctor check on the runner Mac when a claimed build
-fails before tool execution:
+When a runner claims a build and it fails before any tool runs, run the
+platform checks on the Runner Mac:
 
 ```bash
 oore doctor --all
 ```
+
+## A push does not start a build
+
+Check whether GitHub or GitLab delivered the webhook and why Oore skipped it.
+See [Troubleshoot source webhooks](/build/sources/webhooks/troubleshoot), then
+the pipeline's [triggers](/build/pipelines/triggers#a-push-or-pull-request-does-not-start-a-build).
+
+## A runner is low on disk space
+
+**Settings > Runners** shows **Runner disk space is low** below 20 GiB free,
+and Oore opens an operator incident. Purge the runner's
+[dependency caches](/operate/runners/caches#purge-the-caches), and on a VM
+runner delete old Tart images.
 
 ## Sign-in or browser access fails
 
@@ -48,22 +90,34 @@ oore doctor --all
 - OIDC redirect failure: confirm the configured callback ends in
   `/auth/callback` and exactly matches the provider entry.
 - `user_not_found` after External Access sign-in: invite the same email first.
-- Trusted Proxy failure: verify the immediate peer CIDR, exact identity header,
-  and shared proof; a forwarded email header alone is not authentication.
+- Trusted Proxy failure: verify the immediate peer CIDR, the exact identity
+  header, and the shared proof. A forwarded email header alone is not
+  authentication.
+- Locked out of an External Access instance: use
+  [`oore recovery`](/reference/cli/oore-recovery) on the backend Mac.
 
 ## An artifact cannot be downloaded
 
-Request a new link after checking project access and artifact expiry. Ordinary
-download links expire. For S3/R2, check the provider endpoint and bucket
-policy; for local storage, check backend disk and delivery reachability.
+Check project access and artifact expiry, then request a new link. Ordinary
+download links expire. For S3 or R2 storage, check the provider endpoint and
+bucket policy. For local storage, check the backend disk and that the phone or
+browser can reach the delivery URL.
+
+## Notifications do not arrive
+
+Open the channel in **Settings > Notifications** and read its
+**Delivery history**. See
+[Send notifications to Slack](/team/notifications#troubleshooting).
 
 ## Verify the result
 
-Repeat the smallest failing action once. Confirm the original status, error
-code, or log event is gone and that a neighboring operation still works.
+1. Repeat the smallest failing action once.
+2. Confirm that the original status, error code, or log line is gone.
+3. Confirm that a neighboring operation still works, such as another build or
+   another sign-in.
 
 ## Next step
 
 If the symptom remains, [report an issue](/operate/support/report-an-issue)
-with the preserved evidence. Reset only when a narrower recovery path cannot
+with the saved evidence. Reset only when a narrower recovery path cannot
 restore the instance.

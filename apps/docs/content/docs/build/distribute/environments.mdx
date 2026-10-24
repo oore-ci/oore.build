@@ -30,8 +30,10 @@ publish settings decide where its uploads go.
 
 ## 1. Add environments
 
-On the project, open **Environments** and select **Add environment**. Add them
-in promotion order, for example:
+On the project, open the **Environments** tab and select **Add environment**.
+Set **Name**, **Key**, **Store**, and **Track**, turn on **Require approval**
+where a maintainer must sign off, and set the rollout. Add them in promotion
+order, for example:
 
 | Name       | Key          | Track        | Approval | Rollout                           |
 | ---------- | ------------ | ------------ | -------- | --------------------------------- |
@@ -96,9 +98,12 @@ track, add a new environment.
 
 ## 2. Promote a build
 
-Select **Promote** on the environment that holds the build, choose where it
-goes, and add a reason. Builds are promoted within one store, so the list
-shows only environments in the store the build was released to.
+1. Select **Promote** on the environment that holds the build.
+2. In **Promote to**, choose the target environment. The list shows only
+   environments in the store the build was released to.
+3. In **Reason**, say why, such as `QA signed off on 2.4.0`.
+4. Select **Promote**. When the target requires approval, the button reads
+   **Ask to promote** and the promotion waits for a maintainer.
 
 On Google Play, the daemon assigns the release's version code to the target
 track in one Play edit, keeping its release name and notes, then records a
@@ -140,22 +145,8 @@ rolling out, paused or complete. A halted or failed release cannot be
 promoted. On the App Store, that is a TestFlight release Oore uploaded; a
 release on the App Store itself is the end of the path.
 
-When App Store Connect cannot take the build, the promotion fails with
-`409` and one of these codes, and nothing changes in App Store Connect:
-
-| Code                          | Meaning                                                                                                                                  |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `no_source_release`           | The build has no TestFlight release that testers have, or Oore did not upload it.                                                        |
-| `build_expired`               | The build expired in TestFlight (after 90 days). Upload a new build.                                                                     |
-| `no_editable_version`         | The app has no App Store version Apple lets you edit. Create the version in App Store Connect.                                           |
-| `version_mismatch`            | The editable version has another version string, such as 1.3.0 for a 1.2.0 build. Oore never renames it; change it in App Store Connect. |
-| `version_not_editable`        | The version for this version string is in review or live, so no other build can be attached.                                             |
-| `version_held_by_other_build` | Another build's release is in review or releasing on this version. Wait until it finishes or fails.                                      |
-| `testflight_group_not_found`  | App Store Connect has no TestFlight group with the environment's track name.                                                             |
-
-Other App Store Connect errors fail the promotion with `502 store_rejected`.
-A step may already have happened, such as attaching the build; the calls are
-safe to repeat, so promote again once the cause is fixed.
+If App Store Connect cannot take the build, the promotion fails and the
+dialog shows why. See [Troubleshooting](#troubleshooting).
 
 ## 3. Approve a promotion
 
@@ -174,13 +165,66 @@ with the reason `environment deleted` in the audit log.
 
 ## Verify the result
 
-- The environment shows the promoted version and its rollout.
+- The environment shows the promoted version, marked **Promoted**, and its
+  rollout.
+- **Recent promotions** lists the promotion with who approved it. A failed
+  promotion shows its error there.
 - Play Console shows the version code on the target track. For the App
   Store, App Store Connect shows the build in the TestFlight group, or
   attached to the App Store version.
 - The audit log has `promotion_requested`, `promotion_approved` and
   `promotion_completed` entries, and a `release_created` entry for the new
   release.
+
+## Troubleshooting
+
+### **Promote** is missing on an environment
+
+Promotion moves a build toward environments listed after it, in the same
+store. **Promote** shows only when the environment has a release that is
+rolling out, paused, or complete, and a later environment in the same store
+can take it. Developers see it only toward an environment that requires
+approval.
+
+### The dialog says the build already has a release there
+
+A build cannot be promoted into an environment where it already has a
+release, unless that release failed.
+
+### The dialog says a promotion is already waiting for approval
+
+Someone already asked to promote this build there. A maintainer approves or
+rejects it under **Waiting for approval**.
+
+### An App Store promotion fails
+
+The promotion fails with `409` and one of these codes. Nothing changes in App
+Store Connect:
+
+| Code                          | Meaning                                                                                                                                  |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `no_source_release`           | The build has no TestFlight release that testers have, or Oore did not upload it.                                                        |
+| `build_expired`               | The build expired in TestFlight (after 90 days). Upload a new build.                                                                     |
+| `no_editable_version`         | The app has no App Store version Apple lets you edit. Create the version in App Store Connect.                                           |
+| `version_mismatch`            | The editable version has another version string, such as 1.3.0 for a 1.2.0 build. Oore never renames it; change it in App Store Connect. |
+| `version_not_editable`        | The version for this version string is in review or live, so no other build can be attached.                                             |
+| `version_held_by_other_build` | Another build's release is in review or releasing on this version. Wait until it finishes or fails.                                      |
+| `testflight_group_not_found`  | App Store Connect has no TestFlight group with the environment's track name.                                                             |
+
+Other App Store Connect errors fail the promotion with `502 store_rejected`.
+A step may already have happened, such as attaching the build. The calls are
+safe to repeat, so promote again once the cause is fixed.
+
+### A promotion shows "interrupted by daemon restart"
+
+The daemon stopped during the store call. Check Play Console or App Store
+Connect before you promote again, because the change may have reached the
+store.
+
+### The release stays **In review**
+
+Apple is reviewing the build for an external TestFlight group, or the App
+Store version for release. Follow the review in App Store Connect.
 
 ## Limits
 
@@ -189,12 +233,6 @@ with the reason `environment deleted` in the audit log.
 - A promotion into the App Store never creates or renames an App Store
   version, and never sets its release notes. Uploads that publish straight to
   the App Store keep doing both.
-- A build cannot be promoted into an environment where it already has a
-  release, unless that release failed.
-- If the daemon stops during a promotion's store call, the promotion is
-  marked failed when it starts again ("interrupted by daemon restart"). Check
-  Play Console or App Store Connect before promoting again: the change may
-  have reached the store.
 - Per-environment approvers, notification channels, QA groups and secrets are
   not configurable yet.
 

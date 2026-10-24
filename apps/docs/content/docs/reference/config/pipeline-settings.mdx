@@ -1,0 +1,209 @@
+---
+title: 'Pipeline settings'
+status: implemented
+description: 'Triggers, schedules, timeout, approval, and size budget fields on a pipeline, with their UI labels, API fields, and limits.'
+---
+
+These settings live on the pipeline, not in the repository. The pipeline's
+**Edit** page sets them under **Triggers** and **Size budget**, and
+[Update a pipeline](/openapi/operations/update_pipeline) sets the same fields
+through the API. A commit cannot change them, except that a `.oore.yaml`
+version 2 file can replace the events, as described in
+[Triggers in version 2](/reference/config/oore-yaml-v2#triggers).
+
+| UI label                                                       | API field                     |
+| -------------------------------------------------------------- | ----------------------------- |
+| **Events**                                                     | `trigger_config.events`       |
+| **Branch patterns (optional)**                                 | `trigger_config.branches`     |
+| **Tag patterns (optional)**                                    | `trigger_config.tags`         |
+| **Only these paths (optional)**                                | `trigger_config.paths`        |
+| **Ignore these paths (optional)**                              | `trigger_config.paths_ignore` |
+| **Schedules**                                                  | `trigger_config.schedules`    |
+| **Timeout (minutes)**                                          | `timeout_minutes`             |
+| **Builds wait for a maintainer before a runner picks them up** | `approval.required`           |
+| **Which builds**                                               | `approval.events`             |
+| **Size budget** rules                                          | `size_budget.rules`           |
+| **When an artifact is over budget**                            | `size_budget.mode`            |
+
+## Events
+
+`trigger_config.events` lists the source events that start a build:
+
+| Value          | UI label     | Starts a build when                                    |
+| -------------- | ------------ | ------------------------------------------------------ |
+| `push`         | Push         | A branch receives a push                               |
+| `pull_request` | Pull request | A pull or merge request is opened, reopened or updated |
+| `tag_push`     | Tag push     | A tag is pushed                                        |
+
+An empty list accepts every event. Source events need a project connected to
+GitHub or GitLab. A project that builds a repository on the Oore Mac builds
+only from the UI, the API, or a schedule. GitLab sends tag pushes only when the
+project webhook has **Tag push events** turned on.
+
+You can always start a build by hand, whatever the events are.
+
+## Branch and tag patterns
+
+`trigger_config.branches` filters push and pull request events by branch.
+`trigger_config.tags` filters tag pushes by tag name. Both take globs such as
+`release/*` or `v*`.
+
+| Set             | Result                                              |
+| --------------- | --------------------------------------------------- |
+| Neither list    | Every branch and every tag can start a build        |
+| Only `branches` | Tag pushes do not start builds                      |
+| Only `tags`     | Branch pushes and pull requests do not start builds |
+| Both lists      | Each list filters its own events                    |
+
+A tag build records `tag_push` as its event and the tag as its ref.
+
+## Changed paths
+
+`trigger_config.paths` starts a push or pull request build only when a changed
+file matches one of its globs. `trigger_config.paths_ignore` skips the build
+when every changed file matches one of its globs.
+
+| Pattern     | Matches                                        |
+| ----------- | ---------------------------------------------- |
+| `*` and `?` | Characters within one path segment             |
+| `**`        | Any number of segments                         |
+| `*.md`      | A file name anywhere, because it has no `/`    |
+| `lib/`      | Everything below `lib`, because it ends in `/` |
+
+Oore reads the changed files of a push from the webhook. For a pull request,
+it asks GitHub or GitLab for the files changed since the merge base. When the
+change set is unknown, such as for a very large push or after a provider error,
+Oore builds instead of skipping. Path filters do not apply to tag pushes.
+
+## Schedules
+
+`trigger_config.schedules` starts builds on a cron schedule in UTC:
+
+```json
+{
+  "schedules": [
+    { "cron": "0 2 * * 1-5", "branch": "main" },
+    { "cron": "@weekly" }
+  ]
+}
+```
+
+| Field    | Value                                                                           |
+| -------- | ------------------------------------------------------------------------------- |
+| `cron`   | Five fields: minute, hour, day of month, month, day of week (0 or 7 is Sunday)  |
+| `branch` | Branch to build. Without it, the project's default branch at its current commit |
+
+- Lists (`1,15`), ranges (`9-17`), and steps (`*/15`) work in every field.
+- `@hourly`, `@daily`, `@weekly`, `@monthly`, and `@yearly` work in place of
+  the five fields.
+- A pipeline can have up to 10 schedules.
+- A new or edited schedule starts counting from when Oore first sees it.
+- When the daemon was down at a due time, Oore still starts the run if it is
+  less than five minutes late. Older runs are skipped.
+
+## Timeout
+
+`timeout_minutes` is how long a running build may take.
+
+| Property | Value                        |
+| -------- | ---------------------------- |
+| Range    | 1 to 1440 minutes (24 hours) |
+| Default  | 60                           |
+
+Oore marks a build `timed_out` within about 15 seconds of reaching the
+timeout, and the runner stops the job. A build keeps the timeout it was created
+with. A re-run uses the pipeline's current timeout.
+
+## Approval
+
+`approval` holds new builds until a project maintainer approves them:
+
+```json
+{
+  "approval": {
+    "required": true,
+    "events": ["schedule"],
+    "expires_after_hours": 24
+  }
+}
+```
+
+| Field                 | Value                                                                             |
+| --------------------- | --------------------------------------------------------------------------------- |
+| `required`            | `true` holds matching builds                                                      |
+| `events`              | `push`, `pull_request`, `tag_push`, `manual`, `schedule`. Empty holds every build |
+| `expires_after_hours` | 1 to 8760. Default 168 (7 days)                                                   |
+
+- A build that nobody approves or rejects within `expires_after_hours` is
+  canceled with the reason "approval request expired".
+- A re-run of a held build is held again.
+- A waiting build that is canceled or superseded stops waiting.
+- For a project that builds a repository on the Oore Mac, **Which builds**
+  offers only **Manual** and **Schedule**.
+- Only project maintainers, instance admins, and the instance owner can change
+  `approval`. Developers see it read-only.
+
+## Size budget
+
+`size_budget` limits each kind of artifact on the pipeline's commit checks. It
+never fails the build itself, and it does not change artifacts or releases.
+
+```json
+{
+  "size_budget": {
+    "mode": "fail",
+    "rules": [
+      { "kind": "aab", "max_bytes": 157286400, "max_increase_percent": 5 }
+    ]
+  }
+}
+```
+
+| Field                  | UI label              | Value                                                         |
+| ---------------------- | --------------------- | ------------------------------------------------------------- |
+| `kind`                 | **Kind**              | Lowercase file extension, such as `aab`, `apk` or `ipa`       |
+| `max_bytes`            | **Max size (MB)**     | Largest size allowed                                          |
+| `max_increase_bytes`   | **Max increase (MB)** | Largest growth allowed compared with the baseline             |
+| `max_increase_percent` | **Max increase (%)**  | Largest growth allowed compared with the baseline, in percent |
+
+- A rule needs at least one limit. A pipeline can have up to 20 rules. Empty
+  `rules` turns the budget off.
+- The UI shows sizes in binary units, like the rest of Oore: 1 MB is
+  1,048,576 bytes. The API takes bytes.
+- Every artifact of the rule's kind on a check's platform must stay within
+  every limit the rule sets.
+- An artifact that Oore cannot tie to a platform, such as a `.zip`, counts
+  against every check of the build.
+- When the build has no baseline, or an artifact has no match in it, only
+  `max_bytes` applies, and the check summary says so.
+- Any growth from a 0-byte baseline is over a percent limit.
+- The budget applies when a build reports its result, so a change shows on the
+  next build or re-run.
+
+### Modes
+
+| `mode` | UI label                                  | An artifact over budget                                                                                                                                                     |
+| ------ | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fail` | **Fail the check**                        | The GitHub check concludes **failure** and lists each artifact, the limit it went over, and its size or change. The GitLab commit status fails and names the first artifact |
+| `warn` | **Warn on the check and keep its result** | The check keeps its result. The GitHub summary shows a warning with the same table, and the GitLab status description mentions it                                           |
+
+If Oore cannot load the sizes, the check keeps the build's result and its
+summary says the size budget could not be checked.
+
+### Baseline
+
+The size comparison and the increase limits use the same baseline: the latest
+earlier successful build of the same pipeline on the base branch.
+
+- For a pull request, the base branch is the request's target branch.
+- For a push, it is the project's default branch, so a build on the default
+  branch compares with the one before it.
+- Builds of the same commit are skipped, so a re-run never compares with
+  itself.
+- Oore records sizes when an upload finishes and keeps them after retention
+  deletes the files, so an old baseline still compares.
+
+Artifacts pair up by file name. When the name changes between builds, such as
+when it carries a version, an artifact pairs with the only file of the same
+kind in the baseline build, such as the only `.aab`. Split APKs pair by name
+only.

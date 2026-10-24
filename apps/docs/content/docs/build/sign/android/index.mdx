@@ -55,6 +55,22 @@ not receive signing files, passwords, or Oore signing capability tokens. For a
 supported Flutter Android build command, the runner-owned signer signs and
 verifies the produced artifacts outside the repository checkout.
 
+### Flavored apps
+
+Signing works the same with `--flavor`. After each `flutter build apk` or
+`flutter build appbundle` command, the runner signs every `.apk` or `.aab`
+under `build/app/outputs`, including flavored output. Two things change:
+
+- Gradle writes a flavored App Bundle to a folder named after the flavor, such
+  as `build/app/outputs/bundle/prodRelease/app-prod-release.aab`. Under
+  **Build > Artifacts**, use a pattern that matches it, such as
+  `build/app/outputs/bundle/**/*.aab`, instead of
+  `build/app/outputs/bundle/release/*.aab`.
+- Every flavor in one run must use the same variant, such as release. To build
+  several flavors, run one `flutter build` command per flavor, such as
+  `flutter build appbundle --release --flavor prod`. Each command signs all the
+  output of that kind under `build/app/outputs`, so every flavor is signed.
+
 ## Verify the result
 
 The build reaches `succeeded`, and its log includes an `android-sign` step

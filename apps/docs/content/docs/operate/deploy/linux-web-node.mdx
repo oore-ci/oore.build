@@ -90,11 +90,23 @@ A user unit in `~/.config/systemd/user` also works when lingering is on for that
 
 ## 3. Verify the Web node
 
+Check the frontend and the control plane through it:
+
 ```bash
 /opt/oore-web/bin/oore-web status --url http://127.0.0.1:4173
 ```
 
-Sign in as the instance owner and open **Settings > General**. The Runtime section shows the frontend version. When an update is available, **Update frontend** is enabled.
+A healthy Web node prints `Frontend: ok` and `Backend: ok`, each with its
+version and channel, and a `Ready:` line with `database=true
+migrations=true encryption=true`. The command exits with status 1 when either
+check fails.
+
+Then confirm the service and the browser path:
+
+1. Run `systemctl status oore-web`. The unit is `active (running)`.
+2. Open the public HTTPS URL in a browser and sign in.
+3. As the instance owner, open **Settings > General**. Under **Runtime**, the
+   **Frontend** row shows the Web node's version and channel.
 
 ## Update the Web node
 
@@ -126,11 +138,37 @@ Run `oore-web status` from step 3 and confirm that the frontend reports the new 
 
 ## Troubleshooting
 
-If **Update frontend** stays disabled, the Runtime section shows the reason. Common reasons are a unit with another name, a unit without a restart policy, a user unit without lingering, and an `oore-web` process started from a shell instead of by systemd.
+### `oore-web status` reports `Frontend: failed`
+
+`oore-web` is not running, or `--url` points somewhere else. Check
+`systemctl status oore-web` and `journalctl -u oore-web`, and keep the URL on
+the `--listen` address from the unit.
+
+### `oore-web status` reports a backend liveness or readiness failure
+
+The Web node cannot reach `oored`, or `oored` is not ready. Check the
+`--backend-url` address in the unit, the protected network path to the control
+plane, and `oore status` on the control plane. A `Ready:` line with a `false`
+value names the failing check.
+
+### The status says the response did not pass through `oore-web`
+
+`--url` points at the control plane or the ingress proxy instead of
+`oore-web`. Use the loopback address from `--listen`.
+
+### **Update frontend** stays disabled
+
+The **Frontend** row under **Runtime** shows the reason. Common reasons are a unit with another name, a unit without a restart policy, a user unit without lingering, and an `oore-web` process started from a shell instead of by systemd.
+
+### An update fails
 
 If the update fails, Oore keeps the previous release and shows the failure after the next restart. The full output is in `/opt/oore-web/logs/oore-web-update.log`.
 
+### Oore says only the instance owner can manage updates
+
 If Oore says that only the instance owner can manage updates, read the reason it gives. Behind a Trusted Proxy, `oore-web` forwards the identity header only when the upstream proxy also sends the upstream proof. Without `--upstream-trusted-proxy-secret-file`, it strips the header and the control plane does not recognize the session.
+
+### The Web node runs in a container or under pm2
 
 Containers and process managers such as pm2 are not supported for updates from the web UI. Replace the container image or archive instead.
 
