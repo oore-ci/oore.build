@@ -3,115 +3,115 @@ import type {
   StoreErrorIssue,
   StoreVital,
   StoreVitalKind,
-} from "@oore/client/models";
-import { Link } from "@tanstack/react-router";
-import { HugeiconsIcon } from "@hugeicons/react";
-import { ArrowDown01Icon, Refresh01Icon } from "@hugeicons/core-free-icons";
+} from '@oore/client/models'
+import { Link } from '@tanstack/react-router'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { ArrowDown01Icon, Refresh01Icon } from '@hugeicons/core-free-icons'
 
-import { isOoreApiError } from "@oore/client/client";
-import type { ReleaseHealth } from "@oore/client/models";
+import { isOoreApiError } from '@oore/client/client'
+import type { ReleaseHealth } from '@oore/client/models'
 import {
   DashboardList,
   DashboardSection,
   DashboardSectionError,
-} from "@/components/dashboard-section";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge, type BadgeVariant } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+} from '@/components/dashboard-section'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge, type BadgeVariant } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/ui/spinner";
+} from '@/components/ui/collapsible'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { useRefreshStoreVitals, useStoreVitals } from "@/hooks/use-releases";
-import { relativeTime } from "@/lib/format-utils";
+} from '@/components/ui/tooltip'
+import { useRefreshStoreVitals, useStoreVitals } from '@/hooks/use-releases'
+import { relativeTime } from '@/lib/format-utils'
 import {
   getReleaseHealthVariant,
   healthFromThreshold,
   RELEASE_HEALTH_LABEL,
   RELEASE_STORE_LABEL,
-} from "@/lib/releases";
-import { toast } from "@/lib/toast";
-import { cn } from "@/lib/utils";
-import { Row } from "@/components/layout/row";
-import { Stack } from "@/components/layout/stack";
-import { Text } from "@/components/layout/text";
-import { focusRingVariants, textVariants } from "@/lib/recipes";
+} from '@/lib/releases'
+import { toast } from '@/lib/toast'
+import { cn } from '@/lib/utils'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { focusRingVariants, textVariants } from '@/lib/recipes'
 
 const VITAL_LABELS = {
-  crash_rate: "Crash rate",
-  anr_rate: "ANR rate",
-  hang_rate: "Hang rate",
-  launch_time: "Launch time",
-} satisfies Record<StoreVitalKind, string>;
+  crash_rate: 'Crash rate',
+  anr_rate: 'ANR rate',
+  hang_rate: 'Hang rate',
+  launch_time: 'Launch time',
+} satisfies Record<StoreVitalKind, string>
 
 const DOCS_PATH = {
-  google_play: "build/distribute/google-play#store-health-on-home",
-  app_store: "build/distribute/app-store#store-health-on-home",
-} satisfies Record<StoreAppVitals["store"], string>;
+  google_play: 'build/distribute/google-play#store-health-on-home',
+  app_store: 'build/distribute/app-store#store-health-on-home',
+} satisfies Record<StoreAppVitals['store'], string>
 
 /** The anchor a release row links to for the same app and store. */
 export function storeHealthAnchor(projectId: string, store: string): string {
-  return `store-health-${projectId}-${store}`;
+  return `store-health-${projectId}-${store}`
 }
 
 function formatVital(value: number | null | undefined, unit: string): string {
-  if (value == null) return "—";
-  if (unit === "ratio") return `${(value * 100).toFixed(2)}%`;
-  const rounded = value >= 100 ? Math.round(value) : value.toFixed(1);
-  return unit ? `${rounded} ${unit}` : String(rounded);
+  if (value == null) return '—'
+  if (unit === 'ratio') return `${(value * 100).toFixed(2)}%`
+  const rounded = value >= 100 ? Math.round(value) : value.toFixed(1)
+  return unit ? `${rounded} ${unit}` : String(rounded)
 }
 
-type AppStatus = { label: string; variant: BadgeVariant };
+type AppStatus = { label: string; variant: BadgeVariant }
 
 /** The worst vital decides, in the same words the release board uses. */
 function appStatus(app: StoreAppVitals): AppStatus {
   const levels = app.vitals.map((vital) =>
     healthFromThreshold(vital.value, vital.threshold),
-  );
-  const hasNumbers = app.vitals.some((vital) => vital.value != null);
+  )
+  const hasNumbers = app.vitals.some((vital) => vital.value != null)
   if (app.error && !hasNumbers)
-    return { label: "Not readable", variant: "destructive" };
-  const worst: ReleaseHealth = levels.includes("breached")
-    ? "breached"
-    : levels.includes("warning")
-      ? "warning"
+    return { label: 'Not readable', variant: 'destructive' }
+  const worst: ReleaseHealth = levels.includes('breached')
+    ? 'breached'
+    : levels.includes('warning')
+      ? 'warning'
       : hasNumbers
-        ? "healthy"
-        : "unknown";
+        ? 'healthy'
+        : 'unknown'
   return {
     label: RELEASE_HEALTH_LABEL[worst],
     variant: getReleaseHealthVariant(worst),
-  };
+  }
 }
 
 /** A small line of the vital's history with the threshold drawn dashed. */
 function Sparkline({ vital }: { vital: StoreVital }) {
   const values = vital.points.flatMap((point) =>
     point.value == null ? [] : [point.value],
-  );
-  if (values.length < 2) return null;
-  const width = 64;
-  const height = 20;
-  const top = Math.max(...values, vital.threshold ?? 0) * 1.1;
+  )
+  if (values.length < 2) return null
+  const width = 64
+  const height = 20
+  const top = Math.max(...values, vital.threshold ?? 0) * 1.1
   // Rates sit against their threshold from zero; per-version numbers show the change.
-  const bottom = vital.threshold == null ? Math.min(...values) * 0.8 : 0;
+  const bottom = vital.threshold == null ? Math.min(...values) * 0.8 : 0
   const y = (value: number) =>
-    height - ((value - bottom) / (top - bottom || 1)) * height;
+    height - ((value - bottom) / (top - bottom || 1)) * height
   const path = vital.points
     .flatMap((point, index) => {
-      if (point.value == null) return [];
-      const x = (index / (vital.points.length - 1)) * width;
-      return [`${x.toFixed(1)},${y(point.value).toFixed(1)}`];
+      if (point.value == null) return []
+      const x = (index / (vital.points.length - 1)) * width
+      return [`${x.toFixed(1)},${y(point.value).toFixed(1)}`]
     })
-    .join(" ");
+    .join(' ')
   return (
     <svg
       viewBox={`0 0 ${width} ${height}`}
@@ -139,33 +139,33 @@ function Sparkline({ vital }: { vital: StoreVital }) {
         vectorEffect="non-scaling-stroke"
       />
     </svg>
-  );
+  )
 }
 
 const LEVEL_DOT = {
-  healthy: "bg-success",
-  warning: "bg-warning",
-  breached: "bg-destructive",
-  unknown: "bg-muted-foreground/40",
-} satisfies Record<ReleaseHealth, string>;
+  healthy: 'bg-success',
+  warning: 'bg-warning',
+  breached: 'bg-destructive',
+  unknown: 'bg-muted-foreground/40',
+} satisfies Record<ReleaseHealth, string>
 
 function VitalStat({ vital }: { vital: StoreVital }) {
-  const level = healthFromThreshold(vital.value, vital.threshold);
-  const first = vital.points[0]?.label;
-  const last = vital.points[vital.points.length - 1]?.label;
-  const perVersion = vital.unit !== "ratio";
+  const level = healthFromThreshold(vital.value, vital.threshold)
+  const first = vital.points[0]?.label
+  const last = vital.points[vital.points.length - 1]?.label
+  const perVersion = vital.unit !== 'ratio'
   const context =
     vital.threshold == null
       ? perVersion && last
         ? `Version ${last}, typical user`
-        : "28-day average"
-      : `Threshold ${formatVital(vital.threshold, vital.unit)}`;
+        : '28-day average'
+      : `Threshold ${formatVital(vital.threshold, vital.unit)}`
   const history =
     first && last
       ? perVersion
         ? `By app version, ${first} to ${last}`
         : `Daily, ${first} to ${last}`
-      : null;
+      : null
 
   return (
     <Tooltip>
@@ -174,13 +174,13 @@ function VitalStat({ vital }: { vital: StoreVital }) {
           <Row
             tabIndex={0}
             gap={3}
-            className={cn(focusRingVariants(), "min-w-0 rounded-md")}
+            className={cn(focusRingVariants(), 'min-w-0 rounded-md')}
           />
         }
       >
         <div className="flex min-w-0 flex-col">
           <span
-            className={cn(textVariants({ variant: "caption" }), "truncate")}
+            className={cn(textVariants({ variant: 'caption' }), 'truncate')}
           >
             {VITAL_LABELS[vital.kind]}
           </span>
@@ -188,7 +188,7 @@ function VitalStat({ vital }: { vital: StoreVital }) {
             {vital.threshold == null ? null : (
               <span
                 className={cn(
-                  "size-1.5 shrink-0 rounded-full",
+                  'size-1.5 shrink-0 rounded-full',
                   LEVEL_DOT[level],
                 )}
                 aria-hidden
@@ -213,11 +213,11 @@ function VitalStat({ vital }: { vital: StoreVital }) {
         </span>
       </TooltipContent>
     </Tooltip>
-  );
+  )
 }
 
 function IssueRow({ issue }: { issue: StoreErrorIssue }) {
-  const kind = issue.kind === "anr" ? "ANR" : "Crash";
+  const kind = issue.kind === 'anr' ? 'ANR' : 'Crash'
   const content = (
     <>
       <div className="flex min-w-0 flex-col">
@@ -225,45 +225,45 @@ function IssueRow({ issue }: { issue: StoreErrorIssue }) {
           {issue.cause}
         </span>
         <span
-          className={cn(textVariants({ variant: "caption" }), "truncate")}
+          className={cn(textVariants({ variant: 'caption' }), 'truncate')}
           title={issue.location ?? undefined}
         >
           {kind}
-          {issue.location ? ` · ${issue.location}` : ""}
+          {issue.location ? ` · ${issue.location}` : ''}
         </span>
       </div>
       <span
         className={cn(
-          textVariants({ variant: "caption" }),
-          "shrink-0 text-right tabular-nums",
+          textVariants({ variant: 'caption' }),
+          'shrink-0 text-right tabular-nums',
         )}
       >
-        {issue.reports.toLocaleString()} reports ·{" "}
+        {issue.reports.toLocaleString()} reports ·{' '}
         {issue.users.toLocaleString()} users
       </span>
     </>
-  );
+  )
   const className =
-    "flex items-center justify-between gap-3 rounded-md px-2 py-1.5";
+    'flex items-center justify-between gap-3 rounded-md px-2 py-1.5'
   return issue.url ? (
     <a
       href={issue.url}
       target="_blank"
       rel="noreferrer"
       aria-label={`Open ${issue.cause} in Play Console`}
-      className={cn(className, "hover:bg-muted")}
+      className={cn(className, 'hover:bg-muted')}
     >
       {content}
     </a>
   ) : (
     <div className={className}>{content}</div>
-  );
+  )
 }
 
 function AppRow({ app, anchor }: { app: StoreAppVitals; anchor?: string }) {
-  const status = appStatus(app);
-  const issues = app.issues.slice(0, 3);
-  const storeLabel = RELEASE_STORE_LABEL[app.store];
+  const status = appStatus(app)
+  const issues = app.issues.slice(0, 3)
+  const storeLabel = RELEASE_STORE_LABEL[app.store]
   return (
     <Stack id={anchor} gap={3} className="scroll-mt-20 p-4">
       <Stack gap={3} className="@3xl/main:flex-row @3xl/main:items-center">
@@ -273,11 +273,11 @@ function AppRow({ app, anchor }: { app: StoreAppVitals; anchor?: string }) {
               {app.project_name} · {storeLabel}
             </span>
             <span
-              className={cn(textVariants({ variant: "caption" }), "truncate")}
+              className={cn(textVariants({ variant: 'caption' }), 'truncate')}
             >
               {app.app_identifier}
               {app.refreshed_at == null
-                ? ""
+                ? ''
                 : ` · read ${relativeTime(app.refreshed_at)}`}
             </span>
           </div>
@@ -365,19 +365,19 @@ function AppRow({ app, anchor }: { app: StoreAppVitals; anchor?: string }) {
         </Collapsible>
       ) : null}
     </Stack>
-  );
+  )
 }
 
 /** Crash, ANR, hang and launch numbers from the stores, one row per released or configured app. */
 export function DashboardStoreHealth() {
-  const vitalsQuery = useStoreVitals();
-  const refresh = useRefreshStoreVitals();
-  const apps = vitalsQuery.data?.apps ?? [];
+  const vitalsQuery = useStoreVitals()
+  const refresh = useRefreshStoreVitals()
+  const apps = vitalsQuery.data?.apps ?? []
   // Nothing released yet, or the daemon predates store vitals: stay out of
   // the way, but only once the daemon has answered.
   const unsupported =
-    isOoreApiError(vitalsQuery.error) && vitalsQuery.error.status === 404;
-  if ((vitalsQuery.isSuccess && apps.length === 0) || unsupported) return null;
+    isOoreApiError(vitalsQuery.error) && vitalsQuery.error.status === 404
+  if ((vitalsQuery.isSuccess && apps.length === 0) || unsupported) return null
 
   return (
     <DashboardSection
@@ -402,7 +402,7 @@ export function DashboardStoreHealth() {
           ) : (
             <HugeiconsIcon icon={Refresh01Icon} data-icon="inline-start" />
           )}
-          {refresh.isPending ? "Reading stores…" : "Refresh"}
+          {refresh.isPending ? 'Reading stores…' : 'Refresh'}
         </Button>
       }
     >
@@ -416,20 +416,20 @@ export function DashboardStoreHealth() {
       ) : (
         <DashboardList>
           {apps.map((app, index) => {
-            const anchor = storeHealthAnchor(app.project_id, app.store);
+            const anchor = storeHealthAnchor(app.project_id, app.store)
             // A project can have several apps in one store; links land on its first.
             const first =
               apps.findIndex(
                 (other) =>
                   storeHealthAnchor(other.project_id, other.store) === anchor,
-              ) === index;
+              ) === index
             return {
               key: `${app.project_id}-${app.store}-${app.app_identifier}`,
               node: <AppRow app={app} anchor={first ? anchor : undefined} />,
-            };
+            }
           })}
         </DashboardList>
       )}
     </DashboardSection>
-  );
+  )
 }
