@@ -511,15 +511,43 @@ async fn record_disk_pressure(
     Ok(())
 }
 
+/// SQL condition that holds while `$build`'s pipeline has a free slot under
+/// its `concurrency.max_concurrent` limit. A missing, null or zero limit
+/// means no limit. Builds claimed by a runner (`scheduled`), `assigned` or
+/// `running` take a slot. The status list must stay identical to the partial
+/// index `idx_builds_pipeline_active` (migration 077) so SQLite can use it.
+macro_rules! pipeline_has_free_slot {
+    ($build:literal) => {
+        concat!(
+            " AND NOT EXISTS ( \
+               SELECT 1 FROM pipelines pl \
+               WHERE pl.id = ",
+            $build,
+            ".pipeline_id \
+                 AND json_extract(pl.concurrency, '$.max_concurrent') > 0 \
+                 AND ( \
+                   SELECT COUNT(*) FROM builds active \
+                   WHERE active.pipeline_id = pl.id \
+                     AND active.status IN ('scheduled', 'assigned', 'running') \
+                 ) >= json_extract(pl.concurrency, '$.max_concurrent') \
+             ) "
+        )
+    };
+}
+
 /// Atomically linearize a direct-runner claim against the operational pause.
 ///
 /// The initial queue lookup chooses the oldest eligible build. Rechecking the
 /// pause, source identity and the pipeline's `max_concurrent` limit in the
 /// queued -> scheduled update closes races with an operator change, or with
-/// another runner's claim, while a claim request is in flight. SQLite runs
-/// one writer at a time, so two claims cannot both see the last free slot. The build
-/// moves on to assigned, bound to the runner and its signing grant, in the
-/// same transaction, so an interrupted claim never strands it in scheduled.
+/// another runner's claim, while a claim request is in flight. The limit is
+/// race-safe because the slot COUNT and `SET status = 'scheduled'` run in the
+/// same UPDATE statement, and SQLite runs one writer at a time, so two claims
+/// cannot both take the last free slot. A build stuck in scheduled (requeued
+/// after 60 s) or assigned (requeued when its 300 s lease expires) holds its
+/// slot until it is requeued. The build moves on to assigned, bound to the
+/// runner and its signing grant, in the same transaction, so an interrupted
+/// claim never strands it in scheduled.
 pub(crate) async fn claim_eligible_direct_runner_build(
     pool: &sqlx::SqlitePool,
     build_id: &str,
@@ -536,21 +564,12 @@ pub(crate) async fn claim_eligible_direct_runner_build(
         )
     })?;
     let now = now_unix();
-    let result = sqlx::query(
+    let result = sqlx::query(concat!(
         "UPDATE builds SET status = 'scheduled', updated_at = ?1 \
          WHERE id = ?2 AND status = 'queued' \
-           AND (approval_state IS NULL OR approval_state != 'pending') \
-           AND NOT EXISTS ( \
-             SELECT 1 FROM pipelines pl \
-             WHERE pl.id = builds.pipeline_id \
-               AND json_extract(pl.concurrency, '$.max_concurrent') > 0 \
-               AND ( \
-                 SELECT COUNT(*) FROM builds active \
-                 WHERE active.pipeline_id = pl.id \
-                   AND active.status IN ('scheduled', 'assigned', 'running') \
-               ) >= json_extract(pl.concurrency, '$.max_concurrent') \
-           ) \
-           AND EXISTS ( \
+           AND (approval_state IS NULL OR approval_state != 'pending') ",
+        pipeline_has_free_slot!("builds"),
+        " AND EXISTS ( \
              SELECT 1 FROM runners runner WHERE runner.id = ?3 \
                AND NOT EXISTS ( \
                  SELECT 1 FROM json_each(builds.config_snapshot, '$.runs_on') required \
@@ -573,7 +592,7 @@ pub(crate) async fn claim_eligible_direct_runner_build(
                    AND incident.reason IN ('expired', 'rejected', 'refresh_failed') \
                ) \
            )",
-    )
+    ))
     .bind(now)
     .bind(build_id)
     .bind(runner_id)
@@ -756,6 +775,32 @@ async fn fail_credential_blocked_builds(
     Ok(())
 }
 
+const NEXT_ELIGIBLE_BUILD_SQL: &str = concat!(
+    "SELECT b.* FROM builds b \
+     JOIN projects p ON p.id = b.project_id \
+     JOIN integration_repositories r ON r.id = p.repository_id \
+     JOIN integration_installations inst ON inst.id = r.installation_id \
+     JOIN runners runner ON runner.id = ?1 \
+     LEFT JOIN instance_preferences pref ON pref.id = 1 \
+     WHERE b.status = 'queued' \
+       AND (b.approval_state IS NULL OR b.approval_state != 'pending') ",
+    pipeline_has_free_slot!("b"),
+    " AND NOT EXISTS ( \
+         SELECT 1 FROM json_each(b.config_snapshot, '$.runs_on') required \
+         WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
+       ) \
+       AND json_extract(b.config_snapshot, '$.repository_id') = p.repository_id \
+       AND COALESCE(pref.direct_macos_runner_paused, 0) = 0 \
+       AND NOT EXISTS ( \
+         SELECT 1 FROM operator_incidents incident \
+         WHERE incident.status = 'open' \
+           AND incident.resource_kind = 'source' \
+           AND incident.resource_id = inst.integration_id \
+           AND incident.reason IN ('expired', 'rejected', 'refresh_failed') \
+       ) \
+     ORDER BY b.queued_at ASC, b.id ASC LIMIT 1",
+);
+
 /// The oldest queued build this runner may take.
 ///
 /// A missing repository remains ineligible. Missing preferences means the
@@ -767,43 +812,10 @@ async fn next_eligible_build(
     pool: &sqlx::SqlitePool,
     runner_id: &str,
 ) -> sqlx::Result<Option<sqlx::sqlite::SqliteRow>> {
-    sqlx::query(
-        "SELECT b.* FROM builds b \
-         JOIN projects p ON p.id = b.project_id \
-         JOIN integration_repositories r ON r.id = p.repository_id \
-         JOIN integration_installations inst ON inst.id = r.installation_id \
-         JOIN runners runner ON runner.id = ?1 \
-         LEFT JOIN instance_preferences pref ON pref.id = 1 \
-         WHERE b.status = 'queued' \
-           AND (b.approval_state IS NULL OR b.approval_state != 'pending') \
-           AND NOT EXISTS ( \
-             SELECT 1 FROM pipelines pl \
-             WHERE pl.id = b.pipeline_id \
-               AND json_extract(pl.concurrency, '$.max_concurrent') > 0 \
-               AND ( \
-                 SELECT COUNT(*) FROM builds active \
-                 WHERE active.pipeline_id = pl.id \
-                   AND active.status IN ('scheduled', 'assigned', 'running') \
-               ) >= json_extract(pl.concurrency, '$.max_concurrent') \
-           ) \
-           AND NOT EXISTS ( \
-             SELECT 1 FROM json_each(b.config_snapshot, '$.runs_on') required \
-             WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
-           ) \
-           AND json_extract(b.config_snapshot, '$.repository_id') = p.repository_id \
-           AND COALESCE(pref.direct_macos_runner_paused, 0) = 0 \
-           AND NOT EXISTS ( \
-             SELECT 1 FROM operator_incidents incident \
-             WHERE incident.status = 'open' \
-               AND incident.resource_kind = 'source' \
-               AND incident.resource_id = inst.integration_id \
-               AND incident.reason IN ('expired', 'rejected', 'refresh_failed') \
-           ) \
-         ORDER BY b.queued_at ASC, b.id ASC LIMIT 1",
-    )
-    .bind(runner_id)
-    .fetch_optional(pool)
-    .await
+    sqlx::query(NEXT_ELIGIBLE_BUILD_SQL)
+        .bind(runner_id)
+        .fetch_optional(pool)
+        .await
 }
 
 /// Ends the builds a runner still holds once it can no longer be running
@@ -1831,6 +1843,66 @@ mod tests {
         set_build(&pool, "b1", "succeeded", Some("mac1")).await;
         assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("b2"));
         assert_eq!(claim(&pool, "mac1").await, None);
+    }
+
+    #[tokio::test]
+    async fn max_concurrent_two_takes_exactly_two_builds() {
+        let pool = pool().await;
+        for runner in ["mac1", "mac2", "mac3"] {
+            insert_runner(&pool, runner, "macos").await;
+        }
+        limit_pipeline(&pool, "pl1", 2).await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        queue_build(&pool, "b3", 3, &[]).await;
+
+        assert_eq!(claim(&pool, "mac1").await.as_deref(), Some("b1"));
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("b2"));
+        assert_eq!(claim(&pool, "mac3").await, None);
+        assert!(
+            !claim_eligible_direct_runner_build(&pool, "b3", "mac3", "runner:mac3", "h")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            build_status(&pool, "b3").await,
+            ("queued".to_string(), None)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_assigned_build_holds_its_slot() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac1", "macos").await;
+        insert_runner(&pool, "mac2", "macos").await;
+        limit_pipeline(&pool, "pl1", 1).await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        set_build(&pool, "b1", "assigned", Some("mac1")).await;
+
+        assert_eq!(claim(&pool, "mac2").await, None);
+        set_build(&pool, "b1", "queued", None).await;
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("b1"));
+    }
+
+    #[tokio::test]
+    async fn the_slot_count_reads_the_active_builds_index() {
+        let pool = pool().await;
+        let plan: Vec<String> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {NEXT_ELIGIBLE_BUILD_SQL}"
+        )))
+        .bind("mac")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get("detail"))
+        .collect();
+        assert!(
+            plan.iter()
+                .any(|detail| detail.contains("idx_builds_pipeline_active")),
+            "{plan:#?}"
+        );
     }
 
     #[tokio::test]

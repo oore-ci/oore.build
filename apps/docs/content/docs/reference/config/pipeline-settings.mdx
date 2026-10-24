@@ -112,7 +112,8 @@ once.
 | Range    | 1 to 100          |
 | Default  | No limit (`null`) |
 
-- Builds that are assigned to a runner or running count against the limit.
+- Builds that are claimed by a runner, assigned or running count against the
+  limit.
 - A build over the limit stays **Queued**. When a running build finishes, the
   oldest queued build of the pipeline starts next.
 - A pipeline at its limit does not hold up other pipelines' builds; a free
