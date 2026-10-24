@@ -123,7 +123,7 @@ pub(crate) fn summary_line(report: &RunnerTestReport) -> String {
 }
 
 /// macOS temp paths often appear both as `/var/...` and `/private/var/...`.
-fn workspace_prefixes(workspace: &Path) -> Vec<String> {
+pub(crate) fn workspace_prefixes(workspace: &Path) -> Vec<String> {
     let mut prefixes = vec![format!("{}/", workspace.display())];
     if let Ok(canonical) = workspace.canonicalize() {
         let canonical = format!("{}/", canonical.display());
@@ -134,7 +134,7 @@ fn workspace_prefixes(workspace: &Path) -> Vec<String> {
     prefixes
 }
 
-fn strip_prefixes(value: &str, prefixes: &[String]) -> String {
+pub(crate) fn strip_prefixes(value: &str, prefixes: &[String]) -> String {
     let mut value = value.to_string();
     for prefix in prefixes {
         value = value.replace(prefix.as_str(), "");
@@ -142,7 +142,7 @@ fn strip_prefixes(value: &str, prefixes: &[String]) -> String {
     value
 }
 
-fn truncate(value: &str, max_bytes: usize) -> String {
+pub(crate) fn truncate(value: &str, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value.to_string();
     }

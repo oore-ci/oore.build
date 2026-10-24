@@ -15,10 +15,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AppStoreDestination, BuildIsolation, BuildPlatform, GooglePlayPublishConfig,
     PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
-    PlatformBuildCommands, RunnerAppStorePublishPlan, RunnerPublishPlan,
-    default_artifact_patterns_for_platforms, is_valid_pipeline_env_key, normalize_runner_labels,
-    parse_repository_pipeline_yaml, validate_artifact_pattern, validate_build_number_offset,
-    validate_repository_config_path,
+    PlatformBuildCommands, RunnerAppStorePublishPlan, RunnerPublishPlan, SizeBudget,
+    TargetSizeBudget, default_artifact_patterns_for_platforms, is_valid_pipeline_env_key,
+    normalize_runner_labels, parse_repository_pipeline_yaml, validate_artifact_pattern,
+    validate_build_number_offset, validate_repository_config_path,
 };
 
 /// Longest step name a v2 file may use.
@@ -84,6 +84,10 @@ pub struct PipelinePlan {
     /// where the pipeline's Publish settings decide.
     #[serde(skip_serializing_if = "PlanPublish::is_empty")]
     pub publish: PlanPublish,
+    /// Size budgets a v2 file sets on the planned targets. When any is set,
+    /// they replace the pipeline's size budget for the build's checks.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub size_budgets: Vec<TargetSizeBudget>,
 }
 
 /// A store upload from a v2 file, with the field it came from. Values are
@@ -643,6 +647,7 @@ pub fn plan_execution_config(
         runs_on: config.runs_on.clone(),
         isolation: config.isolation,
         publish: PlanPublish::default(),
+        size_budgets: Vec::new(),
     }
 }
 
@@ -785,6 +790,11 @@ pub struct TargetSpec {
     /// `false` or `null` drops a publish a workflow target would inherit.
     #[serde(default, deserialize_with = "deserialize_target_publish")]
     pub publish: Option<TargetPublish>,
+    /// Artifact size limits for this target's commit check, in the shape of
+    /// a pipeline's `size_budget`. A workflow target without `budgets` keeps
+    /// the top-level target's.
+    #[serde(default)]
+    pub budgets: Option<SizeBudget>,
 }
 
 /// A target's `publish`: where to upload, or `false` for nowhere.
@@ -1464,6 +1474,8 @@ struct EffectiveTarget<'a> {
     artifacts: Option<(&'a [String], String)>,
     /// With the path of the `publish` it came from.
     publish: Option<(&'a PublishSpec, String)>,
+    /// With the path of the `budgets` it came from.
+    budgets: Option<(&'a SizeBudget, String)>,
 }
 
 /// Most errors reported for one file; the rest repeat the same mistakes.
@@ -1608,6 +1620,23 @@ impl ConfigV2 {
                     .to_string(),
             );
             notices.extend(self.publish_notices());
+        }
+        let declares_budgets = self
+            .targets
+            .iter()
+            .map(|(_, target)| target)
+            .chain(self.workflows.iter().flat_map(|(_, workflow)| {
+                workflow
+                    .targets
+                    .iter()
+                    .flat_map(|targets| targets.0.iter().map(|(_, target)| target))
+            }))
+            .any(|target| target.budgets.is_some());
+        if declares_budgets {
+            notices.push(
+                "`budgets` replaces the pipeline's Size budget for builds whose planned targets set it: each platform's check uses its target's budgets, and a target without `budgets` has none"
+                    .to_string(),
+            );
         }
         notices
     }
@@ -2022,12 +2051,22 @@ impl ConfigV2 {
                             .map(|publish| (publish, format!("targets.{key}.publish"))),
                         None => None,
                     };
+                    // Budgets limit what the target makes whatever command
+                    // makes it, so they apply until the workflow sets its own.
+                    let budgets = match (&spec.budgets, base.and_then(|b| b.budgets.as_ref())) {
+                        (Some(budgets), _) => {
+                            Some((budgets, format!("{prefix}targets.{key}.budgets")))
+                        }
+                        (None, Some(budgets)) => Some((budgets, format!("targets.{key}.budgets"))),
+                        (None, None) => None,
+                    };
                     targets.push(EffectiveTarget {
                         platform: platform.clone(),
                         build,
                         build_source,
                         artifacts,
                         publish,
+                        budgets,
                     });
                 }
             }
@@ -2049,6 +2088,10 @@ impl ConfigV2 {
                             .as_ref()
                             .and_then(TargetPublish::spec)
                             .map(|publish| (publish, format!("targets.{key}.publish"))),
+                        budgets: spec
+                            .budgets
+                            .as_ref()
+                            .map(|budgets| (budgets, format!("targets.{key}.budgets"))),
                     });
                 }
             }
@@ -2377,6 +2420,17 @@ impl ConfigV2 {
             runs_on: normalize_runner_labels(&self.runs_on).unwrap_or_default(),
             isolation: self.isolation,
             publish,
+            size_budgets: targets
+                .iter()
+                .filter_map(|target| {
+                    let (budget, source) = target.budgets.as_ref()?;
+                    Some(TargetSizeBudget {
+                        platform: target.platform.clone(),
+                        source: source.clone(),
+                        budget: (*budget).clone(),
+                    })
+                })
+                .collect(),
         })
     }
 }
@@ -2427,6 +2481,26 @@ fn check_target(
         errors.push(format!(
             "{path}.artifacts must not be empty; omit it to use the platform defaults"
         ));
+    }
+    if let Some(budgets) = &target.budgets {
+        let field = format!("{path}.budgets");
+        errors.extend(budgets.validate_at(&field));
+        for rule in &budgets.rules {
+            let kind_platform = match rule.kind.as_str() {
+                "aab" | "apk" => Some(BuildPlatform::Android),
+                "ipa" => Some(BuildPlatform::Ios),
+                _ => None,
+            };
+            if let Some(kind_platform) = kind_platform
+                && kind_platform != *platform
+            {
+                errors.push(format!(
+                    "{field} kind '{}' is only built by the {} target",
+                    rule.kind,
+                    platform_key(&kind_platform)
+                ));
+            }
+        }
     }
     let Some(publish) = target.publish.as_ref().and_then(TargetPublish::spec) else {
         return;
@@ -2609,6 +2683,128 @@ mod tests {
         let error = errors("version: 2\nplatforms: [android]\n");
         assert!(error.contains("unknown field `platforms`"), "{error}");
         assert!(error.contains("line 2 column 1"), "{error}");
+    }
+
+    const BUDGETED: &str = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle --release\n    budgets:\n      mode: fail\n      rules:\n        - { kind: aab, max_increase_bytes: 524288 }\n        - { kind: apk, max_bytes: 60000000, max_increase_percent: 2.5 }\n  ios:\n    build: flutter build ipa --release\n";
+
+    #[test]
+    fn target_budgets_parse_and_reach_the_plan() {
+        let top = plan(BUDGETED, None);
+        assert_eq!(top.size_budgets.len(), 1);
+        let android = &top.size_budgets[0];
+        assert_eq!(android.platform, BuildPlatform::Android);
+        assert_eq!(android.source, "targets.android.budgets");
+        assert_eq!(android.budget.mode, crate::SizeBudgetMode::Fail);
+        assert_eq!(android.budget.rules[0].kind, "aab");
+        assert_eq!(android.budget.rules[0].max_increase_bytes, Some(524_288));
+        assert_eq!(android.budget.rules[1].max_increase_percent, Some(2.5));
+
+        // The mode defaults to warn, like the pipeline setting.
+        let warn = plan(
+            &format!("{BASE}    budgets:\n      rules: [{{ kind: apk, max_bytes: 10 }}]\n"),
+            None,
+        );
+        assert_eq!(
+            warn.size_budgets[0].budget.mode,
+            crate::SizeBudgetMode::Warn
+        );
+
+        // Files without budgets plan none, and v1 files never do.
+        assert!(plan(BASE, None).size_budgets.is_empty());
+        let v1 = parse_repository_config("version: 1\nplatforms: [android]\n")
+            .unwrap()
+            .plan(PlanRequest::default())
+            .unwrap();
+        assert!(v1.size_budgets.is_empty());
+
+        let notices = parse_repository_config(BUDGETED).unwrap().notices();
+        assert!(
+            notices
+                .iter()
+                .any(|notice| notice.starts_with("`budgets` replaces the pipeline's Size budget")),
+            "{notices:?}"
+        );
+    }
+
+    #[test]
+    fn workflow_targets_keep_or_replace_the_top_level_budgets() {
+        let yaml = format!(
+            "{BUDGETED}workflows:\n  all: {{}}\n  apk:\n    targets:\n      android:\n        build: flutter build apk --release\n  own:\n    targets:\n      android:\n        budgets: {{ rules: [{{ kind: apk, max_bytes: 5 }}] }}\n  off:\n    targets:\n      android:\n        budgets: {{ rules: [] }}\n  ios_only:\n    targets: [ios]\n"
+        );
+        let sources = |workflow| {
+            plan(&yaml, Some(workflow))
+                .size_budgets
+                .iter()
+                .map(|budget| (budget.source.clone(), budget.budget.rules.len()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(sources("all"), [("targets.android.budgets".to_string(), 2)]);
+        // A new build command still makes the target's artifacts.
+        assert_eq!(sources("apk"), [("targets.android.budgets".to_string(), 2)]);
+        assert_eq!(
+            sources("own"),
+            [("workflows.own.targets.android.budgets".to_string(), 1)]
+        );
+        // An empty budget is still the file's budget: it turns the
+        // pipeline's off.
+        assert_eq!(
+            sources("off"),
+            [("workflows.off.targets.android.budgets".to_string(), 0)]
+        );
+        assert!(sources("ios_only").is_empty());
+
+        // The run's platform selection drops the budgets of other targets.
+        let selected = parse_repository_config(BUDGETED)
+            .unwrap()
+            .plan(PlanRequest {
+                selected_platforms: Some(&[BuildPlatform::Ios]),
+                ..PlanRequest::default()
+            })
+            .unwrap();
+        assert!(selected.size_budgets.is_empty());
+    }
+
+    #[test]
+    fn target_budgets_follow_the_pipeline_rules() {
+        let error = errors(&format!(
+            "{BASE}    budgets:\n      rules:\n        - {{ kind: AAB, max_bytes: 1 }}\n        - {{ kind: apk }}\n        - {{ kind: apk, max_bytes: 0, max_increase_bytes: -1, max_increase_percent: -1 }}\n"
+        ));
+        for expected in [
+            "targets.android.budgets kind 'AAB' must be a lowercase file extension",
+            "targets.android.budgets rule for 'apk' needs a limit",
+            "targets.android.budgets lists kind 'apk' more than once",
+            "targets.android.budgets max_bytes for 'apk' must be greater than 0",
+            "targets.android.budgets max_increase_bytes for 'apk' must be 0 or more",
+            "targets.android.budgets max_increase_percent for 'apk' must be 0 or more",
+        ] {
+            assert!(error.contains(expected), "{expected}\n{error}");
+        }
+
+        let error = errors(&format!(
+            "{BASE}workflows:\n  qa:\n    targets:\n      android:\n        budgets: {{ rules: [{{ kind: ipa, max_bytes: 1 }}] }}\n"
+        ));
+        assert!(
+            error.contains(
+                "workflows.qa.targets.android.budgets kind 'ipa' is only built by the ios target"
+            ),
+            "{error}"
+        );
+
+        let error = errors(&format!(
+            "{BASE}    budgets:\n      mode: fail\n      limit: 1\n"
+        ));
+        assert!(error.contains("unknown field `limit`"), "{error}");
+        let error = errors(&format!("{BASE}    budgets:\n      mode: block\n"));
+        assert!(error.contains("unknown variant `block`"), "{error}");
+
+        let rules: String = (0..21)
+            .map(|index| format!("        - {{ kind: k{index}, max_bytes: 1 }}\n"))
+            .collect();
+        let error = errors(&format!("{BASE}    budgets:\n      rules:\n{rules}"));
+        assert!(
+            error.contains("targets.android.budgets allows at most 20 rules"),
+            "{error}"
+        );
     }
 
     #[test]

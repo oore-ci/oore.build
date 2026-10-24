@@ -23,7 +23,7 @@ use oore_contract::{
     PlanStep, PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION,
     RunnerAndroidSigningProfile, RunnerAndroidSigningResponse, RunnerHeartbeatResponse,
     RunnerIosSigningBundle, RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan,
-    RunnerPublishResult, RunnerRetryArtifactsResponse, StepPhase, StepResult,
+    RunnerPublishResult, RunnerRetryArtifactsResponse, StepPhase, StepResult, TargetSizeBudget,
     artifact_pattern_matches, is_valid_pipeline_env_key, missing_runner_labels,
     normalize_runner_labels, parse_repository_config, pipeline_config::select_v1_platforms,
     plan_execution_config, replace_secret_references, store_version_code,
@@ -34,6 +34,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use zeroize::Zeroize;
 
+mod analyzer;
 mod app_store_upload;
 mod caches;
 mod metrics;
@@ -3589,12 +3590,14 @@ async fn claim_and_execute(
             exit_code: None,
             error_message: None,
             steps: &[],
+            size_budgets: None,
         },
         RetryPolicy::within(RUNNING_REPORT_WINDOW),
     )
     .await?;
 
     let mut cache_observation = None;
+    let mut file_size_budgets = None;
     let (steps, result) = execute_build(
         &job,
         client,
@@ -3602,6 +3605,7 @@ async fn claim_and_execute(
         config,
         caches.map(Arc::as_ref),
         &mut cache_observation,
+        &mut file_size_budgets,
     )
     .await;
     let finished_build = cache_observation.map(|observation| (observation, result.is_ok()));
@@ -3613,6 +3617,7 @@ async fn claim_and_execute(
             exit_code: Some(0),
             error_message: None,
             steps: &steps,
+            size_budgets: file_size_budgets.as_deref(),
         }),
         Err(e) => match e.downcast_ref::<BuildTerminated>() {
             Some(terminated) if terminated.status == CONTROLLER_UNAVAILABLE => Some(StatusReport {
@@ -3624,6 +3629,7 @@ async fn claim_and_execute(
                     CONTROLLER_GRACE.as_secs() / 60
                 )),
                 steps: &steps,
+                size_budgets: file_size_budgets.as_deref(),
             }),
             Some(_) => {
                 println!(
@@ -3638,6 +3644,7 @@ async fn claim_and_execute(
                 exit_code: Some(1),
                 error_message: Some(e.to_string()),
                 steps: &steps,
+                size_budgets: file_size_budgets.as_deref(),
             }),
         },
     };
@@ -3749,6 +3756,8 @@ struct ResolvedExecutionPlan {
     /// The v2 file's store uploads, applied over the pipeline's Publish
     /// settings by the publish steps. Empty otherwise.
     publish: PlanPublish,
+    /// The v2 file's size budgets, reported with the build's result.
+    size_budgets: Vec<TargetSizeBudget>,
 }
 
 fn secret_env_var(name: &str) -> String {
@@ -4209,6 +4218,7 @@ fn resolve_execution_plan(
             flutter_version: resolved_flutter_version,
             source: format!("file:{}", full_path.display()),
             publish: plan.publish,
+            size_budgets: plan.size_budgets,
         });
     }
 
@@ -4232,6 +4242,7 @@ fn resolve_execution_plan(
         flutter_version: resolved_flutter_version,
         source: "ui_fallback".to_string(),
         publish: PlanPublish::default(),
+        size_budgets: Vec::new(),
     })
 }
 
@@ -4504,6 +4515,7 @@ async fn execute_build(
     config: &RunnerConfig,
     caches: Option<&RunnerCaches>,
     cache_observation: &mut Option<CacheObservation>,
+    file_size_budgets: &mut Option<Vec<TargetSizeBudget>>,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
     let mut log_seq = BuildLogCursor::default();
     let mut build_vm = None;
@@ -4516,6 +4528,7 @@ async fn execute_build(
         cache_observation,
         &mut log_seq,
         &mut build_vm,
+        file_size_budgets,
     )
     .await;
     // A build that ended before its last step still has its VM. A canceled
@@ -5018,6 +5031,7 @@ async fn execute_build_steps(
     cache_observation: &mut Option<CacheObservation>,
     log_seq: &mut BuildLogCursor,
     build_vm: &mut Option<BuildVm>,
+    file_size_budgets: &mut Option<Vec<TargetSizeBudget>>,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
     // Pin signer executables before any repository-controlled checkout or build stage runs.
     let android_signing_toolchain = AndroidSigningToolchain::discover();
@@ -5180,6 +5194,7 @@ async fn execute_build_steps(
         Ok(plan) => plan,
         Err(e) => return (steps, Err(e)),
     };
+    *file_size_budgets = Some(execution_plan.size_budgets.clone());
     let version_code =
         match store_version_code(job.build_number, execution_plan.build_number_offset) {
             Ok(code) => code,
@@ -5758,6 +5773,23 @@ async fn execute_build_steps(
                     )
                     .await;
                     if exit_code != 0 {
+                        // Analysis shows what the failing change looks like,
+                        // so it runs here too; it never changes the result.
+                        run_analyzer_step(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            log_seq,
+                            AnalyzeInputs {
+                                workspace: &workspace,
+                                vm,
+                                env: &step_env,
+                                path_prefixes: &report_path_prefixes,
+                            },
+                            &mut steps,
+                        )
+                        .await;
                         let err = if exit_code == 127 && vm.is_some() {
                             anyhow::anyhow!(
                                 "Step failed with exit code 127 (command not found). \
@@ -6031,6 +6063,23 @@ Install the required tooling on the runner, set isolation: vm, or override build
             }
         }
     }
+
+    // While the toolchain (the VM, when there is one) is still up.
+    run_analyzer_step(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        AnalyzeInputs {
+            workspace: &workspace,
+            vm,
+            env: &step_env,
+            path_prefixes: &report_path_prefixes,
+        },
+        &mut steps,
+    )
+    .await;
 
     // Every step has run; free the VM slot before the upload.
     if let Some(vm) = build_vm.take() {
@@ -7157,6 +7206,229 @@ async fn report_step_tests(
     }
 }
 
+/// Longest the analyzer may run. It is a report, so it never holds the build
+/// up for long.
+const ANALYZE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Analyzer stderr kept for the log.
+const ANALYZE_STDERR_BYTES: usize = 16 * 1024;
+/// Diagnostics also printed to the build log.
+const ANALYZE_LOGGED_DIAGNOSTICS: usize = 10;
+
+/// Where the analyzer runs: the build's VM, or the host workspace.
+struct AnalyzeInputs<'a> {
+    workspace: &'a Path,
+    vm: Option<&'a BuildVm>,
+    env: &'a [(String, String)],
+    /// Workspace paths stripped from diagnostic file names.
+    path_prefixes: &'a [PathBuf],
+}
+
+/// Reads all of `reader`, keeping the first `cap` bytes. Reading past the cap
+/// keeps the process from blocking on a full pipe.
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
+    reader: Option<R>,
+    cap: usize,
+) -> (Vec<u8>, bool) {
+    let mut kept = Vec::new();
+    let mut over = false;
+    let Some(mut reader) = reader else {
+        return (kept, over);
+    };
+    let mut chunk = [0u8; 8192];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(read) if kept.len() + read <= cap => kept.extend_from_slice(&chunk[..read]),
+            Ok(_) => over = true,
+        }
+    }
+    (kept, over)
+}
+
+/// Runs the analyzer script. `Err` is why there is no analysis.
+async fn collect_analysis(
+    inputs: &AnalyzeInputs<'_>,
+    stderr_lines: &mut Vec<String>,
+    mask: impl Fn(&str) -> String,
+) -> Result<(i32, oore_contract::RunnerAnalyzerReport), String> {
+    let script = analyzer::analyze_script();
+    let spawned = match inputs.vm {
+        Some(vm) => vm.vm.spawn_step(&script, inputs.env).await,
+        None => {
+            let mut command = repository_shell_command(&script, inputs.workspace);
+            command
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true);
+            for (key, value) in inputs.env {
+                command.env(key, value);
+            }
+            scrub_managed_runner_env(&mut command);
+            command.spawn().map_err(anyhow::Error::from)
+        }
+    };
+    let mut child = spawned.map_err(|error| format!("could not start the analyzer: {error:#}"))?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let finished = tokio::time::timeout(ANALYZE_TIMEOUT, async {
+        let (stdout, stderr) = tokio::join!(
+            read_capped(stdout, analyzer::MAX_OUTPUT_BYTES),
+            read_capped(stderr, ANALYZE_STDERR_BYTES)
+        );
+        (stdout, stderr, child.wait().await)
+    })
+    .await;
+    let Ok(((stdout, stdout_over), (stderr, _), status)) = finished else {
+        stop_process_group(&mut child).await;
+        return Err(format!(
+            "the analyzer ran longer than {} minutes",
+            ANALYZE_TIMEOUT.as_secs() / 60
+        ));
+    };
+    stderr_lines.extend(
+        String::from_utf8_lossy(&stderr)
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(&mask),
+    );
+    let exit_code = status
+        .map_err(|error| format!("could not wait for the analyzer: {error}"))?
+        .code();
+    if let Some(reason) = analyzer::skip_reason(exit_code) {
+        return Err(reason.to_string());
+    }
+    let exit_code = exit_code.unwrap_or(-1);
+    if stdout_over {
+        return Err(format!(
+            "the analyzer printed more than {} MiB",
+            analyzer::MAX_OUTPUT_BYTES / (1024 * 1024)
+        ));
+    }
+    analyzer::parse_analyzer_output(
+        &String::from_utf8_lossy(&stdout),
+        inputs.path_prefixes,
+        mask,
+    )
+    .map(|report| (exit_code, report))
+    .map_err(|error| format!("{error} (exit code {exit_code})"))
+}
+
+/// The `analyze` step: runs `dart analyze --format=json` in the app
+/// directory and reports its summary. It never fails the build; when there is
+/// nothing to analyze, or the analyzer cannot run, the step is skipped.
+async fn run_analyzer_step(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    log_seq: &mut BuildLogCursor,
+    inputs: AnalyzeInputs<'_>,
+    steps: &mut Vec<StepResult>,
+) {
+    if analyzer::analysis_disabled(inputs.env) {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            build_id,
+            log_seq,
+            "stdout",
+            &format!(
+                "[oore-analyze] {} turns analysis off for this pipeline",
+                analyzer::ANALYZE_ENV
+            ),
+        )
+        .await;
+        return;
+    }
+    let started = now_unix();
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        build_id,
+        log_seq,
+        "stdout",
+        &step_start_marker(analyzer::ANALYZE_STEP, analyzer::ANALYZE_COMMAND),
+    )
+    .await;
+    let mut stderr_lines = Vec::new();
+    let outcome = {
+        let masker = &log_seq.masker;
+        collect_analysis(&inputs, &mut stderr_lines, |text| masker.mask(text)).await
+    };
+    for line in stderr_lines.iter().take(20) {
+        let _ = append_runner_log_line(
+            client, daemon_url, config, build_id, log_seq, "stderr", line,
+        )
+        .await;
+    }
+    let mut lines = Vec::new();
+    let (status, exit_code) = match &outcome {
+        Ok((exit_code, report)) => {
+            lines.push(analyzer::summary_line(report));
+            lines.extend(analyzer::diagnostic_lines(
+                report,
+                ANALYZE_LOGGED_DIAGNOSTICS,
+            ));
+            let uploaded = client
+                .post(format!(
+                    "{}/v1/runners/{}/jobs/{}/analysis",
+                    daemon_url, config.runner_id, build_id
+                ))
+                .bearer_auth(&config.runner_token)
+                .json(report)
+                .timeout(CONTROL_REQUEST_TIMEOUT)
+                .send()
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|resp| {
+                    if resp.status().is_success() {
+                        Ok(())
+                    } else {
+                        Err(anyhow::anyhow!("{}", resp.status()))
+                    }
+                });
+            if let Err(error) = uploaded {
+                lines.push(format!(
+                    "[oore-analyze] Could not upload the analysis: {error}"
+                ));
+            }
+            ("succeeded", Some(*exit_code))
+        }
+        Err(reason) => {
+            lines.push(format!("[oore-analyze] Skipped: {reason}"));
+            ("skipped", None)
+        }
+    };
+    for line in &lines {
+        let _ = append_runner_log_line(
+            client, daemon_url, config, build_id, log_seq, "stdout", line,
+        )
+        .await;
+    }
+    let finished = now_unix();
+    steps.push(StepResult {
+        name: analyzer::ANALYZE_STEP.to_string(),
+        status: status.to_string(),
+        exit_code,
+        started_at: started,
+        finished_at: finished,
+        duration_ms: (finished - started) * 1000,
+        publish_from_file: false,
+    });
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        build_id,
+        log_seq,
+        "stdout",
+        &step_end_marker(analyzer::ANALYZE_STEP, status, exit_code),
+    )
+    .await;
+}
+
 fn step_start_marker(name: &str, command: &str) -> String {
     format!(
         "[oore-step] {}",
@@ -7697,6 +7969,8 @@ struct StatusReport<'a> {
     exit_code: Option<i32>,
     error_message: Option<String>,
     steps: &'a [StepResult],
+    /// The file's size budgets, once the build was planned.
+    size_budgets: Option<&'a [TargetSizeBudget]>,
 }
 
 async fn report_status(
@@ -7705,12 +7979,15 @@ async fn report_status(
     config: &RunnerConfig,
     report: &StatusReport<'_>,
 ) -> anyhow::Result<()> {
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": report.status,
         "exit_code": report.exit_code,
         "error_message": report.error_message,
         "steps": report.steps,
     });
+    if let Some(size_budgets) = report.size_budgets {
+        body["size_budgets"] = serde_json::json!(size_budgets);
+    }
 
     let resp = client
         .post(format!(
@@ -8442,6 +8719,7 @@ mod secret_tests {
             flutter_version: "stable".to_string(),
             source: "test".to_string(),
             publish: PlanPublish::default(),
+            size_budgets: Vec::new(),
         }
     }
 
@@ -8770,6 +9048,7 @@ mod build_lifecycle_tests {
             exit_code: Some(0),
             error_message: None,
             steps: &[],
+            size_budgets: None,
         }
     }
 

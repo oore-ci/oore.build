@@ -200,6 +200,11 @@ never fails the build itself, and it does not change artifacts or releases.
 - Any growth from a 0-byte baseline is over a percent limit.
 - The budget applies when a build reports its result, so a change shows on the
   next build or re-run.
+- When the `.oore.yaml` version 2 file a build ran sets
+  [`budgets`](/reference/config/oore-yaml-v2#budgets) on any of its targets,
+  the file's budgets replace `size_budget` for that build. Each platform's
+  check uses its target's budgets, a target without `budgets` has none, and
+  the summary names the field the budget came from.
 
 ### Modes
 
@@ -223,6 +228,8 @@ earlier successful build of the same pipeline on the base branch.
   itself.
 - Oore records sizes when an upload finishes and keeps them after retention
   deletes the files, so an old baseline still compares.
+- The [analyzer](/build/run/pull-request-checks#analyzer) counts compare the
+  same way, with the latest such build that reported an analysis.
 
 Artifacts pair up by file name. When the name changes between builds, such as
 when it carries a version, an artifact pairs with the only file of the same

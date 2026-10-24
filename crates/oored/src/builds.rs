@@ -208,6 +208,10 @@ pub async fn transition_build(
 pub(crate) struct RunnerResults<'a> {
     pub step_results: Option<&'a str>,
     pub exit_code: Option<i32>,
+    /// The size budgets the build's `.oore.yaml` sets, as a JSON array, once
+    /// the runner planned the build. Stored in the config snapshot as
+    /// `file_size_budgets`; an empty array removes it.
+    pub file_size_budgets: Option<&'a str>,
 }
 
 /// [`transition_build`], also storing the runner's results. The status
@@ -314,6 +318,20 @@ pub(crate) async fn transition_build_with_results(
             .execute(&mut *tx)
             .await
             .map_err(store_error("Failed to persist step results"))?;
+        if let Some(budgets) = results.file_size_budgets {
+            sqlx::query(
+                "UPDATE builds SET config_snapshot = CASE \
+                     WHEN json_array_length(?1) > 0 \
+                     THEN json_set(config_snapshot, '$.file_size_budgets', json(?1)) \
+                     ELSE json_remove(config_snapshot, '$.file_size_budgets') END \
+                 WHERE id = ?2 AND json_valid(config_snapshot)",
+            )
+            .bind(budgets)
+            .bind(build_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(store_error("Failed to persist size budgets"))?;
+        }
     }
 
     // Insert build event

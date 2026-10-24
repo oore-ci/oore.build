@@ -170,6 +170,18 @@ commands:
 The runner reads and clears that directory after every command, including a
 command that failed.
 
+## Analyzer
+
+After the commands run, including when one failed, the runner runs
+`dart analyze --format=json` in the workspace root as a step named `analyze`.
+It reports the error, warning and info counts and the 50 most severe
+diagnostics, which the build detail page and the
+[pull request check](/build/run/pull-request-checks#analyzer) show. The step
+never fails the build. It is skipped when the workspace root has no
+`pubspec.yaml`, has no `.dart_tool/package_config.json` (packages not
+resolved), `dart` is not on the `PATH`, or the analyzer runs longer than 10
+minutes. Set the env var `OORE_ANALYZE` to `false` to turn it off.
+
 ## Artifacts
 
 When `artifacts` is omitted, Oore derives default patterns from `platforms`.

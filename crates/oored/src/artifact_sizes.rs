@@ -154,12 +154,21 @@ async fn pull_request_origin(
     ))
 }
 
-/// Sizes of a build compared with its baseline. `None` when the build does
-/// not exist.
-pub(crate) async fn load_size_report(
+/// What a baseline build must have recorded to be compared with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BaselineData {
+    Sizes,
+    Analysis,
+}
+
+/// The branch a build compares with, and the latest earlier successful build
+/// of the same pipeline on it that recorded `data`. `None` when the build
+/// does not exist.
+pub(crate) async fn find_baseline(
     pool: &SqlitePool,
     build_id: &str,
-) -> Result<Option<BuildSizeReport>, sqlx::Error> {
+    data: BaselineData,
+) -> Result<Option<(Option<String>, Option<BuildSizeBaseline>)>, sqlx::Error> {
     let Some(build) = sqlx::query(
         "SELECT b.pipeline_id, b.build_number, b.commit_sha, \
                 p.default_branch AS project_default_branch, \
@@ -187,31 +196,38 @@ pub(crate) async fn load_size_report(
         .or_else(|| non_empty("project_default_branch"))
         .or_else(|| non_empty("repository_default_branch"));
 
-    let current = load_sizes(pool, build_id).await?;
-
     let mut baseline = None;
     if let Some(branch) = &base_branch {
-        let candidates = sqlx::query(
+        let recorded = match data {
+            BaselineData::Sizes => {
+                "EXISTS (SELECT 1 FROM build_artifact_sizes s WHERE s.build_id = b.id)"
+            }
+            BaselineData::Analysis => {
+                "EXISTS (SELECT 1 FROM build_analyses a WHERE a.build_id = b.id)"
+            }
+        };
+        let query = format!(
             "SELECT b.id, b.build_number, b.branch FROM builds b \
              WHERE b.pipeline_id = ?1 AND b.branch = ?2 AND b.build_number < ?3 \
                AND (b.status = 'succeeded' OR (b.status = 'expired' AND b.expired_from = 'succeeded')) \
-               AND EXISTS (SELECT 1 FROM build_artifact_sizes s WHERE s.build_id = b.id) \
+               AND {recorded} \
                AND (?5 IS NULL OR b.commit_sha IS NOT ?5) \
-             ORDER BY b.build_number DESC LIMIT ?4",
-        )
-        .bind(build.get::<String, _>("pipeline_id"))
-        .bind(branch)
-        .bind(build.get::<i64, _>("build_number"))
-        .bind(MAX_BASELINE_CANDIDATES)
-        // A rerun of the same commit, for example on the default branch, is
-        // the same code and would compare with itself.
-        .bind(
-            build
-                .get::<Option<String>, _>("commit_sha")
-                .filter(|sha| !sha.is_empty()),
-        )
-        .fetch_all(pool)
-        .await?;
+             ORDER BY b.build_number DESC LIMIT ?4"
+        );
+        let candidates = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(build.get::<String, _>("pipeline_id"))
+            .bind(branch)
+            .bind(build.get::<i64, _>("build_number"))
+            .bind(MAX_BASELINE_CANDIDATES)
+            // A rerun of the same commit, for example on the default branch,
+            // is the same code and would compare with itself.
+            .bind(
+                build
+                    .get::<Option<String>, _>("commit_sha")
+                    .filter(|sha| !sha.is_empty()),
+            )
+            .fetch_all(pool)
+            .await?;
         // A pull request whose head branch has the base branch's name, for
         // example a fork's `main`, is not the base branch.
         for row in candidates {
@@ -226,6 +242,20 @@ pub(crate) async fn load_size_report(
             }
         }
     }
+    Ok(Some((base_branch, baseline)))
+}
+
+/// Sizes of a build compared with its baseline. `None` when the build does
+/// not exist.
+pub(crate) async fn load_size_report(
+    pool: &SqlitePool,
+    build_id: &str,
+) -> Result<Option<BuildSizeReport>, sqlx::Error> {
+    let Some((base_branch, baseline)) = find_baseline(pool, build_id, BaselineData::Sizes).await?
+    else {
+        return Ok(None);
+    };
+    let current = load_sizes(pool, build_id).await?;
     let baseline_sizes = match &baseline {
         Some(baseline) => load_sizes(pool, &baseline.build_id).await?,
         None => Vec::new(),

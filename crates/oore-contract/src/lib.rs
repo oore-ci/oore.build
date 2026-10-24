@@ -1445,12 +1445,15 @@ impl SizeBudget {
 
     /// Problems that make the budget invalid, one message each.
     pub fn validate(&self) -> Vec<String> {
+        self.validate_at("size_budget")
+    }
+
+    /// [`Self::validate`], naming the budget `field` in each message, such
+    /// as `targets.android.budgets` in a `.oore.yaml` file.
+    pub fn validate_at(&self, field: &str) -> Vec<String> {
         let mut errors = Vec::new();
         if self.rules.len() > Self::MAX_RULES {
-            errors.push(format!(
-                "size_budget allows at most {} rules",
-                Self::MAX_RULES
-            ));
+            errors.push(format!("{field} allows at most {} rules", Self::MAX_RULES));
         }
         let mut seen = std::collections::HashSet::new();
         for rule in &self.rules {
@@ -1462,24 +1465,24 @@ impl SizeBudget {
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
             if !valid_kind {
                 errors.push(format!(
-                    "size_budget kind '{kind}' must be a lowercase file extension such as aab, apk or ipa"
+                    "{field} kind '{kind}' must be a lowercase file extension such as aab, apk or ipa"
                 ));
                 continue;
             }
             if !seen.insert(kind) {
-                errors.push(format!("size_budget lists kind '{kind}' more than once"));
+                errors.push(format!("{field} lists kind '{kind}' more than once"));
             }
             if !rule.has_limit() {
-                errors.push(format!("size_budget rule for '{kind}' needs a limit"));
+                errors.push(format!("{field} rule for '{kind}' needs a limit"));
             }
             if rule.max_bytes.is_some_and(|bytes| bytes <= 0) {
                 errors.push(format!(
-                    "size_budget max_bytes for '{kind}' must be greater than 0"
+                    "{field} max_bytes for '{kind}' must be greater than 0"
                 ));
             }
             if rule.max_increase_bytes.is_some_and(|bytes| bytes < 0) {
                 errors.push(format!(
-                    "size_budget max_increase_bytes for '{kind}' must be 0 or more"
+                    "{field} max_increase_bytes for '{kind}' must be 0 or more"
                 ));
             }
             if rule
@@ -1487,12 +1490,23 @@ impl SizeBudget {
                 .is_some_and(|percent| !percent.is_finite() || percent < 0.0)
             {
                 errors.push(format!(
-                    "size_budget max_increase_percent for '{kind}' must be 0 or more"
+                    "{field} max_increase_percent for '{kind}' must be 0 or more"
                 ));
             }
         }
         errors
     }
+}
+
+/// A size budget a repository's `.oore.yaml` version 2 file sets on one
+/// target, after workflow overrides. When a build's file sets any, they
+/// replace the pipeline's `size_budget` for that build's commit checks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct TargetSizeBudget {
+    pub platform: BuildPlatform,
+    /// Where the budget came from, such as `targets.android.budgets`.
+    pub source: String,
+    pub budget: SizeBudget,
 }
 
 /// Build approval state. Pending builds stay `queued` but no runner claims them.
@@ -2282,6 +2296,11 @@ pub struct UpdateJobStatusRequest {
     pub error_message: Option<String>,
     #[serde(default)]
     pub steps: Vec<StepResult>,
+    /// The size budgets the build's `.oore.yaml` version 2 file sets, sent
+    /// once the runner planned the build. An empty list means the file sets
+    /// none; leaving it out keeps what the build has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_budgets: Option<Vec<TargetSizeBudget>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -2298,6 +2317,79 @@ pub struct StepResult {
     /// build's commit again.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub publish_from_file: bool,
+}
+
+// ── Analyzer ────────────────────────────────────────────────────
+
+/// Severity of a `dart analyze` diagnostic.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyzerSeverity {
+    Error,
+    Warning,
+    Info,
+}
+
+/// One `dart analyze` diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AnalyzerDiagnostic {
+    pub severity: AnalyzerSeverity,
+    /// The diagnostic code, such as `unused_import`.
+    pub code: String,
+    pub message: String,
+    /// Path relative to the build workspace, such as `lib/main.dart`.
+    pub file: String,
+    pub line: i64,
+    pub column: i64,
+}
+
+/// Diagnostics counted by severity.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AnalyzerCounts {
+    pub errors: i64,
+    pub warnings: i64,
+    pub infos: i64,
+}
+
+/// The summary of `dart analyze --format=json` a runner reports after the
+/// build's steps.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct RunnerAnalyzerReport {
+    pub counts: AnalyzerCounts,
+    /// The most severe diagnostics, errors first. The daemon keeps at most
+    /// 50.
+    pub diagnostics: Vec<AnalyzerDiagnostic>,
+}
+
+/// A build's analyzer summary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct BuildAnalysis {
+    pub counts: AnalyzerCounts,
+    /// The most severe diagnostics, errors first, at most 50.
+    pub diagnostics: Vec<AnalyzerDiagnostic>,
+    pub recorded_at: i64,
+}
+
+/// The earlier build an analysis compares with: the latest successful build
+/// of the same pipeline on the base branch that reported one, as for sizes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct BuildAnalysisBaseline {
+    pub build_id: String,
+    pub build_number: i64,
+    pub branch: String,
+    pub counts: AnalyzerCounts,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct BuildAnalysisResponse {
+    /// `null` when the build reported no analysis.
+    pub analysis: Option<BuildAnalysis>,
+    /// The branch the build compares with: a pull request's target branch,
+    /// otherwise the default branch.
+    pub base_branch: Option<String>,
+    pub baseline: Option<BuildAnalysisBaseline>,
 }
 
 // ── Test results ────────────────────────────────────────────────

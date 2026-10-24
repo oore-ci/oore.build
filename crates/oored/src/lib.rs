@@ -10,6 +10,7 @@ pub mod artifacts;
 pub mod audit_logs;
 pub mod auth;
 pub mod background;
+pub mod build_analysis;
 pub mod build_feedback;
 pub mod build_insights;
 pub mod builds;
@@ -2883,6 +2884,10 @@ pub async fn build_router_with_recovery(
             get(test_results::get_build_test_results),
         )
         .route(
+            "/v1/builds/{build_id}/analysis",
+            get(build_analysis::get_build_analysis),
+        )
+        .route(
             "/v1/builds/{build_id}/feedback",
             get(build_feedback::list_build_feedback),
         )
@@ -2996,6 +3001,10 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/test-results",
             post(test_results::report_job_test_results),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/analysis",
+            post(build_analysis::report_job_analysis),
         )
         .route("/v1/runners", get(runners::list_runners))
         // Build log endpoints

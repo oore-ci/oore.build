@@ -1123,10 +1123,16 @@ pub async fn update_job_status(
     // failed write never leaves a terminal build without its step results.
     let steps_json = (!req.steps.is_empty())
         .then(|| serde_json::to_string(&req.steps).unwrap_or_else(|_| "[]".to_string()));
-    let results = (!req.steps.is_empty() || req.exit_code.is_some()).then_some(RunnerResults {
-        step_results: steps_json.as_deref(),
-        exit_code: req.exit_code,
-    });
+    let budgets_json = req
+        .size_budgets
+        .as_ref()
+        .map(|budgets| serde_json::to_string(budgets).unwrap_or_else(|_| "[]".to_string()));
+    let results = (!req.steps.is_empty() || req.exit_code.is_some() || budgets_json.is_some())
+        .then_some(RunnerResults {
+            step_results: steps_json.as_deref(),
+            exit_code: req.exit_code,
+            file_size_budgets: budgets_json.as_deref(),
+        });
     let build = transition_build_with_results(
         pool,
         &job_id,
@@ -2286,6 +2292,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_files_size_budgets_are_kept_in_the_snapshot_with_the_result() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        let budgets = r#"[{"platform":"android","source":"targets.android.budgets","budget":{"mode":"fail","rules":[{"kind":"aab","max_bytes":10}]}}]"#;
+        let snapshot = |pool: sqlx::SqlitePool, id: &'static str| async move {
+            let raw: String =
+                sqlx::query_scalar("SELECT config_snapshot FROM builds WHERE id = ?1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap()
+        };
+        for (id, number, sent) in [
+            ("b1", 1, Some(budgets)),
+            ("b2", 2, Some("[]")),
+            ("b3", 3, None),
+        ] {
+            queue_build(&pool, id, number, &[]).await;
+            set_build(&pool, id, "running", Some("mac")).await;
+            // As a rerun would have copied it.
+            sqlx::query(
+                "UPDATE builds SET config_snapshot = json_set(config_snapshot, '$.file_size_budgets', json('[1]')) WHERE id = ?1 AND ?2",
+            )
+            .bind(id)
+            .bind(id != "b1")
+            .execute(&pool)
+            .await
+            .unwrap();
+            transition_build_with_results(
+                &pool,
+                id,
+                BuildStatus::Succeeded,
+                Some("runner:mac"),
+                None,
+                Some(RunnerResults {
+                    step_results: Some("[]"),
+                    exit_code: Some(0),
+                    file_size_budgets: sent,
+                }),
+            )
+            .await
+            .unwrap();
+        }
+
+        let b1 = snapshot(pool.clone(), "b1").await;
+        assert_eq!(b1["file_size_budgets"][0]["budget"]["mode"], "fail");
+        assert_eq!(b1["repository_id"], "repo1");
+        // The file sets none now.
+        assert!(
+            snapshot(pool.clone(), "b2")
+                .await
+                .get("file_size_budgets")
+                .is_none()
+        );
+        // A runner that sends nothing leaves the snapshot alone.
+        assert_eq!(
+            snapshot(pool.clone(), "b3").await["file_size_budgets"],
+            serde_json::json!([1])
+        );
+    }
+
+    #[tokio::test]
     async fn a_status_change_rolls_back_when_its_event_cannot_be_recorded() {
         let pool = pool().await;
         insert_runner(&pool, "mac", "macos").await;
@@ -2302,6 +2371,7 @@ mod tests {
         let results = RunnerResults {
             step_results: Some("[]"),
             exit_code: Some(0),
+            file_size_budgets: None,
         };
         let (status, _) = transition_build_with_results(
             &pool,
@@ -2333,6 +2403,7 @@ mod tests {
         let results = RunnerResults {
             step_results: Some("[]"),
             exit_code: Some(0),
+            file_size_budgets: None,
         };
         let build = transition_build_with_results(
             &pool,

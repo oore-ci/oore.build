@@ -78,6 +78,24 @@ Sizes are in binary units: 1 MB is 1,048,576 bytes. A pipeline can have up to
 20 rules. The budget applies when a build reports its result, so re-run the
 latest build to see it on an open pull request.
 
+To keep the budget in the repository instead, set
+[`budgets`](/reference/config/oore-yaml-v2#budgets) on the targets of a
+version 2 `.oore.yaml`. A build whose file sets `budgets` uses the file's
+budgets in place of the pipeline's, and the check summary says which field
+they came from.
+
+## See analyzer warnings [#analyzer]
+
+You do not need to set anything up. After a build's steps run, whether they
+passed or one failed, the runner runs `dart analyze --format=json` in the
+repository root as a step named `analyze`. The check shows the error, warning
+and info counts and how they changed since the baseline build, and the build
+page shows them on its **Analyzer** tab. The analyzer never changes the build's
+or the check's result.
+
+To turn it off for a pipeline, add the env var `OORE_ANALYZE` with the value
+`false` to the pipeline or its `.oore.yaml`.
+
 ## Verify the result
 
 On the pull request or merge request:
@@ -99,6 +117,10 @@ On the pull request or merge request:
 - With a size budget, an artifact over budget turns the check to **failure**
   and its title says the build is over the size budget, or the summary shows a
   warning in warn mode.
+- On GitHub, an **Analyzer** table shows the errors, warnings and infos with
+  their change since the baseline build, such as `| Warnings | 3 | +2 |`,
+  followed by the most severe diagnostics with their file and line. On GitLab,
+  the status description adds `analyzer: 1 error (+1), 3 warnings (+2)`.
 
 ## Troubleshooting
 
@@ -129,6 +151,18 @@ so.
 
 Oore could not load the artifact sizes. The check keeps the build's result.
 Re-run the build.
+
+### The analyze step is skipped
+
+The build log says why after `[oore-analyze] Skipped:`. The repository root
+has no `pubspec.yaml`, the packages are not resolved because the build failed
+before a step such as `flutter pub get` or `flutter build` ran, `dart` is not
+on the runner's `PATH`, or the analyzer ran longer than 10 minutes.
+
+### The analyzer counts show no change
+
+No earlier successful build on the base branch reported an analysis. Build the
+base branch once.
 
 ### An artifact never pairs with the baseline
 

@@ -228,12 +228,14 @@ use utoipa::{
         operations::get_job_retry_artifacts,
         operations::report_job_publish_result,
         operations::report_job_test_results,
+        operations::report_job_analysis,
         // ── Build Logs ──
         operations::append_build_logs,
         operations::get_build_logs,
         operations::stream_events,
         operations::stream_build_logs,
         operations::get_build_test_results,
+        operations::get_build_analysis,
         operations::create_stream_token,
         // ── Artifacts ──
         operations::create_artifact,
@@ -393,6 +395,7 @@ use utoipa::{
         oore_contract::SizeBudget,
         oore_contract::SizeBudgetMode,
         oore_contract::SizeBudgetRule,
+        oore_contract::TargetSizeBudget,
         oore_contract::ConcurrencyPolicy,
         oore_contract::Pipeline,
         oore_contract::CreatePipelineRequest,
@@ -619,6 +622,14 @@ use utoipa::{
         oore_contract::TestRunOutcome,
         oore_contract::BuildTestFailure,
         oore_contract::BuildTestResultsResponse,
+        // Analyzer
+        oore_contract::AnalyzerSeverity,
+        oore_contract::AnalyzerDiagnostic,
+        oore_contract::AnalyzerCounts,
+        oore_contract::RunnerAnalyzerReport,
+        oore_contract::BuildAnalysis,
+        oore_contract::BuildAnalysisBaseline,
+        oore_contract::BuildAnalysisResponse,
         // Tester feedback
         oore_contract::CreateBuildFeedbackRequest,
         oore_contract::BuildFeedback,
@@ -3381,6 +3392,44 @@ mod operations {
         )
     )]
     pub(super) fn get_build_test_results() {}
+
+    /// Report the analyzer summary
+    ///
+    /// Runner reports the `dart analyze --format=json` summary of a build. A
+    /// later report replaces an earlier one. Only accepted while the build
+    /// runs.
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/analysis", tag = "Builds",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+        ),
+        request_body = RunnerAnalyzerReport,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Recorded", body = OkResponse),
+            (status = 403, description = "Runner does not match the assignment", body = ApiError),
+            (status = 404, description = "Build not found", body = ApiError),
+            (status = 409, description = "Build is not running", body = ApiError),
+        )
+    )]
+    pub(super) fn report_job_analysis() {}
+
+    /// Get the build's analyzer summary
+    ///
+    /// Returns the `dart analyze` counts and most severe diagnostics of a
+    /// build, with the baseline build on the base branch it compares with.
+    /// `analysis` is `null` when the build reported none.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/analysis", tag = "Builds",
+        params(
+            ("build_id" = String, Path, description = "Build ID"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Analyzer summary", body = BuildAnalysisResponse),
+            (status = 404, description = "Build not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_analysis() {}
 
     /// Stream build logs (SSE)
     ///

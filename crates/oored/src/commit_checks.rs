@@ -7,7 +7,10 @@
 use std::time::Duration;
 
 use chrono::{DateTime, SecondsFormat};
-use oore_contract::{BuildSizeReport, BuildStatus, SizeBudget, SizeBudgetMode, StepResult};
+use oore_contract::{
+    AnalyzerCounts, AnalyzerSeverity, BuildAnalysisResponse, BuildSizeReport, BuildStatus,
+    SizeBudget, SizeBudgetMode, StepResult, TargetSizeBudget, pipeline_config::platform_key,
+};
 use sqlx::{Row, SqlitePool};
 use tracing::{debug, warn};
 use url::Url;
@@ -16,6 +19,7 @@ use crate::artifact_sizes::{
     BudgetLimit, BudgetViolation, check_budget, format_delta, format_delta_with, format_size,
     load_size_report,
 };
+use crate::build_analysis::load_analysis_report;
 use crate::instance_settings::{
     DEFAULT_ALLOWED_ORIGINS, load_effective_external_access_network_settings,
 };
@@ -174,6 +178,9 @@ struct BuildContext {
     steps: Vec<StepResult>,
     /// The pipeline's artifact size limits.
     size_budget: SizeBudget,
+    /// The size budgets the build's `.oore.yaml` sets, per target. When there
+    /// are any, they replace `size_budget` for every check of the build.
+    file_size_budgets: Vec<TargetSizeBudget>,
     provider: String,
     integration_id: String,
     host_url: String,
@@ -295,6 +302,11 @@ async fn load_context(pool: &SqlitePool, build_id: &str) -> anyhow::Result<Optio
             .get::<Option<String>, _>("size_budget")
             .and_then(|raw| serde_json::from_str(&raw).ok())
             .unwrap_or_default(),
+        file_size_budgets: snapshot
+            .get("file_size_budgets")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default(),
         provider: row.get("provider"),
         integration_id: row.get("integration_id"),
         host_url: row.get("host_url"),
@@ -393,6 +405,31 @@ fn budget_belongs_to(artifact_type: &str, name: &str, platform: &str) -> bool {
     artifact_platform(artifact_type, name).is_none_or(|owner| owner == platform)
 }
 
+/// The size budget a platform's check enforces, with the `.oore.yaml` field
+/// it came from. The file's budgets, when it sets any, replace the
+/// pipeline's for every check of the build, so a target without `budgets`
+/// has none.
+fn platform_budget<'a>(
+    ctx: &'a BuildContext,
+    platform: &str,
+) -> Option<(&'a SizeBudget, Option<&'a str>)> {
+    if ctx.file_size_budgets.is_empty() {
+        return Some((&ctx.size_budget, None));
+    }
+    ctx.file_size_budgets
+        .iter()
+        .find(|target| platform_key(&target.platform) == platform)
+        .map(|target| (&target.budget, Some(target.source.as_str())))
+}
+
+/// Says where a budget from the build's `.oore.yaml` came from.
+fn budget_source_note(source: &str) -> String {
+    format!(
+        "\nSet by `{}` in the build's `.oore.yaml`, in place of the pipeline's size budget.\n",
+        source.replace('`', "")
+    )
+}
+
 /// The size of each of a platform's artifacts and its change from the
 /// baseline build, as a Markdown section.
 fn size_section(
@@ -481,6 +518,7 @@ fn budget_actual(violation: &BudgetViolation) -> String {
 fn budget_section(
     report: &BuildSizeReport,
     budget: &SizeBudget,
+    source: Option<&str>,
     violations: &[&BudgetViolation],
     platform: &str,
 ) -> Option<String> {
@@ -514,8 +552,12 @@ fn budget_section(
             unmatched.join(", ")
         )
     });
+    let source_note = source.map(budget_source_note);
     if violations.is_empty() {
         let mut section = String::from("\n**Size budget**: every artifact is within the budget.\n");
+        if let Some(note) = &source_note {
+            section.push_str(note);
+        }
         if let Some(note) = &skipped_note {
             section.push_str(note);
         }
@@ -527,6 +569,9 @@ fn budget_section(
             "\n**Size budget warning**\n\nThe budget only warns, so the check keeps its result.\n",
         ),
     };
+    if let Some(note) = &source_note {
+        section.push_str(note);
+    }
     if let Some(note) = &skipped_note {
         section.push_str(note);
     }
@@ -551,17 +596,25 @@ fn status_description(
     title: &str,
     mode: SizeBudgetMode,
     violations: &[&BudgetViolation],
+    analysis: Option<&BuildAnalysisResponse>,
 ) -> String {
-    let Some(first) = violations.first() else {
-        return title.to_string();
-    };
-    let label = match mode {
-        SizeBudgetMode::Fail => "over the size budget",
-        SizeBudgetMode::Warn => "size budget warning",
-    };
-    let mut description = format!("{title} · {label}: {} {}", first.name, budget_actual(first));
-    if violations.len() > 1 {
-        description.push_str(&format!(" and {} more", violations.len() - 1));
+    let mut description = title.to_string();
+    if let Some(first) = violations.first() {
+        let label = match mode {
+            SizeBudgetMode::Fail => "over the size budget",
+            SizeBudgetMode::Warn => "size budget warning",
+        };
+        description.push_str(&format!(
+            " · {label}: {} {}",
+            first.name,
+            budget_actual(first)
+        ));
+        if violations.len() > 1 {
+            description.push_str(&format!(" and {} more", violations.len() - 1));
+        }
+    }
+    if let Some(analyzer) = analysis.and_then(analyzer_description) {
+        description.push_str(&format!(" · {analyzer}"));
     }
     if description.chars().count() > MAX_GITLAB_DESCRIPTION_CHARS {
         description = description
@@ -573,6 +626,130 @@ fn status_description(
     description
 }
 
+fn count_label(count: i64, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
+/// A count's change from the baseline, such as `+2`.
+fn count_delta(count: i64, baseline: Option<i64>) -> Option<String> {
+    let delta = count - baseline?;
+    Some(match delta {
+        0 => "0".to_string(),
+        delta if delta > 0 => format!("+{delta}"),
+        delta => format!("−{}", delta.unsigned_abs()),
+    })
+}
+
+/// The analyzer part of a GitLab status description, such as
+/// `analyzer: 1 error (+1), 3 warnings (+2)`.
+fn analyzer_description(response: &BuildAnalysisResponse) -> Option<String> {
+    let counts = response.analysis.as_ref()?.counts;
+    let base = response.baseline.as_ref().map(|baseline| baseline.counts);
+    let part = |count: i64, baseline: Option<i64>, one: &str, many: &str| {
+        let mut text = count_label(count, one, many);
+        if let Some(delta) = count_delta(count, baseline) {
+            text.push_str(&format!(" ({delta})"));
+        }
+        text
+    };
+    Some(format!(
+        "analyzer: {}, {}",
+        part(counts.errors, base.map(|b| b.errors), "error", "errors"),
+        part(
+            counts.warnings,
+            base.map(|b| b.warnings),
+            "warning",
+            "warnings"
+        ),
+    ))
+}
+
+/// Diagnostics listed in the check summary.
+const MAX_LISTED_DIAGNOSTICS: usize = 5;
+
+/// The build's `dart analyze` counts, their change from the baseline build
+/// and the most severe diagnostics, as a Markdown section.
+fn analysis_section(response: &BuildAnalysisResponse, base: Option<&Url>) -> Option<String> {
+    let analysis = response.analysis.as_ref()?;
+    let mut section = String::from("\n**Analyzer**");
+    match (&response.baseline, &response.base_branch) {
+        (Some(baseline), _) => {
+            let label = format!("build #{}", baseline.build_number);
+            let label = match base {
+                Some(base) => format!(
+                    "[{label}]({})",
+                    web_url(base, &format!("/builds/{}", baseline.build_id), None)
+                ),
+                None => label,
+            };
+            section.push_str(&format!(
+                " compared with {label} on `{}`\n",
+                baseline.branch.replace('`', "")
+            ));
+        }
+        (None, Some(branch)) => section.push_str(&format!(
+            "\n\nNo earlier successful build on `{}` reported an analysis to compare with.\n",
+            branch.replace('`', "")
+        )),
+        (None, None) => section.push('\n'),
+    }
+    let base_counts: Option<AnalyzerCounts> =
+        response.baseline.as_ref().map(|baseline| baseline.counts);
+    section.push_str("\n| Severity | Count | Change |\n| --- | ---: | ---: |\n");
+    for (label, count, baseline) in [
+        (
+            "Errors",
+            analysis.counts.errors,
+            base_counts.map(|b| b.errors),
+        ),
+        (
+            "Warnings",
+            analysis.counts.warnings,
+            base_counts.map(|b| b.warnings),
+        ),
+        ("Infos", analysis.counts.infos, base_counts.map(|b| b.infos)),
+    ] {
+        section.push_str(&format!(
+            "| {label} | {count} | {} |\n",
+            count_delta(count, baseline).unwrap_or_else(|| "—".to_string())
+        ));
+    }
+    if !analysis.diagnostics.is_empty() {
+        section.push('\n');
+        for diagnostic in analysis.diagnostics.iter().take(MAX_LISTED_DIAGNOSTICS) {
+            let severity = match diagnostic.severity {
+                AnalyzerSeverity::Error => "Error",
+                AnalyzerSeverity::Warning => "Warning",
+                AnalyzerSeverity::Info => "Info",
+            };
+            let location = if diagnostic.file.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " `{}:{}`",
+                    diagnostic.file.replace('`', ""),
+                    diagnostic.line
+                )
+            };
+            section.push_str(&format!(
+                "- {severity}{location} {} (`{}`)\n",
+                markdown_text(&diagnostic.message),
+                diagnostic.code.replace('`', "")
+            ));
+        }
+        let total = analysis.counts.errors + analysis.counts.warnings + analysis.counts.infos;
+        let listed = analysis.diagnostics.len().min(MAX_LISTED_DIAGNOSTICS) as i64;
+        match total - listed {
+            more if more <= 0 => {}
+            1 => section.push_str("\n1 more diagnostic is listed with the build.\n"),
+            more => section.push_str(&format!(
+                "\n{more} more diagnostics are listed with the build.\n"
+            )),
+        }
+    }
+    Some(section)
+}
+
 /// Steps the runner adds around any configuration's own steps.
 const RUNNER_STEPS: &[&str] = &[
     "checkout",
@@ -580,6 +757,7 @@ const RUNNER_STEPS: &[&str] = &[
     "flutter-version",
     "android-sign",
     "ios-sign",
+    "analyze",
     "artifacts",
     "publish-play",
     "publish-app-store",
@@ -695,28 +873,30 @@ fn platform_reports(
     base: Option<&Url>,
     artifacts: &[ArtifactLink],
     sizes: Option<&BuildSizeReport>,
+    analysis: Option<&BuildAnalysisResponse>,
 ) -> Vec<PlatformReport> {
     let build_url = base.map(|base| web_url(base, &format!("/builds/{}", ctx.build_id), None));
     let named_steps = has_named_steps(ctx);
     let title = check_title(ctx, named_steps);
     let single_platform = ctx.platforms.len() == 1;
-    let violations = sizes
-        .map(|sizes| check_budget(sizes, &ctx.size_budget))
-        .unwrap_or_default();
     ctx.platforms
         .iter()
         .map(|platform| {
+            let budget = platform_budget(ctx, platform);
+            let violations = match (sizes, budget) {
+                (Some(sizes), Some((budget, _))) => check_budget(sizes, budget),
+                _ => Vec::new(),
+            };
             let platform_violations: Vec<&BudgetViolation> = violations
                 .iter()
                 .filter(|violation| {
                     budget_belongs_to(&violation.artifact_type, &violation.name, platform)
                 })
                 .collect();
+            let mode = budget.map(|(budget, _)| budget.mode).unwrap_or_default();
             // The budget fails the check, never the build.
-            let over_budget =
-                ctx.size_budget.mode == SizeBudgetMode::Fail && !platform_violations.is_empty();
-            let description =
-                status_description(&title, ctx.size_budget.mode, &platform_violations);
+            let over_budget = mode == SizeBudgetMode::Fail && !platform_violations.is_empty();
+            let description = status_description(&title, mode, &platform_violations, analysis);
             let title = if over_budget {
                 format!("{title} but is over the size budget")
             } else {
@@ -764,22 +944,36 @@ fn platform_reports(
             {
                 summary.push_str(&section);
             }
-            match sizes {
-                Some(sizes) => {
+            match (sizes, budget) {
+                (Some(sizes), Some((budget, source))) => {
                     if let Some(section) =
-                        budget_section(sizes, &ctx.size_budget, &platform_violations, platform)
+                        budget_section(sizes, budget, source, &platform_violations, platform)
                     {
                         summary.push_str(&section);
                     }
                 }
                 // The sizes could not be loaded. The check keeps its result,
                 // but says the budget went unchecked.
-                None if ctx.status == BuildStatus::Succeeded
-                    && !ctx.size_budget.rules.is_empty() =>
+                (None, Some((budget, _)))
+                    if ctx.status == BuildStatus::Succeeded && !budget.rules.is_empty() =>
                 {
                     summary.push_str("\n**The size budget could not be checked.**\n");
                 }
-                None => {}
+                // The file sets budgets for other targets only, which turns
+                // the pipeline's budget off for this check too.
+                (_, None)
+                    if ctx.status == BuildStatus::Succeeded
+                        && !ctx.size_budget.rules.is_empty() =>
+                {
+                    summary.push_str(
+                        "\n**Size budget**: none for this platform. The build's `.oore.yaml` sets `budgets` on other targets, which replaces the pipeline's size budget.\n",
+                    );
+                }
+                _ => {}
+            }
+
+            if let Some(section) = analysis.and_then(|analysis| analysis_section(analysis, base)) {
+                summary.push_str(&section);
             }
 
             if named_steps && let Some(section) = steps_section(&ctx.steps) {
@@ -903,7 +1097,25 @@ async fn report_build(
     } else {
         None
     };
-    let reports = platform_reports(&ctx, base.as_ref(), &artifacts, sizes.as_ref());
+    // The analyzer runs after failed builds too. Like sizes, a failed
+    // lookup only leaves the section out.
+    let analysis = if matches!(ctx.status, BuildStatus::Succeeded | BuildStatus::Failed) {
+        load_analysis_report(pool, &ctx.build_id)
+            .await
+            .unwrap_or_else(|error| {
+                warn!(%error, build_id = %ctx.build_id, "failed to load the analysis for the check");
+                None
+            })
+    } else {
+        None
+    };
+    let reports = platform_reports(
+        &ctx,
+        base.as_ref(),
+        &artifacts,
+        sizes.as_ref(),
+        analysis.as_ref(),
+    );
 
     match ctx.provider.as_str() {
         "github" => {
@@ -1157,7 +1369,14 @@ mod tests {
         let url = frontend_base_url(pool).await;
         let artifacts = load_artifacts(pool, url.as_ref(), build_id).await.unwrap();
         let sizes = load_size_report(pool, build_id).await.unwrap();
-        let reports = platform_reports(&ctx, url.as_ref(), &artifacts, sizes.as_ref());
+        let analysis = load_analysis_report(pool, build_id).await.unwrap();
+        let reports = platform_reports(
+            &ctx,
+            url.as_ref(),
+            &artifacts,
+            sizes.as_ref(),
+            analysis.as_ref(),
+        );
         let client = scm_http_client().unwrap();
         report_github(pool, client, base, "token", &ctx, &reports)
             .await
@@ -2016,7 +2235,7 @@ mod tests {
 
         let ctx = load_context(&pool, "b2").await.unwrap().unwrap();
         // The reporter passes no sizes when loading them fails.
-        let reports = platform_reports(&ctx, None, &[], None);
+        let reports = platform_reports(&ctx, None, &[], None, None);
         let android = github_check_run(&ctx, &reports[0]);
         assert_eq!(android["conclusion"], "success");
         assert_eq!(android["output"]["title"], "Build #2 succeeded");
@@ -2094,5 +2313,265 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("x86\\_64-release.apk | Grows"), "{text}");
+    }
+
+    async fn set_file_budgets(pool: &SqlitePool, build_id: &str, budgets: serde_json::Value) {
+        sqlx::query(
+            "UPDATE builds SET config_snapshot = json_set(config_snapshot, '$.file_size_budgets', json(?2)) WHERE id = ?1",
+        )
+        .bind(build_id)
+        .bind(budgets.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn file_budgets_replace_the_pipeline_budget_and_say_so() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        grown_bundle(&pool).await;
+        // The pipeline's budget would fail the bundle.
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "fail", "rules": [{ "kind": "aab", "max_bytes": 1 }] }),
+        )
+        .await;
+        set_file_budgets(
+            &pool,
+            "b2",
+            serde_json::json!([{
+                "platform": "android",
+                "source": "workflows.release.targets.android.budgets",
+                "budget": { "mode": "fail", "rules": [{ "kind": "aab", "max_increase_bytes": 2 * MB }] },
+            }]),
+        )
+        .await;
+
+        let (android, ios) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "success");
+        let text = summary(&android);
+        assert!(
+            text.contains("**Size budget**: every artifact is within the budget."),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "Set by `workflows.release.targets.android.budgets` in the build's `.oore.yaml`, in place of the pipeline's size budget."
+            ),
+            "{text}"
+        );
+        // The file sets no iOS budget, and the pipeline's no longer applies.
+        assert_eq!(ios["conclusion"], "success");
+        assert!(
+            summary(&ios).contains("**Size budget**: none for this platform."),
+            "{}",
+            summary(&ios)
+        );
+
+        // A file budget that the bundle exceeds fails the check.
+        set_file_budgets(
+            &pool,
+            "b2",
+            serde_json::json!([{
+                "platform": "android",
+                "source": "targets.android.budgets",
+                "budget": { "mode": "fail", "rules": [{ "kind": "aab", "max_increase_percent": 5 }] },
+            }]),
+        )
+        .await;
+        set_budget(&pool, serde_json::json!({})).await;
+        let (android, _) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "failure");
+        let text = summary(&android);
+        assert!(
+            text.contains("| app-release.aab | Grows at most 5% | +1.2 MB (+6.29%) |"),
+            "{text}"
+        );
+        assert!(text.contains("Set by `targets.android.budgets`"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn file_budgets_for_other_targets_turn_the_pipeline_budget_off() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        grown_bundle(&pool).await;
+        set_budget(
+            &pool,
+            serde_json::json!({ "mode": "fail", "rules": [{ "kind": "aab", "max_bytes": 1 }] }),
+        )
+        .await;
+        set_file_budgets(
+            &pool,
+            "b2",
+            serde_json::json!([{
+                "platform": "ios",
+                "source": "targets.ios.budgets",
+                "budget": { "mode": "fail", "rules": [{ "kind": "ipa", "max_bytes": 1 }] },
+            }]),
+        )
+        .await;
+        let (android, _) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "success");
+        assert!(
+            summary(&android).contains("`.oore.yaml` sets `budgets` on other targets"),
+            "{}",
+            summary(&android)
+        );
+
+        // Without file budgets the pipeline's budget applies again.
+        sqlx::query(
+            "UPDATE builds SET config_snapshot = json_remove(config_snapshot, '$.file_size_budgets')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (android, _) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "failure");
+        assert!(
+            !summary(&android).contains("Set by"),
+            "{}",
+            summary(&android)
+        );
+    }
+
+    async fn analyze(pool: &SqlitePool, build_id: &str, errors: i64, warnings: i64, infos: i64) {
+        use oore_contract::{AnalyzerDiagnostic, RunnerAnalyzerReport};
+        let mut diagnostics = Vec::new();
+        if errors > 0 {
+            diagnostics.push(AnalyzerDiagnostic {
+                severity: AnalyzerSeverity::Error,
+                code: "undefined_identifier".to_string(),
+                message: "Undefined name 'sessoin'.".to_string(),
+                file: "lib/src/login.dart".to_string(),
+                line: 42,
+                column: 5,
+            });
+        }
+        for index in 0..warnings {
+            diagnostics.push(AnalyzerDiagnostic {
+                severity: AnalyzerSeverity::Warning,
+                code: "unused_import".to_string(),
+                message: "Unused import: 'dart:async'.".to_string(),
+                file: format!("lib/w{index}.dart"),
+                line: 3,
+                column: 8,
+            });
+        }
+        crate::build_analysis::record_analysis(
+            pool,
+            build_id,
+            &RunnerAnalyzerReport {
+                counts: AnalyzerCounts {
+                    errors,
+                    warnings,
+                    infos,
+                },
+                diagnostics,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_check_shows_analyzer_counts_and_the_change_from_the_base_branch() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        grown_bundle(&pool).await;
+        analyze(&pool, "b1", 0, 1, 4).await;
+        analyze(&pool, "b2", 1, 3, 4).await;
+
+        let (android, ios) = report_checks(&pool).await;
+        let text = summary(&android);
+        assert!(
+            text.contains(
+                "**Analyzer** compared with [build #1](https://oore.example.com/builds/b1) on `main`"
+            ),
+            "{text}"
+        );
+        for row in [
+            "| Errors | 1 | +1 |",
+            "| Warnings | 3 | +2 |",
+            "| Infos | 4 | 0 |",
+        ] {
+            assert!(text.contains(row), "{row}\n{text}");
+        }
+        assert!(
+            text.contains(
+                "- Error `lib/src/login.dart:42` Undefined name 'sessoin'. (`undefined_identifier`)"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("4 more diagnostics are listed with the build."),
+            "{text}"
+        );
+        // The analysis covers the whole app, so every check shows it.
+        assert!(summary(&ios).contains("**Analyzer**"), "{}", summary(&ios));
+        // It never changes the result.
+        assert_eq!(android["conclusion"], "success");
+
+        // A failed build shows its analysis too.
+        set_status(&pool, "b2", "failed").await;
+        let (android, _) = report_checks(&pool).await;
+        assert_eq!(android["conclusion"], "failure");
+        assert!(summary(&android).contains("| Warnings | 3 | +2 |"));
+    }
+
+    #[tokio::test]
+    async fn without_an_analyzed_baseline_the_counts_have_no_change() {
+        let pool = seeded_pool("github", "https://github.com").await;
+        grown_bundle(&pool).await;
+        analyze(&pool, "b2", 0, 1, 0).await;
+        let (android, _) = report_checks(&pool).await;
+        let text = summary(&android);
+        assert!(
+            text.contains(
+                "No earlier successful build on `main` reported an analysis to compare with."
+            ),
+            "{text}"
+        );
+        assert!(text.contains("| Warnings | 1 | — |"), "{text}");
+
+        // A build without an analysis has no section.
+        sqlx::query("DELETE FROM build_analyses")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (android, _) = report_checks(&pool).await;
+        assert!(
+            !summary(&android).contains("Analyzer"),
+            "{}",
+            summary(&android)
+        );
+    }
+
+    #[tokio::test]
+    async fn gitlab_statuses_describe_the_analysis() {
+        let (base, received) = capture_server().await;
+        let key = vec![7u8; 32];
+        let pool = gitlab_pool(&base, &key).await;
+        grown_bundle(&pool).await;
+        analyze(&pool, "b1", 0, 1, 4).await;
+        analyze(&pool, "b2", 1, 3, 0).await;
+        sqlx::query("UPDATE builds SET scm_reported_status = status WHERE id = 'b1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        report_due_builds(&pool, &key, &base).await.unwrap();
+        assert_eq!(
+            gitlab_states(&received)[0],
+            (
+                "Build #2 succeeded · analyzer: 1 error (+1), 3 warnings (+2)".to_string(),
+                "success".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn count_changes_read_as_signed_numbers() {
+        assert_eq!(count_delta(3, Some(1)).as_deref(), Some("+2"));
+        assert_eq!(count_delta(1, Some(3)).as_deref(), Some("−2"));
+        assert_eq!(count_delta(2, Some(2)).as_deref(), Some("0"));
+        assert_eq!(count_delta(2, None), None);
     }
 }

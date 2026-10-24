@@ -2180,6 +2180,54 @@
         ]
       }
     },
+    "/v1/builds/{build_id}/analysis": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Get the build's analyzer summary",
+        "description": "Returns the `dart analyze` counts and most severe diagnostics of a\nbuild, with the baseline build on the base branch it compares with.\n`analysis` is `null` when the build reported none.",
+        "operationId": "get_build_analysis",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Analyzer summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAnalysisResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/builds/{build_id}/approve": {
       "post": {
         "tags": [
@@ -9235,6 +9283,93 @@
         ]
       }
     },
+    "/v1/runners/{runner_id}/jobs/{job_id}/analysis": {
+      "post": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Report the analyzer summary",
+        "description": "Runner reports the `dart analyze --format=json` summary of a build. A\nlater report replaces an earlier one. Only accepted while the build\nruns.",
+        "operationId": "report_job_analysis",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerAnalyzerReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Runner does not match the assignment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Build is not running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/runners/{runner_id}/jobs/{job_id}/android-signing": {
       "get": {
         "tags": [
@@ -13150,6 +13285,74 @@
           }
         }
       },
+      "AnalyzerCounts": {
+        "type": "object",
+        "description": "Diagnostics counted by severity.",
+        "required": [
+          "errors",
+          "warnings",
+          "infos"
+        ],
+        "properties": {
+          "errors": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "infos": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "warnings": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AnalyzerDiagnostic": {
+        "type": "object",
+        "description": "One `dart analyze` diagnostic.",
+        "required": [
+          "severity",
+          "code",
+          "message",
+          "file",
+          "line",
+          "column"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The diagnostic code, such as `unused_import`."
+          },
+          "column": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "file": {
+            "type": "string",
+            "description": "Path relative to the build workspace, such as `lib/main.dart`."
+          },
+          "line": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/AnalyzerSeverity"
+          }
+        }
+      },
+      "AnalyzerSeverity": {
+        "type": "string",
+        "description": "Severity of a `dart analyze` diagnostic.",
+        "enum": [
+          "error",
+          "warning",
+          "info"
+        ]
+      },
       "AndroidSigningBuildType": {
         "type": "string",
         "enum": [
@@ -14145,6 +14348,89 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "BuildAnalysis": {
+        "type": "object",
+        "description": "A build's analyzer summary.",
+        "required": [
+          "counts",
+          "diagnostics",
+          "recorded_at"
+        ],
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/AnalyzerCounts"
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalyzerDiagnostic"
+            },
+            "description": "The most severe diagnostics, errors first, at most 50."
+          },
+          "recorded_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "BuildAnalysisBaseline": {
+        "type": "object",
+        "description": "The earlier build an analysis compares with: the latest successful build\nof the same pipeline on the base branch that reported one, as for sizes.",
+        "required": [
+          "build_id",
+          "build_number",
+          "branch",
+          "counts"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "build_id": {
+            "type": "string"
+          },
+          "build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/AnalyzerCounts"
+          }
+        }
+      },
+      "BuildAnalysisResponse": {
+        "type": "object",
+        "properties": {
+          "analysis": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildAnalysis",
+                "description": "`null` when the build reported no analysis."
+              }
+            ]
+          },
+          "base_branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The branch the build compares with: a pull request's target branch,\notherwise the default branch."
+          },
+          "baseline": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildAnalysisBaseline"
+              }
+            ]
           }
         }
       },
@@ -20355,6 +20641,26 @@
           }
         }
       },
+      "RunnerAnalyzerReport": {
+        "type": "object",
+        "description": "The summary of `dart analyze --format=json` a runner reports after the\nbuild's steps.",
+        "required": [
+          "counts",
+          "diagnostics"
+        ],
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/AnalyzerCounts"
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalyzerDiagnostic"
+            },
+            "description": "The most severe diagnostics, errors first. The daemon keeps at most\n50."
+          }
+        }
+      },
       "RunnerAndroidSigningProfile": {
         "type": "object",
         "required": [
@@ -21947,6 +22253,27 @@
           }
         }
       },
+      "TargetSizeBudget": {
+        "type": "object",
+        "description": "A size budget a repository's `.oore.yaml` version 2 file sets on one\ntarget, after workflow overrides. When a build's file sets any, they\nreplace the pipeline's `size_budget` for that build's commit checks.",
+        "required": [
+          "platform",
+          "source",
+          "budget"
+        ],
+        "properties": {
+          "budget": {
+            "$ref": "#/components/schemas/SizeBudget"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/BuildPlatform"
+          },
+          "source": {
+            "type": "string",
+            "description": "Where the budget came from, such as `targets.android.budgets`."
+          }
+        }
+      },
       "TestNotificationChannelResponse": {
         "type": "object",
         "required": [
@@ -22309,6 +22636,16 @@
               "null"
             ],
             "format": "int32"
+          },
+          "size_budgets": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/TargetSizeBudget"
+            },
+            "description": "The size budgets the build's `.oore.yaml` version 2 file sets, sent\nonce the runner planned the build. An empty list means the file sets\nnone; leaving it out keeps what the build has."
           },
           "status": {
             "type": "string"

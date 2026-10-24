@@ -106,6 +106,7 @@ named `Build Android (free)`, `Build Android (pro)` and so on.
 | `build`     | string   | Yes      | The complete build command for the platform.                  |
 | `artifacts` | string[] | No       | Glob patterns. Defaults to the platform's version 1 defaults. |
 | `publish`   | object   | No       | Where the build is uploaded. See [Publish](#publish).         |
+| `budgets`   | object   | No       | Artifact size limits for the check. See [Budgets](#budgets).  |
 
 Targets build in the order the file lists them. Artifact patterns follow the
 [version 1 rules](/reference/config/oore-yaml#artifacts) and can use `vars` and
@@ -137,6 +138,10 @@ after the step, including when the step fails, and shows the results on the
 build's Tests tab. Plain `flutter test` and `dart test` commands are still
 detected without it.
 
+After the steps, the runner adds an `analyze` step that runs
+`dart analyze --format=json`, as for
+[version 1](/reference/config/oore-yaml#analyzer).
+
 ## Environment and references
 
 `env` maps names to string values. Quote numbers and booleans, such as
@@ -160,21 +165,22 @@ other vars, is rejected with the cycle it forms, such as
 
 `workflows` maps a name to overrides of the top level:
 
-| Field     | Type        | Effect                                                                                             |
-| --------- | ----------- | -------------------------------------------------------------------------------------------------- |
-| `on`      | object      | When the workflow runs. Replaces the top-level `on`.                                               |
-| `targets` | list or map | `[android]` picks top-level targets; a map overrides `build`, `artifacts` or `publish` per target. |
-| `flavors` | string[]    | A subset of `app.flavors`.                                                                         |
-| `steps`   | list        | Replaces the top-level steps. Entries can name top-level steps.                                    |
-| `env`     | map         | Adds to or replaces top-level env values by name.                                                  |
-| `vars`    | map         | Adds to or replaces top-level vars by name, also where other vars use them.                        |
+| Field     | Type        | Effect                                                                                                        |
+| --------- | ----------- | ------------------------------------------------------------------------------------------------------------- |
+| `on`      | object      | When the workflow runs. Replaces the top-level `on`.                                                          |
+| `targets` | list or map | `[android]` picks top-level targets; a map overrides `build`, `artifacts`, `publish` or `budgets` per target. |
+| `flavors` | string[]    | A subset of `app.flavors`.                                                                                    |
+| `steps`   | list        | Replaces the top-level steps. Entries can name top-level steps.                                               |
+| `env`     | map         | Adds to or replaces top-level env values by name.                                                             |
+| `vars`    | map         | Adds to or replaces top-level vars by name, also where other vars use them.                                   |
 
 A workflow target that has no top-level target of the same platform must set
 `build`. Where a workflow target leaves out `build` or `artifacts`, the
 top-level target's applies. `publish` works the same way, except that a
 workflow target that sets its own `build` publishes only if it also sets
 `publish`: the top-level `publish` uploads what the top-level build makes.
-`publish: false` drops it without replacing `build`.
+`publish: false` drops it without replacing `build`. `budgets` applies until
+the workflow target sets its own, even with a new `build`.
 Workflow names use letters, digits, `-` and `_`.
 
 A pipeline builds one workflow, picked under **Workflow** in its settings (the
@@ -260,6 +266,47 @@ bundle.
 [`oore pipeline plan`](/reference/cli/oore-pipeline-plan) prints where each
 workflow publishes, and the pipeline editor's **What will run** section lists
 it with the plan's notes.
+
+## Budgets
+
+`budgets` on a target holds its artifacts to a size budget on the pull request
+check. It has the same shape and rules as the pipeline's
+[size budget](/reference/config/pipeline-settings#size-budget):
+
+```yaml
+targets:
+  android:
+    build: flutter build appbundle --release
+    budgets:
+      mode: fail # or warn, the default
+      rules:
+        - kind: aab
+          max_increase_bytes: 524288 # 512 KiB over the baseline build
+        - kind: apk
+          max_bytes: 62914560 # 60 MiB
+          max_increase_percent: 2.5
+```
+
+| Field                          | Type    | Description                                                                     |
+| ------------------------------ | ------- | ------------------------------------------------------------------------------- |
+| `mode`                         | string  | `fail` fails the check when an artifact is over; `warn` (default) only says so. |
+| `rules[].kind`                 | string  | The artifact's lowercase file extension, such as `aab`, `apk` or `ipa`.         |
+| `rules[].max_bytes`            | integer | Largest size allowed, in bytes. Greater than 0.                                 |
+| `rules[].max_increase_bytes`   | integer | Largest growth over the baseline build, in bytes. 0 or more.                    |
+| `rules[].max_increase_percent` | number  | Largest growth over the baseline build, in percent. 0 or more.                  |
+
+A rule needs at least one limit. A target takes at most 20 rules, each kind
+once. `aab` and `apk` rules belong on `android` and `ipa` rules on `ios`.
+Values are bytes, with no `${{ }}` references.
+
+When the planned workflow sets `budgets` on any of its targets, the file's
+budgets replace the pipeline's size budget for the build: each platform's
+check uses its own target's budgets, and a target without `budgets` has none.
+`budgets: { rules: [] }` turns the budget off for that target. The check
+summary names the field the budget came from, such as
+`workflows.release.targets.android.budgets`. Files without `budgets` and
+version 1 files keep the pipeline's size budget. The budget only changes the
+check; the build itself never fails because of it.
 
 ## Triggers
 
