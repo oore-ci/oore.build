@@ -815,28 +815,29 @@ function demoFormPlan(
       ? available.filter((platform) => selected.includes(platform))
       : available
   const steps: Array<PipelinePlanStep> = []
+  // Sources match the daemon: `default` for commands Oore adds.
   const push = (
     phase: PipelinePlanStep['phase'],
     run: string,
+    source: string,
     platform?: BuildPlatform,
   ) => {
     const index = steps.filter((step) => step.phase === phase).length
-    steps.push({
-      name: `${phase}-${index + 1}`,
-      phase,
-      run,
-      source: `commands.${phase}[${index}]`,
-      platform,
-    })
+    steps.push({ name: `${phase}-${index + 1}`, phase, run, source, platform })
   }
-  push('pre_build', 'flutter pub get')
-  for (const run of config.commands.pre_build) push('pre_build', run)
+  const pushUser = (phase: PipelinePlanStep['phase'], runs: Array<string>) =>
+    runs.forEach((run, index) =>
+      push(phase, run, `commands.${phase}[${index}]`),
+    )
+  push('pre_build', 'flutter pub get', 'default')
+  pushUser('pre_build', config.commands.pre_build)
   for (const platform of platforms) {
     const args = config.platform_build_args?.[platform] ?? []
     const override = config.platform_commands?.[platform]
     push(
       'build',
       override || [DEMO_PLATFORM_BUILDS[platform], ...args].join(' '),
+      override ? `platform_commands.${platform}` : 'default',
       platform,
     )
     if (platform === 'android' && playBundle && !override) {
@@ -847,12 +848,13 @@ function demoFormPlan(
           'flutter build appbundle --release',
           ...args.filter((arg) => arg !== '--split-per-abi'),
         ].join(' '),
+        'default',
         platform,
       )
     }
   }
-  for (const run of config.commands.build) push('build', run)
-  for (const run of config.commands.post_build) push('post_build', run)
+  pushUser('build', config.commands.build)
+  pushUser('post_build', config.commands.post_build)
   return {
     valid: true,
     errors: [],

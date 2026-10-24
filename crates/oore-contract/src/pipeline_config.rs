@@ -324,48 +324,63 @@ fn default_play_bundle_command(args: &PlatformBuildArgs) -> String {
 /// Lower a v1 (or UI) execution configuration. With
 /// `include_default_platform_commands`, `flutter pub get` and one build
 /// command per platform are added, as Oore always has. Steps are named
-/// `<stage>-<n>`, the names v1 builds have always logged.
+/// `<stage>-<n>`, the names v1 builds have always logged. A step's source
+/// points at what the user wrote: `commands.<stage>[i]` for their own
+/// commands, `platform_commands.<platform>` for an override, and `default`
+/// for commands Oore adds.
 pub fn plan_execution_config(
     config: &PipelineExecutionConfig,
     include_default_platform_commands: bool,
     build_play_bundle: bool,
 ) -> PipelinePlan {
-    let mut pre_build: Vec<(String, Option<BuildPlatform>)> = Vec::new();
-    if include_default_platform_commands && !config.platforms.is_empty() {
-        pre_build.push(("flutter pub get".to_string(), None));
-    }
-    pre_build.extend(config.commands.pre_build.iter().cloned().map(|c| (c, None)));
+    // (command, source, platform)
+    type Lowered = Vec<(String, String, Option<BuildPlatform>)>;
+    let user = |stage: &str, commands: &[String]| -> Lowered {
+        commands
+            .iter()
+            .enumerate()
+            .map(|(index, run)| (run.clone(), format!("commands.{stage}[{index}]"), None))
+            .collect()
+    };
 
-    let mut build = Vec::new();
+    let mut pre_build: Lowered = Vec::new();
+    if include_default_platform_commands && !config.platforms.is_empty() {
+        pre_build.push(("flutter pub get".to_string(), "default".to_string(), None));
+    }
+    pre_build.extend(user("pre_build", &config.commands.pre_build));
+
+    let mut build: Lowered = Vec::new();
     if include_default_platform_commands {
         for platform in &config.platforms {
+            let overridden = match platform {
+                BuildPlatform::Android => config.platform_commands.android.is_some(),
+                BuildPlatform::Ios => config.platform_commands.ios.is_some(),
+                BuildPlatform::Macos => config.platform_commands.macos.is_some(),
+            };
             build.push((
                 default_platform_command(
                     platform,
                     &config.platform_commands,
                     &config.platform_build_args,
                 ),
+                if overridden {
+                    format!("platform_commands.{}", platform_key(platform))
+                } else {
+                    "default".to_string()
+                },
                 Some(platform.clone()),
             ));
-            if build_play_bundle
-                && *platform == BuildPlatform::Android
-                && config.platform_commands.android.is_none()
-            {
+            if build_play_bundle && *platform == BuildPlatform::Android && !overridden {
                 build.push((
                     default_play_bundle_command(&config.platform_build_args),
+                    "default".to_string(),
                     Some(BuildPlatform::Android),
                 ));
             }
         }
     }
-    build.extend(config.commands.build.iter().cloned().map(|c| (c, None)));
-    let post_build = config
-        .commands
-        .post_build
-        .iter()
-        .cloned()
-        .map(|c| (c, None))
-        .collect::<Vec<_>>();
+    build.extend(user("build", &config.commands.build));
+    let post_build = user("post_build", &config.commands.post_build);
 
     let mut steps = Vec::new();
     for (phase, commands) in [
@@ -374,12 +389,12 @@ pub fn plan_execution_config(
         (StepPhase::PostBuild, post_build),
     ] {
         let stage = phase.as_str();
-        for (index, (run, platform)) in commands.into_iter().enumerate() {
+        for (index, (run, source, platform)) in commands.into_iter().enumerate() {
             steps.push(PlanStep {
                 name: format!("{stage}-{}", index + 1),
                 phase,
                 run,
-                source: format!("commands.{stage}[{index}]"),
+                source,
                 platform,
                 flavor: None,
                 test_report: None,

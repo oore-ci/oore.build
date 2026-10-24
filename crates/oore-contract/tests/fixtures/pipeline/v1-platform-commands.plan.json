@@ -9,27 +9,27 @@
       "name": "pre_build-1",
       "phase": "pre_build",
       "run": "flutter pub get",
-      "source": "commands.pre_build[0]"
+      "source": "default"
     },
     {
       "name": "build-1",
       "phase": "build",
       "run": "flutter build ipa --release --export-method ad-hoc",
-      "source": "commands.build[0]",
+      "source": "platform_commands.ios",
       "platform": "ios"
     },
     {
       "name": "build-2",
       "phase": "build",
       "run": "flutter build apk --release --flavor prod",
-      "source": "commands.build[1]",
+      "source": "default",
       "platform": "android"
     },
     {
       "name": "build-3",
       "phase": "build",
       "run": "flutter build macos --release --dart-define=CHANNEL=beta",
-      "source": "commands.build[2]",
+      "source": "default",
       "platform": "macos"
     }
   ],

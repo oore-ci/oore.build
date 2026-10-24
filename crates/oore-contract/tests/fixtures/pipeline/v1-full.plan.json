@@ -9,26 +9,26 @@
       "name": "pre_build-1",
       "phase": "pre_build",
       "run": "flutter pub get",
-      "source": "commands.pre_build[0]"
+      "source": "default"
     },
     {
       "name": "pre_build-2",
       "phase": "pre_build",
       "run": "flutter pub get",
-      "source": "commands.pre_build[1]"
+      "source": "commands.pre_build[0]"
     },
     {
       "name": "build-1",
       "phase": "build",
       "run": "flutter build apk --release --split-per-abi --build-number=$OORE_VERSION_CODE",
-      "source": "commands.build[0]",
+      "source": "default",
       "platform": "android"
     },
     {
       "name": "build-2",
       "phase": "build",
       "run": "flutter build ios --release --no-codesign",
-      "source": "commands.build[1]",
+      "source": "default",
       "platform": "ios"
     },
     {

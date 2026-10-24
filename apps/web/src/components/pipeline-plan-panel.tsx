@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   AlertCircleIcon,
@@ -6,14 +6,17 @@ import {
 } from '@hugeicons/core-free-icons'
 
 import type {
-  BuildPlatform,
   PipelinePlanStep,
   PlanPipelineRequest,
   StepPhase,
 } from '@oore/client/models'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import { usePipelinePlan } from '@/hooks/use-pipelines'
-import { executionConfigFromForm } from '@/lib/pipeline-form-utils'
+import {
+  executionConfigFromForm,
+  selectedPlatforms,
+} from '@/lib/pipeline-form-utils'
+import { ALL_PLATFORMS, effectivePlanSelection } from '@/lib/pipeline-plan'
 import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import { textVariants } from '@/lib/recipes'
@@ -50,18 +53,30 @@ const PHASE_LABELS = {
 const PHASES: Array<StepPhase> = ['pre_build', 'build', 'post_build']
 
 type PlanSource = 'form' | 'file'
-const ALL_PLATFORMS = 'all'
 
-function useDebouncedValue<T>(value: T, delay: number): T {
-  const [debounced, setDebounced] = useState(value)
+/**
+ * Hands `value` to `apply` once edits settle. The first value goes out at
+ * once so the panel does not start empty. Values are compared by their JSON,
+ * so a new but equal object does not restart the timer.
+ */
+function useDebouncedJson<T>(
+  value: T,
+  delay: number,
+  apply: (value: T) => void,
+) {
   const key = JSON.stringify(value)
+  const first = useRef(true)
+  const applyRef = useRef(apply)
   useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delay)
+    applyRef.current = apply
+  }, [apply])
+  useEffect(() => {
+    const wait = first.current ? 0 : delay
+    first.current = false
+    // SAFETY: `key` is the JSON of a `T` built in this render.
+    const timer = setTimeout(() => applyRef.current(JSON.parse(key) as T), wait)
     return () => clearTimeout(timer)
-    // `key` stands for `value`, so a new but equal object does not restart it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, delay])
-  return debounced
 }
 
 function formPlanConfig(values: PipelineFormValues) {
@@ -96,24 +111,36 @@ export function PipelinePlanPanel({
   const [workflow, setWorkflow] = useState<string | null>(null)
   const [platform, setPlatform] = useState<string>(ALL_PLATFORMS)
 
+  const [body, setBody] = useState<PlanPipelineRequest | null>(null)
+  const planQuery = usePipelinePlan(body)
+  const result = body ? planQuery.data : undefined
+
+  // The last plan says which workflows and platforms exist, so a choice that
+  // is no longer offered falls back instead of locking the panel on an error
+  // with its select hidden. The form's own platforms are known up front.
+  const workflows = result?.workflows ?? []
+  const platforms =
+    source === 'form'
+      ? selectedPlatforms(values)
+      : (result?.available_platforms ?? [])
+  const selection = effectivePlanSelection({
+    platform,
+    platforms,
+    workflow,
+    workflows,
+  })
+
   const request: PlanPipelineRequest | null =
     source === 'form'
       ? { execution_config: formPlanConfig(values) }
       : yaml.trim()
-        ? { repository_yaml: yaml, workflow: workflow ?? undefined }
+        ? { repository_yaml: yaml, workflow: selection.workflow }
         : null
   if (request) {
     request.build_play_bundle = playBundle
-    if (platform !== ALL_PLATFORMS) {
-      // SAFETY: the select only offers platforms the plan reported.
-      request.platforms = [platform as BuildPlatform]
-    }
+    if (selection.platform) request.platforms = [selection.platform]
   }
-  const body = useDebouncedValue(request, PLAN_DEBOUNCE_MS)
-  const planQuery = usePipelinePlan(body)
-  const result = body ? planQuery.data : undefined
-  const workflows = result?.workflows ?? []
-  const platforms = result?.available_platforms ?? []
+  useDebouncedJson(request, PLAN_DEBOUNCE_MS, setBody)
 
   function changeSource(next: PlanSource) {
     setSource(next)
@@ -171,7 +198,7 @@ export function PipelinePlanPanel({
                   <Stack gap={2}>
                     <Label>Workflow</Label>
                     <Select
-                      value={workflow ?? workflows[0]}
+                      value={selection.workflow ?? workflows[0]}
                       onValueChange={(value) => setWorkflow(value)}
                     >
                       <SelectTrigger className="w-full" aria-label="Workflow">
@@ -193,7 +220,7 @@ export function PipelinePlanPanel({
                   <Stack gap={2}>
                     <Label>Platform</Label>
                     <Select
-                      value={platform}
+                      value={selection.platform ?? ALL_PLATFORMS}
                       onValueChange={(value) =>
                         setPlatform(value ?? ALL_PLATFORMS)
                       }
@@ -283,8 +310,8 @@ function PlanResult({
           <HugeiconsIcon icon={AlertCircleIcon} size={16} />
           <AlertDescription>
             <ul className="list-disc space-y-1 pl-4">
-              {result.errors.map((message) => (
-                <li key={message}>{message}</li>
+              {result.errors.map((message, index) => (
+                <li key={index}>{message}</li>
               ))}
             </ul>
           </AlertDescription>
@@ -295,8 +322,8 @@ function PlanResult({
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
             <ul className="list-disc space-y-1 pl-4">
-              {result.notices.map((message) => (
-                <li key={message}>{message}</li>
+              {result.notices.map((message, index) => (
+                <li key={index}>{message}</li>
               ))}
             </ul>
           </AlertDescription>

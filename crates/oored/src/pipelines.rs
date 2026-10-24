@@ -1690,6 +1690,9 @@ workflows:
         let plan = response.plan.unwrap();
         assert!(plan.steps.iter().any(|step| step.run.contains("appbundle")));
         assert_eq!(plan.steps.last().unwrap().phase, StepPhase::PostBuild);
+        // Generated steps say so; the user's commands keep their own index.
+        assert_eq!(plan.steps[0].source, "default");
+        assert_eq!(plan.steps.last().unwrap().source, "commands.post_build[0]");
         assert!(!serde_json::to_string(&plan).unwrap().contains("hunter2"));
 
         let both = PlanPipelineRequest {
