@@ -1,4 +1,5 @@
 import { StepStatusIcon } from './step-status-icon'
+import { StepDurationBar, StepMedianDelta } from './step-timing'
 import type { StepGroup } from './types'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { FileTerminalIcon } from '@hugeicons/core-free-icons'
@@ -13,7 +14,7 @@ import {
 } from '@/components/ui/item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { formatDuration } from '@/lib/format-utils'
-import { stepTimingTrend } from '@/lib/step-timings'
+import { longestStepMs } from '@/lib/step-timings'
 import { cn } from '@/lib/utils'
 import { textVariants } from '@/lib/recipes'
 
@@ -33,13 +34,7 @@ export function StepNavigation({
   onSelect,
 }: StepNavigationProps) {
   // Bars share one scale, so the slowest step or median fills the track.
-  const longestMs = Math.max(
-    0,
-    ...groups.flatMap((group) => [
-      group.durationMs ?? 0,
-      medians?.get(group.name) ?? 0,
-    ]),
-  )
+  const longestMs = longestStepMs(groups, medians)
   return (
     <nav
       aria-label="Build steps"
@@ -144,70 +139,4 @@ function StepItem({
 
 function formatLineCount(count: number) {
   return `${count} ${count === 1 ? 'line' : 'lines'}`
-}
-
-const TREND_FILL = {
-  slower: 'bg-warning',
-  faster: 'bg-success',
-  typical: 'bg-muted-foreground/40',
-} as const
-
-/** The step's time on a shared scale, with a tick at the pipeline median. */
-function StepDurationBar({
-  durationMs,
-  longestMs,
-  medianMs,
-}: {
-  durationMs: number
-  longestMs: number
-  medianMs?: number
-}) {
-  const trend =
-    medianMs != null ? stepTimingTrend(durationMs, medianMs) : 'typical'
-  return (
-    <div aria-hidden className="relative mt-1 h-1 w-full rounded-full bg-muted">
-      <div
-        className={cn('h-full rounded-full', TREND_FILL[trend])}
-        style={{ width: `${Math.max(2, (durationMs / longestMs) * 100)}%` }}
-      />
-      {medianMs != null ? (
-        <div
-          className="absolute -top-0.5 h-2 w-px bg-foreground/60"
-          style={{ left: `${Math.min(100, (medianMs / longestMs) * 100)}%` }}
-        />
-      ) : null}
-    </div>
-  )
-}
-
-function StepMedianDelta({
-  durationMs,
-  medianMs,
-}: {
-  durationMs: number
-  medianMs: number
-}) {
-  const trend = stepTimingTrend(durationMs, medianMs)
-  const delta = Math.round((durationMs - medianMs) / 1000)
-  const median = formatDuration(medianMs / 1000)
-  const label =
-    delta === 0
-      ? '±0s'
-      : `${delta > 0 ? '+' : '−'}${formatDuration(Math.abs(delta))}`
-  return (
-    <span
-      className={cn(
-        trend === 'slower' && 'text-warning',
-        trend === 'faster' && 'text-success',
-      )}
-      title={`Median ${median} over recent successful builds of this pipeline`}
-    >
-      {label}
-      <span className="sr-only">
-        {trend === 'typical'
-          ? `, about the median of ${median}`
-          : `, ${trend} than the median of ${median}`}
-      </span>
-    </span>
-  )
 }
