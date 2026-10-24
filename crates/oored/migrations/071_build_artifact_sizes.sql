@@ -12,6 +12,9 @@ CREATE TABLE build_artifact_sizes (
 
 CREATE INDEX idx_build_artifact_sizes_build ON build_artifact_sizes (build_id);
 
+-- The baseline lookup walks one pipeline's builds on one branch, newest first.
+CREATE INDEX idx_builds_pipeline_branch_number ON builds (pipeline_id, branch, build_number);
+
 INSERT INTO build_artifact_sizes (artifact_id, build_id, name, artifact_type, size_bytes, recorded_at)
 SELECT a.id, a.build_id, a.name, a.artifact_type, a.file_size,
        COALESCE(a.finalized_at, a.created_at)
