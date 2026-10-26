@@ -529,14 +529,22 @@ fn workspace_out_script(workspace: &str, share: &str) -> String {
 /// runs Gradle from a home on the guest disk. The parts of the home that only
 /// ever gain complete entries are copied in from the share and back out after:
 /// downloaded dependencies, transformed artifacts, the build cache and wrapper
-/// distributions.
+/// distributions. Under the Gradle version's own directory that means the
+/// generated Gradle API jars, compiled build scripts and Kotlin DSL accessors,
+/// and transforms: without them every VM build compiles its `.gradle.kts`
+/// scripts again. The version directory's file hash and metadata stores stay
+/// behind.
 const GRADLE_SHARE: &str = "gradle";
 const GUEST_GRADLE_HOME: &str = ".gradle";
-const GRADLE_SYNCED_DIRS: [&str; 5] = [
+const GRADLE_SYNCED_DIRS: [&str; 9] = [
     "caches/modules-2",
     "caches/transforms-*",
     "caches/jars-*",
     "caches/build-cache-1",
+    "caches/[0-9]*/generated-gradle-jars",
+    "caches/[0-9]*/kotlin-dsl",
+    "caches/[0-9]*/scripts",
+    "caches/[0-9]*/transforms",
     "wrapper/dists",
 ];
 
@@ -643,6 +651,26 @@ fn android_sdk_out_script(sdk: &str, share: &str, baseline: &str) -> String {
         android_package_copy(&share),
         baseline = shell_quote(baseline),
     )
+}
+
+/// Formats VM start phases as `  vm start: 1m 12s (clone 2s, boot 31s, ...)`.
+fn setup_note(times: &[(&str, Duration)]) -> String {
+    let total = times.iter().map(|(_, took)| *took).sum::<Duration>();
+    let parts = times
+        .iter()
+        .map(|(what, took)| format!("{what} {}", format_seconds(*took)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("  vm start: {} ({parts})", format_seconds(total))
+}
+
+pub(crate) fn format_seconds(took: Duration) -> String {
+    let seconds = took.as_secs();
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else {
+        format!("{}m {}s", seconds / 60, seconds % 60)
+    }
 }
 
 /// What one sweep for leftover VMs did.
@@ -877,6 +905,8 @@ pub(crate) struct TartVm {
     android_sdk_sync: Option<(String, String, String)>,
     /// Build log lines on what the guest got back from earlier builds.
     cache_notes: Vec<String>,
+    /// How long each part of starting the VM took, for the build log.
+    setup_times: Vec<(&'static str, Duration)>,
     /// Set once the VM was deleted or kept as an image; `Drop` does nothing then.
     released: bool,
     /// Bounds each copy into or out of the guest.
@@ -918,6 +948,7 @@ impl TartVm {
                 "{arg} cannot be shared into a VM because its path contains ':'"
             );
         }
+        let clone_started = Instant::now();
         run_tart(&tart, &["clone", image, &name], TART_CLONE_TIMEOUT)
             .await
             .with_context(|| {
@@ -936,6 +967,7 @@ impl TartVm {
             derived_data_sync: None,
             android_sdk_sync: None,
             cache_notes: Vec::new(),
+            setup_times: vec![("clone", clone_started.elapsed())],
             released: false,
             copy_timeout: VM_COPY_TIMEOUT,
         };
@@ -984,7 +1016,9 @@ impl TartVm {
         }
         self.run = Some(child);
 
+        let mut phase = Instant::now();
         self.wait_for_agent().await?;
+        self.setup_times.push(("boot", phase.elapsed()));
         let home = self
             .exec_capture("printf %s \"$HOME\"", VM_EXEC_TIMEOUT)
             .await?;
@@ -1025,13 +1059,16 @@ impl TartVm {
         self.exec_capture(&mount_script(&mounts), VM_EXEC_TIMEOUT)
             .await
             .context("failed to mount the build workspace and caches inside the VM")?;
+        phase = Instant::now();
         self.exec_capture(
             &workspace_in_script(&guest_share, &guest_workspace),
             self.copy_timeout,
         )
         .await
         .context("failed to copy the workspace into the VM")?;
+        self.setup_times.push(("workspace", phase.elapsed()));
         if let Some((shared, local)) = gradle_dirs {
+            phase = Instant::now();
             self.exec_capture(&gradle_sync_script(&shared, &local), self.copy_timeout)
                 .await
                 .context("failed to copy the Gradle cache into the VM")?;
@@ -1039,8 +1076,10 @@ impl TartVm {
                 .await
                 .context("failed to write gradle.properties inside the VM")?;
             self.gradle_sync = Some((shared, local));
+            self.setup_times.push(("gradle cache", phase.elapsed()));
         }
         if let Some(shared) = derived_data_share {
+            phase = Instant::now();
             let local = format!("{home}/{GUEST_DERIVED_DATA}");
             let restored = self
                 .exec_capture(
@@ -1056,8 +1095,10 @@ impl TartVm {
                 "  derived data: restored this project's DerivedData and Swift packages".to_string()
             });
             self.derived_data_sync = Some((shared, local));
+            self.setup_times.push(("derived data", phase.elapsed()));
         }
         if let Some(shared) = android_sdk_share {
+            phase = Instant::now();
             // The image sets the SDK location in the login profile.
             let sdk = self
                 .exec_capture(
@@ -1087,6 +1128,7 @@ impl TartVm {
                 }
                 self.android_sdk_sync = Some((shared, sdk, baseline));
             }
+            self.setup_times.push(("android sdk", phase.elapsed()));
         }
         self.guest_workspace = guest_workspace;
         self.guest_share = guest_share;
@@ -1096,14 +1138,16 @@ impl TartVm {
     /// Copies what the steps wrote in the guest workspace back to the host
     /// workspace. Runs after every step, so the host sees artifacts, archives
     /// and test reports as each step finishes.
-    pub(crate) async fn sync_workspace_out(&self) -> anyhow::Result<()> {
+    /// Returns how long the copy took.
+    pub(crate) async fn sync_workspace_out(&self) -> anyhow::Result<Duration> {
+        let started = Instant::now();
         self.exec_capture(
             &workspace_out_script(&self.guest_workspace, &self.guest_share),
             self.copy_timeout,
         )
         .await
         .context("failed to copy the workspace out of the VM")?;
-        Ok(())
+        Ok(started.elapsed())
     }
 
     /// Empties `dir` in the guest, creating it if needed.
@@ -1124,6 +1168,11 @@ impl TartVm {
 
     pub(crate) fn cache_notes(&self) -> &[String] {
         &self.cache_notes
+    }
+
+    /// One build log line on how long each part of starting the VM took.
+    pub(crate) fn setup_note(&self) -> String {
+        setup_note(&self.setup_times)
     }
 
     /// Guest paths for the shared caches, keyed by the variable that names them.
@@ -1496,9 +1545,22 @@ mod tests {
     }
 
     #[test]
+    fn setup_note_lists_each_phase() {
+        let note = setup_note(&[
+            ("clone", Duration::from_millis(1_400)),
+            ("boot", Duration::from_secs(31)),
+            ("gradle cache", Duration::from_secs(95)),
+        ]);
+        assert_eq!(
+            note,
+            "  vm start: 2m 7s (clone 1s, boot 31s, gradle cache 1m 35s)"
+        );
+    }
+
+    #[test]
     fn gradle_cache_syncs_complete_entries_only() {
         let script = gradle_sync_script("/s", "/l");
-        assert!(script.starts_with("cd '/s' 2>/dev/null || exit 0; for dir in caches/modules-2 caches/transforms-* caches/jars-* caches/build-cache-1 wrapper/dists; do"));
+        assert!(script.starts_with("cd '/s' 2>/dev/null || exit 0; for dir in caches/modules-2 caches/transforms-* caches/jars-* caches/build-cache-1 caches/[0-9]*/generated-gradle-jars caches/[0-9]*/kotlin-dsl caches/[0-9]*/scripts caches/[0-9]*/transforms wrapper/dists; do"));
         assert!(script.contains("--exclude '*.lock' --exclude '*.lck'"));
         assert!(!script.contains("caches/8."));
 
@@ -1569,6 +1631,14 @@ mod tests {
         write("gradle-local/caches/transforms-4/abc/result.jar", "t");
         write("gradle-local/caches/build-cache-1/0123", "c");
         write("gradle-local/caches/8.14/fileHashes/fileHashes.bin", "h");
+        write(
+            "gradle-local/caches/8.14/kotlin-dsl/accessors/abc/a.jar",
+            "k",
+        );
+        write(
+            "gradle-local/caches/8.14/generated-gradle-jars/gradle-api-8.14.jar",
+            "g",
+        );
         assert!(
             run_sh(&gradle_sync_script(
                 &path("gradle-local"),
@@ -1585,7 +1655,15 @@ mod tests {
             root.join("gradle-share/caches/build-cache-1/0123")
                 .is_file()
         );
-        assert!(!root.join("gradle-share/caches/8.14").exists());
+        assert!(
+            root.join("gradle-share/caches/8.14/kotlin-dsl/accessors/abc/a.jar")
+                .is_file()
+        );
+        assert!(
+            root.join("gradle-share/caches/8.14/generated-gradle-jars/gradle-api-8.14.jar")
+                .is_file()
+        );
+        assert!(!root.join("gradle-share/caches/8.14/fileHashes").exists());
 
         // A project that turns the build cache off keeps it off.
         write(
@@ -1921,6 +1999,7 @@ mod tests {
             derived_data_sync: Some(("/share".to_string(), "/local".to_string())),
             android_sdk_sync: None,
             cache_notes: Vec::new(),
+            setup_times: Vec::new(),
             released: false,
             copy_timeout: Duration::from_secs(1),
         };

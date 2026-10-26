@@ -59,6 +59,9 @@ const MANAGED_ANDROID_SIGNING_ENV_KEYS: [&str; 6] = [
 ];
 const ANDROID_SIGNER_STORE_PASSWORD_ENV: &str = "OORE_SIGNER_STORE_PASSWORD";
 const ANDROID_SIGNER_KEY_PASSWORD_ENV: &str = "OORE_SIGNER_KEY_PASSWORD";
+/// Copying the workspace back from a VM after a step is logged once it takes
+/// at least this long.
+const VM_SYNC_NOTE_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
 const IOS_SIGNING_DIR: &str = ".oore/ios-signing";
 const IOS_CLEANUP_JOURNAL: &str = ".oore/ios-signing/cleanup-journal.json";
 const BUILD_WORKSPACE_PREFIX: &str = "oore-build";
@@ -5901,6 +5904,22 @@ async fn execute_build_steps(
 
     let vm = match execution_plan.isolation {
         BuildIsolation::Host => {
+            // A VM build reports its DerivedData once the VM restored it.
+            if let Some(line) = cache_observation
+                .as_ref()
+                .and_then(|observation| observation.derived_data_line.clone())
+            {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &line,
+                )
+                .await;
+            }
             let started = now_unix();
             let found = host_flutter_version(&workspace, &step_env).await;
             let check = check_host_flutter(&execution_plan.flutter_version, found);
@@ -6245,7 +6264,27 @@ async fn execute_build_steps(
                     // from its workspace, so bring the guest's changes over
                     // before anything reads it.
                     let sync_error = match &vm {
-                        Some(vm) => vm.vm.sync_workspace_out().await.err(),
+                        Some(vm) => match vm.vm.sync_workspace_out().await {
+                            Ok(took) => {
+                                if took >= VM_SYNC_NOTE_AFTER {
+                                    let _ = append_runner_log_line(
+                                        client,
+                                        daemon_url,
+                                        config,
+                                        &job.build_id,
+                                        log_seq,
+                                        "stdout",
+                                        &format!(
+                                            "[oore-vm] copied the workspace back from the VM in {}",
+                                            tart::format_seconds(took)
+                                        ),
+                                    )
+                                    .await;
+                                }
+                                None
+                            }
+                            Err(error) => Some(error),
+                        },
                         None => None,
                     };
                     if let Some(report) = plan_step.test_report.as_deref()
@@ -7363,6 +7402,17 @@ async fn start_build_vm(
             vm.name(),
             vm.guest_workspace()
         ),
+    )
+    .await;
+    let setup_note = vm.setup_note();
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &setup_note,
     )
     .await;
     for line in vm.cache_notes() {

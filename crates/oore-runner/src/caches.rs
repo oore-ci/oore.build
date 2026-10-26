@@ -193,6 +193,9 @@ pub(crate) struct CacheObservation {
     pub_packages: Vec<(String, String)>,
     /// Lines for the build log, one per cache.
     pub lines: Vec<String>,
+    /// Whether the host's DerivedData has this project. Only logged for host
+    /// builds: a VM build restores its own copy.
+    pub derived_data_line: Option<String>,
 }
 
 pub(crate) struct RunnerCaches {
@@ -379,7 +382,7 @@ impl RunnerCaches {
             .iter()
             .any(|(_, workspace_path)| workspace_path.starts_with(&*workspace.to_string_lossy()));
         if workspace.join("ios").is_dir() || workspace.join("macos").is_dir() {
-            observation.lines.push(format!(
+            observation.derived_data_line = Some(format!(
                 "  derived data: {}",
                 if derived_data_hit {
                     "hit, Xcode reuses this project's DerivedData"

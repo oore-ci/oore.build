@@ -1052,7 +1052,7 @@ fn build_list_query(where_clause: &str, order_by: &str, bind_count: usize) -> St
          LEFT JOIN integrations ON integrations.id = integration_installations.integration_id \
          LEFT JOIN instance_preferences ON instance_preferences.id = 1 \
          LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
-         LEFT JOIN runners ON runners.id = builds.runner_id \
+         LEFT JOIN runners ON runners.id = COALESCE(builds.runner_id, CASE WHEN builds.status != 'queued' THEN builds.ran_on_runner_id END) \
          {where_clause} ORDER BY {order_by} LIMIT ?{} OFFSET ?{}",
         bind_count + 1,
         bind_count + 2
@@ -1754,7 +1754,7 @@ pub async fn get_build(
          LEFT JOIN integrations ON integrations.id = integration_installations.integration_id \
          LEFT JOIN instance_preferences ON instance_preferences.id = 1 \
          LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
-         LEFT JOIN runners ON runners.id = builds.runner_id \
+         LEFT JOIN runners ON runners.id = COALESCE(builds.runner_id, CASE WHEN builds.status != 'queued' THEN builds.ran_on_runner_id END) \
          WHERE builds.id = ?1",
     )
         .bind(&build_id)
@@ -3141,6 +3141,64 @@ mod tests {
         )
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn finished_build_keeps_the_runner_that_ran_it() {
+        let pool = pool(r#"{"events":["push"],"branches":["main"]}"#, "{}", 60).await;
+        let build = deliver(&pool, "d1", Some("main"), None, ChangeSet::Unknown)
+            .await
+            .remove(0);
+        assert!(
+            crate::runners::claim_eligible_direct_runner_build(
+                &pool,
+                &build.id,
+                "run1",
+                "runner:run1",
+                "hash"
+            )
+            .await
+            .unwrap()
+        );
+        for status in [BuildStatus::Running, BuildStatus::Succeeded] {
+            transition_build_with_results(
+                &pool,
+                &build.id,
+                status,
+                Some("runner:run1"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+
+        let runner_id: Option<String> =
+            sqlx::query_scalar("SELECT runner_id FROM builds WHERE id = ?1")
+                .bind(&build.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(runner_id, None, "a finished build revokes the runner");
+        let row = sqlx::query(sqlx::AssertSqlSafe(build_list_query(
+            "WHERE builds.id = ?1",
+            "builds.created_at",
+            1,
+        )))
+        .bind(&build.id)
+        .bind(10)
+        .bind(0)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let listed = row_to_build(&row);
+        assert_eq!(
+            listed
+                .context
+                .and_then(|context| context.runner_name)
+                .as_deref(),
+            Some("mac")
+        );
     }
 
     #[tokio::test]
