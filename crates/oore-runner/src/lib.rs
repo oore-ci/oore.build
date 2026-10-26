@@ -4104,8 +4104,9 @@ impl std::fmt::Display for BuildTerminated {
 
 impl std::error::Error for BuildTerminated {}
 
+/// FVM's `.fvmrc`. Only `flutter` matters here; FVM's other keys, such as
+/// `flavors` and `updateVscodeSettings`, are ignored.
 #[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 struct FvmRcConfig {
     flutter: String,
 }
@@ -9065,7 +9066,11 @@ mod tests {
         let workspace =
             std::env::temp_dir().join(format!("oore-vm-plan-test-{}", std::process::id()));
         std::fs::create_dir_all(&workspace).unwrap();
-        std::fs::write(workspace.join(".fvmrc"), r#"{"flutter": "3.47.7"}"#).unwrap();
+        std::fs::write(
+            workspace.join(".fvmrc"),
+            r#"{"flutter": "3.47.7", "flavors": {"prod": "3.44.9"}, "updateVscodeSettings": true}"#,
+        )
+        .unwrap();
         std::fs::write(
             workspace.join(".oore.yaml"),
             "version: 1\nplatforms: [android]\nisolation: vm\n",
