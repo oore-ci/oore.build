@@ -130,8 +130,9 @@ login for that account, then re-run the build.
 ### The build waits for a VM slot
 
 Apple allows two macOS VMs per Mac, so a Mac runs at most two VM builds at a
-time across all of its runners. A third build waits, and its log says so. Add
-another Runner Mac for more VM builds at once.
+time across all of its runners and
+[concurrent build slots](/operate/runners/concurrent-builds). A third build
+waits, and its log says so. Add another Runner Mac for more VM builds at once.
 
 ### The first build takes an hour
 

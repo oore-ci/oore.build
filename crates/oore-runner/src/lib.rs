@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicU32, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -63,6 +63,7 @@ const IOS_SIGNING_DIR: &str = ".oore/ios-signing";
 const IOS_CLEANUP_JOURNAL: &str = ".oore/ios-signing/cleanup-journal.json";
 const BUILD_WORKSPACE_PREFIX: &str = "oore-build";
 const RUNNER_WORKSPACE_ROOT_NAME: &str = "oore-runner-workspaces";
+const IOS_SIGNING_LOCK: &str = "ios-signing.lock";
 const LEGACY_RECONCILIATION_MARKER: &str = ".legacy-workspaces-reconciled-v1";
 const LEGACY_BUILD_WORKSPACE_ROOT: &str = "/tmp/oore-builds.noindex";
 const SPOTLIGHT_NO_INDEX_SENTINEL: &str = ".metadata_never_index";
@@ -1855,6 +1856,8 @@ struct IosCleanupJournal {
 struct IosSigningCleanup {
     journal_path: Option<PathBuf>,
     journal: IosCleanupJournal,
+    /// Held until the user keychain settings are restored.
+    lock: Option<IosSigningLock>,
 }
 
 impl IosSigningCleanup {
@@ -1863,6 +1866,7 @@ impl IosSigningCleanup {
             return Ok(());
         }
         cleanup_ios_signing_state(&self.journal)?;
+        self.lock = None;
         let journal_path = self
             .journal_path
             .take()
@@ -1886,6 +1890,29 @@ impl Drop for IosSigningCleanup {
         if let Err(error) = self.cleanup() {
             eprintln!("Warning: failed to clean up iOS signing state: {error:#}");
         }
+    }
+}
+
+/// Signing switches the account's default keychain and keychain search list,
+/// which every build of the account shares. Builds that run at the same time,
+/// in this runner or another runner process of the account, take turns
+/// through this lock from keychain setup to cleanup.
+struct IosSigningLock {
+    _file: fs::File,
+}
+
+impl IosSigningLock {
+    fn acquire() -> anyhow::Result<Self> {
+        let path = prepare_runner_workspace_root()?.join(IOS_SIGNING_LOCK);
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("failed to open iOS signing lock {}", path.display()))?;
+        file.lock()
+            .with_context(|| format!("failed to lock {}", path.display()))?;
+        Ok(Self { _file: file })
     }
 }
 
@@ -2363,6 +2390,7 @@ fn install_ios_signing_bundle_with_session_check(
         prepared_profiles.push((profile.bundle_id.clone(), profile_ref, work_path));
     }
 
+    let lock = IosSigningLock::acquire()?;
     let mut journal = IosCleanupJournal {
         keychain_path: keychain_path.clone(),
         original_default_keychain: None,
@@ -2536,6 +2564,7 @@ fn install_ios_signing_bundle_with_session_check(
             IosSigningCleanup {
                 journal_path: Some(journal_path),
                 journal,
+                lock: Some(lock),
             },
         )),
         Err(err) => {
@@ -3519,6 +3548,7 @@ async fn send_runner_heartbeat(
     config: &RunnerConfig,
     capabilities: &serde_json::Value,
     cache_report: &SharedCacheReport,
+    build_slots: &AtomicU32,
 ) -> anyhow::Result<()> {
     let capabilities = heartbeat_capabilities(capabilities, cache_report);
     let cache_bytes = cache_report
@@ -3543,15 +3573,19 @@ async fn send_runner_heartbeat(
         .context("runner heartbeat could not reach the backend")?;
     let status = response.status();
     if status.is_success() {
-        // Older backends answer 204 with no body; that means no purge request.
-        let purge_requested_at = response
+        // Older backends answer 204 with no body; that means no purge
+        // request and one build at a time.
+        let body = response
             .json::<RunnerHeartbeatResponse>()
             .await
-            .ok()
-            .and_then(|body| body.cache_purge_requested_at);
+            .unwrap_or_default();
         if let Ok(mut report) = cache_report.lock() {
-            report.purge_requested_at = purge_requested_at;
+            report.purge_requested_at = body.cache_purge_requested_at;
         }
+        build_slots.store(
+            body.max_concurrent_builds.unwrap_or(1).max(1),
+            Ordering::Relaxed,
+        );
         return Ok(());
     }
     if runner_response_is_terminal(status) {
@@ -3569,6 +3603,7 @@ async fn establish_runner_heartbeat(
     config: &RunnerConfig,
     capabilities: &serde_json::Value,
     cache_report: &SharedCacheReport,
+    build_slots: &AtomicU32,
 ) -> anyhow::Result<()> {
     let delays = [
         Duration::ZERO,
@@ -3580,7 +3615,16 @@ async fn establish_runner_heartbeat(
         if !delay.is_zero() {
             tokio::time::sleep(delay).await;
         }
-        match send_runner_heartbeat(client, daemon_url, config, capabilities, cache_report).await {
+        match send_runner_heartbeat(
+            client,
+            daemon_url,
+            config,
+            capabilities,
+            cache_report,
+            build_slots,
+        )
+        .await
+        {
             Ok(()) => return Ok(()),
             Err(error) if terminal_runner_error(&error) => return Err(error),
             Err(error) => last_error = Some(error),
@@ -3670,7 +3714,17 @@ pub async fn run_runner_forever(
 
     // Do not enter the claim loop or advertise service readiness until the
     // backend has authenticated this exact runner/config/release.
-    establish_runner_heartbeat(&client, &daemon_url, &config, &capabilities, &cache_report).await?;
+    // How many builds run at once. The backend sets it in each heartbeat.
+    let build_slots = Arc::new(AtomicU32::new(1));
+    establish_runner_heartbeat(
+        &client,
+        &daemon_url,
+        &config,
+        &capabilities,
+        &cache_report,
+        &build_slots,
+    )
+    .await?;
     if let (Some(path), Some(template)) =
         (service_ack_path.as_deref(), service_ack_template.as_ref())
     {
@@ -3682,6 +3736,7 @@ pub async fn run_runner_forever(
     let hb_config = config.clone();
     let hb_capabilities = capabilities.clone();
     let hb_cache_report = cache_report.clone();
+    let hb_build_slots = build_slots.clone();
     let hb_ack_path = service_ack_path;
     let hb_ack_template = service_ack_template;
     let (fatal_tx, mut fatal_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -3694,6 +3749,7 @@ pub async fn run_runner_forever(
                 &hb_config,
                 &hb_capabilities,
                 &hb_cache_report,
+                &hb_build_slots,
             )
             .await
             {
@@ -3731,9 +3787,13 @@ pub async fn run_runner_forever(
     });
 
     if let Some(caches) = &caches {
-        run_cache_maintenance(caches.clone(), cache_report.clone(), None).await;
+        run_cache_maintenance(caches.clone(), cache_report.clone()).await;
     }
 
+    let mut builds = tokio::task::JoinSet::new();
+    let mut active_build_ids: Vec<String> = Vec::new();
+    // Eviction waits until no build uses the caches.
+    let mut caches_need_maintenance = false;
     loop {
         tokio::select! {
             fatal = fatal_rx.recv() => {
@@ -3742,44 +3802,75 @@ pub async fn run_runner_forever(
                     None => anyhow::bail!("runner heartbeat monitor stopped unexpectedly"),
                 }
             }
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {}
-        }
-        if runner_should_retire(&mut release_watch) {
-            println!(
-                "A committed runner update is ready; no build is active, exiting for a clean restart"
-            );
-            return Ok(());
-        }
-        if let Err(error) = reconcile_stale_runner_mutations() {
-            eprintln!("Refusing to claim work until stale runner state is cleaned: {error:#}");
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            continue;
-        }
-        if let Some(caches) = &caches {
-            purge_caches_if_requested(caches, &cache_report).await;
-        }
-        if let Some(upkeep) = vm_upkeep.as_mut() {
-            upkeep.run(&config.runner_id, &cache_report).await;
-        }
-        match claim_and_execute(
-            &client,
-            &daemon_url,
-            &config,
-            caches.as_ref(),
-            &cache_report,
-        )
-        .await
-        {
-            Ok(executed) => {
-                // A build whose VM could not be deleted leaves it behind.
-                if executed && let Some(upkeep) = vm_upkeep.as_mut() {
+            Some(joined) = builds.join_next(), if !builds.is_empty() => {
+                let finished: FinishedBuild = match joined {
+                    Ok(finished) => finished,
+                    Err(error) => anyhow::bail!("a build task stopped unexpectedly: {error}"),
+                };
+                active_build_ids.retain(|id| id != &finished.build_id);
+                if let Some(upkeep) = vm_upkeep.as_mut() {
+                    // A build whose VM could not be deleted leaves it behind.
                     upkeep.sweep_now();
                 }
+                if let (Some(caches), Some(observation)) = (&caches, finished.cache_observation) {
+                    record_cache_use(caches.clone(), observation).await;
+                    caches_need_maintenance = true;
+                }
+                match finished.result {
+                    Ok(()) => {}
+                    Err(error) if terminal_runner_error(&error) => return Err(error),
+                    Err(error) => eprintln!("Error during build {}: {error:#}", finished.build_id),
+                }
             }
-            Err(error) if terminal_runner_error(&error) => return Err(error),
-            Err(e) => {
-                eprintln!("Error during claim/execute: {}", e);
+            _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+        }
+
+        // Crash recovery, eviction, purges, VM sweeps and updates touch state
+        // that running builds use, so they wait until every slot is free.
+        if builds.is_empty() {
+            if runner_should_retire(&mut release_watch) {
+                println!(
+                    "A committed runner update is ready; no build is active, exiting for a clean restart"
+                );
+                return Ok(());
+            }
+            if let Err(error) = reconcile_stale_runner_mutations() {
+                eprintln!("Refusing to claim work until stale runner state is cleaned: {error:#}");
                 tokio::time::sleep(Duration::from_secs(10)).await;
+                continue;
+            }
+            if let Some(caches) = &caches {
+                if std::mem::take(&mut caches_need_maintenance) {
+                    run_cache_maintenance(caches.clone(), cache_report.clone()).await;
+                }
+                purge_caches_if_requested(caches, &cache_report).await;
+            }
+            if let Some(upkeep) = vm_upkeep.as_mut() {
+                upkeep.run(&config.runner_id, &cache_report).await;
+            }
+        }
+
+        while builds.len() < build_slots.load(Ordering::Relaxed).max(1) as usize {
+            match claim_job(&client, &daemon_url, &config, &active_build_ids).await {
+                Ok(Some(job)) => {
+                    active_build_ids.push(job.build_id.clone());
+                    builds.spawn(run_claimed_job(
+                        job,
+                        client.clone(),
+                        daemon_url.clone(),
+                        config.clone(),
+                        caches.clone(),
+                    ));
+                }
+                Ok(None) => break,
+                Err(error) if terminal_runner_error(&error) => return Err(error),
+                Err(error) => {
+                    eprintln!("Error during claim: {error:#}");
+                    if builds.is_empty() {
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                    }
+                    break;
+                }
             }
         }
     }
@@ -3861,18 +3952,24 @@ impl VmUpkeep {
     }
 }
 
-/// Records the finished build's lockfile keys, then measures the caches and
-/// evicts above the cap. It finishes before the next claim, because eviction
-/// must never delete from a cache a build is using.
-async fn run_cache_maintenance(
+/// Records a finished build's lockfile keys.
+async fn record_cache_use(
     caches: Arc<RunnerCaches>,
-    cache_report: SharedCacheReport,
-    finished_build: Option<(CacheObservation, bool)>,
+    (observation, succeeded): (CacheObservation, bool),
 ) {
+    let record = tokio::task::spawn_blocking(move || {
+        caches.record(&observation, succeeded, now_unix());
+    });
+    if let Err(error) = record.await {
+        eprintln!("Warning: dependency cache bookkeeping stopped: {error}");
+    }
+}
+
+/// Measures the caches and evicts above the cap. It runs only while no build
+/// is active, because eviction must never delete from a cache a build is
+/// using.
+async fn run_cache_maintenance(caches: Arc<RunnerCaches>, cache_report: SharedCacheReport) {
     let maintenance = tokio::task::spawn_blocking(move || {
-        if let Some((observation, succeeded)) = finished_build {
-            caches.record(&observation, succeeded, now_unix());
-        }
         let stats = caches.maintain(now_unix());
         if stats.evicted_bytes > 0 {
             println!(
@@ -3917,13 +4014,21 @@ async fn purge_caches_if_requested(caches: &Arc<RunnerCaches>, cache_report: &Sh
     }
 }
 
-async fn claim_and_execute(
+/// A build a slot finished, whatever its outcome.
+struct FinishedBuild {
+    build_id: String,
+    cache_observation: Option<(CacheObservation, bool)>,
+    result: anyhow::Result<()>,
+}
+
+/// Claims the next build. `active_build_ids` are the builds the other slots
+/// are still running, which the backend must not release.
+async fn claim_job(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
-    caches: Option<&Arc<RunnerCaches>>,
-    cache_report: &SharedCacheReport,
-) -> anyhow::Result<bool> {
+    active_build_ids: &[String],
+) -> anyhow::Result<Option<ClaimedJob>> {
     let resp = client
         .post(format!(
             "{}/v1/runners/{}/claim",
@@ -3932,6 +4037,7 @@ async fn claim_and_execute(
         .bearer_auth(&config.runner_token)
         .json(&ClaimJobRequest {
             protocol_version: RUNNER_PROTOCOL_VERSION,
+            active_build_ids: active_build_ids.to_vec(),
         })
         .timeout(CONTROL_REQUEST_TIMEOUT)
         .send()
@@ -3949,16 +4055,48 @@ async fn claim_and_execute(
     }
 
     let claim: ClaimJobResponse = resp.json().await?;
-    let job = match claim.job {
-        Some(j) => j,
-        None => return Ok(false),
-    };
+    if let Some(job) = &claim.job {
+        println!(
+            "Claimed build {} (#{}) for project {}",
+            job.build_id, job.build_number, job.project_id
+        );
+    }
+    Ok(claim.job)
+}
 
-    println!(
-        "Claimed build {} (#{}) for project {}",
-        job.build_id, job.build_number, job.project_id
-    );
+/// Runs a claimed build in its own slot and reports its result.
+async fn run_claimed_job(
+    job: ClaimedJob,
+    client: reqwest::Client,
+    daemon_url: String,
+    config: RunnerConfig,
+    caches: Option<Arc<RunnerCaches>>,
+) -> FinishedBuild {
+    let mut cache_observation = None;
+    let result = execute_claimed_job(
+        &job,
+        &client,
+        &daemon_url,
+        &config,
+        caches.as_deref(),
+        &mut cache_observation,
+    )
+    .await;
+    FinishedBuild {
+        build_id: job.build_id,
+        cache_observation,
+        result,
+    }
+}
 
+async fn execute_claimed_job(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    caches: Option<&RunnerCaches>,
+    finished_build: &mut Option<(CacheObservation, bool)>,
+) -> anyhow::Result<()> {
     report_status_with_retry(
         client,
         daemon_url,
@@ -3978,16 +4116,16 @@ async fn claim_and_execute(
     let mut cache_observation = None;
     let mut file_size_budgets = None;
     let (steps, result) = execute_build(
-        &job,
+        job,
         client,
         daemon_url,
         config,
-        caches.map(Arc::as_ref),
+        caches,
         &mut cache_observation,
         &mut file_size_budgets,
     )
     .await;
-    let finished_build = cache_observation.map(|observation| (observation, result.is_ok()));
+    *finished_build = cache_observation.map(|observation| (observation, result.is_ok()));
 
     let final_report = match &result {
         Ok(()) => Some(StatusReport {
@@ -4052,14 +4190,7 @@ async fn claim_and_execute(
         _ => {}
     }
 
-    // After the status report, so measuring the caches never delays it, and
-    // whatever its outcome.
-    if let Some(caches) = caches {
-        run_cache_maintenance(caches.clone(), cache_report.clone(), finished_build).await;
-    }
-    reported?;
-
-    Ok(true)
+    reported
 }
 
 struct WorkspaceCleanup {
@@ -4104,8 +4235,9 @@ impl std::fmt::Display for BuildTerminated {
 
 impl std::error::Error for BuildTerminated {}
 
+/// FVM's `.fvmrc`. Only `flutter` matters here; FVM's other keys, such as
+/// `flavors` and `updateVscodeSettings`, are ignored.
 #[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 struct FvmRcConfig {
     flutter: String,
 }
@@ -4725,6 +4857,7 @@ async fn check_build_active(
         .bearer_auth(&config.runner_token)
         .json(&ClaimJobRequest {
             protocol_version: RUNNER_PROTOCOL_VERSION,
+            active_build_ids: Vec::new(),
         })
         .timeout(CONTROL_REQUEST_TIMEOUT)
         .send()
@@ -8720,6 +8853,24 @@ async fn run_and_stream(
 }
 
 #[cfg(test)]
+mod ios_signing_lock_tests {
+    #[test]
+    fn ios_signing_waits_for_the_signing_build_before_it() {
+        let held = super::IosSigningLock::acquire().unwrap();
+        let path = super::prepare_runner_workspace_root()
+            .unwrap()
+            .join(super::IOS_SIGNING_LOCK);
+        let other = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        assert!(matches!(
+            other.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        drop(held);
+        other.try_lock().unwrap();
+    }
+}
+
+#[cfg(test)]
 mod step_retry_tests {
     use super::{artifact_type_for_extension, retry_artifact_path};
 
@@ -9065,7 +9216,11 @@ mod tests {
         let workspace =
             std::env::temp_dir().join(format!("oore-vm-plan-test-{}", std::process::id()));
         std::fs::create_dir_all(&workspace).unwrap();
-        std::fs::write(workspace.join(".fvmrc"), r#"{"flutter": "3.47.7"}"#).unwrap();
+        std::fs::write(
+            workspace.join(".fvmrc"),
+            r#"{"flutter": "3.47.7", "flavors": {"prod": "3.44.9"}, "updateVscodeSettings": true}"#,
+        )
+        .unwrap();
         std::fs::write(
             workspace.join(".oore.yaml"),
             "version: 1\nplatforms: [android]\nisolation: vm\n",

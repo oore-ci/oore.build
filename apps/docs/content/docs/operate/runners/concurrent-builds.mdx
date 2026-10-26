@@ -1,0 +1,94 @@
+---
+title: 'Run several builds at once'
+status: implemented
+description: 'Let one runner run more than one build at the same time on a large Mac.'
+---
+
+A runner runs one build at a time by default. On a Mac with spare CPU and
+memory, such as a Mac Studio, raise the runner's **Concurrent builds** limit so
+queued builds start without waiting for the one before them.
+
+Each build still gets its own workspace and its own checkout. The builds
+share the runner's [dependency caches](/operate/runners/caches), so the second
+build of a project reuses what the first one downloaded.
+
+## How this compares with other CI tools
+
+GitHub Actions runs one job per self-hosted runner, so a busy host there runs
+several runner services side by side. GitLab Runner (`concurrent`) and
+Buildkite (`spawn`) run several jobs from one agent instead. Oore follows
+GitLab and Buildkite: one runner service, one registration, and a limit you
+change in the UI.
+
+Don't install a second Runner profile under the same macOS account to get more
+builds. Two runner processes of one account would clean up each other's build
+workspaces.
+
+## What you need
+
+- A runner on version 0.1.48 or newer. An older runner keeps running one build
+  at a time whatever the limit says.
+- Instance admin or instance owner access.
+
+## Turn it on
+
+1. Open **Settings > Runners**.
+2. Open the runner's **Actions** menu and select **Edit**.
+3. Set **Concurrent builds** to a number from 1 to 8.
+4. Select **Save changes**.
+
+The runner reads the new limit from its next heartbeat, within 30 seconds. No
+restart is needed. Lowering the limit lets running builds finish; the runner
+claims new builds again once it is under the limit.
+
+The runner list shows the limit under the runner's name when it is above 1.
+
+## Pick a limit
+
+Start with 2 and watch the runner's **Utilisation** column while both builds
+run. Raise the limit one step at a time while CPU and memory stay below about
+80% at the builds' peak. Xcode and Gradle builds use several cores each, so
+the right limit depends on the apps more than on the Mac.
+
+To keep a pipeline from taking every slot, set its own
+**Max concurrent builds** in the pipeline's triggers.
+
+## What runs one at a time
+
+Some steps change state that every build of the macOS account shares, so
+builds take turns on them:
+
+- **iOS signing.** Signing switches the account's default keychain. A build
+  that reaches signing while another build is signing waits a few seconds for
+  it.
+- **VM builds.** Apple allows two macOS VMs per Mac. With
+  [VM isolation](/operate/runners/vm-isolation), a third VM build waits for a
+  VM slot. Host builds don't need a slot.
+- **Upkeep.** The runner trims its caches, applies a cache purge, deletes
+  leftover VMs, and installs runner updates only while no build runs. On a
+  runner that is never idle, these wait for a quiet moment.
+
+## Troubleshooting
+
+### The runner still runs one build at a time
+
+Check the runner's **Version** column. Update the runner to 0.1.48 or newer.
+Then check that the queued builds can run on this runner: their `runs_on`
+labels must match it, and their pipeline must be under its own
+**Max concurrent builds** limit.
+
+### A CocoaPods step fails while another build installs pods
+
+Two builds that download the same new pod at the same moment can clash in the
+shared CocoaPods cache. Re-run the build. If it keeps happening, lower the
+limit.
+
+### Builds slow down or run out of memory
+
+Lower the limit. Builds that compete for memory swap, and two slow builds can
+take longer than the same builds one after another.
+
+## Next step
+
+[Route builds with runner labels](/operate/runners/labels) to send heavy
+pipelines to the Mac with the most room.
