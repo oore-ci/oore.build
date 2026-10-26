@@ -6,7 +6,7 @@ description: 'Use the Complete profile runner or add a Runner profile on another
 
 Every Oore build runs in a separate Direct macOS runner process.
 
-The Complete profile setup enrolls one Runner on the control-plane Mac. Add another Runner only when a build needs a different Mac or toolchain.
+The Complete profile setup enrolls one Runner on the control-plane Mac. Add another Runner only when a build needs a different Mac or toolchain. To run more builds at once on the same Mac, [raise the runner's concurrent build limit](/operate/runners/concurrent-builds) instead.
 
 Repository commands use the Runner account's host permissions. A Direct runner is not a hostile-code sandbox.
 
