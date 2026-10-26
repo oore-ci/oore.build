@@ -15190,6 +15190,13 @@
           "protocol_version"
         ],
         "properties": {
+          "active_build_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The builds the runner is still running. The backend releases any\nother build it holds, since the runner lost it."
+          },
           "protocol_version": {
             "type": "integer",
             "format": "int32",
@@ -20612,6 +20619,12 @@
             ],
             "format": "int64"
           },
+          "max_concurrent_builds": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many builds the runner runs at the same time.",
+            "minimum": 0
+          },
           "metrics": {
             "oneOf": [
               {
@@ -20823,6 +20836,15 @@
               "null"
             ],
             "format": "int64"
+          },
+          "max_concurrent_builds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many builds the runner may run at the same time. Older backends\nleave it out, which means one.",
+            "minimum": 0
           }
         }
       },
@@ -23156,6 +23178,15 @@
               "type": "string"
             },
             "description": "Replaces the runner's operator labels. Detected labels are kept."
+          },
+          "max_concurrent_builds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many builds the runner runs at the same time, from 1 to 8.",
+            "minimum": 0
           },
           "name": {
             "type": [

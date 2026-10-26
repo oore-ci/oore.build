@@ -132,7 +132,14 @@ function getRunnerColumns({
         <DataTableColumnHeader column={column} title="Name" />
       ),
       cell: ({ row }) => (
-        <span className="font-medium">{row.original.name}</span>
+        <>
+          <p className="font-medium">{row.original.name}</p>
+          {(row.original.max_concurrent_builds ?? 1) > 1 ? (
+            <Text variant="caption">
+              {row.original.max_concurrent_builds} builds at once
+            </Text>
+          ) : null}
+        </>
       ),
     },
     {

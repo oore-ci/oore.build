@@ -6,11 +6,11 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
     ApiError, BuildDetailResponse, BuildStatus, ClaimJobRequest, ClaimJobResponse, ClaimedJob,
-    JobStatusResponse, ListRunnersResponse, RUNNER_PROTOCOL_VERSION, RegisterRunnerRequest,
-    RegisterRunnerResponse, Runner, RunnerDiskPressure, RunnerHeartbeatRequest,
-    RunnerHeartbeatResponse, RunnerMetrics, RunnerStatus, UpdateJobStatusRequest,
-    UpdateRunnerRequest, UpdateRunnerResponse, effective_runner_labels, normalize_runner_labels,
-    runner_disk_pressure,
+    JobStatusResponse, ListRunnersResponse, MAX_RUNNER_CONCURRENT_BUILDS, RUNNER_PROTOCOL_VERSION,
+    RegisterRunnerRequest, RegisterRunnerResponse, Runner, RunnerDiskPressure,
+    RunnerHeartbeatRequest, RunnerHeartbeatResponse, RunnerMetrics, RunnerStatus,
+    UpdateJobStatusRequest, UpdateRunnerRequest, UpdateRunnerResponse, effective_runner_labels,
+    normalize_runner_labels, runner_disk_pressure,
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -183,6 +183,10 @@ fn row_to_runner(row: &sqlx::sqlite::SqliteRow) -> Runner {
         last_heartbeat_at: row.get("last_heartbeat_at"),
         registered_by: row.get("registered_by"),
         cache_purge_requested_at: row.get("cache_purge_requested_at"),
+        max_concurrent_builds: row
+            .get::<i64, _>("max_concurrent_builds")
+            .clamp(1, i64::from(MAX_RUNNER_CONCURRENT_BUILDS))
+            as u32,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
@@ -269,6 +273,7 @@ pub async fn register_runner(
         last_heartbeat_at: None,
         registered_by: Some(auth.0.user_id),
         cache_purge_requested_at: None,
+        max_concurrent_builds: 1,
         created_at: now,
         updated_at: now,
     };
@@ -399,8 +404,25 @@ pub async fn runner_heartbeat(
             )
         })?;
 
+    let max_concurrent_builds: i64 =
+        sqlx::query_scalar("SELECT max_concurrent_builds FROM runners WHERE id = ?1")
+            .bind(&runner_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, runner_id = %runner_id, "failed to read runner build limit");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to update runner",
+                )
+            })?;
+
     Ok(Json(RunnerHeartbeatResponse {
         cache_purge_requested_at,
+        max_concurrent_builds: Some(
+            max_concurrent_builds.clamp(1, i64::from(MAX_RUNNER_CONCURRENT_BUILDS)) as u32,
+        ),
     }))
 }
 
@@ -575,6 +597,10 @@ pub(crate) async fn claim_eligible_direct_runner_build(
                  SELECT 1 FROM json_each(builds.config_snapshot, '$.runs_on') required \
                  WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
                ) \
+               AND ( \
+                 SELECT COUNT(*) FROM builds held \
+                 WHERE held.runner_id = runner.id AND held.status IN ('assigned', 'running') \
+               ) < MAX(runner.max_concurrent_builds, 1) \
            ) \
            AND EXISTS ( \
              SELECT 1 FROM projects p \
@@ -791,6 +817,10 @@ const NEXT_ELIGIBLE_BUILD_SQL: &str = concat!(
        ) \
        AND json_extract(b.config_snapshot, '$.repository_id') = p.repository_id \
        AND COALESCE(pref.direct_macos_runner_paused, 0) = 0 \
+       AND ( \
+         SELECT COUNT(*) FROM builds held \
+         WHERE held.runner_id = runner.id AND held.status IN ('assigned', 'running') \
+       ) < MAX(runner.max_concurrent_builds, 1) \
        AND NOT EXISTS ( \
          SELECT 1 FROM operator_incidents incident \
          WHERE incident.status = 'open' \
@@ -807,7 +837,8 @@ const NEXT_ELIGIBLE_BUILD_SQL: &str = concat!(
 /// ordinary running state. Filtering before ordering prevents blocked work,
 /// work that needs labels this runner lacks, and work from a pipeline already
 /// at its `max_concurrent` limit, from starving later eligible builds. A
-/// pipeline with no limit runs as many builds as there are runners.
+/// pipeline with no limit runs as many builds as the runners have slots. A
+/// runner already running `max_concurrent_builds` builds gets none.
 async fn next_eligible_build(
     pool: &sqlx::SqlitePool,
     runner_id: &str,
@@ -827,6 +858,18 @@ pub(crate) async fn release_runner_builds(
     runner_id: &str,
     reason: &str,
 ) -> sqlx::Result<Vec<String>> {
+    release_runner_builds_except(pool, scheduler, runner_id, &[], reason).await
+}
+
+/// [`release_runner_builds`], except for the builds in `active`, which the
+/// runner says it is still running.
+pub(crate) async fn release_runner_builds_except(
+    pool: &sqlx::SqlitePool,
+    scheduler: &crate::scheduler::Scheduler,
+    runner_id: &str,
+    active: &[String],
+    reason: &str,
+) -> sqlx::Result<Vec<String>> {
     let rows = sqlx::query(
         "SELECT id, status FROM builds \
          WHERE runner_id = ?1 AND status IN ('assigned', 'running')",
@@ -838,6 +881,9 @@ pub(crate) async fn release_runner_builds(
     let mut failed = Vec::new();
     for row in rows {
         let build_id: String = row.get("id");
+        if active.contains(&build_id) {
+            continue;
+        }
         let from_status: String = row.get("status");
         let target = if from_status == "running" {
             BuildStatus::Failed
@@ -895,13 +941,14 @@ pub async fn claim_job(
 
     let pool = &state.db;
 
-    // A runner runs one build at a time and reports its result before it
-    // claims again, so a build still bound to it was lost, for example to a
-    // crash or restart.
-    release_runner_builds(
+    // A runner names the builds it is still running when it claims, so any
+    // other build still bound to it was lost, for example to a crash or
+    // restart. Older runners name none, since they claim only when idle.
+    release_runner_builds_except(
         pool,
         &state.scheduler,
         &runner_id,
+        &req.active_build_ids,
         "The runner restarted or moved on without reporting this build's result",
     )
     .await
@@ -1381,11 +1428,21 @@ pub async fn update_runner(
     check_permission(&state.enforcer, &auth.0.role, "runners", "write").await?;
 
     let name = req.name.as_deref().map(str::trim);
-    if name.is_none() && req.custom_labels.is_none() {
+    if name.is_none() && req.custom_labels.is_none() && req.max_concurrent_builds.is_none() {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
             "invalid_input",
-            "Provide a runner name or custom labels",
+            "Provide a runner name, custom labels or a concurrent build limit",
+        ));
+    }
+    if req
+        .max_concurrent_builds
+        .is_some_and(|max| !(1..=MAX_RUNNER_CONCURRENT_BUILDS).contains(&max))
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_max_concurrent_builds",
+            format!("Concurrent builds must be between 1 and {MAX_RUNNER_CONCURRENT_BUILDS}"),
         ));
     }
     if name.is_some_and(|name| name.is_empty() || name.len() > 255) {
@@ -1406,7 +1463,8 @@ pub async fn update_runner(
     let pool = &state.db;
 
     let existing = sqlx::query(
-        "SELECT name, registered_by, capabilities, custom_labels FROM runners WHERE id = ?1",
+        "SELECT name, registered_by, capabilities, custom_labels, max_concurrent_builds \
+         FROM runners WHERE id = ?1",
     )
     .bind(&runner_id)
     .fetch_optional(pool)
@@ -1512,6 +1570,42 @@ pub async fn update_runner(
             pool,
             Some(&auth.0.user_id),
             "runner_labels_updated",
+            "runner",
+            Some(&runner_id),
+            Some(&details),
+        )
+        .await;
+    }
+
+    let previous_max: i64 = existing.get("max_concurrent_builds");
+    if let Some(max) = req.max_concurrent_builds
+        && i64::from(max) != previous_max
+    {
+        sqlx::query("UPDATE runners SET max_concurrent_builds = ?1, updated_at = ?2 WHERE id = ?3")
+            .bind(i64::from(max))
+            .bind(now)
+            .bind(&runner_id)
+            .execute(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, runner_id = %runner_id, "failed to update runner build limit");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to update runner",
+                )
+            })?;
+
+        let details = serde_json::json!({
+            "previous_max_concurrent_builds": previous_max,
+            "new_max_concurrent_builds": max,
+            "updated_by": auth.0.email,
+        })
+        .to_string();
+        let _ = write_audit_log(
+            pool,
+            Some(&auth.0.user_id),
+            "runner_concurrency_updated",
             "runner",
             Some(&runner_id),
             Some(&details),
@@ -2292,6 +2386,60 @@ mod tests {
         assert_eq!(event.build_id, "running");
         assert_eq!(event.to_status, "failed");
         assert!(events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_claim_keeps_the_builds_the_runner_still_runs() {
+        let pool = pool().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        insert_runner(&pool, "mac", "macos").await;
+        queue_build(&pool, "kept", 1, &[]).await;
+        queue_build(&pool, "lost", 2, &[]).await;
+        set_build(&pool, "kept", "running", Some("mac")).await;
+        set_build(&pool, "lost", "running", Some("mac")).await;
+
+        let failed = release_runner_builds_except(
+            &pool,
+            &scheduler,
+            "mac",
+            &["kept".to_string()],
+            "runner lost it",
+        )
+        .await
+        .unwrap();
+        assert_eq!(failed, ["lost"]);
+        assert_eq!(build_status(&pool, "kept").await.0, "running");
+        assert_eq!(build_status(&pool, "lost").await.0, "failed");
+    }
+
+    #[tokio::test]
+    async fn a_runner_takes_builds_up_to_its_concurrent_build_limit() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        for (id, number) in [("b1", 1), ("b2", 2), ("b3", 3)] {
+            queue_build(&pool, id, number, &[]).await;
+        }
+
+        // The default limit is one build.
+        assert_eq!(claim(&pool, "mac").await.as_deref(), Some("b1"));
+        assert_eq!(next_build_id(&pool, "mac").await, None);
+        assert!(
+            !claim_eligible_direct_runner_build(&pool, "b2", "mac", "runner:mac", "h")
+                .await
+                .unwrap()
+        );
+
+        sqlx::query("UPDATE runners SET max_concurrent_builds = 2 WHERE id = 'mac'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        set_build(&pool, "b1", "running", Some("mac")).await;
+        assert_eq!(claim(&pool, "mac").await.as_deref(), Some("b2"));
+        assert_eq!(next_build_id(&pool, "mac").await, None);
+
+        // A finished build frees its slot.
+        set_build(&pool, "b1", "succeeded", Some("mac")).await;
+        assert_eq!(claim(&pool, "mac").await.as_deref(), Some("b3"));
     }
 
     #[tokio::test]
