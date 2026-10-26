@@ -68,6 +68,7 @@ export const Route = createLazyFileRoute('/settings/runners')({
 })
 
 const LABEL_PATTERN = /^[a-z0-9._-]{1,64}$/
+const MAX_CONCURRENT_BUILDS = 8
 
 function parseLabels(value: string) {
   return [
@@ -93,6 +94,13 @@ const editRunnerSchema = z.object({
       'Use letters, digits, ".", "_" and "-", separated by commas or spaces',
     )
     .refine((value) => parseLabels(value).length <= 32, 'At most 32 labels'),
+  max_concurrent_builds: z
+    .string()
+    .refine(
+      (v) =>
+        /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= MAX_CONCURRENT_BUILDS,
+      `Must be a number between 1 and ${MAX_CONCURRENT_BUILDS}`,
+    ),
 })
 
 type EditRunnerForm = z.infer<typeof editRunnerSchema>
@@ -105,9 +113,14 @@ interface EditRunnerDialogProps {
 function EditRunnerDialog({ runner, onClose }: EditRunnerDialogProps) {
   const mutation = useUpdateRunner()
   const initialLabels = runner.custom_labels ?? []
+  const initialMaxBuilds = runner.max_concurrent_builds ?? 1
   const form = useForm<EditRunnerForm>({
     resolver: zodResolver(editRunnerSchema),
-    defaultValues: { name: runner.name, labels: initialLabels.join(', ') },
+    defaultValues: {
+      name: runner.name,
+      labels: initialLabels.join(', '),
+      max_concurrent_builds: String(initialMaxBuilds),
+    },
     mode: 'onBlur',
   })
 
@@ -121,7 +134,9 @@ function EditRunnerDialog({ runner, onClose }: EditRunnerDialogProps) {
     const labels = parseLabels(data.labels)
     const nameChanged = !isManaged && name !== runner.name.trim()
     const labelsChanged = labels.join(' ') !== initialLabels.join(' ')
-    if (!nameChanged && !labelsChanged) {
+    const maxBuilds = Number(data.max_concurrent_builds)
+    const maxBuildsChanged = maxBuilds !== initialMaxBuilds
+    if (!nameChanged && !labelsChanged && !maxBuildsChanged) {
       onClose()
       return
     }
@@ -129,6 +144,7 @@ function EditRunnerDialog({ runner, onClose }: EditRunnerDialogProps) {
     const update: UpdateRunnerRequest = {}
     if (nameChanged) update.name = name
     if (labelsChanged) update.custom_labels = labels
+    if (maxBuildsChanged) update.max_concurrent_builds = maxBuilds
 
     mutation.mutate(
       { runnerId: runner.id, data: update },
@@ -205,6 +221,31 @@ function EditRunnerDialog({ runner, onClose }: EditRunnerDialogProps) {
                     {detectedLabels.length > 0
                       ? `Detected from the host: ${detectedLabels.join(', ')}.`
                       : 'Detected labels appear after the runner connects.'}
+                  </Text>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="max_concurrent_builds"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Concurrent builds</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={MAX_CONCURRENT_BUILDS}
+                      className="w-24"
+                      {...field}
+                    />
+                  </FormControl>
+                  <Text variant="caption">
+                    How many builds this runner runs at the same time. Each
+                    build needs its own CPU and memory, and VM builds share the
+                    Mac&apos;s two VM slots.
                   </Text>
                   <FormMessage />
                 </FormItem>
