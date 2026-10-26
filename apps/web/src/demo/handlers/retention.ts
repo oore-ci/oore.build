@@ -1,28 +1,35 @@
 import { demoApi } from './api'
 import { HttpResponse, delay } from 'msw'
 import * as z from 'zod'
-import type { ProjectRetentionOverride } from '@oore/client/models'
+import type {
+  ProjectRetentionOverride,
+  UpdateProjectRetentionOverrideRequest,
+  UpdateRetentionPolicyRequest,
+} from '@oore/client/models'
 import { requireDemoInstancePermission } from '../authorization'
 import { demoState } from '../state'
 
 const retentionFields = {
-  enabled: z.boolean().optional(),
-  max_age_days: z.number().optional(),
-  max_builds_per_project: z.number().optional(),
-  max_artifact_size_bytes: z.number().optional(),
-  cleanup_target: z.enum(['artifacts_only', 'full']).optional(),
-  keep_statuses: z.array(z.string()).optional(),
-  artifact_ttl_days: z.number().optional(),
+  enabled: z.boolean().nullish(),
+  max_age_days: z.number().nullish(),
+  max_builds_per_project: z.number().nullish(),
+  max_artifact_size_bytes: z.number().nullish(),
+  cleanup_target: z.enum(['artifacts_only', 'full']).nullish(),
+  keep_statuses: z.array(z.string()).nullish(),
+  artifact_ttl_days: z.number().nullish(),
 }
-const retentionPolicyRequestSchema = z.object({
-  ...retentionFields,
-  enabled: z.boolean(),
-  cleanup_target: z.enum(['artifacts_only', 'full']),
-  keep_statuses: z.array(z.string()),
-  dry_run: z.boolean(),
-  cleanup_interval_secs: z.number(),
-})
-const retentionOverrideRequestSchema = z.object(retentionFields)
+const retentionPolicyRequestSchema = z.toZod<UpdateRetentionPolicyRequest>()(
+  z.object({
+    ...retentionFields,
+    enabled: z.boolean(),
+    cleanup_target: z.enum(['artifacts_only', 'full']),
+    keep_statuses: z.array(z.string()).optional(),
+    dry_run: z.boolean().optional(),
+    cleanup_interval_secs: z.number().optional(),
+  }),
+)
+const retentionOverrideRequestSchema =
+  z.toZod<UpdateProjectRetentionOverrideRequest>()(z.object(retentionFields))
 
 function now(): number {
   return Math.floor(Date.now() / 1000)

@@ -1,29 +1,80 @@
 import { demoApi } from './api'
 import { HttpResponse, delay } from 'msw'
 import * as z from 'zod'
-import type { NotificationChannel } from '@oore/client/models'
+import type {
+  CreateNotificationChannelRequest,
+  NotificationChannel,
+  UpdateNotificationChannelRequest,
+} from '@/lib/notification-channels'
 import { requireDemoInstancePermission } from '../authorization'
 import { demoState } from '../state'
 
-const channelTypeSchema = z.enum(['webhook', 'mattermost', 'email'])
-const smtpConfigSchema = z.record(z.string(), z.json())
-const createChannelSchema = z.object({
-  name: z.string(),
-  channel_type: channelTypeSchema,
-  enabled: z.boolean().optional(),
-  events: z.array(z.string()).optional(),
-  url: z.string().optional(),
-  secret: z.string().optional(),
-  smtp_config: smtpConfigSchema.optional(),
+const channelTypeSchema = z.enum(['webhook', 'mattermost', 'email', 'slack'])
+const smtpTlsModeSchema = z.enum(['none', 'start_tls', 'tls'])
+const smtpConfigSchema = z.object({
+  from_address: z.string(),
+  host: z.string(),
+  password: z.string(),
+  port: z.number(),
+  recipients: z.array(z.string()),
+  tls_mode: smtpTlsModeSchema,
+  username: z.string(),
 })
-const updateChannelSchema = z.object({
-  name: z.string().optional(),
-  enabled: z.boolean().optional(),
-  events: z.array(z.string()).optional(),
-  url: z.string().optional(),
-  secret: z.string().optional(),
-  smtp_config: smtpConfigSchema.optional(),
+const updateSmtpConfigSchema = z.object({
+  from_address: z.string().nullish(),
+  host: z.string().nullish(),
+  password: z.string().nullish(),
+  port: z.number().nullish(),
+  recipients: z.array(z.string()).nullish(),
+  tls_mode: smtpTlsModeSchema.nullish(),
+  username: z.string().nullish(),
 })
+const slackMentionsSchema = z.array(
+  z.object({ identity: z.string(), member_id: z.string() }),
+)
+const createChannelSchema = z.toZod<CreateNotificationChannelRequest>()(
+  z.object({
+    name: z.string(),
+    channel_type: channelTypeSchema,
+    enabled: z.boolean().optional(),
+    events: z.array(z.string()).optional(),
+    project_id: z.string().nullish(),
+    url: z.string().nullish(),
+    secret: z.string().nullish(),
+    smtp_config: smtpConfigSchema.nullish(),
+    slack_mentions: slackMentionsSchema.optional(),
+  }),
+)
+const updateChannelSchema = z.toZod<UpdateNotificationChannelRequest>()(
+  z.object({
+    name: z.string().nullish(),
+    enabled: z.boolean().nullish(),
+    events: z.array(z.string()).nullish(),
+    project_id: z.string().nullish(),
+    url: z.string().nullish(),
+    secret: z.string().nullish(),
+    smtp_config: updateSmtpConfigSchema.nullish(),
+    slack_mentions: slackMentionsSchema.nullish(),
+  }),
+)
+
+function urlHost(value?: string | null): string | undefined {
+  if (!value) return undefined
+  try {
+    return new URL(value).host
+  } catch {
+    return undefined
+  }
+}
+
+// The daemon returns readable settings only when reading one channel.
+function listedChannel({
+  url_host: _urlHost,
+  smtp_summary: _smtpSummary,
+  ...channel
+}: NotificationChannel): NotificationChannel {
+  return channel
+}
 
 function now(): number {
   return Math.floor(Date.now() / 1000)
@@ -67,7 +118,7 @@ export const notificationHandlers = [
         return direction * String(leftValue).localeCompare(String(rightValue))
       })
     return HttpResponse.json({
-      channels: channels.slice(offset, offset + limit),
+      channels: channels.slice(offset, offset + limit).map(listedChannel),
       total: channels.length,
     })
   }),
@@ -87,9 +138,22 @@ export const notificationHandlers = [
       channel_type: body.channel_type,
       enabled: body.enabled ?? true,
       events: body.events ?? [],
+      project_id: body.project_id || undefined,
       has_url: !!body.url,
       has_secret: !!body.secret,
       has_smtp_config: !!body.smtp_config,
+      url_host: urlHost(body.url),
+      smtp_summary: body.smtp_config
+        ? {
+            host: body.smtp_config.host,
+            port: body.smtp_config.port,
+            username: body.smtp_config.username,
+            tls_mode: body.smtp_config.tls_mode,
+            from_address: body.smtp_config.from_address,
+            recipients: body.smtp_config.recipients,
+          }
+        : undefined,
+      slack_mentions: body.slack_mentions ?? [],
       created_by: 'usr-demo-owner-001',
       created_at: now(),
       updated_at: now(),
@@ -137,9 +201,31 @@ export const notificationHandlers = [
       name: body.name ?? existing.name,
       enabled: body.enabled ?? existing.enabled,
       events: body.events ?? existing.events,
+      project_id:
+        body.project_id === undefined
+          ? existing.project_id
+          : body.project_id || undefined,
       has_url: body.url ? true : existing.has_url,
       has_secret: body.secret ? true : existing.has_secret,
       has_smtp_config: body.smtp_config ? true : existing.has_smtp_config,
+      url_host: urlHost(body.url) ?? existing.url_host,
+      smtp_summary:
+        body.smtp_config && existing.smtp_summary
+          ? {
+              host: body.smtp_config.host ?? existing.smtp_summary.host,
+              port: body.smtp_config.port ?? existing.smtp_summary.port,
+              username:
+                body.smtp_config.username ?? existing.smtp_summary.username,
+              tls_mode:
+                body.smtp_config.tls_mode ?? existing.smtp_summary.tls_mode,
+              from_address:
+                body.smtp_config.from_address ??
+                existing.smtp_summary.from_address,
+              recipients:
+                body.smtp_config.recipients ?? existing.smtp_summary.recipients,
+            }
+          : existing.smtp_summary,
+      slack_mentions: body.slack_mentions ?? existing.slack_mentions,
       updated_at: now(),
     }
 
@@ -191,9 +277,9 @@ export const notificationHandlers = [
 
   demoApi.listNotificationDeliveries(async ({ params }) => {
     await delay(150)
-    const channelDeliveries = demoState.notificationDeliveries.filter(
-      (d) => d.channel_id === params.id,
-    )
+    const channelDeliveries = demoState.notificationDeliveries
+      .filter((d) => d.channel_id === params.id)
+      .sort((a, b) => b.created_at - a.created_at)
     return HttpResponse.json({
       deliveries: channelDeliveries,
       total: channelDeliveries.length,

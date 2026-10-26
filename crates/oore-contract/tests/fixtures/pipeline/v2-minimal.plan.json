@@ -1,0 +1,22 @@
+{
+  "platforms": [
+    "android"
+  ],
+  "steps": [
+    {
+      "name": "Build Android",
+      "phase": "build",
+      "run": "flutter build apk --release",
+      "source": "targets.android.build",
+      "platform": "android"
+    }
+  ],
+  "env": [],
+  "artifact_patterns": [
+    "build/app/outputs/flutter-apk/*.apk",
+    "build/app/outputs/bundle/**/*.aab"
+  ],
+  "build_number_offset": 0,
+  "runs_on": [],
+  "isolation": "host"
+}

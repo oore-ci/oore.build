@@ -2,11 +2,15 @@
   "title": "Oore documentation",
   "pages": [
     "index",
-    "start",
+    "---Get started---",
+    "...start",
+    "---How-to guides---",
     "build",
     "team",
     "operate",
-    "understand",
-    "reference"
+    "---Concepts---",
+    "...concepts",
+    "---Reference---",
+    "...reference"
   ]
 }

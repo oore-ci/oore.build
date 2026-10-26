@@ -108,6 +108,9 @@ fn parse_ios_manifest_metadata(metadata: &Value) -> Result<IosManifestMetadata, 
         .ok_or("Signed iOS metadata is missing")?;
     let export_method = required_metadata_string(signing, "effective_export_method")
         .ok_or("iOS export method is missing")?;
+    if matches!(export_method.as_str(), "app-store-connect" | "app-store") {
+        return Err("This IPA was exported for App Store Connect; install it through TestFlight");
+    }
     if !matches!(export_method.as_str(), "ad-hoc" | "release-testing") {
         return Err("The IPA was not exported for ad-hoc device installation");
     }
@@ -201,7 +204,10 @@ fn ios_manifest(metadata: &IosManifestMetadata, download_url: &str) -> String {
 fn public_base_url(
     public_url: Option<&str>,
     require_https: bool,
-) -> Result<Url, (StatusCode, Json<ApiError>)> {
+) -> Result<Option<Url>, (StatusCode, Json<ApiError>)> {
+    if public_url.is_none() && !require_https {
+        return Ok(None);
+    }
     let raw = public_url.ok_or_else(|| {
         api_err(
             StatusCode::PRECONDITION_FAILED,
@@ -223,13 +229,13 @@ fn public_base_url(
             "iOS over-the-air installation requires an HTTPS public URL",
         ));
     }
-    Ok(parsed)
+    Ok(Some(parsed))
 }
 
 async fn artifact_delivery_base_url(
     pool: &SqlitePool,
     require_https: bool,
-) -> Result<Url, (StatusCode, Json<ApiError>)> {
+) -> Result<Option<Url>, (StatusCode, Json<ApiError>)> {
     let settings = load_effective_external_access_network_settings(pool)
         .await
         .map_err(|e| {
@@ -249,7 +255,10 @@ async fn artifact_delivery_base_url(
     )
 }
 
-fn public_endpoint(base: &Url, path: &str, warpgate_ticket: Option<&str>) -> String {
+fn public_endpoint(base: &Option<Url>, path: &str, warpgate_ticket: Option<&str>) -> String {
+    let Some(base) = base else {
+        return format!("/{}", path.trim_start_matches('/'));
+    };
     let mut endpoint = base.clone();
     endpoint.set_path(&format!("/{}", path.trim_start_matches('/')));
     endpoint.set_query(None);
@@ -260,6 +269,62 @@ fn public_endpoint(base: &Url, path: &str, warpgate_ticket: Option<&str>) -> Str
             .append_pair("warpgate-ticket", ticket);
     }
     endpoint.into()
+}
+
+#[test]
+fn local_apk_links_work_without_weakening_ios_delivery_requirements() {
+    let local = public_base_url(None, false).unwrap();
+    assert_eq!(
+        public_endpoint(&local, "install/artifact/token", None),
+        "/install/artifact/token"
+    );
+    assert!(public_base_url(None, true).is_err());
+    assert!(public_base_url(Some("http://example.com"), true).is_err());
+    let remote = public_base_url(Some("https://example.com/old?query=1"), true).unwrap();
+    assert_eq!(
+        public_endpoint(&remote, "install/ios/token/manifest.plist", Some("ticket")),
+        "https://example.com/install/ios/token/manifest.plist?warpgate-ticket=ticket"
+    );
+}
+
+/// The device platform an artifact installs on. Only APKs and signed ad-hoc
+/// IPAs install on a device; App Bundles (`aab`) only go to Google Play.
+fn install_platform(
+    artifact_type: &str,
+    metadata: &Value,
+) -> Result<ArtifactInstallPlatform, (StatusCode, Json<ApiError>)> {
+    match artifact_type {
+        "apk" => Ok(ArtifactInstallPlatform::Android),
+        "ipa" => {
+            parse_ios_manifest_metadata(metadata).map_err(|message| {
+                api_err(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "ios_artifact_not_installable",
+                    message,
+                )
+            })?;
+            Ok(ArtifactInstallPlatform::Ios)
+        }
+        _ => Err(api_err(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "artifact_not_installable",
+            "Only APK and signed ad-hoc IPA artifacts can be installed on a device",
+        )),
+    }
+}
+
+#[test]
+fn app_bundles_and_other_non_device_artifacts_are_not_installable() {
+    let empty = Value::Object(Default::default());
+    assert!(matches!(
+        install_platform("apk", &empty),
+        Ok(ArtifactInstallPlatform::Android)
+    ));
+    for artifact_type in ["aab", "app", "generic"] {
+        let (status, Json(error)) = install_platform(artifact_type, &empty).unwrap_err();
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(error.code, "artifact_not_installable");
+    }
 }
 
 /// `POST /v1/artifacts/{artifact_id}/install-link` — create a device install session.
@@ -284,26 +349,7 @@ pub async fn create_install_link(
         ));
     }
 
-    let platform = match artifact.artifact_type.as_str() {
-        "apk" => ArtifactInstallPlatform::Android,
-        "ipa" => {
-            parse_ios_manifest_metadata(&artifact.metadata).map_err(|message| {
-                api_err(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "ios_artifact_not_installable",
-                    message,
-                )
-            })?;
-            ArtifactInstallPlatform::Ios
-        }
-        _ => {
-            return Err(api_err(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "artifact_not_installable",
-                "Only APK and signed ad-hoc IPA artifacts can be installed on a device",
-            ));
-        }
-    };
+    let platform = install_platform(&artifact.artifact_type, &artifact.metadata)?;
 
     let base =
         artifact_delivery_base_url(&pool, matches!(platform, ArtifactInstallPlatform::Ios)).await?;

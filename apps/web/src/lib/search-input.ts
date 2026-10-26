@@ -1,7 +1,5 @@
 import * as z from 'zod'
 
-const searchRecordSchema = z.record(z.string(), z.unknown())
-
 export type SearchValue = boolean | null | number | string | undefined
 
 export interface SearchInput {
@@ -9,8 +7,7 @@ export interface SearchInput {
 }
 
 function searchValue(search: SearchInput, key: string) {
-  const result = searchRecordSchema.safeParse(search)
-  return result.success ? result.data[key] : undefined
+  return Object.hasOwn(search, key) ? search[key] : undefined
 }
 
 export function searchString(

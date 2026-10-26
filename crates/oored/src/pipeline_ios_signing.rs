@@ -5,7 +5,7 @@ use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Component, Path as FsPath, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex as StdMutex, PoisonError};
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -13,11 +13,11 @@ use axum::http::{HeaderMap, StatusCode};
 use base64::Engine as _;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use oore_contract::{
-    ApiError, IosProvisioningProfileInput, IosProvisioningProfileSummary, IosSigningMode,
-    ListPipelineIosDevicesResponse, PipelineIosSigningResponse, RegisterIosDeviceRequest,
-    RegisterIosDeviceResponse, RegisteredIosDevice, RunnerIosProvisioningProfile,
-    RunnerIosSigningBundle, RunnerIosSigningResponse, SyncPipelineIosSigningResponse,
-    UpdatePipelineIosSigningRequest,
+    ApiError, IosExportMethod, IosProvisioningProfileInput, IosProvisioningProfileSummary,
+    IosSigningMode, ListPipelineIosDevicesResponse, PipelineIosSigningResponse,
+    RegisterIosDeviceRequest, RegisterIosDeviceResponse, RegisteredIosDevice,
+    RunnerIosProvisioningProfile, RunnerIosSigningBundle, RunnerIosSigningResponse,
+    SyncPipelineIosSigningResponse, UpdatePipelineIosSigningRequest,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -26,13 +26,14 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::AppState;
+use crate::app_store_connect_keys;
 use crate::apple_api::{self, AppleApiCredentials};
 use crate::crypto;
 use crate::extractors::AuthUser;
 use crate::project_rbac::{ProjectPermission, require_pipeline_project_permission};
 use crate::runners::{RunnerAuth, require_active_job_signing_grant};
 use crate::store::write_audit_log;
-use crate::util::{api_err, now_unix};
+use crate::util::{api_err, is_foreign_key_violation, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -62,12 +63,12 @@ struct IosSigningSettingsRow {
     api_key_id: Option<String>,
     api_issuer_id: Option<String>,
     api_private_key_encrypted: Option<String>,
+    shared_api_key_id: Option<String>,
     updated_at: i64,
 }
 
 #[derive(Debug, Clone, FromRow)]
 struct IosProvisioningProfileRow {
-    id: String,
     bundle_id: String,
     profile_filename: Option<String>,
     profile_encrypted: Option<String>,
@@ -97,6 +98,64 @@ struct ParsedProvisioningProfile {
     profile_name: Option<String>,
     team_id: Option<String>,
     expires_at: Option<i64>,
+    distribution: ProfileDistribution,
+}
+
+/// Distribution type read from a provisioning profile's plist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProfileDistribution {
+    Development,
+    AdHoc,
+    AppStore,
+    Enterprise,
+}
+
+impl ProfileDistribution {
+    fn from_profile_json(json: &serde_json::Value) -> Self {
+        if json
+            .get("ProvisionsAllDevices")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Self::Enterprise;
+        }
+        if json.get("ProvisionedDevices").is_none() {
+            return Self::AppStore;
+        }
+        let get_task_allow = json
+            .get("Entitlements")
+            .and_then(|entitlements| entitlements.get("get-task-allow"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if get_task_allow {
+            Self::Development
+        } else {
+            Self::AdHoc
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Development => "development",
+            Self::AdHoc => "ad hoc",
+            Self::AppStore => "App Store",
+            Self::Enterprise => "enterprise",
+        }
+    }
+
+    fn matches(self, export_method: IosExportMethod) -> bool {
+        match export_method {
+            IosExportMethod::AdHoc => self == Self::AdHoc,
+            IosExportMethod::AppStore => self == Self::AppStore,
+        }
+    }
+}
+
+fn expected_profile_label(export_method: IosExportMethod) -> &'static str {
+    match export_method {
+        IosExportMethod::AdHoc => "an ad hoc distribution",
+        IosExportMethod::AppStore => "an App Store distribution",
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -109,7 +168,6 @@ struct ParsedP12Metadata {
 #[derive(Debug, Clone)]
 struct GeneratedApiCertificateBundle {
     certificate_id: String,
-    certificate_type: Option<String>,
     p12_base64: String,
     p12_password: String,
     metadata: ParsedP12Metadata,
@@ -384,6 +442,7 @@ async fn parse_provisioning_profile(
             profile_name,
             team_id,
             expires_at,
+            distribution: ProfileDistribution::from_profile_json(&json),
         })
     })
     .await
@@ -616,117 +675,61 @@ async fn parse_p12_metadata(
     .map_err(|e| anyhow::anyhow!("parse_p12_metadata task panicked: {e}"))?
 }
 
+/// Imports the p12 into a scratch keychain and checks that it yields a signing
+/// identity. The keychain calls run in-process so neither the p12 password nor
+/// the keychain password ever appears on a process command line.
 async fn verify_p12_keychain_import_compatibility(
     p12_bytes: Vec<u8>,
     p12_password: String,
 ) -> anyhow::Result<()> {
     tokio::task::spawn_blocking(move || {
         let mut scratch = SigningScratch::new()?;
-        let token = Uuid::new_v4().to_string();
-        let p12_path = scratch.path(&format!("import-check-{token}.p12"));
-        let keychain_path = scratch.path(&format!("import-check-{token}.keychain-db"));
-        let exported_identity_path = scratch.path(&format!("identity-check-{token}.p12"));
+        let keychain_path = scratch.path(&format!("import-check-{}.keychain-db", Uuid::new_v4()));
         scratch.keychain = Some(keychain_path.clone());
-        let keychain_password = random_secret_hex();
-
-        fs::write(&p12_path, &p12_bytes).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to write temporary p12 for keychain compatibility check '{}': {e}",
-                p12_path.display()
-            )
-        })?;
-        set_strict_permissions(&p12_path);
-
-        let cleanup = || {
-            let _ = Command::new("security")
-                .args(["delete-keychain", keychain_path.to_string_lossy().as_ref()])
-                .output();
-            let _ = fs::remove_file(&keychain_path);
-            let _ = fs::remove_file(&p12_path);
-            let _ = fs::remove_file(&exported_identity_path);
-        };
-
-        let create_output = Command::new("security")
-            .args([
-                "create-keychain",
-                "-p",
-                &keychain_password,
-                keychain_path.to_string_lossy().as_ref(),
-            ])
-            .output()
-            .map_err(|e| anyhow::anyhow!("failed to execute security create-keychain: {e}"))?;
-        if !create_output.status.success() {
-            let stderr = String::from_utf8_lossy(&create_output.stderr);
-            cleanup();
-            anyhow::bail!(
-                "failed to create temporary keychain for iOS signing validation: {stderr}"
-            );
-        }
-
-        let unlock_output = Command::new("security")
-            .args([
-                "unlock-keychain",
-                "-p",
-                &keychain_password,
-                keychain_path.to_string_lossy().as_ref(),
-            ])
-            .output()
-            .map_err(|e| anyhow::anyhow!("failed to execute security unlock-keychain: {e}"))?;
-        if !unlock_output.status.success() {
-            let stderr = String::from_utf8_lossy(&unlock_output.stderr);
-            cleanup();
-            anyhow::bail!(
-                "failed to unlock temporary keychain for iOS signing validation: {stderr}"
-            );
-        }
-
-        let import_output = Command::new("security")
-            .args([
-                "import",
-                p12_path.to_string_lossy().as_ref(),
-                "-f",
-                "pkcs12",
-                "-k",
-                keychain_path.to_string_lossy().as_ref(),
-                "-P",
-                &p12_password,
-                "-A",
-            ])
-            .output()
-            .map_err(|e| anyhow::anyhow!("failed to execute security import: {e}"))?;
-
-        if !import_output.status.success() {
-            let stderr = String::from_utf8_lossy(&import_output.stderr);
-            cleanup();
-            anyhow::bail!("failed to import p12 into macOS keychain: {stderr}");
-        }
-
-        let export_output = Command::new("security")
-            .args([
-                "export",
-                "-k",
-                keychain_path.to_string_lossy().as_ref(),
-                "-t",
-                "identities",
-                "-f",
-                "pkcs12",
-                "-P",
-                &keychain_password,
-                "-o",
-                exported_identity_path.to_string_lossy().as_ref(),
-            ])
-            .output()
-            .map_err(|e| anyhow::anyhow!("failed to execute security identity export: {e}"))?;
-        cleanup();
-        if !export_output.status.success() {
-            let stderr = String::from_utf8_lossy(&export_output.stderr);
-            anyhow::bail!("p12 imported without a usable macOS signing identity: {stderr}");
-        }
-
-        Ok(())
+        import_p12_into_scratch_keychain(&keychain_path, &p12_bytes, &p12_password)
     })
     .await
     .map_err(|e| anyhow::anyhow!("verify_p12_keychain_import_compatibility task panicked: {e}"))?
+}
+
+#[cfg(target_os = "macos")]
+fn import_p12_into_scratch_keychain(
+    keychain_path: &FsPath,
+    p12_bytes: &[u8],
+    p12_password: &str,
+) -> anyhow::Result<()> {
+    use security_framework::import_export::Pkcs12ImportOptions;
+    use security_framework::os::macos::keychain::CreateOptions;
+
+    let keychain_password = random_secret_hex();
+    let mut keychain = CreateOptions::new()
+        .password(&keychain_password)
+        .create(keychain_path)
+        .map_err(|e| {
+            anyhow::anyhow!("failed to create temporary keychain for iOS signing validation: {e}")
+        })?;
+    keychain.unlock(Some(&keychain_password)).map_err(|e| {
+        anyhow::anyhow!("failed to unlock temporary keychain for iOS signing validation: {e}")
+    })?;
+
+    let imported = Pkcs12ImportOptions::new()
+        .passphrase(p12_password)
+        .keychain(keychain)
+        .import(p12_bytes)
+        .map_err(|e| anyhow::anyhow!("failed to import p12 into macOS keychain: {e}"))?;
+    if !imported.iter().any(|item| item.identity.is_some()) {
+        anyhow::bail!("p12 imported without a usable macOS signing identity");
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn import_p12_into_scratch_keychain(
+    _keychain_path: &FsPath,
+    _p12_bytes: &[u8],
+    _p12_password: &str,
+) -> anyhow::Result<()> {
+    anyhow::bail!("macOS keychain validation is only available on macOS")
 }
 
 /// Re-export a p12 bundle using legacy 3DES+SHA1 encoding that macOS `security import` supports.
@@ -868,13 +871,17 @@ fn parse_rfc3339_opt(value: Option<String>) -> Option<i64> {
         .map(|dt| dt.with_timezone(&Utc).timestamp())
 }
 
-fn profile_name_for_bundle(bundle_id: &str) -> String {
+fn profile_name_for_bundle(bundle_id: &str, export_method: IosExportMethod) -> String {
     let mut compact = bundle_id.replace(|ch: char| !ch.is_ascii_alphanumeric(), "-");
     if compact.len() > 32 {
         compact.truncate(32);
     }
     let digest = hex::encode(Sha256::digest(bundle_id.as_bytes()));
-    format!("oore-adhoc-{compact}-{}", &digest[..32])
+    let kind = match export_method {
+        IosExportMethod::AdHoc => "adhoc",
+        IosExportMethod::AppStore => "appstore",
+    };
+    format!("oore-{kind}-{compact}-{}", &digest[..32])
 }
 
 async fn generate_api_certificate_bundle(
@@ -1206,7 +1213,6 @@ async fn generate_api_certificate_bundle(
 
     Ok(GeneratedApiCertificateBundle {
         certificate_id: created_cert.certificate_id,
-        certificate_type: created_cert.certificate_type,
         p12_base64,
         p12_password,
         metadata,
@@ -1228,7 +1234,8 @@ async fn load_ios_settings(
     let row = sqlx::query_as::<_, IosSigningSettingsRow>(
         "SELECT id, enabled, mode, team_id, export_method, bundle_ids_json,
                 p12_filename, p12_encrypted, p12_password_encrypted, p12_fingerprint, p12_expires_at,
-                api_key_id, api_issuer_id, api_private_key_encrypted, updated_at
+                api_key_id, api_issuer_id, api_private_key_encrypted, shared_api_key_id,
+                updated_at
          FROM pipeline_ios_signing_settings WHERE pipeline_id = ?1",
     )
     .bind(pipeline_id)
@@ -1238,23 +1245,23 @@ async fn load_ios_settings(
 }
 
 async fn load_ios_profiles(
-    pool: &SqlitePool,
+    executor: impl sqlx::SqliteExecutor<'_>,
     pipeline_id: &str,
 ) -> anyhow::Result<Vec<IosProvisioningProfileRow>> {
     let rows = sqlx::query_as::<_, IosProvisioningProfileRow>(
-        "SELECT id, bundle_id, profile_filename, profile_encrypted, profile_uuid,
+        "SELECT bundle_id, profile_filename, profile_encrypted, profile_uuid,
                 profile_name, team_id, expires_at, checksum
          FROM pipeline_ios_provisioning_profiles
          WHERE pipeline_id = ?1 ORDER BY bundle_id ASC",
     )
     .bind(pipeline_id)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     Ok(rows)
 }
 
 async fn prune_ios_profiles(
-    pool: &SqlitePool,
+    executor: impl sqlx::SqliteExecutor<'_>,
     pipeline_id: &str,
     active_bundle_ids: &[String],
 ) -> Result<u64, sqlx::Error> {
@@ -1268,7 +1275,7 @@ async fn prune_ios_profiles(
     )
     .bind(pipeline_id)
     .bind(encode_bundle_ids(active_bundle_ids))
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(result.rows_affected())
 }
@@ -1320,7 +1327,7 @@ fn default_ios_signing_response(pipeline_id: String) -> PipelineIosSigningRespon
         enabled: false,
         mode: IosSigningMode::Manual,
         team_id: None,
-        export_method: "ad_hoc".to_string(),
+        export_method: IosExportMethod::AdHoc,
         bundle_ids: Vec::new(),
         has_p12: false,
         p12_filename: None,
@@ -1330,6 +1337,7 @@ fn default_ios_signing_response(pipeline_id: String) -> PipelineIosSigningRespon
         has_api_key: false,
         api_key_id: None,
         api_issuer_id: None,
+        shared_api_key: None,
         provisioning_profiles: Vec::new(),
         updated_at: None,
     }
@@ -1344,13 +1352,17 @@ async fn build_public_response(
     let Some(settings) = settings else {
         return Ok(default_ios_signing_response(pipeline_id.to_string()));
     };
+    let shared_api_key = match settings.shared_api_key_id.as_deref() {
+        Some(id) => app_store_connect_keys::load_summary(pool, id).await?,
+        None => None,
+    };
 
     Ok(PipelineIosSigningResponse {
         pipeline_id: pipeline_id.to_string(),
         enabled: settings.enabled != 0,
         mode: parse_mode(&settings.mode),
         team_id: settings.team_id,
-        export_method: settings.export_method,
+        export_method: IosExportMethod::from_stored(&settings.export_method),
         bundle_ids: parse_bundle_ids(&settings.bundle_ids_json),
         has_p12: settings.p12_encrypted.is_some(),
         p12_filename: settings.p12_filename,
@@ -1360,6 +1372,7 @@ async fn build_public_response(
         has_api_key: settings.api_private_key_encrypted.is_some(),
         api_key_id: settings.api_key_id,
         api_issuer_id: settings.api_issuer_id,
+        shared_api_key,
         provisioning_profiles: profiles.iter().map(profile_row_to_summary).collect(),
         updated_at: Some(settings.updated_at),
     })
@@ -1373,10 +1386,28 @@ fn validate_udid(udid: &str) -> bool {
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
 }
 
-fn load_api_credentials(
+fn device_cache_store_error(
+    error: impl std::fmt::Display,
+    operation: &'static str,
+) -> (StatusCode, Json<ApiError>) {
+    error!(%error, operation, "failed to persist cached Apple iOS devices");
+    api_err(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "store_error",
+        "Failed to persist synced iOS device cache",
+    )
+}
+
+/// The API key the pipeline uses: the shared key when one is selected,
+/// otherwise its own.
+async fn load_api_credentials(
+    pool: &SqlitePool,
     settings: &IosSigningSettingsRow,
     encryption_key: &[u8],
 ) -> anyhow::Result<Option<AppleApiCredentials>> {
+    if let Some(id) = settings.shared_api_key_id.as_deref() {
+        return app_store_connect_keys::load_credentials(pool, encryption_key, id).await;
+    }
     let (Some(key_id), Some(issuer_id), Some(private_key_encrypted)) = (
         settings.api_key_id.clone(),
         settings.api_issuer_id.clone(),
@@ -1400,12 +1431,16 @@ async fn upsert_cached_apple_devices(
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
     let existing = load_ios_devices(pool, pipeline_id)
         .await
-        .unwrap_or_default();
+        .map_err(|error| device_cache_store_error(error, "load"))?;
     let mut existing_by_udid: HashMap<String, IosDeviceRow> = existing
         .into_iter()
         .map(|row| (row.udid.to_uppercase(), row))
         .collect();
     let now = now_unix();
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|error| device_cache_store_error(error, "begin transaction"))?;
 
     for remote in devices {
         let udid = remote.udid.to_uppercase();
@@ -1423,16 +1458,9 @@ async fn upsert_cached_apple_devices(
             .bind(now)
             .bind(actor_id)
             .bind(existing.id)
-            .execute(pool)
+            .execute(&mut *transaction)
             .await
-            .map_err(|e| {
-                error!(error = %e, "failed to update cached Apple iOS device");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "store_error",
-                    "Failed to persist synced iOS device cache",
-                )
-            })?;
+            .map_err(|error| device_cache_store_error(error, "update"))?;
         } else {
             sqlx::query(
                 "INSERT INTO pipeline_ios_signing_devices (
@@ -1449,18 +1477,16 @@ async fn upsert_cached_apple_devices(
             .bind(&remote.status)
             .bind(now)
             .bind(actor_id)
-            .execute(pool)
+            .execute(&mut *transaction)
             .await
-            .map_err(|e| {
-                error!(error = %e, "failed to insert cached Apple iOS device");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "store_error",
-                    "Failed to persist synced iOS device cache",
-                )
-            })?;
+            .map_err(|error| device_cache_store_error(error, "insert"))?;
         }
     }
+
+    transaction
+        .commit()
+        .await
+        .map_err(|error| device_cache_store_error(error, "commit transaction"))?;
 
     Ok(())
 }
@@ -1508,7 +1534,7 @@ async fn sync_ios_signing_assets(
         ));
     }
 
-    let mut cert_records = apple_api::list_distribution_certificates(&client, creds).await?;
+    let cert_records = apple_api::list_distribution_certificates(&client, creds).await?;
     let mut warnings = Vec::new();
     let mode = parse_mode(&settings.mode);
 
@@ -1729,25 +1755,27 @@ async fn sync_ios_signing_assets(
         && matches!(mode, IosSigningMode::Api)
         && (existing_p12.is_none() || existing_password.is_none() || p12_metadata.is_some());
 
+    // The certificate is stored on this pipeline before any profile is
+    // generated, so a failure below never leaves Apple holding a certificate
+    // whose private key is gone.
     let mut generated_certificate = None;
     if should_generate_cert {
-        match generate_api_certificate_bundle(&client, creds).await {
-            Ok(bundle) => {
-                generated_certificate = Some(bundle);
-            }
-            Err(error) => return Err(error),
-        }
-    }
-
-    if let Some(generated) = generated_certificate.as_ref() {
-        selected_certificate_id = Some(generated.certificate_id.clone());
-        cert_records.push(apple_api::AppleCertificateRecord {
-            certificate_id: generated.certificate_id.clone(),
-            certificate_content: None,
-            certificate_type: generated.certificate_type.clone(),
-            serial_number: generated.metadata.serial_number.clone(),
-            expiration_date: generated.metadata.expires_at.map(|ts| ts.to_string()),
-        });
+        let authority = AppleTeamCertificates {
+            client: &client,
+            creds,
+        };
+        let certificate = obtain_team_certificate(
+            pool,
+            encryption_key,
+            settings,
+            actor_id,
+            &creds.issuer_id,
+            &authority,
+            &mut warnings,
+        )
+        .await?;
+        selected_certificate_id = Some(certificate.certificate_id.clone());
+        generated_certificate = Some(certificate);
     }
 
     if selected_certificate_id.is_none() {
@@ -1787,12 +1815,17 @@ async fn sync_ios_signing_assets(
         );
     }
 
-    let enabled_device_ids: Vec<String> = remote_devices
-        .iter()
-        .filter(|device| device.status.eq_ignore_ascii_case("ENABLED"))
-        .map(|device| device.device_id.clone())
-        .collect();
-    if enabled_device_ids.is_empty() {
+    let export_method = IosExportMethod::from_stored(&settings.export_method);
+    let enabled_device_ids: Vec<String> = match export_method {
+        IosExportMethod::AdHoc => remote_devices
+            .iter()
+            .filter(|device| device.status.eq_ignore_ascii_case("ENABLED"))
+            .map(|device| device.device_id.clone())
+            .collect(),
+        // App Store profiles must not list devices.
+        IosExportMethod::AppStore => Vec::new(),
+    };
+    if export_method == IosExportMethod::AdHoc && enabled_device_ids.is_empty() {
         warnings.push(
             "No enabled Apple devices found; generated profiles may not install on devices"
                 .to_string(),
@@ -1806,23 +1839,19 @@ async fn sync_ios_signing_assets(
         &bundle_by_identifier,
         &certificate_id,
         &enabled_device_ids,
+        export_method,
     )
     .await?;
     warnings.extend(profile_warnings);
 
-    let reexported_certificate = p12_was_reexported
-        .then(|| existing_p12.as_deref().zip(existing_password.as_deref()))
-        .flatten();
-    persist_synced_ios_certificate(
-        pool,
-        encryption_key,
-        settings,
-        actor_id,
-        generated_certificate,
-        reexported_certificate,
-        &mut warnings,
-    )
-    .await?;
+    if p12_was_reexported
+        && generated_certificate.is_none()
+        && let Some((p12_base64, password)) =
+            existing_p12.as_deref().zip(existing_password.as_deref())
+    {
+        persist_reexported_ios_certificate(pool, encryption_key, settings, p12_base64, password)
+            .await?;
+    }
 
     persist_generated_ios_profiles(
         pool,
@@ -1850,69 +1879,226 @@ async fn sync_ios_signing_assets(
     Ok((bundle_ids.len(), warnings))
 }
 
-async fn persist_synced_ios_certificate(
+async fn persist_reexported_ios_certificate(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    settings: &IosSigningSettingsRow,
+    p12_base64: &str,
+    password: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let p12_encrypted =
+        encrypt_opt(Some(p12_base64), encryption_key).map_err(certificate_encryption_error)?;
+    let password_encrypted =
+        encrypt_opt(Some(password), encryption_key).map_err(certificate_encryption_error)?;
+    let fingerprint = decode_b64(p12_base64)
+        .ok()
+        .map(|bytes| hex::encode(Sha256::digest(bytes)));
+    sqlx::query(
+        "UPDATE pipeline_ios_signing_settings
+         SET p12_encrypted = ?1,
+             p12_password_encrypted = ?2,
+             p12_fingerprint = ?3,
+             updated_at = ?4
+         WHERE id = ?5",
+    )
+    .bind(p12_encrypted)
+    .bind(password_encrypted)
+    .bind(fingerprint)
+    .bind(now_unix())
+    .bind(&settings.id)
+    .execute(pool)
+    .await
+    .map_err(certificate_store_error)?;
+    Ok(())
+}
+
+async fn store_api_certificate(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    settings_id: &str,
+    actor_id: &str,
+    certificate: &GeneratedApiCertificateBundle,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let p12_encrypted = encrypt_opt(Some(&certificate.p12_base64), encryption_key)
+        .map_err(certificate_encryption_error)?;
+    let password_encrypted = encrypt_opt(Some(&certificate.p12_password), encryption_key)
+        .map_err(certificate_encryption_error)?;
+    sqlx::query(
+        "UPDATE pipeline_ios_signing_settings
+         SET p12_filename = 'ios-distribution-api.p12',
+             p12_encrypted = ?1,
+             p12_password_encrypted = ?2,
+             p12_fingerprint = ?3,
+             p12_expires_at = ?4,
+             updated_by = ?5,
+             updated_at = ?6
+         WHERE id = ?7",
+    )
+    .bind(p12_encrypted)
+    .bind(password_encrypted)
+    .bind(certificate.metadata.fingerprint.as_deref())
+    .bind(certificate.metadata.expires_at)
+    .bind(actor_id)
+    .bind(now_unix())
+    .bind(settings_id)
+    .execute(pool)
+    .await
+    .map_err(certificate_store_error)?;
+    Ok(())
+}
+
+/// Lists and creates an Apple team's distribution certificates.
+trait TeamCertificateAuthority {
+    async fn list(
+        &self,
+    ) -> Result<Vec<apple_api::AppleCertificateRecord>, (StatusCode, Json<ApiError>)>;
+    async fn create(&self) -> Result<GeneratedApiCertificateBundle, (StatusCode, Json<ApiError>)>;
+}
+
+struct AppleTeamCertificates<'a> {
+    client: &'a reqwest::Client,
+    creds: &'a AppleApiCredentials,
+}
+
+impl TeamCertificateAuthority for AppleTeamCertificates<'_> {
+    async fn list(
+        &self,
+    ) -> Result<Vec<apple_api::AppleCertificateRecord>, (StatusCode, Json<ApiError>)> {
+        apple_api::list_distribution_certificates(self.client, self.creds).await
+    }
+
+    async fn create(&self) -> Result<GeneratedApiCertificateBundle, (StatusCode, Json<ApiError>)> {
+        generate_api_certificate_bundle(self.client, self.creds).await
+    }
+}
+
+/// One lock per Apple team, so pipelines syncing at the same time cannot each
+/// create a certificate.
+fn team_certificate_lock(issuer_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: LazyLock<StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+        LazyLock::new(Default::default);
+    LOCKS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .entry(issuer_id.to_string())
+        .or_default()
+        .clone()
+}
+
+/// A certificate that another API-mode pipeline of the same Apple team created
+/// and that Apple still lists.
+async fn find_team_certificate(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    settings_id: &str,
+    issuer_id: &str,
+    records: &[apple_api::AppleCertificateRecord],
+) -> Result<Option<GeneratedApiCertificateBundle>, (StatusCode, Json<ApiError>)> {
+    let candidates: Vec<(String, String)> = sqlx::query_as(
+        "SELECT s.p12_encrypted, s.p12_password_encrypted
+         FROM pipeline_ios_signing_settings s
+         LEFT JOIN app_store_connect_keys k ON k.id = s.shared_api_key_id
+         WHERE s.id != ?1
+           AND s.mode = 'api'
+           AND s.p12_encrypted IS NOT NULL
+           AND s.p12_password_encrypted IS NOT NULL
+           AND CASE WHEN k.id IS NULL THEN s.api_issuer_id ELSE k.issuer_id END = ?2
+         ORDER BY s.updated_at DESC",
+    )
+    .bind(settings_id)
+    .bind(issuer_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| {
+        error!(%error, "failed to load team iOS certificates");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load iOS certificate material",
+        )
+    })?;
+
+    for (p12_encrypted, password_encrypted) in candidates {
+        let (Ok(p12_base64), Ok(p12_password)) = (
+            crypto::decrypt(&p12_encrypted, encryption_key),
+            crypto::decrypt(&password_encrypted, encryption_key),
+        ) else {
+            continue;
+        };
+        let Ok(p12_bytes) = decode_b64(&p12_base64) else {
+            continue;
+        };
+        let Ok(metadata) = parse_p12_metadata(p12_bytes, p12_password.clone()).await else {
+            continue;
+        };
+        if metadata
+            .expires_at
+            .is_some_and(|expires_at| expires_at <= now_unix())
+        {
+            continue;
+        }
+        let Some(serial) = metadata.serial_number.as_deref() else {
+            continue;
+        };
+        let record = records.iter().find(|record| {
+            record
+                .serial_number
+                .as_deref()
+                .map(normalize_serial)
+                .as_deref()
+                == Some(serial)
+        });
+        if let Some(record) = record {
+            return Ok(Some(GeneratedApiCertificateBundle {
+                certificate_id: record.certificate_id.clone(),
+                p12_base64,
+                p12_password,
+                metadata,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+/// Gives an API-mode pipeline a distribution certificate and stores it on the
+/// pipeline: the team's existing one when another pipeline has it, otherwise
+/// a new one from Apple. Apple allows only a few per team.
+async fn obtain_team_certificate(
     pool: &SqlitePool,
     encryption_key: &[u8],
     settings: &IosSigningSettingsRow,
     actor_id: &str,
-    generated: Option<GeneratedApiCertificateBundle>,
-    reexported: Option<(&str, &str)>,
+    issuer_id: &str,
+    authority: &impl TeamCertificateAuthority,
     warnings: &mut Vec<String>,
-) -> Result<(), (StatusCode, Json<ApiError>)> {
-    let now = now_unix();
-    if let Some(generated) = generated {
-        let p12_encrypted = encrypt_opt(Some(&generated.p12_base64), encryption_key)
-            .map_err(certificate_encryption_error)?;
-        let password_encrypted = encrypt_opt(Some(&generated.p12_password), encryption_key)
-            .map_err(certificate_encryption_error)?;
-        sqlx::query(
-            "UPDATE pipeline_ios_signing_settings
-             SET p12_filename = 'ios-distribution-api.p12',
-                 p12_encrypted = ?1,
-                 p12_password_encrypted = ?2,
-                 p12_fingerprint = ?3,
-                 p12_expires_at = ?4,
-                 updated_by = ?5,
-                 updated_at = ?6
-             WHERE id = ?7",
-        )
-        .bind(p12_encrypted)
-        .bind(password_encrypted)
-        .bind(generated.metadata.fingerprint)
-        .bind(generated.metadata.expires_at)
-        .bind(actor_id)
-        .bind(now)
-        .bind(&settings.id)
-        .execute(pool)
-        .await
-        .map_err(certificate_store_error)?;
-        warnings.push("Generated a new iOS distribution certificate bundle".to_string());
-    } else if let Some((p12_base64, password)) = reexported {
-        let p12_encrypted =
-            encrypt_opt(Some(p12_base64), encryption_key).map_err(certificate_encryption_error)?;
-        let password_encrypted =
-            encrypt_opt(Some(password), encryption_key).map_err(certificate_encryption_error)?;
-        let fingerprint = decode_b64(p12_base64)
-            .ok()
-            .map(|bytes| hex::encode(Sha256::digest(bytes)));
-        sqlx::query(
-            "UPDATE pipeline_ios_signing_settings
-             SET p12_encrypted = ?1,
-                 p12_password_encrypted = ?2,
-                 p12_fingerprint = ?3,
-                 updated_at = ?4
-             WHERE id = ?5",
-        )
-        .bind(p12_encrypted)
-        .bind(password_encrypted)
-        .bind(fingerprint)
-        .bind(now)
-        .bind(&settings.id)
-        .execute(pool)
-        .await
-        .map_err(certificate_store_error)?;
+) -> Result<GeneratedApiCertificateBundle, (StatusCode, Json<ApiError>)> {
+    let lock = team_certificate_lock(issuer_id);
+    let _team = lock.lock().await;
+
+    // Listed under the lock, so a certificate another sync just created counts.
+    let records = authority.list().await?;
+    if let Some(certificate) =
+        find_team_certificate(pool, encryption_key, &settings.id, issuer_id, &records).await?
+    {
+        store_api_certificate(pool, encryption_key, &settings.id, actor_id, &certificate).await?;
+        warnings.push(
+            "Reused the team's iOS distribution certificate from another pipeline".to_string(),
+        );
+        return Ok(certificate);
     }
-    Ok(())
+
+    let certificate = authority.create().await?;
+    if let Err(error) =
+        store_api_certificate(pool, encryption_key, &settings.id, actor_id, &certificate).await
+    {
+        error!(
+            certificate_id = %certificate.certificate_id,
+            "created an Apple distribution certificate but could not store it"
+        );
+        return Err(error);
+    }
+    warnings.push("Generated a new iOS distribution certificate bundle".to_string());
+    Ok(certificate)
 }
 
 fn certificate_encryption_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
@@ -1940,6 +2126,7 @@ async fn generate_ios_profiles(
     bundle_records: &HashMap<String, apple_api::AppleBundleIdRecord>,
     certificate_id: &str,
     device_ids: &[String],
+    export_method: IosExportMethod,
 ) -> Result<(Vec<GeneratedIosProfile>, Vec<String>), (StatusCode, Json<ApiError>)> {
     let mut profiles = Vec::with_capacity(bundle_ids.len());
     let mut warnings = Vec::new();
@@ -1952,10 +2139,11 @@ async fn generate_ios_profiles(
                 format!("Bundle identifier '{bundle_id}' is not available in Apple account"),
             )
         })?;
-        let created = apple_api::create_ad_hoc_profile(
+        let created = apple_api::create_profile(
             client,
             creds,
-            &profile_name_for_bundle(bundle_id),
+            apple_api::profile_type_for_export(export_method),
+            &profile_name_for_bundle(bundle_id, export_method),
             &bundle_record.bundle_id_id,
             &certificate_ids,
             device_ids,
@@ -2174,8 +2362,86 @@ pub async fn update_pipeline_ios_signing(
         ));
     }
 
+    let saved = save_ios_signing(
+        &pool,
+        &state.encryption_key,
+        &pipeline_id,
+        &auth.0.user_id,
+        req,
+    )
+    .await?;
+
+    let details = serde_json::json!({
+        "pipeline_id": &pipeline_id,
+        "updated_by": &auth.0.email,
+        "enabled": saved.enabled,
+        "mode": mode_str(saved.mode),
+        "export_method": saved.export_method.as_str(),
+        "bundle_ids": saved.bundle_ids,
+        "shared_api_key_id": saved.shared_api_key_id,
+    })
+    .to_string();
+    let _ = write_audit_log(
+        &pool,
+        Some(&auth.0.user_id),
+        "pipeline_ios_signing_updated",
+        "pipeline",
+        Some(&pipeline_id),
+        Some(&details),
+    )
+    .await;
+
+    info!(
+        pipeline_id = %pipeline_id,
+        actor = %auth.0.email,
+        "updated pipeline iOS signing settings"
+    );
+
+    let response = build_public_response(&pool, &pipeline_id)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to build iOS signing response");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to load iOS signing settings",
+            )
+        })?;
+    Ok(Json(response))
+}
+
+/// What a saved iOS signing update changed, for the audit log.
+struct SavedIosSigning {
+    enabled: bool,
+    mode: IosSigningMode,
+    export_method: IosExportMethod,
+    bundle_ids: Vec<String>,
+    shared_api_key_id: Option<String>,
+}
+
+fn ios_signing_store_error(
+    error: impl std::fmt::Display,
+    context: &'static str,
+) -> (StatusCode, Json<ApiError>) {
+    error!(%error, "{context}");
+    api_err(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "store_error",
+        "Failed to save iOS signing settings",
+    )
+}
+
+/// Validates the whole update, then writes the settings and profiles in one
+/// transaction, so a rejected request leaves the pipeline as it was.
+async fn save_ios_signing(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    pipeline_id: &str,
+    actor_id: &str,
+    req: UpdatePipelineIosSigningRequest,
+) -> Result<SavedIosSigning, (StatusCode, Json<ApiError>)> {
     let now = now_unix();
-    let settings_existing = load_ios_settings(&pool, &pipeline_id).await.map_err(|e| {
+    let settings_existing = load_ios_settings(pool, pipeline_id).await.map_err(|e| {
         error!(error = %e, "failed to load existing iOS signing settings");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -2191,6 +2457,13 @@ pub async fn update_pipeline_ios_signing(
             format!("Invalid bundle identifiers: {e}"),
         )
     })?;
+    let previous_export_method = settings_existing
+        .as_ref()
+        .map(|settings| IosExportMethod::from_stored(&settings.export_method));
+    let export_method = req
+        .export_method
+        .or(previous_export_method)
+        .unwrap_or_default();
 
     let team_id = trim_opt(req.team_id.clone());
     if req.enabled {
@@ -2232,6 +2505,9 @@ pub async fn update_pipeline_ios_signing(
     let mut api_private_key_encrypted = settings_existing
         .as_ref()
         .and_then(|r| r.api_private_key_encrypted.clone());
+    let mut shared_api_key_id = settings_existing
+        .as_ref()
+        .and_then(|r| r.shared_api_key_id.clone());
     let mut uploaded_p12_bytes: Option<Vec<u8>> = None;
     let mut uploaded_p12_password: Option<String> = None;
 
@@ -2255,15 +2531,14 @@ pub async fn update_pipeline_ios_signing(
                 ));
             }
             let canonical_b64 = base64::engine::general_purpose::STANDARD.encode(&p12_bytes);
-            p12_encrypted =
-                encrypt_opt(Some(&canonical_b64), &state.encryption_key).map_err(|e| {
-                    error!(error = %e, "failed to encrypt iOS p12");
-                    api_err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "encryption_error",
-                        "Failed to encrypt iOS certificate",
-                    )
-                })?;
+            p12_encrypted = encrypt_opt(Some(&canonical_b64), encryption_key).map_err(|e| {
+                error!(error = %e, "failed to encrypt iOS p12");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "encryption_error",
+                    "Failed to encrypt iOS certificate",
+                )
+            })?;
             p12_fingerprint = Some(hex::encode(Sha256::digest(&p12_bytes)));
             uploaded_p12_bytes = Some(p12_bytes);
             if p12_filename.is_none() {
@@ -2271,8 +2546,8 @@ pub async fn update_pipeline_ios_signing(
             }
         }
         if let Some(p12_password) = trim_opt(cert.p12_password) {
-            p12_password_encrypted = encrypt_opt(Some(&p12_password), &state.encryption_key)
-                .map_err(|e| {
+            p12_password_encrypted =
+                encrypt_opt(Some(&p12_password), encryption_key).map_err(|e| {
                     error!(error = %e, "failed to encrypt iOS p12 password");
                     api_err(
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -2288,7 +2563,7 @@ pub async fn update_pipeline_ios_signing(
         let metadata_password = if let Some(password) = uploaded_p12_password.take() {
             Some(password)
         } else {
-            decrypt_opt(p12_password_encrypted.as_deref(), &state.encryption_key).map_err(|e| {
+            decrypt_opt(p12_password_encrypted.as_deref(), encryption_key).map_err(|e| {
                 error!(error = %e, "failed to decrypt iOS p12 password for metadata parsing");
                 api_err(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -2342,7 +2617,7 @@ pub async fn update_pipeline_ios_signing(
                     "App Store Connect private key must be UTF-8 PEM",
                 )
             })?;
-            api_private_key_encrypted = encrypt_opt(Some(&private_key_pem), &state.encryption_key)
+            api_private_key_encrypted = encrypt_opt(Some(&private_key_pem), encryption_key)
                 .map_err(|e| {
                     error!(error = %e, "failed to encrypt App Store Connect private key");
                     api_err(
@@ -2353,6 +2628,34 @@ pub async fn update_pipeline_ios_signing(
                 })?;
         }
     }
+
+    if let Some(requested) = req.shared_api_key_id.as_deref().map(str::trim) {
+        if requested.is_empty() {
+            shared_api_key_id = None;
+        } else {
+            let exists = app_store_connect_keys::load_summary(pool, requested)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "failed to load shared App Store Connect key");
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "store_error",
+                        "Failed to save iOS signing settings",
+                    )
+                })?
+                .is_some();
+            if !exists {
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_api_key",
+                    "The selected shared App Store Connect key no longer exists",
+                ));
+            }
+            shared_api_key_id = Some(requested.to_string());
+        }
+    }
+    let has_api_credentials = shared_api_key_id.is_some()
+        || (api_key_id.is_some() && api_issuer_id.is_some() && api_private_key_encrypted.is_some());
 
     if req.enabled {
         if bundle_ids.is_empty() {
@@ -2376,10 +2679,7 @@ pub async fn update_pipeline_ios_signing(
                 }
             }
             IosSigningMode::Api => {
-                if api_key_id.is_none()
-                    || api_issuer_id.is_none()
-                    || api_private_key_encrypted.is_none()
-                {
+                if !has_api_credentials {
                     return Err(api_err(
                         StatusCode::BAD_REQUEST,
                         "incomplete_signing_profile",
@@ -2398,10 +2698,7 @@ pub async fn update_pipeline_ios_signing(
                         "Hybrid iOS signing mode requires manual p12 certificate material",
                     ));
                 }
-                if api_key_id.is_none()
-                    || api_issuer_id.is_none()
-                    || api_private_key_encrypted.is_none()
-                {
+                if !has_api_credentials {
                     return Err(api_err(
                         StatusCode::BAD_REQUEST,
                         "incomplete_signing_profile",
@@ -2412,18 +2709,35 @@ pub async fn update_pipeline_ios_signing(
         }
     }
 
+    if req.provisioning_profiles.len() > MAX_PROFILE_COUNT {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_profiles",
+            format!("Too many provisioning profiles (max {MAX_PROFILE_COUNT})"),
+        ));
+    }
+    let mut profiles = Vec::with_capacity(req.provisioning_profiles.len());
+    for input in req.provisioning_profiles {
+        profiles.push(prepare_profile(encryption_key, export_method, input).await?);
+    }
+
     let settings_id = settings_existing
         .as_ref()
         .map(|r| r.id.clone())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-    if settings_existing.is_some() {
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|e| ios_signing_store_error(e, "failed to begin iOS signing transaction"))?;
+
+    let saved = if settings_existing.is_some() {
         sqlx::query(
             "UPDATE pipeline_ios_signing_settings
              SET enabled = ?1,
                  mode = ?2,
                  team_id = ?3,
-                 export_method = 'ad_hoc',
+                 export_method = ?16,
                  bundle_ids_json = ?4,
                  p12_filename = ?5,
                  p12_encrypted = ?6,
@@ -2433,6 +2747,7 @@ pub async fn update_pipeline_ios_signing(
                  api_key_id = ?10,
                  api_issuer_id = ?11,
                  api_private_key_encrypted = ?12,
+                 shared_api_key_id = ?17,
                  updated_by = ?13,
                  updated_at = ?14
              WHERE id = ?15",
@@ -2449,35 +2764,29 @@ pub async fn update_pipeline_ios_signing(
         .bind(api_key_id.clone())
         .bind(api_issuer_id.clone())
         .bind(api_private_key_encrypted.clone())
-        .bind(&auth.0.user_id)
+        .bind(actor_id)
         .bind(now)
         .bind(&settings_id)
-        .execute(&pool)
+        .bind(export_method.as_str())
+        .bind(shared_api_key_id.clone())
+        .execute(&mut *transaction)
         .await
-        .map_err(|e| {
-            error!(error = %e, "failed to update pipeline iOS signing settings");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to save iOS signing settings",
-            )
-        })?;
     } else {
         sqlx::query(
             "INSERT INTO pipeline_ios_signing_settings (
                 id, pipeline_id, enabled, mode, team_id, export_method, bundle_ids_json,
                 p12_filename, p12_encrypted, p12_password_encrypted, p12_fingerprint, p12_expires_at,
-                api_key_id, api_issuer_id, api_private_key_encrypted,
+                api_key_id, api_issuer_id, api_private_key_encrypted, shared_api_key_id,
                 created_by, updated_by, created_at, updated_at
              ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, 'ad_hoc', ?6,
+                ?1, ?2, ?3, ?4, ?5, ?17, ?6,
                 ?7, ?8, ?9, ?10, ?11,
-                ?12, ?13, ?14,
+                ?12, ?13, ?14, ?18,
                 ?15, ?15, ?16, ?16
              )",
         )
         .bind(&settings_id)
-        .bind(&pipeline_id)
+        .bind(pipeline_id)
         .bind(if req.enabled { 1 } else { 0 })
         .bind(mode_str(req.mode))
         .bind(team_id.clone())
@@ -2490,50 +2799,56 @@ pub async fn update_pipeline_ios_signing(
         .bind(api_key_id.clone())
         .bind(api_issuer_id.clone())
         .bind(api_private_key_encrypted.clone())
-        .bind(&auth.0.user_id)
+        .bind(actor_id)
         .bind(now)
-        .execute(&pool)
+        .bind(export_method.as_str())
+        .bind(shared_api_key_id.clone())
+        .execute(&mut *transaction)
         .await
-        .map_err(|e| {
-            error!(error = %e, "failed to insert pipeline iOS signing settings");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to save iOS signing settings",
-            )
-        })?;
-    }
-
-    if req.provisioning_profiles.len() > MAX_PROFILE_COUNT {
-        return Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "invalid_profiles",
-            format!("Too many provisioning profiles (max {MAX_PROFILE_COUNT})"),
+    };
+    if let Err(error) = saved {
+        // The shared key was deleted after the check above.
+        if is_foreign_key_violation(&error) && shared_api_key_id.is_some() {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_api_key",
+                "The selected shared App Store Connect key no longer exists",
+            ));
+        }
+        return Err(ios_signing_store_error(
+            error,
+            "failed to save pipeline iOS signing settings",
         ));
     }
 
-    if !req.provisioning_profiles.is_empty() {
-        for input in req.provisioning_profiles {
-            upsert_profile(
-                &pool,
-                &state.encryption_key,
-                &pipeline_id,
-                &auth.0.user_id,
-                input,
-            )
-            .await?;
-        }
+    if previous_export_method.is_some_and(|previous| previous != export_method) {
+        // Ad hoc and App Store profiles are not interchangeable; stale ones
+        // must be replaced by an upload or an API sync before the next build.
+        sqlx::query("DELETE FROM pipeline_ios_provisioning_profiles WHERE pipeline_id = ?1")
+            .bind(pipeline_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|e| {
+                ios_signing_store_error(
+                    e,
+                    "failed to clear iOS profiles after export method change",
+                )
+            })?;
+    }
+
+    for profile in profiles {
+        store_profile(&mut transaction, pipeline_id, actor_id, profile).await?;
     }
 
     if req.enabled && matches!(req.mode, IosSigningMode::Manual) {
-        let profile_rows = load_ios_profiles(&pool, &pipeline_id).await.map_err(|e| {
-            error!(error = %e, "failed to load iOS provisioning profiles for validation");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to validate iOS signing settings",
-            )
-        })?;
+        let profile_rows = load_ios_profiles(&mut *transaction, pipeline_id)
+            .await
+            .map_err(|e| {
+                ios_signing_store_error(
+                    e,
+                    "failed to load iOS provisioning profiles for validation",
+                )
+            })?;
         let available_bundles: HashSet<String> = profile_rows
             .iter()
             .filter(|row| row.profile_encrypted.is_some())
@@ -2552,61 +2867,40 @@ pub async fn update_pipeline_ios_signing(
         }
     }
 
-    prune_ios_profiles(&pool, &pipeline_id, &bundle_ids)
+    prune_ios_profiles(&mut *transaction, pipeline_id, &bundle_ids)
         .await
         .map_err(|e| {
-            error!(error = %e, "failed to prune removed iOS provisioning profiles");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to reconcile iOS provisioning profiles",
-            )
+            ios_signing_store_error(e, "failed to prune removed iOS provisioning profiles")
         })?;
 
-    let details = serde_json::json!({
-        "pipeline_id": &pipeline_id,
-        "updated_by": &auth.0.email,
-        "enabled": req.enabled,
-        "mode": mode_str(req.mode),
-        "bundle_ids": bundle_ids,
+    transaction
+        .commit()
+        .await
+        .map_err(|e| ios_signing_store_error(e, "failed to commit iOS signing settings"))?;
+
+    Ok(SavedIosSigning {
+        enabled: req.enabled,
+        mode: req.mode,
+        export_method,
+        bundle_ids,
+        shared_api_key_id,
     })
-    .to_string();
-    let _ = write_audit_log(
-        &pool,
-        Some(&auth.0.user_id),
-        "pipeline_ios_signing_updated",
-        "pipeline",
-        Some(&pipeline_id),
-        Some(&details),
-    )
-    .await;
-
-    info!(
-        pipeline_id = %pipeline_id,
-        actor = %auth.0.email,
-        "updated pipeline iOS signing settings"
-    );
-
-    let response = build_public_response(&pool, &pipeline_id)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to build iOS signing response");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to load iOS signing settings",
-            )
-        })?;
-    Ok(Json(response))
 }
 
-async fn upsert_profile(
-    pool: &SqlitePool,
+/// An uploaded provisioning profile, checked and encrypted, ready to store.
+struct PreparedProfile {
+    bundle_id: String,
+    filename: Option<String>,
+    encrypted: Option<String>,
+    parsed: ParsedProvisioningProfile,
+    checksum: String,
+}
+
+async fn prepare_profile(
     encryption_key: &[u8],
-    pipeline_id: &str,
-    actor_id: &str,
+    export_method: IosExportMethod,
     input: IosProvisioningProfileInput,
-) -> Result<(), (StatusCode, Json<ApiError>)> {
+) -> Result<PreparedProfile, (StatusCode, Json<ApiError>)> {
     let bundle_id = input.bundle_id.trim().to_string();
     if bundle_id.is_empty() || !is_valid_bundle_id(&bundle_id) {
         return Err(api_err(
@@ -2659,6 +2953,17 @@ async fn upsert_profile(
             ),
         ));
     }
+    if !parsed.distribution.matches(export_method) {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_profiles",
+            format!(
+                "Provisioning profile for '{bundle_id}' is a {} profile; this pipeline exports with {} profile",
+                parsed.distribution.label(),
+                expected_profile_label(export_method)
+            ),
+        ));
+    }
 
     let canonical_b64 = base64::engine::general_purpose::STANDARD.encode(&profile_bytes);
     let encrypted = encrypt_opt(Some(&canonical_b64), encryption_key).map_err(|e| {
@@ -2669,7 +2974,7 @@ async fn upsert_profile(
             "Failed to encrypt provisioning profile",
         )
     })?;
-    let checksum = Some(hex::encode(Sha256::digest(&profile_bytes)));
+    let checksum = hex::encode(Sha256::digest(&profile_bytes));
     let filename = trim_opt(input.profile_filename)
         .map(|filename| validate_materialized_filename(filename, "profile_filename"))
         .transpose()?
@@ -2681,96 +2986,65 @@ async fn upsert_profile(
         })
         .or_else(|| Some(format!("{bundle_id}.mobileprovision")));
 
-    let existing = sqlx::query_as::<_, IosProvisioningProfileRow>(
-        "SELECT id, bundle_id, profile_filename, profile_encrypted, profile_uuid,
-                profile_name, team_id, expires_at, checksum
-         FROM pipeline_ios_provisioning_profiles
-         WHERE pipeline_id = ?1 AND bundle_id = ?2",
+    Ok(PreparedProfile {
+        bundle_id,
+        filename,
+        encrypted,
+        parsed,
+        checksum,
+    })
+}
+
+async fn store_profile(
+    connection: &mut sqlx::SqliteConnection,
+    pipeline_id: &str,
+    actor_id: &str,
+    profile: PreparedProfile,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO pipeline_ios_provisioning_profiles (
+            id, pipeline_id, bundle_id, profile_filename, profile_encrypted,
+            profile_uuid, profile_name, team_id, expires_at, checksum,
+            created_by, updated_by, created_at, updated_at
+         ) VALUES (
+            ?1, ?2, ?3, ?4, ?5,
+            ?6, ?7, ?8, ?9, ?10,
+            ?11, ?11, ?12, ?12
+         )
+         ON CONFLICT(pipeline_id, bundle_id) DO UPDATE SET
+            profile_filename = excluded.profile_filename,
+            profile_encrypted = excluded.profile_encrypted,
+            profile_uuid = excluded.profile_uuid,
+            profile_name = excluded.profile_name,
+            team_id = excluded.team_id,
+            expires_at = excluded.expires_at,
+            checksum = excluded.checksum,
+            updated_by = excluded.updated_by,
+            updated_at = excluded.updated_at",
     )
+    .bind(Uuid::new_v4().to_string())
     .bind(pipeline_id)
-    .bind(&bundle_id)
-    .fetch_optional(pool)
+    .bind(profile.bundle_id)
+    .bind(profile.filename)
+    .bind(profile.encrypted)
+    .bind(profile.parsed.profile_uuid)
+    .bind(profile.parsed.profile_name)
+    .bind(profile.parsed.team_id)
+    .bind(profile.parsed.expires_at)
+    .bind(profile.checksum)
+    .bind(actor_id)
+    .bind(now)
+    .execute(connection)
     .await
     .map_err(|e| {
-        error!(error = %e, "failed to query existing iOS profile row");
+        error!(error = %e, "failed to save iOS provisioning profile row");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "store_error",
             "Failed to save provisioning profile",
         )
     })?;
-
-    let now = now_unix();
-    if let Some(existing) = existing {
-        sqlx::query(
-            "UPDATE pipeline_ios_provisioning_profiles
-             SET profile_filename = ?1,
-                 profile_encrypted = ?2,
-                 profile_uuid = ?3,
-                 profile_name = ?4,
-                 team_id = ?5,
-                 expires_at = ?6,
-                 checksum = ?7,
-                 updated_by = ?8,
-                 updated_at = ?9
-             WHERE id = ?10",
-        )
-        .bind(filename)
-        .bind(encrypted)
-        .bind(parsed.profile_uuid)
-        .bind(parsed.profile_name)
-        .bind(parsed.team_id)
-        .bind(parsed.expires_at)
-        .bind(checksum)
-        .bind(actor_id)
-        .bind(now)
-        .bind(existing.id)
-        .execute(pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to update iOS provisioning profile row");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to save provisioning profile",
-            )
-        })?;
-    } else {
-        sqlx::query(
-            "INSERT INTO pipeline_ios_provisioning_profiles (
-                id, pipeline_id, bundle_id, profile_filename, profile_encrypted,
-                profile_uuid, profile_name, team_id, expires_at, checksum,
-                created_by, updated_by, created_at, updated_at
-             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5,
-                ?6, ?7, ?8, ?9, ?10,
-                ?11, ?11, ?12, ?12
-             )",
-        )
-        .bind(Uuid::new_v4().to_string())
-        .bind(pipeline_id)
-        .bind(bundle_id)
-        .bind(filename)
-        .bind(encrypted)
-        .bind(parsed.profile_uuid)
-        .bind(parsed.profile_name)
-        .bind(parsed.team_id)
-        .bind(parsed.expires_at)
-        .bind(checksum)
-        .bind(actor_id)
-        .bind(now)
-        .execute(pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "failed to insert iOS provisioning profile row");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to save provisioning profile",
-            )
-        })?;
-    }
-
     Ok(())
 }
 
@@ -2889,14 +3163,16 @@ pub async fn register_pipeline_ios_device(
             "iOS signing is not configured for this pipeline",
         ));
     };
-    let creds = load_api_credentials(&settings, &state.encryption_key).map_err(|e| {
-        error!(error = %e, "failed to decode App Store Connect API credentials");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "decryption_error",
-            "Failed to decrypt App Store Connect credentials",
-        )
-    })?;
+    let creds = load_api_credentials(&pool, &settings, &state.encryption_key)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to decode App Store Connect API credentials");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "decryption_error",
+                "Failed to decrypt App Store Connect credentials",
+            )
+        })?;
     let Some(creds) = creds else {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
@@ -3113,14 +3389,16 @@ pub async fn sync_pipeline_ios_signing(
             "iOS signing is not configured for this pipeline",
         ));
     };
-    let creds = load_api_credentials(&settings, &state.encryption_key).map_err(|e| {
-        error!(error = %e, "failed to decode App Store Connect credentials");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "decryption_error",
-            "Failed to decrypt App Store Connect credentials",
-        )
-    })?;
+    let creds = load_api_credentials(&pool, &settings, &state.encryption_key)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to decode App Store Connect credentials");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "decryption_error",
+                "Failed to decrypt App Store Connect credentials",
+            )
+        })?;
     let Some(creds) = creds else {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
@@ -3338,7 +3616,7 @@ pub async fn get_job_ios_signing(
         enabled: true,
         mode: parse_mode(&settings.mode),
         team_id,
-        export_method: settings.export_method,
+        export_method: IosExportMethod::from_stored(&settings.export_method),
         p12_filename,
         p12_base64,
         p12_password,
@@ -3348,4 +3626,355 @@ pub async fn get_job_ios_signing(
     Ok(Json(RunnerIosSigningResponse {
         bundle: Some(bundle),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::app_store_connect_keys::tests::{insert_shared_key, insert_signing, signing_pool};
+
+    const KEY: [u8; 32] = [7u8; 32];
+
+    /// A self-signed certificate and key as a .p12, like one Apple issues.
+    fn test_p12(serial: &str) -> (Vec<u8>, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("key.pem");
+        let cert = dir.path().join("cert.pem");
+        let p12 = dir.path().join("cert.p12");
+        let run = |args: &[&str]| {
+            let output = Command::new("openssl").args(args).output().unwrap();
+            assert!(output.status.success(), "{output:?}");
+        };
+        run(&[
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-days",
+            "30",
+            "-subj",
+            "/CN=iPhone Distribution: Test",
+            "-set_serial",
+            &format!("0x{serial}"),
+            "-keyout",
+            key.to_str().unwrap(),
+            "-out",
+            cert.to_str().unwrap(),
+        ]);
+        run(&[
+            "pkcs12",
+            "-export",
+            "-inkey",
+            key.to_str().unwrap(),
+            "-in",
+            cert.to_str().unwrap(),
+            "-out",
+            p12.to_str().unwrap(),
+            "-passout",
+            "pass:secret",
+        ]);
+        (fs::read(p12).unwrap(), "secret".to_string())
+    }
+
+    #[test]
+    fn no_command_in_this_module_takes_a_password_flag() {
+        let source = include_str!("pipeline_ios_signing.rs");
+        let production = &source[..source.find("#[cfg(test)]\nmod tests").unwrap()];
+        for flag in ['p', 'P'] {
+            let literal = format!("\"-{flag}\"");
+            assert!(
+                !production.contains(&literal),
+                "{literal} would put a password on a process command line"
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn keychain_import_check_accepts_the_right_password_only() {
+        let (p12, password) = test_p12("5a");
+        let (p12, password) = reexport_p12_legacy(p12, password).await.unwrap();
+        verify_p12_keychain_import_compatibility(p12.clone(), password)
+            .await
+            .unwrap();
+        verify_p12_keychain_import_compatibility(p12, "wrong".to_string())
+            .await
+            .unwrap_err();
+    }
+
+    /// An Apple team that issues the same certificate each time and counts how
+    /// often it is asked to.
+    struct FakeTeam {
+        certificate: GeneratedApiCertificateBundle,
+        issued: StdMutex<Vec<apple_api::AppleCertificateRecord>>,
+        created: AtomicUsize,
+    }
+
+    impl FakeTeam {
+        async fn new(serial: &str) -> Self {
+            let (p12, password) = test_p12(serial);
+            let metadata = parse_p12_metadata(p12.clone(), password.clone())
+                .await
+                .unwrap();
+            Self {
+                certificate: GeneratedApiCertificateBundle {
+                    certificate_id: format!("cert-{serial}"),
+                    p12_base64: base64::engine::general_purpose::STANDARD.encode(p12),
+                    p12_password: password,
+                    metadata,
+                },
+                issued: StdMutex::new(Vec::new()),
+                created: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl TeamCertificateAuthority for FakeTeam {
+        async fn list(
+            &self,
+        ) -> Result<Vec<apple_api::AppleCertificateRecord>, (StatusCode, Json<ApiError>)> {
+            Ok(self.issued.lock().unwrap().clone())
+        }
+
+        async fn create(
+            &self,
+        ) -> Result<GeneratedApiCertificateBundle, (StatusCode, Json<ApiError>)> {
+            self.created.fetch_add(1, Ordering::SeqCst);
+            self.issued
+                .lock()
+                .unwrap()
+                .push(apple_api::AppleCertificateRecord {
+                    certificate_id: self.certificate.certificate_id.clone(),
+                    certificate_content: None,
+                    certificate_type: Some("DISTRIBUTION".to_string()),
+                    serial_number: self.certificate.metadata.serial_number.clone(),
+                    expiration_date: None,
+                });
+            Ok(self.certificate.clone())
+        }
+    }
+
+    async fn settings(pool: &SqlitePool, pipeline_id: &str) -> IosSigningSettingsRow {
+        load_ios_settings(pool, pipeline_id).await.unwrap().unwrap()
+    }
+
+    async fn obtain(
+        pool: &SqlitePool,
+        pipeline_id: &str,
+        issuer_id: &str,
+        team: &FakeTeam,
+    ) -> GeneratedApiCertificateBundle {
+        let settings = settings(pool, pipeline_id).await;
+        obtain_team_certificate(
+            pool,
+            &KEY,
+            &settings,
+            "u1",
+            issuer_id,
+            team,
+            &mut Vec::new(),
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn ios_pool() -> SqlitePool {
+        let pool = signing_pool().await;
+        sqlx::raw_sql("INSERT INTO users VALUES ('u1'); INSERT INTO pipelines VALUES ('pl3');")
+            .execute(&pool)
+            .await
+            .unwrap();
+        insert_shared_key(&pool, &KEY, "team").await;
+        pool
+    }
+
+    #[tokio::test]
+    async fn pipelines_sharing_a_key_share_one_distribution_certificate() {
+        let pool = ios_pool().await;
+        insert_signing(&pool, &KEY, "pl1", Some("team")).await;
+        insert_signing(&pool, &KEY, "pl2", Some("team")).await;
+        let team = FakeTeam::new("A1B2C3").await;
+
+        let (first, second) = tokio::join!(
+            obtain(&pool, "pl1", "shared-issuer", &team),
+            obtain(&pool, "pl2", "shared-issuer", &team),
+        );
+
+        assert_eq!(team.created.load(Ordering::SeqCst), 1);
+        assert_eq!(first.certificate_id, second.certificate_id);
+        for pipeline_id in ["pl1", "pl2"] {
+            let stored = settings(&pool, pipeline_id).await;
+            assert_eq!(
+                stored.p12_filename.as_deref(),
+                Some("ios-distribution-api.p12")
+            );
+            let p12 = crypto::decrypt(stored.p12_encrypted.as_deref().unwrap(), &KEY).unwrap();
+            assert_eq!(p12, team.certificate.p12_base64);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_certificate_is_not_reused_across_teams_or_once_apple_drops_it() {
+        let pool = ios_pool().await;
+        insert_signing(&pool, &KEY, "pl1", Some("team")).await;
+        insert_signing(&pool, &KEY, "pl2", None).await;
+        insert_signing(&pool, &KEY, "pl3", Some("team")).await;
+        let team = FakeTeam::new("D4E5F6").await;
+
+        obtain(&pool, "pl1", "shared-issuer", &team).await;
+        // pl2 signs with its own key for another team.
+        obtain(&pool, "pl2", "own-issuer", &team).await;
+        assert_eq!(team.created.load(Ordering::SeqCst), 2);
+
+        // A certificate revoked in Apple's portal is not handed out again.
+        team.issued.lock().unwrap().clear();
+        obtain(&pool, "pl3", "shared-issuer", &team).await;
+        assert_eq!(team.created.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn a_new_certificate_is_stored_before_profiles_are_generated() {
+        let pool = ios_pool().await;
+        insert_signing(&pool, &KEY, "pl1", Some("team")).await;
+        let team = FakeTeam::new("0A0B0C").await;
+
+        // Profile generation runs after this returns, so whatever it does the
+        // certificate's private key is already on the pipeline.
+        obtain(&pool, "pl1", "shared-issuer", &team).await;
+        let stored = settings(&pool, "pl1").await;
+        assert!(stored.p12_encrypted.is_some() && stored.p12_password_encrypted.is_some());
+        assert_eq!(
+            stored.p12_fingerprint,
+            team.certificate.metadata.fingerprint
+        );
+    }
+
+    async fn snapshot(pool: &SqlitePool, pipeline_id: &str) -> String {
+        format!(
+            "{:?} {:?}",
+            load_ios_settings(pool, pipeline_id).await.unwrap(),
+            load_ios_profiles(pool, pipeline_id).await.unwrap()
+        )
+    }
+
+    fn update(value: serde_json::Value) -> UpdatePipelineIosSigningRequest {
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_rejected_update_leaves_signing_settings_and_profiles_unchanged() {
+        let pool = ios_pool().await;
+        insert_signing(&pool, &KEY, "pl1", None).await;
+        sqlx::query(
+            "UPDATE pipeline_ios_signing_settings
+             SET bundle_ids_json = '[\"com.example.app\"]', team_id = 'ABCDE12345',
+                 p12_filename = 'dist.p12', p12_encrypted = 'p12', p12_password_encrypted = 'pw'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO pipeline_ios_provisioning_profiles
+                (id, pipeline_id, bundle_id, profile_encrypted, created_at, updated_at)
+             VALUES ('prof1', 'pl1', 'com.example.app', 'profile', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let before = snapshot(&pool, "pl1").await;
+
+        let base = serde_json::json!({
+            "enabled": true,
+            "mode": "api",
+            "export_method": "ad_hoc",
+            "team_id": "ABCDE12345",
+            "bundle_ids": ["com.example.app"],
+        });
+        let with = |extra: serde_json::Value| {
+            let mut value = base.clone();
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            update(value)
+        };
+        let profile = serde_json::json!({ "bundle_id": "com.example.app", "profile_base64": "!" });
+        let rejected = [
+            // An invalid profile alongside an export method change.
+            with(serde_json::json!({ "provisioning_profiles": [profile] })),
+            with(
+                serde_json::json!({ "provisioning_profiles": vec![profile; MAX_PROFILE_COUNT + 1] }),
+            ),
+            // Manual mode with the export method changed has no profile left,
+            // which is only found after the stored profiles are cleared.
+            with(serde_json::json!({ "mode": "manual" })),
+        ];
+        for req in rejected {
+            let (status, _) = save_ios_signing(&pool, &KEY, "pl1", "u1", req)
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(snapshot(&pool, "pl1").await, before);
+        }
+
+        // The same change without the bad profile is saved.
+        save_ios_signing(&pool, &KEY, "pl1", "u1", with(serde_json::json!({})))
+            .await
+            .unwrap();
+        let saved = settings(&pool, "pl1").await;
+        assert_eq!(saved.export_method, "ad_hoc");
+        assert!(load_ios_profiles(&pool, "pl1").await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn profile_distribution_is_read_from_profile_plist() {
+        let app_store = serde_json::json!({ "Entitlements": { "get-task-allow": false } });
+        let ad_hoc = serde_json::json!({
+            "ProvisionedDevices": ["00008110-000A"],
+            "Entitlements": { "get-task-allow": false }
+        });
+        let development = serde_json::json!({
+            "ProvisionedDevices": ["00008110-000A"],
+            "Entitlements": { "get-task-allow": true }
+        });
+        let enterprise = serde_json::json!({ "ProvisionsAllDevices": true });
+
+        assert_eq!(
+            ProfileDistribution::from_profile_json(&app_store),
+            ProfileDistribution::AppStore
+        );
+        assert_eq!(
+            ProfileDistribution::from_profile_json(&ad_hoc),
+            ProfileDistribution::AdHoc
+        );
+        assert_eq!(
+            ProfileDistribution::from_profile_json(&development),
+            ProfileDistribution::Development
+        );
+        assert_eq!(
+            ProfileDistribution::from_profile_json(&enterprise),
+            ProfileDistribution::Enterprise
+        );
+    }
+
+    #[test]
+    fn only_matching_profiles_are_accepted_for_an_export_method() {
+        assert!(ProfileDistribution::AdHoc.matches(IosExportMethod::AdHoc));
+        assert!(!ProfileDistribution::AdHoc.matches(IosExportMethod::AppStore));
+        assert!(ProfileDistribution::AppStore.matches(IosExportMethod::AppStore));
+        assert!(!ProfileDistribution::AppStore.matches(IosExportMethod::AdHoc));
+        assert!(!ProfileDistribution::Development.matches(IosExportMethod::AdHoc));
+    }
+
+    #[test]
+    fn generated_profile_names_differ_by_export_method() {
+        let ad_hoc = profile_name_for_bundle("com.example.app", IosExportMethod::AdHoc);
+        let app_store = profile_name_for_bundle("com.example.app", IosExportMethod::AppStore);
+        assert!(ad_hoc.starts_with("oore-adhoc-"));
+        assert!(app_store.starts_with("oore-appstore-"));
+    }
 }

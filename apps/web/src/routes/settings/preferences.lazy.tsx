@@ -20,7 +20,8 @@ import {
 } from '@/hooks/use-artifact-storage'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
-import { ApiClientError, getApiErrorMessage } from '@/lib/api-client/api-error'
+import { isOoreApiError } from '@oore/client/client'
+import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import { ExternalAccessCard } from '@/components/settings/preferences-external-access-card'
 import { ExternalAccessManagement } from '@/components/settings/preferences-external-access-management'
 import { ExternalAccessSetup } from '@/components/settings/preferences-external-access-setup'
@@ -33,6 +34,7 @@ import type {
   ConfigureExternalAccessOidcRequest,
   UpdateTrustedProxySettingsRequest,
 } from '@oore/client/models'
+import { splitRowVariants } from '@/lib/recipes'
 
 const preloadExternalAccessNetworkDialog = () =>
   import('@/components/settings/preferences-external-access-network-dialog')
@@ -395,14 +397,14 @@ function PreferencesPage() {
             external_access_origin_not_allowed:
               'Public URL origin must be listed in allowed frontend origins.',
           })
-          if (error instanceof ApiClientError && error.details) {
+          if (isOoreApiError(error) && error.details) {
             toast.error(`${message} ${error.details}`)
           } else {
             toast.error(message)
           }
           if (
-            error instanceof ApiClientError &&
-            error.code.startsWith('external_access')
+            isOoreApiError(error) &&
+            error.code?.startsWith('external_access')
           ) {
             setReadinessOpen(true)
           }
@@ -429,10 +431,7 @@ function PreferencesPage() {
   return (
     <PageLayout width="wide">
       <PageMeta title="General settings" noindex />
-      <PageHeader
-        title="General"
-        description="Manage this instance's runtime and external access."
-      />
+      <PageHeader title="General" />
       <RuntimeOverview
         backendUpdatePhase={backendUpdatePhase}
         backendVersionLabel={backendVersionLabel}
@@ -447,7 +446,7 @@ function PreferencesPage() {
         </SettingsSection>
       ) : preferencesQuery.error ? (
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Failed to load instance settings: {preferencesQuery.error.message}
             </span>
@@ -463,7 +462,7 @@ function PreferencesPage() {
         </Alert>
       ) : !preferences ? (
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>The response did not include instance settings.</span>
             <Button
               type="button"

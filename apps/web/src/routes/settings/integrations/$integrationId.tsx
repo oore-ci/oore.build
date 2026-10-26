@@ -1,7 +1,14 @@
 import { useMemo, useState } from 'react'
 import { createFileRoute, useSearch } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { InformationCircleIcon } from '@hugeicons/core-free-icons'
+import {
+  Delete02Icon,
+  InformationCircleIcon,
+  LinkSquare02Icon,
+  MoreHorizontalCircle01Icon,
+  Refresh01Icon,
+  Setting07Icon,
+} from '@hugeicons/core-free-icons'
 
 import { toast } from '@/lib/toast'
 import { searchNumber, searchString } from '@/lib/search-input'
@@ -21,12 +28,13 @@ import {
 import {
   useDeleteIntegration,
   useGitLabAuthorize,
+  useGitLabTokenStatus,
   useInstallations,
   useIntegration,
   useIntegrationRepos,
   useSyncInstallations,
 } from '@/hooks/use-integrations'
-import { getIntegrationStatusVariant } from '@/lib/status-variants'
+import { StatusBadge } from '@/components/status-badge'
 import { useExternalAccessNetworkSettings } from '@/hooks/use-artifact-storage'
 import { useInfiniteProjects } from '@/hooks/use-projects'
 import { gitLabPublicEndpoints } from '@/lib/gitlab-url'
@@ -34,6 +42,12 @@ import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -47,8 +61,10 @@ import { GitLabWebhookTokenDialogs } from './-gitlab-webhook-tokens'
 import { GitLabTokenSettings } from './-gitlab-token-settings'
 import { IntegrationConnectionDetails } from './-integration-connection-details'
 import { IntegrationDisconnectDialog } from './-integration-disconnect-dialog'
-import { IntegrationHeaderActions } from './-integration-header-actions'
 import { OperatorIncidentAlert } from '@/components/operator-incident-alert'
+import { SourceStatusAlert } from './-source-status-alert'
+import { Text } from '@/components/layout/text'
+import { splitRowVariants, textVariants } from '@/lib/recipes'
 
 type IntegrationDetailTab = 'repositories' | 'accounts' | 'connection'
 
@@ -85,13 +101,17 @@ function parseSearch(search: SearchInput): IntegrationDetailSearch {
 export const Route = createFileRoute('/settings/integrations/$integrationId')({
   staticData: {
     breadcrumb: {
-      title: 'Details',
+      title: 'Source',
     },
   },
   validateSearch: parseSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
+    requireInstanceRoleOrRedirect(
+      instance.id,
+      ['owner', 'admin', 'developer'],
+      context,
+    )
   },
   component: IntegrationDetailPage,
 })
@@ -127,6 +147,11 @@ function IntegrationDetailPage() {
     resourceId: integrationId,
   })
   const markIncidentRead = useMarkOperatorIncidentRead()
+  // Fetched only on demand, when an operator asks Oore to check the token.
+  const tokenCheckQuery = useGitLabTokenStatus(integrationId, false)
+  // Unfiltered count, so a search does not change the repository total.
+  const repositoryTotalQuery = useIntegrationRepos(integrationId, { limit: 1 })
+  const repositoryTotal = repositoryTotalQuery.data?.total
 
   const label =
     detailQuery.data?.integration.display_name ??
@@ -196,7 +221,7 @@ function IntegrationDetailPage() {
       onSuccess: () => {
         toast.success(
           provider === 'gitlab'
-            ? 'GitLab projects synced'
+            ? 'GitLab repositories synced'
             : 'GitHub repositories synced',
         )
       },
@@ -261,9 +286,9 @@ function IntegrationDetailPage() {
       <PageLayout width="wide">
         <PageMeta title="Source not found" noindex />
         <PageHeader title="Source not found" />
-        <p className="text-sm text-muted-foreground">
+        <Text variant="muted">
           This source connection does not exist or is no longer available.
-        </p>
+        </Text>
       </PageLayout>
     )
   }
@@ -291,8 +316,7 @@ function IntegrationDetailPage() {
       : integration.provider === 'github'
         ? 'Install the GitHub App, then sync this source.'
         : 'This source has no linked local path.'
-  const syncLabel =
-    integration.provider === 'gitlab' ? 'Sync projects' : 'Sync repositories'
+  const syncLabel = 'Sync repositories'
   const canSyncInstallations =
     integration.provider === 'github' || integration.provider === 'gitlab'
   const tab = search.tab ?? 'repositories'
@@ -330,47 +354,82 @@ function IntegrationDetailPage() {
         description={`${providerLabel} source at ${integration.host_url}`}
         meta={
           <>
-            <Badge variant={getIntegrationStatusVariant(integration.status)}>
-              {integration.status}
-            </Badge>
+            <StatusBadge kind="integration" value={integration.status} />
             <Badge variant="outline">{providerLabel}</Badge>
-            {!repositoriesQuery.isLoading && !repositoriesQuery.error ? (
-              <>
-                <span>
-                  {repositories.length}{' '}
-                  {repositories.length === 1 ? 'repository' : 'repositories'}
-                </span>
-              </>
+            {repositoryTotal !== undefined ? (
+              <span>
+                {repositoryTotal}{' '}
+                {repositoryTotal === 1 ? 'repository' : 'repositories'}
+              </span>
             ) : null}
           </>
         }
         actions={
           canWrite ? (
-            <IntegrationHeaderActions
-              authorizePending={gitlabAuthorizeMutation.isPending}
-              canSync={canSyncInstallations}
-              manageHref={manageHref}
-              manageLabel={manageLabel}
-              needsAuthorization={needsGitLabAuthorization}
-              onAuthorize={() =>
-                gitlabAuthorizeMutation.mutate(
-                  {
-                    integration_id: integrationId,
-                    redirect_url: window.location.href,
-                  },
-                  {
-                    onError: (authorizationError) =>
-                      toast.error(
-                        `GitLab authorization failed: ${authorizationError.message}`,
-                      ),
-                  },
-                )
-              }
-              onDisconnect={() => setDisconnectOpen(true)}
-              onSync={handleSync}
-              syncLabel={syncLabel}
-              syncPending={syncMutation.isPending}
-            />
+            <>
+              {needsGitLabAuthorization ? (
+                <Button
+                  onClick={() =>
+                    gitlabAuthorizeMutation.mutate(
+                      {
+                        integration_id: integrationId,
+                        redirect_url: window.location.href,
+                      },
+                      {
+                        onError: (authorizationError) =>
+                          toast.error(
+                            `GitLab authorization failed: ${authorizationError.message}`,
+                          ),
+                      },
+                    )
+                  }
+                  disabled={gitlabAuthorizeMutation.isPending}
+                >
+                  <HugeiconsIcon icon={LinkSquare02Icon} size={16} />
+                  {gitlabAuthorizeMutation.isPending
+                    ? 'Redirecting...'
+                    : 'Authorize GitLab'}
+                </Button>
+              ) : canSyncInstallations ? (
+                <Button onClick={handleSync} disabled={syncMutation.isPending}>
+                  <HugeiconsIcon icon={Refresh01Icon} />
+                  {syncMutation.isPending ? 'Syncing...' : syncLabel}
+                </Button>
+              ) : null}
+
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      aria-label="Source actions"
+                    />
+                  }
+                >
+                  <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-auto">
+                  {manageHref ? (
+                    <DropdownMenuItem
+                      onClick={() =>
+                        window.open(manageHref, '_blank', 'noopener,noreferrer')
+                      }
+                    >
+                      <HugeiconsIcon icon={Setting07Icon} />
+                      {manageLabel}
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={() => setDisconnectOpen(true)}
+                  >
+                    <HugeiconsIcon icon={Delete02Icon} />
+                    Disconnect source
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
           ) : null
         }
       />
@@ -381,6 +440,36 @@ function IntegrationDetailPage() {
             You have read-only access to this source connection.
           </AlertDescription>
         </Alert>
+      ) : null}
+
+      {!canWrite ||
+      (incidentsQuery.isSuccess &&
+        incidentsQuery.data.incidents.length === 0) ? (
+        <SourceStatusAlert
+          canWrite={canWrite}
+          checkPending={tokenCheckQuery.isFetching}
+          integration={integration}
+          onCheckAgain={
+            integration.auth_mode === 'personal_token'
+              ? () =>
+                  void tokenCheckQuery
+                    .refetch()
+                    .then(() => detailQuery.refetch())
+              : undefined
+          }
+          onReconnect={
+            integration.auth_mode === 'personal_token'
+              ? () => updateSearch({ tab: 'connection' })
+              : integration.provider === 'github' && manageHref
+                ? () => window.open(manageHref, '_blank', 'noopener,noreferrer')
+                : undefined
+          }
+          reconnectLabel={
+            integration.auth_mode === 'personal_token'
+              ? 'Replace token'
+              : manageLabel
+          }
+        />
       ) : null}
 
       {incidentsQuery.data?.incidents.map((incident) => (
@@ -403,14 +492,18 @@ function IntegrationDetailPage() {
         <TabsList variant="line" aria-label="Source details">
           <TabsTrigger value="repositories">
             Repositories
-            <span className="font-mono text-xs text-muted-foreground">
-              {repositoriesQuery.isLoading ? '…' : repositories.length}
+            <span className={textVariants({ variant: 'mono' })}>
+              {repositoryTotal ?? (repositoryTotalQuery.isError ? '—' : '…')}
             </span>
           </TabsTrigger>
           <TabsTrigger value="accounts">
             {accountsTabLabel}
-            <span className="font-mono text-xs text-muted-foreground">
-              {installationsQuery.isLoading ? '…' : installations.length}
+            <span className={textVariants({ variant: 'mono' })}>
+              {installationsQuery.isLoading
+                ? '…'
+                : installationsQuery.isError
+                  ? '—'
+                  : installations.length}
             </span>
           </TabsTrigger>
           <TabsTrigger value="connection">Connection</TabsTrigger>
@@ -422,7 +515,7 @@ function IntegrationDetailPage() {
           networkSettingsQuery.error ? (
             <Alert variant="destructive" className="mb-4">
               <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-              <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <AlertDescription className={splitRowVariants()}>
                 <span>
                   Webhook actions are unavailable because the public URL could
                   not be loaded.
@@ -464,7 +557,6 @@ function IntegrationDetailPage() {
             pageSize={pageSize}
             query={search.q}
             repositories={visibleRepositories}
-            repositoryCount={repositories.length}
             total={total}
           />
         </TabsContent>
@@ -527,7 +619,7 @@ function IntegrationDetailPage() {
           void disconnectImpactQuery.refetch()
         }}
         open={disconnectOpen}
-        repositoryCount={repositories.length}
+        repositoryCount={repositoryTotal ?? total}
       />
 
       {integration.provider === 'gitlab' && canWrite && gitLabWebhookUrl ? (

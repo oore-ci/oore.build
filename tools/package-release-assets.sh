@@ -91,7 +91,6 @@ validate_stage_tree() {
 
 validate_full_stage() {
   local stage="$1"
-  local obsolete
   require_stage_directory "$stage"
   require_executable "$stage/bin/oore"
   require_executable "$stage/bin/oored"
@@ -103,12 +102,6 @@ validate_full_stage() {
     exit 1
   }
   require_file "$stage/web-dist/index.html"
-  for obsolete in "$stage/bin/fvm" "$stage/libexec/fvm"; do
-    [[ ! -e "$obsolete" && ! -L "$obsolete" ]] || {
-      echo "Release stage contains obsolete bundled FVM: $obsolete" >&2
-      exit 1
-    }
-  done
   validate_stage_tree "$stage" full
 }
 

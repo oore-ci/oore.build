@@ -1,7 +1,7 @@
 import { toast } from '@/lib/toast'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Download04Icon } from '@hugeicons/core-free-icons'
-import type { RuntimeHealth } from '@/hooks/use-runtime-updates'
+import type { useRuntimeUpdates } from '@/hooks/use-runtime-updates'
 import type { RuntimeUpdateStatus } from '@oore/client/models'
 import { runtimeUpdateActive } from '@/components/settings/preferences-utils'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -16,38 +16,13 @@ import {
   ItemTitle,
 } from '@/components/ui/item'
 import {
+  RuntimeUpdatePreflightChecks,
+  backendUpdateReady,
+} from '@/components/runtime-update-preflight'
+import {
   SettingsSection,
   SettingsSurface,
 } from '@/components/settings/settings-section'
-
-interface RuntimeQuery<T> {
-  data?: T
-}
-
-interface RuntimeReleaseSummary {
-  channel?: string | null
-  latest_version: string
-  managed_service?: boolean
-  update_available: boolean
-}
-
-interface RuntimeUpdateMutation {
-  isPending: boolean
-  mutate: (
-    value: undefined,
-    options: { onError: (error: Error) => void; onSuccess: () => void },
-  ) => void
-}
-
-export interface RuntimeOverviewState {
-  backendHealth: RuntimeQuery<RuntimeHealth>
-  backendRelease: RuntimeQuery<RuntimeReleaseSummary>
-  backendUpdate: RuntimeQuery<RuntimeUpdateStatus>
-  frontendHealth: RuntimeQuery<RuntimeHealth>
-  frontendRelease: RuntimeQuery<RuntimeReleaseSummary>
-  startBackendUpdate: RuntimeUpdateMutation
-  startFrontendUpdate?: RuntimeUpdateMutation
-}
 
 export function RuntimeOverview({
   backendUpdatePhase,
@@ -61,21 +36,23 @@ export function RuntimeOverview({
   backendVersionLabel: string
   frontendUpdatePhase: RuntimeUpdateStatus['phase'] | undefined
   isOwner: boolean
-  runtimeUpdates: RuntimeOverviewState
+  runtimeUpdates: ReturnType<typeof useRuntimeUpdates>
   webVersionLabel: string
 }) {
   const webHealthQuery = runtimeUpdates.frontendHealth
   const backendHealthQuery = runtimeUpdates.backendHealth
+  const backendReady = backendUpdateReady(
+    runtimeUpdates.backendPreflight,
+    runtimeUpdates.backendUpdate.data?.managed_service,
+  )
   const backendUpdateFailure =
     runtimeUpdates.backendUpdate.data?.phase === 'failed'
       ? runtimeUpdates.backendUpdate.data.error
       : null
+  const frontendRelease = runtimeUpdates.frontendRelease.data
 
   return (
-    <SettingsSection
-      title="Runtime"
-      description="Installed frontend and backend versions for this instance."
-    >
+    <SettingsSection title="Runtime">
       <SettingsSurface inset={false}>
         <ItemGroup aria-label="Runtime versions" className="gap-0">
           <Item>
@@ -90,21 +67,31 @@ export function RuntimeOverview({
                   ? `${webHealthQuery.data.channel} channel`
                   : 'Loaded oore-web bundle'}
               </ItemDescription>
-              {runtimeUpdates.frontendRelease.data?.update_available ? (
+              {runtimeUpdates.frontendOffered &&
+              runtimeUpdates.frontendRelease.data?.update_available ? (
                 <>
-                  <ItemDescription className="line-clamp-none text-primary">
+                  <ItemDescription className="line-clamp-none text-foreground">
                     {runtimeUpdates.frontendRelease.data.latest_version} is
                     available
                   </ItemDescription>
                   {!runtimeUpdates.frontendRelease.data.managed_service ? (
                     <ItemDescription className="line-clamp-none">
-                      Install oore-web as a managed service to update it here.
+                      {runtimeUpdates.frontendRelease.data
+                        .managed_service_reason ||
+                        'Install oore-web as a managed service to update it here.'}
                     </ItemDescription>
                   ) : null}
                 </>
               ) : null}
+              {isOwner && runtimeUpdates.frontendRelease.isError ? (
+                <ItemDescription className="line-clamp-none">
+                  Could not check for frontend updates:{' '}
+                  {runtimeUpdates.frontendRelease.error.message}
+                </ItemDescription>
+              ) : null}
             </ItemContent>
-            {runtimeUpdates.frontendRelease.data?.update_available ? (
+            {runtimeUpdates.frontendOffered &&
+            runtimeUpdates.frontendRelease.data?.update_available ? (
               <ItemActions>
                 <Button
                   size="sm"
@@ -112,10 +99,10 @@ export function RuntimeOverview({
                     !isOwner ||
                     !runtimeUpdates.frontendRelease.data.managed_service ||
                     runtimeUpdateActive(frontendUpdatePhase) ||
-                    runtimeUpdates.startFrontendUpdate?.isPending
+                    runtimeUpdates.startFrontendUpdate.isPending
                   }
                   onClick={() =>
-                    runtimeUpdates.startFrontendUpdate?.mutate(undefined, {
+                    runtimeUpdates.startFrontendUpdate.mutate(undefined, {
                       onSuccess: () =>
                         toast.success(
                           'Frontend update started. The UI will reconnect after restart.',
@@ -128,7 +115,7 @@ export function RuntimeOverview({
                     icon={Download04Icon}
                     data-icon="inline-start"
                   />
-                  {runtimeUpdates.startFrontendUpdate?.isPending
+                  {runtimeUpdates.startFrontendUpdate.isPending
                     ? 'Starting...'
                     : frontendUpdatePhase === 'restarting'
                       ? 'Restarting...'
@@ -154,32 +141,29 @@ export function RuntimeOverview({
                   ? `${backendHealthQuery.data.channel} channel`
                   : 'Loaded oored daemon'}
               </ItemDescription>
-              {runtimeUpdates.backendRelease.data?.update_available ? (
+              {runtimeUpdates.backendOffered &&
+              runtimeUpdates.backendRelease.data?.update_available ? (
                 <>
-                  <ItemDescription className="line-clamp-none text-primary">
+                  <ItemDescription className="line-clamp-none text-foreground">
                     {runtimeUpdates.backendRelease.data.latest_version} is
                     available
                   </ItemDescription>
-                  {runtimeUpdates.backendUpdate.data &&
-                  !runtimeUpdates.backendUpdate.data.managed_service ? (
-                    <div className="flex flex-col gap-2 text-xs text-muted-foreground">
-                      <p>
-                        Run Oore setup from Terminal to repair this
-                        device&apos;s managed services. No reinstall is
-                        required.
-                      </p>
-                    </div>
-                  ) : null}
                 </>
               ) : null}
+              {isOwner ? (
+                <RuntimeUpdatePreflightChecks
+                  preflight={runtimeUpdates.backendPreflight}
+                />
+              ) : null}
             </ItemContent>
-            {runtimeUpdates.backendRelease.data?.update_available ? (
+            {runtimeUpdates.backendOffered &&
+            runtimeUpdates.backendRelease.data?.update_available ? (
               <ItemActions>
                 <Button
                   size="sm"
                   disabled={
                     !isOwner ||
-                    !runtimeUpdates.backendUpdate.data?.managed_service ||
+                    !backendReady ||
                     runtimeUpdateActive(backendUpdatePhase) ||
                     runtimeUpdates.startBackendUpdate.isPending
                   }
@@ -212,6 +196,27 @@ export function RuntimeOverview({
           </Item>
         </ItemGroup>
       </SettingsSurface>
+
+      {frontendRelease?.phase === 'failed' ? (
+        <Alert variant="destructive">
+          <AlertTitle>Frontend update failed</AlertTitle>
+          <AlertDescription className="flex flex-col gap-2 wrap-break-word">
+            <p>
+              {frontendRelease.error ||
+                'The frontend update stopped before completion.'}
+            </p>
+            {frontendRelease.log_path ? (
+              <p>
+                Check{' '}
+                <code className="font-mono text-[11px]">
+                  {frontendRelease.log_path}
+                </code>{' '}
+                on the web node for details, then retry.
+              </p>
+            ) : null}
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {runtimeUpdates.backendUpdate.data?.phase === 'failed' ? (
         <Alert variant="destructive">

@@ -133,7 +133,7 @@ impl SetupStore {
         )
         .bind(state.schema_version as i64)
         .bind(&state.instance_id)
-        .bind(setup_state_to_str(state.setup_state))
+        .bind(state.setup_state.to_string())
         // Bootstrap token
         .bind(state.bootstrap_token.as_ref().map(|t| &t.hash))
         .bind(state.bootstrap_token.as_ref().map(|t| t.expires_at))
@@ -366,30 +366,6 @@ fn secure_database_file(path: &Path) -> anyhow::Result<()> {
         .with_context(|| format!("failed to secure database {}", path.display()))
 }
 
-// ── Conversion helpers ──────────────────────────────────────────
-
-fn setup_state_to_str(state: SetupState) -> &'static str {
-    match state {
-        SetupState::Uninitialized => "uninitialized",
-        SetupState::BootstrapPending => "bootstrap_pending",
-        SetupState::IdpConfigured => "idp_configured",
-        SetupState::OwnerCreated => "owner_created",
-        SetupState::Ready => "ready",
-        _ => "unknown",
-    }
-}
-
-fn str_to_setup_state(s: &str) -> anyhow::Result<SetupState> {
-    match s {
-        "uninitialized" => Ok(SetupState::Uninitialized),
-        "bootstrap_pending" => Ok(SetupState::BootstrapPending),
-        "idp_configured" => Ok(SetupState::IdpConfigured),
-        "owner_created" => Ok(SetupState::OwnerCreated),
-        "ready" => Ok(SetupState::Ready),
-        other => bail!("unknown setup state: {other}"),
-    }
-}
-
 /// Write an entry to the audit_logs table.
 pub async fn write_audit_log(
     pool: &SqlitePool,
@@ -420,7 +396,9 @@ fn row_to_state_file(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<SetupState
     let schema_version: i64 = row.try_get("schema_version")?;
     let instance_id: String = row.try_get("instance_id")?;
     let state_str: String = row.try_get("setup_state")?;
-    let setup_state = str_to_setup_state(&state_str)?;
+    let setup_state = state_str
+        .parse::<SetupState>()
+        .map_err(anyhow::Error::msg)?;
 
     // Bootstrap token
     let bootstrap_token = {

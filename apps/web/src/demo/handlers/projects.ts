@@ -9,19 +9,31 @@ import {
 } from '../authorization'
 import { demoState } from '../state'
 import { parseDemoJsonObject } from '../request'
+import type {
+  AddProjectMemberRequest,
+  CreateProjectRequest,
+  UpdateProjectMemberRequest,
+} from '@oore/client/models'
 
 const projectRoleSchema = z.enum(['maintainer', 'developer', 'viewer'])
-const projectMemberRequestSchema = z.object({
-  user_id: z.string(),
-  role: projectRoleSchema,
-})
-const projectRoleRequestSchema = z.object({ role: projectRoleSchema })
-const createProjectRequestSchema = z.object({
-  name: z.string(),
-  description: z.string().optional(),
-  repository_id: z.string().optional(),
-  default_branch: z.string().optional(),
-})
+const projectMemberRequestSchema = z.toZod<AddProjectMemberRequest>()(
+  z.object({
+    user_id: z.string(),
+    role: projectRoleSchema,
+  }),
+)
+const projectRoleRequestSchema = z.toZod<UpdateProjectMemberRequest>()(
+  z.object({ role: projectRoleSchema }),
+)
+const createProjectRequestSchema = z.toZod<CreateProjectRequest>()(
+  z.object({
+    name: z.string(),
+    description: z.string().nullish(),
+    repository_id: z.string().nullish(),
+    local_repository_path: z.string().nullish(),
+    default_branch: z.string().nullish(),
+  }),
+)
 
 function hasProjectMembership(projectId: string, userId: string): boolean {
   return !!demoState.projectRoles[projectId]?.[userId]

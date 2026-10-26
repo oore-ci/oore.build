@@ -9,17 +9,27 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { toast } from '@/lib/toast'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { InformationCircleIcon, Search01Icon } from '@hugeicons/core-free-icons'
+import {
+  Alert02Icon,
+  InformationCircleIcon,
+  Search01Icon,
+  ServerStack01Icon,
+} from '@hugeicons/core-free-icons'
 
-import type { Runner } from '@oore/client/models'
+import type { Runner, UpdateRunnerRequest } from '@oore/client/models'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { usePageClamp } from '@/hooks/use-page-clamp'
-import { useRunners, useUpdateRunner } from '@/hooks/use-runners'
+import {
+  usePurgeRunnerCaches,
+  useRunners,
+  useUpdateRunner,
+} from '@/hooks/use-runners'
 import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { DirectRunnerPolicyPanel } from '@/components/settings/direct-runner-policy-panel'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -50,54 +60,86 @@ import { Spinner } from '@/components/ui/spinner'
 import type { SortDirection } from '@/components/data-table-features'
 import type { RunnerSort, RunnersSearch } from './runners'
 import { RunnerInventory } from './-runner-inventory'
+import { Text } from '@/components/layout/text'
+import { splitRowVariants } from '@/lib/recipes'
 
 export const Route = createLazyFileRoute('/settings/runners')({
   component: RunnersSettingsPage,
 })
 
-const renameRunnerSchema = z.object({
+const LABEL_PATTERN = /^[a-z0-9._-]{1,64}$/
+
+function parseLabels(value: string) {
+  return [
+    ...new Set(
+      value
+        .split(/[\s,]+/)
+        .map((label) => label.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ].sort()
+}
+
+const editRunnerSchema = z.object({
   name: z
     .string()
     .trim()
     .min(1, 'Name is required')
     .max(255, 'Name must be at most 255 characters'),
+  labels: z
+    .string()
+    .refine(
+      (value) => parseLabels(value).every((label) => LABEL_PATTERN.test(label)),
+      'Use letters, digits, ".", "_" and "-", separated by commas or spaces',
+    )
+    .refine((value) => parseLabels(value).length <= 32, 'At most 32 labels'),
 })
 
-type RenameRunnerForm = z.infer<typeof renameRunnerSchema>
+type EditRunnerForm = z.infer<typeof editRunnerSchema>
 
-interface RenameRunnerDialogProps {
+interface EditRunnerDialogProps {
   runner: Runner
   onClose: () => void
 }
 
-function RenameRunnerDialog({ runner, onClose }: RenameRunnerDialogProps) {
+function EditRunnerDialog({ runner, onClose }: EditRunnerDialogProps) {
   const mutation = useUpdateRunner()
-  const form = useForm<RenameRunnerForm>({
-    resolver: zodResolver(renameRunnerSchema),
-    defaultValues: { name: runner.name },
+  const initialLabels = runner.custom_labels ?? []
+  const form = useForm<EditRunnerForm>({
+    resolver: zodResolver(editRunnerSchema),
+    defaultValues: { name: runner.name, labels: initialLabels.join(', ') },
     mode: 'onBlur',
   })
 
-  const initialName = runner.name
   const isManaged = !runner.registered_by
+  const detectedLabels = (runner.labels ?? []).filter(
+    (label) => !initialLabels.includes(label),
+  )
 
-  function onSubmit(data: RenameRunnerForm) {
-    const trimmed = data.name.trim()
-    if (trimmed === initialName.trim()) {
+  function onSubmit(data: EditRunnerForm) {
+    const name = data.name.trim()
+    const labels = parseLabels(data.labels)
+    const nameChanged = !isManaged && name !== runner.name.trim()
+    const labelsChanged = labels.join(' ') !== initialLabels.join(' ')
+    if (!nameChanged && !labelsChanged) {
       onClose()
       return
     }
 
+    const update: UpdateRunnerRequest = {}
+    if (nameChanged) update.name = name
+    if (labelsChanged) update.custom_labels = labels
+
     mutation.mutate(
-      { runnerId: runner.id, data: { name: trimmed } },
+      { runnerId: runner.id, data: update },
       {
         onSuccess: () => {
-          toast.success('Runner renamed')
+          toast.success('Runner updated')
           onClose()
         },
         onError: (error) => {
           toast.error(
-            error instanceof Error ? error.message : 'Failed to rename runner',
+            error instanceof Error ? error.message : 'Failed to update runner',
           )
         },
       },
@@ -113,54 +155,79 @@ function RenameRunnerDialog({ runner, onClose }: RenameRunnerDialogProps) {
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Rename runner</DialogTitle>
+          <DialogTitle>Edit runner</DialogTitle>
           <DialogDescription>
-            Update the display name for this runner.
+            Pipelines pick runners by label with <code>runs_on</code>.
           </DialogDescription>
         </DialogHeader>
 
-        {isManaged ? (
-          <Alert>
-            <AlertDescription>
-              Managed runner names are set from the build host and cannot be
-              changed.
-            </AlertDescription>
-          </Alert>
-        ) : (
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Name</FormLabel>
-                    <FormControl>
-                      <Input autoFocus placeholder="Runner name" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Name</FormLabel>
+                  <FormControl>
+                    <Input
+                      autoFocus={!isManaged}
+                      disabled={isManaged}
+                      placeholder="Runner name"
+                      {...field}
+                    />
+                  </FormControl>
+                  {isManaged ? (
+                    <Text variant="caption">
+                      Managed runner names are set from the build host.
+                    </Text>
+                  ) : null}
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={onClose}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={mutation.isPending}>
-                  {mutation.isPending ? (
-                    <>
-                      <Spinner className="size-4" />
-                      Saving...
-                    </>
-                  ) : (
-                    'Save'
-                  )}
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        )}
+            <FormField
+              control={form.control}
+              name="labels"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Custom labels</FormLabel>
+                  <FormControl>
+                    <Input
+                      autoFocus={isManaged}
+                      placeholder="release, gpu"
+                      className="font-mono"
+                      {...field}
+                    />
+                  </FormControl>
+                  <Text variant="caption">
+                    {detectedLabels.length > 0
+                      ? `Detected from the host: ${detectedLabels.join(', ')}.`
+                      : 'Detected labels appear after the runner connects.'}
+                  </Text>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={mutation.isPending}>
+                {mutation.isPending ? (
+                  <>
+                    <Spinner className="size-4" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save changes'
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
       </DialogContent>
     </Dialog>
   )
@@ -171,6 +238,8 @@ function RunnersSettingsPage() {
   const search = useSearch({ from: '/settings/runners' })
   const canWrite = useHasPermission('runners:write')
   const [selectedRunner, setSelectedRunner] = useState<Runner | null>(null)
+  const [purgeRunner, setPurgeRunner] = useState<Runner | null>(null)
+  const purgeCaches = usePurgeRunnerCaches()
 
   const page = search.page ?? 1
   const pageSize = search.pageSize ?? 20
@@ -184,6 +253,14 @@ function RunnersSettingsPage() {
     offset: (page - 1) * pageSize,
   })
   const total = runnersQuery.data?.total ?? 0
+  const queuedTotal = runnersQuery.data?.queued_total ?? 0
+  const unmatchedTotal = runnersQuery.data?.unmatched_queued_total ?? 0
+  const onlineTotal = runnersQuery.data?.online_total ?? 0
+  const noRunnerOnline =
+    runnersQuery.data !== undefined && !search.q && onlineTotal === 0
+  const lowDiskRunners = (runnersQuery.data?.runners ?? []).filter(
+    (runner) => runner.disk_pressure && runner.status !== 'offline',
+  )
   const currentPage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)))
   const visibleRunners = runnersQuery.data?.runners ?? []
 
@@ -210,25 +287,55 @@ function RunnersSettingsPage() {
   return (
     <PageLayout width="wide" fill>
       <PageMeta title="Runners" noindex />
-      <PageHeader
-        title="Runners"
-        description="Monitor connected runners and manage their execution policy."
-      />
+      <PageHeader title="Runners" />
 
       <DirectRunnerPolicyPanel />
 
-      {!canWrite ? (
-        <Alert>
+      {lowDiskRunners.length > 0 ? (
+        <Alert
+          variant={
+            lowDiskRunners.some((runner) => runner.disk_pressure === 'critical')
+              ? 'destructive'
+              : 'default'
+          }
+        >
+          <HugeiconsIcon icon={InformationCircleIcon} />
+          <AlertTitle>Runner disk space is low</AlertTitle>
           <AlertDescription>
-            You have read-only access to runner health and metadata.
+            {lowDiskRunners.map((runner) => runner.name).join(', ')}{' '}
+            {lowDiskRunners.length === 1 ? 'has' : 'have'} less than 20 GB free.
+            Clear caches or old workspaces before builds start failing.
           </AlertDescription>
         </Alert>
+      ) : null}
+
+      {noRunnerOnline && queuedTotal > 0 && total > 0 ? (
+        <Alert>
+          <HugeiconsIcon icon={Alert02Icon} className="text-warning!" />
+          <AlertTitle>No runner is online</AlertTitle>
+          <AlertDescription>
+            {queuedTotal} {queuedTotal === 1 ? 'build is' : 'builds are'}{' '}
+            waiting and none can start until a runner reconnects. Check that the
+            runner service is running on each Mac, then run{' '}
+            <code className="font-mono">oore doctor</code> there if it stays
+            offline.
+          </AlertDescription>
+        </Alert>
+      ) : runnersQuery.data && total > 0 ? (
+        <Text variant="muted">
+          {queuedTotal === 0
+            ? 'No builds are waiting for a runner.'
+            : `${queuedTotal} ${queuedTotal === 1 ? 'build is' : 'builds are'} waiting for a runner.`}
+          {unmatchedTotal > 0
+            ? ` ${unmatchedTotal} ${unmatchedTotal === 1 ? 'needs' : 'need'} labels no online runner has.`
+            : ''}
+        </Text>
       ) : null}
 
       {runnersQuery.error ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>Failed to load runners: {runnersQuery.error.message}</span>
             <Button
               variant="outline"
@@ -247,11 +354,38 @@ function RunnersSettingsPage() {
       !search.q ? (
         <Empty className="border bg-card">
           <EmptyHeader>
-            <EmptyTitle>No runners registered</EmptyTitle>
+            <EmptyMedia variant="icon">
+              <HugeiconsIcon icon={ServerStack01Icon} />
+            </EmptyMedia>
+            <EmptyTitle>No runners connected</EmptyTitle>
             <EmptyDescription>
-              Runners appear here after they connect to this instance.
+              {queuedTotal > 0
+                ? `${queuedTotal} ${queuedTotal === 1 ? 'build is' : 'builds are'} waiting. `
+                : ''}
+              Builds start once a Mac with the Runner profile connects. On the
+              build Mac, run:
             </EmptyDescription>
           </EmptyHeader>
+          <EmptyContent>
+            {/* oxlint-disable-next-line layout/max-class-utilities -- install command block */}
+            <code className="w-full max-w-md rounded-md border bg-muted px-3 py-2 text-left font-mono text-xs break-all">
+              ~/.oore/bin/oore install --profile runner
+            </code>
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={
+                <a
+                  href="https://docs.oore.build/operate/runners/direct"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                />
+              }
+            >
+              Runner setup guide
+              <span className="sr-only">(opens in a new tab)</span>
+            </Button>
+          </EmptyContent>
         </Empty>
       ) : null}
 
@@ -288,7 +422,8 @@ function RunnersSettingsPage() {
           onPageChange={(nextPage) =>
             updateSearch({ page: nextPage > 1 ? nextPage : undefined })
           }
-          onRename={setSelectedRunner}
+          onPurgeCaches={setPurgeRunner}
+          onEdit={setSelectedRunner}
           onSearch={(value) =>
             updateSearch({ q: value.trim() || undefined, page: undefined })
           }
@@ -303,11 +438,39 @@ function RunnersSettingsPage() {
       ) : null}
 
       {canWrite && selectedRunner ? (
-        <RenameRunnerDialog
+        <EditRunnerDialog
           runner={selectedRunner}
           onClose={() => setSelectedRunner(null)}
         />
       ) : null}
+
+      <ConfirmDialog
+        open={canWrite && purgeRunner !== null}
+        onOpenChange={(open) => {
+          if (!open) setPurgeRunner(null)
+        }}
+        title={`Purge caches on ${purgeRunner?.name ?? 'runner'}?`}
+        description="The runner deletes its pub, Gradle, CocoaPods and Xcode DerivedData caches before its next build. The next build of each project downloads its dependencies again."
+        confirmLabel="Purge cache"
+        confirmVariant="destructive"
+        isPending={purgeCaches.isPending}
+        onConfirm={() => {
+          if (!purgeRunner) return
+          purgeCaches.mutate(purgeRunner.id, {
+            onSuccess: () => {
+              toast.success('Cache purge requested')
+              setPurgeRunner(null)
+            },
+            onError: (error) => {
+              toast.error(
+                error instanceof Error
+                  ? error.message
+                  : 'Failed to request cache purge',
+              )
+            },
+          })
+        }}
+      />
     </PageLayout>
   )
 }

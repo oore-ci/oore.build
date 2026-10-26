@@ -5,29 +5,35 @@ import type {
   AuditLogEntry,
   Build,
   BuildEvent,
+  BuildFeedback,
   BuildLogChunk,
+  BuildTestResultsResponse,
   ExternalAccessNetworkSettings,
   InstancePreferences,
-  Integration,
   IntegrationInstallation,
   IntegrationRepository,
-  NotificationChannel,
   NotificationDelivery,
   Pipeline,
   ProjectRetentionOverride,
   RetentionCleanupSummary,
   RetentionPolicy,
+  ReleaseHistoryEntry,
+  RepositoryWorkflowPreview,
   Runner,
   SetupStatus,
   TrustedProxySettingsPublic,
   User,
   UserRole,
 } from '@oore/client/models'
+import type { IntegrationWithStatus } from '@/lib/integration-status'
+import type { NotificationChannel } from '@/lib/notification-channels'
 import type { JsonObject } from '@/lib/types'
 import type { Project, ProjectRole } from '@oore/client/models'
 import { demoArtifacts } from './data/artifacts'
 import { demoAuditLogs } from './data/audit-logs'
 import { demoBuildLogs } from './data/build-logs'
+import { demoBuildTests } from './data/build-tests'
+import { demoBuildFeedback } from './data/build-feedback'
 import { demoBuildEvents, demoBuilds } from './data/builds'
 import {
   demoInstallations,
@@ -38,7 +44,18 @@ import {
   demoNotificationChannels,
   demoNotificationDeliveries,
 } from './data/notification-channels'
+import {
+  demoEnvironments,
+  demoPromotions,
+  type DemoEnvironment,
+  type DemoPromotion,
+} from './data/environments'
 import { demoPipelines } from './data/pipelines'
+import {
+  demoReleaseHistory,
+  demoReleases,
+  type DemoRelease,
+} from './data/releases'
 import {
   demoProjects,
   GITHUB_DEMO_AVATAR_URL,
@@ -81,13 +98,6 @@ export interface DemoPersona {
   projectRoles: Partial<Record<string, ProjectRole>>
 }
 
-interface DemoRepositoryWorkflow {
-  path: string
-  valid: boolean
-  errors: Array<string>
-  execution: JsonObject
-}
-
 interface DemoOidcSettings {
   configured: boolean
   issuer: string
@@ -102,13 +112,21 @@ interface DemoState {
   projects: Array<DemoProject>
   projectRoles: Partial<Record<string, Record<string, ProjectRole>>>
   pipelines: Array<Pipeline>
-  repositoryWorkflows: Partial<Record<string, Array<DemoRepositoryWorkflow>>>
+  repositoryWorkflows: Partial<Record<string, Array<RepositoryWorkflowPreview>>>
   builds: Array<Build>
   buildEvents: Partial<Record<string, Array<BuildEvent>>>
   buildLogs: Partial<Record<string, Array<BuildLogChunk>>>
+  buildTests: Partial<Record<string, BuildTestResultsResponse>>
+  buildFeedback: Partial<Record<string, Array<BuildFeedback>>>
+  /** Uploaded screenshot bytes by feedback id; seeded ones are drawn. */
+  feedbackScreenshots: Partial<Record<string, Uint8Array<ArrayBuffer>>>
   artifacts: Partial<Record<string, Array<Artifact>>>
+  releases: Array<DemoRelease>
+  releaseHistory: Partial<Record<string, Array<ReleaseHistoryEntry>>>
+  environments: Array<DemoEnvironment>
+  promotions: Array<DemoPromotion>
   runners: Array<Runner>
-  integrations: Array<Integration>
+  integrations: Array<IntegrationWithStatus>
   installations: Partial<Record<string, Array<IntegrationInstallation>>>
   repositories: Partial<Record<string, Array<IntegrationRepository>>>
   notificationChannels: Array<NotificationChannel>
@@ -296,6 +314,9 @@ function makeDeveloperPipeline(): Pipeline {
     },
     trigger_config: { events: ['push'], branches: ['main'] },
     concurrency: { cancel_previous: true, max_concurrent: 1 },
+    timeout_minutes: 60,
+    approval: { required: false, events: [] },
+    size_budget: { mode: 'warn', rules: [] },
     enabled: true,
     created_at: ago(86400 * 10),
     updated_at: ago(3600 * 4),
@@ -331,6 +352,9 @@ function makePaginatedPipelines(): Array<Pipeline> {
         },
         trigger_config: { events: ['push'], branches: ['main'] },
         concurrency: { cancel_previous: true, max_concurrent: 1 },
+        timeout_minutes: 60,
+        approval: { required: false, events: [] },
+        size_budget: { mode: 'warn', rules: [] },
         enabled: true,
         created_at: ago(86400 * (30 - sequence)),
         updated_at: ago(3600 * (30 - sequence)),
@@ -528,6 +552,18 @@ export function createDemoState(
       name: 'mac-studio-busy',
       status: 'busy',
       capabilities: { os: 'macOS', arch: 'arm64', xcode: '15.4' },
+      labels: ['arm64', 'macos', 'macos-14', 'xcode-15'],
+      custom_labels: [],
+      metrics: {
+        cpu_percent: 97,
+        memory_used_bytes: 27 * 1024 ** 3,
+        memory_total_bytes: 32 * 1024 ** 3,
+        disk_free_bytes: 14 * 1024 ** 3,
+        disk_total_bytes: 494 * 1024 ** 3,
+        cache_bytes: 61 * 1024 ** 3,
+        collected_at: ago(8),
+      },
+      disk_pressure: 'warning',
       last_heartbeat_at: ago(8),
       registered_by: USER_IDS.admin,
       created_at: ago(86400 * 30),
@@ -538,6 +574,17 @@ export function createDemoState(
       name: 'mac-mini-draining',
       status: 'draining',
       capabilities: { os: 'macOS', arch: 'arm64', xcode: '15.4' },
+      labels: ['arm64', 'macos', 'macos-14', 'xcode-15'],
+      custom_labels: [],
+      metrics: {
+        cpu_percent: 12,
+        memory_used_bytes: 6 * 1024 ** 3,
+        memory_total_bytes: 16 * 1024 ** 3,
+        disk_free_bytes: 188 * 1024 ** 3,
+        disk_total_bytes: 494 * 1024 ** 3,
+        cache_bytes: 44 * 1024 ** 3,
+        collected_at: ago(20),
+      },
       last_heartbeat_at: ago(20),
       registered_by: USER_IDS.owner,
       created_at: ago(86400 * 25),
@@ -555,6 +602,7 @@ export function createDemoState(
       has_url: true,
       has_secret: false,
       has_smtp_config: false,
+      slack_mentions: [],
       created_by: USER_IDS.admin,
       created_at: ago(86400 * 20),
       updated_at: ago(86400 * 5),
@@ -616,24 +664,62 @@ export function createDemoState(
           execution: {
             platforms: ['android', 'ios'],
             flutter_version: '3.24.3',
-            commands: { pre_build: ['flutter pub get'], build: [] },
+            commands: {
+              pre_build: ['flutter pub get'],
+              build: [],
+              post_build: [],
+            },
+            isolation: 'host',
+            platform_build_args: { android: [], ios: [], macos: [] },
+            platform_commands: {},
+            env_keys: [],
             artifact_patterns: [
               'build/app/outputs/**/*.apk',
               'build/ios/**/*.ipa',
             ],
           },
+          workflows: [],
         },
         {
           path: '.oore/invalid.yaml',
           valid: false,
           errors: ['execution.platforms must contain at least one platform'],
-          execution: {},
+          workflows: [],
+        },
+      ],
+      [PROJECT_IDS.nativePayments]: [
+        {
+          path: '.oore/release.yaml',
+          valid: true,
+          errors: [],
+          workflows: ['adhoc', 'release'],
+          execution: {
+            platforms: ['android'],
+            flutter_version: '3.24.3',
+            commands: {
+              pre_build: ['flutter pub get'],
+              build: [],
+              post_build: [],
+            },
+            isolation: 'host',
+            platform_build_args: { android: [], ios: [], macos: [] },
+            platform_commands: { android: 'flutter build apk --release' },
+            env_keys: ['PAYMENT_ENV'],
+            artifact_patterns: ['build/app/outputs/flutter-apk/*.apk'],
+          },
         },
       ],
     },
     builds,
     buildEvents: clone(demoBuildEvents),
+    releases: clone(demoReleases),
+    releaseHistory: clone(demoReleaseHistory),
+    environments: clone(demoEnvironments),
+    promotions: clone(demoPromotions),
     buildLogs: clone(demoBuildLogs),
+    buildTests: clone(demoBuildTests),
+    buildFeedback: clone(demoBuildFeedback),
+    feedbackScreenshots: {},
     artifacts,
     runners,
     integrations: clone(demoIntegrations),
@@ -695,7 +781,11 @@ export function createDemoState(
     const gitlab = state.integrations.find(
       (integration) => integration.id === INTEGRATION_IDS.gitlab,
     )
-    if (gitlab) gitlab.status = 'error'
+    if (gitlab) {
+      gitlab.status = 'error'
+      gitlab.status_reason = 'rejected'
+      gitlab.status_checked_at = Math.floor(Date.now() / 1000) - 600
+    }
     for (const runner of state.runners) {
       runner.status =
         runner.id === RUNNER_IDS.macStudio ? 'draining' : 'offline'
@@ -714,7 +804,13 @@ export function createDemoState(
     state.builds = []
     state.buildEvents = {}
     state.buildLogs = {}
+    state.buildTests = {}
+    state.buildFeedback = {}
     state.artifacts = {}
+    state.releases = []
+    state.releaseHistory = {}
+    state.environments = []
+    state.promotions = []
     state.runners = []
     state.integrations = []
     state.installations = {}

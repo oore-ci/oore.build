@@ -1,0 +1,155 @@
+---
+title: 'Run builds in VMs'
+status: implemented
+description: 'Give every build of a pipeline a clean macOS VM with Tart, picked by the Flutter version.'
+---
+
+Run each build of a pipeline in a new [Tart](https://github.com/openai/tart)
+VM. The runner clones the VM from an image for the build's Flutter version,
+runs every step inside it, and deletes it when the build ends. Nothing a build
+installs survives into the next one, and apps pinned to different Flutter
+versions can share one Runner Mac.
+
+Image names, base images, environment variables, `oore.image.yaml` fields,
+and the full build sequence are in
+[Runner settings](/reference/config/runner#vm-images).
+
+## What you need
+
+- Tart 2.41.1 or newer on the Runner Mac.
+- The runner account logged in to macOS. Apple's Virtualization framework
+  needs that login session, the same one iOS signing uses. On a dedicated
+  build Mac, turn on automatic login for the runner account.
+- Disk space for the images. An image for iOS builds starts from a download of
+  about 69 GB, and an Android-only image from about 26 GB. Budget well over
+  100 GB on a Runner Mac that builds iOS, and more for each further Flutter
+  version.
+- Xcode on the host too, if the pipeline uploads to TestFlight or the App
+  Store. The upload runs on the host.
+- Project developer, maintainer, instance admin, or instance owner access to
+  edit the pipeline.
+
+## 1. Install Tart
+
+Install Tart with Homebrew, then check the version. Homebrew's formula can lag
+behind Tart releases:
+
+```bash
+brew install openai/tools/tart
+tart --version
+```
+
+If Homebrew installs a version older than 2.41.1, remove it and install the
+release directly:
+
+```bash
+brew uninstall openai/tools/tart
+cd /tmp && curl -fLO https://github.com/openai/tart/releases/download/2.41.1/tart.tar.gz
+tar -xzf tart.tar.gz
+sudo rm -rf /Applications/tart.app && sudo mv tart.app /Applications/
+sudo mkdir -p /usr/local/bin
+sudo ln -sf /Applications/tart.app/Contents/MacOS/tart /usr/local/bin/tart
+/usr/local/bin/tart --version
+```
+
+The runner looks for `tart` in `/opt/homebrew/bin`, then `/usr/local/bin`,
+then its service `PATH`. It checks at the start of every VM build, so it needs
+no restart. Run `oore doctor` on the Runner Mac to confirm that it finds Tart.
+
+## 2. Turn on VM isolation
+
+In the pipeline editor:
+
+1. Open the pipeline and select **Edit**.
+2. Under **Build > Runner**, set **Isolation** to
+   **In a fresh macOS VM for the pipeline's Flutter version**.
+3. Select **Save changes**.
+
+If the repository has a `.oore.yaml`, set `isolation` there instead. The file
+wins over the editor when it exists:
+
+```yaml
+version: 1
+platforms: [android, ios]
+isolation: vm
+```
+
+The Flutter version comes from a checked-in `.fvmrc`, then the pipeline's
+Flutter version, then `stable`.
+
+## 3. Build the image
+
+Start a build of the pipeline. If the runner has no image for that Flutter
+version yet, it builds one before the build runs and keeps it for later
+builds. The download and setup stream into the build log under `vm-start`.
+The first image from a base can take an hour or more, depending on the
+connection.
+
+To build an image ahead of time, start any VM build that uses the Flutter
+version.
+
+## 4. Add tools the base image lacks
+
+If the app needs Android SDK packages, Homebrew formulae, or setup commands
+that the image does not have, add `oore.image.yaml` to the repository root:
+
+```yaml
+version: 1
+android_packages:
+  - 'platforms;android-36'
+brew:
+  - graphicsmagick
+setup:
+  - gem install bundler
+```
+
+The next build creates a new image for that project. Each edit to the file
+creates another one, and the runner deletes images that no build used for
+30 days.
+
+## Verify the result
+
+- The build log has a `vm-start` step. It records how long the VM took to
+  start, usually 10 to 30 seconds, and lists the caches it restored.
+- `tart list` on the Runner Mac shows the local image, such as
+  `oore-flutter-3.47.7`, and no leftover VM after the build ends.
+- A second build of the same pipeline skips the image build.
+
+## Troubleshooting
+
+### The build fails because Tart is not installed
+
+The log says the pipeline runs in a VM but Tart is not installed on this
+runner. Install Tart 2.41.1 or newer as in step 1, then re-run the build.
+
+### The VM does not boot
+
+The runner account is not logged in to macOS. Log in, or turn on automatic
+login for that account, then re-run the build.
+
+### The build waits for a VM slot
+
+Apple allows two macOS VMs per Mac, so a Mac runs at most two VM builds at a
+time across all of its runners. A third build waits, and its log says so. Add
+another Runner Mac for more VM builds at once.
+
+### The first build takes an hour
+
+The runner is downloading and building the image. Later builds of the same
+Flutter version reuse it.
+
+### The disk fills up
+
+Delete images you no longer need with `tart delete <image>`. To find base
+images, run `tart list --source oci`. To rebuild an image from scratch, delete
+it, such as `tart delete oore-flutter-3.47.7`, and start a build.
+
+### Instrumented Android tests fail
+
+Android emulators have no hardware acceleration inside a macOS guest. Keep
+instrumented tests in a pipeline that runs on the host.
+
+## Next step
+
+[Route builds with runner labels](/operate/runners/labels) to send VM
+pipelines to the Runner Macs that have Tart and the disk space for its images.

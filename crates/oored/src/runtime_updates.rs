@@ -1,317 +1,115 @@
 use std::fs;
 use std::io::Write;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use oore_contract::runtime_update_preflight as preflight;
 use oore_contract::{
-    ApiError, DeferredRuntimeUpdateRequest, RuntimeUpdatePhase, RuntimeUpdateStatus,
+    ApiError, DeferredRuntimeUpdateRequest, RuntimeUpdateCheck, RuntimeUpdateCheckStatus,
+    RuntimeUpdatePhase, RuntimeUpdatePreflight, RuntimeUpdateStatus,
 };
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::AppState;
 use crate::extractors::AuthUser;
 use crate::store::write_audit_log;
 use crate::util::api_err;
 
-const SYSTEM_SERVICE_PLIST: &str = "/Library/LaunchDaemons/build.oore.oored.plist";
-const UPDATE_SERVICE_PLIST: &str = "/Library/LaunchDaemons/build.oore.oore-updater.plist";
-const RUNNER_SERVICE_PLIST: &str = "/Library/LaunchDaemons/build.oore.oore-runner.plist";
 const UPDATE_SERVICE: &str = "system/build.oore.oore-updater";
 const UPDATE_STATUS_FILE: &str = ".runtime-update-status.json";
-const UPDATE_REQUEST_DIR: &str = "run/runtime-update-queue";
-const UPDATE_REQUEST_FILE: &str = "request.json";
-const SERVICE_PATH: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+const UPDATE_REQUEST_DIR: &str = preflight::UPDATE_REQUEST_DIR;
+const UPDATE_REQUEST_FILE: &str = preflight::UPDATE_REQUEST_FILE;
+const PREFLIGHT_TTL: Duration = Duration::from_secs(30);
+/// How long an update may go without progress before a stopped supervisor counts as gone.
+const ABANDONED_UPDATE_GRACE: Duration = Duration::from_secs(120);
+const ABANDONED_UPDATE_ERROR: &str = "The update supervisor stopped without reporting a result. Check logs/update-supervisor.log on the backend host, then try again.";
+/// How long an update may go without progress when launchd cannot say whether
+/// the supervisor runs. It outlasts the 30 minute runner drain plus the backup.
+const UNCONFIRMED_UPDATE_TIMEOUT: Duration = Duration::from_secs(45 * 60);
+const UNCONFIRMED_UPDATE_ERROR: &str = "The update made no progress for 45 minutes, and Oore could not confirm that the update supervisor is still running. Check logs/update-supervisor.log on the backend host, then try again.";
 
 pub type RuntimeUpdateState = Arc<RwLock<RuntimeUpdateStatus>>;
 
-fn managed_service_installed() -> bool {
-    if !cfg!(target_os = "macos")
-        || !Path::new(SYSTEM_SERVICE_PLIST).is_file()
-        || !Path::new(UPDATE_SERVICE_PLIST).is_file()
+static PREFLIGHT_CACHE: Mutex<Option<(Instant, RuntimeUpdatePreflight)>> = Mutex::const_new(None);
+
+fn run_preflight_blocking() -> RuntimeUpdatePreflight {
+    match install_root_from_current_exe() {
+        Ok(install_root) => preflight::run(&install_root),
+        Err(error) => RuntimeUpdatePreflight {
+            ready: false,
+            checked_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64,
+            checks: vec![RuntimeUpdateCheck {
+                id: "installed_updater".to_string(),
+                label: "Installed updater".to_string(),
+                status: RuntimeUpdateCheckStatus::Fail,
+                detail: Some(format!("{error:#}")),
+                fix: Some(
+                    "Reinstall Oore with the installer from Terminal on the backend Mac."
+                        .to_string(),
+                ),
+            }],
+        },
+    }
+}
+
+/// Runs the update preflight off the async runtime, reusing a result younger
+/// than [`PREFLIGHT_TTL`] unless `fresh` is set. The checks shell out to
+/// `launchctl`, `plutil`, `id` and `sudo`, so status polls must not run them
+/// every time.
+async fn update_preflight(fresh: bool) -> RuntimeUpdatePreflight {
+    let mut cache = PREFLIGHT_CACHE.lock().await;
+    if !fresh
+        && let Some((checked, preflight)) = cache.as_ref()
+        && checked.elapsed() < PREFLIGHT_TTL
     {
-        return false;
+        return preflight.clone();
     }
-    let Ok(install_root) = install_root_from_current_exe() else {
-        return false;
-    };
-    let Some(service_user) = current_user_name() else {
-        return false;
-    };
-    let Some(service_home) = std::env::var_os("HOME").map(PathBuf::from) else {
-        return false;
-    };
-    if !update_supervisor_definition_is_ready(
-        &install_root,
-        Path::new(UPDATE_SERVICE_PLIST),
-        &service_user,
-        &service_home,
-    ) || !update_supervisor_is_loaded(&install_root, &service_user, &service_home)
-    {
-        return false;
-    }
-    let Ok(profile) = backend_profile_from_manifest(&install_root.join("install-manifest.json"))
-    else {
-        return false;
-    };
-    backend_profile_services_are_update_ready(profile.as_deref(), Path::new(RUNNER_SERVICE_PLIST))
+    let preflight = tokio::task::spawn_blocking(run_preflight_blocking)
+        .await
+        .unwrap_or_else(|error| RuntimeUpdatePreflight {
+            ready: false,
+            checked_at: 0,
+            checks: vec![RuntimeUpdateCheck {
+                id: "preflight".to_string(),
+                label: "Update preflight".to_string(),
+                status: RuntimeUpdateCheckStatus::Fail,
+                detail: Some(format!("The preflight checks did not finish: {error}")),
+                fix: Some("Run `oore doctor --update` on the backend Mac.".to_string()),
+            }],
+        });
+    *cache = Some((Instant::now(), preflight.clone()));
+    preflight
 }
 
-fn current_user_name() -> Option<String> {
-    let output = Command::new("/usr/bin/id").arg("-un").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let name = String::from_utf8(output.stdout).ok()?.trim().to_string();
-    (!name.is_empty()).then_some(name)
-}
-
-fn update_supervisor_is_loaded(
-    install_root: &Path,
-    service_user: &str,
-    service_home: &Path,
-) -> bool {
-    let Ok(output) = Command::new("/bin/launchctl")
-        .args(["print", UPDATE_SERVICE])
-        .output()
-    else {
-        return false;
-    };
-    output.status.success()
-        && String::from_utf8(output.stdout).is_ok_and(|loaded| {
-            loaded_update_supervisor_is_ready(&loaded, install_root, service_user, service_home)
-        })
-}
-
-fn update_supervisor_definition_is_ready(
-    install_root: &Path,
-    path: &Path,
-    service_user: &str,
-    service_home: &Path,
-) -> bool {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return false;
-    };
-    if !metadata.file_type().is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.uid() != 0
-        || metadata.gid() != 0
-        || metadata.permissions().mode() & 0o777 != 0o644
-    {
-        return false;
-    }
-    let Ok(output) = Command::new("/usr/bin/plutil")
-        .args(["-convert", "json", "-o", "-"])
-        .arg(path)
-        .output()
-    else {
-        return false;
-    };
-    output.status.success()
-        && serde_json::from_slice::<serde_json::Value>(&output.stdout).is_ok_and(|document| {
-            update_supervisor_document_is_ready(&document, install_root, service_user, service_home)
-        })
-}
-
-fn update_supervisor_document_is_ready(
-    document: &serde_json::Value,
-    install_root: &Path,
-    service_user: &str,
-    service_home: &Path,
-) -> bool {
-    let Some(document) = document.as_object() else {
-        return false;
-    };
-    let managed_keys = [
-        "Label",
-        "UserName",
-        "ProgramArguments",
-        "WorkingDirectory",
-        "EnvironmentVariables",
-        "Umask",
-        "RunAtLoad",
-        "KeepAlive",
-        "StandardOutPath",
-        "StandardErrorPath",
-    ];
-    if document.len() != managed_keys.len()
-        || managed_keys.iter().any(|key| !document.contains_key(*key))
-    {
-        return false;
-    }
-    let expected_log = install_root.join("logs/update-supervisor.log");
-    let Some(environment) = document
-        .get("EnvironmentVariables")
-        .and_then(serde_json::Value::as_object)
-    else {
-        return false;
-    };
-    document.get("Label").and_then(serde_json::Value::as_str) == Some("build.oore.oore-updater")
-        && document.get("UserName").and_then(serde_json::Value::as_str) == Some(service_user)
-        && document
-            .get("WorkingDirectory")
-            .and_then(serde_json::Value::as_str)
-            == Some(install_root.to_string_lossy().as_ref())
-        && document.get("Umask").and_then(serde_json::Value::as_u64) == Some(0o77)
-        && document
-            .get("RunAtLoad")
-            .and_then(serde_json::Value::as_bool)
-            == Some(false)
-        && document
-            .get("KeepAlive")
-            .and_then(serde_json::Value::as_bool)
-            == Some(false)
-        && ["StandardOutPath", "StandardErrorPath"]
-            .into_iter()
-            .all(|key| {
-                document.get(key).and_then(serde_json::Value::as_str)
-                    == Some(expected_log.to_string_lossy().as_ref())
-            })
-        && environment.len() == 3
-        && environment.get("HOME").and_then(serde_json::Value::as_str)
-            == Some(service_home.to_string_lossy().as_ref())
-        && environment.get("PATH").and_then(serde_json::Value::as_str) == Some(SERVICE_PATH)
-        && environment
-            .get("OORE_INSTALL_ROOT")
-            .and_then(serde_json::Value::as_str)
-            == Some(install_root.to_string_lossy().as_ref())
-        && document
-            .get("ProgramArguments")
-            .and_then(serde_json::Value::as_array)
-            .and_then(|arguments| {
-                arguments
-                    .iter()
-                    .map(|argument| argument.as_str().map(str::to_string))
-                    .collect::<Option<Vec<_>>>()
-            })
-            .is_some_and(|arguments| {
-                update_supervisor_program_arguments_are_ready(&arguments, install_root)
-            })
-}
-
-fn update_supervisor_program_arguments_are_ready(
-    arguments: &[String],
-    install_root: &Path,
-) -> bool {
-    arguments
-        == [
-            install_root.join("bin/oore").display().to_string(),
-            "update-supervisor".to_string(),
-            "--request-file".to_string(),
-            install_root
-                .join(UPDATE_REQUEST_DIR)
-                .join(UPDATE_REQUEST_FILE)
-                .display()
-                .to_string(),
-        ]
-}
-
-fn loaded_update_supervisor_is_ready(
-    output: &str,
-    install_root: &Path,
-    service_user: &str,
-    service_home: &Path,
-) -> bool {
-    let mut program = None;
-    let mut username = None;
-    let mut arguments = Vec::new();
-    let mut environment = std::collections::HashMap::new();
-    let mut in_arguments = false;
-    let mut in_environment = false;
-    for line in output.lines().map(str::trim) {
-        if !in_arguments && !in_environment {
-            if let Some(value) = line.strip_prefix("program = ") {
-                program = Some(value.trim_matches('"'));
-            } else if let Some(value) = line.strip_prefix("username = ") {
-                username = Some(value.trim_matches('"'));
+fn unavailable_message(preflight: &RuntimeUpdatePreflight) -> String {
+    match preflight::first_failure(preflight) {
+        Some(check) => {
+            let mut message = format!("One-click backend update is unavailable: {}", check.label);
+            if let Some(detail) = &check.detail {
+                message.push_str(&format!(". {detail}"));
             }
+            if let Some(fix) = &check.fix {
+                message.push_str(&format!(" {fix}"));
+            }
+            message
         }
-        if line == "arguments = {" {
-            in_arguments = true;
-        } else if line == "environment = {" {
-            in_environment = true;
-        } else if in_arguments && line == "}" {
-            in_arguments = false;
-        } else if in_environment && line == "}" {
-            in_environment = false;
-        } else if in_arguments && !line.is_empty() {
-            arguments.push(line.trim_matches('"').to_string());
-        } else if in_environment && let Some((key, value)) = line.split_once(" => ") {
-            environment.insert(key, value.trim_matches('"'));
-        }
+        None => "One-click backend update is unavailable".to_string(),
     }
-    program == Some(install_root.join("bin/oore").to_string_lossy().as_ref())
-        && username == Some(service_user)
-        && environment.get("HOME") == Some(&service_home.to_string_lossy().as_ref())
-        && environment.get("PATH") == Some(&SERVICE_PATH)
-        && environment.get("OORE_INSTALL_ROOT") == Some(&install_root.to_string_lossy().as_ref())
-        && update_supervisor_program_arguments_are_ready(&arguments, install_root)
-}
-
-fn backend_profile_from_manifest(path: &Path) -> anyhow::Result<Option<String>> {
-    let contents = match fs::read(path) {
-        Ok(contents) => contents,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).context("failed to read the install manifest"),
-    };
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&contents).context("invalid install manifest")?;
-    let profile = manifest
-        .get("profile")
-        .and_then(serde_json::Value::as_str)
-        .context("install manifest has no profile")?;
-    Ok(Some(profile.to_string()))
-}
-
-fn backend_profile_services_are_update_ready(profile: Option<&str>, runner_service: &Path) -> bool {
-    match profile {
-        Some("control-plane") => true,
-        Some("complete") | None => runner_service_is_update_ready(runner_service),
-        Some(_) => false,
-    }
-}
-
-fn runner_program_arguments_are_update_ready(arguments: &[String]) -> bool {
-    arguments.first().map(String::as_str) == Some("/bin/launchctl")
-        && arguments.get(1).map(String::as_str) == Some("asuser")
-        && arguments.get(3).map(String::as_str) == Some("/usr/bin/sudo")
-        && arguments.get(4).map(String::as_str) == Some("-E")
-        && arguments.get(5).map(String::as_str) == Some("-H")
-        && arguments.get(6).map(String::as_str) == Some("-u")
-        && arguments.get(9).map(String::as_str) == Some("runner")
-        && arguments.get(10).map(String::as_str) == Some("start")
-}
-
-fn runner_service_is_update_ready(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    let Ok(output) = Command::new("/usr/bin/plutil")
-        .args(["-extract", "ProgramArguments", "json", "-o", "-"])
-        .arg(path)
-        .output()
-    else {
-        return false;
-    };
-    output.status.success()
-        && serde_json::from_slice::<Vec<String>>(&output.stdout)
-            .is_ok_and(|arguments| runner_program_arguments_are_update_ready(&arguments))
 }
 
 fn install_root_from_current_exe() -> anyhow::Result<PathBuf> {
-    let executable = std::env::current_exe().context("failed to locate oored")?;
-    executable
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .context("installed oored path has no install root")
+    oore_contract::install_root::install_root_for_current_executable()
+        .context("oored is not running from an Oore install root")
 }
 
 fn update_status_path() -> anyhow::Result<PathBuf> {
@@ -328,9 +126,8 @@ fn read_persisted_status(path: &Path) -> anyhow::Result<Option<RuntimeUpdateStat
             });
         }
     };
-    let mut status: RuntimeUpdateStatus = serde_json::from_slice(&bytes)
+    let status: RuntimeUpdateStatus = serde_json::from_slice(&bytes)
         .with_context(|| format!("invalid runtime update status {}", path.display()))?;
-    status.managed_service = managed_service_installed();
     Ok(Some(status))
 }
 
@@ -370,13 +167,14 @@ fn write_persisted_status(path: &Path, status: &RuntimeUpdateStatus) -> anyhow::
     Ok(())
 }
 
+/// `managed_service` starts false; `get_status` fills it from the preflight.
 fn initial_status() -> RuntimeUpdateStatus {
-    let managed_service = managed_service_installed();
+    let managed_service = false;
     match update_status_path().and_then(|path| read_persisted_status(&path)) {
-        Ok(Some(mut status)) => {
-            status.managed_service = managed_service;
-            status
-        }
+        Ok(Some(status)) => RuntimeUpdateStatus {
+            managed_service,
+            ..status
+        },
         Ok(None) => RuntimeUpdateStatus {
             phase: RuntimeUpdatePhase::Idle,
             error: None,
@@ -390,6 +188,91 @@ fn initial_status() -> RuntimeUpdateStatus {
             managed_service,
         },
     }
+}
+
+fn update_supervisor_running() -> Option<bool> {
+    let output = Command::new("/bin/launchctl")
+        .args(["print", UPDATE_SERVICE])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return Some(false);
+    }
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| line.trim().starts_with("pid = ")),
+    )
+}
+
+fn time_since_modified(path: &Path) -> Option<Duration> {
+    let modified = fs::symlink_metadata(path).ok()?.modified().ok()?;
+    Some(
+        SystemTime::now()
+            .duration_since(modified)
+            .unwrap_or_default(),
+    )
+}
+
+/// The failure to report when an update looks abandoned, or `None` while it may
+/// still be running.
+fn abandoned_update_error(
+    quiet_for: Option<Duration>,
+    supervisor_running: Option<bool>,
+) -> Option<&'static str> {
+    let quiet_for = quiet_for?;
+    match supervisor_running {
+        Some(false) if quiet_for >= ABANDONED_UPDATE_GRACE => Some(ABANDONED_UPDATE_ERROR),
+        None if quiet_for >= UNCONFIRMED_UPDATE_TIMEOUT => Some(UNCONFIRMED_UPDATE_ERROR),
+        _ => None,
+    }
+}
+
+/// Fail an update whose supervisor exited without reporting, and drop its queued request,
+/// so the UI stops polling and the next click starts a fresh attempt.
+fn reconcile_abandoned_update(
+    install_root: &Path,
+    supervisor_running: impl FnOnce() -> Option<bool>,
+) -> anyhow::Result<()> {
+    let status_path = install_root.join(UPDATE_STATUS_FILE);
+    let request_path = install_root
+        .join(UPDATE_REQUEST_DIR)
+        .join(UPDATE_REQUEST_FILE);
+    let in_flight = read_persisted_status(&status_path)?.filter(|status| {
+        matches!(
+            status.phase,
+            RuntimeUpdatePhase::Updating | RuntimeUpdatePhase::Restarting
+        )
+    });
+    let request_queued = fs::symlink_metadata(&request_path).is_ok();
+    if in_flight.is_none() && !request_queued {
+        return Ok(());
+    }
+    let quiet_for = [&status_path, &request_path]
+        .into_iter()
+        .filter_map(|path| time_since_modified(path))
+        .min();
+    let Some(error) = abandoned_update_error(quiet_for, supervisor_running()) else {
+        return Ok(());
+    };
+    match fs::remove_file(&request_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "failed to clear stale update request {}",
+                    request_path.display()
+                )
+            });
+        }
+    }
+    if let Some(mut status) = in_flight {
+        status.phase = RuntimeUpdatePhase::Failed;
+        status.error = Some(error.to_string());
+        write_persisted_status(&status_path, &status)?;
+    }
+    Ok(())
 }
 
 pub fn new_state() -> RuntimeUpdateState {
@@ -413,13 +296,9 @@ fn process_listen_address() -> anyhow::Result<SocketAddr> {
 
 fn loopback_daemon_url() -> anyhow::Result<String> {
     let listen = process_listen_address()?;
-    let loopback = match listen.ip() {
-        IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::LOCALHOST),
-        IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::LOCALHOST),
-    };
     Ok(format!(
         "http://{}",
-        SocketAddr::new(loopback, listen.port())
+        crate::loopback_maintenance_addr(listen)
     ))
 }
 
@@ -497,6 +376,20 @@ pub async fn get_status(
     auth: AuthUser,
 ) -> Result<Json<RuntimeUpdateStatus>, (StatusCode, Json<ApiError>)> {
     auth.require_owner()?;
+    // Reconciling may run `launchctl print`, so keep it off the async runtime.
+    if let Ok(install_root) = install_root_from_current_exe()
+        && let Err(error) = tokio::task::spawn_blocking(move || {
+            reconcile_abandoned_update(&install_root, update_supervisor_running)
+        })
+        .await
+        .map_err(anyhow::Error::from)
+        .and_then(|result| result)
+    {
+        tracing::warn!(
+            error = format!("{error:#}"),
+            "failed to reconcile an abandoned backend update"
+        );
+    }
     if let Ok(path) = update_status_path() {
         match read_persisted_status(&path) {
             Ok(Some(status)) => *state.runtime_update.write().await = status,
@@ -507,14 +400,22 @@ pub async fn get_status(
                     error: Some(format!(
                         "Could not read the last backend update status: {error:#}"
                     )),
-                    managed_service: managed_service_installed(),
+                    managed_service: false,
                 };
             }
         }
     }
+    let ready = update_preflight(false).await.ready;
     let mut status = state.runtime_update.write().await;
-    status.managed_service = managed_service_installed();
+    status.managed_service = ready;
     Ok(Json(status.clone()))
+}
+
+pub async fn get_preflight(
+    auth: AuthUser,
+) -> Result<Json<RuntimeUpdatePreflight>, (StatusCode, Json<ApiError>)> {
+    auth.require_owner()?;
+    Ok(Json(update_preflight(false).await))
 }
 
 pub async fn start_update(
@@ -557,6 +458,13 @@ pub async fn start_update(
             error.to_string(),
         )
     })?;
+    reconcile_abandoned_update(&install_root, update_supervisor_running).map_err(|error| {
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "runtime_update_status_failed",
+            format!("{error:#}"),
+        )
+    })?;
     let request_path = install_root
         .join(UPDATE_REQUEST_DIR)
         .join(UPDATE_REQUEST_FILE);
@@ -583,6 +491,7 @@ pub async fn start_update(
         daemon_url,
         status: status_path.clone(),
     };
+    let preflight = update_preflight(true).await;
 
     {
         let mut status = state.runtime_update.write().await;
@@ -595,12 +504,12 @@ pub async fn start_update(
         })? {
             *status = persisted;
         }
-        if !managed_service_installed() {
+        if !preflight.ready {
             status.managed_service = false;
             return Err(api_err(
                 StatusCode::CONFLICT,
                 "runtime_update_unmanaged",
-                "Backend updates from the web require the current managed macOS services; run the installer once from Terminal to finish or repair service setup",
+                unavailable_message(&preflight),
             ));
         }
         if matches!(
@@ -674,98 +583,122 @@ pub async fn start_update(
 mod tests {
     use super::*;
 
-    #[test]
-    fn loaded_update_supervisor_must_match_the_managed_command() {
-        let root = Path::new("/Users/appbuilder/.oore");
-        let home = Path::new("/Users/appbuilder");
-        let loaded = r#"system/build.oore.oore-updater = {
-    program = /Users/appbuilder/.oore/bin/oore
-    arguments = {
-        /Users/appbuilder/.oore/bin/oore
-        update-supervisor
-        --request-file
-        /Users/appbuilder/.oore/run/runtime-update-queue/request.json
-    }
-    environment = {
-        HOME => /Users/appbuilder
-        PATH => /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
-        OORE_INSTALL_ROOT => /Users/appbuilder/.oore
-        XPC_SERVICE_NAME => build.oore.oore-updater
-    }
-    username = appbuilder
-}"#;
-        assert!(loaded_update_supervisor_is_ready(
-            loaded,
-            root,
-            "appbuilder",
-            home
-        ));
-
-        let wrong_program = loaded.replace(
-            "program = /Users/appbuilder/.oore/bin/oore",
-            "program = /tmp/foreign",
-        );
-        assert!(!loaded_update_supervisor_is_ready(
-            &wrong_program,
-            root,
-            "appbuilder",
-            home,
-        ));
-        assert!(!loaded_update_supervisor_is_ready(
-            loaded, root, "root", home,
-        ));
-    }
-
-    #[test]
-    fn update_supervisor_definition_rejects_foreign_keys_and_identity() {
-        let root = Path::new("/Users/appbuilder/.oore");
-        let home = Path::new("/Users/appbuilder");
-        let mut document = serde_json::json!({
-            "Label": "build.oore.oore-updater",
-            "UserName": "appbuilder",
-            "ProgramArguments": [
-                "/Users/appbuilder/.oore/bin/oore",
-                "update-supervisor",
-                "--request-file",
-                "/Users/appbuilder/.oore/run/runtime-update-queue/request.json"
-            ],
-            "WorkingDirectory": "/Users/appbuilder/.oore",
-            "EnvironmentVariables": {
-                "HOME": "/Users/appbuilder",
-                "PATH": SERVICE_PATH,
-                "OORE_INSTALL_ROOT": "/Users/appbuilder/.oore"
+    fn write_update_fixture(
+        install_root: &Path,
+        phase: RuntimeUpdatePhase,
+        request_queued: bool,
+        age: Duration,
+    ) -> (PathBuf, PathBuf) {
+        let status_path = install_root.join(UPDATE_STATUS_FILE);
+        write_persisted_status(
+            &status_path,
+            &RuntimeUpdateStatus {
+                phase,
+                error: None,
+                managed_service: true,
             },
-            "Umask": 63,
-            "RunAtLoad": false,
-            "KeepAlive": false,
-            "StandardOutPath": "/Users/appbuilder/.oore/logs/update-supervisor.log",
-            "StandardErrorPath": "/Users/appbuilder/.oore/logs/update-supervisor.log"
-        });
+        )
+        .unwrap();
+        let request_path = install_root
+            .join(UPDATE_REQUEST_DIR)
+            .join(UPDATE_REQUEST_FILE);
+        fs::create_dir_all(request_path.parent().unwrap()).unwrap();
+        if request_queued {
+            fs::write(&request_path, b"{}").unwrap();
+        }
+        let modified = SystemTime::now() - age;
+        for path in [&status_path, &request_path] {
+            if let Ok(file) = fs::File::options().write(true).open(path) {
+                file.set_modified(modified).unwrap();
+            }
+        }
+        (status_path, request_path)
+    }
 
-        assert!(update_supervisor_document_is_ready(
-            &document,
-            root,
-            "appbuilder",
-            home,
-        ));
+    fn persisted_phase(path: &Path) -> (RuntimeUpdatePhase, Option<String>) {
+        let status = read_persisted_status(path).unwrap().unwrap();
+        (status.phase, status.error)
+    }
 
-        document["Program"] = serde_json::json!("/tmp/foreign");
-        assert!(!update_supervisor_document_is_ready(
-            &document,
-            root,
-            "appbuilder",
-            home,
-        ));
-        document
-            .as_object_mut()
-            .expect("document")
-            .remove("Program");
-        document["UserName"] = serde_json::json!("root");
-        assert!(!update_supervisor_document_is_ready(
-            &document,
-            root,
-            "appbuilder",
-            home,
-        ));
+    #[test]
+    fn abandoned_update_fails_and_clears_the_queued_request() {
+        let root = tempfile::tempdir().unwrap();
+        let (status_path, request_path) = write_update_fixture(
+            root.path(),
+            RuntimeUpdatePhase::Updating,
+            true,
+            Duration::from_secs(600),
+        );
+
+        reconcile_abandoned_update(root.path(), || Some(false)).unwrap();
+
+        assert_eq!(
+            persisted_phase(&status_path),
+            (
+                RuntimeUpdatePhase::Failed,
+                Some(ABANDONED_UPDATE_ERROR.to_string())
+            )
+        );
+        assert!(!request_path.exists());
+    }
+
+    #[test]
+    fn stale_request_is_cleared_after_a_reported_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let (status_path, request_path) = write_update_fixture(
+            root.path(),
+            RuntimeUpdatePhase::Failed,
+            true,
+            Duration::from_secs(600),
+        );
+
+        reconcile_abandoned_update(root.path(), || Some(false)).unwrap();
+
+        assert_eq!(persisted_phase(&status_path).0, RuntimeUpdatePhase::Failed);
+        assert!(!request_path.exists());
+    }
+
+    #[test]
+    fn an_hour_old_update_fails_when_the_supervisor_state_is_unknown() {
+        let root = tempfile::tempdir().unwrap();
+        let (status_path, request_path) = write_update_fixture(
+            root.path(),
+            RuntimeUpdatePhase::Updating,
+            true,
+            Duration::from_secs(60 * 60),
+        );
+
+        reconcile_abandoned_update(root.path(), || None).unwrap();
+
+        assert_eq!(
+            persisted_phase(&status_path),
+            (
+                RuntimeUpdatePhase::Failed,
+                Some(UNCONFIRMED_UPDATE_ERROR.to_string())
+            )
+        );
+        assert!(!request_path.exists());
+    }
+
+    #[test]
+    fn running_recent_or_unknown_updates_are_left_alone() {
+        for (age, supervisor_running) in [
+            (Duration::from_secs(60 * 60), Some(true)),
+            (Duration::from_secs(600), None),
+            (Duration::from_secs(40 * 60), None),
+            (Duration::from_secs(5), Some(false)),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let (status_path, request_path) =
+                write_update_fixture(root.path(), RuntimeUpdatePhase::Restarting, true, age);
+
+            reconcile_abandoned_update(root.path(), || supervisor_running).unwrap();
+
+            assert_eq!(
+                persisted_phase(&status_path),
+                (RuntimeUpdatePhase::Restarting, None)
+            );
+            assert!(request_path.exists());
+        }
     }
 }

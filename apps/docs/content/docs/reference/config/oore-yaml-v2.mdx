@@ -1,0 +1,384 @@
+---
+title: '`.oore.yaml` version 2'
+status: preview
+description: 'Workflows, targets with full build commands, named steps, and vars, secrets and flavor references.'
+---
+
+`version: 2` describes a pipeline as an app, the targets it builds, the named
+steps around those builds, and the inputs they read. Each target's `build` is
+the complete command. Oore adds no hidden default and appends no arguments.
+[Version 1](/reference/config/oore-yaml) files keep working unchanged.
+[`oore pipeline migrate`](/reference/cli/oore-pipeline-migrate) rewrites a
+version 1 file as version 2 that runs the same commands.
+
+```yaml
+version: 2
+
+app:
+  flutter: 3.24.5 # or omit to use .fvmrc
+  flavors: [free, pro] # optional; each target builds once per flavor
+
+targets:
+  android:
+    build: flutter build appbundle --release --flavor ${{ flavor }}
+    artifacts: ['build/app/outputs/bundle/${{ flavor }}Release/*.aab']
+    publish:
+      play: { track: production, rollout: 0.01 }
+  ios:
+    build: flutter build ipa --release --flavor ${{ flavor }} --export-method app-store-connect
+    artifacts: [build/ios/ipa/*.ipa]
+    publish:
+      testflight: { group: Internal }
+
+steps:
+  - name: Get packages
+    run: flutter pub get
+  - name: Tests
+    run: flutter test --machine > build/tests.json
+    reports: { tests: build/tests.json }
+  - build # the targets run here
+  - name: Size report
+    run: flutter build apk --analyze-size --target-platform android-arm64 --flavor pro
+
+env:
+  BUILD_FLAVOR: staging
+  SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+
+workflows:
+  adhoc:
+    on:
+      pull_request: true
+    targets:
+      android:
+        build: flutter build apk --release --flavor ${{ flavor }}
+        artifacts: ['build/app/outputs/flutter-apk/*-${{ flavor }}-release.apk']
+    flavors: [free]
+    steps: [Get packages, build]
+  release:
+    on:
+      push: { branches: [main, release/*] }
+      tag: v*
+      paths: [lib/**, pubspec.*]
+    flavors: [pro] # a store takes one build
+```
+
+The schema rejects unknown fields. Run
+[`oore pipeline plan`](/reference/cli/oore-pipeline-plan) to see the steps each
+workflow runs.
+
+## Top-level fields
+
+| Field                 | Type     | Required | Default                    |
+| --------------------- | -------- | -------- | -------------------------- |
+| `version`             | integer  | Yes      | Must be `2`                |
+| `app`                 | object   | No       | No Flutter pin, no flavors |
+| `targets`             | object   | Yes¹     | No default                 |
+| `steps`               | list     | No       | `[build]`                  |
+| `env`                 | map      | No       | `{}`                       |
+| `vars`                | map      | No       | `{}`                       |
+| `on`                  | object   | No       | Pipeline trigger settings  |
+| `workflows`           | map      | No       | One implicit workflow      |
+| `build_number_offset` | integer  | No       | `0`                        |
+| `runs_on`             | string[] | No       | `[macos]`                  |
+| `isolation`           | string   | No       | `host`                     |
+
+¹ At least one target, at the top level or in a workflow.
+
+`build_number_offset`, `runs_on` and `isolation` work as in
+[version 1](/reference/config/oore-yaml).
+
+## App
+
+| Field     | Type     | Description                                            |
+| --------- | -------- | ------------------------------------------------------ |
+| `flutter` | string   | Flutter version. A `.fvmrc` file takes precedence.     |
+| `flavors` | string[] | Flavor matrix. Names use letters, digits, `-` and `_`. |
+
+With flavors, every target builds once per flavor in the same build, as steps
+named `Build Android (free)`, `Build Android (pro)` and so on.
+
+## Targets
+
+`targets` maps `android`, `ios` or `macos` to:
+
+| Field       | Type     | Required | Description                                                   |
+| ----------- | -------- | -------- | ------------------------------------------------------------- |
+| `build`     | string   | Yes      | The complete build command for the platform.                  |
+| `artifacts` | string[] | No       | Glob patterns. Defaults to the platform's version 1 defaults. |
+| `publish`   | object   | No       | Where the build is uploaded. See [Publish](#publish).         |
+| `budgets`   | object   | No       | Artifact size limits for the check. See [Budgets](#budgets).  |
+
+Targets build in the order the file lists them. Artifact patterns follow the
+[version 1 rules](/reference/config/oore-yaml#artifacts) and can use `vars` and
+`${{ flavor }}`, but not `${{ secrets.NAME }}`.
+
+Unlike version 1, a Google Play upload does not add a
+`flutter build appbundle` step. Write the App Bundle build into
+`targets.android.build`; `oore pipeline migrate` leaves a comment with the
+command version 1 would have added.
+
+## Steps
+
+`steps` is an ordered list. Each entry is one of:
+
+- a step with `name` and `run`, and optionally `reports`;
+- `build`, which places the target builds; without it, the targets build after
+  the last step;
+- in a workflow only, the name of a top-level step.
+
+Step names are shown in logs and checks, must be unique, and are at most 100
+characters. `Build Android`, `Build iOS (pro)` and the like name the target
+builds and cannot be reused. Steps before `build` run as pre-build steps and
+steps after it as post-build steps; Android signing and the iOS export
+settings apply only to the target builds.
+
+`reports.tests` names a workspace-relative `.json` (`dart test` or
+`flutter test --machine`) or `.xml` (JUnit) file the step writes. Oore reads it
+after the step, including when the step fails, and shows the results on the
+build's Tests tab. Plain `flutter test` and `dart test` commands are still
+detected without it.
+
+When the env var `OORE_ANALYZE` is `true`, the runner adds an `analyze` step
+after the steps that runs `dart analyze --format=json`, as for
+[version 1](/reference/config/oore-yaml#analyzer).
+
+## Environment and references
+
+`env` maps names to string values. Quote numbers and booleans, such as
+`RETRIES: '3'`. Names follow `[A-Za-z_][A-Za-z0-9_]*`.
+
+Commands, env values and artifact patterns can use these references:
+
+| Reference             | Resolves to                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------- |
+| `${{ vars.NAME }}`    | The value of `vars.NAME`. Vars can refer to other vars.                               |
+| `${{ secrets.NAME }}` | A stored secret, resolved by the runner. See [Use secrets](/build/pipelines/secrets). |
+| `${{ flavor }}`       | The flavor being built, in a target's `build` and `artifacts` only.                   |
+
+Any other `${{ }}` expression is an error. Vars are repository-owned text and
+are substituted into commands before the build starts, so do not put
+credentials in them. A var that refers back to itself, directly or through
+other vars, is rejected with the cycle it forms, such as
+`vars form a cycle: vars.A -> vars.B -> vars.A`.
+
+## Workflows
+
+`workflows` maps a name to overrides of the top level:
+
+| Field     | Type        | Effect                                                                                                        |
+| --------- | ----------- | ------------------------------------------------------------------------------------------------------------- |
+| `on`      | object      | When the workflow runs. Replaces the top-level `on`.                                                          |
+| `targets` | list or map | `[android]` picks top-level targets; a map overrides `build`, `artifacts`, `publish` or `budgets` per target. |
+| `flavors` | string[]    | A subset of `app.flavors`.                                                                                    |
+| `steps`   | list        | Replaces the top-level steps. Entries can name top-level steps.                                               |
+| `env`     | map         | Adds to or replaces top-level env values by name.                                                             |
+| `vars`    | map         | Adds to or replaces top-level vars by name, also where other vars use them.                                   |
+
+A workflow target that has no top-level target of the same platform must set
+`build`. Where a workflow target leaves out `build` or `artifacts`, the
+top-level target's applies. `publish` works the same way, except that a
+workflow target that sets its own `build` publishes only if it also sets
+`publish`: the top-level `publish` uploads what the top-level build makes.
+`publish: false` drops it without replacing `build`. `budgets` applies until
+the workflow target sets its own, even with a new `build`.
+Workflow names use letters, digits, `-` and `_`.
+
+A pipeline builds one workflow, picked under **Workflow** in its settings (the
+API's `workflow` field). The selector appears when the pipeline's file defines
+workflows. Without a pick, a file with one workflow builds it, and a file with
+none builds the top level; a file with several fails the build with
+`choose one for the pipeline`.
+
+## Publish
+
+`publish` on a target says where a build is uploaded after it succeeds:
+
+| Field              | Target    | Description                                                                                                                  |
+| ------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `play.track`       | `android` | `internal`, `closed`, `open`, `production`, or a custom track name.                                                          |
+| `play.rollout`     | `android` | Staged rollout as a fraction greater than 0 and at most 1, such as `0.05` for 5%. Left out, the Google Play settings decide. |
+| `play.draft`       | `android` | `true` creates a draft release in Play Console instead of rolling out. Left out, the Google Play settings decide.            |
+| `testflight.group` | `ios`     | The TestFlight group to add the build to: one name, without commas, at most 128 characters, and not `app_store`.             |
+
+`track` and `group` can use `${{ vars.NAME }}`, so a workflow can change them
+by overriding a var. Secrets and `${{ flavor }}` are not available there.
+
+`publish: false` (or `null`) publishes nowhere. On a workflow target it drops
+the `publish` the target would otherwise take from the top level, while
+keeping the top-level `build`:
+
+```yaml
+workflows:
+  qa:
+    targets:
+      android:
+        publish: false # builds the release bundle, uploads nothing
+```
+
+The file says where; credentials stay in the pipeline. When the planned
+workflow publishes to a store, the file replaces the pipeline's Publish
+settings for that store:
+
+- **Google Play**: the file's track replaces the settings' track, and its
+  `rollout` and `draft` replace the settings' own where the file sets them.
+  The service account secret, expected package, release notes, mapping
+  upload, in-app update priority and rollout policy still come from the
+  pipeline's Google Play settings, and **Upload after each build** must be on.
+- **TestFlight**: the file's group replaces the settings' destination and
+  groups. The App Store Connect API key comes from the pipeline's iOS signing
+  settings, which must export App Store IPAs, and App Store Connect publishing
+  must be on. Release notes and the export compliance answer still come from
+  the settings.
+
+Stores the file does not name, version 1 files and files without `publish`
+keep the pipeline's Publish settings exactly.
+
+Problems with `publish` never stop the build: it runs and keeps its
+artifacts, and only its `publish-play` or `publish-app-store` step fails, with
+a message saying what to fix. That happens when:
+
+- the store is not set up in the pipeline (the message names the settings to
+  turn on);
+- the target builds more than one flavor, since a store takes one build
+  (narrow it with `flavors: [<one flavor>]` on the workflow);
+- `track` or `group`, once vars are resolved, is not a valid name, or refers
+  to an undefined var.
+
+`oore pipeline validate` prints a `note:` for each of these that it can see in
+the file.
+
+Google Play's rules apply to the combined result. The `internal` track has no
+staged rollouts, so a rollout below 1 there releases to every internal tester,
+and a draft ignores `rollout`. The upload logs the adjustment, and
+`oore pipeline validate` notes it when the file itself sets the combination.
+
+Retrying a failed upload that took its destination from the file reads the
+file at the build's commit again, so it uploads where the build would have.
+Retrying any other upload works as before and does not check out the source.
+
+Google Play takes App Bundles, and Oore runs `build` as written. When a
+workflow publishes to Google Play but its Android build does not appear to
+build a bundle, `oore pipeline validate` prints a `note:`; the upload looks
+for one under `build/app/outputs/bundle`. Keep an `.aab` artifact pattern (the
+defaults include one) so a failed upload can be retried from the stored
+bundle.
+
+[`oore pipeline plan`](/reference/cli/oore-pipeline-plan) prints where each
+workflow publishes, and the pipeline editor's **What will run** section lists
+it with the plan's notes.
+
+## Budgets
+
+`budgets` on a target holds its artifacts to a size budget on the pull request
+check. It has the same shape and rules as the pipeline's
+[size budget](/reference/config/pipeline-settings#size-budget):
+
+```yaml
+targets:
+  android:
+    build: flutter build appbundle --release
+    budgets:
+      mode: fail # or warn, the default
+      rules:
+        - kind: aab
+          max_increase_bytes: 524288 # 512 KiB over the baseline build
+        - kind: apk
+          max_bytes: 62914560 # 60 MiB
+          max_increase_percent: 2.5
+```
+
+| Field                          | Type    | Description                                                                     |
+| ------------------------------ | ------- | ------------------------------------------------------------------------------- |
+| `mode`                         | string  | `fail` fails the check when an artifact is over; `warn` (default) only says so. |
+| `rules[].kind`                 | string  | The artifact's lowercase file extension, such as `aab`, `apk` or `ipa`.         |
+| `rules[].max_bytes`            | integer | Largest size allowed, in bytes. Greater than 0.                                 |
+| `rules[].max_increase_bytes`   | integer | Largest growth over the baseline build, in bytes. 0 or more.                    |
+| `rules[].max_increase_percent` | number  | Largest growth over the baseline build, in percent. 0 or more.                  |
+
+A rule needs at least one limit. A target takes at most 20 rules, each kind
+once. `aab` and `apk` rules belong on `android` and `ipa` rules on `ios`.
+Values are bytes, with no `${{ }}` references.
+
+The pipeline's size budget is a floor: a target's `budgets` add limits for
+that platform's check and can tighten the pipeline's, never loosen or remove
+them. Each platform's check is held to both the pipeline's size budget and its
+own target's `budgets`. An artifact over either is listed, with the budget it
+went over, and the check fails when any budget it went over has `mode: fail`.
+`budgets` on one target does not change another target's check, and
+`budgets: { rules: [] }` adds nothing. The check summary names the field the
+budget came from, such as `workflows.release.targets.android.budgets`. The
+budget only changes the check; the build itself never fails because of it.
+
+## Triggers
+
+`on` accepts:
+
+| Field          | Type                         | Example                           |
+| -------------- | ---------------------------- | --------------------------------- |
+| `push`         | `true` or `{ branches: [] }` | `{ branches: [main, release/*] }` |
+| `pull_request` | `true` or `{ branches: [] }` | `true`                            |
+| `tag`          | string or string[]           | `v*`                              |
+| `paths`        | string[]                     | `[lib/**, pubspec.*]`             |
+
+When a webhook arrives, Oore reads the pipeline's file at the pushed commit.
+If the pipeline's workflow sets `on`, or the file sets a top-level `on`, that
+decides whether the event starts a build, in place of the pipeline's trigger
+settings:
+
+- `push` matches pushes to a branch, `true` for any branch or `branches` for
+  the listed globs.
+- `pull_request` matches pull and merge requests that are opened, reopened or
+  updated. `branches` names the branch the request **targets**, so
+  `{ branches: [main] }` builds requests into `main`.
+- `tag` matches pushed tags.
+- `paths` narrows pushes and pull requests to changes that touch a matching
+  file, with the same rules as the trigger settings' path filters. Tag pushes
+  ignore it.
+- A field left out, or set to `false`, starts no builds for that event.
+
+Branch and tag globs use `*` and `?` as in the trigger settings. Schedules and
+manual builds still come from the pipeline. Version 1 files, files without
+`on`, and a missing or invalid file keep the pipeline's trigger settings.
+
+If Oore cannot read the file from GitHub or GitLab, for example during an
+outage, a pipeline without a workflow keeps its trigger settings. A pipeline
+with a workflow is skipped and the webhook delivery is retried (up to five
+times), so it never builds from trigger settings its `on` would not allow.
+Other pipelines still build on the first attempt.
+
+For example, with the file above a pipeline set to `adhoc` builds every pull
+request and a pipeline set to `release` builds pushes to `main` and
+`release/*` that touch `lib/` or `pubspec.*`, plus `v*` tags, with no trigger
+settings in the UI.
+
+## Limits
+
+Oore checks these limits before anything else, so a file stays cheap to
+validate:
+
+| What                                         | Limit            |
+| -------------------------------------------- | ---------------- |
+| Workflows                                    | 32               |
+| Flavors, in `app.flavors` or a workflow      | 32               |
+| Steps, top level or per workflow             | 100              |
+| Artifact patterns per target                 | 64               |
+| `env` entries, top level or per workflow     | 128              |
+| `vars`, top level or per workflow            | 128              |
+| Branches, tags or paths in one trigger field | 64               |
+| A `run` or `build` command as written        | 32 KiB           |
+| An artifact pattern as written               | 2,048 characters |
+| What vars add to one value                   | 64 KiB           |
+| Var references expanded, whole file          | 250,000          |
+| Text vars add, whole file                    | 4 MiB            |
+
+The last two count every workflow together. Each var is resolved once per
+flavor and reused, so ordinary files stay far below them.
+
+## Errors
+
+Shape errors, such as an unknown field or a wrong type, name the line and
+column. Other errors name the field path, for example
+`workflows.adhoc.steps[0] refers to step 'Lint', which is not defined in the top-level steps`
+or `steps[2].run uses ${{ flavor }}, which is only available in a target's build and artifacts`.
+Every workflow is checked when the file is validated, so a broken reference in
+any workflow fails `oore pipeline validate`.

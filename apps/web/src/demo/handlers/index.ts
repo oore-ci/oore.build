@@ -8,6 +8,8 @@ import { userHandlers } from './users'
 import { projectHandlers } from './projects'
 import { pipelineHandlers } from './pipelines'
 import { buildHandlers } from './builds'
+import { releaseHandlers } from './releases'
+import { environmentHandlers } from './environments'
 import { artifactHandlers } from './artifacts'
 import { integrationHandlers } from './integrations'
 import { runnerHandlers } from './runners'
@@ -16,6 +18,8 @@ import { notificationHandlers } from './notifications'
 import { retentionHandlers } from './retention'
 import { auditLogHandlers } from './audit-logs'
 import { apiTokenHandlers } from './api-tokens'
+import { secretHandlersList } from './secrets'
+import { storeCredentialHandlers } from './store-credentials'
 
 export const allHandlers = [
   ...demoReadOnlyGuardHandlers,
@@ -26,6 +30,8 @@ export const allHandlers = [
   ...projectHandlers,
   ...pipelineHandlers,
   ...buildHandlers,
+  ...releaseHandlers,
+  ...environmentHandlers,
   ...artifactHandlers,
   ...integrationHandlers,
   ...runnerHandlers,
@@ -34,4 +40,6 @@ export const allHandlers = [
   ...retentionHandlers,
   ...auditLogHandlers,
   ...apiTokenHandlers,
+  ...secretHandlersList,
+  ...storeCredentialHandlers,
 ]

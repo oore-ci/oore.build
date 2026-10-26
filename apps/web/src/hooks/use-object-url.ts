@@ -1,14 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 function useObjectUrl(input?: Blob | MediaSource) {
-  const ref = useRef(input)
   const [url, setUrl] = useState<string | undefined>()
 
   useEffect(() => {
-    ref.current = input
+    const nextUrl = input ? URL.createObjectURL(input) : undefined
 
-    const nextUrl = ref.current ? URL.createObjectURL(ref.current) : undefined
-
+    // The URL is a browser resource created after commit and revoked on cleanup.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setUrl(nextUrl)
 
     return () => {

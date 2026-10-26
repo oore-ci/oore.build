@@ -110,7 +110,7 @@ export function parseUserCsv(source: string): CsvUserImportResult {
     const role = (record[roleIndex] ?? '').trim().toLowerCase()
     const normalizedEmail = email.toLowerCase()
 
-    if (!EMAIL_SCHEMA.safeParse(email).success) {
+    if (!z.validate(EMAIL_SCHEMA, email)) {
       errors.push({ row, message: 'Enter a valid email address.' })
       continue
     }

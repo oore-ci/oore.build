@@ -6,17 +6,13 @@ import {
   useSearch,
 } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Add01Icon,
-  Folder02Icon,
-  Link04Icon,
-  Search01Icon,
-} from '@hugeicons/core-free-icons'
+import { Add01Icon, Folder02Icon, Link04Icon } from '@hugeicons/core-free-icons'
 
 import {
   getActiveInstanceOrRedirect,
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
+import { useBuildInsights } from '@/hooks/use-builds'
 import { useIntegrations } from '@/hooks/use-integrations'
 import { useProjects } from '@/hooks/use-projects'
 import {
@@ -25,6 +21,7 @@ import {
 } from '@/hooks/use-permissions'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { usePageClamp } from '@/hooks/use-page-clamp'
+import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { searchChoice, searchNumber, searchString } from '@/lib/search-input'
 import type { SearchInput } from '@/lib/search-input'
@@ -44,13 +41,15 @@ import type { ListIntegrationsResponse, Project } from '@oore/client/models'
 import { PageMeta } from '@/lib/seo'
 import { ProjectCollection } from './-project-collection'
 import type { ProjectSort } from './-project-collection'
+import { useListNavigation } from '@/hooks/use-list-navigation'
+import { Text } from '@/components/layout/text'
 
 const loadCreateProjectDialog = () => import('./-create-project-dialog')
 const CreateProjectDialog = lazy(loadCreateProjectDialog)
 
 interface ProjectsSearch {
   direction?: SortDirection
-  openCreate?: string
+  openCreate?: 1
   page?: number
   pageSize?: 20 | 50 | 100
   q?: string
@@ -83,15 +82,15 @@ function parseSearch(search: SearchInput): ProjectsSearch {
     direction,
     page: Number.isInteger(page) && page > 1 ? page : undefined,
     pageSize: pageSize === 50 || pageSize === 100 ? pageSize : undefined,
-    openCreate: searchString(search, 'openCreate') === '1' ? '1' : undefined,
+    openCreate: searchNumber(search, 'openCreate') === 1 ? 1 : undefined,
   }
 }
 
 export const Route = createFileRoute('/projects/')({
   validateSearch: parseSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireAuthOrRedirect(instance.id, context)
     if (useAuthStore.getState().user?.role === 'qa_viewer') {
       throw redirect({ to: '/' })
     }
@@ -100,6 +99,9 @@ export const Route = createFileRoute('/projects/')({
 })
 
 function ProjectsListPage() {
+  useListNavigation()
+  const scope = useFirstAppScope()
+  const updateProgress = useFirstAppStore((state) => state.update)
   const search = useSearch({ from: '/projects/' })
   const navigate = Route.useNavigate()
   const page = search.page ?? 1
@@ -119,6 +121,8 @@ function ProjectsListPage() {
       select: selectHasActiveIntegration,
     },
   )
+  // The widest window, so a project that builds monthly still shows status.
+  const insightsQuery = useBuildInsights({ days: 90 })
   const setupStatusQuery = useSetupStatus()
   const [canWriteProjects, canWriteIntegrations] = useHasPermissions([
     'projects:write',
@@ -140,7 +144,7 @@ function ProjectsListPage() {
     integrationsQuery.data === false
 
   const openCreateFromSearch =
-    search.openCreate === '1' &&
+    search.openCreate === 1 &&
     !projectsQuery.isLoading &&
     !projectsQuery.error &&
     canWriteProjects
@@ -159,7 +163,7 @@ function ProjectsListPage() {
 
   function handleCreateOpenChange(open: boolean) {
     setCreateOpen(open)
-    if (!open && search.openCreate === '1') {
+    if (!open && search.openCreate === 1) {
       updateSearch({ openCreate: undefined })
     }
   }
@@ -177,22 +181,23 @@ function ProjectsListPage() {
   )
 
   const hasSearch = !!search.q
+  const needsSource = runtimeMode === 'remote' && noConnectedSources
   const showTrueEmpty =
     !projectsQuery.isLoading &&
     !projectsQuery.error &&
     total === 0 &&
     !hasSearch
-  const showFilteredEmpty =
-    !projectsQuery.isLoading && !projectsQuery.error && total === 0 && hasSearch
 
   return (
     <PageLayout width="wide" fill>
       <PageMeta title="Projects" noindex />
       <PageHeader
         title="Projects"
-        description="Repositories, pipelines, and build access."
         actions={
-          canWriteProjects ? (
+          // While the page is empty its one next step lives in the empty
+          // state, and without a connected source the dialog has nothing to
+          // pick from.
+          canWriteProjects && !showTrueEmpty && !needsSource ? (
             <Button onClick={() => setCreateOpen(true)}>
               <HugeiconsIcon icon={Add01Icon} />
               New project
@@ -204,6 +209,9 @@ function ProjectsListPage() {
       <ProjectCollection
         canManageProject={canManageProject}
         direction={direction}
+        insights={insightsQuery.data?.projects}
+        insightsError={insightsQuery.isError}
+        insightsLoading={insightsQuery.isLoading}
         emptyState={
           showTrueEmpty ? (
             <Empty className="border bg-card">
@@ -216,24 +224,27 @@ function ProjectsListPage() {
                   {runtimeMode === 'local'
                     ? 'Choose a local Git repository to create your first project.'
                     : noConnectedSources
-                      ? 'Connect a source before creating your first remote project.'
-                      : 'Create a project from a connected source repository to define pipelines and start builds.'}
+                      ? 'Connect GitHub or GitLab so Oore can see your repositories, then create a project from one.'
+                      : 'Pick a repository from a connected source, then add a pipeline to start building.'}
                 </EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
-                {runtimeMode === 'remote' && noConnectedSources ? (
+                {needsSource ? (
                   canWriteIntegrations ? (
                     <Button
                       render={<Link to="/settings/integrations" />}
+                      onClick={() =>
+                        updateProgress(scope, { projectDraft: { name: '' } })
+                      }
                       nativeButton={false}
                     >
                       <HugeiconsIcon icon={Link04Icon} />
                       Connect source
                     </Button>
                   ) : (
-                    <p className="text-xs text-muted-foreground">
+                    <Text variant="caption">
                       Ask an owner or admin to connect a source.
-                    </p>
+                    </Text>
                   )
                 ) : canWriteProjects ? (
                   <Button onClick={() => setCreateOpen(true)}>
@@ -241,32 +252,10 @@ function ProjectsListPage() {
                     Create project
                   </Button>
                 ) : (
-                  <p className="text-xs text-muted-foreground">
+                  <Text variant="caption">
                     Ask an owner or admin to create the first project.
-                  </p>
+                  </Text>
                 )}
-              </EmptyContent>
-            </Empty>
-          ) : showFilteredEmpty ? (
-            <Empty className="border bg-card">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <HugeiconsIcon icon={Search01Icon} />
-                </EmptyMedia>
-                <EmptyTitle>No matching projects</EmptyTitle>
-                <EmptyDescription>
-                  Try a different search or clear the current query.
-                </EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    updateSearch({ q: undefined, page: undefined })
-                  }
-                >
-                  Clear search
-                </Button>
               </EmptyContent>
             </Empty>
           ) : null

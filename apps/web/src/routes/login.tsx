@@ -43,11 +43,31 @@ import { resolveLoginFlow } from '@/lib/login-flow'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 
 import DemoLoginForm from '@/components/demo-login-form'
+import { FocusedFlowHeader } from '@/components/focused-flow-header'
 import { isDemoMode } from '@/lib/demo-mode'
 import { useTime } from '@/hooks/use-time'
 import { createWebOoreClient } from '@/lib/api-client/client'
+import {
+  describeRedirectPath,
+  safeRedirectPath,
+  storeOidcRedirect,
+} from '@/lib/auth-redirect'
+import { searchString, type SearchInput } from '@/lib/search-input'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { FocusedFlowLayout } from '@/components/focused-flow-layout'
+import { Mono } from '@/components/layout/mono'
+
+interface LoginSearch {
+  redirect?: string
+}
 
 export const Route = createFileRoute('/login')({
+  validateSearch: (search: SearchInput): LoginSearch => {
+    const redirect = safeRedirectPath(searchString(search, 'redirect'))
+    return redirect ? { redirect } : {}
+  },
   component: LoginPage,
   staticData: {
     breadcrumb: {
@@ -77,9 +97,9 @@ const LOGIN_ERROR_MESSAGES = {
   external_access_origin_not_allowed:
     'External Access Public URL origin is not included in allowed frontend origins.',
   external_access_public_url_missing:
-    'Set External Access Public URL in Preferences on the host machine before enabling External Access.',
+    'Set the External Access public URL in Settings → General on the host machine before enabling External Access.',
   external_access_preflight_failed:
-    'External Access preflight checks are failing. Resolve setup and Preferences readiness checks first.',
+    'External Access preflight checks are failing. Resolve the readiness checks in Settings → General first.',
   trusted_proxy_peer_not_allowed:
     'Trusted proxy login request did not come from an allowlisted proxy peer.',
   trusted_proxy_identity_missing:
@@ -139,6 +159,8 @@ function LoginPage() {
   const activeInstanceId = useInstanceStore((s) => s.activeInstanceId)
   const setActiveInstance = useInstanceStore((s) => s.setActiveInstance)
   const navigate = useNavigate()
+  const { redirect } = Route.useSearch()
+  const continueTo = redirect ? describeRedirectPath(redirect) : null
   const setAuth = useAuthStore((s) => s.setAuth)
   const token = useAuthStore((s) => s.token)
   const expiresAt = useAuthStore((s) => s.expiresAt)
@@ -190,10 +212,12 @@ function LoginPage() {
     }
   })
 
+  function continueAfterSignIn() {
+    void navigate({ href: redirect ?? '/', replace: true })
+  }
+
   useMountEffect(() => {
-    if (hasValidToken) {
-      void navigate({ to: '/' })
-    }
+    if (hasValidToken) continueAfterSignIn()
   })
 
   useMountEffect(() => {
@@ -281,7 +305,7 @@ function LoginPage() {
           resolvedLoginFlow,
         )
         setLoading(false)
-        void navigate({ to: '/' })
+        continueAfterSignIn()
         return
       }
 
@@ -301,7 +325,7 @@ function LoginPage() {
           'trusted_proxy',
         )
         setLoading(false)
-        void navigate({ to: '/' })
+        continueAfterSignIn()
         return
       }
 
@@ -318,6 +342,7 @@ function LoginPage() {
       } catch {
         // sessionStorage unavailable
       }
+      storeOidcRedirect(redirect ?? null)
 
       window.location.href = data.authorization_url
     } catch (e) {
@@ -344,53 +369,49 @@ function LoginPage() {
 
   if (isDemoMode) {
     return (
-      <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
+      <FocusedFlowLayout>
         <PageMeta title="Demo login" />
-        <div className="w-full max-w-sm space-y-8">
-          <div className="space-y-4 text-center">
-            <div className="mx-auto flex size-14 items-center justify-center">
-              <img src="/logo.svg" alt="Oore logo" className="size-full" />
-            </div>
-            <div className="space-y-1">
-              <h1 className="text-3xl font-bold tracking-tight">
-                Explore the Oore demo
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                Choose a role to see its real navigation, data, and permissions.
-              </p>
-            </div>
-          </div>
-          <DemoLoginForm />
+        <div className="w-full max-w-sm space-y-6">
+          <FocusedFlowHeader
+            title="Explore the Oore demo"
+            description={
+              continueTo
+                ? `Choose a role to continue to ${continueTo}.`
+                : 'Choose a role to see its real navigation, data, and permissions.'
+            }
+          />
+          <DemoLoginForm redirectTo={redirect ?? '/'} />
         </div>
-      </div>
+      </FocusedFlowLayout>
     )
   }
 
   return (
-    <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
+    <FocusedFlowLayout>
       <PageMeta title="Login" />
-      <div className="w-full max-w-sm space-y-8">
-        <div className="space-y-4 text-center">
-          <div className="mx-auto flex size-14 items-center justify-center">
-            <img src="/logo.svg" alt="Oore logo" className="size-full" />
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-3xl font-bold tracking-tight">Sign in</h1>
-            <p className="text-sm text-muted-foreground">
-              Authenticate to the active instance to continue.
-            </p>
-          </div>
-        </div>
+      <div className="w-full max-w-sm space-y-6">
+        <FocusedFlowHeader
+          title="Sign in"
+          description={
+            continueTo
+              ? `Sign in to continue to ${continueTo}.`
+              : 'Authenticate to the active instance to continue.'
+          }
+        />
 
         <Card size="sm">
           <CardContent className="space-y-4">
-            <div className="flex items-center gap-2 text-sm">
+            <Row gap={2} className="text-sm">
               <span className="text-muted-foreground">Instance</span>
               <Separator orientation="vertical" className="h-3!" />
-              <code className="bg-muted px-1.5 py-0.5 font-mono text-xs font-medium">
+              <Mono
+                size="xs"
+                render={<code />}
+                className="bg-muted px-1.5 py-0.5 font-medium"
+              >
                 {instance?.label ?? 'none selected'}
-              </code>
-            </div>
+              </Mono>
+            </Row>
 
             <Item variant="muted" size="sm">
               <ItemContent>
@@ -411,7 +432,7 @@ function LoginPage() {
                 <ItemDescription>
                   {lastAuthMeta
                     ? `Last successful sign-in: ${formatLastAuthTime(lastAuthMeta.at)} via ${formatAuthMethodLabel(lastAuthMeta.method)}`
-                    : 'No previous successful sign-in stored on this device.'}
+                    : 'No sign-in history on this device.'}
                 </ItemDescription>
               </ItemContent>
             </Item>
@@ -429,9 +450,8 @@ function LoginPage() {
             {trustedProxyLoginAvailable ? (
               <Alert>
                 <AlertDescription>
-                  Your upstream proxy has already authenticated this request.
-                  Continue to create an Oore session from the forwarded
-                  identity.
+                  Your proxy has verified your identity. Continue to sign in to
+                  Oore.
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -439,15 +459,15 @@ function LoginPage() {
             {loginFlow === 'recovery' ? (
               <Alert>
                 <AlertDescription>
-                  Continue with the single-use recovery link minted on the
-                  daemon host. Its capability has already been removed from the
-                  address bar and will be sent only in this sign-in request.
+                  Use the single-use recovery link created on the Oore Mac. Its
+                  token has been removed from the address bar and is sent only
+                  when you sign in.
                 </AlertDescription>
               </Alert>
             ) : null}
 
             {localLoginAvailable && !localModeNetworkBlocked ? (
-              <div className="flex flex-col gap-2">
+              <Stack gap={2}>
                 <Label htmlFor="local-login-email">Email (optional)</Label>
                 <Input
                   id="local-login-email"
@@ -458,17 +478,16 @@ function LoginPage() {
                   onChange={(event) => setLocalEmail(event.target.value)}
                   disabled={loading}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Leave email blank to auto-sign-in when only one active user
-                  exists.
-                </p>
+                <Text variant="caption">
+                  Leave blank if this instance has only one active user.
+                </Text>
                 {runtimeMode === 'local' ? (
-                  <p className="text-xs text-muted-foreground">
-                    First sign-in on a new local instance will auto-initialize
-                    owner setup.
-                  </p>
+                  <Text variant="caption">
+                    Your first sign-in on a new local instance creates the owner
+                    account.
+                  </Text>
                 ) : null}
-              </div>
+              </Stack>
             ) : null}
 
             {error ? (
@@ -485,7 +504,7 @@ function LoginPage() {
 
                   <div className="space-y-1">
                     <p className="text-xs font-medium text-foreground">
-                      CLI fallback
+                      Set up in Terminal
                     </p>
                     <code className="block rounded-md bg-muted px-2 py-1 text-xs text-foreground">
                       oore setup
@@ -494,7 +513,7 @@ function LoginPage() {
 
                   <div className="space-y-1">
                     <p className="text-xs font-medium text-foreground">
-                      Publish through protected ingress
+                      Connect through Cloudflare Access
                     </p>
                     <p>
                       Use a named tunnel that Cloudflare Access protects. Do not
@@ -507,9 +526,9 @@ function LoginPage() {
                       href="https://docs.oore.build/operate/access/cloudflare-access"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-block text-xs text-primary underline underline-offset-2"
+                      className="inline-block text-xs text-foreground underline underline-offset-2"
                     >
-                      Open the Cloudflare Access guide
+                      Cloudflare Access guide
                     </a>
                   </div>
 
@@ -563,9 +582,9 @@ function LoginPage() {
           </CardHeader>
           <CardContent className="space-y-2">
             {instanceList.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
+              <Text variant="muted">
                 No saved instances yet. Add one to start signing in.
-              </p>
+              </Text>
             ) : (
               <RadioGroup
                 aria-label="Saved instances"
@@ -605,10 +624,14 @@ function LoginPage() {
                       </ItemContent>
                       <ItemActions>
                         {isActive ? (
-                          <span className="flex items-center gap-1 text-xs text-primary">
+                          <Row
+                            gap={1}
+                            render={<span />}
+                            className="text-xs text-foreground"
+                          >
                             <HugeiconsIcon icon={Tick02Icon} size={14} />
                             Active
-                          </span>
+                          </Row>
                         ) : null}
                       </ItemActions>
                     </Item>
@@ -631,6 +654,6 @@ function LoginPage() {
         open={showAddInstance}
         onOpenChange={setShowAddInstance}
       />
-    </div>
+    </FocusedFlowLayout>
   )
 }

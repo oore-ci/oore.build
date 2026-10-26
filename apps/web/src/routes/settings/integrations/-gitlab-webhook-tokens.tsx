@@ -24,28 +24,11 @@ import { Input } from '@/components/ui/input'
 import { useRotateGitLabRepositoryWebhookSecret } from '@/hooks/use-integrations'
 import { toast } from '@/lib/toast'
 import type { IntegrationRepository } from '@oore/client/models'
+import { Text } from '@/components/layout/text'
 
 interface RevealedWebhookToken {
   repository: IntegrationRepository
   secret: string
-}
-
-interface RotateWebhookTokenMutation {
-  isPending: boolean
-  mutate: (
-    repositoryId: string,
-    options: {
-      onError: (error: Error) => void
-      onSuccess: (response: { webhook_secret: string }) => void
-    },
-  ) => void
-}
-
-interface GitLabWebhookTokenDialogsViewProps {
-  onClose: () => void
-  repository: IntegrationRepository | null
-  rotate: RotateWebhookTokenMutation
-  webhookUrl: string
 }
 
 function copyToClipboard(value: string, label: string) {
@@ -65,22 +48,6 @@ export function GitLabWebhookTokenDialogs({
   webhookUrl: string
 }) {
   const rotate = useRotateGitLabRepositoryWebhookSecret()
-  return (
-    <GitLabWebhookTokenDialogsView
-      onClose={onClose}
-      repository={repository}
-      rotate={rotate}
-      webhookUrl={webhookUrl}
-    />
-  )
-}
-
-export function GitLabWebhookTokenDialogsView({
-  onClose,
-  repository,
-  rotate,
-  webhookUrl,
-}: GitLabWebhookTokenDialogsViewProps) {
   const [revealed, setRevealed] = useState<RevealedWebhookToken | null>(null)
 
   function generateToken() {
@@ -151,9 +118,9 @@ export function GitLabWebhookTokenDialogsView({
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground">
+              <Text variant="caption" className="font-medium">
                 Webhook URL
-              </p>
+              </Text>
               <div className="flex gap-2">
                 <Input
                   readOnly
@@ -174,9 +141,9 @@ export function GitLabWebhookTokenDialogsView({
             </div>
 
             <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground">
+              <Text variant="caption" className="font-medium">
                 Secret token
-              </p>
+              </Text>
               <div className="flex gap-2">
                 <Input
                   readOnly

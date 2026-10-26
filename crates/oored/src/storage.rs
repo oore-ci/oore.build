@@ -142,6 +142,70 @@ impl StorageClient {
         Ok(url)
     }
 
+    /// Store a small object the daemon holds in memory.
+    pub async fn put_object(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+        content_type: &str,
+    ) -> Result<(), anyhow::Error> {
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .content_type(content_type)
+            .body(aws_sdk_s3::primitives::ByteStream::from(bytes))
+            .send()
+            .await
+            .with_context(|| format!("failed to store S3 object: {key}"))?;
+        Ok(())
+    }
+
+    /// Read a small object into memory. `None` when it is missing or larger
+    /// than `max_bytes`.
+    pub async fn get_object(
+        &self,
+        key: &str,
+        max_bytes: usize,
+    ) -> Result<Option<Vec<u8>>, anyhow::Error> {
+        let output = match self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(output) => output,
+            Err(error)
+                if error
+                    .as_service_error()
+                    .is_some_and(|service| service.is_no_such_key()) =>
+            {
+                return Ok(None);
+            }
+            Err(error) => {
+                return Err(error).with_context(|| format!("failed to read S3 object: {key}"));
+            }
+        };
+        if output
+            .content_length()
+            .is_some_and(|length| length < 0 || length as u64 > max_bytes as u64)
+        {
+            return Ok(None);
+        }
+        let bytes = output
+            .body
+            .collect()
+            .await
+            .with_context(|| format!("failed to read S3 object body: {key}"))?
+            .into_bytes();
+        if bytes.len() > max_bytes {
+            return Ok(None);
+        }
+        Ok(Some(bytes.to_vec()))
+    }
+
     pub async fn delete_object(&self, key: &str) -> Result<(), anyhow::Error> {
         self.client
             .delete_object()
@@ -355,7 +419,8 @@ impl LocalStorageClient {
 
     pub async fn generate_download_url(&self, key: &str, ttl_secs: u64) -> String {
         let token = Self::issue_token(&self.download_tokens, key, ttl_secs).await;
-        format!("{}/v1/artifacts/download/{token}", self.public_base_url)
+        // Resolve browser downloads against the requesting instance, including custom ports.
+        format!("/v1/artifacts/download/{token}")
     }
 
     pub async fn generate_download_url_with_base(
@@ -369,7 +434,7 @@ impl LocalStorageClient {
         let base = public_base_url
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .unwrap_or(&self.public_base_url)
+            .unwrap_or("")
             .trim_end_matches('/');
         let mut url = format!("{base}/install/download/{token}");
         if let Some((key, value)) = query_pair {
@@ -530,6 +595,46 @@ impl LocalStorageClient {
         Ok(Some(LocalDownloadPayload { bytes, file_name }))
     }
 
+    /// Write a small object atomically.
+    pub async fn put_file(&self, key: &str, bytes: &[u8]) -> Result<(), anyhow::Error> {
+        let path = self.full_path_for_key(key)?;
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.with_context(|| {
+                format!("failed to create parent directory: {}", parent.display())
+            })?;
+        }
+        let temp_path = path.with_extension(format!("oore-upload-{}.tmp", Uuid::new_v4()));
+        if let Err(error) = tokio::fs::write(&temp_path, bytes).await {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(error).with_context(|| format!("failed to write {}", temp_path.display()));
+        }
+        tokio::fs::rename(&temp_path, &path)
+            .await
+            .with_context(|| format!("failed to publish {}", path.display()))
+    }
+
+    /// Read a small object. `None` when it is missing or larger than
+    /// `max_bytes`.
+    pub async fn get_file(
+        &self,
+        key: &str,
+        max_bytes: usize,
+    ) -> Result<Option<Vec<u8>>, anyhow::Error> {
+        let path = self.full_path_for_key(key)?;
+        let metadata = match tokio::fs::metadata(&path).await {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e).with_context(|| format!("failed to stat {}", path.display())),
+        };
+        if !metadata.is_file() || metadata.len() > max_bytes as u64 {
+            return Ok(None);
+        }
+        let bytes = tokio::fs::read(&path)
+            .await
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        Ok((bytes.len() <= max_bytes).then_some(bytes))
+    }
+
     pub async fn delete_file(&self, key: &str) -> Result<(), anyhow::Error> {
         let path = self.full_path_for_key(key)?;
         match tokio::fs::remove_file(&path).await {
@@ -548,6 +653,50 @@ impl LocalStorageClient {
 pub struct LocalDownloadPayload {
     pub bytes: Body,
     pub file_name: String,
+}
+
+#[tokio::test]
+async fn local_download_links_preserve_origin_and_token_checks() {
+    let directory = std::env::temp_dir().join(format!("oore-download-{}", uuid::Uuid::new_v4()));
+    let client = LocalStorageClient::new(directory.clone(), None).unwrap();
+    std::fs::write(directory.join("app.apk"), b"apk content").unwrap();
+    let direct = client.generate_download_url("app.apk", 60).await;
+    let install = client
+        .generate_download_url_with_base("app.apk", 60, None, None)
+        .await;
+    assert!(direct.starts_with("/v1/artifacts/download/"));
+    assert!(install.starts_with("/install/download/"));
+    for link in [&direct, &install] {
+        let token = link.rsplit('/').next().unwrap();
+        let payload = client.handle_download(token).await.unwrap().unwrap();
+        assert_eq!(
+            axum::body::to_bytes(payload.bytes, 100)
+                .await
+                .unwrap()
+                .as_ref(),
+            b"apk content"
+        );
+    }
+    let remote = client
+        .generate_download_url_with_base(
+            "app.apk",
+            60,
+            Some("https://files.example.com"),
+            Some(("warpgate-ticket", "ticket")),
+        )
+        .await;
+    assert!(remote.starts_with("https://files.example.com/install/download/"));
+    assert!(remote.ends_with("?warpgate-ticket=ticket"));
+    let expired = client.generate_download_url("app.apk", 0).await;
+    assert!(
+        client
+            .handle_download(expired.rsplit('/').next().unwrap())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(client.handle_download("invalid").await.unwrap().is_none());
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[derive(Clone)]
@@ -614,6 +763,35 @@ impl StorageBackend {
         match self {
             Self::Local(client) => client.handle_download(token).await,
             _ => Ok(None),
+        }
+    }
+
+    /// Store a small object the daemon holds in memory, such as a feedback
+    /// screenshot. Fails when storage is disabled.
+    pub async fn put_object(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+        content_type: &str,
+    ) -> Result<(), anyhow::Error> {
+        match self {
+            Self::Disabled => anyhow::bail!("artifact storage is not configured"),
+            Self::S3(client) => client.put_object(key, bytes, content_type).await,
+            Self::Local(client) => client.put_file(key, &bytes).await,
+        }
+    }
+
+    /// Read a small object into memory. `None` when storage is disabled, or
+    /// the object is missing or larger than `max_bytes`.
+    pub async fn get_object(
+        &self,
+        key: &str,
+        max_bytes: usize,
+    ) -> Result<Option<Vec<u8>>, anyhow::Error> {
+        match self {
+            Self::Disabled => Ok(None),
+            Self::S3(client) => client.get_object(key, max_bytes).await,
+            Self::Local(client) => client.get_file(key, max_bytes).await,
         }
     }
 

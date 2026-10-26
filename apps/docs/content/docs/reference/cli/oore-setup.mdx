@@ -42,6 +42,8 @@ The guided browser token is single-use and expires after 30 minutes.
 
 Control plane setup uses the terminal. Browser setup is available only for Complete.
 
+The one-click updater runs as the account that owns the install. Setup adds `/etc/sudoers.d/oore-update-recovery` so that account can run exactly three commands without a password: `launchctl bootout system/build.oore.oored`, `launchctl bootstrap system /Library/LaunchDaemons/build.oore.oored.plist`, and `launchctl kickstart -k system/build.oore.oored`. The updater uses them only to reload the backend when an update fails during restart. `oore uninstall` removes the file.
+
 In this release, the Complete profile always binds its web service to loopback. The browser transport assertion does not change this rule.
 
 Use a Web node behind protected ingress when its web listener must use a non-loopback address.

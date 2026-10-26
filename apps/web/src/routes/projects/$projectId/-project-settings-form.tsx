@@ -8,9 +8,14 @@ import { useUpdateProject } from '@/hooks/use-projects'
 import { useSourceRepositories } from '@/hooks/use-source-repositories'
 import { isNearScrollEnd } from '@/lib/scroll'
 import RepositoryAvatar from '@/components/repository-avatar'
+import { FormActions } from '@/components/form-actions'
+import {
+  SettingsSection,
+  SettingsSurface,
+  SettingsSurfaceSeparator,
+} from '@/components/settings/settings-section'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import {
   Form,
   FormControl,
@@ -29,6 +34,10 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 const editProjectSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -46,12 +55,7 @@ export function ProjectSettingsForm({
 }: {
   canChangeSource: boolean
   projectId: string
-  currentValues: {
-    name: string
-    description?: string
-    default_branch?: string
-    repository_id?: string
-  }
+  currentValues: EditProjectForm & { repository_full_name?: string }
 }) {
   const updateMutation = useUpdateProject()
   const repositoriesQuery = useSourceRepositories(canChangeSource)
@@ -62,12 +66,6 @@ export function ProjectSettingsForm({
   )
   const form = useForm<EditProjectForm>({
     resolver: zodResolver(editProjectSchema),
-    defaultValues: {
-      name: currentValues.name,
-      description: currentValues.description ?? '',
-      default_branch: currentValues.default_branch ?? '',
-      repository_id: currentValues.repository_id ?? '',
-    },
     values: {
       name: currentValues.name,
       description: currentValues.description ?? '',
@@ -76,6 +74,8 @@ export function ProjectSettingsForm({
     },
     mode: 'onBlur',
   })
+
+  const { isDirty } = form.formState
 
   function onSubmit(data: EditProjectForm) {
     updateMutation.mutate(
@@ -100,10 +100,13 @@ export function ProjectSettingsForm({
   }
 
   return (
-    <Card>
-      <CardContent>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+    <Form {...form}>
+      <form
+        onSubmit={form.handleSubmit(onSubmit)}
+        className="flex flex-col gap-8"
+      >
+        <SettingsSection title="General">
+          <SettingsSurface className="flex flex-col gap-4">
             <FormField
               control={form.control}
               name="name"
@@ -117,6 +120,38 @@ export function ProjectSettingsForm({
                 </FormItem>
               )}
             />
+            <FormField
+              control={form.control}
+              name="description"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Description</FormLabel>
+                  <FormControl>
+                    <Input {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <SettingsSurfaceSeparator />
+            <FormField
+              control={form.control}
+              name="default_branch"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Default branch</FormLabel>
+                  <FormControl>
+                    <Input {...field} className="font-mono" />
+                  </FormControl>
+                  <FormDescription>
+                    Preselected when you run a build and used to discover
+                    checked-in workflows.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <SettingsSurfaceSeparator />
             {canChangeSource ? (
               <FormField
                 control={form.control}
@@ -125,12 +160,12 @@ export function ProjectSettingsForm({
                   <FormItem>
                     <FormLabel>Source repository</FormLabel>
                     {repositoriesQuery.isLoading ? (
-                      <div className="flex items-center gap-2 py-2">
+                      <Row gap={2} className="py-2">
                         <Spinner className="size-4" />
-                        <span className="text-sm text-muted-foreground">
+                        <span className={textVariants({ variant: 'muted' })}>
                           Loading repositories...
                         </span>
-                      </div>
+                      </Row>
                     ) : repositoriesQuery.error ? (
                       <Alert variant="destructive">
                         <AlertDescription className="flex items-center justify-between gap-3">
@@ -155,8 +190,8 @@ export function ProjectSettingsForm({
                         items={repositoryItems}
                       >
                         <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Choose source" />
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Choose a repository" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent
@@ -188,14 +223,20 @@ export function ProjectSettingsForm({
                         </SelectContent>
                       </Select>
                     ) : (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        render={<Link to="/settings/integrations" />}
-                        nativeButton={false}
-                      >
-                        Connect source
-                      </Button>
+                      <Stack gap={2} className="items-start">
+                        <Text variant="muted">
+                          No source is connected yet. Connect GitHub, GitLab or
+                          a local folder first.
+                        </Text>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          render={<Link to="/settings/integrations" />}
+                          nativeButton={false}
+                        >
+                          Connect source
+                        </Button>
+                      </Stack>
                     )}
                     <FormDescription>
                       Choosing the source trusts its build commands to run with
@@ -222,48 +263,35 @@ export function ProjectSettingsForm({
                   </FormItem>
                 )}
               />
-            ) : null}
-            <FormField
-              control={form.control}
-              name="description"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Description</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+            ) : (
+              <Stack gap={1.5} className="text-sm">
+                <p className="font-medium">Source repository</p>
+                <p>
+                  {currentValues.repository_full_name ? (
+                    <span className="font-medium">
+                      {currentValues.repository_full_name}
+                    </span>
+                  ) : (
+                    'No repository connected.'
+                  )}{' '}
+                  <span className="text-muted-foreground">
+                    Only an owner or admin can change the source.
+                  </span>
+                </p>
+              </Stack>
+            )}
+            <SettingsSurfaceSeparator />
+            <FormActions
+              isPending={updateMutation.isPending}
+              disabled={!isDirty}
+              disabledReason="No changes to save"
+              onCancel={isDirty ? () => form.reset() : undefined}
+              cancelLabel="Discard"
+              submitLabel="Save changes"
             />
-            <FormField
-              control={form.control}
-              name="default_branch"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Default Branch</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <div className="flex justify-end">
-              <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? (
-                  <>
-                    <Spinner className="size-4" />
-                    Saving...
-                  </>
-                ) : (
-                  'Save'
-                )}
-              </Button>
-            </div>
-          </form>
-        </Form>
-      </CardContent>
-    </Card>
+          </SettingsSurface>
+        </SettingsSection>
+      </form>
+    </Form>
   )
 }

@@ -1,0 +1,79 @@
+name: Release train
+
+# Ships master to alpha on a schedule, and promotes a published alpha to
+# stable on request. Each move is a validated pull request merged by the
+# release bot. The merge pushes the release branch, and autotag.yml cuts the
+# tag and starts release.yml from there.
+
+on:
+  schedule:
+    # Daily at 21:30 UTC (03:00 IST).
+    - cron: '30 21 * * *'
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: alpha ships master; stable promotes a published alpha
+        required: true
+        default: alpha
+        type: choice
+        options: [alpha, stable]
+      tag:
+        description: Alpha tag to promote to stable (default is the newest published alpha)
+        required: false
+        type: string
+      dry-run:
+        description: Report the next move without opening or merging anything
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-train
+  # Queue every run. Without this a nightly run queued behind a running
+  # train cancels a waiting manual stable promotion.
+  queue: max
+
+permissions:
+  contents: read
+
+jobs:
+  train:
+    name: Release train (${{ inputs.channel || 'alpha' }})
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    # Restrict this environment to master so the bot credentials never
+    # reach pull request workflows.
+    environment: release-train
+    steps:
+      - name: Mint the release bot token
+        id: app-token
+        if: vars.RELEASE_BOT_CLIENT_ID != ''
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Require the release bot token
+        env:
+          BOT_TOKEN: ${{ steps.app-token.outputs.token || secrets.RELEASE_BOT_TOKEN }}
+        # The default GITHUB_TOKEN cannot do this job: its merges do not start
+        # autotag.yml, and it cannot merge changes to workflow files.
+        run: |
+          [[ -n "$BOT_TOKEN" ]] || {
+            echo 'Configure the release bot on the release-train environment: RELEASE_BOT_CLIENT_ID and RELEASE_BOT_PRIVATE_KEY for a GitHub App, or RELEASE_BOT_TOKEN.' >&2
+            exit 1
+          }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token || secrets.RELEASE_BOT_TOKEN }}
+
+      - name: Run the release train
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.RELEASE_BOT_TOKEN }}
+          CHANNEL: ${{ inputs.channel || 'alpha' }}
+          PROMOTE_TAG: ${{ inputs.tag }}
+          RELEASE_TRAIN_DRY_RUN: ${{ inputs.dry-run || false }}
+        run: bash tools/release-train.sh "$CHANNEL" ${PROMOTE_TAG:+"$PROMOTE_TAG"}

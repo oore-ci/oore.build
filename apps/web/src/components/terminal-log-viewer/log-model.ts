@@ -57,7 +57,6 @@ export function groupLogs(
   stepResults: Array<StepResult>,
 ) {
   const groups = new Map<string, StepGroup>()
-  const order: Array<string> = []
   const allVisibleLogs: Array<BuildLogChunk> = []
   let activeStep: string | null = null
 
@@ -66,7 +65,6 @@ export function groupLogs(
     if (existing) return existing
     const created: StepGroup = { name, status: 'pending', logs: [] }
     groups.set(name, created)
-    order.push(name)
     return created
   }
 
@@ -95,10 +93,7 @@ export function groupLogs(
     group.durationMs = result.duration_ms
   }
 
-  const stepGroups = order.flatMap((name) => {
-    const group = groups.get(name)
-    return group ? [group] : []
-  })
+  const stepGroups = [...groups.values()]
 
   return {
     stepGroups,
@@ -106,6 +101,56 @@ export function groupLogs(
     allVisibleLogs,
     runningStepName:
       stepGroups.find((group) => group.status === 'running')?.name ?? null,
+  }
+}
+
+/** Name of the step still running, read from the last step marker. */
+export function currentStepName(logs: Array<BuildLogChunk>): string | null {
+  for (let index = logs.length - 1; index >= 0; index--) {
+    const marker = parseStepMarker(logs[index].content)
+    if (marker) return marker.event === 'start' ? marker.name : null
+  }
+  return null
+}
+
+// oxlint-disable-next-line no-control-regex
+const ANSI_PATTERN = /\u001b\[[0-9;?]*[ -/]*[@-~]/g
+const OORE_PREFIX_PATTERN = /^\[oore-[a-z-]+\]\s*/
+
+export interface FailureLine {
+  step: string
+  sequence: number
+  lineNumber: number
+  text: string
+}
+
+/**
+ * The line that best explains why the build failed: the last error-looking
+ * line of the failed step, else that step's last non-blank line.
+ */
+export function findFailureLine(
+  stepGroups: Array<StepGroup>,
+  allVisibleLogs: Array<BuildLogChunk>,
+): FailureLine | null {
+  const group = stepGroups.find(
+    (candidate) =>
+      (candidate.status === 'failed' || candidate.status === 'timed_out') &&
+      candidate.logs.length > 0,
+  )
+  if (!group) return null
+  const lines = group.logs.filter((chunk) => chunk.content.trim())
+  const chunk =
+    [...lines].reverse().find((candidate) => isErrorLine(candidate.content)) ??
+    lines.at(-1)
+  if (!chunk) return null
+  return {
+    step: group.name,
+    sequence: chunk.sequence,
+    lineNumber: allVisibleLogs.indexOf(chunk) + 1,
+    text: chunk.content
+      .replace(ANSI_PATTERN, '')
+      .replace(OORE_PREFIX_PATTERN, '')
+      .trim(),
   }
 }
 

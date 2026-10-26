@@ -3,14 +3,12 @@
   "pagesIndex": "index",
   "pages": [
     "index",
-    "deploy",
     "access",
     "runners",
+    "...storage",
+    "deploy",
     "instances",
-    "storage",
     "maintain",
-    "recover",
-    "(troubleshooting)",
-    "support"
+    "(troubleshooting)"
   ]
 }

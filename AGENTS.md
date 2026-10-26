@@ -41,6 +41,7 @@
 - Use the tokens from `apps/web/src/styles.css` for colors.
 - Support light, dark, and system appearance.
 - Read `DESIGN.md` before frontend interface work.
+- Never commit PR screenshots to the repository. Attach them to the pull request instead.
 - Keep `apps/docs` as an Astro and Fumadocs static site.
 - Keep `apps/site` as a static Vite site.
 
@@ -53,10 +54,13 @@
 
 ## Releases
 
+- The Release train workflow ships `master` to `alpha` nightly and bumps the workspace version after a stable release.
+- Run Release train with channel `stable` to promote the newest published alpha to `stable`.
 - Merge to `alpha` for `vX.Y.Z-alpha.N` releases.
 - Merge to `beta` for `vX.Y.Z-beta.N` releases.
 - Merge to `stable` for `vX.Y.Z` releases.
 - Validate `master` without automatic tags.
+- Bump the workspace version with `make bump-version VERSION=X.Y.Z`.
 
 ## Maintenance
 

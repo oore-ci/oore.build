@@ -1,5 +1,12 @@
 {
   "title": "Reference",
-  "pages": ["index", "(product-values)", "cli", "config", "api"],
-  "pagesIndex": "index"
+  "pagesIndex": "index",
+  "pages": [
+    "index",
+    "cli",
+    "config",
+    "api",
+    "(product-values)",
+    "known-limitations"
+  ]
 }

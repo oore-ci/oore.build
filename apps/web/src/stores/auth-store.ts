@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import * as z from 'zod/mini'
 import type { UserRole } from '@oore/client/models'
 
+import { queryClient } from '@/lib/query-client'
+
 interface AuthUser {
   email: string
   oidc_subject: string
@@ -187,8 +189,11 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
   },
 
   clearAuth: () => {
-    const { instanceId } = get()
+    const { instanceId, token } = get()
     saveAuth(instanceId, null, null, null)
     set({ token: null, expiresAt: null, user: null })
+    // The next person to sign in on this browser must not see this session's
+    // data, so drop it however the session ended.
+    if (token) queryClient.clear()
   },
 }))

@@ -5,7 +5,7 @@ import { ArrowDownToLineIcon } from '@hugeicons/core-free-icons'
 import type { RefObject } from 'react'
 import type { Virtualizer } from '@tanstack/react-virtual'
 
-import type { BuildLogChunk } from '@oore/client/models'
+import type { BuildLogChunk, BuildStatus } from '@oore/client/models'
 import type { SelectedStepMeta } from './types'
 import { Button } from '@/components/ui/button'
 import {
@@ -16,6 +16,8 @@ import {
 } from '@/components/ui/empty'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import { Row } from '@/components/layout/row'
+import { textVariants } from '@/lib/recipes'
 
 interface LogOutputProps {
   logs: Array<BuildLogChunk>
@@ -25,7 +27,9 @@ interface LogOutputProps {
   isLoading: boolean
   logsUnavailable: boolean
   isTerminal: boolean
+  buildStatus?: BuildStatus
   wrapLines: boolean
+  lineNumbers: ReadonlyMap<BuildLogChunk, number>
   matchingIndexes: ReadonlySet<number>
   currentMatchIndex: number | null
   showJumpToLatest: boolean
@@ -42,7 +46,9 @@ export function LogOutput({
   isLoading,
   logsUnavailable,
   isTerminal,
+  buildStatus,
   wrapLines,
+  lineNumbers,
   matchingIndexes,
   currentMatchIndex,
   showJumpToLatest,
@@ -50,15 +56,20 @@ export function LogOutput({
   scrollContainerRef,
   virtualizer,
 }: LogOutputProps) {
+  'use no memo' // Read fresh row positions from the mutable virtualizer.
+
   const verticalPadding = 8
-  const maxSeq = logs.length > 0 ? logs[logs.length - 1].sequence : 0
-  const lineNumWidth = Math.max(String(maxSeq).length, 3)
+  const maxLineNumber =
+    logs.length > 0 ? (lineNumbers.get(logs.at(-1)!) ?? 0) : 0
+  const lineNumWidth = Math.max(String(maxLineNumber).length, 3)
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
       {selectedStepMeta ? (
-        <div className="flex shrink-0 items-center gap-2 border-b bg-muted/20 px-3 py-2">
-          <span className="text-xs font-medium text-muted-foreground">
+        <Row gap={2} className="shrink-0 border-b bg-muted/20 px-3 py-2">
+          <span
+            className={cn(textVariants({ variant: 'caption' }), 'font-medium')}
+          >
             {selectedStep}
           </span>
           {selectedStepMeta.command ? (
@@ -66,28 +77,45 @@ export function LogOutput({
               $ {selectedStepMeta.command}
             </code>
           ) : null}
-        </div>
+        </Row>
       ) : null}
 
-      {logs.length === 0 ? (
-        <Empty className="h-full min-h-48 rounded-none border-0 p-6">
-          <EmptyHeader>
-            <EmptyTitle>
-              {emptyState(isLoading, logsUnavailable, isTerminal).title}
-            </EmptyTitle>
-            <EmptyDescription>
-              {emptyState(isLoading, logsUnavailable, isTerminal).description}
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <ScrollArea
-          className="h-full min-h-0 flex-1"
-          horizontal={!wrapLines}
-          viewportRef={scrollContainerRef}
-          role="region"
-          aria-label="Build log output"
-        >
+      <ScrollArea
+        className="h-full min-h-0 flex-1"
+        horizontal={!wrapLines}
+        viewportRef={scrollContainerRef}
+        role="region"
+        aria-label="Build log output"
+        data-build-log-output=""
+      >
+        {logs.length === 0 ? (
+          <Empty className="h-full min-h-48 rounded-none border-0 p-6">
+            <EmptyHeader>
+              <EmptyTitle>
+                {
+                  emptyState(
+                    isLoading,
+                    logsUnavailable,
+                    isTerminal,
+                    buildStatus,
+                    selectedStep,
+                  ).title
+                }
+              </EmptyTitle>
+              <EmptyDescription>
+                {
+                  emptyState(
+                    isLoading,
+                    logsUnavailable,
+                    isTerminal,
+                    buildStatus,
+                    selectedStep,
+                  ).description
+                }
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
           <div
             style={{
               height: `${virtualizer.getTotalSize() + verticalPadding * 2}px`,
@@ -120,6 +148,7 @@ export function LogOutput({
                   aria-current={isCurrentMatch ? 'true' : undefined}
                 >
                   <span
+                    // oxlint-disable-next-line layout/max-class-utilities -- sticky line-number gutter
                     className={cn(
                       'sticky left-0 z-10 shrink-0 border-r px-3 text-right text-muted-foreground select-none',
                       isCurrentMatch ? 'bg-primary/5' : 'bg-background',
@@ -127,11 +156,11 @@ export function LogOutput({
                     )}
                     style={{ width: `${lineNumWidth + 4}ch` }}
                   >
-                    {chunk.sequence}
+                    {lineNumbers.get(chunk) ?? virtualRow.index + 1}
                   </span>
                   <span
                     className={cn(
-                      'pr-4 pl-3',
+                      'min-w-0 pr-4 pl-3',
                       wrapLines
                         ? 'break-all whitespace-pre-wrap'
                         : 'whitespace-pre',
@@ -146,8 +175,8 @@ export function LogOutput({
               )
             })}
           </div>
-        </ScrollArea>
-      )}
+        )}
+      </ScrollArea>
 
       {showJumpToLatest && logs.length > 0 ? (
         <Button
@@ -168,6 +197,8 @@ function emptyState(
   isLoading: boolean,
   logsUnavailable: boolean,
   isTerminal: boolean,
+  buildStatus?: BuildStatus,
+  selectedStep = 'all',
 ) {
   if (isLoading) {
     return {
@@ -181,10 +212,39 @@ function emptyState(
       description: 'Oore could not retrieve the logs for this build.',
     }
   }
+  if (selectedStep !== 'all') {
+    return isTerminal
+      ? {
+          title: 'No output from this step',
+          description: 'This step finished without printing any lines.',
+        }
+      : {
+          title: 'Waiting for output',
+          description: 'This step has not printed anything yet.',
+        }
+  }
+  if (buildStatus === 'expired') {
+    return {
+      title: 'No logs',
+      description: 'This build expired before a runner started it.',
+    }
+  }
+  if (buildStatus === 'canceled') {
+    return {
+      title: 'No log output',
+      description: 'The build was canceled before it printed any lines.',
+    }
+  }
   if (isTerminal) {
     return {
       title: 'No log output',
-      description: 'This build completed without recording any log lines.',
+      description: 'This build finished without recording any log lines.',
+    }
+  }
+  if (buildStatus && buildStatus !== 'running') {
+    return {
+      title: 'Not started yet',
+      description: 'Logs appear here once a runner starts the build.',
     }
   }
   return {

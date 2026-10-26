@@ -1,11 +1,7 @@
 import { useMemo } from 'react'
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Add01Icon,
-  InformationCircleIcon,
-  MoreHorizontalCircle01Icon,
-} from '@hugeicons/core-free-icons'
+import { Add01Icon, InformationCircleIcon } from '@hugeicons/core-free-icons'
 
 import type { Pipeline } from '@oore/client/models'
 import type { SortDirection } from '@/components/data-table-features'
@@ -14,13 +10,13 @@ import {
   DataTableColumnHeader,
   useDataTable,
   type DataTableColumnDef,
+  DataTableRowActionsTrigger,
 } from '@/components/data-table'
 import {
   dataTableSortingState,
   resolveDataTableSorting,
 } from '@/components/data-table-features'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -29,7 +25,6 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
   Empty,
@@ -43,8 +38,12 @@ import { Spinner } from '@/components/ui/spinner'
 import { TabsContent } from '@/components/ui/tabs'
 import { useUpdatePipeline } from '@/hooks/use-pipelines'
 import { relativeTime } from '@/lib/format-utils'
-import { getPipelineStatusVariant } from '@/lib/status-variants'
+import { enabledStatus } from '@/lib/status-variants'
+import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
+import { StatusBadge } from '@/components/status-badge'
 import { toast } from '@/lib/toast'
+import type { LastPipelineBuild } from './-project-build-summary'
+import { splitRowVariants } from '@/lib/recipes'
 
 const PIPELINE_SORTS = ['created_at', 'name'] as const
 
@@ -78,10 +77,7 @@ function PipelineActions({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" />}>
-        <span className="sr-only">Open menu</span>
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
-      </DropdownMenuTrigger>
+      <DataTableRowActionsTrigger label={`Actions for ${pipeline.name}`} />
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Actions</DropdownMenuLabel>
@@ -137,7 +133,6 @@ export function ProjectPipelinesTab({
   hasValidRepositoryWorkflow,
   isLoading,
   lastBuildByPipeline,
-  onDirectionChange,
   onPageChange,
   onQueryChange,
   onRetry,
@@ -161,12 +156,11 @@ export function ProjectPipelinesTab({
   error?: string
   hasValidRepositoryWorkflow: boolean
   isLoading: boolean
-  lastBuildByPipeline: Map<string, { status: string; time: number }>
-  onDirectionChange: (direction: SortDirection) => void
+  lastBuildByPipeline: ReadonlyMap<string, LastPipelineBuild>
   onPageChange: (page: number) => void
   onQueryChange: (query: string) => void
   onRetry: () => void
-  onSortChange: (sort: 'created_at' | 'name') => void
+  onSortChange: (sort: 'created_at' | 'name', direction: SortDirection) => void
   onTriggerBuild: (pipelineId: string) => void
   page: number
   pageSize: 20 | 50 | 100
@@ -190,6 +184,7 @@ export function ProjectPipelinesTab({
           <Link
             to="/projects/$projectId/pipelines/$pipelineId"
             params={{ projectId, pipelineId: row.original.id }}
+            className="font-medium underline-offset-4 hover:underline"
           >
             {row.original.name}
           </Link>
@@ -199,16 +194,20 @@ export function ProjectPipelinesTab({
         accessorKey: 'enabled',
         header: 'Status',
         cell: ({ row }) => (
-          <Badge variant={getPipelineStatusVariant(row.original.enabled)}>
-            {row.original.enabled ? 'Enabled' : 'Disabled'}
-          </Badge>
+          <StatusBadge
+            kind="enabled"
+            value={enabledStatus(row.original.enabled)}
+          />
         ),
         enableSorting: false,
       },
       {
         id: 'platforms',
         header: 'Platforms',
-        cell: ({ row }) => row.original.execution_config.platforms.join(', '),
+        cell: ({ row }) =>
+          row.original.execution_config.platforms
+            .map((platform) => BUILD_PLATFORM_LABELS[platform])
+            .join(', '),
         enableSorting: false,
       },
       {
@@ -216,8 +215,24 @@ export function ProjectPipelinesTab({
         header: 'Last build',
         cell: ({ row }) => {
           const build = lastBuildByPipeline.get(row.original.id)
-          if (!build) return 'No builds'
-          return `${build.status} · ${relativeTime(build.time)}`
+          if (!build) {
+            return (
+              <span className="text-muted-foreground">No recent builds</span>
+            )
+          }
+          return (
+            <Link
+              to="/builds/$buildId"
+              params={{ buildId: build.buildId }}
+              className="inline-flex items-center gap-2"
+            >
+              <StatusBadge kind="build" value={build.status} />
+              <span className="text-muted-foreground">
+                <span className="font-mono">#{build.buildNumber}</span> ·{' '}
+                {relativeTime(build.time)}
+              </span>
+            </Link>
+          )
         },
         enableSorting: false,
       },
@@ -264,36 +279,17 @@ export function ProjectPipelinesTab({
     onSortingChange: (updater) => {
       const next = resolveDataTableSorting(updater, sorting, PIPELINE_SORTS)
       if (!next) return
-      onSortChange(next.sort)
-      onDirectionChange(next.direction)
+      onSortChange(next.sort, next.direction)
     },
   })
 
   return (
     <TabsContent value="pipelines">
       <div className="space-y-4 pt-2">
-        {canWritePipelines && (total > 0 || query) ? (
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              nativeButton={false}
-              render={
-                <Link
-                  to="/projects/$projectId/pipelines/new"
-                  params={{ projectId }}
-                />
-              }
-            >
-              <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" />
-              Add pipeline
-            </Button>
-          </div>
-        ) : null}
-
         {error ? (
           <Alert variant="destructive">
             <HugeiconsIcon icon={InformationCircleIcon} />
-            <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <AlertDescription className={splitRowVariants()}>
               <span>Failed to load pipelines: {error}</span>
               <Button variant="outline" size="sm" onClick={onRetry}>
                 Retry
@@ -370,7 +366,24 @@ export function ProjectPipelinesTab({
               onChange: onQueryChange,
               placeholder: 'Search pipelines',
             }}
+            actions={
+              canWritePipelines ? (
+                <Button
+                  nativeButton={false}
+                  render={
+                    <Link
+                      to="/projects/$projectId/pipelines/new"
+                      params={{ projectId }}
+                    />
+                  }
+                >
+                  <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" />
+                  Add pipeline
+                </Button>
+              ) : undefined
+            }
             pagination={{ onPageChange, page, pageSize, total }}
+            isLoading={isLoading}
             emptyMessage={isLoading ? 'Loading pipelines…' : undefined}
           />
         )}

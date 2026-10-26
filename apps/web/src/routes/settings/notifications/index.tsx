@@ -47,6 +47,7 @@ import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { NotificationInventory } from './-notification-inventory'
 import type { NotificationSort } from './-notification-inventory'
+import { splitRowVariants } from '@/lib/recipes'
 
 interface NotificationsSearch {
   direction?: SortDirection
@@ -81,9 +82,9 @@ function parseSearch(search: SearchInput): NotificationsSearch {
 
 export const Route = createFileRoute('/settings/notifications/')({
   validateSearch: parseSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'], context)
   },
   component: NotificationsPage,
 })
@@ -168,7 +169,6 @@ function NotificationsPage() {
       <PageMeta title="Notifications" noindex />
       <PageHeader
         title="Notifications"
-        description="Configure outbound notification channels for build status updates."
         actions={
           <Button
             render={<Link to="/settings/notifications/new" />}
@@ -183,7 +183,7 @@ function NotificationsPage() {
       {channelsQuery.error ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Failed to load notification channels:{' '}
               {channelsQuery.error.message}
@@ -278,18 +278,19 @@ function NotificationsPage() {
             <AlertDialogTitle>Delete notification channel?</AlertDialogTitle>
             <AlertDialogDescription>
               This permanently removes {deleteTarget?.name ?? 'the channel'} and
-              its delivery history.
+              its delivery history. Pipelines that notified it stop sending.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               onClick={() => {
                 if (deleteTarget) handleDelete(deleteTarget)
               }}
               disabled={deleteMutation.isPending}
             >
-              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+              {deleteMutation.isPending ? 'Deleting...' : 'Delete channel'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

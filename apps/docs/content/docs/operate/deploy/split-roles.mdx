@@ -6,7 +6,7 @@ description: 'Use Control plane, Runner, Web node, and CLI only profiles across 
 
 Use split roles when one Mac cannot provide every required service.
 
-The guided v0.1.42 lifecycle supports macOS only. Published Linux web archives are standalone assets, not a guided Web node installation.
+The guided v0.1.42 lifecycle supports macOS only. To run the Web node on a Linux host, see [Run a Web node on Linux](/operate/deploy/linux-web-node).
 
 ## Supported compositions
 
@@ -109,6 +109,38 @@ oore status --daemon-url https://oore.example.com
 Open the protected browser URL. Make sure that **Settings > Runners** shows each expected Runner as online.
 
 Run a small build from an approved repository. Make sure that a remote Runner claims the build.
+
+## Keep live updates streaming through proxies
+
+The browser receives build, release, and runner changes over a long-lived server-sent events (SSE) connection to `GET /v1/events`. Build logs use the same transport at `/v1/builds/<build-id>/logs/stream`. When a hop cuts or buffers these connections, the UI falls back to polling, so pages still work, but they update more slowly and send more requests.
+
+Oore sends a keepalive comment every 15 seconds and marks each stream `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no`. The Web node lifts its own idle timeout for these requests. Check every other hop between the browser and the control plane, such as HAProxy, Warpgate, or a load balancer:
+
+- **Idle timeouts.** Each hop must allow at least 20 seconds without data. Use 60 seconds or more for headroom.
+- **Response buffering.** Each hop must forward response bytes as they arrive. Don't buffer or compress `text/event-stream` responses.
+- **Connection limits.** Each open browser tab holds one events connection, plus one log connection while it shows a running build. Size connection limits for that.
+
+For HAProxy, set the timeouts on the frontend and backend that carry `/v1/` traffic:
+
+```text
+defaults
+  mode http
+  timeout client  60s
+  timeout server  60s
+  timeout tunnel  1h
+```
+
+HAProxy streams response bodies without buffering by default. `timeout client` and `timeout server` govern an SSE response, and the keepalives reset them. `timeout tunnel` covers HAProxy configurations that switch a long response into tunnel mode. If you enable `compression`, HAProxy skips responses marked `no-transform`, so no change is needed. Don't add `http-response` rules that wait for the full body.
+
+To confirm the whole path, sign in through the browser entry point and open the developer tools. In the network panel, find the `events` request. It should show a `ready` event, stay open for several minutes, and show new events when a build changes state. If it closes at a fixed interval, find the hop with that idle timeout.
+
+With an API token, you can test the same path from a terminal:
+
+```bash
+curl -N -H "Authorization: Bearer <token>" https://oore.example.com/v1/events
+```
+
+`curl` should print an `event: ready` line, then a `:` keepalive line every 15 seconds.
 
 ## Troubleshooting
 

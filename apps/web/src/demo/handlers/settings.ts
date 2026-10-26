@@ -1,49 +1,71 @@
 import { demoApi } from './api'
 import { HttpResponse, delay } from 'msw'
 import * as z from 'zod'
-import type { ExternalAccessPreflightCheck } from '@oore/client/models'
+import type {
+  ConfigureExternalAccessOidcRequest,
+  ExternalAccessPreflightCheck,
+  TestOidcConnectionRequest,
+  UpdateArtifactStorageSettingsRequest,
+  UpdateExternalAccessNetworkSettingsRequest,
+  UpdateInstancePreferencesRequest,
+  UpdateTrustedProxySettingsRequest,
+} from '@oore/client/models'
 import { requireDemoInstancePermission } from '../authorization'
 import { demoState } from '../state'
 
 const DEMO_OIDC_ISSUER = 'https://accounts.google.com'
 
-const artifactStorageRequestSchema = z.object({
-  provider: z.enum(['disabled', 'local', 's3', 'r2']),
-  local_base_dir: z.string().optional(),
-  s3_bucket: z.string().optional(),
-  s3_region: z.string().optional(),
-  s3_endpoint: z.string().optional(),
-  access_key_id: z.string().optional(),
-  secret_access_key: z.string().optional(),
-})
+const artifactStorageRequestSchema =
+  z.toZod<UpdateArtifactStorageSettingsRequest>()(
+    z.object({
+      provider: z.enum(['disabled', 'local', 's3', 'r2']),
+      local_base_dir: z.string().nullish(),
+      s3_bucket: z.string().nullish(),
+      s3_region: z.string().nullish(),
+      s3_endpoint: z.string().nullish(),
+      access_key_id: z.string().nullish(),
+      secret_access_key: z.string().nullish(),
+    }),
+  )
 
-const preferencesRequestSchema = z.object({
-  key_storage_mode: z.enum(['keychain', 'file']),
-  runtime_mode: z.enum(['local', 'remote']).optional(),
-  remote_auth_mode: z.enum(['oidc', 'trusted_proxy']).optional(),
-  direct_macos_runner_paused: z.boolean().optional(),
-})
+const preferencesRequestSchema = z.toZod<UpdateInstancePreferencesRequest>()(
+  z.object({
+    key_storage_mode: z.enum(['keychain', 'file']),
+    runtime_mode: z.enum(['local', 'remote']).nullish(),
+    remote_auth_mode: z.enum(['oidc', 'trusted_proxy']).nullish(),
+    direct_macos_runner_paused: z.boolean().nullish(),
+  }),
+)
 
-const networkRequestSchema = z.object({
-  public_url: z.string().optional(),
-  artifact_delivery_url: z.string().optional(),
-  allowed_origins: z.array(z.string()),
-})
+const networkRequestSchema =
+  z.toZod<UpdateExternalAccessNetworkSettingsRequest>()(
+    z.object({
+      public_url: z.string().nullish(),
+      artifact_delivery_url: z.string().nullish(),
+      allowed_origins: z.array(z.string()),
+    }),
+  )
 
-const trustedProxyRequestSchema = z.object({
-  user_email_header: z.string().optional(),
-  trusted_proxy_cidrs: z.array(z.string()),
-  shared_secret: z.string().optional(),
-  warpgate_ticket: z.string().optional(),
-})
+const trustedProxyRequestSchema = z.toZod<UpdateTrustedProxySettingsRequest>()(
+  z.object({
+    user_email_header: z.string().nullish(),
+    trusted_proxy_cidrs: z.array(z.string()).optional(),
+    shared_secret: z.string().nullish(),
+    warpgate_ticket: z.string().nullish(),
+  }),
+)
 
-const oidcRequestSchema = z.object({
-  issuer_url: z.string().optional(),
-  client_id: z.string().optional(),
-  client_secret: z.string().optional(),
-})
+const oidcRequestSchema = z.toZod<ConfigureExternalAccessOidcRequest>()(
+  z.object({
+    issuer_url: z.string(),
+    client_id: z.string(),
+    client_secret: z.string().nullish(),
+  }),
+)
 
-const testOidcRequestSchema = z.object({ issuer_url: z.string().optional() })
+const testOidcRequestSchema = z.toZod<TestOidcConnectionRequest>()(
+  z.object({ issuer_url: z.string() }),
+)
 
 function now(): number {
   return Math.floor(Date.now() / 1000)
@@ -186,7 +208,13 @@ export const settingsHandlers = [
 
     demoState.preferences = {
       ...demoState.preferences,
-      ...body,
+      key_storage_mode: body.key_storage_mode,
+      runtime_mode: body.runtime_mode ?? demoState.preferences.runtime_mode,
+      remote_auth_mode:
+        body.remote_auth_mode ?? demoState.preferences.remote_auth_mode,
+      direct_macos_runner_paused:
+        body.direct_macos_runner_paused ??
+        demoState.preferences.direct_macos_runner_paused,
       updated_at: now(),
     }
 
@@ -245,7 +273,8 @@ export const settingsHandlers = [
       ...demoState.trustedProxy,
       user_email_header:
         body.user_email_header ?? demoState.trustedProxy.user_email_header,
-      trusted_proxy_cidrs: body.trusted_proxy_cidrs,
+      trusted_proxy_cidrs:
+        body.trusted_proxy_cidrs ?? demoState.trustedProxy.trusted_proxy_cidrs,
       has_shared_secret:
         demoState.trustedProxy.has_shared_secret || !!body.shared_secret,
       has_warpgate_ticket:

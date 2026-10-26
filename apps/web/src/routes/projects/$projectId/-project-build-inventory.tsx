@@ -14,12 +14,12 @@ import {
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
 import { Badge } from '@/components/ui/badge'
-import { relativeTime } from '@/lib/format-utils'
-import {
-  BUILD_STATUS_FILTER_OPTIONS,
-  getStatusVariant,
-} from '@/lib/status-variants'
+import { StatusBadge } from '@/components/status-badge'
+import { BuildSourceValue, EmptyValue } from '@/components/table-values'
+import { formatDuration, relativeTime } from '@/lib/format-utils'
+import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import type { ProjectBuildSort } from './-project-build-sort'
+import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
 
 const PROJECT_BUILD_SORTS = [
   'pipeline_name',
@@ -28,15 +28,26 @@ const PROJECT_BUILD_SORTS = [
   'created_at',
 ] satisfies ReadonlyArray<ProjectBuildSort>
 
+function buildDuration(build: Build): string | undefined {
+  if (!build.started_at || !build.finished_at) return undefined
+  return formatDuration(build.finished_at - build.started_at)
+}
+
 const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
     accessorKey: 'build_number',
     header: 'Build',
     cell: ({ row }) => (
-      <Link to="/builds/$buildId" params={{ buildId: row.original.id }}>
+      <Link
+        {...LIST_NAV_ITEM}
+        to="/builds/$buildId"
+        params={{ buildId: row.original.id }}
+        className="font-mono font-medium underline-offset-4 hover:underline"
+      >
         #{row.original.build_number}
       </Link>
     ),
+    enableHiding: false,
     enableSorting: false,
   },
   {
@@ -53,17 +64,15 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Status" />
     ),
-    cell: ({ row }) => (
-      <Badge variant={getStatusVariant(row.original.status)}>
-        {BUILD_STATUS_FILTER_OPTIONS[row.original.status]}
-      </Badge>
-    ),
+    cell: ({ row }) => <StatusBadge kind="build" value={row.original.status} />,
   },
   {
     accessorKey: 'trigger_type',
     header: 'Trigger',
     cell: ({ row }) => (
-      <Badge variant="outline">{row.original.trigger_type}</Badge>
+      <Badge variant="outline">
+        {TRIGGER_TYPE_LABELS[row.original.trigger_type]}
+      </Badge>
     ),
     enableSorting: false,
   },
@@ -72,12 +81,25 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Branch" />
     ),
-    cell: ({ row }) => row.original.branch ?? 'n/a',
+    cell: ({ row }) => (
+      <BuildSourceValue
+        branch={row.original.branch}
+        commitSha={row.original.commit_sha}
+        context={row.original.context}
+      />
+    ),
   },
   {
-    accessorKey: 'commit_sha',
-    header: 'Commit',
-    cell: ({ row }) => row.original.commit_sha?.slice(0, 10) ?? 'n/a',
+    id: 'duration',
+    header: 'Duration',
+    cell: ({ row }) => {
+      const duration = buildDuration(row.original)
+      return duration ? (
+        <span className="font-mono text-xs tabular-nums">{duration}</span>
+      ) : (
+        <EmptyValue />
+      )
+    },
     enableSorting: false,
   },
   {
@@ -90,10 +112,12 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
 ]
 
 export function ProjectBuildInventory({
+  activeFilterCount,
   builds,
   direction,
   filters,
   isLoading,
+  onClearFilters,
   onPageChange,
   onSearch,
   onSortChange,
@@ -103,10 +127,12 @@ export function ProjectBuildInventory({
   sort,
   total,
 }: {
+  activeFilterCount: number
   builds: Array<Build>
   direction: SortDirection
   filters: ReactNode
   isLoading: boolean
+  onClearFilters?: () => void
   onPageChange: (page: number) => void
   onSearch: (query: string) => void
   onSortChange: (sort: ProjectBuildSort, direction: SortDirection) => void
@@ -139,13 +165,22 @@ export function ProjectBuildInventory({
     <DataTable
       table={table}
       filters={filters}
+      activeFilterCount={activeFilterCount}
+      onClearFilters={onClearFilters}
       search={{
         value: query,
         onChange: onSearch,
-        placeholder: 'Search by branch',
+        placeholder: 'Search builds',
       }}
       pagination={{ onPageChange, page, pageSize, total }}
-      emptyMessage={isLoading ? 'Loading builds…' : 'No matching builds.'}
+      isLoading={isLoading}
+      emptyMessage={
+        isLoading
+          ? 'Loading builds…'
+          : query
+            ? `No builds match “${query}”.`
+            : 'No builds match these filters.'
+      }
     />
   )
 }

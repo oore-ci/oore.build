@@ -1,5 +1,4 @@
 {
-  "title": "Deployment",
-  "pagesIndex": "index",
-  "pages": ["index", "split-roles"]
+  "title": "Split roles across machines",
+  "pages": ["split-roles", "linux-web-node"]
 }

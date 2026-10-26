@@ -2,13 +2,11 @@ import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowRight01Icon,
-  Link04Icon,
+  Folder02Icon,
   PlayIcon,
-  Search01Icon,
 } from '@hugeicons/core-free-icons'
 
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Empty,
   EmptyContent,
@@ -17,114 +15,71 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import SetupHint from '@/components/setup-hint'
+import { Text } from '@/components/layout/text'
 
 export function BuildsEmptyState({
   capabilities,
   state,
-  onClearFilters,
   onRunBuild,
   runtimeMode,
 }: {
   capabilities: {
     triggerBuild: boolean
-    writeIntegrations: boolean
     writeProjects: boolean
   }
-  state: 'missing-projects' | 'no-builds' | 'no-results' | null
-  onClearFilters: () => void
+  state: 'missing-projects' | 'no-builds'
   onRunBuild: () => void
   runtimeMode: 'local' | 'remote'
 }) {
   if (state === 'missing-projects') {
     return (
-      <Card size="sm">
-        <CardHeader>
-          <CardTitle>Create project first</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <p className="text-sm text-muted-foreground">
-            {runtimeMode === 'local'
-              ? 'Builds run through project pipelines. Create your first project from a local Git repository.'
-              : 'Builds run through project pipelines. Create your first project before triggering builds.'}
-          </p>
-          <SetupHint
-            title="Fastest path to the first build"
-            items={[
-              runtimeMode === 'local'
-                ? 'Create a project from a local repository path on the runner host.'
-                : 'Connect GitHub or GitLab for repository discovery and webhook triggers.',
-              'Create a pipeline and choose the platforms Oore should build.',
-              'Trigger the first build from the pipeline page or a configured webhook.',
-            ]}
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            {capabilities.writeProjects ? (
-              <Button render={<Link to="/projects" />} nativeButton={false}>
-                Go to projects
-                <HugeiconsIcon icon={ArrowRight01Icon} />
-              </Button>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Ask an owner or admin to create the first project.
-              </p>
-            )}
-            {runtimeMode === 'remote' && capabilities.writeIntegrations ? (
-              <Button
-                variant="outline"
-                render={<Link to="/settings/integrations" />}
-                nativeButton={false}
-              >
-                <HugeiconsIcon icon={Link04Icon} />
-                Connect source
-              </Button>
-            ) : null}
-          </div>
-        </CardContent>
-      </Card>
-    )
-  }
-
-  if (state === 'no-builds') {
-    return (
-      <Empty className="border bg-card">
+      <Empty className="flex-none border bg-card">
         <EmptyHeader>
           <EmptyMedia variant="icon">
-            <HugeiconsIcon icon={PlayIcon} />
+            <HugeiconsIcon icon={Folder02Icon} />
           </EmptyMedia>
-          <EmptyTitle>No builds yet</EmptyTitle>
+          <EmptyTitle>No projects to build yet</EmptyTitle>
           <EmptyDescription>
-            Run a pipeline to see its status, output, and artifacts here.
+            {runtimeMode === 'local'
+              ? 'Builds run from project pipelines. Create a project from a Git repository on this Mac, add a pipeline, and your builds will show up here.'
+              : 'Builds run from project pipelines. Create a project from a GitHub or GitLab repository, add a pipeline, and your builds will show up here.'}
           </EmptyDescription>
         </EmptyHeader>
-        {capabilities.triggerBuild ? (
-          <EmptyContent>
-            <Button onClick={onRunBuild}>
-              <HugeiconsIcon icon={PlayIcon} />
-              Run first build
+        <EmptyContent>
+          {capabilities.writeProjects ? (
+            <Button render={<Link to="/projects" />} nativeButton={false}>
+              Set up a project
+              <HugeiconsIcon icon={ArrowRight01Icon} data-icon="inline-end" />
             </Button>
-          </EmptyContent>
-        ) : null}
+          ) : (
+            <Text variant="muted">
+              Ask an owner or admin to create the first project.
+            </Text>
+          )}
+        </EmptyContent>
       </Empty>
     )
   }
 
-  return state === 'no-results' ? (
+  return (
     <Empty className="border bg-card">
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <HugeiconsIcon icon={Search01Icon} />
+          <HugeiconsIcon icon={PlayIcon} />
         </EmptyMedia>
-        <EmptyTitle>No matching builds</EmptyTitle>
+        <EmptyTitle>No builds yet</EmptyTitle>
         <EmptyDescription>
-          Change the current filters or clear them to see all builds.
+          Run a pipeline to see its status, output, and artifacts here.
         </EmptyDescription>
       </EmptyHeader>
-      <EmptyContent>
-        <Button variant="outline" onClick={onClearFilters}>
-          Clear filters
-        </Button>
-      </EmptyContent>
+      {capabilities.triggerBuild ? (
+        <EmptyContent>
+          <Button onClick={onRunBuild}>
+            <HugeiconsIcon icon={PlayIcon} />
+            Run first build
+          </Button>
+        </EmptyContent>
+      ) : null}
     </Empty>
-  ) : null
+  )
 }

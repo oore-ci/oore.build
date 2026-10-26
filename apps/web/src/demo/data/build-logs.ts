@@ -58,10 +58,15 @@ const flutterBuildLogs: Array<BuildLogChunk> = [
   },
   {
     sequence: 21,
-    content: 'Signing APK with release keystore...',
+    content:
+      'Font asset "MaterialIcons-Regular.otf" was tree-shaken, reducing it from 1645184 to 4076 bytes (99.8% reduction).',
     stream: 'stdout',
   },
-  { sequence: 22, content: 'V2 signing enabled.', stream: 'stdout' },
+  {
+    sequence: 22,
+    content: "Running Gradle task 'assembleRelease'... 41.3s",
+    stream: 'stdout',
+  },
   {
     sequence: 23,
     content:
@@ -94,33 +99,53 @@ const failedBuildLogs: Array<BuildLogChunk> = [
   { sequence: 2, content: '  stripe_sdk 3.0.0', stream: 'stdout' },
   { sequence: 3, content: 'Got dependencies!', stream: 'stdout' },
   { sequence: 4, content: '', stream: 'stdout' },
-  { sequence: 5, content: '$ flutter analyze', stream: 'stdout' },
-  { sequence: 6, content: 'Analyzing native_payments...', stream: 'stdout' },
-  { sequence: 7, content: '', stream: 'stdout' },
+  { sequence: 5, content: '$ flutter test', stream: 'stdout' },
+  {
+    sequence: 6,
+    content:
+      '00:04 +38: test/stripe_v3/handler_test.dart: StripeV3Handler confirms a payment intent',
+    stream: 'stdout',
+  },
+  {
+    sequence: 7,
+    content:
+      '00:05 +38 -1: test/stripe_v3/handler_test.dart: StripeV3Handler rejects an expired card [E]',
+    stream: 'stderr',
+  },
   {
     sequence: 8,
-    content:
-      "  error - The argument type 'String' can't be assigned to the parameter type 'PaymentIntent' - lib/stripe_v3/handler.dart:42:15 - argument_type_not_assignable",
+    content: '  Expected: PaymentStatus:<PaymentStatus.declined>',
     stream: 'stderr',
   },
   {
     sequence: 9,
-    content:
-      "  error - Undefined name 'StripeV3Client' - lib/stripe_v3/client.dart:18:5 - undefined_identifier",
+    content: '    Actual: PaymentStatus:<PaymentStatus.pending>',
     stream: 'stderr',
   },
   {
     sequence: 10,
     content:
-      "  error - Missing required argument 'apiKey' - lib/stripe_v3/config.dart:7:22 - missing_required_argument",
+      '00:09 +41 -2: test/checkout/checkout_flow_test.dart: Checkout retries after a network timeout [E]',
     stream: 'stderr',
   },
-  { sequence: 11, content: '', stream: 'stdout' },
-  { sequence: 12, content: '3 issues found. (3 errors)', stream: 'stderr' },
-  { sequence: 13, content: '', stream: 'stdout' },
+  {
+    sequence: 11,
+    content: '  TimeoutException after 0:00:05.000000: Future not completed',
+    stream: 'stderr',
+  },
+  {
+    sequence: 12,
+    content: '00:11 +44 ~1 -2: Some tests failed.',
+    stream: 'stderr',
+  },
+  {
+    sequence: 13,
+    content: '[oore-tests] 47 tests: 44 passed, 2 failed, 1 skipped',
+    stream: 'stdout',
+  },
   {
     sequence: 14,
-    content: 'Build failed: flutter analyze exited with code 1',
+    content: 'Build failed: flutter test exited with code 1',
     stream: 'stderr',
   },
 ]
@@ -141,11 +166,16 @@ function withStepMarkers(
       stream: 'stdout',
     },
     ...step.logs.map((log) => ({ ...log, sequence: sequence++ })),
-    {
-      sequence: sequence++,
-      content: `[oore-step] ${JSON.stringify({ event: 'end', name: step.name, status: step.status })}`,
-      stream: 'stdout',
-    },
+    // A running step has no end marker yet.
+    ...(step.status === 'running'
+      ? []
+      : [
+          {
+            sequence: sequence++,
+            content: `[oore-step] ${JSON.stringify({ event: 'end', name: step.name, status: step.status })}`,
+            stream: 'stdout' as const,
+          },
+        ]),
   ])
 }
 
@@ -176,6 +206,27 @@ const succeededBuildLogsWithSteps = withStepMarkers([
   },
 ])
 
+const runningBuildLogsWithSteps = withStepMarkers([
+  {
+    name: 'flutter pub get',
+    command: 'flutter pub get',
+    status: 'succeeded',
+    logs: flutterBuildLogs.slice(0, 9),
+  },
+  {
+    name: 'flutter analyze',
+    command: 'flutter analyze --no-fatal-infos',
+    status: 'succeeded',
+    logs: flutterBuildLogs.slice(9, 16),
+  },
+  {
+    name: 'flutter build apk --release',
+    command: 'flutter build apk --release --split-per-abi',
+    status: 'running',
+    logs: flutterBuildLogs.slice(16, 20),
+  },
+])
+
 const failedBuildLogsWithSteps = withStepMarkers([
   {
     name: 'flutter pub get',
@@ -184,15 +235,70 @@ const failedBuildLogsWithSteps = withStepMarkers([
     logs: failedBuildLogs.slice(0, 5),
   },
   {
-    name: 'flutter analyze',
-    command: 'flutter analyze',
+    name: 'flutter test',
+    command: 'flutter test',
     status: 'failed',
     logs: failedBuildLogs.slice(5),
   },
 ])
 
+const failedPublishLogs = withStepMarkers([
+  {
+    name: 'checkout',
+    command: 'git checkout b7c8d9e',
+    status: 'succeeded',
+    logs: [
+      { sequence: 0, content: 'HEAD is now at b7c8d9e', stream: 'stdout' },
+    ],
+  },
+  {
+    name: 'flutter build appbundle --release',
+    command: 'flutter build appbundle --release',
+    status: 'succeeded',
+    logs: [
+      {
+        sequence: 0,
+        content: "Running Gradle task 'bundleRelease'...",
+        stream: 'stdout',
+      },
+      {
+        sequence: 1,
+        content:
+          '✓ Built build/app/outputs/bundle/release/app-release.aab (38.2 MB)',
+        stream: 'stdout',
+      },
+    ],
+  },
+  {
+    name: 'artifacts',
+    command: 'Upload artifacts',
+    status: 'succeeded',
+    logs: [
+      {
+        sequence: 0,
+        content: 'Found 1 artifact(s) to upload',
+        stream: 'stdout',
+      },
+    ],
+  },
+  {
+    name: 'publish-play',
+    command: 'Upload the App Bundle to Google Play',
+    status: 'failed',
+    logs: [
+      {
+        sequence: 0,
+        content:
+          '[oore-publish] Google Play rejected the request (403): The caller does not have permission',
+        stream: 'stderr',
+      },
+    ],
+  },
+])
+
 export const demoBuildLogs = {
-  [BUILD_IDS.running1]: flutterBuildLogs.slice(0, 20), // in-progress
+  [BUILD_IDS.failedPublish1]: failedPublishLogs,
+  [BUILD_IDS.running1]: runningBuildLogsWithSteps,
   [BUILD_IDS.running2]: flutterBuildLogs.slice(0, 8),
   [BUILD_IDS.succeeded1]: succeededBuildLogsWithSteps,
   [BUILD_IDS.succeeded2]: flutterBuildLogs.slice(0, 8).concat([

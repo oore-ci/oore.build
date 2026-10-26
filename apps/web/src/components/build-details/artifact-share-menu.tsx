@@ -41,6 +41,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { textVariants } from '@/lib/recipes'
 
 const TTL_OPTIONS = [
   { value: '3600', label: '1 hour' },
@@ -70,7 +73,10 @@ export default function ArtifactShareMenu({
     downloadMutation.mutate(artifact.id, {
       onSuccess: (response) => {
         void navigator.clipboard.writeText(response.download_url).then(
-          () => toast.success(`Download link copied for ${artifact.name}`),
+          () =>
+            toast.success(
+              `Download link for ${artifact.name} copied. It works for 15 minutes.`,
+            ),
           () => toast.error('Failed to copy link'),
         )
       },
@@ -105,7 +111,7 @@ export default function ArtifactShareMenu({
   function copyShareUrl() {
     if (!createdToken) return
     void navigator.clipboard.writeText(createdToken.download_url).then(
-      () => toast.success('Share link copied to clipboard'),
+      () => toast.success('Share link copied'),
       () => toast.error('Failed to copy link'),
     )
   }
@@ -117,13 +123,14 @@ export default function ArtifactShareMenu({
           render={
             <Button
               variant="outline"
-              size="icon-xs"
+              size="sm"
               aria-label={`Share options for ${artifact.name}`}
               title="Share options"
             />
           }
         >
           <HugeiconsIcon icon={Share08Icon} />
+          Share
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-auto">
           <DropdownMenuGroup>
@@ -132,11 +139,21 @@ export default function ArtifactShareMenu({
               disabled={downloadMutation.isPending}
             >
               <HugeiconsIcon icon={Copy01Icon} />
-              Copy download link
+              <span className="flex flex-col">
+                Copy download link
+                <span className={textVariants({ variant: 'caption' })}>
+                  Anyone with it can download for 15 minutes
+                </span>
+              </span>
             </DropdownMenuItem>
             <DropdownMenuItem onClick={openShareDialog}>
               <HugeiconsIcon icon={Share08Icon} />
-              Create share link
+              <span className="flex flex-col">
+                Create share link…
+                <span className={textVariants({ variant: 'caption' })}>
+                  Lasts 1 hour to 7 days, no sign-in needed
+                </span>
+              </span>
             </DropdownMenuItem>
           </DropdownMenuGroup>
         </DropdownMenuContent>
@@ -146,12 +163,12 @@ export default function ArtifactShareMenu({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {createdToken ? 'Share Link Created' : 'Create Share Link'}
+              {createdToken ? 'Share link created' : 'Create share link'}
             </DialogTitle>
             <DialogDescription>
               {createdToken
                 ? 'Copy this link to share. It will not be shown again.'
-                : `Generate a scoped download link for "${artifact.name}".`}
+                : `Anyone with this link can download "${artifact.name}" without signing in until it expires or is revoked. Share it only with intended recipients.`}
             </DialogDescription>
           </DialogHeader>
 
@@ -162,14 +179,14 @@ export default function ArtifactShareMenu({
                   {createdToken.download_url}
                 </AlertDescription>
               </Alert>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Row gap={2} className={textVariants({ variant: 'caption' })}>
                 <span>Expires {relativeTime(createdToken.expires_at)}</span>
                 {createdToken.single_use ? (
                   <Badge variant="secondary" className="text-[10px]">
                     Single use
                   </Badge>
                 ) : null}
-              </div>
+              </Row>
               <DialogFooter>
                 <Button
                   variant="secondary"
@@ -188,8 +205,8 @@ export default function ArtifactShareMenu({
               </DialogFooter>
             </div>
           ) : (
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
+            <Stack gap={4}>
+              <Stack gap={2}>
                 <Label htmlFor="ttl-select">Expires after</Label>
                 <Select
                   items={TTL_OPTIONS}
@@ -211,17 +228,17 @@ export default function ArtifactShareMenu({
                     </SelectGroup>
                   </SelectContent>
                 </Select>
-              </div>
-              <div className="flex items-center gap-2">
+              </Stack>
+              <Row gap={2}>
                 <Checkbox
                   id="single-use"
                   checked={singleUse}
                   onCheckedChange={(checked) => setSingleUse(checked === true)}
                 />
                 <Label htmlFor="single-use" className="text-sm font-normal">
-                  Single use (consumed after first download)
+                  Limit to one download
                 </Label>
-              </div>
+              </Row>
               <DialogFooter>
                 <Button
                   variant="secondary"
@@ -239,11 +256,11 @@ export default function ArtifactShareMenu({
                       Creating...
                     </>
                   ) : (
-                    'Create Link'
+                    'Create link'
                   )}
                 </Button>
               </DialogFooter>
-            </div>
+            </Stack>
           )}
         </DialogContent>
       </Dialog>

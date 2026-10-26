@@ -31,7 +31,7 @@ Use the root Makefile for common tasks.
 
 ```bash
 make dev-web
-make test-web
+make validate-frontend
 make validate-rust
 make validate
 ```

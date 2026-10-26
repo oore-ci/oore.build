@@ -17,9 +17,12 @@ import type {
   ListBuildsResponse,
 } from '@oore/client/models'
 import {
+  approveBuild,
   cancelBuild,
   createBuild,
+  rejectBuild,
   rerunBuild,
+  retryBuildStep,
   createArtifactInstallLink,
   generateDownloadLink as getArtifactDownloadLink,
   listBuildArtifacts,
@@ -27,15 +30,24 @@ import {
   getBuildLogs,
 } from '@oore/client/operations'
 import {
+  getBuildInsightsOptions,
   getBuildOptions,
+  getBuildLogsQueryKey,
   getBuildQueryKey,
+  getBuildAnalysisOptions,
+  getBuildSizeReportOptions,
+  getBuildTestResultsOptions,
+  listBuildActorsOptions,
   listArtifactsOptions,
   listBuildsOptions,
   listBuildsQueryKey,
+  listBuildArtifactsMutationKey,
   listProjectArtifactsOptions,
   previewBuildChangelogOptions,
 } from '@oore/client/react-query'
 import { useApiContext } from '@/hooks/use-api-context'
+import { LIVE_FALLBACK_POLL_MS } from '@/lib/live-events'
+import { useLiveEventsStore } from '@/stores/live-events-store'
 import {
   scopeOoreQueryKey,
   scopeOoreQueryOptions,
@@ -57,6 +69,11 @@ export function useBuilds<TData = ListBuildsResponse>(
     pipeline_id?: string
     status?: string
     branch?: string
+    trigger?: string
+    actor?: string
+    created_after?: number
+    created_before?: number
+    q?: string
     sort?: 'created_at' | 'status' | 'project_name' | 'pipeline_name' | 'branch'
     direction?: 'asc' | 'desc'
     limit?: number
@@ -69,7 +86,12 @@ export function useBuilds<TData = ListBuildsResponse>(
   },
 ) {
   const { baseUrl, client, instanceId, token } = useApiContext()
-  const pollInterval = options?.refetchInterval ?? BUILD_POLL_INTERVAL_MS
+  const liveEvents = useLiveEventsStore((s) => s.connected)
+  const requestedInterval = options?.refetchInterval ?? BUILD_POLL_INTERVAL_MS
+  const pollInterval =
+    liveEvents && requestedInterval !== false
+      ? LIVE_FALLBACK_POLL_MS
+      : requestedInterval
   const query = scopeOoreQueryOptions(
     instanceId,
     listBuildsOptions({ client, query: params }),
@@ -83,6 +105,20 @@ export function useBuilds<TData = ListBuildsResponse>(
       hasActiveBuilds(query.state.data) ? pollInterval : false,
     placeholderData: keepPreviousData,
     select: options?.select,
+  })
+}
+
+/** Who triggered the builds the caller can see, for the actor filter. */
+export function useBuildActors(params: { project_id?: string; q?: string }) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  return useQuery({
+    ...scopeOoreQueryOptions(
+      instanceId,
+      listBuildActorsOptions({ client, query: { ...params, limit: 50 } }),
+    ),
+    enabled: !!baseUrl && !!token,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -241,6 +277,35 @@ export function useCancelBuild() {
   })
 }
 
+export function useBuildApprovalDecision(decision: 'approve' | 'reject') {
+  const queryClient = useQueryClient()
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useMutation({
+    mutationFn: ({ buildId, reason }: { buildId: string; reason?: string }) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      const decide = decision === 'approve' ? approveBuild : rejectBuild
+      return decide({
+        client,
+        path: { build_id: buildId },
+        body: { reason: reason?.trim() || undefined },
+      })
+    },
+    onSuccess: (_data, { buildId }) => {
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(instanceId, listBuildsQueryKey({ client })),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(
+          instanceId,
+          getBuildQueryKey({ client, path: { build_id: buildId } }),
+        ),
+      })
+    },
+  })
+}
+
 export function useRerunBuild() {
   const queryClient = useQueryClient()
   const { baseUrl, client, instanceId, token } = useApiContext()
@@ -265,11 +330,36 @@ export function useRerunBuild() {
   })
 }
 
+export function useRetryBuildStep() {
+  const queryClient = useQueryClient()
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useMutation({
+    mutationFn: ({ buildId, step }: { buildId: string; step: string }) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return retryBuildStep({
+        body: { step },
+        client,
+        path: { build_id: buildId },
+      })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(instanceId, listBuildsQueryKey({ client })),
+      })
+    },
+  })
+}
+
 export function useBuildLogs(buildId: string, options?: { enabled?: boolean }) {
   const { baseUrl, client, instanceId, token } = useApiContext()
 
   return useQuery({
-    queryKey: [instanceId, 'build-logs', buildId],
+    queryKey: scopeOoreQueryKey(
+      instanceId,
+      getBuildLogsQueryKey({ client, path: { build_id: buildId } }),
+    ),
     queryFn: async ({ signal }) => {
       const pageSize = 5000
       const logs: Array<BuildLogChunk> = []
@@ -315,6 +405,60 @@ export function useArtifacts(
   })
 }
 
+export function useBuildTests(
+  buildId: string,
+  options?: { refetchInterval?: number | false },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    getBuildTestResultsOptions({ client, path: { build_id: buildId } }),
+  )
+
+  return useQuery({
+    ...query,
+    enabled: !!baseUrl && !!token && !!buildId,
+    staleTime: 5_000,
+    refetchInterval: options?.refetchInterval,
+  })
+}
+
+export function useBuildAnalysis(
+  buildId: string,
+  options?: { refetchInterval?: number | false },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    getBuildAnalysisOptions({ client, path: { build_id: buildId } }),
+  )
+
+  return useQuery({
+    ...query,
+    enabled: !!baseUrl && !!token && !!buildId,
+    staleTime: 5_000,
+    refetchInterval: options?.refetchInterval,
+  })
+}
+
+export function useBuildSizeReport(
+  buildId: string,
+  options?: { refetchInterval?: number | false },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    getBuildSizeReportOptions({ client, path: { build_id: buildId } }),
+  )
+
+  return useQuery({
+    ...query,
+    enabled: !!baseUrl && !!token && !!buildId,
+    staleTime: 5_000,
+    refetchInterval: options?.refetchInterval,
+  })
+}
+
 export function useProjectArtifacts(projectId: string, limit = 50) {
   const { baseUrl, client, instanceId, token } = useApiContext()
   const query = scopeOoreQueryOptions(
@@ -337,7 +481,13 @@ export function useArtifactsForBuilds(buildIds: Array<string>) {
   const { baseUrl, client, instanceId, token } = useApiContext()
 
   return useQuery({
-    queryKey: [instanceId, 'build-artifacts', buildIds],
+    queryKey: scopeOoreQueryKey(
+      instanceId,
+      listBuildArtifactsMutationKey({
+        client,
+        body: { build_ids: buildIds },
+      }),
+    ),
     queryFn: ({ signal }) =>
       listBuildArtifacts({ body: { build_ids: buildIds }, client, signal }),
     enabled: !!baseUrl && !!token && buildIds.length > 0,
@@ -349,40 +499,43 @@ export function useArtifactDownloadLink() {
   const { baseUrl, client, token } = useApiContext()
 
   return useMutation({
-    mutationFn: (artifactId: string) => {
+    mutationFn: async (artifactId: string) => {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
-      return getArtifactDownloadLink({
+      const response = await getArtifactDownloadLink({
         client,
         path: { artifact_id: artifactId },
       })
+      return {
+        ...response,
+        download_url: new URL(response.download_url, baseUrl).href,
+      }
     },
   })
 }
 
 export function useArtifactInstallLink() {
-  const { baseUrl, client, instanceId, token } = useApiContext()
-  const queryClient = useQueryClient()
+  const { baseUrl, client, token } = useApiContext()
 
   return useMutation({
-    mutationFn: (artifactId: string) => {
+    mutationFn: async (artifactId: string) => {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
-      return createArtifactInstallLink({
+      const response = await createArtifactInstallLink({
         client,
         path: { artifact_id: artifactId },
       })
+      return {
+        ...response,
+        download_url: new URL(response.download_url, baseUrl).href,
+        install_url: new URL(response.install_url, baseUrl).href,
+      }
     },
-    onSuccess: (_result, artifactId) =>
-      queryClient.invalidateQueries({
-        queryKey: [instanceId, 'scoped-tokens', artifactId],
-      }),
   })
 }
 
 export function useCreateScopedDownloadToken() {
-  const { baseUrl, client, instanceId, token } = useApiContext()
-  const queryClient = useQueryClient()
+  const { baseUrl, client, token } = useApiContext()
 
   return useMutation({
     mutationFn: ({
@@ -400,10 +553,33 @@ export function useCreateScopedDownloadToken() {
         path: { artifact_id: artifactId },
       })
     },
-    onSuccess: (_data, { artifactId }) => {
-      void queryClient.invalidateQueries({
-        queryKey: [instanceId, 'scoped-tokens', artifactId],
-      })
-    },
+  })
+}
+
+export type BuildInsightsWindow = 7 | 14 | 30 | 90
+
+/** Build health for Home, bucketed by day in the viewer's time zone. */
+export function useBuildInsights(params: {
+  days: BuildInsightsWindow
+  project_id?: string
+}) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    getBuildInsightsOptions({
+      client,
+      query: {
+        ...params,
+        utc_offset_minutes: -new Date().getTimezoneOffset(),
+      },
+    }),
+  )
+
+  return useQuery({
+    ...query,
+    enabled: !!baseUrl && !!token,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    placeholderData: keepPreviousData,
   })
 }

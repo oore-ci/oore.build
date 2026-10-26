@@ -10,8 +10,11 @@ import {
   type DataTableColumnDef,
 } from '@/components/data-table'
 import { Button } from '@/components/ui/button'
+import { RelativeTime } from '@/components/relative-time'
+import { formatEnumLabel } from '@/lib/format-utils'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Row } from '@/components/layout/row'
 
 interface ConnectionDetail {
   label: string
@@ -38,12 +41,7 @@ function humanizeAuthMode(mode: string): string {
     ['pat', 'Personal access token'],
     ['personal_token', 'Personal access token'],
   ])
-  return (
-    labels.get(mode) ??
-    mode
-      .replace(/_/g, ' ')
-      .replace(/\b\w/g, (character) => character.toUpperCase())
-  )
+  return labels.get(mode) ?? formatEnumLabel(mode)
 }
 
 function providerLabel(provider: Integration['provider']): string {
@@ -82,7 +80,7 @@ export function IntegrationConnectionDetails({
         value: networkSettingsLoading ? (
           <Skeleton className="h-6 w-72" />
         ) : networkSettingsError ? (
-          <div className="flex items-center gap-3">
+          <Row gap={3}>
             <span className="text-sm text-destructive">
               Could not load webhook URL
             </span>
@@ -93,9 +91,9 @@ export function IntegrationConnectionDetails({
             >
               Retry
             </Button>
-          </div>
+          </Row>
         ) : gitLabWebhookUrl ? (
-          <div className="flex items-center gap-2">
+          <Row gap={2}>
             <code className="font-mono text-xs">{gitLabWebhookUrl}</code>
             <Button
               variant="ghost"
@@ -111,14 +109,16 @@ export function IntegrationConnectionDetails({
             >
               <HugeiconsIcon icon={Copy01Icon} />
             </Button>
-          </div>
+          </Row>
         ) : null,
       })
       rows.push({
         label: 'Last delivery for this source',
-        value: lastWebhookAt
-          ? new Date(lastWebhookAt * 1000).toLocaleString()
-          : 'No delivery received',
+        value: lastWebhookAt ? (
+          <RelativeTime at={lastWebhookAt} />
+        ) : (
+          'No delivery received'
+        ),
       })
     }
 
@@ -131,7 +131,7 @@ export function IntegrationConnectionDetails({
 
     rows.push({
       label: 'Created',
-      value: new Date(integration.created_at * 1000).toLocaleString(),
+      value: <RelativeTime at={integration.created_at} />,
     })
     return rows
   }, [

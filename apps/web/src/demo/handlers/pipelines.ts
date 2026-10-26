@@ -8,14 +8,35 @@ import {
   requireDemoProjectPermission,
 } from '../authorization'
 import { demoState } from '../state'
+import { demoExportYaml } from '../pipeline-yaml'
+import { demoImportYaml } from '../pipeline-yaml-import'
 import { parseDemoJsonObject } from '../request'
+import {
+  DEMO_SHARED_KEY_ID,
+  demoSharedKeySummary,
+  setDemoSharedKeyUsage,
+} from './store-credentials'
 import type { JsonObject } from '@/lib/types'
-import type { Pipeline } from '@oore/client/models'
+import type {
+  AppStorePublishConfig,
+  BuildPlatform,
+  CreatePipelineRequest,
+  ExportPipelineYamlRequest,
+  ImportPipelineYamlRequest,
+  Pipeline,
+  PipelineExecutionConfig,
+  PipelinePlanStep,
+  PlanPipelineRequest,
+  PlanPipelineResponse,
+  RegisterIosDeviceRequest,
+  UpdatePipelineAndroidSigningRequest,
+  UpdatePipelineRequest,
+} from '@oore/client/models'
 
 const stringListSchema = z.array(z.string())
 const executionConfigSchema = z.object({
   platforms: z.array(z.enum(['android', 'ios', 'macos'])),
-  flutter_version: z.string().optional(),
+  flutter_version: z.string().nullish(),
   commands: z.object({
     pre_build: stringListSchema,
     build: stringListSchema,
@@ -30,51 +51,99 @@ const executionConfigSchema = z.object({
     .optional(),
   platform_commands: z
     .object({
-      android: z.string().optional(),
-      ios: z.string().optional(),
-      macos: z.string().optional(),
+      android: z.string().nullish(),
+      ios: z.string().nullish(),
+      macos: z.string().nullish(),
     })
     .optional(),
   env: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
   artifact_patterns: stringListSchema,
+  build_number_offset: z.number().int().optional(),
+  runs_on: stringListSchema.optional(),
+  isolation: z.enum(['host', 'vm']).optional(),
 })
 const triggerConfigSchema = z.object({
   events: stringListSchema,
   branches: stringListSchema,
+  tags: stringListSchema.optional(),
+  paths: stringListSchema.optional(),
+  paths_ignore: stringListSchema.optional(),
+  schedules: z
+    .array(z.object({ cron: z.string(), branch: z.string().nullish() }))
+    .optional(),
+})
+const approvalPolicySchema = z.object({
+  required: z.boolean(),
+  events: stringListSchema.optional(),
+  expires_after_hours: z.number().int().min(0).nullish(),
+})
+const sizeBudgetSchema = z.object({
+  mode: z.enum(['warn', 'fail']),
+  rules: z.array(
+    z.object({
+      kind: z.string(),
+      max_bytes: z.number().nullish(),
+      max_increase_bytes: z.number().nullish(),
+      max_increase_percent: z.number().nullish(),
+    }),
+  ),
 })
 const concurrencySchema = z.object({
   cancel_previous: z.boolean(),
-  max_concurrent: z.number().optional(),
+  max_concurrent: z.number().nullish(),
 })
-const createPipelineSchema = z.object({
-  name: z.string(),
-  config_path: z.string().optional(),
-  config_path_explicit: z.boolean().optional(),
-  execution_config: executionConfigSchema.optional(),
-  trigger_config: triggerConfigSchema,
-  concurrency: concurrencySchema,
-})
-const updatePipelineSchema = createPipelineSchema.partial().extend({
-  enabled: z.boolean().optional(),
-})
+const createPipelineSchema = z.toZod<CreatePipelineRequest>()(
+  z.object({
+    name: z.string(),
+    config_path: z.string().nullish(),
+    config_path_explicit: z.boolean().nullish(),
+    execution_config: executionConfigSchema.nullish(),
+    trigger_config: triggerConfigSchema.nullish(),
+    concurrency: concurrencySchema.nullish(),
+    timeout_minutes: z.number().int().nullish(),
+    approval: approvalPolicySchema.nullish(),
+    size_budget: sizeBudgetSchema.nullish(),
+    workflow: z.string().nullish(),
+  }),
+)
+const updatePipelineSchema = z.toZod<UpdatePipelineRequest>()(
+  z.object({
+    name: z.string().nullish(),
+    config_path: z.string().nullish(),
+    config_path_explicit: z.boolean().nullish(),
+    execution_config: executionConfigSchema.nullish(),
+    trigger_config: triggerConfigSchema.nullish(),
+    concurrency: concurrencySchema.nullish(),
+    timeout_minutes: z.number().int().nullish(),
+    approval: approvalPolicySchema.nullish(),
+    size_budget: sizeBudgetSchema.nullish(),
+    workflow: z.string().nullish(),
+    enabled: z.boolean().nullish(),
+  }),
+)
 const androidSigningInputSchema = z.object({
-  enabled: z.boolean(),
-  keystore_filename: z.string().optional(),
-  keystore_base64: z.string().optional(),
-  store_password: z.string().optional(),
-  key_alias: z.string().optional(),
-  key_password: z.string().optional(),
+  enabled: z.boolean().optional(),
+  keystore_filename: z.string().nullish(),
+  keystore_base64: z.string().nullish(),
+  store_password: z.string().nullish(),
+  key_alias: z.string().nullish(),
+  key_password: z.string().nullish(),
 })
-const androidSigningRequestSchema = z.object({
-  debug: androidSigningInputSchema.optional(),
-  release: androidSigningInputSchema.optional(),
-})
+const androidSigningRequestSchema =
+  z.toZod<UpdatePipelineAndroidSigningRequest>()(
+    z.object({
+      debug: androidSigningInputSchema.nullish(),
+      release: androidSigningInputSchema.nullish(),
+    }),
+  )
 const jsonObjectSchema = z.record(z.string(), z.json())
-const iosDeviceRequestSchema = z.object({
-  name: z.string(),
-  udid: z.string(),
-  platform: z.string(),
-})
+const iosDeviceRequestSchema = z.toZod<RegisterIosDeviceRequest>()(
+  z.object({
+    name: z.string(),
+    udid: z.string(),
+    platform: z.string().nullish(),
+  }),
+)
 
 interface IosSigningFixtures {
   [pipelineId: string]: JsonObject | undefined
@@ -123,6 +192,7 @@ const iosSigningByPipeline: IosSigningFixtures = {
   [PIPELINE_IDS.shopIos]: {
     enabled: true,
     mode: 'api',
+    export_method: 'ad_hoc',
     team_id: 'A1B2C3D4E5',
     bundle_ids: ['com.example.fluttershop'],
     has_p12: false,
@@ -145,6 +215,7 @@ const iosSigningByPipeline: IosSigningFixtures = {
   [PIPELINE_IDS.paymentsAll]: {
     enabled: true,
     mode: 'hybrid',
+    export_method: 'app_store',
     team_id: 'F6G7H8I9J0',
     bundle_ids: [
       'com.example.nativepayments',
@@ -156,26 +227,121 @@ const iosSigningByPipeline: IosSigningFixtures = {
     has_api_key: true,
     api_key_id: 'M3N4P5Q6RS',
     api_issuer_id: '69d2de96-0000-47e3-e053-0824d011072a',
+    shared_api_key_id: DEMO_SHARED_KEY_ID,
     provisioning_profiles: [
       {
         bundle_id: 'com.example.nativepayments',
         has_profile: true,
-        profile_filename: 'NativePayments_AdHoc.mobileprovision',
+        profile_filename: 'NativePayments_AppStore.mobileprovision',
         profile_uuid: 'B2C3D4E5-F6A7-8901-BCDE-F12345678901',
-        profile_name: 'NativePayments Ad Hoc',
+        profile_name: 'NativePayments App Store',
         expires_at: ago(-365 * 86400),
       },
       {
         bundle_id: 'com.example.nativepayments.share',
         has_profile: true,
-        profile_filename: 'NativePayments_Share_AdHoc.mobileprovision',
+        profile_filename: 'NativePayments_Share_AppStore.mobileprovision',
         profile_uuid: 'C3D4E5F6-A7B8-9012-CDEF-123456789012',
-        profile_name: 'NativePayments Share Ad Hoc',
+        profile_name: 'NativePayments Share App Store',
         expires_at: ago(-365 * 86400),
       },
     ],
     updated_at: ago(86400 * 7),
   },
+}
+
+const demoAppStoreConfigs = new Map<
+  string,
+  { config: AppStorePublishConfig; updated_at: number }
+>([
+  [
+    PIPELINE_IDS.paymentsAll,
+    {
+      config: {
+        enabled: true,
+        destination: 'testflight',
+        testflight_groups: ['Internal QA', 'Payments beta'],
+        release_notes: [
+          {
+            locale: 'en-US',
+            whats_new: 'Checks the new card entry flow and saved cards.',
+          },
+        ],
+        uses_non_exempt_encryption: false,
+        submit_for_review: false,
+        phased_release: false,
+      },
+      updated_at: ago(86400 * 2),
+    },
+  ],
+])
+
+const appStoreConfigSchema = z.object({
+  enabled: z.boolean(),
+  destination: z.enum(['testflight', 'app_store']),
+  testflight_groups: z.array(z.string().min(1).max(128)).max(20),
+  release_notes: z
+    .array(z.object({ locale: z.string().min(1), whats_new: z.string() }))
+    .max(40),
+  uses_non_exempt_encryption: z.boolean(),
+  submit_for_review: z.boolean(),
+  phased_release: z.boolean(),
+})
+
+const iosSigningSummarySchema = z.object({
+  enabled: z.boolean().optional(),
+  export_method: z.string().optional(),
+  has_api_key: z.boolean().optional(),
+  shared_api_key_id: z.string().optional(),
+})
+
+function storedIosSigning(pipelineId: string) {
+  return iosSigningSummarySchema.parse(
+    demoState.iosSigning[pipelineId] ?? iosSigningByPipeline[pipelineId] ?? {},
+  )
+}
+
+setDemoSharedKeyUsage(
+  (keyId) =>
+    demoState.pipelines.filter(
+      (pipeline) => storedIosSigning(pipeline.id).shared_api_key_id === keyId,
+    ).length,
+)
+
+/** The daemon returns the selected shared key, not its id. */
+function iosSigningResponse(data: JsonObject) {
+  const { shared_api_key_id: sharedKeyId, ...rest } = data
+  const id = z.string().safeParse(sharedKeyId).data
+  const sharedKey = id ? demoSharedKeySummary(id) : undefined
+  return sharedKey ? { ...rest, shared_api_key: sharedKey } : rest
+}
+
+function appStoreResponse(pipelineId: string) {
+  const signing = storedIosSigning(pipelineId)
+  const saved = demoAppStoreConfigs.get(pipelineId)
+  return {
+    pipeline_id: pipelineId,
+    config: saved?.config ?? {
+      enabled: false,
+      destination: 'testflight' as const,
+      testflight_groups: [],
+      release_notes: [],
+      uses_non_exempt_encryption: false,
+      submit_for_review: false,
+      phased_release: false,
+    },
+    updated_at: saved?.updated_at,
+    has_api_key: !!signing.has_api_key || !!signing.shared_api_key_id,
+    app_store_export:
+      (signing.enabled ?? false) && signing.export_method === 'app_store',
+  }
+}
+
+function invalidPublishConfig(message: string): Response {
+  return HttpResponse.json(
+    { error: message, code: 'invalid_publish_config' },
+    { status: 400 },
+  )
 }
 
 const iosDevicesByPipeline: IosDeviceFixtures = {
@@ -338,8 +504,15 @@ export const pipelineHandlers = [
         commands: { pre_build: [], build: [], post_build: [] },
         artifact_patterns: [],
       },
-      trigger_config: body.trigger_config,
-      concurrency: body.concurrency,
+      trigger_config: body.trigger_config ?? { events: [], branches: [] },
+      concurrency: body.concurrency ?? {
+        cancel_previous: false,
+        max_concurrent: null,
+      },
+      timeout_minutes: body.timeout_minutes ?? 60,
+      approval: body.approval ?? { required: false, events: [] },
+      size_budget: body.size_budget ?? { mode: 'warn', rules: [] },
+      workflow: body.workflow ?? null,
       enabled: true,
       created_at: ago(0),
       updated_at: ago(0),
@@ -406,6 +579,48 @@ export const pipelineHandlers = [
     const forbidden = requireDemoInstancePermission(request, 'pipelines:write')
     if (forbidden) return forbidden
     return HttpResponse.json({ valid: true })
+  }),
+
+  demoApi.planPipeline(async ({ request }) => {
+    await delay(150)
+    const forbidden = requireDemoInstancePermission(request, 'pipelines:read')
+    if (forbidden) return forbidden
+    // SAFETY: demo requests come from the app's own typed client.
+    const body = (await request.json()) as PlanPipelineRequest
+    if (body.execution_config) {
+      return HttpResponse.json(
+        demoFormPlan(
+          body.execution_config,
+          body.platforms ?? [],
+          body.build_play_bundle ?? false,
+        ),
+      )
+    }
+    return HttpResponse.json(
+      demoFilePlan(
+        body.repository_yaml ?? '',
+        body.workflow ?? null,
+        body.platforms ?? [],
+      ),
+    )
+  }),
+
+  demoApi.exportPipelineYaml(async ({ request }) => {
+    await delay(150)
+    const forbidden = requireDemoInstancePermission(request, 'pipelines:read')
+    if (forbidden) return forbidden
+    // SAFETY: demo requests come from the app's own typed client.
+    const body = (await request.json()) as ExportPipelineYamlRequest
+    return HttpResponse.json(demoExportYaml(body))
+  }),
+
+  demoApi.importPipelineYaml(async ({ request }) => {
+    await delay(150)
+    const forbidden = requireDemoInstancePermission(request, 'pipelines:read')
+    if (forbidden) return forbidden
+    // SAFETY: demo requests come from the app's own typed client.
+    const body = (await request.json()) as ImportPipelineYamlRequest
+    return HttpResponse.json(demoImportYaml(body))
   }),
 
   demoApi.getPipelineAndroidSigning(async ({ params }) => {
@@ -483,12 +698,13 @@ export const pipelineHandlers = [
         : undefined)
     if (data) {
       demoState.iosSigning[id] = data
-      return HttpResponse.json({ pipeline_id: id, ...data })
+      return HttpResponse.json(iosSigningResponse({ pipeline_id: id, ...data }))
     }
     return HttpResponse.json({
       pipeline_id: id,
       enabled: false,
       mode: 'manual',
+      export_method: 'ad_hoc',
       team_id: null,
       bundle_ids: [],
       has_p12: false,
@@ -507,14 +723,56 @@ export const pipelineHandlers = [
     if (forbidden) return forbidden
     const body = await parseDemoJsonObject(request)
     const existing = demoState.iosSigning[id] ?? iosSigningByPipeline[id] ?? {}
-    const merged = {
+    // Switching the export method discards profiles, like the daemon does.
+    const methodChanged =
+      body.export_method != null &&
+      body.export_method !== (existing.export_method ?? 'ad_hoc')
+    const { shared_api_key_id: rawSharedKeyId, ...changes } = body
+    const sharedKeyId = z.string().optional().parse(rawSharedKeyId)
+    const merged: JsonObject = {
       pipeline_id: id,
       ...existing,
-      ...body,
+      ...changes,
       updated_at: ago(0),
     }
+    // Omitted keeps the shared key, an empty string switches to the own key.
+    if (sharedKeyId === '') delete merged.shared_api_key_id
+    else if (sharedKeyId) merged.shared_api_key_id = sharedKeyId
+    if (methodChanged) merged.provisioning_profiles = []
     demoState.iosSigning[id] = merged
-    return HttpResponse.json(merged)
+    return HttpResponse.json(iosSigningResponse(merged))
+  }),
+
+  demoApi.getPipelineAppStorePublish(async ({ params }) => {
+    await delay(120)
+    return HttpResponse.json(appStoreResponse(String(params.pipeline_id)))
+  }),
+
+  demoApi.updatePipelineAppStorePublish(async ({ params, request }) => {
+    await delay(200)
+    const id = String(params.pipeline_id)
+    const forbidden = requirePipelinePermission(request, id, 'pipelines:write')
+    if (forbidden) return forbidden
+    const parsed = appStoreConfigSchema.safeParse(await request.json())
+    if (!parsed.success) {
+      return invalidPublishConfig(parsed.error.message)
+    }
+    const current = appStoreResponse(id)
+    if (parsed.data.enabled && !current.app_store_export) {
+      return invalidPublishConfig(
+        'App Store publishing needs iOS signing with the App Store export method.',
+      )
+    }
+    if (parsed.data.enabled && !current.has_api_key) {
+      return invalidPublishConfig(
+        'App Store publishing needs an App Store Connect API key in iOS signing.',
+      )
+    }
+    demoAppStoreConfigs.set(id, {
+      config: parsed.data,
+      updated_at: ago(0),
+    })
+    return HttpResponse.json(appStoreResponse(id))
   }),
 
   demoApi.syncPipelineIosSigning(async ({ params, request }) => {
@@ -566,3 +824,190 @@ export const pipelineHandlers = [
     })
   }),
 ]
+
+// ── Plan previews ───────────────────────────────────────────────
+
+const DEMO_PLATFORM_BUILDS = {
+  android: 'flutter build apk --release',
+  ios: 'flutter build ios --release --no-codesign',
+  macos: 'flutter build macos --release',
+} satisfies Record<BuildPlatform, string>
+
+/** Mirrors the runner's lowering of form settings (plan_execution_config). */
+function demoFormPlan(
+  config: PipelineExecutionConfig,
+  selected: Array<BuildPlatform>,
+  playBundle: boolean,
+): PlanPipelineResponse {
+  const available = config.platforms
+  if (available.length === 0) {
+    return {
+      valid: false,
+      errors: ['execution_config.platforms must include at least one platform'],
+      notices: [],
+      workflows: [],
+      available_platforms: [],
+    }
+  }
+  const platforms =
+    selected.length > 0
+      ? available.filter((platform) => selected.includes(platform))
+      : available
+  const steps: Array<PipelinePlanStep> = []
+  // Sources match the daemon: `default` for commands Oore adds.
+  const push = (
+    phase: PipelinePlanStep['phase'],
+    run: string,
+    source: string,
+    platform?: BuildPlatform,
+  ) => {
+    const index = steps.filter((step) => step.phase === phase).length
+    steps.push({ name: `${phase}-${index + 1}`, phase, run, source, platform })
+  }
+  const pushUser = (phase: PipelinePlanStep['phase'], runs: Array<string>) =>
+    runs.forEach((run, index) =>
+      push(phase, run, `commands.${phase}[${index}]`),
+    )
+  push('pre_build', 'flutter pub get', 'default')
+  pushUser('pre_build', config.commands.pre_build)
+  for (const platform of platforms) {
+    const args = config.platform_build_args?.[platform] ?? []
+    const override = config.platform_commands?.[platform]
+    push(
+      'build',
+      override || [DEMO_PLATFORM_BUILDS[platform], ...args].join(' '),
+      override ? `platform_commands.${platform}` : 'default',
+      platform,
+    )
+    if (platform === 'android' && playBundle && !override) {
+      push(
+        'build',
+        // `--split-per-abi` is APK-only; the runner drops it too.
+        [
+          'flutter build appbundle --release',
+          ...args.filter((arg) => arg !== '--split-per-abi'),
+        ].join(' '),
+        'default',
+        platform,
+      )
+    }
+  }
+  pushUser('build', config.commands.build)
+  pushUser('post_build', config.commands.post_build)
+  return {
+    valid: true,
+    errors: [],
+    notices: [],
+    workflows: [],
+    available_platforms: available,
+    plan: {
+      platforms,
+      flutter_version: config.flutter_version ?? undefined,
+      steps,
+      env_keys: (config.env ?? []).map((entry) => entry.key),
+      artifact_patterns: config.artifact_patterns,
+      build_number_offset: config.build_number_offset ?? 0,
+      runs_on: config.runs_on ?? [],
+      isolation: config.isolation ?? 'host',
+    },
+  }
+}
+
+const DEMO_WORKFLOWS = {
+  nightly: { platforms: ['android', 'ios'], flavor: 'staging' },
+  release: { platforms: ['android', 'ios'], flavor: 'production' },
+} satisfies Record<string, { platforms: Array<BuildPlatform>; flavor: string }>
+
+/** A canned version 2 plan; the demo has no YAML parser. */
+function demoFilePlan(
+  yaml: string,
+  requested: string | null,
+  selected: Array<BuildPlatform>,
+): PlanPipelineResponse {
+  const workflows = Object.keys(DEMO_WORKFLOWS)
+  if (!/^version:\s*[12]\s*$/m.test(yaml)) {
+    return {
+      valid: false,
+      errors: ['missing field `version`; start the file with `version: 2`'],
+      notices: [],
+      workflows: [],
+      available_platforms: [],
+    }
+  }
+  const name = requested ?? workflows[0]
+  if (!(name in DEMO_WORKFLOWS)) {
+    return {
+      valid: false,
+      errors: [`workflow '${name}' is not defined`],
+      notices: [],
+      version: 2,
+      workflows,
+      available_platforms: [],
+    }
+  }
+  // SAFETY: `name in DEMO_WORKFLOWS` was checked above.
+  const workflow = DEMO_WORKFLOWS[name as keyof typeof DEMO_WORKFLOWS]
+  const available: Array<BuildPlatform> = workflow.platforms
+  const platforms =
+    selected.length > 0
+      ? available.filter((platform) => selected.includes(platform))
+      : available
+  const { flavor } = workflow
+  const steps: Array<PipelinePlanStep> = [
+    {
+      name: 'Get packages',
+      phase: 'pre_build',
+      run: 'flutter pub get',
+      source: 'steps[0]',
+    },
+    {
+      name: 'Test',
+      phase: 'pre_build',
+      run: 'flutter test --machine > build/test-results.json',
+      source: 'steps[1]',
+      test_report: 'build/test-results.json',
+    },
+    ...platforms.map((platform): PipelinePlanStep => ({
+      name: `Build ${platform === 'ios' ? 'iOS' : 'Android'} (${flavor})`,
+      phase: 'build',
+      run:
+        platform === 'ios'
+          ? `flutter build ipa --release --flavor ${flavor} --export-options-plist ios/ExportOptions.plist`
+          : `flutter build appbundle --release --flavor ${flavor}`,
+      source: `targets.${platform}.build`,
+      platform,
+      flavor,
+    })),
+    {
+      name: 'Upload symbols',
+      phase: 'post_build',
+      run: 'sentry-cli debug-files upload --auth-token ${{ secrets.SENTRY_TOKEN }} build/',
+      source: 'steps[3]',
+    },
+  ]
+  return {
+    valid: true,
+    errors: [],
+    notices: [
+      `this file defines workflows [${workflows.join(', ')}], but pipelines cannot select a workflow yet, so every build from this file fails with \`choose one for the pipeline\`; keep one workflow until workflow selection lands`,
+    ],
+    version: 2,
+    workflows,
+    available_platforms: available,
+    plan: {
+      workflow: name,
+      platforms,
+      flutter_version: '3.24.5',
+      steps,
+      env_keys: ['BUILD_FLAVOR', 'SENTRY_DSN'],
+      artifact_patterns: platforms.map((platform) =>
+        platform === 'ios'
+          ? 'build/ios/ipa/*.ipa'
+          : `build/app/outputs/bundle/${flavor}Release/*.aab`,
+      ),
+      build_number_offset: 0,
+      runs_on: [],
+      isolation: 'host',
+    },
+  }
+}

@@ -1,19 +1,29 @@
 pub mod api_tokens;
+pub mod app_store_connect;
+pub mod app_store_connect_keys;
+pub mod app_store_publish;
 pub mod apple_api;
 pub mod artifact_install;
+pub mod artifact_sizes;
 pub mod artifact_tokens;
 pub mod artifacts;
 pub mod audit_logs;
 pub mod auth;
 pub mod background;
+pub mod build_analysis;
+pub mod build_feedback;
+pub mod build_insights;
 pub mod builds;
+pub mod commit_checks;
 pub mod crypto;
-pub mod embedded_runner;
+pub mod environments;
+pub mod events;
 pub mod extractors;
 pub mod frontend_pairing;
 pub mod incidents;
 pub mod instance_settings;
 pub mod integrations;
+pub mod key_check;
 pub mod local_recovery;
 pub mod logs;
 pub mod notification_channels;
@@ -22,20 +32,28 @@ pub mod observability;
 pub mod oidc;
 pub mod operator;
 pub mod pipeline_ios_signing;
+pub mod pipeline_publish;
+pub mod pipeline_schedules;
 pub mod pipeline_signing;
 pub mod pipelines;
 pub mod project_members;
 pub mod project_rbac;
 pub mod projects;
 pub mod rbac;
+pub mod release_store;
+pub mod releases;
 pub mod repository_workflows;
 pub mod retention;
 pub mod runners;
 pub mod runtime_updates;
 pub mod scheduler;
+pub mod secrets;
 pub mod session;
+pub mod step_retry;
 pub mod storage;
 pub mod store;
+pub mod store_vitals;
+pub mod test_results;
 pub mod token;
 pub mod users;
 pub mod util;
@@ -106,6 +124,8 @@ pub struct AppState {
     pub storage: Arc<RwLock<storage::StorageBackend>>,
     /// In-memory store for short-lived SSE streaming tokens.
     pub stream_tokens: logs::StreamTokenStore,
+    /// Live build, runner and release events for `GET /v1/events`.
+    pub events: Arc<events::EventHub>,
     /// Origins allowed for redirect URIs and CORS.
     pub allowed_origins: Arc<RwLock<Vec<String>>>,
     /// Effective public base URL for externally reachable callbacks/download links.
@@ -114,6 +134,8 @@ pub struct AppState {
     pub runtime_update: runtime_updates::RuntimeUpdateState,
     /// Short-lived, single-use local recovery capabilities minted over UDS.
     pub recovery_capabilities: local_recovery::RecoveryCapabilityStore,
+    /// Outbound store client for release rollout changes and health.
+    pub release_store: Arc<dyn releases::ReleaseStoreClient>,
 }
 
 // ── Constants ────────────────────────────────────────────────────
@@ -202,6 +224,19 @@ pub fn is_loopback_host(host: &str) -> bool {
 
 pub fn is_loopback_client(peer_addr: SocketAddr) -> bool {
     peer_addr.ip().is_loopback()
+}
+
+/// The loopback address that reaches a daemon listening on `listen`.
+///
+/// A daemon bound to a specific non-loopback address (for example a NetBird
+/// interface) also binds this address, so the runner, CLI, and update
+/// supervisor on the same host never depend on the private interface.
+pub fn loopback_maintenance_addr(listen: SocketAddr) -> SocketAddr {
+    let loopback = match listen.ip() {
+        IpAddr::V4(_) => IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        IpAddr::V6(_) => IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+    };
+    SocketAddr::new(loopback, listen.port())
 }
 
 fn parse_ip_from_header(headers: &HeaderMap, name: &str) -> Option<IpAddr> {
@@ -757,8 +792,13 @@ async fn healthz() -> Json<HealthResponse> {
 /// accept requests remains observable while a dependency is being repaired.
 async fn readyz(State(state): State<Arc<AppState>>) -> (StatusCode, Json<serde_json::Value>) {
     let db_ready = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
-    let encryption_ready = state.encryption_key.len() == 32;
+    let encryption_ready = state.encryption_key.len() == 32
+        && db_ready
+        && key_check::key_matches_database(&state.db, &state.encryption_key)
+            .await
+            .unwrap_or(false);
     let ready = db_ready && encryption_ready;
+    let runtime = installed_runtime_metadata();
     (
         if ready {
             StatusCode::OK
@@ -771,6 +811,10 @@ async fn readyz(State(state): State<Arc<AppState>>) -> (StatusCode, Json<serde_j
             // Migrations and the runtime key are completed before the router is built.
             "migrations": db_ready,
             "encryption": encryption_ready,
+            // The running binary's version, so update clients can tell a restarted
+            // daemon from the old process still serving after VERSION changed.
+            "version": runtime.version,
+            "package_version": runtime.package_version,
         })),
     )
 }
@@ -2313,17 +2357,6 @@ pub async fn build_router_with_recovery(
     metrics_handle: PrometheusHandle,
     recovery_capabilities: local_recovery::RecoveryCapabilityStore,
 ) -> anyhow::Result<Router> {
-    build_router_inner(store, encryption_key, metrics_handle, recovery_capabilities)
-        .await
-        .map(|(router, _)| router)
-}
-
-async fn build_router_inner(
-    store: SetupStore,
-    encryption_key: Vec<u8>,
-    metrics_handle: PrometheusHandle,
-    recovery_capabilities: local_recovery::RecoveryCapabilityStore,
-) -> anyhow::Result<(Router, Arc<AppState>)> {
     let session_store = SessionStore::new(store.pool().clone());
     let enforcer = rbac::init_enforcer().await?;
     let sched = scheduler::Scheduler::new(1000);
@@ -2333,6 +2366,18 @@ async fn build_router_inner(
         let pool = store.pool();
         if let Err(e) = sched.reload_pending(pool).await {
             tracing::error!(error = %e, "failed to reload pending builds into scheduler");
+        }
+        match environments::fail_interrupted_promotions(pool).await {
+            Ok(0) => {}
+            Ok(count) => {
+                tracing::warn!(
+                    count,
+                    "marked promotions interrupted by the restart as failed"
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to mark interrupted promotions as failed");
+            }
         }
     }
 
@@ -2377,7 +2422,14 @@ async fn build_router_inner(
     );
 
     let db = store.pool().clone();
-    let webhook_wake = integrations::webhooks::start_webhook_processor(db.clone());
+    let release_store = release_store::PlayReleaseStoreClient::new(
+        db.clone(),
+        Zeroizing::new(encryption_key.clone()),
+    )?;
+    let webhook_wake =
+        integrations::webhooks::start_webhook_processor(db.clone(), encryption_key.clone());
+    let release_store_pool = db.clone();
+    let release_store_key = encryption_key.clone();
     let shared_state = Arc::new(AppState {
         store: Mutex::new(store),
         db,
@@ -2390,10 +2442,18 @@ async fn build_router_inner(
         webhook_wake,
         storage: Arc::new(RwLock::new(storage_backend)),
         stream_tokens: logs::StreamTokenStore::new(),
+        events: Arc::new(events::EventHub::new()),
         allowed_origins: allowed_origins_state.clone(),
         public_url: public_url_state,
         runtime_update: runtime_updates::new_state(),
         recovery_capabilities,
+        release_store: Arc::new(app_store_publish::StoreRouter::new(
+            app_store_publish::AppStoreReleaseClient::new(
+                release_store_pool,
+                Zeroizing::new(release_store_key),
+            ),
+            Arc::new(release_store),
+        )),
     });
 
     // Start background tasks (lease timeout, build timeout, heartbeat monitor)
@@ -2404,12 +2464,21 @@ async fn build_router_inner(
             sched.clone(),
             shared_state.storage.clone(),
         );
+        events::start_change_watcher(pool.clone(), sched.clone(), shared_state.events.clone());
+        commit_checks::start_commit_check_reporter(
+            pool.clone(),
+            shared_state.encryption_key.to_vec(),
+        );
         notification_dispatch::start_notification_dispatcher(
             pool,
             sched,
             shared_state.encryption_key.to_vec(),
         );
         integrations::gitlab::start_credential_health_monitor(shared_state.clone());
+        app_store_publish::start_release_monitor(shared_state.clone());
+        background::start_release_rollout_monitor(shared_state.clone());
+        store_vitals::start_store_vitals_monitor(shared_state.clone());
+        pipeline_schedules::start_schedule_monitor(shared_state.clone());
     }
 
     let allowed_origins_for_cors = allowed_origins_state.clone();
@@ -2512,6 +2581,10 @@ async fn build_router_inner(
         .route(
             "/v1/system/update",
             get(runtime_updates::get_status).post(runtime_updates::start_update),
+        )
+        .route(
+            "/v1/system/update/preflight",
+            get(runtime_updates::get_preflight),
         )
         .route("/v1/users", get(users::list_users))
         .route("/v1/users/invite", post(users::invite_user))
@@ -2688,6 +2761,15 @@ async fn build_router_inner(
                 .delete(pipelines::delete_pipeline),
         )
         .route("/v1/pipelines/validate", post(pipelines::validate_pipeline))
+        .route("/v1/pipelines/plan", post(pipelines::plan_pipeline))
+        .route(
+            "/v1/pipelines/export-yaml",
+            post(pipelines::export_pipeline_yaml),
+        )
+        .route(
+            "/v1/pipelines/import-yaml",
+            post(pipelines::import_pipeline_yaml),
+        )
         .route(
             "/v1/pipelines/{pipeline_id}/android-signing",
             get(pipeline_signing::get_pipeline_android_signing)
@@ -2700,6 +2782,11 @@ async fn build_router_inner(
                 .layer(DefaultBodyLimit::max(
                     pipeline_ios_signing::MAX_IOS_SIGNING_REQUEST_BYTES,
                 )),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/publish/app-store",
+            get(app_store_publish::get_pipeline_app_store_publish)
+                .put(app_store_publish::update_pipeline_app_store_publish),
         )
         .route(
             "/v1/pipelines/{pipeline_id}/ios-signing/sync",
@@ -2715,6 +2802,54 @@ async fn build_router_inner(
             "/v1/pipelines/{pipeline_id}/ios-signing/devices/register",
             post(pipeline_ios_signing::register_pipeline_ios_device),
         )
+        .route(
+            "/v1/pipelines/{pipeline_id}/publish/google-play",
+            get(pipeline_publish::get_pipeline_google_play_publish)
+                .put(pipeline_publish::update_pipeline_google_play_publish),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/publish/google-play/test-credentials",
+            post(pipeline_publish::test_pipeline_google_play_credentials),
+        )
+        // Shared App Store Connect API keys (private keys are never returned)
+        .route(
+            "/v1/app-store-connect-keys",
+            get(app_store_connect_keys::list_app_store_connect_keys)
+                .post(app_store_connect_keys::create_app_store_connect_key),
+        )
+        .route(
+            "/v1/app-store-connect-keys/{id}",
+            axum::routing::put(app_store_connect_keys::update_app_store_connect_key)
+                .delete(app_store_connect_keys::delete_app_store_connect_key),
+        )
+        // Secret endpoints (write-only; values are never returned)
+        .route(
+            "/v1/secrets",
+            get(secrets::list_instance_secrets).post(secrets::create_instance_secret),
+        )
+        .route(
+            "/v1/secrets/{name}",
+            axum::routing::put(secrets::rotate_instance_secret)
+                .delete(secrets::delete_instance_secret),
+        )
+        .route(
+            "/v1/projects/{project_id}/secrets",
+            get(secrets::list_project_secrets).post(secrets::create_project_secret),
+        )
+        .route(
+            "/v1/projects/{project_id}/secrets/{name}",
+            axum::routing::put(secrets::rotate_project_secret)
+                .delete(secrets::delete_project_secret),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/secrets",
+            get(secrets::list_pipeline_secrets).post(secrets::create_pipeline_secret),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/secrets/{name}",
+            axum::routing::put(secrets::rotate_pipeline_secret)
+                .delete(secrets::delete_pipeline_secret),
+        )
         // Build endpoints
         .route(
             "/v1/projects/{project_id}/builds",
@@ -2725,11 +2860,81 @@ async fn build_router_inner(
             get(builds::preview_build_changelog),
         )
         .route("/v1/builds", get(builds::list_builds))
+        .route("/v1/builds/actors", get(builds::list_build_actors))
+        .route(
+            "/v1/builds/insights",
+            get(build_insights::get_build_insights),
+        )
+        .route("/v1/store-vitals", get(store_vitals::get_store_vitals))
+        .route(
+            "/v1/store-vitals/refresh",
+            post(store_vitals::refresh_store_vitals),
+        )
         .route("/v1/builds/{build_id}", get(builds::get_build))
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
+        .route("/v1/builds/{build_id}/approve", post(builds::approve_build))
+        .route("/v1/builds/{build_id}/reject", post(builds::reject_build))
         .route("/v1/builds/{build_id}/rerun", post(builds::rerun_build))
+        .route(
+            "/v1/builds/{build_id}/retry-step",
+            post(step_retry::retry_build_step),
+        )
+        .route(
+            "/v1/builds/{build_id}/tests",
+            get(test_results::get_build_test_results),
+        )
+        .route(
+            "/v1/builds/{build_id}/analysis",
+            get(build_analysis::get_build_analysis),
+        )
+        .route(
+            "/v1/builds/{build_id}/feedback",
+            get(build_feedback::list_build_feedback),
+        )
+        .route(
+            "/v1/builds/{build_id}/feedback",
+            post(build_feedback::create_build_feedback).layer(DefaultBodyLimit::max(
+                build_feedback::MAX_FEEDBACK_REQUEST_BYTES,
+            )),
+        )
+        .route(
+            "/v1/builds/{build_id}/feedback/{feedback_id}/screenshot",
+            get(build_feedback::get_build_feedback_screenshot),
+        )
         // Audit log endpoints
         .route("/v1/audit-logs", get(audit_logs::list_audit_logs))
+        .route(
+            "/v1/releases",
+            get(releases::list_releases).post(releases::create_release_handler),
+        )
+        .route("/v1/releases/{release_id}", get(releases::get_release))
+        .route(
+            "/v1/releases/{release_id}/{action}",
+            post(releases::release_action),
+        )
+        .route("/v1/release-events", get(releases::list_release_activity))
+        .route(
+            "/v1/projects/{project_id}/environments",
+            get(environments::list_project_environments)
+                .post(environments::create_project_environment),
+        )
+        .route(
+            "/v1/projects/{project_id}/environments/{environment_id}",
+            axum::routing::patch(environments::update_project_environment)
+                .delete(environments::delete_project_environment),
+        )
+        .route(
+            "/v1/projects/{project_id}/promotions",
+            post(environments::promote_build),
+        )
+        .route(
+            "/v1/projects/{project_id}/promotions/{promotion_id}/approve",
+            post(environments::approve_promotion),
+        )
+        .route(
+            "/v1/projects/{project_id}/promotions/{promotion_id}/reject",
+            post(environments::reject_promotion),
+        )
         // API token endpoints
         .route(
             "/v1/api-tokens",
@@ -2746,6 +2951,10 @@ async fn build_router_inner(
             get(runners::get_runner)
                 .patch(runners::update_runner)
                 .delete(runners::delete_runner),
+        )
+        .route(
+            "/v1/runners/{runner_id}/caches/purge",
+            post(runners::purge_runner_caches),
         )
         .route(
             "/v1/runners/{runner_id}/heartbeat",
@@ -2773,12 +2982,37 @@ async fn build_router_inner(
             "/v1/runners/{runner_id}/jobs/{job_id}/ios-signing",
             get(pipeline_ios_signing::get_job_ios_signing),
         )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/secrets",
+            get(secrets::get_job_secrets),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/publish",
+            get(pipeline_publish::get_job_publish_plan),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/retry-artifacts",
+            get(step_retry::get_job_retry_artifacts),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/publish-results",
+            post(pipeline_publish::report_job_publish_result),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/test-results",
+            post(test_results::report_job_test_results),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/analysis",
+            post(build_analysis::report_job_analysis),
+        )
         .route("/v1/runners", get(runners::list_runners))
         // Build log endpoints
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/logs",
             post(logs::append_build_logs),
         )
+        .route("/v1/events", get(events::stream_events))
         .route("/v1/builds/{build_id}/logs", get(logs::get_build_logs))
         .route(
             "/v1/builds/{build_id}/logs/stream",
@@ -2804,6 +3038,10 @@ async fn build_router_inner(
         .route(
             "/v1/builds/{build_id}/artifacts",
             get(artifacts::list_artifacts),
+        )
+        .route(
+            "/v1/builds/{build_id}/sizes",
+            get(artifact_sizes::get_build_size_report),
         )
         .route(
             "/v1/projects/{project_id}/artifacts",
@@ -2883,7 +3121,7 @@ async fn build_router_inner(
                 .delete(retention::delete_project_retention),
         )
         .layer(cors)
-        .with_state(shared_state.clone())
+        .with_state(shared_state)
         // Merge webhook routes (outside CORS)
         .merge(webhook_routes)
         // Merge GitHub App manifest flow routes (outside CORS — browser-navigated HTML pages)
@@ -2896,5 +3134,5 @@ async fn build_router_inner(
         // Request metrics middleware wraps all routes (including /metrics)
         .layer(axum_mw::from_fn(observability::track_http_metrics));
 
-    Ok((router, shared_state))
+    Ok(router)
 }

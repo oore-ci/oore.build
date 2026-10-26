@@ -8,13 +8,28 @@ import {
 } from '@hugeicons/core-free-icons'
 import { toast } from '@/lib/toast'
 
-import type { Artifact, BuildStatus } from '@oore/client/models'
+import type {
+  Artifact,
+  ArtifactSizeComparison,
+  BuildSizeReport,
+  BuildStatus,
+} from '@oore/client/models'
 import { useArtifactDownloadLink } from '@/hooks/use-builds'
-import { formatFileSize, relativeTime } from '@/lib/format-utils'
+import {
+  formatFileSize,
+  formatSizeChange,
+  relativeTime,
+} from '@/lib/format-utils'
 import { artifactInstallReadiness } from '@/lib/artifact-install'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -24,6 +39,8 @@ import {
   ItemDescription,
   ItemTitle,
 } from '@/components/ui/item'
+import { Row } from '@/components/layout/row'
+import { Text } from '@/components/layout/text'
 
 const loadArtifactShareMenu = () => import('./artifact-share-menu')
 const ArtifactShareMenu = lazy(loadArtifactShareMenu)
@@ -64,7 +81,7 @@ function ArtifactShareControl({ artifact }: { artifact: Artifact }) {
   const trigger = (
     <Button
       variant="outline"
-      size="icon-xs"
+      size="sm"
       aria-label={`Share options for ${artifact.name}`}
       title="Share options"
       disabled={expired}
@@ -74,6 +91,7 @@ function ArtifactShareControl({ artifact }: { artifact: Artifact }) {
       }}
     >
       <HugeiconsIcon icon={Share08Icon} />
+      Share
     </Button>
   )
 
@@ -90,30 +108,61 @@ function ArtifactShareControl({ artifact }: { artifact: Artifact }) {
   )
 }
 
+function SizeChange({
+  comparison,
+  baselineNumber,
+}: {
+  comparison: ArtifactSizeComparison | undefined
+  baselineNumber: number | undefined
+}) {
+  if (baselineNumber == null || !comparison) return null
+  if (
+    comparison.delta_bytes == null ||
+    comparison.baseline_size_bytes == null
+  ) {
+    return (
+      <span title={`No matching artifact in #${baselineNumber}`}>· New</span>
+    )
+  }
+  const renamed =
+    comparison.baseline_name && comparison.baseline_name !== comparison.name
+      ? ` (${comparison.baseline_name})`
+      : ''
+  return (
+    <span
+      className="tabular-nums"
+      title={`${formatFileSize(comparison.baseline_size_bytes)} in #${baselineNumber}${renamed}`}
+    >
+      ·{' '}
+      {formatSizeChange(comparison.delta_bytes, comparison.baseline_size_bytes)}
+    </span>
+  )
+}
+
 function ArtifactRow({
   artifact,
   isDownloadPending,
   onDownload,
   canManageShareLinks,
+  sizeComparison,
+  baselineNumber,
 }: {
   artifact: Artifact
   isDownloadPending: boolean
   onDownload: (artifactId: string, name: string) => void
   canManageShareLinks: boolean
+  sizeComparison?: ArtifactSizeComparison
+  baselineNumber?: number
 }) {
   const expired = isArtifactExpired(artifact)
   const expiryLabel = artifactExpiryLabel(artifact)
   const installReady = artifactInstallReadiness(artifact).ready
 
   return (
-    <Item
-      variant="outline"
-      size="xs"
-      className={expired ? 'opacity-50' : undefined}
-    >
-      <ItemContent>
-        <ItemTitle>{artifact.name}</ItemTitle>
-        <ItemDescription className="flex items-center gap-1.5">
+    <Item variant="outline" size="xs" className="flex-wrap">
+      <ItemContent className="min-w-0 basis-40">
+        <ItemTitle className="break-all">{artifact.name}</ItemTitle>
+        <ItemDescription className="flex flex-wrap items-center gap-1.5">
           <Badge variant="outline" className="text-[10px]">
             {artifact.artifact_type}
           </Badge>
@@ -122,6 +171,10 @@ function ArtifactRow({
               ? formatFileSize(artifact.file_size)
               : '—'}
           </span>
+          <SizeChange
+            comparison={sizeComparison}
+            baselineNumber={baselineNumber}
+          />
           {expiryLabel ? (
             <span className={expired ? 'text-destructive' : undefined}>
               {expiryLabel}
@@ -133,7 +186,7 @@ function ArtifactRow({
         {installReady ? (
           <Button
             variant="outline"
-            size="icon-xs"
+            size="sm"
             render={
               <Link
                 to="/builds/$buildId"
@@ -149,11 +202,12 @@ function ArtifactRow({
             title="Install"
           >
             <HugeiconsIcon icon={Download04Icon} />
+            Install
           </Button>
         ) : (
           <Button
             variant="outline"
-            size="icon-xs"
+            size="sm"
             title="Download"
             aria-label={`Download ${artifact.name}`}
             onClick={() => onDownload(artifact.id, artifact.name)}
@@ -164,6 +218,7 @@ function ArtifactRow({
             ) : (
               <HugeiconsIcon icon={Download04Icon} />
             )}
+            Download
           </Button>
         )}
         {canManageShareLinks ? (
@@ -176,16 +231,29 @@ function ArtifactRow({
 
 export function ArtifactsPanel({
   artifacts,
+  error,
   isLoading,
+  onRetry,
   buildStatus,
   canManageShareLinks,
+  sizes,
 }: {
   artifacts: Array<Artifact>
+  error?: Error | null
   isLoading: boolean
+  onRetry?: () => void
   buildStatus: BuildStatus
   canManageShareLinks: boolean
+  sizes?: BuildSizeReport
 }) {
   const downloadMutation = useArtifactDownloadLink()
+  const comparisons = new Map(
+    (sizes?.artifacts ?? []).map((comparison) => [
+      comparison.artifact_id,
+      comparison,
+    ]),
+  )
+  const baseline = sizes?.baseline
 
   function handleDownload(artifactId: string, name: string) {
     downloadMutation.mutate(artifactId, {
@@ -210,28 +278,62 @@ export function ArtifactsPanel({
             </Badge>
           ) : null}
         </CardTitle>
+        {artifacts.length > 0 && baseline ? (
+          <CardDescription>
+            Size changes compared with{' '}
+            <Link
+              to="/builds/$buildId"
+              params={{ buildId: baseline.build_id }}
+              className="underline underline-offset-2"
+            >
+              build #{baseline.build_number}
+            </Link>{' '}
+            on <span className="font-mono">{baseline.branch}</span>
+          </CardDescription>
+        ) : artifacts.length > 0 && sizes?.base_branch && comparisons.size ? (
+          <CardDescription>
+            No earlier successful build on{' '}
+            <span className="font-mono">{sizes.base_branch}</span> to compare
+            sizes with
+          </CardDescription>
+        ) : null}
       </CardHeader>
       <CardContent>
-        {isLoading ? (
+        {error ? (
+          <Row gap={3} className="flex-wrap justify-between">
+            <Text variant="muted">Artifacts could not be loaded.</Text>
+            {onRetry ? (
+              <Button variant="outline" size="sm" onClick={onRetry}>
+                Retry
+              </Button>
+            ) : null}
+          </Row>
+        ) : isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-8 w-full" />
             <Skeleton className="h-8 w-full" />
           </div>
         ) : !artifacts.length ? (
-          <p className="text-xs text-muted-foreground">
-            {artifactEmptyMessage(buildStatus)}
-          </p>
+          <Text variant="caption">{artifactEmptyMessage(buildStatus)}</Text>
         ) : (
           <div className="space-y-2">
-            {artifacts.map((artifact) => (
-              <ArtifactRow
-                key={artifact.id}
-                artifact={artifact}
-                isDownloadPending={downloadMutation.isPending}
-                onDownload={handleDownload}
-                canManageShareLinks={canManageShareLinks}
-              />
-            ))}
+            {[...artifacts]
+              .sort(
+                (a, b) =>
+                  Number(artifactInstallReadiness(b).ready) -
+                  Number(artifactInstallReadiness(a).ready),
+              )
+              .map((artifact) => (
+                <ArtifactRow
+                  key={artifact.id}
+                  artifact={artifact}
+                  isDownloadPending={downloadMutation.isPending}
+                  onDownload={handleDownload}
+                  canManageShareLinks={canManageShareLinks}
+                  sizeComparison={comparisons.get(artifact.id)}
+                  baselineNumber={baseline?.build_number}
+                />
+              ))}
           </div>
         )}
       </CardContent>

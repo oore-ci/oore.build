@@ -58,7 +58,7 @@ runs:
         esac
 
     - name: Checkout the candidate release pin
-      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
         persist-credentials: false
@@ -180,7 +180,7 @@ runs:
         }
 
     - name: Download unsigned metadata
-      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         name: ${{ inputs.artifact-name }}
         path: payload
@@ -223,7 +223,67 @@ runs:
               echo 'The release index has no latest channel manifest.' >&2
               exit 1
             }
+            for manifest in payload/latest/*; do
+              case "$manifest" in
+                payload/latest/alpha.json|payload/latest/beta.json|payload/latest/stable.json) ;;
+                *) echo "The release index has an unexpected latest manifest: $manifest" >&2; exit 1 ;;
+              esac
+            done
             manifests+=("${latest_manifests[@]}")
+
+            case "$OORE_RELEASE_TAG" in
+              *-alpha.*) release_channel=alpha ;;
+              *-beta.*) release_channel=beta ;;
+              *) release_channel=stable ;;
+            esac
+            # Check every channel, not only this release's: one index
+            # carries them all, and the signature covers all of them.
+            for channel in alpha beta stable; do
+              history_manifest="payload/$channel.json"
+              latest_manifest="payload/latest/$channel.json"
+              [[ -f "$history_manifest" && ! -L "$history_manifest" ]] || {
+                echo "The release index is missing a required manifest: $history_manifest" >&2
+                exit 1
+              }
+              jq -e --arg channel "$channel" '
+                def pattern:
+                  if $channel == "stable" then "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+                  else "^v[0-9]+\\.[0-9]+\\.[0-9]+-" + $channel + "\\.[0-9]+$" end;
+                def key: .tag | ltrimstr("v") | split("-")
+                  | (.[0] | split(".") | map(tonumber)) + [(.[1] // "x.-1" | split(".")[1] | tonumber)];
+                .schema_version == 1
+                and .channel == $channel
+                and (.releases | type == "array")
+                and all(.releases[];
+                  .schema_version == 1 and .channel == $channel
+                  and (.tag | test(pattern)) and .version == (.tag | ltrimstr("v")))
+                and ([.releases[] | key] as $keys
+                  | all(range(1; $keys | length); $keys[. - 1] > $keys[.]))
+              ' "$history_manifest" >/dev/null || {
+                echo "The $channel history is malformed, mixes channels, or is not ordered newest first." >&2
+                exit 1
+              }
+              if [[ "$(jq '.releases | length' "$history_manifest")" == 0 ]]; then
+                [[ ! -e "$latest_manifest" ]] || {
+                  echo "The release index has latest/$channel.json but no $channel history." >&2
+                  exit 1
+                }
+                continue
+              fi
+              [[ -f "$latest_manifest" && ! -L "$latest_manifest" ]] || {
+                echo "The release index lacks latest/$channel.json." >&2
+                exit 1
+              }
+              cmp -s <(jq -S . "$latest_manifest") <(jq -S '.releases[0]' "$history_manifest") || {
+                echo "The latest $channel manifest does not match its history entry." >&2
+                exit 1
+              }
+            done
+            jq -e --arg tag "$OORE_RELEASE_TAG" '.tag == $tag' "payload/latest/$release_channel.json" >/dev/null 2>&1 || {
+              echo "The latest $release_channel release is not $OORE_RELEASE_TAG." >&2
+              exit 1
+            }
+
             for manifest in "${manifests[@]}"; do
               [[ -f "$manifest" && ! -L "$manifest" ]] || {
                 echo "The release index is missing a required manifest: $manifest" >&2
@@ -236,7 +296,7 @@ runs:
         esac
 
     - name: Upload signed metadata
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.output-artifact-name }}
         path: payload

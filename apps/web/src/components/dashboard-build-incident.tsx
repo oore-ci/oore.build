@@ -1,4 +1,3 @@
-import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ChevronRightIcon,
@@ -6,138 +5,62 @@ import {
   Alert02Icon as TriangleAlertIcon,
 } from '@hugeicons/core-free-icons'
 
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { DashboardList, DashboardSection } from '@/components/dashboard-section'
 import {
   Item,
   ItemActions,
   ItemContent,
   ItemDescription,
-  ItemGroup,
   ItemMedia,
   ItemTitle,
 } from '@/components/ui/item'
-import { formatDuration } from '@/lib/format-utils'
-import { getRunnerPolicyBlockLabel } from '@/lib/status-variants'
-import type { Build } from '@oore/client/models'
-import { useTime } from '@/hooks/use-time'
+import type { AttentionItem } from '@/hooks/use-attention'
+import { cn } from '@/lib/utils'
 
+function AttentionRow({ item }: { item: AttentionItem }) {
+  const blocking = item.severity === 'blocking'
+  return (
+    <Item
+      size="sm"
+      className="rounded-none"
+      render={item.link}
+      onClick={item.onSelect}
+    >
+      <ItemMedia variant="icon">
+        <HugeiconsIcon
+          icon={blocking ? CircleAlertIcon : TriangleAlertIcon}
+          className={cn(blocking ? 'text-destructive!' : 'text-warning!')}
+        />
+      </ItemMedia>
+      <ItemContent className="min-w-0">
+        <ItemTitle>{item.title}</ItemTitle>
+        <ItemDescription className="line-clamp-1">
+          {item.description}
+        </ItemDescription>
+      </ItemContent>
+      <ItemActions>
+        <HugeiconsIcon icon={ChevronRightIcon} aria-hidden />
+      </ItemActions>
+    </Item>
+  )
+}
+
+/** What is broken right now, blocking causes first, gone once it recovers. */
 export default function DashboardBuildIncident({
-  builds,
-  noOnlineRunners,
+  items,
 }: {
-  builds: Array<Build>
-  noOnlineRunners: boolean
+  items: Array<AttentionItem>
 }) {
-  const time = useTime()
-  const issueCount = builds.length + (noOnlineRunners ? 1 : 0)
-  if (issueCount === 0) return null
-
-  const visibleBuilds = builds.slice(0, noOnlineRunners ? 2 : 3)
-  const hasHiddenBuilds = visibleBuilds.length < builds.length
+  if (items.length === 0) return null
 
   return (
-    <section className="flex flex-col gap-3" aria-labelledby="attention-needed">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <h2
-            id="attention-needed"
-            className="text-sm font-medium text-muted-foreground"
-          >
-            Needs attention
-          </h2>
-          <Badge variant="outline">{issueCount}</Badge>
-        </div>
-        {hasHiddenBuilds ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            render={<Link to="/builds" />}
-            nativeButton={false}
-          >
-            View all
-            <HugeiconsIcon icon={ChevronRightIcon} data-icon="inline-end" />
-          </Button>
-        ) : null}
-      </div>
-
-      <ItemGroup className="gap-2">
-        {noOnlineRunners ? (
-          <Item
-            variant="outline"
-            size="default"
-            className="min-h-16"
-            render={
-              <Link
-                to="/settings/runners"
-                aria-label="Review runner availability"
-              />
-            }
-          >
-            <ItemMedia variant="icon">
-              <HugeiconsIcon icon={CircleAlertIcon} className="text-warning!" />
-            </ItemMedia>
-            <ItemContent className="min-w-0">
-              <ItemTitle>No runner is available</ItemTitle>
-              <ItemDescription className="line-clamp-1">
-                Builds will wait until a runner checks in.
-              </ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <HugeiconsIcon icon={ChevronRightIcon} />
-            </ItemActions>
-          </Item>
-        ) : null}
-
-        {visibleBuilds.map((build) => {
-          const projectName = build.context?.project_name ?? build.project_id
-          const issue = getRunnerPolicyBlockLabel(
-            build.runner_policy_block_reason!,
-          )
-          const pipelineName = build.context?.pipeline_name ?? 'Build pipeline'
-          const branch = build.branch ?? 'No branch'
-          const blockedFor = formatDuration(
-            Math.max(0, Math.floor(time / 1000) - build.queued_at),
-          )
-
-          return (
-            <Item
-              key={build.id}
-              variant="outline"
-              size="default"
-              className="min-h-16"
-              render={
-                <Link
-                  to="/builds/$buildId"
-                  params={{ buildId: build.id }}
-                  aria-label={`Review ${projectName} build #${build.build_number}`}
-                />
-              }
-            >
-              <ItemMedia variant="icon">
-                <HugeiconsIcon
-                  icon={TriangleAlertIcon}
-                  className="text-warning!"
-                />
-              </ItemMedia>
-              <ItemContent className="min-w-0">
-                <ItemTitle>
-                  {issue} for {projectName} #{build.build_number}
-                </ItemTitle>
-                <ItemDescription className="line-clamp-1">
-                  {build.runner_policy_block_reason === 'repository_unavailable'
-                    ? "Oore couldn't check out this project's source."
-                    : 'Direct runner execution is paused.'}{' '}
-                  · {pipelineName} · {branch} · Blocked {blockedFor}
-                </ItemDescription>
-              </ItemContent>
-              <ItemActions>
-                <HugeiconsIcon icon={ChevronRightIcon} />
-              </ItemActions>
-            </Item>
-          )
-        })}
-      </ItemGroup>
-    </section>
+    <DashboardSection title="Needs attention" count={items.length}>
+      <DashboardList>
+        {items.map((item) => ({
+          key: item.key,
+          node: <AttentionRow item={item} />,
+        }))}
+      </DashboardList>
+    </DashboardSection>
   )
 }

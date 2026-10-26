@@ -27,13 +27,16 @@ use crate::util::{api_err, now_unix};
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 const MAX_BROWSE_DIRECTORY_ENTRIES: usize = 300;
 
-fn normalize_repo_path(raw: &str) -> Result<PathBuf, (StatusCode, Json<ApiError>)> {
+pub(crate) fn normalize_repo_path(
+    raw: &str,
+    field: &str,
+) -> Result<PathBuf, (StatusCode, Json<ApiError>)> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
             "invalid_input",
-            "repository_path is required",
+            format!("{field} is required"),
         ));
     }
 
@@ -42,7 +45,7 @@ fn normalize_repo_path(raw: &str) -> Result<PathBuf, (StatusCode, Json<ApiError>
         return Err(api_err(
             StatusCode::BAD_REQUEST,
             "invalid_input",
-            "repository_path must be an absolute path",
+            format!("{field} must be an absolute path"),
         ));
     }
 
@@ -50,12 +53,15 @@ fn normalize_repo_path(raw: &str) -> Result<PathBuf, (StatusCode, Json<ApiError>
         api_err(
             StatusCode::BAD_REQUEST,
             "invalid_input",
-            "repository_path does not exist or is not accessible",
+            format!("{field} does not exist or is not accessible"),
         )
     })
 }
 
-fn assert_git_repo(path: &std::path::Path) -> Result<(), (StatusCode, Json<ApiError>)> {
+pub(crate) fn assert_git_repo(
+    path: &std::path::Path,
+    field: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
     let path_str = path.to_string_lossy().into_owned();
 
     let inside = Command::new("git")
@@ -86,11 +92,11 @@ fn assert_git_repo(path: &std::path::Path) -> Result<(), (StatusCode, Json<ApiEr
     Err(api_err(
         StatusCode::BAD_REQUEST,
         "invalid_repository",
-        "repository_path is not a valid git repository",
+        format!("{field} is not a valid git repository"),
     ))
 }
 
-fn resolve_default_branch(path: &std::path::Path) -> Option<String> {
+pub(crate) fn resolve_default_branch(path: &std::path::Path) -> Option<String> {
     let path_str = path.to_string_lossy().into_owned();
     Command::new("git")
         .args(["-C", path_str.as_str(), "symbolic-ref", "--short", "HEAD"])
@@ -222,8 +228,8 @@ async fn inspect_local_git_repo(
 ) -> Result<LocalGitRepoInspection, (StatusCode, Json<ApiError>)> {
     let raw_path = raw_path.to_string();
     tokio::task::spawn_blocking(move || {
-        let canonical_path = normalize_repo_path(&raw_path)?;
-        assert_git_repo(&canonical_path)?;
+        let canonical_path = normalize_repo_path(&raw_path, "repository_path")?;
+        assert_git_repo(&canonical_path, "repository_path")?;
 
         let default_branch = resolve_default_branch(&canonical_path);
         let canonical_str = canonical_path.to_string_lossy().into_owned();
@@ -586,6 +592,8 @@ pub async fn create_local_git_integration(
         host_url: "local://filesystem".to_string(),
         auth_mode: "local_path".to_string(),
         status: "active".to_string(),
+        status_reason: None,
+        status_checked_at: None,
         display_name: Some(display_name),
         app_id: None,
         app_slug: None,

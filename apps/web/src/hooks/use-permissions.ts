@@ -1,6 +1,5 @@
 import { useAuthStore } from '@/stores/auth-store'
-import type { ProjectRole } from '@oore/client/models'
-import type { UserRole } from '@oore/client/models'
+import type { ProjectRole, UserRole } from '@oore/client/models'
 
 type PermissionTemplate = `${string}:${string}`
 
@@ -8,69 +7,41 @@ type PermissionTemplate = `${string}:${string}`
  * Client-side RBAC matrix mirroring crates/oored/rbac_policy.csv.
  * Used for UI gating only — the backend enforces the real policy.
  */
+const ADMIN_PERMISSIONS = new Set<PermissionTemplate>([
+  'instance_settings:read',
+  'instance_settings:write',
+  'users:read',
+  'users:write',
+  'users:invite',
+  'users:delete',
+  'users:enable',
+  'projects:read',
+  'projects:write',
+  'projects:delete',
+  'pipelines:read',
+  'pipelines:write',
+  'pipelines:delete',
+  'builds:read',
+  'builds:write',
+  'builds:cancel',
+  'artifacts:read',
+  'artifacts:write',
+  'artifacts:delete',
+  'runners:read',
+  'runners:write',
+  'runners:delete',
+  'integrations:read',
+  'integrations:write',
+  'integrations:delete',
+  'api_tokens:read',
+  'api_tokens:write',
+  'api_tokens:delete',
+  'audit_logs:read',
+])
+
 const RBAC_MATRIX = {
-  owner: new Set<PermissionTemplate>([
-    'instance_settings:read',
-    'instance_settings:write',
-    'users:read',
-    'users:write',
-    'users:invite',
-    'users:delete',
-    'users:enable',
-    'projects:read',
-    'projects:write',
-    'projects:delete',
-    'pipelines:read',
-    'pipelines:write',
-    'pipelines:delete',
-    'builds:read',
-    'builds:write',
-    'builds:cancel',
-    'artifacts:read',
-    'artifacts:write',
-    'artifacts:delete',
-    'runners:read',
-    'runners:write',
-    'runners:delete',
-    'integrations:read',
-    'integrations:write',
-    'integrations:delete',
-    'api_tokens:read',
-    'api_tokens:write',
-    'api_tokens:delete',
-    'audit_logs:read',
-  ]),
-  admin: new Set<PermissionTemplate>([
-    'instance_settings:read',
-    'instance_settings:write',
-    'users:read',
-    'users:write',
-    'users:invite',
-    'users:delete',
-    'users:enable',
-    'projects:read',
-    'projects:write',
-    'projects:delete',
-    'pipelines:read',
-    'pipelines:write',
-    'pipelines:delete',
-    'builds:read',
-    'builds:write',
-    'builds:cancel',
-    'artifacts:read',
-    'artifacts:write',
-    'artifacts:delete',
-    'runners:read',
-    'runners:write',
-    'runners:delete',
-    'integrations:read',
-    'integrations:write',
-    'integrations:delete',
-    'api_tokens:read',
-    'api_tokens:write',
-    'api_tokens:delete',
-    'audit_logs:read',
-  ]),
+  owner: ADMIN_PERMISSIONS,
+  admin: ADMIN_PERMISSIONS,
   developer: new Set<PermissionTemplate>([
     'projects:read',
     'pipelines:read',
@@ -97,6 +68,7 @@ const RBAC_MATRIX = {
 
 const PROJECT_RBAC_MATRIX = {
   maintainer: new Set<PermissionTemplate>([
+    'builds:approve',
     'projects:write',
     'projects:delete',
     'pipelines:write',
@@ -121,6 +93,21 @@ export function hasProjectPermission(
 ): boolean {
   if (permission.split(':').at(1) === 'read') return role !== undefined
   return !!role && PROJECT_RBAC_MATRIX[role].has(permission)
+}
+
+/**
+ * Mirrors the server's ApproveBuild check: project maintainers, instance
+ * admins and the owner decide which builds wait for approval.
+ */
+export function canChangeApprovalPolicy(
+  instanceRole: UserRole | undefined,
+  projectRole: ProjectRole | undefined,
+): boolean {
+  return (
+    instanceRole === 'owner' ||
+    instanceRole === 'admin' ||
+    projectRole === 'maintainer'
+  )
 }
 
 export function useHasPermission(permission: PermissionTemplate) {

@@ -1,9 +1,6 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { RemoteAuthMode } from '@oore/client/models'
-import {
-  authModeDescription,
-  authModeLabel,
-} from '@/components/settings/preferences-utils'
+import { authModeLabel } from '@/components/settings/preferences-utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -15,6 +12,7 @@ import {
   ItemTitle,
 } from '@/components/ui/item'
 import { Spinner } from '@/components/ui/spinner'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import {
   SettingsSection,
   SettingsSurface,
@@ -39,15 +37,12 @@ export function ExternalAccessCard({
   remoteAuthMode: RemoteAuthMode
   updatePending: boolean
 }) {
+  const [confirmOffOpen, setConfirmOffOpen] = useState(false)
+
   return (
     <SettingsSection
       title="External access"
-      description={
-        externalAccessEnabled
-          ? authModeDescription(remoteAuthMode)
-          : 'Local sign-in is limited to this machine.'
-      }
-      actions={
+      meta={
         <Badge variant={externalAccessEnabled ? 'secondary' : 'outline'}>
           {externalAccessEnabled ? authModeLabel(remoteAuthMode) : 'Local only'}
         </Badge>
@@ -67,7 +62,10 @@ export function ExternalAccessCard({
             {isOwner ? (
               <Button
                 type="button"
-                onClick={onToggle}
+                variant={externalAccessEnabled ? 'outline' : 'default'}
+                onClick={() =>
+                  externalAccessEnabled ? setConfirmOffOpen(true) : onToggle()
+                }
                 disabled={
                   updatePending ||
                   (!externalAccessEnabled &&
@@ -97,6 +95,16 @@ export function ExternalAccessCard({
         </Alert>
       ) : null}
       {children}
+      <ConfirmDialog
+        open={confirmOffOpen && externalAccessEnabled}
+        onOpenChange={setConfirmOffOpen}
+        title="Turn off external access?"
+        description="Everyone who signs in from another device loses access, and remote sessions stop working, possibly including yours. Only sign-in on this machine keeps working. You will need to sign in again."
+        confirmLabel="Turn off external access"
+        confirmVariant="destructive"
+        isPending={updatePending}
+        onConfirm={onToggle}
+      />
     </SettingsSection>
   )
 }

@@ -80,7 +80,7 @@ Usage:
   oore-web [serve] [--listen <host:port>] [--backend-url <url>] [--dist-dir <path>]
   oore-web status [--url <frontend-url>] [--json]
   oore-web update [--channel stable|beta|alpha] [--repo owner/name] [--check] [--force]
-  oore-web recover-update
+  oore-web recover-update [--lifecycle-lock-held]
   oore-web version
 
 Options:
@@ -150,14 +150,16 @@ function printUpdateHelp() {
   console.log(`oore-web update - update the frontend launcher and web assets
 
 Usage:
-  oore-web update [--channel stable|beta|alpha] [--repo owner/name] [--check] [--force]
+  oore-web update [--channel stable|beta|alpha [--switch-channel]] [--repo owner/name] [--check] [--force]
 
 Options:
-  --channel   Release channel. Defaults to the installed frontend channel, then current version.
-  --repo      GitHub repo. Defaults to the installed frontend repository, then ${DEFAULT_GITHUB_REPO}.
-  --check     Only print whether an update is available.
-  --force     Reinstall the latest release even if already current.
-  --help      Show this help text
+  --channel         Release channel. Defaults to the installed frontend channel, then current version.
+  --switch-channel  Move this frontend to the --channel release channel. The target release must
+                    be the same as or newer than the installed version.
+  --repo            GitHub repo. Defaults to the installed frontend repository, then ${DEFAULT_GITHUB_REPO}.
+  --check           Only print whether an update is available.
+  --force           Reinstall the latest release even if already current.
+  --help            Show this help text
 `)
 }
 
@@ -457,10 +459,11 @@ export function candidateValidationArgs(config, distDir) {
   return args
 }
 
-function parseUpdateArgs(argv) {
+export function parseUpdateArgs(argv) {
   const config = {
     channel: process.env.OORE_CHANNEL || '',
     repo: process.env.OORE_GITHUB_REPO || '',
+    switchChannel: false,
     check: false,
     force: false,
   }
@@ -488,6 +491,11 @@ function parseUpdateArgs(argv) {
       continue
     }
 
+    if (arg === '--switch-channel') {
+      config.switchChannel = true
+      continue
+    }
+
     if (arg === '--check') {
       config.check = true
       continue
@@ -501,6 +509,9 @@ function parseUpdateArgs(argv) {
     throw new Error(`unknown update argument: ${arg}`)
   }
 
+  if (config.switchChannel && !config.channel) {
+    throw new Error('--switch-channel requires --channel')
+  }
   return config
 }
 
@@ -578,7 +589,7 @@ function parseChannel(raw) {
   throw new Error(`invalid channel '${raw}', expected: stable|beta|alpha`)
 }
 
-function parseVersion(raw) {
+export function parseVersion(raw) {
   const match = raw
     .trim()
     .match(/^v?(\d+)\.(\d+)\.(\d+)(?:-(alpha|beta)\.(\d+))?$/)
@@ -617,6 +628,7 @@ export function validateManagedUpdateTransition(
   targetVersion,
   targetChannel,
   targetRepo,
+  switchChannel = false,
 ) {
   if (installed.version === 'unknown') return
   const current = parseVersion(installed.version)
@@ -633,7 +645,7 @@ export function validateManagedUpdateTransition(
       `frontend updates must stay on the recorded ${installed.github_repo} repository`,
     )
   }
-  if (targetChannel === installedChannel) return
+  if (targetChannel === installedChannel || switchChannel) return
   const prereleaseToStable =
     ['alpha', 'beta'].includes(installedChannel) &&
     targetChannel === 'stable' &&
@@ -643,7 +655,7 @@ export function validateManagedUpdateTransition(
     current.patch === targetVersion.patch
   if (!prereleaseToStable) {
     throw new Error(
-      `frontend updates must stay on the recorded ${installedChannel} channel, except for a same-version-line alpha or beta promotion to stable`,
+      `frontend updates stay on the recorded ${installedChannel} channel; pass --switch-channel to move this frontend to the ${targetChannel} channel`,
     )
   }
 }
@@ -1377,9 +1389,20 @@ function openPrivateLockFile(lockPath) {
 
 async function acquireFileLock(lockPath, busyMessage) {
   const { descriptor } = openPrivateLockFile(lockPath)
-  let acquireCommand
+  const ready = `printf '%s\\n' '${WEB_UPDATE_LOCK_READY}'
+IFS= read -r _`
+  let holdScript
   if (process.platform === 'darwin') {
-    acquireCommand = '/usr/bin/lockf -s -t 0 3'
+    // lockf before macOS 15 cannot lock a descriptor and exits with EX_USAGE.
+    // It can still hold a flock(2) lock on the path for a command's lifetime.
+    holdScript = `/usr/bin/lockf -s -t 0 3 2>/dev/null
+status=$?
+if [ "$status" -eq 64 ]; then
+  exec 3>&-
+  exec /usr/bin/lockf -k -s -t 0 "$1" /bin/sh -c "$2"
+fi
+[ "$status" -eq 0 ] || exit 75
+${ready}`
   } else if (process.platform === 'linux') {
     const flock = fs.existsSync('/usr/bin/flock')
       ? '/usr/bin/flock'
@@ -1388,21 +1411,23 @@ async function acquireFileLock(lockPath, busyMessage) {
       fs.closeSync(descriptor)
       throw new Error('frontend updates require flock on Linux')
     }
-    acquireCommand = `${flock} -n 3`
+    holdScript = `${flock} -n 3 || exit 75
+${ready}`
   } else {
     fs.closeSync(descriptor)
     throw new Error(`frontend updates are not supported on ${process.platform}`)
   }
-  const holdScript = `${acquireCommand} || exit 75
-printf '%s\\n' '${WEB_UPDATE_LOCK_READY}'
-IFS= read -r _`
 
   let child
   try {
-    child = spawn('/bin/sh', ['-c', holdScript], {
-      stdio: ['pipe', 'pipe', 'pipe', descriptor],
-      env: { ...process.env, LC_ALL: 'C' },
-    })
+    child = spawn(
+      '/bin/sh',
+      ['-c', holdScript, 'oore-web-lock', lockPath, ready],
+      {
+        stdio: ['pipe', 'pipe', 'pipe', descriptor],
+        env: { ...process.env, LC_ALL: 'C' },
+      },
+    )
   } finally {
     fs.closeSync(descriptor)
   }
@@ -2382,10 +2407,9 @@ async function runUpdate(config, activeConfig = null) {
 
 async function runUpdateWithAcquiredLock(config, activeConfig = null) {
   const installRoot = resolveInstallRoot()
+  const log = config.log ?? console.log
   if (!config.check && recoverInterruptedUpdate(installRoot)) {
-    console.warn(
-      '[oore-web] restored the previous frontend after an interrupted update',
-    )
+    log('[oore-web] restored the previous frontend after an interrupted update')
   }
   const installed = readInstalledMetadata(installRoot)
   const currentRaw =
@@ -2398,22 +2422,28 @@ async function runUpdateWithAcquiredLock(config, activeConfig = null) {
 
   const { release, latest, archiveName, expectedHash } =
     await fetchVerifiedWebRelease(channel, repo)
-  validateManagedUpdateTransition(installed, latest, channel, repo)
+  validateManagedUpdateTransition(
+    installed,
+    latest,
+    channel,
+    repo,
+    config.switchChannel,
+  )
 
-  console.log(`Channel:         ${channel}`)
-  console.log(`GitHub repo:     ${repo}`)
-  console.log(`Current version: ${current.raw}`)
-  console.log(`Latest version:  ${latest.raw} (${release.tag})`)
+  log(`Channel:         ${channel}`)
+  log(`GitHub repo:     ${repo}`)
+  log(`Current version: ${current.raw}`)
+  log(`Latest version:  ${latest.raw} (${release.tag})`)
 
   if (compareVersions(current, latest) >= 0 && !config.force) {
-    console.log('Already up to date.')
+    log('Already up to date.')
     return { current: current.raw, latest: latest.raw, updated: false }
   }
 
   if (compareVersions(current, latest) < 0) {
-    console.log(`Update available: ${current.raw} -> ${latest.raw}`)
+    log(`Update available: ${current.raw} -> ${latest.raw}`)
   } else {
-    console.log(`Reinstalling version ${latest.raw} (--force).`)
+    log(`Reinstalling version ${latest.raw} (--force).`)
   }
 
   const archiveUrl = findAssetUrl(release, archiveName)
@@ -2426,7 +2456,7 @@ async function runUpdateWithAcquiredLock(config, activeConfig = null) {
   try {
     const bundlePath = path.join(tmpDir, archiveName)
     const extractDir = path.join(tmpDir, 'extract')
-    console.log(`Downloading ${archiveName}...`)
+    log(`Downloading ${archiveName}...`)
     const actualHash = await downloadFileLimited(archiveUrl, bundlePath, {
       limit: MAX_RELEASE_ARCHIVE_BYTES,
       description: 'release archive',
@@ -2436,7 +2466,7 @@ async function runUpdateWithAcquiredLock(config, activeConfig = null) {
         `checksum mismatch for ${archiveName} (expected ${expectedHash}, got ${actualHash})`,
       )
     }
-    console.log('Checksum verified (SHA-256).')
+    log('Checksum verified (SHA-256).')
     await extractTarGz(bundlePath, extractDir, latest.raw)
 
     const extractedBinary = path.join(extractDir, 'bin', 'oore-web')
@@ -2460,27 +2490,300 @@ async function runUpdateWithAcquiredLock(config, activeConfig = null) {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   }
 
-  console.log(`Updated oore-web to ${latest.raw}.`)
-  console.log(
-    'If oore-web is running as a service, restart the service to use the updated launcher binary.',
-  )
+  log(`Updated oore-web to ${latest.raw}.`)
   return { current: current.raw, latest: latest.raw, updated: true }
 }
 
-function hasManagedWebService() {
-  return (
-    fileExists(
-      path.join(os.homedir(), '.config', 'systemd', 'user', 'oore-web.service'),
-    ) ||
-    fileExists(
-      path.join(
-        os.homedir(),
-        'Library',
-        'LaunchAgents',
-        'build.oore.oore-web.plist',
-      ),
-    )
+const WEB_SYSTEMD_UNIT = 'oore-web.service'
+const WEB_LAUNCHD_LABEL = 'build.oore.oore-web'
+const SYSTEMD_RESTART_POLICIES = new Set(['on-failure', 'always'])
+const MANAGED_SERVICE_CACHE_MS = 30_000
+
+export function parseSystemctlShow(output) {
+  const properties = {}
+  for (const line of output.split('\n')) {
+    const separator = line.indexOf('=')
+    if (separator > 0) {
+      properties[line.slice(0, separator)] = line.slice(separator + 1).trim()
+    }
+  }
+  return properties
+}
+
+// Checks an `oore-web.service` unit from `systemctl show`. Returns null when
+// the unit is not installed in that scope. With `pid`, the unit must be the
+// one running this process, so `process.exit(75)` leads to a restart.
+export function evaluateSystemdWebUnit(properties, { scope, pid, linger }) {
+  if (properties.LoadState !== 'loaded') return null
+  const service = `systemd ${scope} unit ${WEB_SYSTEMD_UNIT}`
+  const mainPid = Number.parseInt(properties.MainPID || '0', 10)
+  if (pid && mainPid !== pid) {
+    return {
+      managed: false,
+      service,
+      reason: `This oore-web process is not the one ${WEB_SYSTEMD_UNIT} runs. Start oore-web with systemctl instead of from a shell.`,
+    }
+  }
+  if (!SYSTEMD_RESTART_POLICIES.has(properties.Restart)) {
+    return {
+      managed: false,
+      service,
+      reason: `${WEB_SYSTEMD_UNIT} uses Restart=${properties.Restart || 'no'}. Set Restart=on-failure or Restart=always so it restarts after an update.`,
+    }
+  }
+  if (scope === 'user' && linger !== true) {
+    return {
+      managed: false,
+      service,
+      reason: `${WEB_SYSTEMD_UNIT} is a user unit without lingering, so it stops when you log out. Run loginctl enable-linger ${os.userInfo().username} or install it as a system unit.`,
+    }
+  }
+  return { managed: true, service, reason: null }
+}
+
+function systemctlShow(scopeArgs) {
+  const result = spawnSync(
+    'systemctl',
+    [
+      ...scopeArgs,
+      'show',
+      WEB_SYSTEMD_UNIT,
+      '--property=LoadState,Restart,MainPID',
+    ],
+    { encoding: 'utf8', timeout: 5000 },
   )
+  if (result.error || result.status !== 0) return {}
+  return parseSystemctlShow(result.stdout)
+}
+
+function userLingerEnabled() {
+  const result = spawnSync(
+    'loginctl',
+    ['show-user', String(process.getuid()), '--property=Linger', '--value'],
+    { encoding: 'utf8', timeout: 5000 },
+  )
+  return !result.error && result.status === 0 && result.stdout.trim() === 'yes'
+}
+
+function detectSystemdWebService(pid) {
+  const system = evaluateSystemdWebUnit(systemctlShow([]), {
+    scope: 'system',
+    pid,
+  })
+  if (system?.managed) return system
+  const userProperties = systemctlShow(['--user'])
+  const user =
+    userProperties.LoadState === 'loaded'
+      ? evaluateSystemdWebUnit(userProperties, {
+          scope: 'user',
+          pid,
+          linger: userLingerEnabled(),
+        })
+      : null
+  if (user?.managed) return user
+  return (
+    system ??
+    user ?? {
+      managed: false,
+      service: null,
+      reason: `No ${WEB_SYSTEMD_UNIT} systemd unit was found. Install the documented unit to update oore-web from the web UI.`,
+    }
+  )
+}
+
+function detectLaunchdWebService() {
+  // The installer writes a LaunchDaemon; older installs used a LaunchAgent.
+  // Both set KeepAlive, so exiting after an update restarts the launcher.
+  const definitions = [
+    path.join('/Library', 'LaunchDaemons', `${WEB_LAUNCHD_LABEL}.plist`),
+    path.join(
+      os.homedir(),
+      'Library',
+      'LaunchAgents',
+      `${WEB_LAUNCHD_LABEL}.plist`,
+    ),
+  ]
+  const definition = definitions.find(fileExists)
+  if (definition) {
+    return {
+      managed: true,
+      service: `launchd job ${WEB_LAUNCHD_LABEL}`,
+      reason: null,
+    }
+  }
+  return {
+    managed: false,
+    service: null,
+    reason:
+      'Run oore setup on this Mac to install oore-web as a managed service.',
+  }
+}
+
+// `pid` is set when the caller is the serving process that will exit after
+// an update; `oore-web update` from a shell only needs the unit to exist.
+export function detectManagedWebService({ pid = null } = {}) {
+  if (process.platform === 'darwin') return detectLaunchdWebService()
+  if (process.platform === 'linux') return detectSystemdWebService(pid)
+  return {
+    managed: false,
+    service: null,
+    reason: `Frontend updates from the web UI are not supported on ${process.platform}.`,
+  }
+}
+
+function webServiceRestartHint(service) {
+  if (!service?.managed) {
+    return 'Restart oore-web to use the updated launcher binary.'
+  }
+  if (service.service?.startsWith('systemd system')) {
+    return `Run sudo systemctl restart ${WEB_SYSTEMD_UNIT} to use the updated launcher binary.`
+  }
+  if (service.service?.startsWith('systemd user')) {
+    return `Run systemctl --user restart ${WEB_SYSTEMD_UNIT} to use the updated launcher binary.`
+  }
+  return `Restart the ${service.service} to use the updated launcher binary.`
+}
+
+let managedServiceCache = null
+
+function managedWebService() {
+  const now = Date.now()
+  if (!managedServiceCache || managedServiceCache.expires <= now) {
+    managedServiceCache = {
+      value: detectManagedWebService({ pid: process.pid }),
+      expires: now + MANAGED_SERVICE_CACHE_MS,
+    }
+  }
+  return managedServiceCache.value
+}
+
+function webUpdateStatePath(installRoot) {
+  return path.join(installRoot, 'WEB_UPDATE_STATE.json')
+}
+
+function webUpdateLogPath(installRoot) {
+  return path.join(installRoot, 'logs', 'oore-web-update.log')
+}
+
+function savedText(value) {
+  return value === undefined || value === null ? null : String(value)
+}
+
+// Reads WEB_UPDATE_STATE.json into the fields restoreWebUpdateState uses.
+export function parseSavedWebUpdateState(raw) {
+  if (!raw || Array.isArray(raw)) return null
+  return {
+    phase: savedText(raw.phase),
+    error: savedText(raw.error),
+    log_path: savedText(raw.log_path),
+    from_version: savedText(raw.from_version),
+    target_version: savedText(raw.target_version),
+  }
+}
+
+// Turns the update state saved before a restart into the state to report
+// now. A restart that landed on the target version is a finished update.
+export function restoreWebUpdateState(saved, installedVersion) {
+  const idle = { phase: 'idle', error: null, log_path: null }
+  if (!saved) return idle
+  const target = saved.target_version
+  const logPath = saved.log_path
+  if (target && target === installedVersion) return idle
+  // Another update, for example `oore-web update`, replaced the version
+  // that failed to update, so the saved failure no longer applies.
+  if (
+    saved.phase === 'failed' &&
+    saved.from_version &&
+    saved.from_version !== installedVersion
+  ) {
+    return idle
+  }
+  if (saved.phase === 'restarting') {
+    return {
+      phase: 'failed',
+      error: `oore-web restarted on ${installedVersion} instead of ${target || 'the new release'}.`,
+      log_path: logPath,
+      from_version: installedVersion,
+    }
+  }
+  if (saved.phase === 'updating') {
+    return {
+      phase: 'failed',
+      error:
+        'The frontend update was interrupted before it finished. The previous frontend was kept.',
+      log_path: logPath,
+      from_version: installedVersion,
+    }
+  }
+  if (saved.phase === 'failed') {
+    return {
+      phase: 'failed',
+      error: saved.error || 'Frontend update failed',
+      log_path: logPath,
+      from_version: saved.from_version,
+    }
+  }
+  return idle
+}
+
+function loadWebUpdateState(installRoot) {
+  const statePath = webUpdateStatePath(installRoot)
+  let saved = null
+  try {
+    if (fileExists(statePath)) {
+      saved = parseSavedWebUpdateState(
+        readJsonFile(statePath, 'frontend update state'),
+      )
+    }
+  } catch (error) {
+    console.warn(`[oore-web] ${errorMessage(error)}`)
+  }
+  const state = restoreWebUpdateState(
+    saved,
+    readInstalledMetadata(installRoot).version,
+  )
+  saveWebUpdateState(installRoot, state)
+  return state
+}
+
+function saveWebUpdateState(installRoot, state) {
+  const statePath = webUpdateStatePath(installRoot)
+  try {
+    if (state.phase === 'idle') {
+      fs.rmSync(statePath, { force: true })
+    } else {
+      writeJsonAtomic(statePath, state)
+    }
+  } catch (error) {
+    console.warn(
+      `[oore-web] failed to save the frontend update state: ${errorMessage(error)}`,
+    )
+  }
+}
+
+function openWebUpdateLog(installRoot) {
+  const logPath = webUpdateLogPath(installRoot)
+  let writable = true
+  try {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 })
+    fs.writeFileSync(logPath, '', { mode: 0o600 })
+  } catch (error) {
+    writable = false
+    console.warn(
+      `[oore-web] failed to open the update log at ${logPath}: ${errorMessage(error)}`,
+    )
+  }
+  const log = (...parts) => {
+    const line = parts.join(' ')
+    console.log(line)
+    if (!writable) return
+    try {
+      fs.appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`)
+    } catch {
+      writable = false
+    }
+  }
+  return { log, logPath: writable ? logPath : null }
 }
 
 export async function authorizeOwner(
@@ -2496,9 +2799,112 @@ export async function authorizeOwner(
   const requestInit = { headers }
   if (signal) requestInit.signal = signal
   const response = await fetch(new URL('/v1/users/me', backendUrl), requestInit)
-  if (!response.ok) return false
+  if (!response.ok) {
+    return {
+      owner: false,
+      reason: ownerCheckFailureReason(request, response.status, config),
+    }
+  }
   const profile = await response.json()
-  return profile?.user?.role === 'owner'
+  const role = profile?.user?.role
+  if (role === 'owner') return { owner: true, reason: null }
+  return {
+    owner: false,
+    reason: `Only the instance owner can manage runtime updates. This session has the ${role || 'unknown'} role.`,
+  }
+}
+
+// Explains why the backend did not recognise the session behind oore-web.
+// Behind a trusted proxy the identity header only reaches the backend when
+// the upstream proxy proves itself with the shared secret.
+export function ownerCheckFailureReason(request, status, config) {
+  if (status === 401 && config.trustedProxySecret?.trim()) {
+    const identityHeader = config.trustedProxyUserEmailHeader
+    const proofHeader = config.upstreamTrustedProxySecretHeader
+    const upstreamSecret = config.upstreamTrustedProxySecret?.trim() || ''
+    if (!upstreamSecret) {
+      return `The backend did not recognise this session. oore-web strips the ${identityHeader} header because it has no upstream trusted proxy secret; set --upstream-trusted-proxy-secret-file on oore-web.`
+    }
+    if (!request.headers.get(identityHeader)?.trim()) {
+      return `The backend did not recognise this session. The upstream proxy did not send the ${identityHeader} header to oore-web.`
+    }
+    const proof = request.headers.get(proofHeader)?.trim() || ''
+    if (!timingSafeStringEqual(proof, upstreamSecret)) {
+      return `The backend did not recognise this session. The upstream proxy sent ${identityHeader} without a matching ${proofHeader} header, so oore-web stripped it.`
+    }
+  }
+  if (status === 401) {
+    return 'The backend did not recognise this session. Sign in again, then retry.'
+  }
+  return `The backend rejected the owner check (HTTP ${status}).`
+}
+
+// Releases on the channel newer than the installed version, newest first,
+// so the update dialog can show everything an update brings, not only the
+// latest release notes.
+export function releasesSinceInstalled(history, current, latest, repo) {
+  const entries = Array.isArray(history?.releases) ? history.releases : []
+  const releases = []
+  let installedTag = null
+  for (const entry of entries) {
+    let version
+    try {
+      version = parseVersion(String(entry?.version ?? ''))
+    } catch {
+      continue
+    }
+    if (compareVersions(version, current) === 0) installedTag = entry.tag
+    if (
+      compareVersions(version, current) <= 0 ||
+      compareVersions(version, latest) > 0
+    ) {
+      continue
+    }
+    releases.push({
+      parsed: version,
+      version: version.raw,
+      tag: String(entry.tag || `v${version.raw}`),
+      published_at: String(entry.published_at || ''),
+      release_name: String(entry.release_name || entry.tag || version.raw),
+      release_notes: String(entry.release_notes || ''),
+      release_url: String(entry.release_url || ''),
+    })
+  }
+  releases.sort((a, b) => compareVersions(b.parsed, a.parsed))
+  const latestTag = releases[0]?.tag
+  return {
+    releases: releases.map((release) => ({
+      version: release.version,
+      tag: release.tag,
+      published_at: release.published_at,
+      release_name: release.release_name,
+      release_notes: release.release_notes,
+      release_url: release.release_url,
+    })),
+    // A compare link only works when the installed version was published.
+    compare_url:
+      installedTag && latestTag
+        ? `https://github.com/${repo}/compare/${installedTag}...${latestTag}`
+        : null,
+  }
+}
+
+async function fetchChannelHistory(channel) {
+  const baseUrl = (
+    process.env.OORE_RELEASE_INDEX_BASE_URL || DEFAULT_RELEASE_INDEX_BASE_URL
+  ).replace(/\/$/, '')
+  const url = `${baseUrl}/${channel}.json`
+  const payload = await downloadVerifiedReleaseMetadata(
+    url,
+    RELEASE_INDEX_NAMESPACE,
+    `${channel} release history`,
+    releaseIndexHeaders(),
+  )
+  const history = JSON.parse(decodeReleaseMetadata(payload, 'release history'))
+  if (history?.schema_version !== 1 || history.channel !== channel) {
+    throw new Error(`invalid ${channel} release history response from ${url}`)
+  }
+  return history
 }
 
 export async function getWebUpdateStatus(updateState, searchParams) {
@@ -2513,18 +2919,37 @@ export async function getWebUpdateStatus(updateState, searchParams) {
     searchParams.get('repo') || metadata.github_repo,
   )
   const { release, latest } = await fetchVerifiedWebRelease(channel, repo)
+  const service = managedWebService()
+  const updateAvailable = compareVersions(current, latest) < 0
+  // The history is extra context: without it the dialog falls back to the
+  // latest release notes.
+  const since = updateAvailable
+    ? await fetchChannelHistory(channel)
+        .then((history) =>
+          releasesSinceInstalled(history, current, latest, repo),
+        )
+        .catch((error) => {
+          console.warn(
+            `[oore-web] failed to read the ${channel} release history: ${errorMessage(error)}`,
+          )
+          return null
+        })
+    : null
   return {
     ...metadata,
     version: current.raw,
     channel,
     github_repo: repo,
     latest_version: latest.raw,
-    update_available: compareVersions(current, latest) < 0,
+    update_available: updateAvailable,
     release_name: release.release_name || release.tag,
     release_notes: release.release_notes || '',
     release_url: release.release_url,
-    changelog_url: release.changelog_url,
-    managed_service: hasManagedWebService(),
+    changelog_url: since?.compare_url || release.changelog_url,
+    releases: since?.releases.length ? since.releases : undefined,
+    managed_service: service.managed,
+    managed_service_name: service.service,
+    managed_service_reason: service.reason,
     ...updateState,
   }
 }
@@ -2536,6 +2961,16 @@ export function isApiPath(pathname) {
     pathname.startsWith('/install/') ||
     pathname === '/v1' ||
     pathname.startsWith('/v1/')
+  )
+}
+
+// Bun.serve closes connections idle for 10 seconds, which would cut SSE
+// streams between keepalives. Streaming requests opt out per request.
+export function isEventStreamRequest(pathname, acceptHeader = '') {
+  return (
+    acceptHeader.includes('text/event-stream') ||
+    pathname === '/v1/events' ||
+    /^\/v1\/builds\/[^/]+\/logs\/stream$/.test(pathname)
   )
 }
 
@@ -2629,18 +3064,47 @@ export function spaCacheControl(pathname) {
 export function spaResponseHeaders(pathname) {
   return {
     'Cache-Control': spaCacheControl(pathname),
+    Vary: 'Accept-Encoding',
     'Content-Security-Policy': "frame-ancestors 'none'",
     'X-Frame-Options': 'DENY',
   }
 }
 
-function spaFileResponse(filePath, pathname) {
-  return new Response(Bun.file(filePath), {
-    headers: spaResponseHeaders(pathname),
-  })
+export function spaFileResponse(filePath, pathname, acceptEncoding = '') {
+  const file = Bun.file(filePath)
+  const headers = {
+    ...spaResponseHeaders(pathname),
+    'Content-Type': file.type,
+  }
+  const encodings = new Map(
+    acceptEncoding
+      .toLowerCase()
+      .split(',')
+      .map((part) => {
+        const [name, ...parameters] = part.trim().split(';')
+        const quality = parameters.find((parameter) =>
+          parameter.trim().startsWith('q='),
+        )
+        return [name.trim(), quality ? Number(quality.trim().slice(2)) : 1]
+      }),
+  )
+  const gzipQuality = encodings.get('gzip') ?? encodings.get('*') ?? 0
+  if (
+    gzipQuality > 0 &&
+    gzipQuality <= 1 &&
+    file.size >= 1024 &&
+    /\.(?:html|js|css|json|svg|txt|xml)$/.test(filePath)
+  ) {
+    headers['Content-Encoding'] = 'gzip'
+    return new Response(
+      file.stream().pipeThrough(new CompressionStream('gzip')),
+      { headers },
+    )
+  }
+  return new Response(file, { headers })
 }
 
-function serveSpa(distDir, pathname, acceptHeader) {
+function serveSpa(distDir, pathname, acceptHeader, acceptEncoding) {
   const assetPath = resolveAssetPath(distDir, pathname)
   if (!assetPath) {
     return new Response('Not found', { status: 404 })
@@ -2649,12 +3113,12 @@ function serveSpa(distDir, pathname, acceptHeader) {
   if (isDirectory(assetPath)) {
     const indexPath = path.join(assetPath, 'index.html')
     if (fileExists(indexPath)) {
-      return spaFileResponse(indexPath, '/')
+      return spaFileResponse(indexPath, '/', acceptEncoding)
     }
   }
 
   if (fileExists(assetPath)) {
-    return spaFileResponse(assetPath, pathname)
+    return spaFileResponse(assetPath, pathname, acceptEncoding)
   }
 
   const wantsHtml =
@@ -2664,7 +3128,7 @@ function serveSpa(distDir, pathname, acceptHeader) {
     if (!fileExists(indexPath)) {
       return new Response('index.html not found', { status: 500 })
     }
-    return spaFileResponse(indexPath, '/')
+    return spaFileResponse(indexPath, '/', acceptEncoding)
   }
 
   return new Response('Not found', { status: 404 })
@@ -2716,16 +3180,33 @@ async function main() {
       printUpdateHelp()
       process.exit(2)
     }
-    await runUpdate(updateConfig)
+    const service = updateConfig.check ? null : detectManagedWebService()
+    if (service && !service.managed) {
+      console.warn(`[oore-web] ${service.reason}`)
+    }
+    const result = await runUpdate(updateConfig)
+    if (result.updated) console.log(webServiceRestartHint(service))
     return
   }
 
   if (parsedCommand.command === 'recover-update') {
-    if (parsedCommand.args.length > 0) {
-      console.error('[oore-web] recover-update does not accept arguments')
+    // `oore` takes the lifecycle lock before it asks for recovery, so this
+    // process only takes the frontend update lock.
+    const lifecycleLockHeld =
+      parsedCommand.args.length === 1 &&
+      parsedCommand.args[0] === '--lifecycle-lock-held'
+    if (parsedCommand.args.length > 0 && !lifecycleLockHeld) {
+      console.error(
+        '[oore-web] recover-update accepts only --lifecycle-lock-held',
+      )
       process.exit(2)
     }
-    const recovered = await recoverUpdateWithLocks(resolveInstallRoot())
+    const installRoot = resolveInstallRoot()
+    const recovered = lifecycleLockHeld
+      ? await withUpdateLock(installRoot, () =>
+          recoverInterruptedUpdate(installRoot),
+        )
+      : await recoverUpdateWithLocks(installRoot)
     console.log(
       recovered
         ? 'Restored the previous frontend after an interrupted update.'
@@ -2772,11 +3253,11 @@ async function main() {
   }
   const { backendUrl, listen, distDir } = validated
 
-  const updateState = { phase: 'idle', error: null }
+  const updateState = loadWebUpdateState(installRoot)
   const server = Bun.serve({
     hostname: listen.hostname,
     port: listen.port,
-    fetch: async (request) => {
+    fetch: async (request, server) => {
       const url = new URL(request.url)
 
       if (url.pathname === '/__oore_web_healthz') {
@@ -2794,20 +3275,17 @@ async function main() {
       }
 
       if (url.pathname === '/__oore_web_update') {
-        let owner = false
+        let authorization
         try {
-          owner = await authorizeOwner(request, backendUrl, config)
+          authorization = await authorizeOwner(request, backendUrl, config)
         } catch {
           return Response.json(
             { error: 'Could not verify the current owner session' },
             { status: 502 },
           )
         }
-        if (!owner) {
-          return Response.json(
-            { error: 'Only the instance owner can manage runtime updates' },
-            { status: 403 },
-          )
+        if (!authorization.owner) {
+          return Response.json({ error: authorization.reason }, { status: 403 })
         }
 
         if (request.method === 'GET') {
@@ -2834,11 +3312,23 @@ async function main() {
         if (request.method !== 'POST') {
           return new Response('Method not allowed', { status: 405 })
         }
-        if (!hasManagedWebService()) {
-          return Response.json(
-            { error: 'Frontend updates require a managed service' },
-            { status: 409 },
-          )
+        // The web UI passes the backend's channel so that both halves of a
+        // coordinated update end on the same release stream.
+        const requestedChannel = url.searchParams.get('channel')
+        let channel = ''
+        if (requestedChannel) {
+          try {
+            channel = parseChannel(requestedChannel)
+          } catch (error) {
+            return Response.json(
+              { error: errorMessage(error) },
+              { status: 400 },
+            )
+          }
+        }
+        const service = managedWebService()
+        if (!service.managed) {
+          return Response.json({ error: service.reason }, { status: 409 })
         }
         if (updateState.phase === 'updating') {
           return Response.json(
@@ -2847,32 +3337,70 @@ async function main() {
           )
         }
 
-        updateState.phase = 'updating'
-        updateState.error = null
-        void runUpdate({ check: false, force: false }, config).then(
+        const { log, logPath } = openWebUpdateLog(installRoot)
+        Object.assign(updateState, {
+          phase: 'updating',
+          error: null,
+          log_path: logPath,
+          from_version: readInstalledMetadata(installRoot).version,
+          target_version: null,
+        })
+        saveWebUpdateState(installRoot, updateState)
+        void runUpdate(
+          {
+            channel,
+            switchChannel: !!channel,
+            check: false,
+            force: false,
+            log,
+          },
+          config,
+        ).then(
           (result) => {
             if (!result.updated) {
-              updateState.phase = 'idle'
+              Object.assign(updateState, { phase: 'idle', log_path: null })
+              saveWebUpdateState(installRoot, updateState)
               return
             }
-            updateState.phase = 'restarting'
+            Object.assign(updateState, {
+              phase: 'restarting',
+              target_version: result.latest,
+            })
+            saveWebUpdateState(installRoot, updateState)
             setTimeout(() => process.exit(75), 1000)
           },
           (error) => {
-            updateState.phase = 'failed'
-            updateState.error =
-              error instanceof Error ? error.message : 'Frontend update failed'
+            const message = errorMessage(error)
+            log(`Frontend update failed: ${message}`)
+            Object.assign(updateState, {
+              phase: 'failed',
+              error: message || 'Frontend update failed',
+            })
+            saveWebUpdateState(installRoot, updateState)
           },
         )
         return Response.json(updateState, { status: 202 })
       }
 
       if (isApiPath(url.pathname)) {
+        if (
+          isEventStreamRequest(
+            url.pathname,
+            request.headers.get('accept') || '',
+          )
+        ) {
+          server.timeout(request, 0)
+        }
         return proxyRequest(request, backendUrl, url, config)
       }
 
       const acceptHeader = request.headers.get('accept') || ''
-      return serveSpa(distDir, url.pathname, acceptHeader)
+      return serveSpa(
+        distDir,
+        url.pathname,
+        acceptHeader,
+        request.headers.get('accept-encoding') || '',
+      )
     },
   })
 

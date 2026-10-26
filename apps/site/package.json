@@ -12,11 +12,10 @@
   "dependencies": {
     "@base-ui/react": "^1.7.0",
     "@fontsource-variable/dm-sans": "^5.3.0",
-    "@hugeicons/core-free-icons": "^4.2.3",
-    "@hugeicons/react": "^1.1.9",
+    "@hugeicons/core-free-icons": "^4.3.0",
+    "@hugeicons/react": "^1.1.10",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "cnfast": "^0.1.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "tailwind-merge": "^3.6.0",
@@ -26,9 +25,9 @@
     "@astrojs/react": "6.0.4",
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
-    "astro": "7.2.4",
-    "shadcn": "^4.18.0",
+    "@types/react-dom": "^19.2.5",
+    "astro": "7.3.3",
+    "shadcn": "^4.19.0",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2"
   }

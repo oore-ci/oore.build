@@ -1,13 +1,14 @@
 ---
 title: '`oore doctor`'
 status: implemented
-description: 'Check required host tools, the managed runner, and selected platform toolchains.'
+description: 'Check required host tools, the managed runner, selected platform toolchains, and backend update readiness.'
 ---
 
 `oore doctor` checks the host used for Direct macOS builds.
 
 ```text
 oore doctor [--platform <PLATFORM>]... [--all] [--json]
+oore doctor --update [--json]
 ```
 
 | Option               | Meaning                                |
@@ -16,10 +17,10 @@ oore doctor [--platform <PLATFORM>]... [--all] [--json]
 | `--platform ios`     | Include iOS and Apple signing checks   |
 | `--platform macos`   | Include macOS and Apple signing checks |
 | `--all`              | Check Android, iOS, and macOS          |
+| `--update`           | Run the backend update preflight only  |
 | `--json`             | Emit a structured report               |
 
-The base report checks Git, Oore-managed Flutter/FVM readiness, and the managed
-runner service. Platform options add Android SDK or Xcode/signing checks.
+The base report checks Git, Flutter, Tart, and the managed runner service. Platform options add Android SDK or Xcode/signing checks.
 
 Each check has one status:
 
@@ -41,3 +42,32 @@ oore doctor --all --json
 ```
 
 Run the command on the runner host, not on a separate UI-only Linux host.
+
+## Backend update preflight
+
+`oore doctor --update` runs the same checks that **Settings → General →
+Runtime** and the update dialog show before a one-click backend update. Run it
+on the backend Mac as the account that owns the install, without `sudo`.
+
+| Check                        | What it verifies                                                                 |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| Installed updater            | `bin/oore` is installed beside `oored`                                           |
+| Backend launchd service      | `/Library/LaunchDaemons/build.oore.oored.plist` exists                           |
+| Service account              | The account name and `HOME` resolve                                              |
+| Update supervisor definition | The updater plist is `root:wheel`, mode `0644`, and matches the managed contents |
+| Update supervisor loaded     | launchd has loaded the same updater command, user, and environment               |
+| Runner service               | A Complete install uses the current boot-time runner command                     |
+| Rollback privileges          | The service account may run the daemon's `launchctl` reload through `sudo -n`    |
+
+Each check reports `ok`, `warning`, or `failed` with a detail and a fix. Only
+`failed` blocks the one-click update; the rollback check is a warning because
+an update can still start, but a failed restart then needs recovery from
+Terminal. Setup grants that reload in `/etc/sudoers.d/oore-update-recovery`,
+which allows only the daemon's `launchctl bootout`, `bootstrap`, and
+`kickstart -k` commands, so rerun `oore setup` when the check warns. The
+command fails when any check fails. `--json` prints the same
+`ready`, `checked_at`, and `checks` object as `GET /v1/system/update/preflight`.
+
+```bash
+oore doctor --update
+```

@@ -1,16 +1,10 @@
 import {
   columnFilteringFeature,
   columnVisibilityFeature,
-  createFilteredRowModel,
-  createPaginatedRowModel,
-  createSortedRowModel,
-  filterFn_includesString,
   functionalUpdate,
   rowPaginationFeature,
   rowSelectionFeature,
   rowSortingFeature,
-  sortFn_alphanumeric,
-  sortFn_text,
   tableFeatures,
   type SortingState,
   type Updater,
@@ -23,32 +17,41 @@ export const features = tableFeatures({
   rowPaginationFeature,
   rowSelectionFeature,
   rowSortingFeature,
-  filteredRowModel: createFilteredRowModel(),
-  paginatedRowModel: createPaginatedRowModel(),
-  sortedRowModel: createSortedRowModel(),
-  filterFns: { includesString: filterFn_includesString },
-  sortFns: { alphanumeric: sortFn_alphanumeric, text: sortFn_text },
 })
 
 // Pass this as the first generic argument to `ColumnDef`, `Column`, `Table`,
 // and `Row` so each type knows which feature APIs are available.
 export type DataTableFeatures = typeof features
 
-export type DataTableSortDirection = 'asc' | 'desc'
-export type SortDirection = DataTableSortDirection
+export type SortDirection = 'asc' | 'desc'
 
 export function dataTableSortingState(
   sort: string,
-  direction: DataTableSortDirection,
+  direction: SortDirection,
 ): SortingState {
   return [{ id: sort, desc: direction === 'desc' }]
+}
+
+// The direction a column header shows and toggles from. Controlled sorting is
+// read straight from options: v9 only publishes it to the table atoms in a
+// layout effect, so `column.getIsSorted()` lags one render behind and a header
+// rendered from it keeps re-sending the first click's direction.
+export function dataTableColumnSortDirection(
+  controlled: SortingState | undefined,
+  columnId: string,
+  fallback: () => SortDirection | false,
+): SortDirection | false {
+  if (!controlled) return fallback()
+  const entry = controlled.find((sort) => sort.id === columnId)
+  if (!entry) return false
+  return entry.desc ? 'desc' : 'asc'
 }
 
 export function resolveDataTableSorting<TSort extends string>(
   updater: Updater<SortingState>,
   current: SortingState,
   sortKeys: ReadonlyArray<TSort>,
-): { direction: DataTableSortDirection; sort: TSort } | null {
+): { direction: SortDirection; sort: TSort } | null {
   const next = functionalUpdate(updater, current)[0]
   if (!next) return null
 

@@ -1,14 +1,9 @@
-import { createLazyFileRoute, useNavigate } from '@tanstack/react-router'
+import { createLazyFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useForm } from 'react-hook-form'
-import type { UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import * as z from 'zod'
-import { toast } from '@/lib/toast'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Delete02Icon, TestTube01Icon } from '@hugeicons/core-free-icons'
-
-import type { UpdateSmtpConfig } from '@oore/client/models'
-import type { NotificationChannel } from '@oore/client/models'
+import { toast } from '@/lib/toast'
 import {
   useDeleteNotificationChannel,
   useNotificationChannel,
@@ -32,34 +27,23 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { DangerZone } from '@/components/danger-zone'
+import { FormActions } from '@/components/form-actions'
+import { RelativeTime } from '@/components/relative-time'
+import { StatusBadge } from '@/components/status-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Checkbox } from '@/components/ui/checkbox'
+import {
+  SettingsSection,
+  SettingsSurface,
+} from '@/components/settings/settings-section'
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Form } from '@/components/ui/form'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Item,
@@ -67,288 +51,28 @@ import {
   ItemContent,
   ItemDescription,
   ItemGroup,
+  ItemSeparator,
   ItemTitle,
 } from '@/components/ui/item'
-import { buildWebhookChannelUpdate } from './-notification-update'
+import {
+  channelTypeLabel,
+  editNotificationChannelSchema,
+  NotificationChannelFormFields,
+  notificationChannelDefaults,
+  notificationChannelEditValues,
+  notificationEventLabel,
+  type NotificationChannelFormValues,
+  updateNotificationChannelRequest,
+} from './-notification-form'
+import { splitRowVariants } from '@/lib/recipes'
 
 export const Route = createLazyFileRoute('/settings/notifications/$channelId')({
   component: NotificationChannelDetailPage,
 })
 
-const NOTIFICATION_EVENTS = [
-  { value: 'succeeded', label: 'Succeeded' },
-  { value: 'failed', label: 'Failed' },
-  { value: 'canceled', label: 'Canceled' },
-  { value: 'timed_out', label: 'Timed out' },
-  { value: 'expired', label: 'Expired' },
-  { value: 'runner_offline', label: 'Runner offline' },
-] as const
-
-const schema = z.object({
-  name: z.string().min(1, 'Name is required').max(200),
-  enabled: z.boolean(),
-  url: z.string().optional(),
-  secret: z.string().optional(),
-  remove_secret: z.boolean(),
-  events: z.array(z.string()),
-  // SMTP fields are optional during edits; blank keeps the existing value.
-  smtp_host: z.string().optional(),
-  smtp_port: z.string().optional(),
-  smtp_username: z.string().optional(),
-  smtp_password: z.string().optional(),
-  smtp_tls_mode: z.enum(['none', 'start_tls', 'tls']).optional(),
-  smtp_from_address: z.string().optional(),
-  smtp_recipients: z.string().optional(),
-})
-
-type FormValues = z.infer<typeof schema>
-
-function channelTypeLabel(type: string): string {
-  switch (type) {
-    case 'webhook':
-      return 'Webhook'
-    case 'mattermost':
-      return 'Mattermost'
-    case 'email':
-      return 'Email (SMTP)'
-    default:
-      return type
-  }
-}
-
-function NotificationChannelSettingsFields({
-  channel,
-  form,
-}: {
-  channel: NotificationChannel
-  form: UseFormReturn<FormValues>
-}) {
-  const removeSecret = form.watch('remove_secret')
-
-  if (channel.channel_type !== 'email') {
-    return (
-      <>
-        <FormField
-          control={form.control}
-          name="url"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>New URL (leave blank to keep existing)</FormLabel>
-              <FormControl>
-                <Input type="url" placeholder="https://..." {...field} />
-              </FormControl>
-              <FormDescription>
-                {channel.has_url
-                  ? 'A URL is currently configured. Enter a new one to replace it.'
-                  : 'No URL configured.'}
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        {channel.channel_type === 'webhook' ? (
-          <FormField
-            control={form.control}
-            name="secret"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>New HMAC secret</FormLabel>
-                <FormControl>
-                  <Input type="password" {...field} disabled={removeSecret} />
-                </FormControl>
-                <FormDescription>
-                  {channel.has_secret
-                    ? removeSecret
-                      ? 'The configured secret will be removed when you save.'
-                      : 'Leave blank to keep the configured secret.'
-                    : 'No HMAC secret configured.'}
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        ) : null}
-
-        {channel.channel_type === 'webhook' && channel.has_secret ? (
-          <FormField
-            control={form.control}
-            name="remove_secret"
-            render={({ field }) => (
-              <FormItem className="flex items-start gap-3">
-                <FormControl>
-                  <Checkbox
-                    checked={field.value}
-                    onCheckedChange={field.onChange}
-                  />
-                </FormControl>
-                <div className="space-y-0.5">
-                  <FormLabel>Remove configured HMAC secret</FormLabel>
-                  <FormDescription>
-                    Future webhook deliveries will no longer include an HMAC
-                    signature.
-                  </FormDescription>
-                </div>
-              </FormItem>
-            )}
-          />
-        ) : null}
-      </>
-    )
-  }
-
-  return (
-    <>
-      <div className="flex items-center gap-2 text-sm">
-        <Badge variant={channel.has_smtp_config ? 'secondary' : 'outline'}>
-          {channel.has_smtp_config ? 'SMTP configured' : 'No SMTP config'}
-        </Badge>
-      </div>
-
-      <FormDescription>
-        Leave fields blank to keep existing values. Only fill in fields you want
-        to change.
-      </FormDescription>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <FormField
-          control={form.control}
-          name="smtp_host"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>SMTP host</FormLabel>
-              <FormControl>
-                <Input placeholder="Leave blank to keep existing" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name="smtp_port"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Port</FormLabel>
-              <FormControl>
-                <Input
-                  type="number"
-                  placeholder="Leave blank to keep existing"
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <FormField
-          control={form.control}
-          name="smtp_username"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Username</FormLabel>
-              <FormControl>
-                <Input placeholder="Leave blank to keep existing" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name="smtp_password"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Password</FormLabel>
-              <FormControl>
-                <Input
-                  type="password"
-                  placeholder="Leave blank to keep existing"
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      </div>
-
-      <FormField
-        control={form.control}
-        name="smtp_tls_mode"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>TLS mode</FormLabel>
-            <Select
-              value={field.value}
-              onValueChange={(value) => field.onChange(value)}
-            >
-              <FormControl>
-                <SelectTrigger>
-                  <SelectValue placeholder="Leave unchanged" />
-                </SelectTrigger>
-              </FormControl>
-              <SelectContent>
-                <SelectItem value="start_tls">STARTTLS (port 587)</SelectItem>
-                <SelectItem value="tls">Implicit TLS (port 465)</SelectItem>
-                <SelectItem value="none">None (unencrypted)</SelectItem>
-              </SelectContent>
-            </Select>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-
-      <FormField
-        control={form.control}
-        name="smtp_from_address"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>From address</FormLabel>
-            <FormControl>
-              <Input
-                type="email"
-                placeholder="Leave blank to keep existing"
-                {...field}
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-
-      <FormField
-        control={form.control}
-        name="smtp_recipients"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>Recipients</FormLabel>
-            <FormControl>
-              <Textarea
-                placeholder="Leave blank to keep existing (comma-separated)"
-                rows={3}
-                {...field}
-              />
-            </FormControl>
-            <FormDescription>
-              Comma-separated list of email addresses. Leave blank to keep
-              existing recipients.
-            </FormDescription>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-    </>
-  )
-}
-
 function NotificationChannelDetailPage() {
   const { channelId } = Route.useParams()
   const navigate = useNavigate()
-
   const {
     data: channelData,
     error: channelError,
@@ -364,103 +88,28 @@ function NotificationChannelDetailPage() {
   const updateMutation = useUpdateNotificationChannel()
   const deleteMutation = useDeleteNotificationChannel()
   const testMutation = useTestNotificationChannel()
-
   const channel = channelData?.channel
   const deliveries = deliveriesData?.deliveries ?? []
-  const isEmail = channel?.channel_type === 'email'
-
-  const channelValues = channel
-    ? {
-        name: channel.name,
-        enabled: channel.enabled,
-        url: '',
-        secret: '',
-        remove_secret: false,
-        events: channel.events,
-        smtp_host: '',
-        smtp_port: '',
-        smtp_username: '',
-        smtp_password: '',
-        smtp_tls_mode: undefined,
-        smtp_from_address: '',
-        smtp_recipients: '',
-      }
-    : undefined
-
-  const form = useForm<FormValues>({
-    resolver: zodResolver(schema),
-    defaultValues: {
-      name: '',
-      enabled: true,
-      url: '',
-      secret: '',
-      remove_secret: false,
-      events: [],
-      smtp_host: '',
-      smtp_port: '',
-      smtp_username: '',
-      smtp_password: '',
-      smtp_tls_mode: undefined,
-      smtp_from_address: '',
-      smtp_recipients: '',
-    },
-    values: channelValues,
+  const form = useForm<NotificationChannelFormValues>({
+    resolver: zodResolver(
+      editNotificationChannelSchema(Boolean(channel?.smtp_summary)),
+    ),
+    defaultValues: notificationChannelDefaults,
+    values: channel ? notificationChannelEditValues(channel) : undefined,
     mode: 'onBlur',
   })
 
-  function onSubmit(values: FormValues) {
-    if (isEmail) {
-      // Build a partial SMTP config with only fields that have values.
-      const smtp_config: UpdateSmtpConfig = {}
-      if (values.smtp_host) smtp_config.host = values.smtp_host
-      if (values.smtp_port) smtp_config.port = Number(values.smtp_port)
-      if (values.smtp_username) smtp_config.username = values.smtp_username
-      if (values.smtp_password) smtp_config.password = values.smtp_password
-      if (values.smtp_tls_mode) smtp_config.tls_mode = values.smtp_tls_mode
-      if (values.smtp_from_address)
-        smtp_config.from_address = values.smtp_from_address
-      if (values.smtp_recipients?.trim()) {
-        smtp_config.recipients = values.smtp_recipients
-          .split(',')
-          .map((r) => r.trim())
-          .filter(Boolean)
-      }
-
-      const hasSmtpChanges = Object.keys(smtp_config).length > 0
-
-      const data = {
-        name: values.name,
-        enabled: values.enabled,
-        events: values.events,
-      }
-      if (hasSmtpChanges) Object.assign(data, { smtp_config })
-
-      updateMutation.mutate(
-        { id: channelId, data },
-        {
-          onSuccess: () => toast.success('Channel updated'),
-          onError: (err) => toast.error(getApiErrorMessage(err, {})),
+  function onSubmit(values: NotificationChannelFormValues) {
+    updateMutation.mutate(
+      { id: channelId, data: updateNotificationChannelRequest(values) },
+      {
+        onSuccess: () => {
+          toast.success('Channel updated')
+          form.reset(values)
         },
-      )
-    } else {
-      updateMutation.mutate(
-        {
-          id: channelId,
-          data: buildWebhookChannelUpdate({
-            enabled: values.enabled,
-            events: values.events,
-            name: values.name,
-            removeSecret: values.remove_secret,
-            secret: values.secret,
-            url: values.url,
-          }),
-        },
-        {
-          onSuccess: () => toast.success('Channel updated'),
-          onError: (err) => toast.error(getApiErrorMessage(err, {})),
-        },
-      )
-    }
+        onError: (error) => toast.error(getApiErrorMessage(error, {})),
+      },
+    )
   }
 
   function handleDelete() {
@@ -469,20 +118,17 @@ function NotificationChannelDetailPage() {
         toast.success('Channel deleted')
         void navigate({ to: '/settings/notifications' })
       },
-      onError: (err) => toast.error(`Failed to delete: ${err.message}`),
+      onError: (error) => toast.error(`Failed to delete: ${error.message}`),
     })
   }
 
   function handleTest() {
     testMutation.mutate(channelId, {
       onSuccess: (result) => {
-        if (result.success) {
-          toast.success('Test notification sent')
-        } else {
-          toast.error(`Test failed: ${result.error ?? 'Unknown error'}`)
-        }
+        if (result.success) toast.success('Test notification sent')
+        else toast.error(`Test failed: ${result.error ?? 'Unknown error'}`)
       },
-      onError: (err) => toast.error(`Test failed: ${err.message}`),
+      onError: (error) => toast.error(`Test failed: ${error.message}`),
     })
   }
 
@@ -490,12 +136,7 @@ function NotificationChannelDetailPage() {
     return (
       <PageLayout width="wide">
         <Skeleton className="h-8 w-48" />
-        <Card size="sm">
-          <CardContent className="space-y-3">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </CardContent>
-        </Card>
+        <Skeleton className="h-64 w-full" />
       </PageLayout>
     )
   }
@@ -505,7 +146,7 @@ function NotificationChannelDetailPage() {
       <PageLayout width="wide">
         <PageHeader title="Notification channel" />
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Failed to load notification channel: {channelError.message}
             </span>
@@ -544,228 +185,162 @@ function NotificationChannelDetailPage() {
       <PageMeta title={`${channel.name} notifications`} noindex />
       <PageHeader
         title={channel.name}
-        description={`${channelTypeLabel(channel.channel_type)} notification channel`}
+        meta={
+          <Badge variant="outline">
+            {channelTypeLabel(channel.channel_type)}
+          </Badge>
+        }
         actions={
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={handleTest}
-              disabled={testMutation.isPending}
-            >
-              <HugeiconsIcon icon={TestTube01Icon} />
-              {testMutation.isPending ? 'Sending...' : 'Test'}
-            </Button>
-            <AlertDialog>
-              <AlertDialogTrigger
-                render={
-                  <Button variant="destructive">
-                    <HugeiconsIcon icon={Delete02Icon} />
-                    Delete
-                  </Button>
-                }
-              />
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    Delete notification channel?
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This permanently removes the channel and its delivery
-                    history.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={handleDelete}
-                    disabled={deleteMutation.isPending}
-                  >
-                    {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
+          <Button
+            variant="outline"
+            onClick={handleTest}
+            disabled={testMutation.isPending}
+          >
+            <HugeiconsIcon icon={TestTube01Icon} />
+            {testMutation.isPending ? 'Sending...' : 'Test'}
+          </Button>
         }
       />
 
-      <Card size="sm" aria-labelledby="channel-settings-title">
-        <CardHeader>
-          <CardTitle id="channel-settings-title">Settings</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Name</FormLabel>
-                    <FormControl>
-                      <Input {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+      <Form {...form}>
+        <form
+          onSubmit={form.handleSubmit(onSubmit)}
+          className="flex flex-col gap-4"
+        >
+          <SettingsSection title="Channel">
+            <SettingsSurface className="flex flex-col gap-4">
+              <NotificationChannelFormFields channel={channel} form={form} />
+            </SettingsSurface>
+          </SettingsSection>
+          <FormActions
+            disabled={!form.formState.isDirty}
+            disabledReason="No changes to save"
+            isPending={updateMutation.isPending}
+            submitLabel="Save changes"
+          />
+        </form>
+      </Form>
 
-              <FormField
-                control={form.control}
-                name="enabled"
-                render={({ field }) => (
-                  <FormItem className="flex items-center gap-2 space-y-0">
-                    <FormControl>
-                      <Checkbox
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                    </FormControl>
-                    <FormLabel className="text-sm font-normal">
-                      Enabled
-                    </FormLabel>
-                  </FormItem>
-                )}
-              />
-
-              <NotificationChannelSettingsFields
-                channel={channel}
-                form={form}
-              />
-
-              <FormField
-                control={form.control}
-                name="events"
-                render={() => (
-                  <FormItem>
-                    <FormLabel>Event filter</FormLabel>
-                    <FormDescription>
-                      Leave all unchecked to receive all events.
-                    </FormDescription>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                      {NOTIFICATION_EVENTS.map((event) => (
-                        <FormField
-                          key={event.value}
-                          control={form.control}
-                          name="events"
-                          render={({ field }) => (
-                            <FormItem className="flex items-center gap-2 space-y-0">
-                              <FormControl>
-                                <Checkbox
-                                  checked={field.value.includes(event.value)}
-                                  onCheckedChange={(checked) => {
-                                    const current = field.value
-                                    if (checked) {
-                                      field.onChange([...current, event.value])
-                                    } else {
-                                      field.onChange(
-                                        current.filter(
-                                          (v: string) => v !== event.value,
-                                        ),
-                                      )
-                                    }
-                                  }}
-                                />
-                              </FormControl>
-                              <FormLabel className="text-sm font-normal">
-                                {event.label}
-                              </FormLabel>
-                            </FormItem>
-                          )}
-                        />
-                      ))}
-                    </div>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? 'Saving...' : 'Save changes'}
-              </Button>
-            </form>
-          </Form>
-        </CardContent>
-      </Card>
-
-      <Card size="sm" aria-labelledby="delivery-history-title">
-        <CardHeader>
-          <CardTitle id="delivery-history-title">Delivery history</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <SettingsSection title="Delivery history">
+        <SettingsSurface inset={false}>
           {deliveriesLoading ? (
-            <div className="space-y-2" aria-label="Loading delivery history">
+            <div
+              className="space-y-2 p-4 sm:p-5"
+              aria-label="Loading delivery history"
+            >
               <Skeleton className="h-12 w-full" />
               <Skeleton className="h-12 w-full" />
             </div>
           ) : deliveriesError ? (
-            <Alert variant="destructive">
-              <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <span>
-                  Failed to load delivery history: {deliveriesError.message}
-                </span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void refetchDeliveries()}
-                >
-                  Retry
-                </Button>
-              </AlertDescription>
-            </Alert>
+            <div className="p-4 sm:p-5">
+              <Alert variant="destructive">
+                <AlertDescription className={splitRowVariants()}>
+                  <span>
+                    Failed to load delivery history: {deliveriesError.message}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void refetchDeliveries()}
+                  >
+                    Retry
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            </div>
           ) : deliveries.length === 0 ? (
-            <Empty className="py-4">
+            <Empty className="py-8">
               <EmptyHeader>
                 <EmptyTitle>No deliveries yet</EmptyTitle>
                 <EmptyDescription>
                   Delivery attempts will appear here after this channel is
-                  triggered.
+                  triggered. Use Test to send one now.
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : (
             <ItemGroup>
-              {deliveries.map((delivery) => (
-                <Item key={delivery.id} variant="outline" size="sm">
-                  <ItemContent>
-                    <ItemTitle>
-                      <Badge
-                        variant={
-                          delivery.status === 'delivered'
-                            ? 'secondary'
-                            : delivery.status === 'failed'
-                              ? 'destructive'
-                              : 'outline'
-                        }
-                      >
-                        {delivery.status}
-                      </Badge>
-                      <span className="text-muted-foreground">
-                        {delivery.event_type}
-                      </span>
-                    </ItemTitle>
-                    {delivery.last_error ? (
-                      <ItemDescription className="text-destructive">
-                        {delivery.last_error}
+              {deliveries.map((delivery, index) => (
+                <div key={delivery.id}>
+                  {index > 0 ? <ItemSeparator /> : null}
+                  <Item size="sm">
+                    <ItemContent className="min-w-0">
+                      <ItemTitle>
+                        {notificationEventLabel(delivery.event_type)}
+                      </ItemTitle>
+                      <ItemDescription>
+                        <RelativeTime at={delivery.created_at} />
+                        {delivery.attempt_count > 1
+                          ? ` · ${delivery.attempt_count} attempts`
+                          : ''}
+                        {delivery.build_id ? (
+                          <>
+                            {' · '}
+                            <Link
+                              to="/builds/$buildId"
+                              params={{ buildId: delivery.build_id }}
+                              className="underline underline-offset-4"
+                            >
+                              View build
+                            </Link>
+                          </>
+                        ) : null}
                       </ItemDescription>
-                    ) : null}
-                  </ItemContent>
-                  <ItemActions className="text-xs text-muted-foreground">
-                    <time
-                      dateTime={new Date(
-                        delivery.created_at * 1000,
-                      ).toISOString()}
-                    >
-                      {new Date(delivery.created_at * 1000).toLocaleString()}
-                    </time>
-                  </ItemActions>
-                </Item>
+                      {delivery.last_error ? (
+                        <ItemDescription className="font-mono text-xs wrap-break-word">
+                          {delivery.last_error}
+                        </ItemDescription>
+                      ) : null}
+                    </ItemContent>
+                    <ItemActions>
+                      <StatusBadge kind="delivery" value={delivery.status} />
+                    </ItemActions>
+                  </Item>
+                </div>
               ))}
             </ItemGroup>
           )}
-        </CardContent>
-      </Card>
+        </SettingsSurface>
+      </SettingsSection>
+
+      <DangerZone
+        title="Delete this channel"
+        description={`Permanently removes "${channel.name}" and its delivery history. Pipelines that notified it stop sending.`}
+        action={
+          <AlertDialog>
+            <AlertDialogTrigger
+              render={
+                <Button variant="destructive">
+                  <HugeiconsIcon icon={Delete02Icon} />
+                  Delete channel
+                </Button>
+              }
+            />
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Delete notification channel?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  This permanently removes "{channel.name}" and its delivery
+                  history. Pipelines that notified it stop sending.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={deleteMutation.isPending}
+                >
+                  {deleteMutation.isPending ? 'Deleting...' : 'Delete channel'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        }
+      />
     </PageLayout>
   )
 }

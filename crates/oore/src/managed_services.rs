@@ -12,6 +12,7 @@ use serde_json::Value;
 use url::Url;
 
 use crate::install_manifest::InstallService;
+use crate::{launchd_xml_escape as xml_escape, paths_refer_to_same_file};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -19,6 +20,7 @@ const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const SERVICE_PATH: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 const LEGACY_UPDATER_LABEL: &str = "build.oore.oore-updater";
 const UPDATE_REQUEST_FILE: &str = "run/runtime-update-queue/request.json";
+const RECOVERY_SUDOERS: &str = "/etc/sudoers.d/oore-update-recovery";
 
 #[derive(Debug)]
 struct ServiceOwner {
@@ -138,7 +140,94 @@ pub(crate) async fn install_update_supervisor(root: &Path) -> anyhow::Result<()>
     let owner = service_owner(&root)?;
     validate_installed_executable(&root, owner.uid, "oore")?;
     validate_log_path_preflight(&root, owner.uid, InstallService::Updater)?;
-    install_service(update_supervisor_definition(root, owner)).await
+    let user = owner.name.clone();
+    install_service(update_supervisor_definition(root, owner)).await?;
+    install_recovery_sudoers(&user)
+        .context("one-click updates are installed, but granting the rollback rule failed")
+}
+
+/// Lets the update supervisor, which runs as the service account without a
+/// terminal, reload `oored` when an update fails mid restart. It names the
+/// three exact `launchctl` command lines the rollback runs, and nothing else.
+fn render_recovery_sudoers(user: &str) -> anyhow::Result<String> {
+    anyhow::ensure!(
+        !user.is_empty()
+            && user
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')),
+        "service account name {user:?} cannot be written to a sudoers rule"
+    );
+    let label = InstallService::Daemon.label();
+    let plist = InstallService::Daemon.definition();
+    Ok(format!(
+        "# Managed by Oore. Removed by `oore uninstall`.\n\
+         # Lets the update supervisor reload oored when an update fails mid restart.\n\
+         {user} ALL=(root) NOPASSWD: /bin/launchctl bootout system/{label}, \
+         /bin/launchctl bootstrap system {plist}, \
+         /bin/launchctl kickstart -k system/{label}\n",
+        plist = plist.display()
+    ))
+}
+
+fn install_recovery_sudoers(user: &str) -> anyhow::Result<()> {
+    let contents = render_recovery_sudoers(user)?;
+    let target = Path::new(RECOVERY_SUDOERS);
+    if read_system_definition_bytes(target).is_ok_and(|current| current == contents.as_bytes()) {
+        return Ok(());
+    }
+    let mut source = tempfile::NamedTempFile::new().context("failed to stage the sudoers rule")?;
+    source
+        .as_file()
+        .set_permissions(fs::Permissions::from_mode(0o600))?;
+    source.write_all(contents.as_bytes())?;
+    source.as_file_mut().sync_all()?;
+    // sudo skips sudoers.d files whose names contain a dot, so the stage stays
+    // inert until the final rename.
+    let stage = Path::new("/etc/sudoers.d").join(format!(
+        ".oore-update-recovery.{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let publish = (|| -> anyhow::Result<()> {
+        privileged_checked(
+            "/usr/bin/install",
+            &[
+                OsStr::new("-o"),
+                OsStr::new("root"),
+                OsStr::new("-g"),
+                OsStr::new("wheel"),
+                OsStr::new("-m"),
+                OsStr::new("0440"),
+                source.path().as_os_str(),
+                stage.as_os_str(),
+            ],
+            "staging the sudoers rule",
+        )?;
+        privileged_checked(
+            "/usr/sbin/visudo",
+            &[OsStr::new("-c"), OsStr::new("-f"), stage.as_os_str()],
+            "validating the sudoers rule",
+        )?;
+        privileged_checked(
+            "/bin/mv",
+            &[OsStr::new("-f"), stage.as_os_str(), target.as_os_str()],
+            "publishing the sudoers rule",
+        )
+    })();
+    if publish.is_err() {
+        let _ = privileged_output("/bin/rm", &[OsStr::new("-f"), stage.as_os_str()]);
+    }
+    publish
+}
+
+fn remove_recovery_sudoers() -> anyhow::Result<()> {
+    if fs::symlink_metadata(RECOVERY_SUDOERS).is_err() {
+        return Ok(());
+    }
+    privileged_checked(
+        "/bin/rm",
+        &[OsStr::new("-f"), OsStr::new(RECOVERY_SUDOERS)],
+        "removing the sudoers rule",
+    )
 }
 
 fn update_supervisor_definition(root: PathBuf, owner: ServiceOwner) -> ServiceDefinition {
@@ -334,6 +423,10 @@ pub(crate) fn remove_service(root: &Path, service: InstallService) -> anyhow::Re
     let root = validate_install_root(root)?;
     if !service_is_owned(&root, service)? {
         return Ok(());
+    }
+    if service == InstallService::Updater {
+        require_privileged_access()?;
+        remove_recovery_sudoers()?;
     }
     let snapshot = capture_snapshot(&root, service)?;
     if snapshot.definition.is_some() {
@@ -1621,26 +1714,7 @@ fn validate_owned_document(
         .and_then(Value::as_object)
         .context("service definition has no environment")?;
     match service {
-        InstallService::Runner => {
-            anyhow::ensure!(
-                environment.len() == 4
-                    && environment.get("PATH").and_then(Value::as_str) == Some(SERVICE_PATH)
-                    && environment.get("HOME").and_then(Value::as_str)
-                        == Some(owner.home.to_string_lossy().as_ref())
-                    && environment.get("FVM_CACHE_PATH").and_then(Value::as_str)
-                        == Some(root.join("toolchains/flutter").to_string_lossy().as_ref())
-                    && environment
-                        .get(oore_runner::RUNNER_SERVICE_ACK_PATH_ENV)
-                        .and_then(Value::as_str)
-                        == Some(
-                            root.join("run")
-                                .join(oore_runner::RUNNER_SERVICE_ACK_FILE)
-                                .to_string_lossy()
-                                .as_ref(),
-                        ),
-                "runner service definition has an unexpected environment"
-            );
-        }
+        InstallService::Runner => validate_runner_environment(root, owner, environment)?,
         InstallService::Daemon | InstallService::Updater | InstallService::Web => {
             anyhow::ensure!(
                 environment.len() == 3
@@ -1654,6 +1728,37 @@ fn validate_owned_document(
         }
     }
     validate_definition_arguments(root, service, owner, document)
+}
+
+// Runner services installed before FVM was removed also set FVM_CACHE_PATH.
+// The runner ignores it now, so accept it until `oore setup` rewrites the
+// service, instead of treating an Oore-written service as foreign.
+fn validate_runner_environment(
+    root: &Path,
+    owner: &ServiceOwner,
+    environment: &serde_json::Map<String, Value>,
+) -> anyhow::Result<()> {
+    let legacy_fvm_cache = environment.get("FVM_CACHE_PATH").map(|value| {
+        value.as_str() == Some(root.join("toolchains/flutter").to_string_lossy().as_ref())
+    });
+    anyhow::ensure!(
+        legacy_fvm_cache != Some(false)
+            && environment.len() == 3 + usize::from(legacy_fvm_cache.is_some())
+            && environment.get("PATH").and_then(Value::as_str) == Some(SERVICE_PATH)
+            && environment.get("HOME").and_then(Value::as_str)
+                == Some(owner.home.to_string_lossy().as_ref())
+            && environment
+                .get(oore_runner::RUNNER_SERVICE_ACK_PATH_ENV)
+                .and_then(Value::as_str)
+                == Some(
+                    root.join("run")
+                        .join(oore_runner::RUNNER_SERVICE_ACK_FILE)
+                        .to_string_lossy()
+                        .as_ref(),
+                ),
+        "runner service definition has an unexpected environment"
+    );
+    Ok(())
 }
 
 fn validate_definition_arguments(
@@ -3053,22 +3158,6 @@ fn is_loopback_host(host: &str) -> bool {
             .is_ok_and(|address| address.is_loopback())
 }
 
-fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
-    match (fs::canonicalize(left), fs::canonicalize(right)) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => left == right,
-    }
-}
-
-fn xml_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
 fn current_effective_uid() -> u32 {
     // SAFETY: `geteuid` has no pointer arguments or failure state.
     unsafe { libc::geteuid() }
@@ -3085,6 +3174,56 @@ fn require_macos() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_sudoers_names_only_the_rollback_commands() {
+        let rule = render_recovery_sudoers("appbuilder").expect("valid account");
+        assert_eq!(
+            rule.lines().last(),
+            Some(
+                "appbuilder ALL=(root) NOPASSWD: /bin/launchctl bootout system/build.oore.oored, /bin/launchctl bootstrap system /Library/LaunchDaemons/build.oore.oored.plist, /bin/launchctl kickstart -k system/build.oore.oored"
+            )
+        );
+        assert!(render_recovery_sudoers("app builder").is_err());
+        assert!(render_recovery_sudoers("ALL,root").is_err());
+        assert!(render_recovery_sudoers("").is_err());
+    }
+
+    #[test]
+    fn runner_environment_accepts_the_pre_fvm_removal_service() {
+        let root = PathBuf::from("/Users/appbuilder/.oore");
+        let owner = ServiceOwner {
+            uid: 501,
+            name: "appbuilder".to_string(),
+            home: PathBuf::from("/Users/appbuilder"),
+        };
+        let mut environment = serde_json::Map::new();
+        environment.insert("PATH".to_string(), SERVICE_PATH.into());
+        environment.insert("HOME".to_string(), "/Users/appbuilder".into());
+        environment.insert(
+            oore_runner::RUNNER_SERVICE_ACK_PATH_ENV.to_string(),
+            format!(
+                "/Users/appbuilder/.oore/run/{}",
+                oore_runner::RUNNER_SERVICE_ACK_FILE
+            )
+            .into(),
+        );
+        assert!(validate_runner_environment(&root, &owner, &environment).is_ok());
+
+        let mut legacy = environment.clone();
+        legacy.insert(
+            "FVM_CACHE_PATH".to_string(),
+            "/Users/appbuilder/.oore/toolchains/flutter".into(),
+        );
+        assert!(validate_runner_environment(&root, &owner, &legacy).is_ok());
+
+        legacy.insert("FVM_CACHE_PATH".to_string(), "/tmp/flutter".into());
+        assert!(validate_runner_environment(&root, &owner, &legacy).is_err());
+
+        let mut extra = environment;
+        extra.insert("EXTRA".to_string(), "1".into());
+        assert!(validate_runner_environment(&root, &owner, &extra).is_err());
+    }
 
     #[test]
     fn backend_update_supervisor_is_demand_only() {

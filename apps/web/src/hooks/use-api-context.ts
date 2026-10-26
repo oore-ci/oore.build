@@ -10,14 +10,14 @@ export function useApiContext() {
   const [token, expiresAt] = useAuthStore(
     useShallow((state) => [state.token, state.expiresAt]),
   )
-  const time = useTime()
-  const validToken =
+  const validToken = useTime((time) =>
     !token ||
     expiresAt == null ||
     !Number.isFinite(expiresAt) ||
     expiresAt <= Math.floor(time / 1000)
       ? null
-      : token
+      : token,
+  )
   const baseUrl = resolveInstanceApiBaseUrl(instance)
 
   return {

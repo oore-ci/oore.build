@@ -3,6 +3,9 @@ import { Link } from '@tanstack/react-router'
 
 import type { NotificationChannel } from '@oore/client/models'
 import { relativeTime } from '@/lib/format-utils'
+import { notificationEventLabel } from './-notification-form'
+import { enabledStatus } from '@/lib/status-variants'
+import { StatusBadge } from '@/components/status-badge'
 import {
   DataTable,
   DataTableColumnHeader,
@@ -16,6 +19,9 @@ import {
 import { Badge } from '@/components/ui/badge'
 import type { SortDirection } from '@/components/data-table-features'
 import { ChannelActions } from './-channel-actions'
+import { focusRingVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
+import { Stack } from '@/components/layout/stack'
 
 export type NotificationSort = 'name' | 'type' | 'status' | 'updated_at'
 
@@ -29,6 +35,7 @@ const NOTIFICATION_SORTS = [
 function channelTypeLabel(type: string): string {
   if (type === 'webhook') return 'Webhook'
   if (type === 'mattermost') return 'Mattermost'
+  if (type === 'slack') return 'Slack'
   if (type === 'email') return 'Email (SMTP)'
   return type
 }
@@ -38,13 +45,10 @@ function channelIdentity(channel: NotificationChannel) {
     <Link
       to="/settings/notifications/$channelId"
       params={{ channelId: channel.id }}
-      className="group block min-w-0 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      className={cn(focusRingVariants(), 'group block min-w-0 rounded-md')}
     >
       <span className="block truncate font-medium group-hover:underline">
         {channel.name}
-      </span>
-      <span className="block truncate font-mono text-[11px] text-muted-foreground">
-        {channel.id.slice(0, 8)}
       </span>
     </Link>
   )
@@ -86,9 +90,10 @@ function getNotificationColumns({
         <DataTableColumnHeader column={column} title="Status" />
       ),
       cell: ({ row }) => (
-        <Badge variant={row.original.enabled ? 'secondary' : 'outline'}>
-          {row.original.enabled ? 'Enabled' : 'Disabled'}
-        </Badge>
+        <StatusBadge
+          kind="enabled"
+          value={enabledStatus(row.original.enabled)}
+        />
       ),
     },
     {
@@ -96,7 +101,7 @@ function getNotificationColumns({
       header: 'Events',
       cell: ({ row }) =>
         row.original.events.length > 0
-          ? row.original.events.join(', ')
+          ? row.original.events.map(notificationEventLabel).join(', ')
           : 'All events',
       enableSorting: false,
     },
@@ -112,6 +117,7 @@ function getNotificationColumns({
       header: () => <span className="sr-only">Actions</span>,
       cell: ({ row }) => (
         <ChannelActions
+          name={row.original.name}
           pending={pending}
           onDelete={() => onDelete(row.original)}
           onTest={() => onTest(row.original)}
@@ -174,9 +180,10 @@ export function NotificationInventory({
   })
 
   return (
-    <section
+    <Stack
       aria-label="Notification channel inventory"
-      className="flex min-h-0 min-w-0 flex-1 flex-col"
+      fill
+      render={<section />}
     >
       <DataTable
         table={table}
@@ -186,8 +193,9 @@ export function NotificationInventory({
           placeholder: 'Search channels',
         }}
         pagination={{ onPageChange, page, pageSize, total }}
+        isLoading={isLoading}
         emptyMessage={isLoading ? 'Loading notification channels…' : undefined}
       />
-    </section>
+    </Stack>
   )
 }

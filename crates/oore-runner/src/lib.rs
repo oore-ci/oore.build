@@ -5,26 +5,42 @@ use std::net::IpAddr;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{
-    Arc,
-    atomic::{AtomicU8, Ordering},
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
 };
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+pub mod store_version;
 
 use anyhow::Context;
 use base64::Engine as _;
+use caches::{CacheObservation, CacheStats, RunnerCaches};
 use oore_contract::{
-    AndroidSigningBuildType, BuildPlatform, BuildStatus, ClaimJobRequest, ClaimJobResponse,
-    ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse, JobStatusResponse,
-    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
-    PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
-    RunnerAndroidSigningResponse, RunnerIosSigningBundle, RunnerIosSigningResponse, StepResult,
-    artifact_pattern_matches, parse_repository_pipeline_yaml, validate_artifact_pattern,
-    validate_repository_config_path,
+    AndroidSigningBuildType, BuildIsolation, BuildPlatform, BuildStatus, ClaimJobRequest,
+    ClaimJobResponse, ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse,
+    IosExportMethod, JobStatusResponse, PUBLISH_APP_STORE_STEP, PUBLISH_PLAY_STEP,
+    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlanPublish, PlanRequest,
+    PlanStep, PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION,
+    RunnerAndroidSigningProfile, RunnerAndroidSigningResponse, RunnerHeartbeatResponse,
+    RunnerIosSigningBundle, RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan,
+    RunnerPublishResult, RunnerRetryArtifactsResponse, StepPhase, StepResult, TargetSizeBudget,
+    artifact_pattern_matches, is_valid_pipeline_env_key, missing_runner_labels,
+    normalize_runner_labels, parse_repository_config, pipeline_config::select_v1_platforms,
+    plan_execution_config, replace_secret_references, store_version_code,
+    validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use zeroize::Zeroize;
+
+mod analyzer;
+mod app_store_upload;
+mod caches;
+mod metrics;
+mod publish;
+mod tart;
+mod test_reports;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
 const OORE_ANDROID_KEYSTORE_PATH_ENV: &str = "OORE_ANDROID_KEYSTORE_PATH";
@@ -55,14 +71,31 @@ pub const RUNNER_SERVICE_ACK_PATH_ENV: &str = "OORE_RUNNER_SERVICE_ACK_PATH";
 pub const RUNNER_SERVICE_ACK_MAX_AGE_SECS: u64 = 75;
 const RUNNER_SERVICE_ACK_SCHEMA_VERSION: u32 = 1;
 const MANAGED_RUNNER_SERVICE_LABEL: &str = "build.oore.oore-runner";
-// ponytail: fixed three-check grace; move it into the runner protocol if deployments need tuning.
-const MAX_CONSECUTIVE_AUTHORITY_FAILURES: u8 = 3;
-const MANAGED_FVM_VERSION: &str = "4.1.2";
-const MANAGED_FVM_ARM64_SHA256: &str =
-    "0b2a146986c51f06331f135f0bdf2a202eb57f55d7edd420c9078e8520e4c033";
-const MANAGED_FVM_X64_SHA256: &str =
-    "7bbfcb6883ea67ce532163704f5625eba7ecf340084be707cde71a28fefff1d8";
-const MANAGED_FVM_MAX_ARCHIVE_BYTES: usize = 32 * 1024 * 1024;
+/// How long a build keeps running while the backend cannot confirm it, for
+/// example through a backend restart.
+const CONTROLLER_GRACE: Duration = Duration::from_secs(300);
+/// `BuildTerminated` status for a build stopped after `CONTROLLER_GRACE`.
+const CONTROLLER_UNAVAILABLE: &str = "controller_unavailable";
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Longest wait for the next bytes of any response, so a half-open
+/// connection fails instead of hanging the runner.
+const READ_TIMEOUT: Duration = Duration::from_secs(120);
+/// Whole-request bound for the small JSON calls to the backend.
+const CONTROL_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long the runner keeps trying to deliver a build's final status.
+const FINAL_REPORT_WINDOW: Duration = Duration::from_secs(600);
+/// How long it keeps trying to say a claimed build started. Shorter than the
+/// backend's 5 minute lease, after which the build is queued again.
+const RUNNING_REPORT_WINDOW: Duration = Duration::from_secs(120);
+/// Longest a Google Play upload may run before the runner stops it.
+const PLAY_PUBLISH_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+/// How long a canceled step's processes get to exit after SIGTERM.
+const STEP_TERM_GRACE: Duration = Duration::from_secs(5);
+/// How long a step's output may stay quiet after the step exits before the
+/// runner stops reading it, in case a background process it left behind
+/// still holds the pipes. `STEP_OUTPUT_LIMIT` bounds the whole wait.
+const STEP_OUTPUT_GRACE: Duration = Duration::from_secs(5);
+const STEP_OUTPUT_LIMIT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RunnerConfig {
@@ -176,6 +209,36 @@ fn create_private_workspace_in(parent: &Path, runner_id: &str) -> std::io::Resul
     ))
 }
 
+/// A build workspace whose path is the same for every build of a project on
+/// this runner, so Xcode keeps one DerivedData folder per project instead of
+/// starting a new one per build. Falls back to a random name if a previous
+/// workspace for the project is still present.
+fn create_project_workspace_in(
+    parent: &Path,
+    runner_id: &str,
+    project_id: &str,
+) -> std::io::Result<PathBuf> {
+    let digest = Sha256::digest(project_id.as_bytes());
+    let path = parent.join(format!(
+        "{}{}",
+        runner_workspace_prefix(runner_id),
+        hex::encode(&digest[..16])
+    ));
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(&path) {
+        Ok(()) => Ok(path),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            create_private_workspace_in(parent, runner_id)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn prepare_runner_workspace_root() -> anyhow::Result<PathBuf> {
     let path = std::env::temp_dir().join(RUNNER_WORKSPACE_ROOT_NAME);
     let mut builder = fs::DirBuilder::new();
@@ -214,195 +277,35 @@ fn repository_shell_command(script: &str, workspace: &Path) -> tokio::process::C
         .arg("-c")
         .arg(script)
         .current_dir(workspace)
-        .env_remove(RUNNER_SERVICE_ACK_PATH_ENV);
-    if let Some(install_root) = bundled_fvm_install_root() {
-        configure_bundled_fvm_environment(&mut command, &install_root);
-    }
+        .env_remove(RUNNER_SERVICE_ACK_PATH_ENV)
+        // Its own process group, so canceling the step reaches everything
+        // the script started, not just the shell.
+        .process_group(0);
     command
 }
 
-fn bundled_fvm_install_root() -> Option<PathBuf> {
-    let executable = std::env::current_exe().ok()?;
-    oore_install_root_for_executable(&executable)
-        .filter(|install_root| managed_fvm_is_available(install_root))
+/// Stops a step: SIGTERM to its process group, then SIGKILL to whatever is
+/// left once `STEP_TERM_GRACE` passes. A child that leads no group of its
+/// own is killed directly.
+async fn stop_process_group(child: &mut tokio::process::Child) {
+    let group = child.id().and_then(|pid| libc::pid_t::try_from(pid).ok());
+    // SAFETY: killpg only sends a signal. The child leads its group when it
+    // was spawned with process_group(0); otherwise no group has its id and
+    // the call fails harmlessly.
+    let signal_group =
+        |signal| group.is_some_and(|pgid| unsafe { libc::killpg(pgid, signal) } == 0);
+    if signal_group(libc::SIGTERM) {
+        let _ = tokio::time::timeout(STEP_TERM_GRACE, child.wait()).await;
+        signal_group(libc::SIGKILL);
+    }
+    child.kill().await.ok();
 }
 
-fn oore_install_root_for_executable(executable: &Path) -> Option<PathBuf> {
-    let bin = executable.parent()?;
-    if bin.file_name()? != "bin" {
-        return None;
+/// Waits for every task in `handles`.
+async fn join_all(handles: Vec<tokio::task::JoinHandle<()>>) {
+    for handle in handles {
+        let _ = handle.await;
     }
-    let install_root = bin.parent()?;
-    install_root
-        .join("VERSION")
-        .is_file()
-        .then(|| install_root.to_path_buf())
-}
-
-fn managed_fvm_is_available(install_root: &Path) -> bool {
-    install_root.join("bin/fvm").is_file() && install_root.join("libexec/fvm/fvm").is_file()
-}
-
-fn managed_fvm_download(arch: &str) -> anyhow::Result<(String, &'static str)> {
-    let (asset_arch, expected_sha256) = match arch {
-        "aarch64" => ("arm64", MANAGED_FVM_ARM64_SHA256),
-        "x86_64" => ("x64", MANAGED_FVM_X64_SHA256),
-        other => anyhow::bail!("Oore-managed FVM is not available for architecture {other}"),
-    };
-    Ok((
-        format!(
-            "https://github.com/conceptadev/fvm/releases/download/{MANAGED_FVM_VERSION}/fvm-{MANAGED_FVM_VERSION}-macos-{asset_arch}.tar.gz"
-        ),
-        expected_sha256,
-    ))
-}
-
-async fn install_managed_fvm_archive(
-    install_root: &Path,
-    archive_bytes: &[u8],
-    expected_sha256: &str,
-) -> anyhow::Result<()> {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-
-    anyhow::ensure!(
-        archive_bytes.len() <= MANAGED_FVM_MAX_ARCHIVE_BYTES,
-        "managed FVM archive exceeds the {} byte limit",
-        MANAGED_FVM_MAX_ARCHIVE_BYTES
-    );
-    let actual_sha256 = hex::encode(Sha256::digest(archive_bytes));
-    anyhow::ensure!(
-        actual_sha256 == expected_sha256,
-        "managed FVM archive checksum mismatch"
-    );
-
-    let mut random = [0u8; 8];
-    rand::thread_rng().fill_bytes(&mut random);
-    let staging = install_root.join(format!(
-        ".fvm-bootstrap-{}-{}",
-        std::process::id(),
-        hex::encode(random)
-    ));
-    let mut staging_builder = fs::DirBuilder::new();
-    staging_builder.mode(0o700);
-    staging_builder
-        .create(&staging)
-        .with_context(|| format!("failed to create {}", staging.display()))?;
-
-    let result: anyhow::Result<()> = async {
-        let archive = staging.join("fvm.tar.gz");
-        write_private_file(&archive, archive_bytes)
-            .with_context(|| format!("failed to write {}", archive.display()))?;
-        let output = tokio::process::Command::new("/usr/bin/tar")
-            .args(["-xzf"])
-            .arg(&archive)
-            .args(["-C"])
-            .arg(&staging)
-            .output()
-            .await
-            .context("failed to extract managed FVM archive")?;
-        anyhow::ensure!(
-            output.status.success(),
-            "failed to extract managed FVM archive: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-
-        let extracted = staging.join("fvm");
-        let payload = extracted.join("fvm");
-        let payload_metadata = fs::symlink_metadata(&payload)
-            .with_context(|| format!("managed FVM archive is missing {}", payload.display()))?;
-        anyhow::ensure!(
-            payload_metadata.file_type().is_file(),
-            "managed FVM payload is not a regular file"
-        );
-        fs::set_permissions(&payload, fs::Permissions::from_mode(0o755))?;
-
-        let libexec = install_root.join("libexec");
-        fs::create_dir_all(&libexec)?;
-        let destination = libexec.join("fvm");
-        match fs::remove_dir_all(&destination) {
-            Ok(()) => {}
-            Err(error) if error.kind() == ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-        fs::rename(&extracted, &destination).with_context(|| {
-            format!(
-                "failed to install managed FVM payload at {}",
-                destination.display()
-            )
-        })?;
-        fs::File::open(&libexec)?.sync_all()?;
-
-        let bin = install_root.join("bin");
-        fs::create_dir_all(&bin)?;
-        let launcher = bin.join(format!(
-            ".fvm.{}-{}.tmp",
-            std::process::id(),
-            hex::encode(random)
-        ));
-        write_private_file(
-            &launcher,
-            b"#!/bin/sh\nset -eu\nroot=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")/..\" && pwd)\"\nexec \"$root/libexec/fvm/fvm\" \"$@\"\n",
-        )?;
-        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755))?;
-        fs::rename(&launcher, bin.join("fvm"))?;
-        fs::File::open(&bin)?.sync_all()?;
-        Ok(())
-    }
-    .await;
-
-    if let Err(cleanup_error) = fs::remove_dir_all(&staging)
-        && cleanup_error.kind() != ErrorKind::NotFound
-        && result.is_ok()
-    {
-        return Err(cleanup_error).context("failed to clean up managed FVM bootstrap");
-    }
-    result
-}
-
-async fn ensure_managed_fvm(client: &reqwest::Client) -> anyhow::Result<bool> {
-    let executable = std::env::current_exe().context("failed to locate the Oore runner")?;
-    let Some(install_root) = oore_install_root_for_executable(&executable) else {
-        return Ok(false);
-    };
-    if managed_fvm_is_available(&install_root) {
-        return Ok(false);
-    }
-
-    let (url, expected_sha256) = managed_fvm_download(std::env::consts::ARCH)?;
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .context("failed to download Oore-managed FVM")?
-        .error_for_status()
-        .context("Oore-managed FVM download failed")?;
-    if let Some(length) = response.content_length() {
-        anyhow::ensure!(
-            length <= MANAGED_FVM_MAX_ARCHIVE_BYTES as u64,
-            "managed FVM archive exceeds the {} byte limit",
-            MANAGED_FVM_MAX_ARCHIVE_BYTES
-        );
-    }
-    let bytes = response
-        .bytes()
-        .await
-        .context("failed to read Oore-managed FVM download")?;
-    install_managed_fvm_archive(&install_root, &bytes, expected_sha256).await?;
-    Ok(true)
-}
-
-fn configure_bundled_fvm_environment(command: &mut tokio::process::Command, install_root: &Path) {
-    let mut paths = vec![install_root.join("bin")];
-    if let Some(current) = std::env::var_os("PATH") {
-        paths.extend(std::env::split_paths(&current));
-    }
-    if let Ok(path) = std::env::join_paths(paths) {
-        command.env("PATH", path);
-    }
-    command.env(
-        "FVM_CACHE_PATH",
-        install_root.join("toolchains").join("flutter"),
-    );
 }
 
 fn write_private_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
@@ -460,11 +363,16 @@ pub async fn detect_capabilities() -> serde_json::Value {
         .map(|path| runner_version_for_executable(&path))
         .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
 
+    let tart_version = tart::find_tart()
+        .and_then(|tart| tart::tart_version(&tart))
+        .unwrap_or_default();
+
     serde_json::json!({
-        "os": "macos",
+        "os": std::env::consts::OS,
         "os_version": os_version,
         "arch": arch,
         "xcode_version": xcode_version,
+        "tart_version": tart_version,
         "version": version,
         "protocol_version": RUNNER_PROTOCOL_VERSION,
     })
@@ -901,10 +809,7 @@ fn android_signing_prepared_marker(source: &str, variant: AndroidSigningBuildTyp
 
 fn is_android_flutter_build_command(command: &str) -> bool {
     let trimmed = command.trim_start();
-    trimmed.starts_with("flutter build apk")
-        || trimmed.starts_with("fvm flutter build apk")
-        || trimmed.starts_with("flutter build appbundle")
-        || trimmed.starts_with("fvm flutter build appbundle")
+    trimmed.starts_with("flutter build apk") || trimmed.starts_with("flutter build appbundle")
 }
 
 fn android_signing_variant_for_command(command: &str) -> Option<AndroidSigningBuildType> {
@@ -1169,7 +1074,7 @@ fn run_android_signer_command(
     args: &[String],
     inputs: &AndroidSigningInputs,
     action: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<String> {
     let mut command = Command::new(program);
     command
         .args(args)
@@ -1184,9 +1089,46 @@ fn run_android_signer_command(
     let output = command.output().map_err(|error| {
         anyhow::anyhow!("failed to {action} with {}: {error}", program.display())
     })?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        anyhow::bail!("failed to {action}: {stderr}");
+        anyhow::bail!(
+            "failed to {action}: {}",
+            android_signer_failure_detail(&stdout, &output.stderr)
+        );
+    }
+    Ok(stdout)
+}
+
+/// jarsigner and apksigner print most diagnostics to stdout, so failures need
+/// both streams to be actionable.
+fn android_signer_failure_detail(stdout: &str, stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr);
+    let detail = [stderr.trim(), stdout.trim()]
+        .into_iter()
+        .filter(|stream| !stream.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if detail.is_empty() {
+        "signer exited without output".to_string()
+    } else {
+        detail
+    }
+}
+
+/// Checks `jarsigner -verify` output. `-strict` is deliberately not used:
+/// Android upload keys are self-signed and AABs are not timestamped, which
+/// `-strict` reports as errors. Plain `-verify` still exits non-zero on digest
+/// or signature mismatches, but exits zero for an unsigned jar, so the output
+/// must confirm every entry was verified.
+fn check_android_bundle_verification(stdout: &str) -> anyhow::Result<()> {
+    let verified = stdout
+        .lines()
+        .any(|line| line.trim().starts_with("jar verified"));
+    if !verified || stdout.contains("unsigned entries") {
+        anyhow::bail!(
+            "failed to verify Android App Bundle signature: {}",
+            android_signer_failure_detail(stdout, &[])
+        );
     }
     Ok(())
 }
@@ -1320,17 +1262,14 @@ fn sign_android_artifacts(
                 inputs,
                 "sign Android App Bundle",
             )?;
-            run_android_signer_command(
+            let verification = run_android_signer_command(
                 toolchain,
                 &toolchain.jarsigner,
-                &[
-                    "-verify".to_string(),
-                    "-strict".to_string(),
-                    signed_artifact.display().to_string(),
-                ],
+                &["-verify".to_string(), signed_artifact.display().to_string()],
                 inputs,
                 "verify Android App Bundle signature",
             )?;
+            check_android_bundle_verification(&verification)?;
         }
 
         fs::copy(&signed_artifact, artifact).map_err(|error| {
@@ -1340,6 +1279,161 @@ fn sign_android_artifacts(
             )
         })?;
     }
+    Ok(artifacts)
+}
+
+/// Asks the host's `flutter`, found through the same PATH and env the
+/// pipeline steps get, which framework version it is. `Err` carries why it
+/// could not tell.
+async fn host_flutter_version(
+    workspace: &Path,
+    step_env: &[(String, String)],
+) -> Result<String, String> {
+    let mut command = repository_shell_command("flutter --version --machine", workspace);
+    command
+        .envs(step_env.iter().map(|(key, value)| (key, value)))
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(Duration::from_secs(300), command.output())
+        .await
+        .map_err(|_| "flutter --version timed out after 5 minutes".to_string())?
+        .map_err(|error| format!("failed to run flutter --version: {error}"))?;
+    if output.status.code() == Some(127) {
+        return Err("no flutter on the runner's PATH".to_string());
+    }
+    if !output.status.success() {
+        return Err(format!(
+            "flutter --version failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    parse_flutter_machine_version(&String::from_utf8_lossy(&output.stdout)).ok_or_else(|| {
+        "could not read frameworkVersion from flutter --version --machine".to_string()
+    })
+}
+
+/// `flutter --version --machine` prints JSON, possibly after first-run
+/// banners, so read the outermost object.
+fn parse_flutter_machine_version(stdout: &str) -> Option<String> {
+    let start = stdout.find('{')?;
+    let end = stdout.rfind('}')?;
+    let value: serde_json::Value = serde_json::from_str(stdout.get(start..=end)?).ok()?;
+    value.get("frameworkVersion")?.as_str().map(str::to_string)
+}
+
+/// Host builds cannot switch Flutter, so a pinned version (from `.fvmrc` or
+/// the pipeline) must be the one the host has installed. A channel such as
+/// `stable` is not checked, since a host checkout of a tag reports no
+/// channel. `Ok` and `Err` both carry the line for the build log.
+fn check_host_flutter(requested: &str, found: Result<String, String>) -> Result<String, String> {
+    // FVM writes `3.47.7@beta` for a release from a channel.
+    let pinned = requested.split('@').next().unwrap_or(requested).trim();
+    let pinned = pinned.strip_prefix('v').unwrap_or(pinned);
+    let is_version = pinned.starts_with(|c: char| c.is_ascii_digit());
+    match (is_version, found) {
+        (true, Ok(found)) if found == pinned => Ok(format!(
+            "Host build: using the runner's Flutter {found}, matching the requested {requested}"
+        )),
+        (true, Ok(found)) => Err(format!(
+            "Host build needs Flutter {pinned}, but the runner's flutter is {found}. Install {pinned} on the runner host (see Runner prerequisites in the docs) or set isolation: vm"
+        )),
+        (true, Err(reason)) => Err(format!(
+            "Host build needs Flutter {pinned}, but {reason}. Install {pinned} on the runner host (see Runner prerequisites in the docs) or set isolation: vm"
+        )),
+        (false, Ok(found)) => Ok(format!(
+            "Host build: using the runner's Flutter {found} for {requested}; pin a version in .fvmrc to enforce one"
+        )),
+        (false, Err(reason)) => Ok(format!(
+            "Host build: could not check the runner's Flutter ({reason})"
+        )),
+    }
+}
+
+/// The guest-side equivalent of [`sign_android_artifacts`]: the same
+/// apksigner and jarsigner steps, run with the VM image's Android SDK and JDK
+/// so the host needs neither. The script travels over the guest agent's
+/// channel and writes the keystore only to a private directory on the VM's
+/// own disk, never to the shared workspace.
+fn android_vm_signing_script(
+    guest_artifacts: &[String],
+    extension: &str,
+    inputs: &AndroidSigningInputs,
+) -> String {
+    use tart::shell_quote as q;
+    let keystore = base64::engine::general_purpose::STANDARD.encode(&inputs.keystore_bytes);
+    let mut script = format!(
+        r#"set -e
+umask 077
+dir="$(mktemp -d)"
+trap 'rm -rf "$dir"' EXIT
+printf %s {keystore} | base64 --decode > "$dir/keystore.jks"
+export {ANDROID_SIGNER_STORE_PASSWORD_ENV}={store}
+export {ANDROID_SIGNER_KEY_PASSWORD_ENV}={key}
+apksigner="$(ls -1 "${{ANDROID_HOME:-$HOME/android-sdk}}"/build-tools/*/apksigner 2>/dev/null | sort | tail -n 1)"
+"#,
+        keystore = q(&keystore),
+        store = q(&inputs.keystore_password),
+        key = q(&inputs.key_password),
+    );
+    let alias = q(&inputs.key_alias);
+    for (index, artifact) in guest_artifacts.iter().enumerate() {
+        let artifact = q(artifact);
+        let signed = format!("\"$dir/signed-{index}.{extension}\"");
+        if extension == "apk" {
+            script.push_str(&format!(
+                r#"[ -n "$apksigner" ] || {{ echo "apksigner is missing from the VM image's Android SDK" >&2; exit 1; }}
+"$apksigner" sign --ks "$dir/keystore.jks" --ks-key-alias {alias} --ks-pass env:{ANDROID_SIGNER_STORE_PASSWORD_ENV} --key-pass env:{ANDROID_SIGNER_KEY_PASSWORD_ENV} --out {signed} {artifact}
+"$apksigner" verify --verbose --print-certs {signed} >&2
+"#
+            ));
+        } else {
+            script.push_str(&format!(
+                r#"cp {artifact} {signed}
+zip -d {signed} 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' 'META-INF/MANIFEST.MF' > /dev/null || [ $? -eq 12 ]
+jarsigner -keystore "$dir/keystore.jks" -storepass:env {ANDROID_SIGNER_STORE_PASSWORD_ENV} -keypass:env {ANDROID_SIGNER_KEY_PASSWORD_ENV} {signed} {alias} >&2
+verified="$(jarsigner -verify {signed})" || {{ printf '%s\n' "$verified" >&2; exit 1; }}
+if ! printf '%s\n' "$verified" | grep -q '^ *jar verified' || printf '%s\n' "$verified" | grep -q 'unsigned entries'; then
+  printf 'failed to verify Android App Bundle signature: %s\n' "$verified" >&2
+  exit 1
+fi
+"#
+            ));
+        }
+        script.push_str(&format!("cp {signed} {artifact}\n"));
+    }
+    script
+}
+
+async fn sign_android_artifacts_in_vm(
+    vm: &tart::TartVm,
+    workspace: &Path,
+    command: &str,
+    inputs: &AndroidSigningInputs,
+) -> anyhow::Result<Vec<PathBuf>> {
+    let extension = android_artifact_extension(command)
+        .ok_or_else(|| anyhow::anyhow!("unsupported Android signing command"))?;
+    let artifacts = android_artifacts_for_signing(workspace, extension)?;
+    let guest_artifacts = artifacts
+        .iter()
+        .map(|artifact| {
+            let relative = artifact
+                .strip_prefix(workspace)
+                .context("Android artifact is outside the build workspace")?;
+            Ok(format!("{}/{}", vm.guest_workspace(), relative.display()))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut script = android_vm_signing_script(&guest_artifacts, extension, inputs);
+    let output = vm.run_script(&script).await;
+    script.zeroize();
+    let output = output?;
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to sign Android artifacts in the VM ({}): {}",
+        output.status,
+        android_signer_failure_detail(&String::from_utf8_lossy(&output.stdout), &output.stderr)
+    );
+    vm.sync_workspace_out().await?;
     Ok(artifacts)
 }
 
@@ -1426,6 +1520,10 @@ fn run_security_command(args: &[&str]) -> anyhow::Result<String> {
 }
 
 fn require_ios_signing_user_session() -> anyhow::Result<()> {
+    require_gui_login_session("iOS signing")
+}
+
+fn require_gui_login_session(purpose: &str) -> anyhow::Result<()> {
     // SAFETY: `geteuid` accepts no arguments and has no failure state.
     let uid = unsafe { libc::geteuid() };
     let output = Command::new("/bin/launchctl")
@@ -1434,10 +1532,10 @@ fn require_ios_signing_user_session() -> anyhow::Result<()> {
         .context("failed to inspect the runner account login session")?;
     anyhow::ensure!(
         output.status.success(),
-        "iOS signing requires an active macOS login session. Log into the runner account and retry the build"
+        "{purpose} requires an active macOS login session. Log into the runner account and retry the build"
     );
     if is_managed_system_runner() {
-        active_gui_session_process_id(uid)?;
+        active_gui_session_process_id(uid, purpose)?;
     }
     Ok(())
 }
@@ -1446,7 +1544,7 @@ fn is_managed_system_runner() -> bool {
     std::env::var_os("XPC_SERVICE_NAME").is_some_and(|name| name == MANAGED_RUNNER_SERVICE_LABEL)
 }
 
-fn active_gui_session_process_id(uid: u32) -> anyhow::Result<u32> {
+fn active_gui_session_process_id(uid: u32, purpose: &str) -> anyhow::Result<u32> {
     let output = Command::new("/usr/bin/pgrep")
         .args(["-u", &uid.to_string(), "-x", "Dock"])
         .output()
@@ -1457,7 +1555,7 @@ fn active_gui_session_process_id(uid: u32) -> anyhow::Result<u32> {
         .filter(|pid| *pid > 0);
     pid.ok_or_else(|| {
         anyhow::anyhow!(
-            "iOS signing requires an active macOS login session. Log into the runner account and retry the build"
+            "{purpose} requires an active macOS login session. Log into the runner account and retry the build"
         )
     })
 }
@@ -1687,21 +1785,26 @@ fn random_password_hex() -> String {
     hex::encode(bytes)
 }
 
-fn choose_ios_export_method(help_text: &str) -> &'static str {
-    if help_text.to_ascii_lowercase().contains("release-testing") {
-        "release-testing"
-    } else {
-        "ad-hoc"
+/// Xcode 15.3 renamed `ad-hoc` to `release-testing` and `app-store` to
+/// `app-store-connect`; older toolchains only know the original names.
+fn choose_ios_export_method(help_text: &str, export_method: IosExportMethod) -> &'static str {
+    let help_text = help_text.to_ascii_lowercase();
+    match export_method {
+        IosExportMethod::AdHoc if help_text.contains("release-testing") => "release-testing",
+        IosExportMethod::AdHoc => "ad-hoc",
+        IosExportMethod::AppStore if help_text.contains("app-store-connect") => "app-store-connect",
+        IosExportMethod::AppStore => "app-store",
     }
 }
 
-fn resolve_ios_export_method() -> String {
-    match Command::new("xcodebuild").arg("-help").output() {
+fn resolve_ios_export_method(export_method: IosExportMethod) -> String {
+    let help_text = match Command::new("xcodebuild").arg("-help").output() {
         Ok(output) if output.status.success() => {
-            choose_ios_export_method(&String::from_utf8_lossy(&output.stdout)).to_string()
+            String::from_utf8_lossy(&output.stdout).into_owned()
         }
-        _ => "ad-hoc".to_string(),
-    }
+        _ => String::new(),
+    };
+    choose_ios_export_method(&help_text, export_method).to_string()
 }
 
 fn decode_runner_b64(value: &str, field_name: &str) -> anyhow::Result<Vec<u8>> {
@@ -2027,7 +2130,7 @@ fn install_ios_signing_bundle_with_session_check(
         )?;
         let _ = fs::remove_file(signing_preflight_path);
 
-        let effective_export_method = resolve_ios_export_method();
+        let effective_export_method = resolve_ios_export_method(bundle.export_method);
         let export_options_plist_path = signing_dir.join("ExportOptions.plist");
         write_export_options_plist(
             &export_options_plist_path,
@@ -2460,9 +2563,6 @@ fn is_ios_flutter_build_command(command: &str) -> bool {
     let has_flutter_target = |target: &str| -> bool {
         args.windows(3)
             .any(|window| window == ["flutter", "build", target])
-            || args
-                .windows(4)
-                .any(|window| window == ["fvm", "flutter", "build", target])
     };
     has_flutter_target("ios") || has_flutter_target("ipa")
 }
@@ -2470,9 +2570,6 @@ fn is_ios_flutter_build_command(command: &str) -> bool {
 fn contains_flutter_build_target(args: &[String], target: &str) -> bool {
     args.windows(3)
         .any(|window| window == ["flutter", "build", target])
-        || args
-            .windows(4)
-            .any(|window| window == ["fvm", "flutter", "build", target])
 }
 
 fn rewrite_flutter_ios_target_to_ipa(args: &mut [String]) -> bool {
@@ -2484,15 +2581,6 @@ fn rewrite_flutter_ios_target_to_ipa(args: &mut [String]) -> bool {
             && args[i + 2] == "ios"
         {
             args[i + 2] = "ipa".to_string();
-            rewritten = true;
-        }
-        if i + 3 < args.len()
-            && args[i] == "fvm"
-            && args[i + 1] == "flutter"
-            && args[i + 2] == "build"
-            && args[i + 3] == "ios"
-        {
-            args[i + 3] = "ipa".to_string();
             rewritten = true;
         }
     }
@@ -2996,25 +3084,95 @@ fn terminal_runner_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<RunnerControlPlaneRejected>().is_some()
 }
 
+/// Cache sizes for the heartbeat and the purge the backend last asked for.
+#[derive(Debug, Default)]
+struct CacheReport {
+    stats: Option<CacheStats>,
+    purge_requested_at: Option<i64>,
+    vm_images: Option<VmImageUsage>,
+}
+
+/// The VM images this runner built that are on disk, outside the cache cap.
+#[derive(Debug, Clone, serde::Serialize)]
+struct VmImageUsage {
+    count: usize,
+    bytes: u64,
+}
+
+type SharedCacheReport = Arc<std::sync::Mutex<CacheReport>>;
+
+fn heartbeat_capabilities(
+    capabilities: &serde_json::Value,
+    cache_report: &SharedCacheReport,
+) -> serde_json::Value {
+    let mut capabilities = capabilities.clone();
+    let (stats, vm_images) = cache_report
+        .lock()
+        .map(|report| (report.stats.clone(), report.vm_images.clone()))
+        .unwrap_or_default();
+    if let (Some(object), Some(stats)) = (capabilities.as_object_mut(), stats)
+        && let Ok(value) = serde_json::to_value(stats)
+    {
+        object.insert("caches".to_string(), value);
+    }
+    if let (Some(object), Some(vm_images)) = (capabilities.as_object_mut(), vm_images)
+        && let Ok(value) = serde_json::to_value(vm_images)
+    {
+        object.insert("vm_images".to_string(), value);
+    }
+    capabilities
+}
+
+/// The runner's HTTP client. Uploads can take long, so it bounds connecting
+/// and each wait for response bytes rather than whole requests; small JSON
+/// calls add `CONTROL_REQUEST_TIMEOUT`.
+fn runner_http_client() -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(READ_TIMEOUT)
+        .build()
+        .context("failed to build the runner HTTP client")
+}
+
 async fn send_runner_heartbeat(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
     capabilities: &serde_json::Value,
+    cache_report: &SharedCacheReport,
 ) -> anyhow::Result<()> {
+    let capabilities = heartbeat_capabilities(capabilities, cache_report);
+    let cache_bytes = cache_report
+        .lock()
+        .ok()
+        .and_then(|report| report.stats.as_ref().map(|stats| stats.total_bytes));
+    let metrics = metrics::sample_runner_metrics(&std::env::temp_dir(), cache_bytes);
     let response = client
         .post(format!(
             "{}/v1/runners/{}/heartbeat",
             daemon_url, config.runner_id
         ))
         .bearer_auth(&config.runner_token)
-        .json(&serde_json::json!({ "status": "online", "capabilities": capabilities }))
+        .json(&serde_json::json!({
+            "status": "online",
+            "capabilities": capabilities,
+            "metrics": metrics,
+        }))
         .timeout(Duration::from_secs(3))
         .send()
         .await
         .context("runner heartbeat could not reach the backend")?;
     let status = response.status();
     if status.is_success() {
+        // Older backends answer 204 with no body; that means no purge request.
+        let purge_requested_at = response
+            .json::<RunnerHeartbeatResponse>()
+            .await
+            .ok()
+            .and_then(|body| body.cache_purge_requested_at);
+        if let Ok(mut report) = cache_report.lock() {
+            report.purge_requested_at = purge_requested_at;
+        }
         return Ok(());
     }
     if runner_response_is_terminal(status) {
@@ -3031,6 +3189,7 @@ async fn establish_runner_heartbeat(
     daemon_url: &str,
     config: &RunnerConfig,
     capabilities: &serde_json::Value,
+    cache_report: &SharedCacheReport,
 ) -> anyhow::Result<()> {
     let delays = [
         Duration::ZERO,
@@ -3042,7 +3201,7 @@ async fn establish_runner_heartbeat(
         if !delay.is_zero() {
             tokio::time::sleep(delay).await;
         }
-        match send_runner_heartbeat(client, daemon_url, config, capabilities).await {
+        match send_runner_heartbeat(client, daemon_url, config, capabilities, cache_report).await {
             Ok(()) => return Ok(()),
             Err(error) if terminal_runner_error(&error) => return Err(error),
             Err(error) => last_error = Some(error),
@@ -3072,7 +3231,7 @@ pub async fn run_runner_forever(
 ) -> anyhow::Result<()> {
     let daemon_url = daemon_url_override.unwrap_or(config.daemon_url.clone());
     require_safe_daemon_url(&daemon_url)?;
-    let client = reqwest::Client::new();
+    let client = runner_http_client()?;
     let mut release_watch = RunnerReleaseWatch::for_current_executable()?;
     let executable = std::env::current_exe().context("failed to locate the runner executable")?;
     let service_ack_path = runner_service_ack_path_from_env()?;
@@ -3104,15 +3263,35 @@ pub async fn run_runner_forever(
 
     reconcile_stale_runner_mutations()
         .context("failed to reconcile stale runner state before startup")?;
+    // Sweeps leftover VMs before the first claim.
+    let mut vm_upkeep = tart::find_tart().map(VmUpkeep::new);
 
     println!("Starting runner '{}' ({})", config.name, config.runner_id);
     println!("Connecting to: {}", daemon_url);
 
     let capabilities = detect_capabilities().await;
 
+    let cache_report = SharedCacheReport::default();
+    let caches = match RunnerCaches::for_runner(
+        &config.runner_id,
+        &runner_workspace_prefix(&config.runner_id),
+    ) {
+        Ok(caches) => {
+            println!("Dependency caches: {}", caches.root().display());
+            if let Ok(mut report) = cache_report.lock() {
+                report.stats = caches.last_stats();
+            }
+            Some(Arc::new(caches))
+        }
+        Err(error) => {
+            eprintln!("Warning: dependency caches are disabled: {error:#}");
+            None
+        }
+    };
+
     // Do not enter the claim loop or advertise service readiness until the
     // backend has authenticated this exact runner/config/release.
-    establish_runner_heartbeat(&client, &daemon_url, &config, &capabilities).await?;
+    establish_runner_heartbeat(&client, &daemon_url, &config, &capabilities, &cache_report).await?;
     if let (Some(path), Some(template)) =
         (service_ack_path.as_deref(), service_ack_template.as_ref())
     {
@@ -3123,13 +3302,22 @@ pub async fn run_runner_forever(
     let hb_url = daemon_url.clone();
     let hb_config = config.clone();
     let hb_capabilities = capabilities.clone();
+    let hb_cache_report = cache_report.clone();
     let hb_ack_path = service_ack_path;
     let hb_ack_template = service_ack_template;
     let (fatal_tx, mut fatal_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
-            match send_runner_heartbeat(&hb_client, &hb_url, &hb_config, &hb_capabilities).await {
+            match send_runner_heartbeat(
+                &hb_client,
+                &hb_url,
+                &hb_config,
+                &hb_capabilities,
+                &hb_cache_report,
+            )
+            .await
+            {
                 Ok(()) => {
                     if let (Some(path), Some(template)) =
                         (hb_ack_path.as_deref(), hb_ack_template.as_ref())
@@ -3163,6 +3351,10 @@ pub async fn run_runner_forever(
         }
     });
 
+    if let Some(caches) = &caches {
+        run_cache_maintenance(caches.clone(), cache_report.clone(), None).await;
+    }
+
     loop {
         tokio::select! {
             fatal = fatal_rx.recv() => {
@@ -3184,8 +3376,27 @@ pub async fn run_runner_forever(
             tokio::time::sleep(Duration::from_secs(10)).await;
             continue;
         }
-        match claim_and_execute(&client, &daemon_url, &config).await {
-            Ok(_executed) => {}
+        if let Some(caches) = &caches {
+            purge_caches_if_requested(caches, &cache_report).await;
+        }
+        if let Some(upkeep) = vm_upkeep.as_mut() {
+            upkeep.run(&config.runner_id, &cache_report).await;
+        }
+        match claim_and_execute(
+            &client,
+            &daemon_url,
+            &config,
+            caches.as_ref(),
+            &cache_report,
+        )
+        .await
+        {
+            Ok(executed) => {
+                // A build whose VM could not be deleted leaves it behind.
+                if executed && let Some(upkeep) = vm_upkeep.as_mut() {
+                    upkeep.sweep_now();
+                }
+            }
             Err(error) if terminal_runner_error(&error) => return Err(error),
             Err(e) => {
                 eprintln!("Error during claim/execute: {}", e);
@@ -3195,10 +3406,144 @@ pub async fn run_runner_forever(
     }
 }
 
+/// Idle-time VM housekeeping: deletes VMs this runner left behind and prunes
+/// the VM images it built that no build used for a while. Runs only between
+/// builds, when this runner has no VM of its own.
+struct VmUpkeep {
+    tart: PathBuf,
+    next_sweep: tokio::time::Instant,
+    next_prune: tokio::time::Instant,
+}
+
+impl VmUpkeep {
+    const SWEEP_INTERVAL: Duration = Duration::from_secs(10 * 60);
+    const PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+    fn new(tart: PathBuf) -> Self {
+        let now = tokio::time::Instant::now();
+        Self {
+            tart,
+            next_sweep: now,
+            next_prune: now,
+        }
+    }
+
+    fn sweep_now(&mut self) {
+        self.next_sweep = tokio::time::Instant::now();
+    }
+
+    async fn run(&mut self, runner_id: &str, cache_report: &SharedCacheReport) {
+        let now = tokio::time::Instant::now();
+        if now >= self.next_sweep {
+            self.next_sweep = now + Self::SWEEP_INTERVAL;
+            match tart::delete_stale_vms(&self.tart, runner_id).await {
+                Ok(sweep) => {
+                    if sweep.removed > 0 {
+                        println!("Deleted {} leftover build VM(s)", sweep.removed);
+                    }
+                    for error in sweep.errors {
+                        eprintln!("Warning: could not delete leftover build VM {error}");
+                    }
+                }
+                Err(error) => eprintln!("Warning: could not list leftover build VMs: {error:#}"),
+            }
+        }
+        if now >= self.next_prune {
+            self.next_prune = now + Self::PRUNE_INTERVAL;
+            let Ok(dir) = tart::slot_dir() else {
+                return;
+            };
+            match tart::prune_unused_images(
+                &self.tart,
+                &dir,
+                tart::local_vms_dir().as_deref(),
+                tart::image_max_age(),
+                now_unix(),
+            )
+            .await
+            {
+                Ok(prune) => {
+                    for image in &prune.deleted {
+                        println!("Deleted VM image {image}, which no build used recently");
+                    }
+                    for error in &prune.errors {
+                        eprintln!("Warning: could not delete unused VM image {error}");
+                    }
+                    if let Ok(mut report) = cache_report.lock() {
+                        report.vm_images = Some(VmImageUsage {
+                            count: prune.kept,
+                            bytes: prune.kept_bytes,
+                        });
+                    }
+                }
+                Err(error) => eprintln!("Warning: could not prune VM images: {error:#}"),
+            }
+        }
+    }
+}
+
+/// Records the finished build's lockfile keys, then measures the caches and
+/// evicts above the cap. It finishes before the next claim, because eviction
+/// must never delete from a cache a build is using.
+async fn run_cache_maintenance(
+    caches: Arc<RunnerCaches>,
+    cache_report: SharedCacheReport,
+    finished_build: Option<(CacheObservation, bool)>,
+) {
+    let maintenance = tokio::task::spawn_blocking(move || {
+        if let Some((observation, succeeded)) = finished_build {
+            caches.record(&observation, succeeded, now_unix());
+        }
+        let stats = caches.maintain(now_unix());
+        if stats.evicted_bytes > 0 {
+            println!(
+                "Evicted {} of least recently used dependency caches",
+                caches::format_bytes(stats.evicted_bytes)
+            );
+        }
+        if let Ok(mut report) = cache_report.lock() {
+            report.stats = Some(stats);
+        }
+    });
+    if let Err(error) = maintenance.await {
+        eprintln!("Warning: dependency cache maintenance stopped: {error}");
+    }
+}
+
+async fn purge_caches_if_requested(caches: &Arc<RunnerCaches>, cache_report: &SharedCacheReport) {
+    let Some(requested_at) = cache_report
+        .lock()
+        .ok()
+        .and_then(|report| report.purge_requested_at)
+    else {
+        return;
+    };
+    if caches
+        .purged_at()
+        .is_some_and(|purged_at| purged_at >= requested_at)
+    {
+        return;
+    }
+    println!("Purging dependency caches at {}", caches.root().display());
+    let purge_caches = caches.clone();
+    match tokio::task::spawn_blocking(move || purge_caches.purge(requested_at, now_unix())).await {
+        Ok(Ok(stats)) => {
+            if let Ok(mut report) = cache_report.lock() {
+                report.stats = Some(stats);
+            }
+            println!("Dependency caches purged");
+        }
+        Ok(Err(error)) => eprintln!("Warning: dependency cache purge failed: {error:#}"),
+        Err(error) => eprintln!("Warning: dependency cache purge stopped: {error}"),
+    }
+}
+
 async fn claim_and_execute(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
+    caches: Option<&Arc<RunnerCaches>>,
+    cache_report: &SharedCacheReport,
 ) -> anyhow::Result<bool> {
     let resp = client
         .post(format!(
@@ -3209,6 +3554,7 @@ async fn claim_and_execute(
         .json(&ClaimJobRequest {
             protocol_version: RUNNER_PROTOCOL_VERSION,
         })
+        .timeout(CONTROL_REQUEST_TIMEOUT)
         .send()
         .await?;
 
@@ -3234,63 +3580,105 @@ async fn claim_and_execute(
         job.build_id, job.build_number, job.project_id
     );
 
-    report_status(
+    report_status_with_retry(
         client,
         daemon_url,
         config,
-        StatusReport {
+        &StatusReport {
             build_id: job.build_id.as_str(),
             status: "running",
             exit_code: None,
             error_message: None,
             steps: &[],
+            size_budgets: None,
         },
+        RetryPolicy::within(RUNNING_REPORT_WINDOW),
     )
     .await?;
 
-    let (steps, result) = execute_build(&job, client, daemon_url, config).await;
+    let mut cache_observation = None;
+    let mut file_size_budgets = None;
+    let (steps, result) = execute_build(
+        &job,
+        client,
+        daemon_url,
+        config,
+        caches.map(Arc::as_ref),
+        &mut cache_observation,
+        &mut file_size_budgets,
+    )
+    .await;
+    let finished_build = cache_observation.map(|observation| (observation, result.is_ok()));
 
-    match result {
-        Ok(()) => {
-            report_status(
-                client,
-                daemon_url,
-                config,
-                StatusReport {
-                    build_id: job.build_id.as_str(),
-                    status: "succeeded",
-                    exit_code: Some(0),
-                    error_message: None,
-                    steps: &steps,
-                },
-            )
-            .await?;
-            println!("Build {} succeeded", job.build_id);
-        }
-        Err(e) => {
-            if e.downcast_ref::<BuildTerminated>().is_some() {
+    let final_report = match &result {
+        Ok(()) => Some(StatusReport {
+            build_id: job.build_id.as_str(),
+            status: "succeeded",
+            exit_code: Some(0),
+            error_message: None,
+            steps: &steps,
+            size_budgets: file_size_budgets.as_deref(),
+        }),
+        Err(e) => match e.downcast_ref::<BuildTerminated>() {
+            Some(terminated) if terminated.status == CONTROLLER_UNAVAILABLE => Some(StatusReport {
+                build_id: job.build_id.as_str(),
+                status: "failed",
+                exit_code: Some(1),
+                error_message: Some(format!(
+                    "The runner lost contact with the backend for more than {} minutes and stopped the build",
+                    CONTROLLER_GRACE.as_secs() / 60
+                )),
+                steps: &steps,
+                size_budgets: file_size_budgets.as_deref(),
+            }),
+            Some(_) => {
                 println!(
                     "Build {} was externally terminated, skipping status report",
                     job.build_id
                 );
-            } else {
-                report_status(
-                    client,
-                    daemon_url,
-                    config,
-                    StatusReport {
-                        build_id: job.build_id.as_str(),
-                        status: "failed",
-                        exit_code: Some(1),
-                        error_message: Some(e.to_string()),
-                        steps: &steps,
-                    },
-                )
-                .await?;
-                eprintln!("Build {} failed: {}", job.build_id, e);
+                None
             }
+            None => Some(StatusReport {
+                build_id: job.build_id.as_str(),
+                status: "failed",
+                exit_code: Some(1),
+                error_message: Some(e.to_string()),
+                steps: &steps,
+                size_budgets: file_size_budgets.as_deref(),
+            }),
+        },
+    };
+    let reported = match &final_report {
+        Some(report) => {
+            report_status_with_retry(
+                client,
+                daemon_url,
+                config,
+                report,
+                RetryPolicy::within(FINAL_REPORT_WINDOW),
+            )
+            .await
         }
+        None => Ok(()),
+    };
+    match (&final_report, &reported) {
+        (Some(report), Ok(())) if report.status == "succeeded" => {
+            println!("Build {} succeeded", job.build_id)
+        }
+        (Some(report), Ok(())) => eprintln!(
+            "Build {} failed: {}",
+            job.build_id,
+            report.error_message.as_deref().unwrap_or_default()
+        ),
+        _ => {}
     }
+
+    // After the status report, so measuring the caches never delays it, and
+    // whatever its outcome.
+    if let Some(caches) = caches {
+        run_cache_maintenance(caches.clone(), cache_report.clone(), finished_build).await;
+    }
+    reported?;
 
     Ok(true)
 }
@@ -3343,22 +3731,187 @@ struct FvmRcConfig {
     flutter: String,
 }
 
-const DEFAULT_MANAGED_FLUTTER_VERSION: &str = "stable";
+/// Flutter version a build asks for when neither `.fvmrc` nor the pipeline pins one.
+const DEFAULT_FLUTTER_VERSION: &str = "stable";
 
 #[derive(Debug, Clone)]
 struct ResolvedExecutionPlan {
-    stage_commands: PipelineCommandStages,
+    /// Named steps in run order: pre-build, then build, then post-build.
+    steps: Vec<PlanStep>,
     artifact_patterns: Vec<String>,
     env: Vec<PipelineEnvVar>,
+    /// `OORE_SECRET_<NAME>` variables backing `${{ secrets.NAME }}` in commands.
+    secret_env: Vec<(String, String)>,
+    /// Env keys whose values came from a secret.
+    secret_env_keys: std::collections::HashSet<String>,
+    build_number_offset: i64,
+    isolation: BuildIsolation,
+    /// Whether the build targets iOS or macOS. Only those need the Xcode VM
+    /// image; Android-only builds use a base about a third its size.
+    needs_xcode: bool,
+    /// From `.fvmrc`, then the pipeline config, then `stable`. Picks the VM
+    /// image; host builds check that the runner's Flutter matches it.
+    flutter_version: String,
     source: String,
+    /// The v2 file's store uploads, applied over the pipeline's Publish
+    /// settings by the publish steps. Empty otherwise.
+    publish: PlanPublish,
+    /// The v2 file's size budgets, reported with the build's result.
+    size_budgets: Vec<TargetSizeBudget>,
 }
 
-fn validate_command_list(stage: &str, commands: &[String]) -> anyhow::Result<Vec<String>> {
+fn secret_env_var(name: &str) -> String {
+    format!("OORE_SECRET_{name}")
+}
+
+fn lookup_secret<'a>(
+    secrets: &'a std::collections::BTreeMap<String, String>,
+    name: &str,
+    path: &str,
+) -> anyhow::Result<&'a str> {
+    secrets.get(name).map(String::as_str).ok_or_else(|| {
+        anyhow::anyhow!(
+            "{path} references secret '{name}', which is not defined for this pipeline, its project or the instance"
+        )
+    })
+}
+
+/// Resolve `${{ secrets.NAME }}`. Env values receive the value itself. Commands
+/// receive a quoted-safe `${OORE_SECRET_NAME}` shell reference instead, so a value
+/// is never spliced into shell source.
+fn apply_secret_references(
+    mut plan: ResolvedExecutionPlan,
+    secrets: &std::collections::BTreeMap<String, String>,
+) -> anyhow::Result<ResolvedExecutionPlan> {
+    for (index, pair) in plan.env.iter_mut().enumerate() {
+        let path = format!("env[{index}].value");
+        let mut missing = None;
+        let resolved = replace_secret_references(&pair.value, |name| {
+            match lookup_secret(secrets, name, &path) {
+                Ok(value) => value.to_string(),
+                Err(error) => {
+                    missing.get_or_insert(error);
+                    String::new()
+                }
+            }
+        })
+        .map_err(|error| anyhow::anyhow!("{path} {error}"))?;
+        if let Some(error) = missing {
+            return Err(error);
+        }
+        if resolved != pair.value {
+            plan.secret_env_keys.insert(pair.key.clone());
+            pair.value = resolved;
+        }
+    }
+
+    let mut referenced = std::collections::BTreeSet::new();
+    for step in &mut plan.steps {
+        let path = step.source.clone();
+        let mut names = Vec::new();
+        step.run = replace_secret_references(&step.run, |name| {
+            names.push(name.to_string());
+            format!("${{{}}}", secret_env_var(name))
+        })
+        .map_err(|error| anyhow::anyhow!("{path} {error}"))?;
+        for name in names {
+            lookup_secret(secrets, &name, &path)?;
+            referenced.insert(name);
+        }
+    }
+    plan.secret_env = referenced
+        .into_iter()
+        .map(|name| {
+            let value = secrets[&name].clone();
+            (secret_env_var(&name), value)
+        })
+        .collect();
+    Ok(plan)
+}
+
+/// Replaces secret values in log text with `***`.
+#[derive(Clone, Default)]
+struct SecretMasker {
+    patterns: Arc<Vec<String>>,
+}
+
+impl SecretMasker {
+    fn new<'a>(values: impl Iterator<Item = &'a str>) -> Self {
+        let mut patterns = std::collections::BTreeSet::new();
+        for value in values {
+            if value.is_empty() {
+                continue;
+            }
+            patterns.insert(value.to_string());
+            // Multi-line values (JSON keys, PEM blocks) are printed line by line.
+            if value.contains('\n') {
+                for line in value.lines().map(str::trim) {
+                    if line.len() >= 8 {
+                        patterns.insert(line.to_string());
+                    }
+                }
+            }
+        }
+        let mut patterns: Vec<String> = patterns.into_iter().collect();
+        patterns.sort_by_key(|pattern| std::cmp::Reverse(pattern.len()));
+        Self {
+            patterns: Arc::new(patterns),
+        }
+    }
+
+    fn mask(&self, text: &str) -> String {
+        let mut masked = text.to_string();
+        for pattern in self.patterns.iter() {
+            if masked.contains(pattern.as_str()) {
+                masked = masked.replace(pattern.as_str(), "***");
+            }
+        }
+        masked
+    }
+}
+
+/// Log sequence position plus the masker applied to every uploaded line.
+#[derive(Default)]
+struct BuildLogCursor {
+    seq: i64,
+    masker: SecretMasker,
+}
+
+async fn fetch_job_secrets(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    signing_token: &str,
+) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+    let resp = client
+        .get(format!(
+            "{}/v1/runners/{}/jobs/{}/secrets",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .header("x-oore-signing-token", signing_token)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("secret lookup failed: {}", resp.status());
+    }
+
+    let payload: RunnerJobSecretsResponse = resp.json().await?;
+    Ok(payload
+        .secrets
+        .into_iter()
+        .map(|secret| (secret.name, secret.value))
+        .collect())
+}
+
+fn validate_command_list(path: &str, commands: &[String]) -> anyhow::Result<Vec<String>> {
     let mut cleaned = Vec::with_capacity(commands.len());
     for (idx, command) in commands.iter().enumerate() {
         let trimmed = command.trim();
         if trimmed.is_empty() {
-            anyhow::bail!("commands.{stage}[{idx}] must not be empty");
+            anyhow::bail!("{path}[{idx}] must not be empty");
         }
         cleaned.push(trimmed.to_string());
     }
@@ -3417,94 +3970,26 @@ fn read_fvmrc_version(workspace: &Path) -> anyhow::Result<Option<String>> {
     normalize_flutter_version(Some(trimmed), ".fvmrc")
 }
 
-fn maybe_wrap_with_fvm(command: &str) -> String {
-    let trimmed = command.trim();
-    if trimmed == "flutter" {
-        return "fvm flutter".to_string();
-    }
-    if trimmed == "dart" {
-        return "fvm dart".to_string();
-    }
-    if let Some(rest) = trimmed.strip_prefix("flutter ") {
-        return format!("fvm flutter {rest}");
-    }
-    if let Some(rest) = trimmed.strip_prefix("dart ") {
-        return format!("fvm dart {rest}");
-    }
-    trimmed.to_string()
+/// The version name from `pubspec.yaml` (`version: 1.4.0+12` gives `1.4.0`),
+/// when the workspace root has one.
+fn read_pubspec_version_name(workspace: &Path) -> Option<String> {
+    let raw = fs::read_to_string(workspace.join("pubspec.yaml")).ok()?;
+    pubspec_version_name(&raw)
 }
 
-fn apply_fvm_wrappers(stage_commands: PipelineCommandStages) -> PipelineCommandStages {
-    PipelineCommandStages {
-        pre_build: stage_commands
-            .pre_build
-            .into_iter()
-            .map(|cmd| maybe_wrap_with_fvm(&cmd))
-            .collect(),
-        build: stage_commands
-            .build
-            .into_iter()
-            .map(|cmd| maybe_wrap_with_fvm(&cmd))
-            .collect(),
-        post_build: stage_commands
-            .post_build
-            .into_iter()
-            .map(|cmd| maybe_wrap_with_fvm(&cmd))
-            .collect(),
-    }
-}
-
-fn command_uses_flutter_toolchain(command: &str) -> bool {
-    let trimmed = command.trim();
-    maybe_wrap_with_fvm(trimmed) != trimmed
-        || trimmed == "fvm flutter"
-        || trimmed == "fvm dart"
-        || trimmed.starts_with("fvm flutter ")
-        || trimmed.starts_with("fvm dart ")
-}
-
-fn apply_managed_flutter_toolchain(
-    stage_commands: PipelineCommandStages,
-    version: &str,
-) -> PipelineCommandStages {
-    let requires_flutter = stage_commands
-        .pre_build
-        .iter()
-        .chain(&stage_commands.build)
-        .chain(&stage_commands.post_build)
-        .any(|command| command_uses_flutter_toolchain(command));
-    if !requires_flutter {
-        return stage_commands;
-    }
-
-    let mut stage_commands = apply_fvm_wrappers(stage_commands);
-    stage_commands
-        .pre_build
-        .insert(0, format!("fvm use {version} --force --skip-pub-get"));
-    stage_commands
+fn pubspec_version_name(raw: &str) -> Option<String> {
+    let value = raw.lines().find_map(|line| line.strip_prefix("version:"))?;
+    let value = value.split(" #").next()?.trim().trim_matches(['"', '\'']);
+    let name = value.split('+').next()?.trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 fn validate_artifact_patterns(patterns: &[String]) -> anyhow::Result<Vec<String>> {
     let mut cleaned = Vec::with_capacity(patterns.len());
     for (idx, pattern) in patterns.iter().enumerate() {
         let trimmed = pattern.trim();
-        if trimmed.is_empty() {
-            anyhow::bail!("artifacts.patterns[{idx}] must not be empty");
-        }
         validate_artifact_pattern(trimmed)
             .map_err(|error| anyhow::anyhow!("artifacts.patterns[{idx}] {error}"))?;
-        cleaned.push(trimmed.to_string());
-    }
-    Ok(cleaned)
-}
-
-fn validate_platform_args(args: &[String], path: &str) -> anyhow::Result<Vec<String>> {
-    let mut cleaned = Vec::with_capacity(args.len());
-    for (idx, arg) in args.iter().enumerate() {
-        let trimmed = arg.trim();
-        if trimmed.is_empty() {
-            anyhow::bail!("{path}[{idx}] must not be empty");
-        }
         cleaned.push(trimmed.to_string());
     }
     Ok(cleaned)
@@ -3526,17 +4011,6 @@ fn validate_platform_command(
     }
 }
 
-fn is_valid_env_key(key: &str) -> bool {
-    let mut chars = key.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if first != '_' && !first.is_ascii_alphabetic() {
-        return false;
-    }
-    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-}
-
 fn validate_env_vars(env: &[PipelineEnvVar]) -> anyhow::Result<Vec<PipelineEnvVar>> {
     let mut validated = Vec::with_capacity(env.len());
     let mut seen = std::collections::HashSet::new();
@@ -3546,7 +4020,7 @@ fn validate_env_vars(env: &[PipelineEnvVar]) -> anyhow::Result<Vec<PipelineEnvVa
         if key.is_empty() {
             anyhow::bail!("env[{idx}].key must not be empty");
         }
-        if !is_valid_env_key(key) {
+        if !is_valid_pipeline_env_key(key) {
             anyhow::bail!("env[{idx}].key must match [A-Za-z_][A-Za-z0-9_]*");
         }
         if !seen.insert(key.to_string()) {
@@ -3568,19 +4042,19 @@ fn normalize_execution_config(
     }
 
     let commands = PipelineCommandStages {
-        pre_build: validate_command_list("pre_build", &config.commands.pre_build)?,
-        build: validate_command_list("build", &config.commands.build)?,
-        post_build: validate_command_list("post_build", &config.commands.post_build)?,
+        pre_build: validate_command_list("commands.pre_build", &config.commands.pre_build)?,
+        build: validate_command_list("commands.build", &config.commands.build)?,
+        post_build: validate_command_list("commands.post_build", &config.commands.post_build)?,
     };
     let platform_build_args = PlatformBuildArgs {
-        android: validate_platform_args(
-            &config.platform_build_args.android,
+        android: validate_command_list(
             "platform_build_args.android",
+            &config.platform_build_args.android,
         )?,
-        ios: validate_platform_args(&config.platform_build_args.ios, "platform_build_args.ios")?,
-        macos: validate_platform_args(
-            &config.platform_build_args.macos,
+        ios: validate_command_list("platform_build_args.ios", &config.platform_build_args.ios)?,
+        macos: validate_command_list(
             "platform_build_args.macos",
+            &config.platform_build_args.macos,
         )?,
     };
     let platform_commands = PlatformBuildCommands {
@@ -3598,6 +4072,10 @@ fn normalize_execution_config(
     let artifact_patterns = validate_artifact_patterns(&config.artifact_patterns)?;
     let flutter_version =
         normalize_flutter_version(config.flutter_version.as_deref(), "flutter_version")?;
+    validate_build_number_offset(config.build_number_offset)
+        .map_err(|error| anyhow::anyhow!("build_number_offset {error}"))?;
+    let runs_on = normalize_runner_labels(&config.runs_on)
+        .map_err(|error| anyhow::anyhow!("runs_on {error}"))?;
 
     Ok(PipelineExecutionConfig {
         platforms: config.platforms,
@@ -3607,124 +4085,63 @@ fn normalize_execution_config(
         platform_commands,
         env,
         artifact_patterns,
+        build_number_offset: config.build_number_offset,
+        runs_on,
+        isolation: config.isolation,
     })
-}
-
-fn parse_repo_config_file(raw: &str) -> anyhow::Result<PipelineExecutionConfig> {
-    parse_repository_pipeline_yaml(raw).map_err(anyhow::Error::msg)
-}
-
-fn build_default_command_with_args(base: &str, args: &[String]) -> String {
-    if args.is_empty() {
-        return base.to_string();
-    }
-    format!("{base} {}", args.join(" "))
-}
-
-fn default_platform_command(
-    platform: &BuildPlatform,
-    overrides: &PlatformBuildCommands,
-    args: &PlatformBuildArgs,
-) -> String {
-    match platform {
-        BuildPlatform::Android => overrides.android.clone().unwrap_or_else(|| {
-            build_default_command_with_args("flutter build apk --release", &args.android)
-        }),
-        BuildPlatform::Ios => overrides.ios.clone().unwrap_or_else(|| {
-            build_default_command_with_args("flutter build ios --release --no-codesign", &args.ios)
-        }),
-        BuildPlatform::Macos => overrides.macos.clone().unwrap_or_else(|| {
-            build_default_command_with_args("flutter build macos --release", &args.macos)
-        }),
-    }
-}
-
-fn materialize_stage_commands(
-    config: &PipelineExecutionConfig,
-    include_default_platform_commands: bool,
-) -> PipelineCommandStages {
-    let mut pre_build = Vec::new();
-    if include_default_platform_commands && !config.platforms.is_empty() {
-        pre_build.push("flutter pub get".to_string());
-    }
-    pre_build.extend(config.commands.pre_build.clone());
-
-    let mut build = if include_default_platform_commands {
-        config
-            .platforms
-            .iter()
-            .map(|platform| {
-                default_platform_command(
-                    platform,
-                    &config.platform_commands,
-                    &config.platform_build_args,
-                )
-            })
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-    build.extend(config.commands.build.clone());
-
-    PipelineCommandStages {
-        pre_build,
-        build,
-        post_build: config.commands.post_build.clone(),
-    }
 }
 
 fn load_ui_execution_config(
     snapshot: &serde_json::Value,
 ) -> anyhow::Result<PipelineExecutionConfig> {
-    let raw = snapshot.get("ui_execution_config");
-    if raw.is_none() {
+    let Some(raw) = snapshot.get("ui_execution_config") else {
         return Ok(PipelineExecutionConfig::default());
-    }
-    let parsed: PipelineExecutionConfig = serde_json::from_value(raw.cloned().unwrap_or_default())
+    };
+    let parsed: PipelineExecutionConfig = serde_json::from_value(raw.clone())
         .map_err(|e| anyhow::anyhow!("Invalid ui_execution_config in snapshot: {e}"))?;
     normalize_execution_config(parsed)
 }
 
-fn apply_run_platform_selection(
-    mut config: PipelineExecutionConfig,
-    snapshot: &serde_json::Value,
-) -> anyhow::Result<PipelineExecutionConfig> {
-    let Some(raw) = snapshot.get("selected_platforms") else {
-        return Ok(config);
-    };
-    if raw.is_null() {
-        return Ok(config);
+/// The run's platform selection from the snapshot, when it made one.
+fn selected_platforms(snapshot: &serde_json::Value) -> anyhow::Result<Option<Vec<BuildPlatform>>> {
+    match snapshot.get("selected_platforms") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(raw) => serde_json::from_value(raw.clone())
+            .map(Some)
+            .map_err(|error| anyhow::anyhow!("Invalid selected_platforms in snapshot: {error}")),
     }
+}
 
-    let selected: Vec<BuildPlatform> = serde_json::from_value(raw.clone())
-        .map_err(|error| anyhow::anyhow!("Invalid selected_platforms in snapshot: {error}"))?;
-    if selected.is_empty() {
-        anyhow::bail!("selected_platforms must include at least one target");
-    }
-    let has_duplicate = selected
+/// The scheduler matched this runner against the pipeline's `runs_on`. A
+/// repository file can ask for more, so stop before any build command runs on
+/// a runner that lacks those labels.
+fn require_runner_labels(
+    runs_on: &[String],
+    snapshot: &serde_json::Value,
+    config_path: &str,
+) -> anyhow::Result<()> {
+    let Some(runner_labels) = snapshot.get("runner_labels").and_then(|v| v.as_array()) else {
+        return Ok(());
+    };
+    let runner_labels: Vec<String> = runner_labels
         .iter()
-        .enumerate()
-        .any(|(index, platform)| selected[..index].contains(platform));
-    if has_duplicate
-        || selected
-            .iter()
-            .any(|platform| !config.platforms.contains(platform))
-    {
-        anyhow::bail!("selected_platforms must be unique and configured by the workflow");
-    }
-    if selected.len() < config.platforms.len() && !config.commands.build.is_empty() {
+        .filter_map(|label| label.as_str().map(str::to_string))
+        .collect();
+    let missing = missing_runner_labels(runs_on, &runner_labels);
+    if !missing.is_empty() {
         anyhow::bail!(
-            "Per-run platform selection requires platform_commands or default platform commands; shared commands.build cannot be filtered safely"
+            "{config_path} sets runs_on [{}], but this runner lacks [{}]. Set the same runs_on on the pipeline so the scheduler picks a matching runner",
+            runs_on.join(", "),
+            missing.join(", ")
         );
     }
-
-    config.platforms = selected;
-    Ok(config)
+    Ok(())
 }
 
 fn resolve_execution_plan(
     workspace: &Path,
     snapshot: &serde_json::Value,
+    build_play_bundle: bool,
 ) -> anyhow::Result<ResolvedExecutionPlan> {
     let config_path_explicit = snapshot
         .get("config_path_explicit")
@@ -3772,68 +4189,127 @@ fn resolve_execution_plan(
         let content = fs::read_to_string(&full_path).map_err(|e| {
             anyhow::anyhow!("Failed to read config file {}: {e}", full_path.display())
         })?;
-        let file_config = parse_repo_config_file(&content).map_err(|e| {
+        let file_config = parse_repository_config(&content).map_err(|e| {
             anyhow::anyhow!("Invalid pipeline config in {}: {}", full_path.display(), e)
         })?;
-        let file_config = apply_run_platform_selection(file_config, snapshot)?;
+        require_runner_labels(file_config.runs_on(), snapshot, rel_path)?;
+        let selected = selected_platforms(snapshot)?;
+        let plan = file_config
+            .plan(PlanRequest {
+                // The pipeline's v2 workflow, when it names one.
+                workflow: snapshot.get("workflow").and_then(|v| v.as_str()),
+                selected_platforms: selected.as_deref(),
+                build_play_bundle,
+            })
+            .map_err(|e| anyhow::anyhow!("{rel_path}: {e}"))?;
         let resolved_flutter_version = fvmrc_version
-            .or_else(|| file_config.flutter_version.clone())
-            .unwrap_or_else(|| DEFAULT_MANAGED_FLUTTER_VERSION.to_string());
-        let include_defaults = file_config.commands.build.is_empty();
-        let stage_commands = apply_managed_flutter_toolchain(
-            materialize_stage_commands(&file_config, include_defaults),
-            &resolved_flutter_version,
-        );
+            .or_else(|| plan.flutter_version.clone())
+            .unwrap_or_else(|| DEFAULT_FLUTTER_VERSION.to_string());
 
         return Ok(ResolvedExecutionPlan {
-            stage_commands,
-            artifact_patterns: file_config.artifact_patterns,
-            env: file_config.env,
+            needs_xcode: needs_xcode(&plan.platforms),
+            steps: plan.steps,
+            artifact_patterns: plan.artifact_patterns,
+            env: plan.env,
+            secret_env: Vec::new(),
+            secret_env_keys: Default::default(),
+            build_number_offset: plan.build_number_offset,
+            isolation: plan.isolation,
+            flutter_version: resolved_flutter_version,
             source: format!("file:{}", full_path.display()),
+            publish: plan.publish,
+            size_budgets: plan.size_budgets,
         });
     }
 
-    let fallback = apply_run_platform_selection(load_ui_execution_config(snapshot)?, snapshot)?;
+    let mut fallback = load_ui_execution_config(snapshot)?;
+    if let Some(selected) = selected_platforms(snapshot)? {
+        fallback = select_v1_platforms(fallback, &selected).map_err(anyhow::Error::msg)?;
+    }
     let resolved_flutter_version = fvmrc_version
         .or_else(|| fallback.flutter_version.clone())
-        .unwrap_or_else(|| DEFAULT_MANAGED_FLUTTER_VERSION.to_string());
-    let stage_commands = apply_managed_flutter_toolchain(
-        materialize_stage_commands(&fallback, true),
-        &resolved_flutter_version,
-    );
+        .unwrap_or_else(|| DEFAULT_FLUTTER_VERSION.to_string());
+    let plan = plan_execution_config(&fallback, true, build_play_bundle);
     Ok(ResolvedExecutionPlan {
-        stage_commands,
-        artifact_patterns: fallback.artifact_patterns,
-        env: fallback.env,
+        needs_xcode: needs_xcode(&plan.platforms),
+        steps: plan.steps,
+        artifact_patterns: plan.artifact_patterns,
+        env: plan.env,
+        secret_env: Vec::new(),
+        secret_env_keys: Default::default(),
+        build_number_offset: plan.build_number_offset,
+        isolation: plan.isolation,
+        flutter_version: resolved_flutter_version,
         source: "ui_fallback".to_string(),
+        publish: PlanPublish::default(),
+        size_budgets: Vec::new(),
     })
 }
 
-#[derive(Default)]
+/// What the runner last heard from the backend about the build it runs.
 struct BuildAuthorityState {
-    consecutive_failures: AtomicU8,
+    last_confirmed: Mutex<Instant>,
+    grace: Duration,
+    /// Why the build must stop, once the runner knows.
+    terminated: Mutex<Option<String>>,
+}
+
+impl Default for BuildAuthorityState {
+    fn default() -> Self {
+        Self::with_grace(CONTROLLER_GRACE)
+    }
 }
 
 impl BuildAuthorityState {
-    fn confirmed_active(&self) {
-        self.consecutive_failures.store(0, Ordering::Relaxed);
+    fn with_grace(grace: Duration) -> Self {
+        Self {
+            last_confirmed: Mutex::new(Instant::now()),
+            grace,
+            terminated: Mutex::new(None),
+        }
     }
 
+    fn confirmed_active(&self) {
+        if let Ok(mut last) = self.last_confirmed.lock() {
+            *last = Instant::now();
+        }
+    }
+
+    /// The backend could not answer. The build carries on until the backend
+    /// has been unreachable for the whole grace window.
     fn transient_failure(&self) -> anyhow::Result<()> {
-        let failures = self
-            .consecutive_failures
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-                Some(value.saturating_add(1))
-            })
-            .unwrap_or(u8::MAX)
-            .saturating_add(1);
-        if failures >= MAX_CONSECUTIVE_AUTHORITY_FAILURES {
+        let elapsed = self
+            .last_confirmed
+            .lock()
+            .map(|last| last.elapsed())
+            .unwrap_or(Duration::MAX);
+        if elapsed >= self.grace {
             return Err(BuildTerminated {
-                status: "controller_unavailable".to_string(),
+                status: CONTROLLER_UNAVAILABLE.to_string(),
             }
             .into());
         }
         Ok(())
+    }
+
+    fn record(&self, result: &anyhow::Result<()>) {
+        if let Err(error) = result
+            && let Some(terminated) = error.downcast_ref::<BuildTerminated>()
+            && let Ok(mut reason) = self.terminated.lock()
+        {
+            reason.get_or_insert_with(|| terminated.status.clone());
+        }
+    }
+
+    /// The error for a step stopped by `poll_cancellation`.
+    fn terminated(&self) -> anyhow::Error {
+        let status = self
+            .terminated
+            .lock()
+            .ok()
+            .and_then(|reason| reason.clone())
+            .unwrap_or_else(|| "canceled".to_string());
+        BuildTerminated { status }.into()
     }
 }
 
@@ -3871,32 +4347,38 @@ async fn check_build_active(
         .json(&ClaimJobRequest {
             protocol_version: RUNNER_PROTOCOL_VERSION,
         })
+        .timeout(CONTROL_REQUEST_TIMEOUT)
         .send()
         .await;
 
-    match resp {
-        Ok(r) if r.status().is_success() => {
-            let status_resp: JobStatusResponse = r.json().await?;
-            let status: BuildStatus = status_resp
-                .status
-                .parse()
-                .map_err(|e: String| anyhow::anyhow!(e))?;
-
-            if status.is_terminal() {
-                return Err(BuildTerminated {
-                    status: status_resp.status,
+    let result = match resp {
+        Ok(r) if r.status().is_success() => match r.json::<JobStatusResponse>().await {
+            Ok(status_resp) => {
+                let status: BuildStatus = status_resp
+                    .status
+                    .parse()
+                    .map_err(|e: String| anyhow::anyhow!(e))?;
+                if status.is_terminal() {
+                    Err(BuildTerminated {
+                        status: status_resp.status,
+                    }
+                    .into())
+                } else {
+                    authority.confirmed_active();
+                    Ok(())
                 }
-                .into());
             }
-            authority.confirmed_active();
-            Ok(())
-        }
+            // A body cut off mid-read is the connection's fault, not the build's.
+            Err(_) => authority.transient_failure(),
+        },
         Ok(response) if is_transient_authority_status(response.status()) => {
             authority.transient_failure()
         }
         Ok(response) => Err(authority_loss(response.status())),
         Err(_) => authority.transient_failure(),
-    }
+    };
+    authority.record(&result);
+    result
 }
 
 async fn poll_cancellation(
@@ -4006,6 +4488,12 @@ fn add_checkout_proxy_config(
     ]);
 }
 
+fn needs_xcode(platforms: &[BuildPlatform]) -> bool {
+    platforms
+        .iter()
+        .any(|platform| matches!(platform, BuildPlatform::Ios | BuildPlatform::Macos))
+}
+
 fn snapshot_requests_ios(snapshot: &serde_json::Value) -> bool {
     let platforms = snapshot
         .get("selected_platforms")
@@ -4025,6 +4513,525 @@ async fn execute_build(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
+    caches: Option<&RunnerCaches>,
+    cache_observation: &mut Option<CacheObservation>,
+    file_size_budgets: &mut Option<Vec<TargetSizeBudget>>,
+) -> (Vec<StepResult>, anyhow::Result<()>) {
+    let mut log_seq = BuildLogCursor::default();
+    let mut build_vm = None;
+    let (steps, result) = execute_build_steps(
+        job,
+        client,
+        daemon_url,
+        config,
+        caches,
+        cache_observation,
+        &mut log_seq,
+        &mut build_vm,
+        file_size_budgets,
+    )
+    .await;
+    // A build that ended before its last step still has its VM. A canceled
+    // or timed-out build may have stopped tools mid-write, so its caches are
+    // not saved.
+    if let Some(vm) = build_vm.take() {
+        let terminated = result
+            .as_ref()
+            .err()
+            .is_some_and(|error| error.downcast_ref::<BuildTerminated>().is_some());
+        shutdown_build_vm(
+            vm,
+            !terminated,
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &mut log_seq,
+        )
+        .await;
+    }
+    // Error text reaches the build record and the runner log, so mask it too.
+    let result = result.map_err(|error| {
+        if error.downcast_ref::<BuildTerminated>().is_some() {
+            error
+        } else {
+            anyhow::anyhow!(log_seq.masker.mask(&format!("{error:#}")))
+        }
+    });
+    (steps, result)
+}
+
+/// Where a reused artifact goes in the workspace: where a build leaves it, so
+/// the uploads find it the same way. `None` for an artifact no upload reads.
+fn retry_artifact_path(name: &str, artifact_type: &str) -> Option<String> {
+    if name.is_empty()
+        || name.starts_with('.')
+        || name.contains(['/', '\\'])
+        || name.chars().any(char::is_control)
+    {
+        return None;
+    }
+    if name.to_ascii_lowercase().ends_with(".aab") {
+        Some(format!("build/app/outputs/bundle/release/{name}"))
+    } else if name == "mapping.txt" {
+        Some("build/app/outputs/mapping/release/mapping.txt".to_string())
+    } else if artifact_type == "ipa" {
+        Some(format!("build/ios/ipa/{name}"))
+    } else {
+        None
+    }
+}
+
+/// Downloads a stored artifact to `dest` and checks it against the checksum
+/// recorded when it was uploaded.
+async fn download_retry_artifact(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    download_url: &str,
+    dest: &Path,
+    checksum: Option<&str>,
+) -> anyhow::Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    // Local storage hands out daemon-relative URLs.
+    let url = if download_url.starts_with('/') {
+        format!("{}{download_url}", daemon_url.trim_end_matches('/'))
+    } else {
+        download_url.to_string()
+    };
+    let mut resp = client.get(&url).send().await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("download failed (HTTP {})", resp.status());
+    }
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let mut file = tokio::fs::File::create(dest).await?;
+    let mut hasher = Sha256::new();
+    while let Some(chunk) = resp.chunk().await? {
+        hasher.update(&chunk);
+        file.write_all(&chunk).await?;
+    }
+    file.flush().await?;
+    let actual = hex::encode(hasher.finalize());
+    if let Some(expected) = checksum
+        && !expected.eq_ignore_ascii_case(&actual)
+    {
+        anyhow::bail!("checksum mismatch: expected {expected}, got {actual}");
+    }
+    Ok(())
+}
+
+async fn fetch_job_retry_artifacts(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    signing_token: &str,
+) -> anyhow::Result<RunnerRetryArtifactsResponse> {
+    let resp = client
+        .get(format!(
+            "{}/v1/runners/{}/jobs/{}/retry-artifacts",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .header("x-oore-signing-token", signing_token)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("artifact lookup failed: {}", resp.status());
+    }
+    Ok(resp.json().await?)
+}
+
+/// The retry job's private directories.
+struct RetryWorkspace<'a> {
+    workspace: &'a Path,
+    signing_workspace: &'a Path,
+    authority: &'a Arc<BuildAuthorityState>,
+}
+
+/// Runs only the retried store uploads, with the source build's stored
+/// artifacts instead of a build. The artifacts are stored again as this
+/// build's own, so its uploads and releases point at what it published.
+#[allow(clippy::too_many_arguments)]
+async fn execute_step_retry(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    dirs: RetryWorkspace<'_>,
+    retry_steps: &[String],
+    steps: &mut Vec<StepResult>,
+) -> anyhow::Result<()> {
+    let RetryWorkspace {
+        workspace,
+        signing_workspace,
+        authority,
+    } = dirs;
+    let secrets = fetch_job_secrets(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &job.signing_token,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("Failed to load secrets for this build: {error}"))?;
+    log_seq.masker = SecretMasker::new(secrets.values().map(String::as_str));
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!(
+            "[oore-retry] Retrying {} with the source build's stored artifacts. Build steps do not run again.",
+            retry_steps.join(", ")
+        ),
+    )
+    .await;
+
+    let publish_plan = fetch_job_publish_plan(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &job.signing_token,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("Failed to load publish settings for this build: {error}"))?;
+    for step in retry_steps {
+        let enabled = match step.as_str() {
+            PUBLISH_PLAY_STEP => publish_plan.google_play.is_some(),
+            PUBLISH_APP_STORE_STEP => publish_plan.app_store.is_some(),
+            _ => false,
+        };
+        if !enabled {
+            anyhow::bail!(
+                "{step} cannot run: publishing to that store is no longer turned on for this pipeline"
+            );
+        }
+    }
+
+    // When the build took a retried upload's destination from `.oore.yaml`,
+    // the file at the build's commit decides it again; retrying without it
+    // could upload to the settings' track instead of the file's. Otherwise
+    // only release notes kept in the repository need the source.
+    let publish_from_file = job
+        .config_snapshot
+        .get(oore_contract::RETRY_PUBLISH_FROM_FILE)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let needs_source = publish_from_file
+        || (retry_steps.iter().any(|step| step == PUBLISH_PLAY_STEP)
+            && publish_plan.google_play.as_ref().is_some_and(|play| {
+                play.release_notes == oore_contract::GooglePlayReleaseNotesSource::RepoFiles
+            }));
+    if needs_source {
+        run_checkout(
+            job, client, daemon_url, config, log_seq, workspace, authority, steps,
+        )
+        .await?;
+    }
+    let file_publish = if publish_from_file {
+        resolve_execution_plan(workspace, &job.config_snapshot, false)
+            .map(|plan| plan.publish)
+            .context("Failed to read the pipeline file at the build's commit")?
+    } else {
+        PlanPublish::default()
+    };
+
+    let step_name = "artifacts";
+    let started = now_unix();
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &step_start_marker(step_name, "Reuse the source build's stored artifacts"),
+    )
+    .await;
+    let mut ipa: Option<(PathBuf, serde_json::Value)> = None;
+    let restore = async {
+        let listing = fetch_job_retry_artifacts(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &job.signing_token,
+        )
+        .await?;
+        let mut restored = Vec::new();
+        for artifact in listing.artifacts {
+            let Some(relative) = retry_artifact_path(&artifact.name, &artifact.artifact_type)
+            else {
+                continue;
+            };
+            let dest = workspace.join(&relative);
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &format!("[oore-retry] Downloading {}", artifact.name),
+            )
+            .await;
+            download_retry_artifact(
+                client,
+                daemon_url,
+                &artifact.download_url,
+                &dest,
+                artifact.checksum.as_deref(),
+            )
+            .await
+            .with_context(|| format!("failed to download {}", artifact.name))?;
+            if artifact.artifact_type == "ipa" {
+                ipa = Some((dest, artifact.metadata));
+            }
+            restored.push(relative);
+        }
+        if restored.is_empty() {
+            anyhow::bail!("the source build has no stored artifacts these uploads can use");
+        }
+        scan_and_upload_artifacts(
+            workspace,
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &restored,
+            ipa.as_ref().map(|(_, metadata)| metadata),
+        )
+        .await
+    };
+    let restore: anyhow::Result<()> = tokio::select! {
+        result = restore => result,
+        _ = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
+            Err(authority.terminated())
+        }
+    };
+    let finished = now_unix();
+    let succeeded = restore.is_ok();
+    steps.push(artifacts_step_result(
+        succeeded,
+        Some(if succeeded { 0 } else { 1 }),
+        (started, finished),
+        &file_publish,
+    ));
+    if let Err(error) = &restore {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stderr",
+            &format!("[oore-retry] {error:#}"),
+        )
+        .await;
+    }
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &step_end_marker(
+            step_name,
+            if succeeded { "succeeded" } else { "failed" },
+            Some(if succeeded { 0 } else { 1 }),
+        ),
+    )
+    .await;
+    restore?;
+
+    run_publish_steps(
+        job,
+        client,
+        daemon_url,
+        config,
+        log_seq,
+        PublishInputs {
+            workspace,
+            signing_workspace,
+            secrets: &secrets,
+            signed_ipa_path: ipa.as_ref().map(|(path, _)| path.as_path()),
+            ios_artifact_metadata: ipa.as_ref().map(|(_, metadata)| metadata),
+            only: Some(retry_steps),
+            authority,
+            file_publish: &file_publish,
+        },
+        steps,
+    )
+    .await
+}
+
+/// Clones the build's commit into `workspace` as the `checkout` step.
+#[allow(clippy::too_many_arguments)]
+async fn run_checkout(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    workspace: &Path,
+    authority: &Arc<BuildAuthorityState>,
+    steps: &mut Vec<StepResult>,
+) -> anyhow::Result<()> {
+    let snapshot = &job.config_snapshot;
+    let repo_url = snapshot
+        .get("repo_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if repo_url.is_empty() {
+        anyhow::bail!("Build config snapshot has no repo_url — cannot checkout source");
+    }
+
+    let proxy_path = snapshot.get("checkout_proxy_path").and_then(|v| v.as_str());
+    let effective_repo_url = proxy_path
+        .map(|path| format!("{}{}", daemon_url.trim_end_matches('/'), path))
+        .unwrap_or_else(|| repo_url.to_string());
+
+    let start = now_unix();
+    let mut checkout = match build_checkout_invocation(
+        &effective_repo_url,
+        job.commit_sha.as_deref(),
+        job.branch.as_deref(),
+    ) {
+        Ok(checkout) => checkout,
+        Err(e) => return Err(e),
+    };
+    if proxy_path.is_some() {
+        add_checkout_proxy_config(&mut checkout, &effective_repo_url, &config.runner_token);
+    }
+
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &step_start_marker("checkout", &checkout.preview_command),
+    )
+    .await;
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!("$ {}", checkout.preview_command),
+    )
+    .await;
+
+    let mut checkout_child = repository_shell_command(&checkout.shell_script, workspace);
+    checkout_child
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+
+    for (key, value) in &checkout.env {
+        checkout_child.env(key, value);
+    }
+    scrub_managed_runner_env(&mut checkout_child);
+
+    let child = match checkout_child.spawn() {
+        Ok(c) => c,
+        Err(e) => return Err(e.into()),
+    };
+
+    let clone_status = run_and_stream(
+        child,
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
+    )
+    .await;
+
+    let finished = now_unix();
+    match clone_status {
+        None => {
+            steps.push(StepResult {
+                name: "checkout".to_string(),
+                status: "failed".to_string(),
+                exit_code: None,
+                started_at: start,
+                finished_at: finished,
+                duration_ms: (finished - start) * 1000,
+                publish_from_file: false,
+            });
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &step_end_marker("checkout", "canceled", None),
+            )
+            .await;
+            return Err(authority.terminated());
+        }
+        Some(status) => {
+            let exit_code = status.code();
+            let success = exit_code == Some(0);
+            steps.push(StepResult {
+                name: "checkout".to_string(),
+                status: if success { "succeeded" } else { "failed" }.to_string(),
+                exit_code,
+                started_at: start,
+                finished_at: finished,
+                duration_ms: (finished - start) * 1000,
+                publish_from_file: false,
+            });
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &step_end_marker(
+                    "checkout",
+                    if success { "succeeded" } else { "failed" },
+                    exit_code,
+                ),
+            )
+            .await;
+            if !success {
+                anyhow::bail!("Git checkout failed");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_build_steps(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    caches: Option<&RunnerCaches>,
+    cache_observation: &mut Option<CacheObservation>,
+    log_seq: &mut BuildLogCursor,
+    build_vm: &mut Option<BuildVm>,
+    file_size_budgets: &mut Option<Vec<TargetSizeBudget>>,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
     // Pin signer executables before any repository-controlled checkout or build stage runs.
     let android_signing_toolchain = AndroidSigningToolchain::discover();
@@ -4032,7 +5039,11 @@ async fn execute_build(
         Ok(root) => root,
         Err(error) => return (vec![], Err(error)),
     };
-    let workspace = match create_private_workspace_in(&runner_workspace_root, &config.runner_id) {
+    let workspace = match create_project_workspace_in(
+        &runner_workspace_root,
+        &config.runner_id,
+        &job.project_id,
+    ) {
         Ok(workspace) => workspace,
         Err(error) => return (vec![], Err(error.into())),
     };
@@ -4054,7 +5065,6 @@ async fn execute_build(
 
     let snapshot = &job.config_snapshot;
     let mut steps = Vec::new();
-    let mut log_seq: i64 = 0;
     let mut ios_signing_source: Option<&str> = None;
     let mut ios_signing_bundle: Option<RunnerIosSigningBundle> = None;
     let ios_signing_checked_before_checkout = snapshot_requests_ios(snapshot);
@@ -4062,6 +5072,25 @@ async fn execute_build(
     if let Err(e) = check_build_active(client, daemon_url, config, &job.build_id, &authority).await
     {
         return (steps, Err(e));
+    }
+
+    if let Some(retry_steps) = job.retry_steps.as_deref() {
+        let result = execute_step_retry(
+            job,
+            client,
+            daemon_url,
+            config,
+            log_seq,
+            RetryWorkspace {
+                workspace: &workspace,
+                signing_workspace: &signing_workspace,
+                authority: &authority,
+            },
+            retry_steps,
+            &mut steps,
+        )
+        .await;
+        return (steps, result);
     }
 
     if ios_signing_checked_before_checkout {
@@ -4102,198 +5131,92 @@ async fn execute_build(
         }
     }
 
-    let repo_url = snapshot
-        .get("repo_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    if repo_url.is_empty() {
-        return (
-            steps,
-            Err(anyhow::anyhow!(
-                "Build config snapshot has no repo_url — cannot checkout source"
-            )),
-        );
-    }
-
-    let proxy_path = snapshot.get("checkout_proxy_path").and_then(|v| v.as_str());
-    let effective_repo_url = proxy_path
-        .map(|path| format!("{}{}", daemon_url.trim_end_matches('/'), path))
-        .unwrap_or_else(|| repo_url.to_string());
-
-    let start = now_unix();
-    let mut checkout = match build_checkout_invocation(
-        &effective_repo_url,
-        job.commit_sha.as_deref(),
-        job.branch.as_deref(),
-    ) {
-        Ok(checkout) => checkout,
-        Err(e) => return (steps, Err(e)),
-    };
-    if proxy_path.is_some() {
-        add_checkout_proxy_config(&mut checkout, &effective_repo_url, &config.runner_token);
-    }
-
-    let _ = append_runner_log_line(
+    let secrets = match fetch_job_secrets(
         client,
         daemon_url,
         config,
         &job.build_id,
-        &mut log_seq,
-        "stdout",
-        &step_start_marker("checkout", &checkout.preview_command),
+        &job.signing_token,
     )
-    .await;
-    let _ = append_runner_log_line(
-        client,
-        daemon_url,
-        config,
-        &job.build_id,
-        &mut log_seq,
-        "stdout",
-        &format!("$ {}", checkout.preview_command),
-    )
-    .await;
-
-    let mut checkout_child = repository_shell_command(&checkout.shell_script, &workspace);
-    checkout_child
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-
-    for (key, value) in &checkout.env {
-        checkout_child.env(key, value);
-    }
-    scrub_managed_runner_env(&mut checkout_child);
-
-    let child = match checkout_child.spawn() {
-        Ok(c) => c,
-        Err(e) => return (steps, Err(e.into())),
-    };
-
-    let clone_status = run_and_stream(
-        child,
-        client,
-        daemon_url,
-        config,
-        &job.build_id,
-        &mut log_seq,
-        poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
-    )
-    .await;
-
-    let finished = now_unix();
-    match clone_status {
-        None => {
-            steps.push(StepResult {
-                name: "checkout".to_string(),
-                status: "failed".to_string(),
-                exit_code: None,
-                started_at: start,
-                finished_at: finished,
-                duration_ms: (finished - start) * 1000,
-            });
-            let _ = append_runner_log_line(
-                client,
-                daemon_url,
-                config,
-                &job.build_id,
-                &mut log_seq,
-                "stdout",
-                &step_end_marker("checkout", "canceled", None),
-            )
-            .await;
+    .await
+    {
+        Ok(secrets) => secrets,
+        Err(error) => {
             return (
                 steps,
-                Err(BuildTerminated {
-                    status: "canceled".to_string(),
-                }
-                .into()),
+                Err(anyhow::anyhow!(
+                    "Failed to load secrets for this build: {error}"
+                )),
             );
         }
-        Some(status) => {
-            let exit_code = status.code();
-            let success = exit_code == Some(0);
-            steps.push(StepResult {
-                name: "checkout".to_string(),
-                status: if success { "succeeded" } else { "failed" }.to_string(),
-                exit_code,
-                started_at: start,
-                finished_at: finished,
-                duration_ms: (finished - start) * 1000,
-            });
+    };
+    log_seq.masker = SecretMasker::new(secrets.values().map(String::as_str));
+
+    if let Err(error) = run_checkout(
+        job, client, daemon_url, config, log_seq, &workspace, &authority, &mut steps,
+    )
+    .await
+    {
+        return (steps, Err(error));
+    }
+
+    if let Some(caches) = caches {
+        let observation = caches.observe(&workspace);
+        for line in &observation.lines {
             let _ = append_runner_log_line(
                 client,
                 daemon_url,
                 config,
                 &job.build_id,
-                &mut log_seq,
+                log_seq,
                 "stdout",
-                &step_end_marker(
-                    "checkout",
-                    if success { "succeeded" } else { "failed" },
-                    exit_code,
-                ),
+                line,
             )
             .await;
-            if !success {
-                return (steps, Err(anyhow::anyhow!("Git checkout failed")));
-            }
         }
+        *cache_observation = Some(observation);
     }
 
-    let execution_plan = match resolve_execution_plan(&workspace, snapshot) {
+    // A failed lookup here is not fatal: the publish step reloads the plan
+    // and reports the error where the user looks for it.
+    let build_play_bundle = fetch_job_publish_plan(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &job.signing_token,
+    )
+    .await
+    .is_ok_and(|plan| plan.google_play.is_some());
+    let execution_plan = match resolve_execution_plan(&workspace, snapshot, build_play_bundle)
+        .and_then(|plan| apply_secret_references(plan, &secrets))
+    {
         Ok(plan) => plan,
         Err(e) => return (steps, Err(e)),
     };
-    let requires_managed_fvm = execution_plan
-        .stage_commands
-        .pre_build
-        .iter()
-        .chain(&execution_plan.stage_commands.build)
-        .chain(&execution_plan.stage_commands.post_build)
-        .any(|command| command_uses_flutter_toolchain(command));
-    if requires_managed_fvm && bundled_fvm_install_root().is_none() {
-        let _ = append_runner_log_line(
-            client,
-            daemon_url,
-            config,
-            &job.build_id,
-            &mut log_seq,
-            "stdout",
-            "Preparing Oore-managed Flutter tooling for this runner...",
-        )
-        .await;
-        match ensure_managed_fvm(client).await {
-            Ok(true) => {
-                let _ = append_runner_log_line(
-                    client,
-                    daemon_url,
-                    config,
-                    &job.build_id,
-                    &mut log_seq,
-                    "stdout",
-                    "Oore-managed Flutter tooling is ready.",
-                )
-                .await;
-            }
-            Ok(false) => {}
+    *file_size_budgets = Some(execution_plan.size_budgets.clone());
+    let version_code =
+        match store_version_code(job.build_number, execution_plan.build_number_offset) {
+            Ok(code) => code,
             Err(error) => {
                 return (
                     steps,
-                    Err(error.context(
-                        "Failed to prepare Oore-managed Flutter tooling; retry the build",
-                    )),
+                    Err(anyhow::anyhow!("Invalid store version code: {error}")),
                 );
             }
-        }
-    }
+        };
+    let version_name = read_pubspec_version_name(&workspace);
 
     let mut signing_source: Option<&str> = None;
     let mut signing_variant: Option<AndroidSigningBuildType> = None;
     let mut signing_inputs: Option<AndroidSigningInputs> = None;
-    let build_commands = execution_plan.stage_commands.build.as_slice();
-    match determine_android_signing_variant(build_commands) {
+    let build_commands: Vec<String> = execution_plan
+        .steps
+        .iter()
+        .filter(|step| step.phase == StepPhase::Build)
+        .map(|step| step.run.clone())
+        .collect();
+    match determine_android_signing_variant(&build_commands) {
         Ok(Some(variant)) => {
             signing_variant = Some(variant);
             match fetch_job_android_signing(
@@ -4387,7 +5310,19 @@ async fn execute_build(
             job.build_number.to_string(),
         ),
         ("BUILD_NUMBER".to_string(), job.build_number.to_string()),
+        ("OORE_VERSION_CODE".to_string(), version_code.to_string()),
     ];
+    // Before pipeline env, so a pipeline can still point a tool elsewhere.
+    if let Some(caches) = caches {
+        step_env.extend(caches.step_env());
+    }
+    println!(
+        "Store version code {version_code} (build {} + offset {})",
+        job.build_number, execution_plan.build_number_offset
+    );
+    if let Some(name) = &version_name {
+        step_env.push(("OORE_VERSION_NAME".to_string(), name.clone()));
+    }
     if let Some(branch) = &job.branch {
         step_env.push(("BRANCH".to_string(), branch.clone()));
     }
@@ -4396,6 +5331,9 @@ async fn execute_build(
     }
     for pair in &execution_plan.env {
         step_env.push((pair.key.clone(), pair.value.clone()));
+    }
+    for (key, value) in &execution_plan.secret_env {
+        step_env.push((key.clone(), value.clone()));
     }
 
     if execution_plan.env.iter().all(|pair| pair.key != "CI") {
@@ -4410,7 +5348,7 @@ async fn execute_build(
             daemon_url,
             config,
             &job.build_id,
-            &mut log_seq,
+            log_seq,
             "stdout",
             &android_signing_prepared_marker(source, variant),
         )
@@ -4419,11 +5357,18 @@ async fn execute_build(
 
     // Flutter expects dart-defines to be materialized in a file. When pipeline
     // env vars are provided, create a temporary .env and pass it to flutter build.
-    let dart_define_file = if execution_plan.env.is_empty() {
+    // Secret-backed values stay out of the define file so they are never
+    // compiled into the app; commands can still pass them explicitly.
+    let dart_defines: Vec<&PipelineEnvVar> = execution_plan
+        .env
+        .iter()
+        .filter(|pair| !execution_plan.secret_env_keys.contains(&pair.key))
+        .collect();
+    let dart_define_file = if dart_defines.is_empty() {
         None
     } else {
         let mut content = String::new();
-        for pair in &execution_plan.env {
+        for pair in dart_defines {
             content.push_str(&pair.key);
             content.push('=');
             content.push_str(&pair.value);
@@ -4442,28 +5387,195 @@ async fn execute_build(
         Some(".env".to_string())
     };
 
+    let vm = match execution_plan.isolation {
+        BuildIsolation::Host => {
+            let started = now_unix();
+            let found = host_flutter_version(&workspace, &step_env).await;
+            let check = check_host_flutter(&execution_plan.flutter_version, found);
+            let message = match &check {
+                Ok(message) | Err(message) => message.clone(),
+            };
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                if check.is_ok() { "stdout" } else { "stderr" },
+                &message,
+            )
+            .await;
+            if check.is_err() {
+                let finished = now_unix();
+                steps.push(StepResult {
+                    name: "flutter-version".to_string(),
+                    status: "failed".to_string(),
+                    exit_code: Some(1),
+                    started_at: started,
+                    finished_at: finished,
+                    duration_ms: (finished - started) * 1000,
+                    publish_from_file: false,
+                });
+                return (steps, Err(anyhow::anyhow!(message)));
+            }
+            None
+        }
+        BuildIsolation::Vm => {
+            let started = now_unix();
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &step_start_marker("vm-start", "Start a clean Tart VM for this build"),
+            )
+            .await;
+            let shares = caches
+                .map(|caches| {
+                    caches
+                        .mounts()
+                        .into_iter()
+                        .map(|mount| tart::HostShare {
+                            name: mount.name,
+                            env: mount.env,
+                            // Every VM build runs from the same guest path, so
+                            // Xcode names DerivedData the same for every
+                            // project; keep one saved copy per project.
+                            host_dir: if mount.name == "derived-data" {
+                                mount.host_dir.join(hex::encode(
+                                    &Sha256::digest(job.project_id.as_bytes())[..16],
+                                ))
+                            } else {
+                                mount.host_dir
+                            },
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let result = start_build_vm(
+                job,
+                client,
+                daemon_url,
+                config,
+                log_seq,
+                &authority,
+                &workspace,
+                &shares,
+                &execution_plan.flutter_version,
+                execution_plan.needs_xcode,
+            )
+            .await;
+            let finished = now_unix();
+            let succeeded = result.is_ok();
+            steps.push(StepResult {
+                name: "vm-start".to_string(),
+                status: if succeeded { "succeeded" } else { "failed" }.to_string(),
+                exit_code: Some(if succeeded { 0 } else { 1 }),
+                started_at: started,
+                finished_at: finished,
+                duration_ms: (finished - started) * 1000,
+                publish_from_file: false,
+            });
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &step_end_marker(
+                    "vm-start",
+                    if succeeded { "succeeded" } else { "failed" },
+                    Some(if succeeded { 0 } else { 1 }),
+                ),
+            )
+            .await;
+            match result {
+                Ok(vm) => {
+                    // Point the cache variables at the guest mounts, leaving
+                    // any value a pipeline set for itself alone.
+                    if let Some(caches) = caches {
+                        let host_env = caches.step_env();
+                        for (key, value) in step_env.iter_mut() {
+                            let is_host_cache =
+                                host_env.iter().any(|(k, v)| k == key && v == value);
+                            if let Some((_, guest)) =
+                                vm.vm.guest_env().iter().find(|(k, _)| k == key)
+                                && is_host_cache
+                            {
+                                *value = guest.clone();
+                            }
+                        }
+                    }
+                    Some(vm)
+                }
+                Err(error) => return (steps, Err(error)),
+            }
+        }
+    };
+
+    // The caller ends the VM if a step returns early.
+    *build_vm = vm;
+    let vm = build_vm.as_ref();
+
+    // A VM build's steps write reports in the guest workspace; the copy back
+    // after each step brings them here.
+    let test_reports_dir = workspace.join(test_reports::TEST_REPORTS_SUBDIR);
+    if let Err(error) = fs::create_dir_all(&test_reports_dir) {
+        return (
+            steps,
+            Err(anyhow::anyhow!(
+                "Failed to create the test reports directory: {error}"
+            )),
+        );
+    }
+    let guest_workspace = vm.as_ref().map(|vm| PathBuf::from(vm.vm.guest_workspace()));
+    let step_test_reports_dir = guest_workspace
+        .as_deref()
+        .unwrap_or(&workspace)
+        .join(test_reports::TEST_REPORTS_SUBDIR);
+    // The guest workspace was copied in before the host directory existed.
+    if let Some(vm) = vm
+        && let Err(error) = vm
+            .vm
+            .reset_guest_dir(&step_test_reports_dir.display().to_string())
+            .await
+    {
+        return (
+            steps,
+            Err(error.context("Failed to create the test reports directory in the VM")),
+        );
+    }
+    step_env.push((
+        test_reports::TEST_REPORTS_DIR_ENV.to_string(),
+        step_test_reports_dir.display().to_string(),
+    ));
+    let mut report_path_prefixes = vec![workspace.clone()];
+    report_path_prefixes.extend(guest_workspace);
+
     let mut ios_signing_command_applied = false;
     let ios_signing_expected = ios_signing_bundle.is_some();
     let mut ios_artifact_metadata: Option<serde_json::Value> = None;
-    for (stage_name, commands) in [
-        (
-            "pre_build",
-            execution_plan.stage_commands.pre_build.as_slice(),
-        ),
-        ("build", execution_plan.stage_commands.build.as_slice()),
-        (
-            "post_build",
-            execution_plan.stage_commands.post_build.as_slice(),
-        ),
-    ] {
-        for (index, command) in commands.iter().enumerate() {
+    let mut signed_ipa_path: Option<PathBuf> = None;
+    for phase in StepPhase::ALL {
+        let stage_name = phase.as_str();
+        let phase_steps: Vec<PlanStep> = execution_plan
+            .steps
+            .iter()
+            .filter(|step| step.phase == phase)
+            .cloned()
+            .collect();
+        for plan_step in &phase_steps {
+            let command = &plan_step.run;
             if let Err(e) =
                 check_build_active(client, daemon_url, config, &job.build_id, &authority).await
             {
                 return (steps, Err(e));
             }
 
-            let step_name = format!("{stage_name}-{}", index + 1);
+            let step_name = plan_step.name.clone();
             let start = now_unix();
             let (normalized_command, command_applied) = match normalize_stage_command_for_execution(
                 stage_name,
@@ -4475,6 +5587,10 @@ async fn execute_build(
                 Err(e) => return (steps, Err(e)),
             };
             ios_signing_command_applied |= command_applied;
+            let normalized_command = test_reports::with_test_file_reporter(
+                &normalized_command,
+                &step_test_reports_dir.join(format!("{}.json", report_file_stem(&step_name))),
+            );
             let command_preview = render_command_preview(&normalized_command, &step_env);
 
             let _ = append_runner_log_line(
@@ -4482,7 +5598,7 @@ async fn execute_build(
                 daemon_url,
                 config,
                 &job.build_id,
-                &mut log_seq,
+                log_seq,
                 "stdout",
                 &step_start_marker(&step_name, &normalized_command),
             )
@@ -4492,7 +5608,7 @@ async fn execute_build(
                 daemon_url,
                 config,
                 &job.build_id,
-                &mut log_seq,
+                log_seq,
                 "stdout",
                 &format!("$ {command_preview}"),
             )
@@ -4502,24 +5618,30 @@ async fn execute_build(
                 daemon_url,
                 config,
                 &job.build_id,
-                &mut log_seq,
+                log_seq,
                 "stdout",
                 &render_step_env_preview(&step_env),
             )
             .await;
 
-            let mut step_cmd = repository_shell_command(&normalized_command, &workspace);
-            step_cmd
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true);
-            for (key, value) in &step_env {
-                step_cmd.env(key, value);
-            }
-            scrub_managed_runner_env(&mut step_cmd);
-            let child = match step_cmd.spawn() {
+            let spawned = match &vm {
+                Some(vm) => vm.vm.spawn_step(&normalized_command, &step_env).await,
+                None => {
+                    let mut step_cmd = repository_shell_command(&normalized_command, &workspace);
+                    step_cmd
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .kill_on_drop(true);
+                    for (key, value) in &step_env {
+                        step_cmd.env(key, value);
+                    }
+                    scrub_managed_runner_env(&mut step_cmd);
+                    step_cmd.spawn().map_err(anyhow::Error::from)
+                }
+            };
+            let child = match spawned {
                 Ok(c) => c,
-                Err(e) => return (steps, Err(e.into())),
+                Err(e) => return (steps, Err(e)),
             };
 
             let step_status = run_and_stream(
@@ -4528,7 +5650,7 @@ async fn execute_build(
                 daemon_url,
                 config,
                 &job.build_id,
-                &mut log_seq,
+                log_seq,
                 poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
             )
             .await;
@@ -4543,27 +5665,80 @@ async fn execute_build(
                         started_at: start,
                         finished_at: finished,
                         duration_ms: (finished - start) * 1000,
+                        publish_from_file: false,
                     });
                     let _ = append_runner_log_line(
                         client,
                         daemon_url,
                         config,
                         &job.build_id,
-                        &mut log_seq,
+                        log_seq,
                         "stdout",
-                        &step_end_marker(&format!("{stage_name}-{}", index + 1), "canceled", None),
+                        &step_end_marker(&plan_step.name, "canceled", None),
                     )
                     .await;
-                    return (
-                        steps,
-                        Err(BuildTerminated {
-                            status: "canceled".to_string(),
-                        }
-                        .into()),
-                    );
+                    return (steps, Err(authority.terminated()));
                 }
                 Some(status) => {
                     let exit_code = status.code().unwrap_or(-1);
+                    // The host collects test reports, archives and artifacts
+                    // from its workspace, so bring the guest's changes over
+                    // before anything reads it.
+                    let sync_error = match &vm {
+                        Some(vm) => vm.vm.sync_workspace_out().await.err(),
+                        None => None,
+                    };
+                    if let Some(report) = plan_step.test_report.as_deref()
+                        && let Err(error) = copy_declared_test_report(
+                            &workspace,
+                            report,
+                            &test_reports_dir,
+                            &step_name,
+                        )
+                    {
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            log_seq,
+                            "stderr",
+                            &format!("[oore-tests] {error}"),
+                        )
+                        .await;
+                    }
+                    report_step_tests(
+                        client,
+                        daemon_url,
+                        config,
+                        &job.build_id,
+                        log_seq,
+                        &test_reports_dir,
+                        &report_path_prefixes,
+                        &step_name,
+                    )
+                    .await;
+                    // The host removed the reports it read; remove the guest's
+                    // too, or the next step's copy back reports them again.
+                    if let Some(vm) = vm
+                        && let Err(error) = vm
+                            .vm
+                            .reset_guest_dir(&step_test_reports_dir.display().to_string())
+                            .await
+                    {
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            log_seq,
+                            "stderr",
+                            &format!(
+                                "[oore-tests] Could not clear the VM's test reports: {error:#}"
+                            ),
+                        )
+                        .await;
+                    }
                     steps.push(StepResult {
                         name: step_name,
                         status: if exit_code == 0 {
@@ -4576,14 +5751,15 @@ async fn execute_build(
                         started_at: start,
                         finished_at: finished,
                         duration_ms: (finished - start) * 1000,
+                        publish_from_file: false,
                     });
-                    let step_name = format!("{stage_name}-{}", index + 1);
+                    let step_name = plan_step.name.clone();
                     let _ = append_runner_log_line(
                         client,
                         daemon_url,
                         config,
                         &job.build_id,
-                        &mut log_seq,
+                        log_seq,
                         "stdout",
                         &step_end_marker(
                             &step_name,
@@ -4596,17 +5772,52 @@ async fn execute_build(
                         ),
                     )
                     .await;
+                    // Analysis shows what the failing change looks like, so
+                    // it runs here too; it never changes the result. After a
+                    // pre-build failure (dependencies, code generation) the
+                    // analyzer would only report the missing setup.
+                    if exit_code != 0
+                        && phase != StepPhase::PreBuild
+                        && let Err(error) = run_analyzer_step(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            log_seq,
+                            AnalyzeInputs {
+                                workspace: &workspace,
+                                vm,
+                                env: &step_env,
+                                path_prefixes: &report_path_prefixes,
+                                authority: authority.clone(),
+                            },
+                            &mut steps,
+                        )
+                        .await
+                    {
+                        return (steps, Err(error));
+                    }
                     if exit_code != 0 {
-                        let err = if exit_code == 127 {
+                        let err = if exit_code == 127 && vm.is_some() {
                             anyhow::anyhow!(
                                 "Step failed with exit code 127 (command not found). \
-Install required tooling (for example Flutter/FVM) or override build commands. Command: {}",
+The VM image for Flutter {} does not provide this command. Command: {}",
+                                execution_plan.flutter_version,
+                                command_preview
+                            )
+                        } else if exit_code == 127 {
+                            anyhow::anyhow!(
+                                "Step failed with exit code 127 (command not found). \
+Install the required tooling on the runner, set isolation: vm, or override build commands. Command: {}",
                                 command_preview
                             )
                         } else {
                             anyhow::anyhow!("Step failed with exit code {}", exit_code)
                         };
                         return (steps, Err(err));
+                    }
+                    if let Some(error) = sync_error {
+                        return (steps, Err(error));
                     }
                     if stage_name == "build"
                         && android_artifact_extension(command).is_some()
@@ -4619,7 +5830,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             daemon_url,
                             config,
                             &job.build_id,
-                            &mut log_seq,
+                            log_seq,
                             "stdout",
                             &step_start_marker(
                                 signing_step_name,
@@ -4627,13 +5838,19 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             ),
                         )
                         .await;
-                        let signing_result = sign_android_artifacts(
-                            &workspace,
-                            &signing_workspace,
-                            command,
-                            inputs,
-                            &android_signing_toolchain,
-                        );
+                        let signing_result = match &vm {
+                            Some(vm) => {
+                                sign_android_artifacts_in_vm(&vm.vm, &workspace, command, inputs)
+                                    .await
+                            }
+                            None => sign_android_artifacts(
+                                &workspace,
+                                &signing_workspace,
+                                command,
+                                inputs,
+                                &android_signing_toolchain,
+                            ),
+                        };
                         let signing_finished = now_unix();
                         let signing_succeeded = signing_result.is_ok();
                         steps.push(StepResult {
@@ -4648,6 +5865,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             started_at: signing_started,
                             finished_at: signing_finished,
                             duration_ms: (signing_finished - signing_started) * 1000,
+                            publish_from_file: false,
                         });
                         match signing_result {
                             Ok(artifacts) => {
@@ -4656,7 +5874,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     daemon_url,
                                     config,
                                     &job.build_id,
-                                    &mut log_seq,
+                                    log_seq,
                                     "stdout",
                                     &format!(
                                         "[oore-signing] Signed and verified {} Android artifact(s)",
@@ -4671,7 +5889,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     daemon_url,
                                     config,
                                     &job.build_id,
-                                    &mut log_seq,
+                                    log_seq,
                                     "stderr",
                                     &format!("[oore-signing] {error:#}"),
                                 )
@@ -4684,7 +5902,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             daemon_url,
                             config,
                             &job.build_id,
-                            &mut log_seq,
+                            log_seq,
                             "stdout",
                             &step_end_marker(signing_step_name, "succeeded", Some(0)),
                         )
@@ -4709,7 +5927,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             daemon_url,
                             config,
                             &job.build_id,
-                            &mut log_seq,
+                            log_seq,
                             "stdout",
                             &ios_signing_prepared_marker(
                                 ios_signing_source.unwrap_or("pipeline_profile"),
@@ -4725,7 +5943,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             daemon_url,
                             config,
                             &job.build_id,
-                            &mut log_seq,
+                            log_seq,
                             "stdout",
                             &step_start_marker(
                                 signing_step_name,
@@ -4749,6 +5967,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             started_at: signing_started,
                             finished_at: signing_finished,
                             duration_ms: (signing_finished - signing_started) * 1000,
+                            publish_from_file: false,
                         });
                         match signing_result {
                             Ok(signed_archive) => {
@@ -4757,7 +5976,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     daemon_url,
                                     config,
                                     &job.build_id,
-                                    &mut log_seq,
+                                    log_seq,
                                     "stdout",
                                     &format!(
                                         "[oore-signing] Signed IPA created at {}",
@@ -4765,6 +5984,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     ),
                                 )
                                 .await;
+                                signed_ipa_path = Some(signed_archive.ipa_path.clone());
                                 let mut p12_bytes =
                                     match decode_runner_b64(&bundle.p12_base64, "p12") {
                                         Ok(bytes) => bytes,
@@ -4809,7 +6029,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     daemon_url,
                                     config,
                                     &job.build_id,
-                                    &mut log_seq,
+                                    log_seq,
                                     "stderr",
                                     &format!("[oore-signing] {error:#}"),
                                 )
@@ -4819,7 +6039,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                                     daemon_url,
                                     config,
                                     &job.build_id,
-                                    &mut log_seq,
+                                    log_seq,
                                     "stdout",
                                     &step_end_marker(signing_step_name, "failed", Some(1)),
                                 )
@@ -4835,7 +6055,7 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                             daemon_url,
                             config,
                             &job.build_id,
-                            &mut log_seq,
+                            log_seq,
                             "stdout",
                             &step_end_marker(signing_step_name, "succeeded", Some(0)),
                         )
@@ -4850,6 +6070,32 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
                 zeroize_ios_signing_bundle(&mut bundle);
             }
         }
+    }
+
+    // While the toolchain (the VM, when there is one) is still up.
+    if let Err(error) = run_analyzer_step(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        AnalyzeInputs {
+            workspace: &workspace,
+            vm,
+            env: &step_env,
+            path_prefixes: &report_path_prefixes,
+            authority: authority.clone(),
+        },
+        &mut steps,
+    )
+    .await
+    {
+        return (steps, Err(error));
+    }
+
+    // Every step has run; free the VM slot before the upload.
+    if let Some(vm) = build_vm.take() {
+        shutdown_build_vm(vm, true, client, daemon_url, config, &job.build_id, log_seq).await;
     }
 
     if ios_signing_expected && !ios_signing_command_applied {
@@ -4873,24 +6119,1358 @@ Install required tooling (for example Flutter/FVM) or override build commands. C
     )
     .await;
     let artifacts_finished = now_unix();
-    steps.push(StepResult {
-        name: "artifacts".to_string(),
-        status: if artifact_result.is_ok() {
-            "succeeded"
-        } else {
-            "failed"
-        }
-        .to_string(),
-        exit_code: artifact_result.as_ref().err().map(|_| 1),
-        started_at: artifacts_started,
-        finished_at: artifacts_finished,
-        duration_ms: (artifacts_finished - artifacts_started) * 1000,
-    });
+    steps.push(artifacts_step_result(
+        artifact_result.is_ok(),
+        artifact_result.as_ref().err().map(|_| 1),
+        (artifacts_started, artifacts_finished),
+        &execution_plan.publish,
+    ));
     if let Err(error) = artifact_result {
         return (steps, Err(error));
     }
 
-    (steps, Ok(()))
+    // Publishing runs only after every build, signing and artifact step
+    // succeeded; any earlier failure has already returned.
+    let result = run_publish_steps(
+        job,
+        client,
+        daemon_url,
+        config,
+        log_seq,
+        PublishInputs {
+            workspace: &workspace,
+            signing_workspace: &signing_workspace,
+            secrets: &secrets,
+            signed_ipa_path: signed_ipa_path.as_deref(),
+            ios_artifact_metadata: ios_artifact_metadata.as_ref(),
+            only: None,
+            authority: &authority,
+            file_publish: &execution_plan.publish,
+        },
+        &mut steps,
+    )
+    .await;
+    (steps, result)
+}
+
+/// The `artifacts` step's result. It always exists once publishing can run,
+/// so it carries the build-level `publish_from_file`: a retry of any publish
+/// step, including one that never ran, then reads the file again.
+fn artifacts_step_result(
+    succeeded: bool,
+    exit_code: Option<i32>,
+    (started, finished): (i64, i64),
+    file_publish: &PlanPublish,
+) -> StepResult {
+    StepResult {
+        name: "artifacts".to_string(),
+        status: if succeeded { "succeeded" } else { "failed" }.to_string(),
+        exit_code,
+        started_at: started,
+        finished_at: finished,
+        duration_ms: (finished - started) * 1000,
+        publish_from_file: !file_publish.is_empty(),
+    }
+}
+
+/// What the store uploads read: the build's outputs and the job's secrets.
+struct PublishInputs<'a> {
+    workspace: &'a Path,
+    signing_workspace: &'a Path,
+    secrets: &'a std::collections::BTreeMap<String, String>,
+    signed_ipa_path: Option<&'a Path>,
+    ios_artifact_metadata: Option<&'a serde_json::Value>,
+    /// Runs only these upload steps, for a step retry. `None` runs every
+    /// upload the pipeline turns on.
+    only: Option<&'a [String]>,
+    authority: &'a Arc<BuildAuthorityState>,
+    /// The v2 file's uploads, which replace the Publish settings' targets.
+    file_publish: &'a PlanPublish,
+}
+
+/// Records `step_name` as a failed upload that never started, with `error`
+/// in its log, and returns the error for the build.
+#[allow(clippy::too_many_arguments)]
+async fn fail_publish_step(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    steps: &mut Vec<StepResult>,
+    (step_name, title): (&str, &str),
+    error: String,
+    from_file: bool,
+) -> anyhow::Error {
+    let now = now_unix();
+    for (stream, line) in [
+        ("stdout", step_start_marker(step_name, title)),
+        ("stderr", format!("[oore-publish] {error}")),
+        ("stdout", step_end_marker(step_name, "failed", Some(1))),
+    ] {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            stream,
+            &line,
+        )
+        .await;
+    }
+    steps.push(StepResult {
+        name: step_name.to_string(),
+        status: "failed".to_string(),
+        exit_code: Some(1),
+        started_at: now,
+        finished_at: now,
+        duration_ms: 0,
+        publish_from_file: from_file,
+    });
+    anyhow::anyhow!(error).context(format!("{step_name} failed"))
+}
+
+/// Runs the store uploads the pipeline turns on, stopping at the first failure.
+async fn run_publish_steps(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    inputs: PublishInputs<'_>,
+    steps: &mut Vec<StepResult>,
+) -> anyhow::Result<()> {
+    let PublishInputs {
+        workspace,
+        signing_workspace,
+        secrets,
+        signed_ipa_path,
+        ios_artifact_metadata,
+        only,
+        authority,
+        file_publish,
+    } = inputs;
+    let runs = |step: &str| only.is_none_or(|only| only.iter().any(|name| name == step));
+    let settings = match fetch_job_publish_plan(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &job.signing_token,
+    )
+    .await
+    {
+        Ok(plan) => plan,
+        Err(error) => {
+            anyhow::bail!("Failed to load publish settings for this build: {error}");
+        }
+    };
+    let publish_plan = file_publish.apply(settings);
+    for note in &publish_plan.notes {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stdout",
+            &format!("[oore-publish] {note}"),
+        )
+        .await;
+    }
+    const PLAY_TITLE: &str = "Upload the App Bundle to Google Play";
+    const APP_STORE_TITLE: &str = "Upload the IPA to App Store Connect";
+    let google_play = match publish_plan.google_play {
+        Ok(play) => play.filter(|_| runs(PUBLISH_PLAY_STEP)),
+        Err(error) if runs(PUBLISH_PLAY_STEP) => {
+            return Err(fail_publish_step(
+                job,
+                client,
+                daemon_url,
+                config,
+                log_seq,
+                steps,
+                (PUBLISH_PLAY_STEP, PLAY_TITLE),
+                error,
+                file_publish.play.is_some(),
+            )
+            .await);
+        }
+        Err(_) => None,
+    };
+    if let Some(play) = google_play.as_ref() {
+        let step_name = PUBLISH_PLAY_STEP;
+        let started = now_unix();
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stdout",
+            &step_start_marker(step_name, PLAY_TITLE),
+        )
+        .await;
+        let mut lines = Vec::new();
+        let result = publish::publish_to_google_play(
+            client,
+            workspace,
+            secrets,
+            publish_plan.changelog.as_deref(),
+            play,
+            &mut lines,
+            publish::PublishGate {
+                stopped: async {
+                    tokio::select! {
+                        _ = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
+                            authority.terminated()
+                        }
+                        _ = tokio::time::sleep(PLAY_PUBLISH_TIMEOUT) => anyhow::anyhow!(
+                            "Google Play upload timed out after {} minutes",
+                            PLAY_PUBLISH_TIMEOUT.as_secs() / 60
+                        ),
+                    }
+                },
+                still_active: check_build_active(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    authority,
+                ),
+            },
+        )
+        .await;
+        for line in lines {
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &line,
+            )
+            .await;
+        }
+        let finished = now_unix();
+        steps.push(StepResult {
+            name: step_name.to_string(),
+            status: if result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            }
+            .to_string(),
+            exit_code: Some(if result.is_ok() { 0 } else { 1 }),
+            started_at: started,
+            finished_at: finished,
+            duration_ms: (finished - started) * 1000,
+            publish_from_file: file_publish.play.is_some(),
+        });
+        match result {
+            Ok(published) => {
+                if let Err(error) = report_publish_result(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    &job.signing_token,
+                    &published,
+                    &PUBLISH_REPORT_DELAYS,
+                )
+                .await
+                {
+                    let _ = append_runner_log_line(
+                        client,
+                        daemon_url,
+                        config,
+                        &job.build_id,
+                        log_seq,
+                        "stderr",
+                        &format!(
+                            "[oore-publish] Warning: the build is on Google Play, but Oore could not \
+                             record the release, so it will not track or roll it out: {error:#}"
+                        ),
+                    )
+                    .await;
+                }
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &step_end_marker(step_name, "succeeded", Some(0)),
+                )
+                .await;
+            }
+            Err(error) => {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stderr",
+                    &format!("[oore-publish] {error:#}"),
+                )
+                .await;
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &step_end_marker(step_name, "failed", Some(1)),
+                )
+                .await;
+                return Err(error.context("publish-play failed"));
+            }
+        }
+    }
+
+    let app_store = match publish_plan.app_store {
+        Ok(app_store) => app_store.filter(|_| runs(PUBLISH_APP_STORE_STEP)),
+        Err(error) if runs(PUBLISH_APP_STORE_STEP) => {
+            return Err(fail_publish_step(
+                job,
+                client,
+                daemon_url,
+                config,
+                log_seq,
+                steps,
+                (PUBLISH_APP_STORE_STEP, APP_STORE_TITLE),
+                error,
+                file_publish.testflight.is_some(),
+            )
+            .await);
+        }
+        Err(_) => None,
+    };
+    if let Some(app_store) = app_store.as_ref() {
+        let step_name = PUBLISH_APP_STORE_STEP;
+        let started = now_unix();
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stdout",
+            &step_start_marker(step_name, APP_STORE_TITLE),
+        )
+        .await;
+        let result = match (signed_ipa_path, ios_artifact_metadata) {
+            (Some(ipa), Some(metadata)) => {
+                let key_dir = signing_workspace.join(".oore").join("asc-keys");
+                // Once altool starts, Apple may get the build; don't start
+                // it for a build that has already stopped.
+                match check_build_active(client, daemon_url, config, &job.build_id, authority)
+                    .await
+                {
+                    Err(error) => Err(error.context(
+                        "The build stopped before the App Store Connect upload started; nothing was uploaded",
+                    )),
+                    Ok(()) => tokio::select! {
+                        uploaded = app_store_upload::upload_ipa(ipa, &app_store.credentials, &key_dir) => {
+                            uploaded.and_then(|message| {
+                                app_store_upload::publish_result(metadata, &app_store.config)
+                                    .map(|result| (message, result))
+                            })
+                        }
+                        _ = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
+                            Err(authority.terminated().context(
+                                "The build stopped during the App Store Connect upload, so the upload was stopped",
+                            ))
+                        }
+                    },
+                }
+            }
+            _ => Err(anyhow::anyhow!(
+                "App Store publishing is on, but this build produced no signed App Store IPA"
+            )),
+        };
+        let finished = now_unix();
+        steps.push(StepResult {
+            name: step_name.to_string(),
+            status: if result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            }
+            .to_string(),
+            exit_code: Some(if result.is_ok() { 0 } else { 1 }),
+            started_at: started,
+            finished_at: finished,
+            duration_ms: (finished - started) * 1000,
+            publish_from_file: file_publish.testflight.is_some(),
+        });
+        match result {
+            Ok((message, published)) => {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &format!("[oore-publish] {message}"),
+                )
+                .await;
+                if let Err(error) = report_publish_result(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    &job.signing_token,
+                    &published,
+                    &PUBLISH_REPORT_DELAYS,
+                )
+                .await
+                {
+                    let _ = append_runner_log_line(
+                        client,
+                        daemon_url,
+                        config,
+                        &job.build_id,
+                        log_seq,
+                        "stderr",
+                        &format!(
+                            "[oore-publish] Warning: the build is on App Store Connect, but Oore could not \
+                             record the release, so it will not track or roll it out: {error:#}"
+                        ),
+                    )
+                    .await;
+                }
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &step_end_marker(step_name, "succeeded", Some(0)),
+                )
+                .await;
+            }
+            Err(error) => {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stderr",
+                    &format!("[oore-publish] {error:#}"),
+                )
+                .await;
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &step_end_marker(step_name, "failed", Some(1)),
+                )
+                .await;
+                return Err(error.context("publish-app-store failed"));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// The build's VM and the host slot it occupies. The VM is declared first so
+/// it is deleted before the slot is released.
+struct BuildVm {
+    vm: tart::TartVm,
+    _slot: tart::VmSlot,
+}
+
+/// Saves the VM's caches back to the host unless `save_caches` is false,
+/// deletes the VM, and only then frees its slot. Every step is bounded.
+async fn shutdown_build_vm(
+    build_vm: BuildVm,
+    save_caches: bool,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    log_seq: &mut BuildLogCursor,
+) {
+    let BuildVm {
+        mut vm,
+        _slot: slot,
+    } = build_vm;
+    if save_caches && vm.has_cache_saves() {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            build_id,
+            log_seq,
+            "stdout",
+            &format!("Saving caches from VM {} to this runner", vm.name()),
+        )
+        .await;
+        for line in vm.save_caches().await {
+            let _ = append_runner_log_line(
+                client, daemon_url, config, build_id, log_seq, "stdout", &line,
+            )
+            .await;
+        }
+    }
+    let name = vm.name().to_string();
+    if let Err(error) = vm.delete().await {
+        eprintln!("Warning: {error:#}; the runner retries before its next build");
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            build_id,
+            log_seq,
+            "stderr",
+            &format!("Could not delete VM {name}; the runner retries before its next build"),
+        )
+        .await;
+    }
+    drop(slot);
+}
+
+/// Reads the repository's optional `oore.image.yaml`.
+fn read_vm_image_config(
+    workspace: &Path,
+) -> anyhow::Result<Option<(String, oore_contract::VmImageConfig)>> {
+    let path = workspace.join(oore_contract::VM_IMAGE_CONFIG_PATH);
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
+    let config = oore_contract::parse_vm_image_yaml(&raw)
+        .map_err(|error| anyhow::anyhow!("Invalid {}: {error}", path.display()))?;
+    Ok(Some((raw, config)))
+}
+
+/// Waits for one of the host's macOS VM slots, builds the image if this host
+/// does not have it yet, then boots the build's VM.
+#[allow(clippy::too_many_arguments)]
+async fn start_build_vm(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    authority: &Arc<BuildAuthorityState>,
+    workspace: &Path,
+    shares: &[tart::HostShare],
+    flutter_version: &str,
+    needs_xcode: bool,
+) -> anyhow::Result<BuildVm> {
+    let tart_bin = tart::find_tart().with_context(|| {
+        format!(
+            "This pipeline runs in a VM (isolation: vm), but Tart is not installed on this runner; install Tart {} or newer",
+            tart::PINNED_TART_VERSION
+        )
+    })?;
+    let tart_version = {
+        let tart_bin = tart_bin.clone();
+        tokio::task::spawn_blocking(move || tart::tart_version(&tart_bin))
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    };
+    anyhow::ensure!(
+        tart::version_is_supported(&tart_version),
+        "Tart {} or newer is required for VM builds; this runner has '{}'",
+        tart::PINNED_TART_VERSION,
+        tart_version
+    );
+    // Virtualization.framework needs the runner account's GUI session, the
+    // same one iOS signing uses; a bare launchd daemon context cannot boot VMs.
+    require_gui_login_session("Running builds in a VM")?;
+    let image_config = read_vm_image_config(workspace)?;
+    let plan = tart::plan_image(
+        &tart::image_template(),
+        &tart::base_image(needs_xcode),
+        flutter_version,
+        !needs_xcode,
+        &job.project_id,
+        image_config
+            .as_ref()
+            .map(|(raw, config)| (raw.as_str(), config.clone())),
+    )?;
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!(
+            "Flutter {flutter_version} uses VM image {} (Tart {tart_version}){}",
+            plan.name,
+            if plan.config.is_some() {
+                format!(", customised by {}", oore_contract::VM_IMAGE_CONFIG_PATH)
+            } else {
+                String::new()
+            }
+        ),
+    )
+    .await;
+
+    let slot_dir = tart::slot_dir()?;
+    let mut waiting_logged = false;
+    let slot = loop {
+        if let Some(slot) = tart::try_acquire_slot(&slot_dir, tart::MAX_MACOS_VMS)? {
+            break slot;
+        }
+        if !waiting_logged {
+            waiting_logged = true;
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &format!(
+                    "Waiting for a macOS VM slot; this host runs at most {} at a time",
+                    tart::MAX_MACOS_VMS
+                ),
+            )
+            .await;
+        }
+        check_build_active(client, daemon_url, config, &job.build_id, authority).await?;
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    };
+
+    let name = tart::vm_name(&config.runner_id, &job.build_id);
+    if tart::is_registry_reference(&plan.name) {
+        pull_registry_image(
+            job, client, daemon_url, config, log_seq, authority, &tart_bin, &plan.name,
+        )
+        .await?;
+    } else {
+        // Before the image is checked, so pruning cannot delete it under us.
+        if let Err(error) = tart::record_image_use(&slot_dir, &plan.name, now_unix()).await {
+            eprintln!(
+                "Warning: could not record the use of VM image {}: {error:#}",
+                plan.name
+            );
+        }
+        ensure_vm_image(
+            job, client, daemon_url, config, log_seq, authority, &tart_bin, &slot_dir, &plan, &name,
+        )
+        .await?;
+    }
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!(
+            "Cloning {} into {name} (VM slot {})",
+            plan.name,
+            slot.index + 1
+        ),
+    )
+    .await;
+    // Dropping the start on cancel deletes the half-started VM.
+    let vm = tokio::select! {
+        vm = tart::TartVm::start(tart_bin, &plan.name, name, Some(workspace), shares) => vm?,
+        () = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
+            return Err(authority.terminated());
+        }
+    };
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!(
+            "VM {} is ready; the workspace was copied to {}",
+            vm.name(),
+            vm.guest_workspace()
+        ),
+    )
+    .await;
+    for line in vm.cache_notes() {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stdout",
+            line,
+        )
+        .await;
+    }
+    Ok(BuildVm { vm, _slot: slot })
+}
+
+/// Downloads a registry image into Tart's cache unless it is already there,
+/// streaming Tart's progress into the build log. Without this, the clone that
+/// follows would download tens of gigabytes with no output and no way to cancel.
+#[allow(clippy::too_many_arguments)]
+async fn pull_registry_image(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    authority: &Arc<BuildAuthorityState>,
+    tart_bin: &Path,
+    reference: &str,
+) -> anyhow::Result<()> {
+    if tart::registry_image_cached(tart_bin, reference).await? {
+        return Ok(());
+    }
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!("Downloading {reference}; Tart reports its progress below"),
+    )
+    .await;
+    let child = tart::spawn_pull(tart_bin, reference)?;
+    let status = run_and_stream(
+        child,
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
+    )
+    .await;
+    match status {
+        None => Err(authority.terminated()),
+        Some(status) if !status.success() => {
+            anyhow::bail!("Downloading {reference} failed with {status}; see the log above")
+        }
+        Some(_) => Ok(()),
+    }
+}
+
+/// Builds `plan.name` from its base image unless this host already has it.
+/// Runs inside the build's own VM slot.
+#[allow(clippy::too_many_arguments)]
+async fn ensure_vm_image(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    authority: &Arc<BuildAuthorityState>,
+    tart_bin: &Path,
+    lock_dir: &Path,
+    plan: &tart::ImagePlan,
+    vm_name: &str,
+) -> anyhow::Result<()> {
+    let mut waiting_logged = false;
+    let _image_lock = loop {
+        if tart::local_image_exists(tart_bin, &plan.name).await? {
+            return Ok(());
+        }
+        if let Some(lock) = tart::try_lock_image(lock_dir, &plan.name)? {
+            break lock;
+        }
+        if !waiting_logged {
+            waiting_logged = true;
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &format!(
+                    "Another build is creating VM image {}; waiting for it",
+                    plan.name
+                ),
+            )
+            .await;
+        }
+        check_build_active(client, daemon_url, config, &job.build_id, authority).await?;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    };
+    // The build holding the lock before us may have just finished it.
+    if tart::local_image_exists(tart_bin, &plan.name).await? {
+        return Ok(());
+    }
+
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!(
+            "This runner has no VM image {}; building it from {}. The first build of a new image downloads the base and Flutter and can take an hour or more",
+            plan.name, plan.base
+        ),
+    )
+    .await;
+    if tart::is_registry_reference(&plan.base) {
+        pull_registry_image(
+            job, client, daemon_url, config, log_seq, authority, tart_bin, &plan.base,
+        )
+        .await?;
+    }
+    let builder = tokio::select! {
+        builder = tart::TartVm::start(
+            tart_bin.to_path_buf(),
+            &plan.base,
+            format!("{vm_name}-image"),
+            None,
+            &[],
+        ) => builder.with_context(|| format!("failed to start base image {}", plan.base))?,
+        () = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
+            return Err(authority.terminated());
+        }
+    };
+    let provisioned = async {
+        let child = builder.spawn_script(&tart::provision_script(plan)).await?;
+        let status = run_and_stream(
+            child,
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
+        )
+        .await;
+        match status {
+            None => {
+                return Err(authority.terminated());
+            }
+            Some(status) if !status.success() => {
+                anyhow::bail!(
+                    "Building VM image {} failed with {status}; see the log above",
+                    plan.name
+                );
+            }
+            Some(_) => {}
+        }
+        // Check Flutter the way build steps find it, so an image that cannot
+        // run Flutter is never cached.
+        let check = builder
+            .run_script("exec /bin/sh -c 'flutter --version'")
+            .await?;
+        anyhow::ensure!(
+            check.status.success(),
+            "Building VM image {} finished, but build steps cannot run flutter in it ({}): {}",
+            plan.name,
+            check.status,
+            String::from_utf8_lossy(&check.stderr).trim()
+        );
+        Ok(())
+    }
+    .await;
+    if let Err(error) = provisioned {
+        if let Err(delete_error) = builder.delete().await {
+            eprintln!("Warning: {delete_error:#}");
+        }
+        return Err(error);
+    }
+    builder
+        .keep_as(&plan.name)
+        .await
+        .context("saving the VM image failed")?;
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &format!("VM image {} is ready and cached on this runner", plan.name),
+    )
+    .await;
+    Ok(())
+}
+
+async fn fetch_job_publish_plan(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    signing_token: &str,
+) -> anyhow::Result<RunnerPublishPlan> {
+    let resp = client
+        .get(format!(
+            "{}/v1/runners/{}/jobs/{}/publish",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .header("x-oore-signing-token", signing_token)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("publish settings lookup failed: {}", resp.status());
+    }
+    Ok(resp.json().await?)
+}
+
+/// Waits between attempts to record a store upload: about two minutes in all,
+/// enough to ride out a daemon restart.
+const PUBLISH_REPORT_DELAYS: [Duration; 5] = [
+    Duration::ZERO,
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(20),
+    Duration::from_secs(40),
+];
+const PUBLISH_REPORT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Tell the daemon about a finished store upload so it records the release.
+/// The daemon ignores repeats, so this retries until the daemon answers or
+/// rejects the report.
+async fn report_publish_result(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    signing_token: &str,
+    result: &RunnerPublishResult,
+    delays: &[Duration],
+) -> anyhow::Result<()> {
+    let mut last_error = None;
+    for delay in delays {
+        if !delay.is_zero() {
+            tokio::time::sleep(*delay).await;
+        }
+        let sent = client
+            .post(format!(
+                "{}/v1/runners/{}/jobs/{}/publish-results",
+                daemon_url, config.runner_id, build_id
+            ))
+            .bearer_auth(&config.runner_token)
+            .header("x-oore-signing-token", signing_token)
+            .timeout(PUBLISH_REPORT_TIMEOUT)
+            .json(result)
+            .send()
+            .await;
+        let resp = match sent {
+            Ok(resp) => resp,
+            Err(error) => {
+                last_error = Some(anyhow::Error::new(error));
+                continue;
+            }
+        };
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body = resp.text().await.unwrap_or_default();
+        let error = anyhow::anyhow!("the daemon answered {status}: {body}");
+        if runner_response_is_terminal(status) {
+            return Err(error);
+        }
+        last_error = Some(error);
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("the publish result was not sent")))
+}
+
+/// Test report file name for a step. Step names can hold spaces and
+/// punctuation; v1 names (`pre_build-1`) pass through unchanged.
+fn report_file_stem(step_name: &str) -> String {
+    step_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// Copy the report a v2 step declares in `reports.tests` into the reports
+/// directory the runner reads after every step.
+fn copy_declared_test_report(
+    workspace: &Path,
+    report: &str,
+    reports_dir: &Path,
+    step_name: &str,
+) -> Result<(), String> {
+    let source = workspace.join(report);
+    if !source.is_file() {
+        return Err(format!(
+            "step '{step_name}' declares reports.tests {report}, but the file was not written"
+        ));
+    }
+    let inside_workspace = match (source.canonicalize(), workspace.canonicalize()) {
+        (Ok(source), Ok(workspace)) => source.starts_with(workspace),
+        _ => false,
+    };
+    if !inside_workspace {
+        return Err(format!(
+            "step '{step_name}' declares reports.tests {report}, which resolves outside the workspace"
+        ));
+    }
+    // The collector skips larger reports anyway; do not copy them first.
+    let size = fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
+    if size > test_reports::MAX_REPORT_FILE_BYTES {
+        return Err(format!(
+            "step '{step_name}' declares reports.tests {report}, which is larger than {} MiB and is skipped",
+            test_reports::MAX_REPORT_FILE_BYTES / (1024 * 1024)
+        ));
+    }
+    let extension = source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("json");
+    fs::create_dir_all(reports_dir)
+        .and_then(|_| {
+            fs::copy(
+                &source,
+                reports_dir.join(format!(
+                    "{}-declared.{extension}",
+                    report_file_stem(step_name)
+                )),
+            )
+        })
+        .map(|_| ())
+        .map_err(|error| format!("could not read reports.tests {report}: {error}"))
+}
+
+/// Parse the reports a step wrote and send them to the daemon. Test reporting
+/// never fails the build; problems are logged instead.
+#[allow(clippy::too_many_arguments)]
+async fn report_step_tests(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    log_seq: &mut BuildLogCursor,
+    reports_dir: &Path,
+    workspaces: &[PathBuf],
+    step_name: &str,
+) {
+    let masker = &log_seq.masker;
+    let Some(report) =
+        test_reports::collect_test_reports(reports_dir, workspaces, step_name, |text| {
+            masker.mask(text)
+        })
+    else {
+        return;
+    };
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        build_id,
+        log_seq,
+        "stdout",
+        &test_reports::summary_line(&report),
+    )
+    .await;
+    let result = client
+        .post(format!(
+            "{}/v1/runners/{}/jobs/{}/test-results",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .json(&report)
+        .send()
+        .await
+        .map_err(anyhow::Error::from)
+        .and_then(|resp| {
+            if resp.status().is_success() {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("{}", resp.status()))
+            }
+        });
+    if let Err(error) = result {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            build_id,
+            log_seq,
+            "stderr",
+            &format!("[oore-tests] Could not upload test results: {error}"),
+        )
+        .await;
+    }
+}
+
+/// Longest the analyzer may run. It is a report, so it never holds the build
+/// up for long.
+const ANALYZE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// Analyzer stderr kept for the log.
+const ANALYZE_STDERR_BYTES: usize = 16 * 1024;
+/// Diagnostics also printed to the build log.
+const ANALYZE_LOGGED_DIAGNOSTICS: usize = 10;
+
+/// Where the analyzer runs: the build's VM, or the host workspace.
+struct AnalyzeInputs<'a> {
+    workspace: &'a Path,
+    vm: Option<&'a BuildVm>,
+    env: &'a [(String, String)],
+    /// Workspace paths stripped from diagnostic file names.
+    path_prefixes: &'a [PathBuf],
+    /// Watched while the analyzer runs, so canceling the build stops it.
+    authority: Arc<BuildAuthorityState>,
+}
+
+/// Why `collect_analysis` has no report.
+enum AnalysisSkip {
+    /// The step is skipped for this reason; the build carries on.
+    Reason(String),
+    /// The build was canceled or lost while the analyzer ran.
+    Terminated,
+}
+
+impl From<String> for AnalysisSkip {
+    fn from(reason: String) -> Self {
+        AnalysisSkip::Reason(reason)
+    }
+}
+
+/// Reads all of `reader`, keeping the first `cap` bytes. Reading past the cap
+/// keeps the process from blocking on a full pipe.
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
+    reader: Option<R>,
+    cap: usize,
+) -> (Vec<u8>, bool) {
+    let mut kept = Vec::new();
+    let mut over = false;
+    let Some(mut reader) = reader else {
+        return (kept, over);
+    };
+    let mut chunk = [0u8; 8192];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(read) if kept.len() + read <= cap => kept.extend_from_slice(&chunk[..read]),
+            Ok(_) => over = true,
+        }
+    }
+    (kept, over)
+}
+
+/// Runs the analyzer script. `Err` is why there is no analysis.
+async fn collect_analysis(
+    inputs: &AnalyzeInputs<'_>,
+    cancel_fut: impl std::future::Future<Output = ()>,
+    stderr_lines: &mut Vec<String>,
+    mask: impl Fn(&str) -> String,
+) -> Result<(i32, oore_contract::RunnerAnalyzerReport), AnalysisSkip> {
+    let script = analyzer::analyze_script();
+    let spawned = match inputs.vm {
+        Some(vm) => vm.vm.spawn_step(&script, inputs.env).await,
+        None => {
+            let mut command = repository_shell_command(&script, inputs.workspace);
+            command
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true);
+            for (key, value) in inputs.env {
+                command.env(key, value);
+            }
+            scrub_managed_runner_env(&mut command);
+            command.spawn().map_err(anyhow::Error::from)
+        }
+    };
+    let mut child = spawned.map_err(|error| format!("could not start the analyzer: {error:#}"))?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let finished = tokio::select! {
+        finished = tokio::time::timeout(ANALYZE_TIMEOUT, async {
+            let (stdout, stderr) = tokio::join!(
+                read_capped(stdout, analyzer::MAX_OUTPUT_BYTES),
+                read_capped(stderr, ANALYZE_STDERR_BYTES)
+            );
+            (stdout, stderr, child.wait().await)
+        }) => finished.ok(),
+        () = cancel_fut => {
+            stop_process_group(&mut child).await;
+            return Err(AnalysisSkip::Terminated);
+        }
+    };
+    let Some(((stdout, stdout_over), (stderr, _), status)) = finished else {
+        // In a VM the child is the host's `tart exec`, which leads no process
+        // group, so this kills only that client. The analyzer may keep
+        // running in the guest until the VM stops, which follows right after
+        // this step (or the failed step that ran it).
+        stop_process_group(&mut child).await;
+        return Err(format!(
+            "the analyzer ran longer than {} minutes",
+            ANALYZE_TIMEOUT.as_secs() / 60
+        )
+        .into());
+    };
+    stderr_lines.extend(
+        String::from_utf8_lossy(&stderr)
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(&mask),
+    );
+    let exit_code = status
+        .map_err(|error| format!("could not wait for the analyzer: {error}"))?
+        .code();
+    if let Some(reason) = analyzer::skip_reason(exit_code) {
+        return Err(reason.to_string().into());
+    }
+    let exit_code = exit_code.unwrap_or(-1);
+    if stdout_over {
+        return Err(format!(
+            "the analyzer printed more than {} MiB",
+            analyzer::MAX_OUTPUT_BYTES / (1024 * 1024)
+        )
+        .into());
+    }
+    analyzer::parse_analyzer_output(
+        &String::from_utf8_lossy(&stdout),
+        inputs.path_prefixes,
+        mask,
+    )
+    .map(|report| (exit_code, report))
+    .map_err(|error| format!("{error} (exit code {exit_code})").into())
+}
+
+/// The `analyze` step: runs `dart analyze --format=json` in the app
+/// directory and reports its summary. It never fails the build; when there is
+/// nothing to analyze, or the analyzer cannot run, the step is skipped.
+/// `Err` means the build was canceled or lost while it ran.
+async fn run_analyzer_step(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    log_seq: &mut BuildLogCursor,
+    inputs: AnalyzeInputs<'_>,
+    steps: &mut Vec<StepResult>,
+) -> anyhow::Result<()> {
+    if !analyzer::analysis_enabled(inputs.env) {
+        return Ok(());
+    }
+    let started = now_unix();
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        build_id,
+        log_seq,
+        "stdout",
+        &step_start_marker(analyzer::ANALYZE_STEP, analyzer::ANALYZE_COMMAND),
+    )
+    .await;
+    let mut stderr_lines = Vec::new();
+    let outcome = {
+        let masker = &log_seq.masker;
+        let cancel = poll_cancellation(
+            client,
+            daemon_url,
+            config,
+            build_id,
+            inputs.authority.clone(),
+        );
+        collect_analysis(&inputs, cancel, &mut stderr_lines, |text| masker.mask(text)).await
+    };
+    let terminated = matches!(outcome, Err(AnalysisSkip::Terminated));
+    for line in stderr_lines.iter().take(20) {
+        let _ = append_runner_log_line(
+            client, daemon_url, config, build_id, log_seq, "stderr", line,
+        )
+        .await;
+    }
+    let mut lines = Vec::new();
+    let (status, exit_code) = match &outcome {
+        Ok((exit_code, report)) => {
+            lines.push(analyzer::summary_line(report));
+            lines.extend(analyzer::diagnostic_lines(
+                report,
+                ANALYZE_LOGGED_DIAGNOSTICS,
+            ));
+            let uploaded = client
+                .post(format!(
+                    "{}/v1/runners/{}/jobs/{}/analysis",
+                    daemon_url, config.runner_id, build_id
+                ))
+                .bearer_auth(&config.runner_token)
+                .json(report)
+                .timeout(CONTROL_REQUEST_TIMEOUT)
+                .send()
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|resp| {
+                    if resp.status().is_success() {
+                        Ok(())
+                    } else {
+                        Err(anyhow::anyhow!("{}", resp.status()))
+                    }
+                });
+            if let Err(error) = uploaded {
+                lines.push(format!(
+                    "[oore-analyze] Could not upload the analysis: {error}"
+                ));
+            }
+            ("succeeded", Some(*exit_code))
+        }
+        Err(AnalysisSkip::Reason(reason)) => {
+            lines.push(format!("[oore-analyze] Skipped: {reason}"));
+            ("skipped", None)
+        }
+        Err(AnalysisSkip::Terminated) => {
+            lines.push("[oore-analyze] Stopped: the build is no longer active".to_string());
+            ("skipped", None)
+        }
+    };
+    for line in &lines {
+        let _ = append_runner_log_line(
+            client, daemon_url, config, build_id, log_seq, "stdout", line,
+        )
+        .await;
+    }
+    let finished = now_unix();
+    steps.push(StepResult {
+        name: analyzer::ANALYZE_STEP.to_string(),
+        status: status.to_string(),
+        exit_code,
+        started_at: started,
+        finished_at: finished,
+        duration_ms: (finished - started) * 1000,
+        publish_from_file: false,
+    });
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        build_id,
+        log_seq,
+        "stdout",
+        &step_end_marker(analyzer::ANALYZE_STEP, status, exit_code),
+    )
+    .await;
+    if terminated {
+        return Err(inputs.authority.terminated());
+    }
+    Ok(())
 }
 
 fn step_start_marker(name: &str, command: &str) -> String {
@@ -5044,9 +7624,6 @@ fn render_command_preview(command: &str, env: &[(String, String)]) -> String {
 fn is_flutter_build_command(command: &str) -> bool {
     let args: Vec<&str> = command.split_whitespace().collect();
     args.windows(2).any(|window| window == ["flutter", "build"])
-        || args
-            .windows(3)
-            .any(|window| window == ["fvm", "flutter", "build"])
 }
 
 fn with_dart_define_file(command: &str, define_file: &str) -> String {
@@ -5073,14 +7650,14 @@ async fn append_runner_log_line(
     daemon_url: &str,
     config: &RunnerConfig,
     build_id: &str,
-    seq: &mut i64,
+    cursor: &mut BuildLogCursor,
     stream: &str,
     content: &str,
 ) -> anyhow::Result<()> {
     let body = serde_json::json!({
         "chunks": [{
-            "sequence": *seq,
-            "content": content,
+            "sequence": cursor.seq,
+            "content": cursor.masker.mask(content),
             "stream": stream,
         }],
     });
@@ -5092,6 +7669,7 @@ async fn append_runner_log_line(
         ))
         .bearer_auth(&config.runner_token)
         .json(&body)
+        .timeout(CONTROL_REQUEST_TIMEOUT)
         .send()
         .await?;
 
@@ -5099,7 +7677,7 @@ async fn append_runner_log_line(
         anyhow::bail!("log append failed: {}", resp.status());
     }
 
-    *seq += 1;
+    cursor.seq += 1;
     Ok(())
 }
 
@@ -5107,6 +7685,7 @@ fn artifact_type_for_extension(ext: &str) -> Option<&'static str> {
     match ext.to_lowercase().as_str() {
         "apk" => Some("apk"),
         "ipa" => Some("ipa"),
+        "aab" => Some("aab"),
         _ => None,
     }
 }
@@ -5290,23 +7869,7 @@ async fn scan_and_upload_artifacts(
             "metadata": metadata,
         });
 
-        let resp = client
-            .post(format!(
-                "{}/v1/runners/{}/jobs/{}/artifacts",
-                daemon_url, config.runner_id, build_id
-            ))
-            .bearer_auth(&config.runner_token)
-            .json(&body)
-            .send()
-            .await
-            .with_context(|| format!("failed to reserve artifact {name}"))?;
-
-        if !resp.status().is_success() {
-            anyhow::bail!(
-                "artifact reservation failed for {name} (HTTP {})",
-                resp.status()
-            );
-        }
+        let resp = reserve_artifact(client, daemon_url, config, build_id, name, body).await?;
 
         let create_resp: oore_contract::CreateArtifactResponse = resp.json().await?;
         let artifact_id = create_resp.artifact.id;
@@ -5373,6 +7936,56 @@ async fn scan_and_upload_artifacts(
     Ok(())
 }
 
+/// Reserves an artifact upload. A daemon older than the `aab` artifact type
+/// rejects it with `invalid_artifact_type`; the bundle is then reserved once
+/// more as `generic`, which is how those daemons stored App Bundles.
+async fn reserve_artifact(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    name: &str,
+    mut body: serde_json::Value,
+) -> anyhow::Result<reqwest::Response> {
+    let url = format!(
+        "{}/v1/runners/{}/jobs/{}/artifacts",
+        daemon_url, config.runner_id, build_id
+    );
+    let mut fell_back = false;
+    loop {
+        let resp = client
+            .post(&url)
+            .bearer_auth(&config.runner_token)
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("failed to reserve artifact {name}"))?;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(resp);
+        }
+        if !fell_back
+            && status == reqwest::StatusCode::BAD_REQUEST
+            && body["artifact_type"] == "aab"
+        {
+            let code = resp
+                .json::<oore_contract::ApiError>()
+                .await
+                .map(|error| error.code)
+                .unwrap_or_default();
+            if code == "invalid_artifact_type" {
+                println!(
+                    "  Daemon does not accept the aab artifact type yet; uploading {name} as generic"
+                );
+                body["artifact_type"] = serde_json::Value::from("generic");
+                fell_back = true;
+                continue;
+            }
+        }
+        anyhow::bail!("artifact reservation failed for {name} (HTTP {status})");
+    }
+}
+
 async fn abort_artifact(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -5400,44 +8013,112 @@ struct StatusReport<'a> {
     exit_code: Option<i32>,
     error_message: Option<String>,
     steps: &'a [StepResult],
+    /// The file's size budgets, once the build was planned.
+    size_budgets: Option<&'a [TargetSizeBudget]>,
 }
 
 async fn report_status(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
-    report: StatusReport<'_>,
+    report: &StatusReport<'_>,
 ) -> anyhow::Result<()> {
-    let StatusReport {
-        build_id,
-        status,
-        exit_code,
-        error_message,
-        steps,
-    } = report;
-
-    let body = serde_json::json!({
-        "status": status,
-        "exit_code": exit_code,
-        "error_message": error_message,
-        "steps": steps,
+    let mut body = serde_json::json!({
+        "status": report.status,
+        "exit_code": report.exit_code,
+        "error_message": report.error_message,
+        "steps": report.steps,
     });
+    if let Some(size_budgets) = report.size_budgets {
+        body["size_budgets"] = serde_json::json!(size_budgets);
+    }
 
     let resp = client
         .post(format!(
             "{}/v1/runners/{}/jobs/{}/status",
-            daemon_url, config.runner_id, build_id
+            daemon_url, config.runner_id, report.build_id
         ))
         .bearer_auth(&config.runner_token)
         .json(&body)
+        .timeout(CONTROL_REQUEST_TIMEOUT)
         .send()
         .await?;
 
-    if !resp.status().is_success() {
-        anyhow::bail!("Status update failed: {}", resp.status());
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(());
     }
+    if is_transient_authority_status(status) {
+        anyhow::bail!("Status update failed: {status}");
+    }
+    Err(StatusReportRejected(status).into())
+}
 
-    Ok(())
+/// The backend refused a status report, for example because the build
+/// already ended or moved to another runner. Retrying cannot help.
+#[derive(Debug)]
+struct StatusReportRejected(reqwest::StatusCode);
+
+impl std::fmt::Display for StatusReportRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Status update was rejected: {}", self.0)
+    }
+}
+
+impl std::error::Error for StatusReportRejected {}
+
+#[derive(Debug, Clone, Copy)]
+struct RetryPolicy {
+    first_delay: Duration,
+    max_delay: Duration,
+    window: Duration,
+}
+
+impl RetryPolicy {
+    fn within(window: Duration) -> Self {
+        Self {
+            first_delay: Duration::from_secs(1),
+            max_delay: Duration::from_secs(30),
+            window,
+        }
+    }
+}
+
+/// Sends a status report until the backend takes it, the backend refuses
+/// it, or `policy.window` runs out. A lost final report would leave the build
+/// running until it timed out.
+async fn report_status_with_retry(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    report: &StatusReport<'_>,
+    policy: RetryPolicy,
+) -> anyhow::Result<()> {
+    let started = Instant::now();
+    let mut delay = policy.first_delay;
+    loop {
+        let error = match report_status(client, daemon_url, config, report).await {
+            Ok(()) => return Ok(()),
+            Err(error) if error.downcast_ref::<StatusReportRejected>().is_some() => {
+                return Err(error);
+            }
+            Err(error) => error,
+        };
+        if started.elapsed() + delay > policy.window {
+            return Err(error.context(format!(
+                "gave up reporting build {} as {}",
+                report.build_id, report.status
+            )));
+        }
+        eprintln!(
+            "Could not report build {} as {} ({error:#}); retrying in {}s",
+            report.build_id,
+            report.status,
+            delay.as_secs_f32()
+        );
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(policy.max_delay);
+    }
 }
 
 async fn run_and_stream(
@@ -5446,7 +8127,7 @@ async fn run_and_stream(
     daemon_url: &str,
     config: &RunnerConfig,
     build_id: &str,
-    seq: &mut i64,
+    cursor: &mut BuildLogCursor,
     cancel_fut: impl std::future::Future<Output = ()>,
 ) -> Option<std::process::ExitStatus> {
     let stdout = child.stdout.take();
@@ -5460,30 +8141,38 @@ async fn run_and_stream(
 
     let (line_tx, mut line_rx) = tokio::sync::mpsc::channel::<(String, String)>(256);
 
+    let mut readers = Vec::new();
+    // When each reader last saw a line, in milliseconds since `opened`.
+    let opened = Instant::now();
+    let last_line_ms = Arc::new(AtomicU64::new(0));
     if let Some(stdout) = stdout {
         let tx = line_tx.clone();
-        tokio::spawn(async move {
+        let last_line_ms = last_line_ms.clone();
+        readers.push(tokio::spawn(async move {
             let reader = tokio::io::BufReader::new(stdout);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
+                last_line_ms.fetch_max(opened.elapsed().as_millis() as u64, Ordering::Relaxed);
                 if tx.send((line, "stdout".to_string())).await.is_err() {
                     break;
                 }
             }
-        });
+        }));
     }
 
     if let Some(stderr) = stderr {
         let tx = line_tx.clone();
-        tokio::spawn(async move {
+        let last_line_ms = last_line_ms.clone();
+        readers.push(tokio::spawn(async move {
             let reader = tokio::io::BufReader::new(stderr);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
+                last_line_ms.fetch_max(opened.elapsed().as_millis() as u64, Ordering::Relaxed);
                 if tx.send((line, "stderr".to_string())).await.is_err() {
                     break;
                 }
             }
-        });
+        }));
     }
 
     drop(line_tx);
@@ -5493,7 +8182,8 @@ async fn run_and_stream(
     let upload_config_id = config_out_id;
     let upload_config_token = config_out_token;
     let upload_build = build_out;
-    let seq_start = *seq;
+    let seq_start = cursor.seq;
+    let masker = cursor.masker.clone();
     let upload_handle = tokio::spawn(async move {
         let mut local_seq = seq_start;
         let mut batch = Vec::new();
@@ -5506,7 +8196,7 @@ async fn run_and_stream(
                         Some((content, stream)) => {
                             batch.push(serde_json::json!({
                                 "sequence": local_seq,
-                                "content": content,
+                                "content": masker.mask(&content),
                                 "stream": stream,
                             }));
                             local_seq += 1;
@@ -5520,6 +8210,7 @@ async fn run_and_stream(
                                     ))
                                     .bearer_auth(&upload_config_token)
                                     .json(&body)
+                                    .timeout(CONTROL_REQUEST_TIMEOUT)
                                     .send()
                                     .await;
                                 batch = Vec::new();
@@ -5535,6 +8226,7 @@ async fn run_and_stream(
                                     ))
                                     .bearer_auth(&upload_config_token)
                                     .json(&body)
+                                    .timeout(CONTROL_REQUEST_TIMEOUT)
                                     .send()
                                     .await;
                             }
@@ -5552,6 +8244,7 @@ async fn run_and_stream(
                             ))
                             .bearer_auth(&upload_config_token)
                             .json(&body)
+                            .timeout(CONTROL_REQUEST_TIMEOUT)
                             .send()
                             .await;
                         batch = Vec::new();
@@ -5566,14 +8259,1553 @@ async fn run_and_stream(
             result.ok()
         },
         _ = cancel_fut => {
-            child.kill().await.ok();
+            stop_process_group(&mut child).await;
             None
         }
     };
 
+    // A background process the step started can keep the pipes open after
+    // the step exits. Keep reading while output still arrives, then stop.
+    let exited = Instant::now();
+    let abort_readers: Vec<_> = readers.iter().map(|reader| reader.abort_handle()).collect();
+    let readers_done = join_all(readers);
+    tokio::pin!(readers_done);
+    loop {
+        if tokio::time::timeout(Duration::from_millis(250), &mut readers_done)
+            .await
+            .is_ok()
+        {
+            break;
+        }
+        let last_line = opened + Duration::from_millis(last_line_ms.load(Ordering::Relaxed));
+        if last_line.max(exited).elapsed() >= STEP_OUTPUT_GRACE
+            || exited.elapsed() >= STEP_OUTPUT_LIMIT
+        {
+            for reader in &abort_readers {
+                reader.abort();
+            }
+            break;
+        }
+    }
+
     if let Ok(final_seq) = upload_handle.await {
-        *seq = final_seq;
+        cursor.seq = final_seq;
     }
 
     status
+}
+
+#[cfg(test)]
+mod step_retry_tests {
+    use super::{artifact_type_for_extension, retry_artifact_path};
+
+    #[test]
+    fn artifact_types_follow_the_file_extension() {
+        assert_eq!(artifact_type_for_extension("apk"), Some("apk"));
+        assert_eq!(artifact_type_for_extension("ipa"), Some("ipa"));
+        assert_eq!(artifact_type_for_extension("aab"), Some("aab"));
+        assert_eq!(artifact_type_for_extension("AAB"), Some("aab"));
+        assert_eq!(artifact_type_for_extension("txt"), None);
+    }
+
+    #[test]
+    fn reused_artifacts_go_where_a_build_leaves_them() {
+        assert_eq!(
+            retry_artifact_path("app-release.aab", "generic").as_deref(),
+            Some("build/app/outputs/bundle/release/app-release.aab")
+        );
+        assert_eq!(
+            retry_artifact_path("app-release.aab", "aab").as_deref(),
+            Some("build/app/outputs/bundle/release/app-release.aab")
+        );
+        assert_eq!(
+            retry_artifact_path("mapping.txt", "generic").as_deref(),
+            Some("build/app/outputs/mapping/release/mapping.txt")
+        );
+        assert_eq!(
+            retry_artifact_path("Runner.ipa", "ipa").as_deref(),
+            Some("build/ios/ipa/Runner.ipa")
+        );
+        assert_eq!(retry_artifact_path("app-release.apk", "apk"), None);
+        for unsafe_name in ["../app.aab", "a/b.aab", ".hidden.aab", ""] {
+            assert_eq!(retry_artifact_path(unsafe_name, "generic"), None);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        choose_ios_export_method, load_ui_execution_config, pubspec_version_name,
+        require_runner_labels, resolve_execution_plan,
+    };
+    use oore_contract::{BuildIsolation, IosExportMethod, StepPhase};
+    use serde_json::json;
+
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("{prefix}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn canceling_the_build_stops_the_analyzer() {
+        use std::os::unix::fs::PermissionsExt;
+        let workspace = TempDir::new("oore-analyze-cancel");
+        let root = workspace.path();
+        std::fs::write(root.join("pubspec.yaml"), "name: app\n").unwrap();
+        std::fs::create_dir_all(root.join(".dart_tool")).unwrap();
+        std::fs::write(root.join(".dart_tool/package_config.json"), "{}").unwrap();
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let dart = bin.join("dart");
+        std::fs::write(&dart, "#!/bin/sh\nsleep 60\n").unwrap();
+        std::fs::set_permissions(&dart, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let env = vec![(
+            "PATH".to_string(),
+            format!("{}:/usr/bin:/bin", bin.display()),
+        )];
+        let inputs = super::AnalyzeInputs {
+            workspace: root,
+            vm: None,
+            env: &env,
+            path_prefixes: &[],
+            authority: std::sync::Arc::new(super::BuildAuthorityState::default()),
+        };
+        let started = std::time::Instant::now();
+        let outcome = super::collect_analysis(
+            &inputs,
+            tokio::time::sleep(std::time::Duration::from_millis(300)),
+            &mut Vec::new(),
+            str::to_string,
+        )
+        .await;
+        assert!(matches!(outcome, Err(super::AnalysisSkip::Terminated)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+    }
+
+    fn plan_commands(plan: &super::ResolvedExecutionPlan, phase: StepPhase) -> Vec<String> {
+        plan.steps
+            .iter()
+            .filter(|step| step.phase == phase)
+            .map(|step| step.run.clone())
+            .collect()
+    }
+
+    #[test]
+    fn v2_files_run_named_steps_through_the_same_plan() {
+        let workspace = TempDir::new("oore-v2-plan-test");
+        std::fs::write(
+            workspace.path().join(".oore.yaml"),
+            "version: 2\napp:\n  flutter: 3.47.7\ntargets:\n  android:\n    build: flutter build appbundle --release\n  ios:\n    build: flutter build ipa --release\nsteps:\n  - name: Get packages\n    run: flutter pub get\n  - build\n  - name: Notify\n    run: echo ${{ secrets.HOOK }}\nenv:\n  CHANNEL: beta\n",
+        )
+        .unwrap();
+
+        let plan = resolve_execution_plan(workspace.path(), &json!({}), true).unwrap();
+        let names: Vec<(&str, StepPhase)> = plan
+            .steps
+            .iter()
+            .map(|step| (step.name.as_str(), step.phase))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("Get packages", StepPhase::PreBuild),
+                ("Build Android", StepPhase::Build),
+                ("Build iOS", StepPhase::Build),
+                ("Notify", StepPhase::PostBuild),
+            ]
+        );
+        // v2 build commands are complete; a Play upload adds no hidden bundle step.
+        assert_eq!(
+            plan_commands(&plan, StepPhase::Build),
+            [
+                "flutter build appbundle --release",
+                "flutter build ipa --release"
+            ]
+        );
+        assert_eq!(plan.flutter_version, "3.47.7");
+        assert!(plan.needs_xcode);
+        assert_eq!(plan.env[0].key, "CHANNEL");
+
+        let secrets = std::collections::BTreeMap::from([("HOOK".to_string(), "x".to_string())]);
+        let resolved = super::apply_secret_references(plan, &secrets).unwrap();
+        assert_eq!(resolved.steps[3].run, "echo ${OORE_SECRET_HOOK}");
+
+        let android_only = resolve_execution_plan(
+            workspace.path(),
+            &json!({ "selected_platforms": ["android"] }),
+            false,
+        )
+        .unwrap();
+        assert_eq!(android_only.steps.len(), 3);
+        assert!(!android_only.needs_xcode);
+
+        std::fs::write(
+            workspace.path().join(".oore.yaml"),
+            "version: 2\ntargets:\n  android:\n    build: a\nworkflows:\n  adhoc: {}\n  release: {}\n",
+        )
+        .unwrap();
+        let error = resolve_execution_plan(workspace.path(), &json!({}), false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("choose one for the pipeline"), "{error}");
+        let release =
+            resolve_execution_plan(workspace.path(), &json!({ "workflow": "release" }), false)
+                .unwrap();
+        assert_eq!(release.steps[0].name, "Build Android");
+    }
+
+    #[test]
+    fn declared_test_reports_are_copied_for_collection() {
+        let workspace = TempDir::new("oore-declared-report-ws");
+        let reports = TempDir::new("oore-declared-report-out");
+        std::fs::create_dir_all(workspace.path().join("build")).unwrap();
+        std::fs::write(workspace.path().join("build/tests.json"), "{}").unwrap();
+
+        super::copy_declared_test_report(
+            workspace.path(),
+            "build/tests.json",
+            reports.path(),
+            "Unit tests",
+        )
+        .unwrap();
+        assert!(reports.path().join("Unit-tests-declared.json").is_file());
+
+        let error = super::copy_declared_test_report(
+            workspace.path(),
+            "build/missing.xml",
+            reports.path(),
+            "Unit tests",
+        )
+        .unwrap_err();
+        assert!(error.contains("was not written"), "{error}");
+
+        // Oversized reports are skipped, not copied. A sparse file keeps the
+        // test cheap.
+        std::fs::File::create(workspace.path().join("build/huge.json"))
+            .unwrap()
+            .set_len(super::test_reports::MAX_REPORT_FILE_BYTES + 1)
+            .unwrap();
+        let error = super::copy_declared_test_report(
+            workspace.path(),
+            "build/huge.json",
+            reports.path(),
+            "Huge",
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("larger than 64 MiB and is skipped"),
+            "{error}"
+        );
+        assert!(!reports.path().join("Huge-declared.json").exists());
+        assert_eq!(super::report_file_stem("pre_build-1"), "pre_build-1");
+        assert_eq!(
+            super::report_file_stem("Build iOS (pro)"),
+            "Build-iOS--pro-"
+        );
+    }
+
+    #[test]
+    fn host_flutter_must_match_a_pinned_version() {
+        use super::{check_host_flutter, parse_flutter_machine_version};
+        let machine = "Welcome to Flutter!\n{\n  \"frameworkVersion\": \"3.47.7\",\n  \"channel\": \"stable\"\n}\n";
+        assert_eq!(
+            parse_flutter_machine_version(machine).as_deref(),
+            Some("3.47.7")
+        );
+        assert_eq!(parse_flutter_machine_version("no json"), None);
+
+        assert!(check_host_flutter("3.47.7", Ok("3.47.7".into())).is_ok());
+        assert!(check_host_flutter("v3.47.7", Ok("3.47.7".into())).is_ok());
+        assert!(check_host_flutter("3.47.7@stable", Ok("3.47.7".into())).is_ok());
+        let wrong = check_host_flutter("3.47.7", Ok("3.44.0".into())).unwrap_err();
+        assert!(wrong.contains("needs Flutter 3.47.7") && wrong.contains("3.44.0"));
+        let missing = check_host_flutter("3.47.7", Err("no flutter on the runner's PATH".into()))
+            .unwrap_err();
+        assert!(missing.contains("no flutter on the runner's PATH"));
+
+        assert!(check_host_flutter("stable", Ok("3.44.0".into())).is_ok());
+        assert!(
+            check_host_flutter("stable", Err("no flutter on the runner's PATH".into())).is_ok()
+        );
+    }
+
+    #[test]
+    fn vm_android_signing_keeps_secrets_quoted_and_off_the_workspace() {
+        let inputs = super::AndroidSigningInputs {
+            keystore_bytes: b"keystore".to_vec(),
+            keystore_password: "p'ss".to_string(),
+            key_alias: "upload".to_string(),
+            key_password: "k$y".to_string(),
+        };
+        let script = super::android_vm_signing_script(
+            &[
+                "/Users/admin/oore-workspace/build/app/outputs/flutter-apk/app-release.apk"
+                    .to_string(),
+            ],
+            "apk",
+            &inputs,
+        );
+        assert!(
+            script.contains("printf %s 'a2V5c3RvcmU=' | base64 --decode > \"$dir/keystore.jks\"")
+        );
+        assert!(script.contains("export OORE_SIGNER_STORE_PASSWORD='p'\\''ss'"));
+        assert!(script.contains("export OORE_SIGNER_KEY_PASSWORD='k$y'"));
+        assert!(script.contains("--out \"$dir/signed-0.apk\" '/Users/admin/oore-workspace/build/app/outputs/flutter-apk/app-release.apk'"));
+        assert!(script.contains("cp \"$dir/signed-0.apk\" '/Users/admin/oore-workspace/"));
+
+        let bundle = super::android_vm_signing_script(
+            &["/w/build/app/outputs/bundle/release/app-release.aab".to_string()],
+            "aab",
+            &inputs,
+        );
+        assert!(bundle.contains("jarsigner -keystore \"$dir/keystore.jks\""));
+        assert!(bundle.contains("verified=\"$(jarsigner -verify \"$dir/signed-0.aab\")\""));
+        assert!(!bundle.contains("-strict"));
+    }
+
+    #[test]
+    fn repository_runs_on_must_match_the_claiming_runner() {
+        let snapshot = serde_json::json!({ "runner_labels": ["arm64", "macos", "xcode-16"] });
+        assert!(require_runner_labels(&["macos".into()], &snapshot, ".oore.yaml").is_ok());
+        let error = require_runner_labels(&["linux".into()], &snapshot, ".oore.yaml")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("lacks [linux]"), "{error}");
+        // Older backends do not send runner labels.
+        assert!(
+            require_runner_labels(&["linux".into()], &serde_json::json!({}), ".oore.yaml").is_ok()
+        );
+    }
+
+    #[test]
+    fn play_publishing_adds_an_app_bundle_to_the_default_android_build() {
+        let workspace =
+            std::env::temp_dir().join(format!("oore-play-bundle-test-{}", std::process::id()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let snapshot = json!({
+            "ui_execution_config": {
+                "platforms": ["android"],
+                "platform_build_args": { "android": ["--split-per-abi", "--flavor=prod"] }
+            }
+        });
+
+        let plan = resolve_execution_plan(&workspace, &snapshot, true).unwrap();
+        assert_eq!(
+            plan_commands(&plan, StepPhase::Build),
+            vec![
+                "flutter build apk --release --split-per-abi --flavor=prod",
+                "flutter build appbundle --release --flavor=prod",
+            ]
+        );
+
+        let plan = resolve_execution_plan(&workspace, &snapshot, false).unwrap();
+        assert_eq!(
+            plan_commands(&plan, StepPhase::Build),
+            vec!["flutter build apk --release --split-per-abi --flavor=prod"]
+        );
+
+        // An explicit Android command is the user's choice; leave it alone.
+        let snapshot = json!({
+            "ui_execution_config": {
+                "platforms": ["android"],
+                "platform_commands": { "android": "flutter build apk --release" }
+            }
+        });
+        let plan = resolve_execution_plan(&workspace, &snapshot, true).unwrap();
+        assert_eq!(
+            plan_commands(&plan, StepPhase::Build),
+            vec!["flutter build apk --release"]
+        );
+        std::fs::remove_dir_all(&workspace).ok();
+    }
+
+    #[test]
+    fn flutter_commands_run_unwrapped_and_fvmrc_picks_the_version() {
+        let workspace =
+            std::env::temp_dir().join(format!("oore-vm-plan-test-{}", std::process::id()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join(".fvmrc"), r#"{"flutter": "3.47.7"}"#).unwrap();
+        std::fs::write(
+            workspace.join(".oore.yaml"),
+            "version: 1\nplatforms: [android]\nisolation: vm\n",
+        )
+        .unwrap();
+
+        let plan = resolve_execution_plan(&workspace, &json!({}), false).unwrap();
+        assert_eq!(plan.isolation, BuildIsolation::Vm);
+        assert_eq!(plan.flutter_version, "3.47.7");
+        assert_eq!(
+            plan_commands(&plan, StepPhase::PreBuild),
+            vec!["flutter pub get"]
+        );
+        assert_eq!(
+            plan_commands(&plan, StepPhase::Build),
+            vec!["flutter build apk --release"]
+        );
+
+        std::fs::write(
+            workspace.join(".oore.yaml"),
+            "version: 1\nplatforms: [android]\n",
+        )
+        .unwrap();
+        let plan = resolve_execution_plan(&workspace, &json!({}), false).unwrap();
+        assert_eq!(plan.isolation, BuildIsolation::Host);
+        assert_eq!(plan.flutter_version, "3.47.7");
+        assert_eq!(
+            plan_commands(&plan, StepPhase::PreBuild),
+            vec!["flutter pub get"]
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[test]
+    fn export_method_follows_pipeline_and_xcode_naming() {
+        let current = "-exportArchive ... release-testing, app-store-connect, debugging";
+        assert_eq!(
+            choose_ios_export_method(current, IosExportMethod::AdHoc),
+            "release-testing"
+        );
+        assert_eq!(
+            choose_ios_export_method(current, IosExportMethod::AppStore),
+            "app-store-connect"
+        );
+        assert_eq!(
+            choose_ios_export_method("", IosExportMethod::AdHoc),
+            "ad-hoc"
+        );
+        assert_eq!(
+            choose_ios_export_method("", IosExportMethod::AppStore),
+            "app-store"
+        );
+    }
+
+    #[test]
+    fn pubspec_version_name_drops_build_number() {
+        assert_eq!(
+            pubspec_version_name("name: app\nversion: 1.4.0+12\n").as_deref(),
+            Some("1.4.0")
+        );
+        assert_eq!(
+            pubspec_version_name("version: \"2.0.1\" # release\n").as_deref(),
+            Some("2.0.1")
+        );
+        assert_eq!(
+            pubspec_version_name("dependencies:\n  version: 1.0.0\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn ui_config_rejects_negative_build_number_offset() {
+        let error =
+            load_ui_execution_config(&json!({"ui_execution_config": {"build_number_offset": -3}}))
+                .unwrap_err()
+                .to_string();
+        assert!(
+            error.starts_with("build_number_offset must be between 0"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn snapshot_config_preserves_defaults_trimming_and_field_errors() {
+        assert!(load_ui_execution_config(&json!({})).is_ok());
+        assert!(load_ui_execution_config(&json!({"ui_execution_config": null})).is_err());
+        for (group, field) in [
+            ("commands", "pre_build"),
+            ("commands", "build"),
+            ("commands", "post_build"),
+            ("platform_build_args", "android"),
+            ("platform_build_args", "ios"),
+            ("platform_build_args", "macos"),
+        ] {
+            let mut config = json!({});
+            config[group] = json!({});
+            config[group][field] = json!(["  first  ", "\tsecond\n"]);
+            let snapshot = json!({"ui_execution_config": config});
+            let normalized = load_ui_execution_config(&snapshot).unwrap();
+            assert_eq!(
+                serde_json::to_value(normalized).unwrap()[group][field],
+                json!(["first", "second"])
+            );
+            let mut invalid = snapshot;
+            invalid["ui_execution_config"][group][field][1] = json!("  ");
+            assert_eq!(
+                load_ui_execution_config(&invalid).unwrap_err().to_string(),
+                format!("{group}.{field}[1] must not be empty")
+            );
+        }
+        assert_eq!(
+            load_ui_execution_config(&json!({"ui_execution_config": {"artifact_patterns": [" "]}}))
+                .unwrap_err()
+                .to_string(),
+            "artifacts.patterns[0] must not be empty"
+        );
+    }
+}
+
+#[cfg(test)]
+mod secret_tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    fn plan(env: &[(&str, &str)], build: &[&str]) -> ResolvedExecutionPlan {
+        ResolvedExecutionPlan {
+            steps: build
+                .iter()
+                .enumerate()
+                .map(|(index, command)| PlanStep {
+                    name: format!("build-{}", index + 1),
+                    phase: StepPhase::Build,
+                    run: command.to_string(),
+                    source: format!("commands.build[{index}]"),
+                    platform: None,
+                    flavor: None,
+                    test_report: None,
+                })
+                .collect(),
+            artifact_patterns: vec![],
+            env: env
+                .iter()
+                .map(|(key, value)| PipelineEnvVar {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                })
+                .collect(),
+            secret_env: vec![],
+            secret_env_keys: Default::default(),
+            build_number_offset: 0,
+            isolation: BuildIsolation::Host,
+            needs_xcode: false,
+            flutter_version: "stable".to_string(),
+            source: "test".to_string(),
+            publish: PlanPublish::default(),
+            size_budgets: Vec::new(),
+        }
+    }
+
+    fn secrets() -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("API_TOKEN".to_string(), "s3cr3t-token".to_string()),
+            ("UNUSED".to_string(), "never-exposed".to_string()),
+        ])
+    }
+
+    #[test]
+    fn env_values_resolve_and_commands_use_shell_references() {
+        let resolved = apply_secret_references(
+            plan(
+                &[
+                    ("AUTH", "Bearer ${{ secrets.API_TOKEN }}"),
+                    ("FLAVOR", "prod"),
+                ],
+                &["curl -H \"X-Token: ${{secrets.API_TOKEN}}\" https://example.test"],
+            ),
+            &secrets(),
+        )
+        .unwrap();
+
+        assert_eq!(resolved.env[0].value, "Bearer s3cr3t-token");
+        assert_eq!(resolved.env[1].value, "prod");
+        assert!(resolved.secret_env_keys.contains("AUTH"));
+        assert!(!resolved.secret_env_keys.contains("FLAVOR"));
+        assert_eq!(
+            resolved.steps[0].run,
+            "curl -H \"X-Token: ${OORE_SECRET_API_TOKEN}\" https://example.test"
+        );
+        assert_eq!(
+            resolved.secret_env,
+            vec![(
+                "OORE_SECRET_API_TOKEN".to_string(),
+                "s3cr3t-token".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn unknown_secret_fails_before_any_step_runs() {
+        let error =
+            apply_secret_references(plan(&[], &["echo ${{ secrets.MISSING }}"]), &secrets())
+                .err()
+                .unwrap()
+                .to_string();
+        assert!(error.contains("commands.build[0]"), "{error}");
+        assert!(error.contains("'MISSING'"), "{error}");
+    }
+
+    #[test]
+    fn masker_hides_whole_values_and_lines_of_multiline_values() {
+        let json = "{\n  \"private_key\": \"-----BEGIN PRIVATE KEY-----abc\",\n  \"x\": 1\n}";
+        let masker = SecretMasker::new(["s3cr3t-token", json, ""].into_iter());
+        assert_eq!(masker.mask("token=s3cr3t-token done"), "token=*** done");
+        assert_eq!(
+            masker.mask("  \"private_key\": \"-----BEGIN PRIVATE KEY-----abc\","),
+            "  ***"
+        );
+        assert_eq!(masker.mask("nothing to hide"), "nothing to hide");
+    }
+
+    #[test]
+    fn bundle_verification_requires_every_entry_to_be_signed() {
+        let self_signed = "jar verified.\n\nWarning: \nThis jar contains entries whose signer certificate is self-signed.";
+        assert!(check_android_bundle_verification(self_signed).is_ok());
+        let unsigned = check_android_bundle_verification("no manifest.\n\njar is unsigned.")
+            .unwrap_err()
+            .to_string();
+        assert!(unsigned.contains("jar is unsigned"), "{unsigned}");
+        let partial = "jar verified.\n\nWarning: \nThis jar contains unsigned entries which have not been integrity-checked.";
+        assert!(check_android_bundle_verification(partial).is_err());
+        assert_eq!(
+            android_signer_failure_detail("", b"  "),
+            "signer exited without output"
+        );
+        assert_eq!(android_signer_failure_detail("out", b"err\n"), "err\nout");
+    }
+
+    #[test]
+    fn app_bundles_sign_with_self_signed_upload_keys() {
+        let toolchain = AndroidSigningToolchain::discover();
+        let Some(keytool) = toolchain
+            .java_home
+            .as_ref()
+            .map(|home| home.join("bin/keytool"))
+            .or_else(|| fixed_system_executable("keytool"))
+            .filter(|path| path.is_file())
+        else {
+            eprintln!("skipping: keytool is not installed");
+            return;
+        };
+        if !toolchain.jarsigner.is_file() || !toolchain.zip.is_file() {
+            eprintln!("skipping: jarsigner or zip is not installed");
+            return;
+        }
+        // macOS ships /usr/bin/keytool as a stub that fails without a JDK.
+        if !Command::new(&keytool)
+            .arg("-help")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            eprintln!("skipping: keytool has no Java runtime");
+            return;
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "oore-aab-signing-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let bundle_dir = root.join("workspace/build/app/outputs/bundle/release");
+        fs::create_dir_all(&bundle_dir).unwrap();
+        let keystore = root.join("upload.jks");
+        let status = Command::new(&keytool)
+            .args(["-genkeypair", "-keystore"])
+            .arg(&keystore)
+            .args([
+                "-storepass",
+                "store-secret",
+                "-keypass",
+                "store-secret",
+                "-alias",
+                "upload",
+                "-keyalg",
+                "RSA",
+                "-keysize",
+                "2048",
+                "-validity",
+                "10000",
+                "-dname",
+                "CN=Upload",
+            ])
+            .env_remove("JAVA_TOOL_OPTIONS")
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "{status:?}");
+
+        fs::write(root.join("base.txt"), "module").unwrap();
+        let bundle = bundle_dir.join("app-release.aab");
+        let zipped = Command::new(&toolchain.zip)
+            .current_dir(&root)
+            .arg("-q")
+            .arg(&bundle)
+            .arg("base.txt")
+            .output()
+            .unwrap();
+        assert!(zipped.status.success(), "{zipped:?}");
+
+        let inputs = AndroidSigningInputs {
+            keystore_bytes: fs::read(&keystore).unwrap(),
+            keystore_password: "store-secret".into(),
+            key_alias: "upload".into(),
+            key_password: "store-secret".into(),
+        };
+        let signed = sign_android_artifacts(
+            &root.join("workspace"),
+            &root,
+            "flutter build appbundle --release",
+            &inputs,
+            &toolchain,
+        )
+        .unwrap();
+        assert_eq!(signed, vec![bundle.clone()]);
+
+        let output = Command::new(&toolchain.jarsigner)
+            .arg("-verify")
+            .arg(&bundle)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{stdout}");
+        assert!(stdout.contains("self-signed"), "{stdout}");
+        fs::remove_dir_all(&root).ok();
+    }
+}
+
+#[cfg(test)]
+mod publish_report_tests {
+    use std::time::Duration;
+
+    use oore_contract::{PublishStore, RunnerPublishResult};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::{RunnerConfig, report_publish_result};
+
+    /// Answers each connection with the next status and counts requests.
+    async fn daemon(statuses: &'static [u16]) -> (String, tokio::task::JoinHandle<usize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = tokio::spawn(async move {
+            let mut served = 0;
+            for status in statuses {
+                let Ok(Ok((mut socket, _))) =
+                    tokio::time::timeout(Duration::from_millis(500), listener.accept()).await
+                else {
+                    break;
+                };
+                let mut buf = vec![0u8; 8192];
+                let _ = socket.read(&mut buf).await;
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}"
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+                served += 1;
+            }
+            served
+        });
+        (url, handle)
+    }
+
+    async fn report(url: &str) -> anyhow::Result<()> {
+        let config = RunnerConfig {
+            runner_id: "r1".into(),
+            runner_token: "t".into(),
+            daemon_url: url.into(),
+            name: "runner".into(),
+        };
+        let result = RunnerPublishResult {
+            store: PublishStore::GooglePlay,
+            track: "production".into(),
+            package_name: "com.example.app".into(),
+            version_code: 7,
+            version_name: None,
+            rollout_fraction: Some(0.1),
+            status: "in_progress".into(),
+            testflight_groups: None,
+        };
+        report_publish_result(
+            &reqwest::Client::new(),
+            url,
+            &config,
+            "b1",
+            "signing",
+            &result,
+            &[
+                Duration::ZERO,
+                Duration::from_millis(10),
+                Duration::from_millis(10),
+            ],
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn retries_until_the_daemon_records_the_release() {
+        let (url, daemon) = daemon(&[503, 500, 200]).await;
+        report(&url).await.unwrap();
+        assert_eq!(daemon.await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn stops_when_the_daemon_rejects_the_report() {
+        let (url, daemon) = daemon(&[403, 200]).await;
+        assert!(report(&url).await.is_err());
+        assert_eq!(daemon.await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn gives_up_after_the_last_attempt() {
+        let (url, daemon) = daemon(&[500, 500, 500, 200]).await;
+        let error = report(&url).await.unwrap_err();
+        assert!(format!("{error:#}").contains("500"), "{error:#}");
+        assert_eq!(daemon.await.unwrap(), 3);
+    }
+}
+
+#[cfg(test)]
+mod build_lifecycle_tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    fn test_config(daemon_url: &str) -> RunnerConfig {
+        RunnerConfig {
+            runner_id: "r1".to_string(),
+            runner_token: "token".to_string(),
+            daemon_url: daemon_url.to_string(),
+            name: "test".to_string(),
+        }
+    }
+
+    /// Answers one request per connection with each status in turn and
+    /// returns how many requests it answered.
+    async fn backend(statuses: Vec<u16>) -> (String, tokio::task::JoinHandle<usize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            for (served, status) in statuses.iter().enumerate() {
+                let Ok(Ok((mut socket, _))) =
+                    tokio::time::timeout(Duration::from_secs(5), listener.accept()).await
+                else {
+                    return served;
+                };
+                let mut buf = vec![0u8; 16 * 1024];
+                let _ = socket.read(&mut buf).await.unwrap();
+                let body = r#"{"status":"running"}"#;
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            statuses.len()
+        });
+        (url, server)
+    }
+
+    fn quick_retries() -> RetryPolicy {
+        RetryPolicy {
+            first_delay: Duration::from_millis(10),
+            max_delay: Duration::from_millis(20),
+            window: Duration::from_secs(5),
+        }
+    }
+
+    fn succeeded(build_id: &str) -> StatusReport<'_> {
+        StatusReport {
+            build_id,
+            status: "succeeded",
+            exit_code: Some(0),
+            error_message: None,
+            steps: &[],
+            size_budgets: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn the_final_status_survives_two_backend_errors() {
+        let (url, server) = backend(vec![503, 503, 200]).await;
+        let config = test_config(&url);
+        report_status_with_retry(
+            &runner_http_client().unwrap(),
+            &url,
+            &config,
+            &succeeded("b1"),
+            quick_retries(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(server.await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_rejected_status_report_is_not_retried() {
+        let (url, server) = backend(vec![409, 200]).await;
+        let config = test_config(&url);
+        let error = report_status_with_retry(
+            &runner_http_client().unwrap(),
+            &url,
+            &config,
+            &succeeded("b1"),
+            quick_retries(),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.downcast_ref::<StatusReportRejected>().is_some());
+        // The server waits for a second request that never comes.
+        assert_eq!(server.await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_short_backend_outage_does_not_stop_the_build() {
+        let (url, _server) = backend(vec![503, 503, 200, 503]).await;
+        let config = test_config(&url);
+        let client = runner_http_client().unwrap();
+        let authority = BuildAuthorityState::with_grace(Duration::from_millis(300));
+
+        for _ in 0..3 {
+            check_build_active(&client, &url, &config, "b1", &authority)
+                .await
+                .unwrap();
+        }
+        // Past the grace window without word from the backend, the build stops
+        // and says why.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        let error = check_build_active(&client, &url, &config, "b1", &authority)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<BuildTerminated>().unwrap().status,
+            CONTROLLER_UNAVAILABLE
+        );
+        assert_eq!(
+            authority
+                .terminated()
+                .downcast_ref::<BuildTerminated>()
+                .unwrap()
+                .status,
+            CONTROLLER_UNAVAILABLE
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_connection_counts_toward_the_grace_window() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let config = test_config(&url);
+        let client = runner_http_client().unwrap();
+        let authority = BuildAuthorityState::with_grace(Duration::from_secs(60));
+        check_build_active(&client, &url, &config, "b1", &authority)
+            .await
+            .unwrap();
+        assert_eq!(
+            authority
+                .terminated()
+                .downcast_ref::<BuildTerminated>()
+                .unwrap()
+                .status,
+            "canceled"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_lost_assignment_stops_the_build_at_once() {
+        let (url, _server) = backend(vec![403]).await;
+        let config = test_config(&url);
+        let authority = BuildAuthorityState::default();
+        check_build_active(
+            &runner_http_client().unwrap(),
+            &url,
+            &config,
+            "b1",
+            &authority,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            authority
+                .terminated()
+                .downcast_ref::<BuildTerminated>()
+                .unwrap()
+                .status,
+            "assignment_lost"
+        );
+    }
+
+    fn process_is_gone(pid: &str) -> bool {
+        // Reparented children may linger as zombies until init reaps them.
+        let output = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", pid])
+            .output()
+            .unwrap();
+        let stat = String::from_utf8_lossy(&output.stdout);
+        stat.trim().is_empty() || stat.trim().starts_with('Z')
+    }
+
+    async fn read_pid(path: &Path) -> String {
+        for _ in 0..100 {
+            if let Ok(pid) = std::fs::read_to_string(path)
+                && !pid.trim().is_empty()
+            {
+                return pid.trim().to_string();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the step never wrote its background pid");
+    }
+
+    fn spawn_step(script: &str, workspace: &Path) -> tokio::process::Child {
+        let mut command = repository_shell_command(script, workspace);
+        command
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        command.spawn().unwrap()
+    }
+
+    fn unreachable_daemon() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        url
+    }
+
+    #[tokio::test]
+    async fn canceling_a_step_stops_everything_it_started() {
+        let workspace = tempfile_dir("cancel");
+        let child = spawn_step(
+            "sleep 600 & echo $! > bg.pid; echo started; sleep 600",
+            &workspace,
+        );
+        let url = unreachable_daemon();
+        let config = test_config(&url);
+        let mut cursor = BuildLogCursor::default();
+        let started = Instant::now();
+        let status = run_and_stream(
+            child,
+            &runner_http_client().unwrap(),
+            &url,
+            &config,
+            "b1",
+            &mut cursor,
+            async {
+                read_pid(&workspace.join("bg.pid")).await;
+            },
+        )
+        .await;
+        assert!(status.is_none());
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        let pid = read_pid(&workspace.join("bg.pid")).await;
+        let mut gone = false;
+        for _ in 0..50 {
+            if process_is_gone(&pid) {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(gone, "background process {pid} survived the cancel");
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn a_background_process_holding_the_output_does_not_block_the_runner() {
+        let workspace = tempfile_dir("orphan");
+        let child = spawn_step("sleep 600 & echo $! > bg.pid; echo done", &workspace);
+        let url = unreachable_daemon();
+        let config = test_config(&url);
+        let mut cursor = BuildLogCursor::default();
+        let started = Instant::now();
+        let status = run_and_stream(
+            child,
+            &runner_http_client().unwrap(),
+            &url,
+            &config,
+            "b1",
+            &mut cursor,
+            std::future::pending(),
+        )
+        .await;
+        assert!(status.unwrap().success());
+        assert!(
+            started.elapsed() < STEP_OUTPUT_GRACE + Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+        let pid = read_pid(&workspace.join("bg.pid")).await;
+        // SAFETY: kill only sends a signal to the test's own background process.
+        unsafe { libc::kill(pid.parse().unwrap(), libc::SIGKILL) };
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    fn tempfile_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "oore-runner-test-{name}-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+}
+
+#[cfg(test)]
+mod artifact_reservation_tests {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::{RunnerConfig, reserve_artifact};
+
+    /// Answers each connection with the next (status, body) and returns the
+    /// request bodies it received.
+    async fn daemon(
+        responses: Vec<(u16, &'static str)>,
+    ) -> (String, tokio::task::JoinHandle<Vec<serde_json::Value>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = tokio::spawn(async move {
+            let mut bodies = Vec::new();
+            for (status, body) in responses {
+                let Ok(Ok((mut socket, _))) =
+                    tokio::time::timeout(Duration::from_millis(500), listener.accept()).await
+                else {
+                    break;
+                };
+                let mut request = Vec::new();
+                let mut buf = [0u8; 4096];
+                let request_body = loop {
+                    let read = socket.read(&mut buf).await.unwrap();
+                    request.extend_from_slice(&buf[..read]);
+                    let text = String::from_utf8_lossy(&request).to_string();
+                    if let Some((head, rest)) = text.split_once("\r\n\r\n") {
+                        let length = head
+                            .lines()
+                            .find_map(|line| {
+                                let (key, value) = line.split_once(':')?;
+                                key.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())?
+                            })
+                            .unwrap_or(0);
+                        if rest.len() >= length || read == 0 {
+                            break rest.to_string();
+                        }
+                    } else if read == 0 {
+                        break String::new();
+                    }
+                };
+                bodies.push(serde_json::from_str(&request_body).unwrap());
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            bodies
+        });
+        (url, handle)
+    }
+
+    async fn reserve(url: &str, artifact_type: &str) -> anyhow::Result<reqwest::Response> {
+        let config = RunnerConfig {
+            runner_id: "r1".into(),
+            runner_token: "t".into(),
+            daemon_url: url.into(),
+            name: "runner".into(),
+        };
+        let body = serde_json::json!({ "name": "app.aab", "artifact_type": artifact_type });
+        reserve_artifact(&reqwest::Client::new(), url, &config, "b1", "app.aab", body).await
+    }
+
+    const INVALID_TYPE: &str =
+        r#"{"code":"invalid_artifact_type","error":"artifact_type must be one of: apk, ipa"}"#;
+
+    #[tokio::test]
+    async fn an_older_daemon_gets_app_bundles_as_generic() {
+        let (url, server) = daemon(vec![(400, INVALID_TYPE), (201, "{}")]).await;
+        assert!(reserve(&url, "aab").await.unwrap().status().is_success());
+        let bodies = server.await.unwrap();
+        assert_eq!(bodies.len(), 2);
+        assert_eq!(bodies[0]["artifact_type"], "aab");
+        assert_eq!(bodies[1]["artifact_type"], "generic");
+        assert_eq!(bodies[1]["name"], "app.aab");
+    }
+
+    #[tokio::test]
+    async fn falls_back_only_once_and_only_for_app_bundles() {
+        let (url, server) =
+            daemon(vec![(400, INVALID_TYPE), (400, INVALID_TYPE), (201, "{}")]).await;
+        assert!(reserve(&url, "aab").await.is_err());
+        assert_eq!(server.await.unwrap().len(), 2);
+
+        let (url, server) = daemon(vec![(400, INVALID_TYPE), (201, "{}")]).await;
+        assert!(reserve(&url, "apk").await.is_err());
+        assert_eq!(server.await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn other_rejections_are_not_retried() {
+        let body = r#"{"code":"invalid_name","error":"bad name"}"#;
+        let (url, server) = daemon(vec![(400, body), (201, "{}")]).await;
+        assert!(reserve(&url, "aab").await.is_err());
+        assert_eq!(server.await.unwrap().len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod file_publish_tests {
+    use super::*;
+    use oore_contract::{
+        AppStoreDestination, AppStorePublishConfig, GooglePlayPublishConfig,
+        RunnerAppStorePublishPlan, RunnerAppStoreUploadCredentials,
+    };
+    use serde_json::json;
+    use tokio::io::AsyncWriteExt;
+
+    const V2: &str = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle --release\n    publish:\n      play: { track: closed, rollout: 0.2 }\n  ios:\n    build: flutter build ipa --release\n    publish:\n      testflight: { group: Beta }\n";
+
+    fn workspace(name: &str, oore_yaml: Option<&str>) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("oore-file-publish-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        if let Some(yaml) = oore_yaml {
+            std::fs::write(dir.join(".oore.yaml"), yaml).unwrap();
+        }
+        dir
+    }
+
+    fn play_settings(track: &str, rollout_percent: Option<f64>) -> GooglePlayPublishConfig {
+        serde_json::from_value(json!({
+            "enabled": true,
+            "service_account_secret": "PLAY_KEY",
+            "package_name": "com.example.app",
+            "track": track,
+            "rollout_percent": rollout_percent,
+            "release_notes": "changelog",
+        }))
+        .unwrap()
+    }
+
+    fn app_store_settings(config: AppStorePublishConfig) -> RunnerAppStorePublishPlan {
+        RunnerAppStorePublishPlan {
+            config,
+            credentials: RunnerAppStoreUploadCredentials {
+                key_id: "KEY".to_string(),
+                issuer_id: "ISSUER".to_string(),
+                private_key_pem: "PEM".to_string(),
+            },
+        }
+    }
+
+    fn testflight(groups: &[&str]) -> AppStorePublishConfig {
+        AppStorePublishConfig {
+            enabled: true,
+            destination: AppStoreDestination::Testflight,
+            testflight_groups: groups.iter().map(|group| group.to_string()).collect(),
+            ..AppStorePublishConfig::default()
+        }
+    }
+
+    #[test]
+    fn a_v2_publish_plans_like_the_equivalent_publish_settings() {
+        let dir = workspace("same", Some(V2));
+        let plan = resolve_execution_plan(&dir, &json!({}), false).unwrap();
+        // The pipeline's settings upload elsewhere; the file says where.
+        let settings = RunnerPublishPlan {
+            changelog: Some("Fixes".to_string()),
+            google_play: Some(play_settings("production", None)),
+            app_store: Some(app_store_settings(testflight(&["Internal", "QA"]))),
+        };
+        let from_file = plan.publish.apply(settings);
+        // What the runner gets when the settings themselves say it.
+        let equivalent = RunnerPublishPlan {
+            changelog: Some("Fixes".to_string()),
+            google_play: Some(play_settings("closed", Some(20.0))),
+            app_store: Some(app_store_settings(testflight(&["Beta"]))),
+        };
+        assert_eq!(from_file.changelog, equivalent.changelog);
+        assert_eq!(from_file.google_play.unwrap(), equivalent.google_play);
+        assert_eq!(
+            from_file.app_store.unwrap().unwrap().config,
+            equivalent.app_store.unwrap().config
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn files_without_publish_keep_the_publish_settings() {
+        for (name, yaml) in [
+            ("none", None),
+            ("v1", Some("version: 1\nplatforms: [android]\n")),
+            (
+                "v2",
+                Some("version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n"),
+            ),
+        ] {
+            let dir = workspace(name, yaml);
+            let snapshot = json!({ "ui_execution_config": { "platforms": ["android"] } });
+            let plan = resolve_execution_plan(&dir, &snapshot, true).unwrap();
+            assert!(plan.publish.is_empty(), "{name}");
+            let effective = plan.publish.apply(RunnerPublishPlan {
+                changelog: None,
+                google_play: Some(play_settings("internal", None)),
+                app_store: None,
+            });
+            assert_eq!(
+                effective.google_play.unwrap(),
+                Some(play_settings("internal", None)),
+                "{name}"
+            );
+            std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// Answers every request with 200 and `body`, and returns the request
+    /// lines it saw once `requests` have arrived.
+    async fn daemon(
+        body: &'static str,
+        requests: usize,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            while seen.len() < requests {
+                let Ok(Ok((mut socket, _))) =
+                    tokio::time::timeout(Duration::from_secs(5), listener.accept()).await
+                else {
+                    break;
+                };
+                let mut buf = vec![0u8; 16 * 1024];
+                let read = socket.read(&mut buf).await.unwrap();
+                let head = String::from_utf8_lossy(&buf[..read]).to_string();
+                seen.push(head.lines().next().unwrap_or_default().to_string());
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            seen
+        });
+        (url, server)
+    }
+
+    #[tokio::test]
+    async fn file_publish_without_store_settings_fails_the_publish_step() {
+        let dir = workspace("missing", Some(V2));
+        let plan = resolve_execution_plan(&dir, &json!({}), false).unwrap();
+        // The publish plan has no stores turned on, then three log lines.
+        let (url, server) = daemon("{}", 4).await;
+        let config = RunnerConfig {
+            runner_id: "r1".to_string(),
+            runner_token: "token".to_string(),
+            daemon_url: url.clone(),
+            name: "test".to_string(),
+        };
+        let job = ClaimedJob {
+            build_id: "b1".to_string(),
+            project_id: "p1".to_string(),
+            pipeline_id: "pl1".to_string(),
+            build_number: 1,
+            config_snapshot: json!({}),
+            commit_sha: None,
+            branch: None,
+            lease_expires_at: 0,
+            signing_token: "signing".to_string(),
+            retry_steps: None,
+        };
+        let authority = Arc::new(BuildAuthorityState::with_grace(Duration::from_secs(60)));
+        let mut steps = Vec::new();
+        let error = run_publish_steps(
+            &job,
+            &reqwest::Client::new(),
+            &url,
+            &config,
+            &mut BuildLogCursor::default(),
+            PublishInputs {
+                workspace: &dir,
+                signing_workspace: &dir,
+                secrets: &Default::default(),
+                signed_ipa_path: None,
+                ios_artifact_metadata: None,
+                only: None,
+                authority: &authority,
+                file_publish: &plan.publish,
+            },
+            &mut steps,
+        )
+        .await
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.starts_with("publish-play failed: "), "{message}");
+        assert!(
+            message.contains(
+                "targets.android.publish.play publishes with the pipeline's Google Play settings, which are off"
+            ),
+            "{message}"
+        );
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].name, PUBLISH_PLAY_STEP);
+        assert_eq!(steps[0].status, "failed");
+        // A retry of this step reads the file again.
+        assert!(steps[0].publish_from_file);
+        let seen = server.await.unwrap();
+        assert!(
+            seen[0].starts_with("GET /v1/runners/r1/jobs/b1/publish "),
+            "{seen:?}"
+        );
+        assert!(
+            seen[1..]
+                .iter()
+                .all(|line| line.starts_with("POST /v1/runners/r1/jobs/b1/logs ")),
+            "{seen:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Answers by path: the job's secrets, a publish plan with Google Play
+    /// on, no stored artifacts, and `{}` for everything else.
+    async fn retry_daemon() -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            while let Ok(Ok((mut socket, _))) =
+                tokio::time::timeout(Duration::from_millis(500), listener.accept()).await
+            {
+                let mut buf = vec![0u8; 16 * 1024];
+                let read = socket.read(&mut buf).await.unwrap();
+                let head = String::from_utf8_lossy(&buf[..read]).to_string();
+                let line = head.lines().next().unwrap_or_default().to_string();
+                let body = if line.contains("/secrets ") {
+                    r#"{"secrets":[]}"#
+                } else if line.contains("/publish ") {
+                    r#"{"google_play":{"enabled":true,"service_account_secret":"PLAY","track":"internal"}}"#
+                } else if line.contains("/retry-artifacts ") {
+                    r#"{"artifacts":[]}"#
+                } else {
+                    "{}"
+                };
+                seen.push(line);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            seen
+        });
+        (url, server)
+    }
+
+    async fn retry_play(snapshot: serde_json::Value) -> (String, Vec<StepResult>) {
+        let dir = workspace(
+            &format!("retry-{}", snapshot.as_object().unwrap().len()),
+            None,
+        );
+        let (url, server) = retry_daemon().await;
+        let config = RunnerConfig {
+            runner_id: "r1".to_string(),
+            runner_token: "token".to_string(),
+            daemon_url: url.clone(),
+            name: "test".to_string(),
+        };
+        let job = ClaimedJob {
+            build_id: "b2".to_string(),
+            project_id: "p1".to_string(),
+            pipeline_id: "pl1".to_string(),
+            build_number: 2,
+            // No repo_url, so a checkout fails.
+            config_snapshot: snapshot,
+            commit_sha: None,
+            branch: None,
+            lease_expires_at: 0,
+            signing_token: "signing".to_string(),
+            retry_steps: Some(vec![PUBLISH_PLAY_STEP.to_string()]),
+        };
+        let authority = Arc::new(BuildAuthorityState::with_grace(Duration::from_secs(60)));
+        let mut steps = Vec::new();
+        let error = execute_step_retry(
+            &job,
+            &reqwest::Client::new(),
+            &url,
+            &config,
+            &mut BuildLogCursor::default(),
+            RetryWorkspace {
+                workspace: &dir,
+                signing_workspace: &dir,
+                authority: &authority,
+            },
+            &[PUBLISH_PLAY_STEP.to_string()],
+            &mut steps,
+        )
+        .await
+        .unwrap_err();
+        server.abort();
+        std::fs::remove_dir_all(&dir).ok();
+        (format!("{error:#}"), steps)
+    }
+
+    #[tokio::test]
+    async fn a_retry_of_a_settings_publish_does_not_need_the_source() {
+        // A v1 or form build: checking out would fail, and is not tried.
+        let (error, steps) = retry_play(json!({ "retry_steps": ["publish-play"] })).await;
+        assert!(
+            error.contains("the source build has no stored artifacts"),
+            "{error}"
+        );
+        assert!(!error.contains("repo_url"), "{error}");
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].name, "artifacts");
+    }
+
+    #[tokio::test]
+    async fn a_retry_of_a_file_publish_reads_the_file_at_the_commit() {
+        let (error, steps) = retry_play(json!({
+            "retry_steps": ["publish-play"],
+            oore_contract::RETRY_PUBLISH_FROM_FILE: true,
+        }))
+        .await;
+        assert!(error.contains("no repo_url"), "{error}");
+        assert!(steps.is_empty());
+    }
+
+    #[test]
+    fn the_artifacts_result_carries_the_build_level_file_flag() {
+        let dir = workspace("artifacts-flag", Some(V2));
+        let plan = resolve_execution_plan(&dir, &json!({}), false).unwrap();
+        let from_file = artifacts_step_result(true, None, (0, 1), &plan.publish);
+        assert_eq!(from_file.name, "artifacts");
+        assert!(from_file.publish_from_file);
+        let settings = artifacts_step_result(true, None, (0, 1), &PlanPublish::default());
+        assert!(!settings.publish_from_file);
+        // The flag survives the round trip the daemon stores it through.
+        let stored = serde_json::to_value(&from_file).unwrap();
+        assert_eq!(stored["publish_from_file"], json!(true));
+        assert!(
+            serde_json::to_value(&settings)
+                .unwrap()
+                .get("publish_from_file")
+                .is_none()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

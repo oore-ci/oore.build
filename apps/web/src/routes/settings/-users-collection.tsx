@@ -16,9 +16,9 @@ export function UsersCollection({
   pageSize,
   query,
   table,
+  toolbar,
   total,
 }: {
-  authUserId?: string
   emptyState: ReactNode
   error: Error | null
   isLoading: boolean
@@ -30,6 +30,7 @@ export function UsersCollection({
   pageSize: number
   query: string
   table: DataTableInstance<User>
+  toolbar?: ReactNode
   total: number
 }) {
   return (
@@ -47,12 +48,14 @@ export function UsersCollection({
       ) : (
         <DataTable
           table={table}
+          actions={toolbar}
           search={{
             value: query,
             onChange: onSearch,
             placeholder: 'Search users',
           }}
           pagination={{ onPageChange, page, pageSize, total }}
+          isLoading={isLoading}
           emptyMessage={isLoading ? 'Loading users…' : undefined}
         />
       )}

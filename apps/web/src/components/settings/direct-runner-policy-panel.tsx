@@ -18,73 +18,31 @@ import {
 } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import type { InstancePreferences } from '@oore/client/models'
-
-type DirectRunnerPreferences = Pick<
-  InstancePreferences,
-  'direct_macos_runner_paused' | 'key_storage_mode'
->
-
-interface PreferencesRefetchResult {
-  data?: DirectRunnerPreferences
-  error: Error | null
-}
-
-interface PreferencesQuery {
-  data?: DirectRunnerPreferences
-  error: Error | null
-  isLoading: boolean
-  refetch: () => Promise<PreferencesRefetchResult>
-}
-
-interface UpdatePreferencesMutation {
-  isPending: boolean
-  mutate: (
-    data: Pick<
-      InstancePreferences,
-      'direct_macos_runner_paused' | 'key_storage_mode'
-    >,
-    options: { onError: (error: Error) => void; onSuccess: () => void },
-  ) => void
-}
-
-interface DirectRunnerPolicyPanelViewProps {
-  canRead: boolean
-  canWrite: boolean
-  preferencesQuery?: PreferencesQuery
-  updatePreferences?: UpdatePreferencesMutation
-}
+import {
+  SettingsSection,
+  SettingsSurface,
+} from '@/components/settings/settings-section'
+import { splitRowVariants } from '@/lib/recipes'
 
 export function DirectRunnerPolicyPanel() {
   const canRead = useHasPermission('instance_settings:read')
 
   if (!canRead) return null
 
-  return <DirectRunnerPolicyControl />
+  return (
+    <SettingsSection
+      title="Build intake"
+      hint="Applies to every runner. Pausing stops new claims; assigned and running builds finish."
+    >
+      <DirectRunnerPolicyControl />
+    </SettingsSection>
+  )
 }
 
 function DirectRunnerPolicyControl() {
   const preferencesQuery = useInstancePreferences()
-  const updatePreferences = useUpdateInstancePreferences()
+  const mutation = useUpdateInstancePreferences()
   const canWrite = useHasPermission('instance_settings:write')
-  return (
-    <DirectRunnerPolicyPanelView
-      canRead
-      canWrite={canWrite}
-      preferencesQuery={preferencesQuery}
-      updatePreferences={updatePreferences}
-    />
-  )
-}
-
-function DirectRunnerPolicyPanelView({
-  canRead,
-  canWrite,
-  preferencesQuery,
-  updatePreferences,
-}: DirectRunnerPolicyPanelViewProps) {
-  if (!canRead || !preferencesQuery || !updatePreferences) return null
-  const mutation = updatePreferences
   const preferences = preferencesQuery.data
   const enabled = !(preferences?.direct_macos_runner_paused ?? false)
 
@@ -96,7 +54,7 @@ function DirectRunnerPolicyPanelView({
     return (
       <Alert variant="destructive">
         <HugeiconsIcon icon={Alert02Icon} aria-hidden />
-        <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <AlertDescription className={splitRowVariants()}>
           <span>
             Failed to load Direct runner policy:{' '}
             {preferencesQuery.error.message}
@@ -129,8 +87,8 @@ function DirectRunnerPolicyPanelView({
         onSuccess: () =>
           toast.success(
             checked
-              ? 'Direct macOS runner enabled.'
-              : 'Direct macOS runner paused. Running builds will finish.',
+              ? 'Runners resumed.'
+              : 'Runners paused. Running builds will finish.',
           ),
         onError: (error) =>
           toast.error(`Failed to update runner policy: ${error.message}`),
@@ -139,27 +97,65 @@ function DirectRunnerPolicyPanelView({
   }
 
   return (
-    <Item variant="outline">
-      <ItemContent>
-        <ItemTitle>Allow approved repositories</ItemTitle>
-        <ItemDescription>
-          Pause new claims while assigned and running jobs finish.
-        </ItemDescription>
-        {!canWrite ? (
+    <SettingsSurface inset={false}>
+      <Item>
+        <ItemContent>
+          <ItemTitle>Accept builds from approved repositories</ItemTitle>
           <ItemDescription>
-            You have read-only access to this instance policy.
+            {enabled
+              ? 'Connected runners claim new builds from approved repositories.'
+              : 'Paused. Builds in progress finish; new builds wait until you resume.'}
           </ItemDescription>
-        ) : null}
-      </ItemContent>
-      <ItemActions className="ml-auto">
-        <Switch
-          id="direct-runner-policy"
-          aria-label="Allow approved repositories"
-          checked={enabled}
-          disabled={!canWrite || mutation.isPending}
-          onCheckedChange={updatePolicy}
-        />
-      </ItemActions>
-    </Item>
+          {!canWrite ? (
+            <ItemDescription>
+              Only an owner or admin can change this.
+            </ItemDescription>
+          ) : null}
+        </ItemContent>
+        <ItemActions className="ml-auto">
+          <Switch
+            id="direct-runner-policy"
+            aria-label="Accept builds from approved repositories"
+            checked={enabled}
+            disabled={!canWrite || mutation.isPending}
+            onCheckedChange={updatePolicy}
+          />
+        </ItemActions>
+      </Item>
+    </SettingsSurface>
+  )
+}
+
+// Lets owners and admins resume paused runners from the alert that explains
+// why a build is waiting, instead of sending them to another page.
+export function ResumeRunnersButton() {
+  const preferencesQuery = useInstancePreferences()
+  const mutation = useUpdateInstancePreferences()
+  const preferences = preferencesQuery.data
+
+  if (!preferences?.direct_macos_runner_paused) return null
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={mutation.isPending}
+      onClick={() =>
+        mutation.mutate(
+          {
+            key_storage_mode: preferences.key_storage_mode,
+            direct_macos_runner_paused: false,
+          },
+          {
+            onSuccess: () => toast.success('Runners resumed.'),
+            onError: (error) =>
+              toast.error(`Failed to resume runners: ${error.message}`),
+          },
+        )
+      }
+    >
+      {mutation.isPending ? 'Resuming...' : 'Resume runners'}
+    </Button>
   )
 }

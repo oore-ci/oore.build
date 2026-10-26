@@ -36,7 +36,7 @@ export function CopyableOidcRedirectUri({ uri }: { uri: string }) {
           aria-label="Copy redirect URI"
         >
           {copied ? (
-            <HugeiconsIcon icon={Tick02Icon} className="text-primary" />
+            <HugeiconsIcon icon={Tick02Icon} className="text-foreground" />
           ) : (
             <HugeiconsIcon icon={Copy01Icon} />
           )}

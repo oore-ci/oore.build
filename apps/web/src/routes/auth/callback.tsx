@@ -3,14 +3,19 @@ import { useRef, useState } from 'react'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import { oidcCallback, setupOidcVerify } from '@oore/client/operations'
 import { precheckOidcCallback } from '@/lib/oidc-callback'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { FocusedFlowHeader } from '@/components/focused-flow-header'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useAuthStore } from '@/stores/auth-store'
 import { useInstanceStore } from '@/stores/instance-store'
 import { PageMeta } from '@/lib/seo'
 import { resolveRequiredInstanceApiBaseUrl } from '@/lib/instance-url'
+import { takeOidcRedirect } from '@/lib/auth-redirect'
 import { createWebOoreClient } from '@/lib/api-client/client'
+import { Row } from '@/components/layout/row'
+import { Text } from '@/components/layout/text'
+import { FocusedFlowLayout } from '@/components/focused-flow-layout'
 
 export const Route = createFileRoute('/auth/callback')({
   component: AuthCallbackPage,
@@ -136,7 +141,7 @@ function AuthCallbackPage() {
         })
 
         cleanupOidcSessionStorage()
-        void navigate({ to: '/' })
+        void navigate({ href: takeOidcRedirect() ?? '/', replace: true })
       })
       .catch((cause: unknown) => {
         failAuth(
@@ -200,11 +205,11 @@ function AuthCallbackPage() {
         ? 'Setup authentication failed'
         : 'Authentication failed'
     return (
-      <div className="focused-flow flex min-h-0 flex-1 flex-col items-center p-4 sm:p-6">
+      <FocusedFlowLayout>
         <PageMeta title="Signing In" />
-        <div className="w-full max-w-md space-y-4">
+        <div className="w-full max-w-md space-y-6">
+          <FocusedFlowHeader title={title} />
           <Alert variant="destructive">
-            <AlertTitle>{title}</AlertTitle>
             <AlertDescription>
               <p>{error}</p>
               {errorHint === 'setup_owner_verify_failed' ? (
@@ -216,9 +221,9 @@ function AuthCallbackPage() {
             </AlertDescription>
           </Alert>
           {errorHint ? (
-            <p className="text-xs text-muted-foreground">
+            <Text variant="caption">
               Diagnostic hint: <code>{errorHint}</code>
-            </p>
+            </Text>
           ) : null}
           <div className="text-center">
             <Button
@@ -229,17 +234,17 @@ function AuthCallbackPage() {
             </Button>
           </div>
         </div>
-      </div>
+      </FocusedFlowLayout>
     )
   }
 
   return (
-    <div className="focused-flow flex min-h-0 flex-1 items-center p-4 sm:p-6">
+    <FocusedFlowLayout align="center">
       <PageMeta title="Signing In" />
-      <div className="flex items-center gap-3">
+      <Row gap={3}>
         <Spinner className="size-5" />
-        <p className="text-sm text-muted-foreground">Completing sign-in...</p>
-      </div>
-    </div>
+        <Text variant="muted">Completing sign-in...</Text>
+      </Row>
+    </FocusedFlowLayout>
   )
 }

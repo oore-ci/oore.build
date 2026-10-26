@@ -19,6 +19,10 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
+import { ROLE_LABELS } from '@/routes/settings/-user-role-labels'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const demoLoginSchema = z.object({
   email: z.email('Enter one of the demo email addresses.'),
@@ -27,7 +31,7 @@ const demoLoginSchema = z.object({
 
 type DemoLoginValues = z.infer<typeof demoLoginSchema>
 
-export default function DemoLoginForm() {
+export default function DemoLoginForm({ redirectTo }: { redirectTo: string }) {
   const navigate = useNavigate()
   const setAuth = useAuthStore((state) => state.setAuth)
   const form = useForm<DemoLoginValues>({
@@ -62,7 +66,7 @@ export default function DemoLoginForm() {
       },
       'local',
     )
-    void navigate({ to: '/', replace: true })
+    void navigate({ href: redirectTo, replace: true })
   }
 
   return (
@@ -106,23 +110,24 @@ export default function DemoLoginForm() {
               </Alert>
             ) : null}
             <Button type="submit" className="w-full">
-              Sign in as {watchedEmail.split('+')[1]?.split('@')[0] ?? 'user'}
+              Sign in
             </Button>
           </form>
         </Form>
 
         <div className="space-y-2">
           <Separator />
-          <p className="text-xs font-medium text-muted-foreground">
+          <Text variant="caption" className="font-medium">
             Demo accounts
-          </p>
+          </Text>
           <div className="grid grid-cols-2 gap-2">
             {DEMO_PERSONAS.map((persona) => (
               <Button
                 key={persona.role}
                 type="button"
                 variant="outline"
-                className="h-auto justify-start px-3 py-2 text-left"
+                aria-pressed={watchedEmail === persona.email}
+                className="h-auto justify-start px-3 py-2 text-left aria-pressed:border-primary aria-pressed:bg-accent"
                 onClick={() => {
                   form.setValue('email', persona.email, {
                     shouldValidate: true,
@@ -132,19 +137,22 @@ export default function DemoLoginForm() {
                 }}
               >
                 <span>
-                  <span className="block capitalize">
-                    {persona.role.replace('_', ' ')}
-                  </span>
-                  <span className="block text-xs font-normal text-muted-foreground">
+                  <span className="block">{ROLE_LABELS[persona.role]}</span>
+                  <span
+                    className={cn(
+                      textVariants({ variant: 'caption' }),
+                      'block font-normal',
+                    )}
+                  >
                     {persona.displayName}
                   </span>
                 </span>
               </Button>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground">
+          <Text variant="caption">
             All accounts use password <code>{DEMO_PASSWORD}</code>.
-          </p>
+          </Text>
         </div>
       </CardContent>
     </Card>

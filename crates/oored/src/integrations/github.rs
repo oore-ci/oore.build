@@ -29,7 +29,7 @@ type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 const STATE_MAX_AGE_SECS: i64 = 600; // 10 minutes
 /// Maximum age (seconds) for GitHub install-callback browser cookie.
 const INSTALL_STATE_MAX_AGE_SECS: i64 = 1800; // 30 minutes
-const GITHUB_API_BASE_URL: &str = "https://api.github.com";
+pub(crate) const GITHUB_API_BASE_URL: &str = "https://api.github.com";
 const GITHUB_PAGE_SIZE: usize = 100;
 
 type PendingStates = tokio::sync::Mutex<HashMap<String, i64>>;
@@ -123,7 +123,10 @@ fn validate_redirect_origin(
     Ok(())
 }
 
-fn preferred_frontend_origin(allowed_origins: &[String], public_url: Option<&str>) -> String {
+pub(crate) fn preferred_frontend_origin(
+    allowed_origins: &[String],
+    public_url: Option<&str>,
+) -> String {
     let public_origin = public_url
         .and_then(|raw| url::Url::parse(raw).ok())
         .map(|parsed| parsed.origin().ascii_serialization());
@@ -899,6 +902,8 @@ async fn exchange_and_store(
         host_url: "https://github.com".to_string(),
         auth_mode: "github_app".to_string(),
         status: "active".to_string(),
+        status_reason: None,
+        status_checked_at: None,
         display_name: Some(display_name),
         app_id: Some(conversion.id.to_string()),
         app_slug: conversion.slug.clone(),
@@ -926,9 +931,6 @@ struct GitHubManifestConversionResponse {
 #[derive(Debug, Deserialize)]
 struct GitHubOwner {
     login: String,
-    #[serde(rename = "type")]
-    #[allow(dead_code)]
-    owner_type: Option<String>,
 }
 
 /// `POST /v1/integrations/github/complete` — exchange manifest code for app credentials.
@@ -1212,6 +1214,66 @@ pub(crate) async fn resolve_branch_commit(
         })
 }
 
+/// Files changed between `base` and `head` (three-dot, so from their merge
+/// base). `None` when GitHub truncates the list at 300 files.
+pub(crate) async fn changed_files(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    installation_id: &str,
+    full_name: &str,
+    base: &str,
+    head: &str,
+) -> anyhow::Result<Option<Vec<String>>> {
+    #[derive(Deserialize)]
+    struct CompareResponse {
+        #[serde(default)]
+        files: Vec<CompareFile>,
+    }
+    #[derive(Deserialize)]
+    struct CompareFile {
+        filename: String,
+        previous_filename: Option<String>,
+    }
+    const GITHUB_COMPARE_FILE_LIMIT: usize = 300;
+
+    let client = build_http_client().map_err(anyhow::Error::msg)?;
+    let token = load_installation_access_token(
+        client,
+        pool,
+        encryption_key,
+        integration_id,
+        installation_id,
+    )
+    .await
+    .map_err(|(_, body)| anyhow::anyhow!(body.0.error))?;
+    let response = client
+        .get(format!(
+            "https://api.github.com/repos/{full_name}/compare/{}...{}",
+            urlencoding::encode(base),
+            urlencoding::encode(head)
+        ))
+        .query(&[("per_page", "1")])
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "oore-ci")
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<CompareResponse>()
+        .await?;
+    if response.files.len() >= GITHUB_COMPARE_FILE_LIMIT {
+        return Ok(None);
+    }
+    Ok(Some(
+        response
+            .files
+            .into_iter()
+            .flat_map(|file| std::iter::once(file.filename).chain(file.previous_filename))
+            .collect(),
+    ))
+}
+
 pub(crate) async fn compare_commits(
     pool: &sqlx::SqlitePool,
     encryption_key: &[u8],
@@ -1319,6 +1381,76 @@ pub(crate) async fn compare_commits(
                 "Failed to read repository comparison",
             )
         })
+}
+
+/// Create a check run, or update `existing_id` in place. Returns the run's id.
+/// A run that GitHub no longer has, or refuses to update, is created again.
+pub(crate) async fn upsert_check_run(
+    client: &reqwest::Client,
+    api_base_url: &str,
+    token: &str,
+    full_name: &str,
+    existing_id: Option<&str>,
+    run: &serde_json::Value,
+) -> anyhow::Result<String> {
+    #[derive(Deserialize)]
+    struct CheckRunResponse {
+        id: u64,
+    }
+
+    let send = |request: reqwest::RequestBuilder, body: &serde_json::Value| {
+        request
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "oore-ci")
+            .json(body)
+            .send()
+    };
+
+    if let Some(existing_id) = existing_id {
+        let mut update = run.clone();
+        if let Some(fields) = update.as_object_mut() {
+            fields.remove("head_sha");
+        }
+        let response = send(
+            client.patch(format!(
+                "{api_base_url}/repos/{full_name}/check-runs/{existing_id}"
+            )),
+            &update,
+        )
+        .await?;
+        if response.status().is_success() {
+            return Ok(response.json::<CheckRunResponse>().await?.id.to_string());
+        }
+        if !matches!(
+            response.status(),
+            reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::UNPROCESSABLE_ENTITY
+        ) {
+            anyhow::bail!("GitHub returned {} updating a check run", response.status());
+        }
+        warn!(
+            check_run_id = existing_id,
+            status = %response.status(),
+            "GitHub check run could not be updated; creating a new one"
+        );
+    }
+
+    let response = send(
+        client.post(format!("{api_base_url}/repos/{full_name}/check-runs")),
+        run,
+    )
+    .await?;
+    if response.status() == reqwest::StatusCode::FORBIDDEN {
+        return Err(crate::commit_checks::Refused(
+            "GitHub refused the check run; the app installation needs the checks permission",
+        )
+        .into());
+    }
+    if !response.status().is_success() {
+        anyhow::bail!("GitHub returned {} creating a check run", response.status());
+    }
+    Ok(response.json::<CheckRunResponse>().await?.id.to_string())
 }
 
 /// Fetch every GitHub App installation page before using the result for cleanup.

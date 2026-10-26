@@ -3,8 +3,8 @@ import {
   BookOpen01Icon,
   ChevronsUpDown,
   Logout03Icon,
+  ComputerIcon,
   Moon02Icon,
-  SmartPhone01Icon,
   Sun03Icon,
 } from '@hugeicons/core-free-icons'
 import { useTheme } from 'next-themes'
@@ -35,13 +35,20 @@ import { useLogout } from '@/hooks/use-auth'
 import { isDemoMode } from '@/lib/demo-mode'
 import type { UserRole } from '@oore/client/models'
 import type { DemoScenario } from '@/demo/state'
+import { ROLE_LABELS } from '@/routes/settings/-user-role-labels'
+import { Row } from '@/components/layout/row'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
-const PERSONA_OPTIONS: ReadonlyArray<{ value: UserRole; label: string }> = [
-  { value: 'owner', label: 'Owner' },
-  { value: 'admin', label: 'Admin' },
-  { value: 'developer', label: 'Developer' },
-  { value: 'qa_viewer', label: 'QA viewer' },
-]
+const PERSONA_OPTIONS: ReadonlyArray<{ value: UserRole; label: string }> = (
+  ['owner', 'admin', 'developer', 'qa_viewer'] as const
+).map((value) => ({ value, label: ROLE_LABELS[value] }))
+
+const THEME_OPTIONS = [
+  { value: 'light', label: 'Light', icon: Sun03Icon },
+  { value: 'dark', label: 'Dark', icon: Moon02Icon },
+  { value: 'system', label: 'System', icon: ComputerIcon },
+] as const
 
 const SCENARIO_OPTIONS: ReadonlyArray<{
   value: DemoScenario
@@ -118,8 +125,8 @@ export default function NavUserMenu({
             </Avatar>
             <div className="grid flex-1 text-left text-sm leading-tight">
               <span className="truncate font-medium">{authUser.email}</span>
-              <span className="truncate text-xs capitalize">
-                {authUser.role.replace('_', ' ')}
+              <span className="truncate text-xs">
+                {ROLE_LABELS[authUser.role] ?? authUser.role}
               </span>
             </div>
             <HugeiconsIcon icon={ChevronsUpDown} className="ml-auto size-4" />
@@ -132,7 +139,7 @@ export default function NavUserMenu({
           >
             <DropdownMenuGroup>
               <DropdownMenuLabel className="p-0 font-normal">
-                <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+                <Row gap={2} className="px-1 py-1.5 text-left text-sm">
                   <Avatar className="size-8 rounded-lg">
                     {authUser.avatar_url ? (
                       <AvatarImage
@@ -148,11 +155,11 @@ export default function NavUserMenu({
                     <span className="truncate font-medium">
                       {authUser.email}
                     </span>
-                    <span className="truncate text-xs capitalize">
-                      {authUser.role.replace('_', ' ')}
+                    <span className="truncate text-xs">
+                      {ROLE_LABELS[authUser.role] ?? authUser.role}
                     </span>
                   </div>
-                </div>
+                </Row>
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
@@ -165,7 +172,12 @@ export default function NavUserMenu({
                       aria-label={`Persona: ${PERSONA_OPTIONS.find(({ value }) => value === authUser.role)?.label ?? authUser.role}`}
                     >
                       Persona
-                      <span className="ml-auto text-xs text-muted-foreground">
+                      <span
+                        className={cn(
+                          textVariants({ variant: 'caption' }),
+                          'ml-auto',
+                        )}
+                      >
                         {PERSONA_OPTIONS.find(
                           ({ value }) => value === authUser.role,
                         )?.label ?? authUser.role}
@@ -190,7 +202,12 @@ export default function NavUserMenu({
                       aria-label={`Scenario: ${currentScenario.label}`}
                     >
                       Scenario
-                      <span className="ml-auto text-xs text-muted-foreground">
+                      <span
+                        className={cn(
+                          textVariants({ variant: 'caption' }),
+                          'ml-auto',
+                        )}
+                      >
                         {currentScenario.label}
                       </span>
                     </DropdownMenuSubTrigger>
@@ -213,30 +230,23 @@ export default function NavUserMenu({
               </>
             ) : null}
             <DropdownMenuGroup>
-              <DropdownMenuLabel className="text-xs text-muted-foreground">
+              <DropdownMenuLabel
+                className={textVariants({ variant: 'caption' })}
+              >
                 Theme
               </DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => setTheme('light')}>
-                <HugeiconsIcon icon={Sun03Icon} size={16} />
-                Light
-                {theme === 'light' ? (
-                  <span className="ml-auto text-xs text-primary">Active</span>
-                ) : null}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setTheme('dark')}>
-                <HugeiconsIcon icon={Moon02Icon} size={16} />
-                Dark
-                {theme === 'dark' ? (
-                  <span className="ml-auto text-xs text-primary">Active</span>
-                ) : null}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setTheme('system')}>
-                <HugeiconsIcon icon={SmartPhone01Icon} size={16} />
-                System
-                {theme === 'system' ? (
-                  <span className="ml-auto text-xs text-primary">Active</span>
-                ) : null}
-              </DropdownMenuItem>
+              <DropdownMenuRadioGroup value={theme ?? 'system'}>
+                {THEME_OPTIONS.map((option) => (
+                  <DropdownMenuRadioItem
+                    key={option.value}
+                    value={option.value}
+                    onClick={() => setTheme(option.value)}
+                  >
+                    <HugeiconsIcon icon={option.icon} size={16} />
+                    {option.label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem

@@ -33,7 +33,8 @@ export function parseRunnersSearch(search: SearchInput): RunnersSearch {
   return {
     q: q || undefined,
     sort,
-    direction: searchString(search, 'direction') === 'asc' ? 'asc' : undefined,
+    direction:
+      searchString(search, 'direction') === 'desc' ? 'desc' : undefined,
     page: Number.isInteger(page) && page > 1 ? page : undefined,
     pageSize: pageSize === 50 || pageSize === 100 ? pageSize : undefined,
   }
@@ -46,8 +47,12 @@ export const Route = createFileRoute('/settings/runners')({
     },
   },
   validateSearch: parseRunnersSearch,
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin', 'developer'])
+    requireInstanceRoleOrRedirect(
+      instance.id,
+      ['owner', 'admin', 'developer'],
+      context,
+    )
   },
 })

@@ -39,9 +39,9 @@ export const Route = createFileRoute('/settings/artifacts')({
       title: 'Artifact storage',
     },
   },
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'], context)
   },
   component: ArtifactStoragePage,
 })
@@ -192,10 +192,7 @@ function ArtifactStoragePage() {
   return (
     <PageLayout width="wide">
       <PageMeta title="Artifact storage" noindex />
-      <PageHeader
-        title="Artifact storage"
-        description="Choose where build artifact files are stored and manage provider credentials."
-      />
+      <PageHeader title="Artifact storage" />
       <ArtifactStorageSettings
         backendKind={backendKind}
         canBrowseLocalFs={canBrowseLocalFs}

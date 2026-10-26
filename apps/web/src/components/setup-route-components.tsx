@@ -1,4 +1,6 @@
 import { useNavigate, useRouter } from '@tanstack/react-router'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Tick02Icon } from '@hugeicons/core-free-icons'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -6,6 +8,11 @@ import { Card, CardContent } from '@/components/ui/card'
 import { getConnectivityIssue, isHostedUiOrigin } from '@/lib/connectivity'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { useInstanceStore } from '@/stores/instance-store'
+import { cn } from '@/lib/utils'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { stepMarkerVariants } from '@/lib/recipes'
+import { FocusedFlowLayout } from '@/components/focused-flow-layout'
 
 function quotePosixShellArgument(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`
@@ -34,12 +41,7 @@ export function SetupStepIndicator({
           {activeLabel}
         </span>
       </div>
-      <ol
-        className="hidden gap-2 text-xs sm:grid"
-        style={{
-          gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))`,
-        }}
-      >
+      <ol className="hidden items-center gap-2 text-xs sm:flex">
         {steps.map((label, index) => {
           const isActive = index === currentStep
           const isCompleted = index < currentStep
@@ -47,19 +49,52 @@ export function SetupStepIndicator({
           return (
             <li
               key={label}
-              className={`truncate text-center ${
-                isActive
-                  ? 'font-medium text-foreground'
-                  : isCompleted
-                    ? 'text-muted-foreground'
-                    : 'text-muted-foreground/70'
-              }`}
+              className="flex min-w-0 flex-1 items-center gap-2 last:flex-none"
               aria-current={isActive ? 'step' : undefined}
             >
-              <span className="sr-only">
-                {isCompleted ? 'Completed: ' : isActive ? 'Current: ' : ''}
+              <span
+                aria-hidden="true"
+                className={cn(
+                  stepMarkerVariants(),
+                  isCompleted
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : isActive
+                      ? 'border-primary text-primary'
+                      : 'border-border text-muted-foreground',
+                )}
+              >
+                {isCompleted ? (
+                  <HugeiconsIcon
+                    icon={Tick02Icon}
+                    strokeWidth={2.5}
+                    className="size-3"
+                  />
+                ) : (
+                  index + 1
+                )}
               </span>
-              {label}
+              <span
+                className={cn(
+                  'truncate',
+                  isActive
+                    ? 'font-medium text-foreground'
+                    : 'text-muted-foreground',
+                )}
+              >
+                <span className="sr-only">
+                  {isCompleted ? 'Completed: ' : isActive ? 'Current: ' : ''}
+                </span>
+                {label}
+              </span>
+              {index < steps.length - 1 ? (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'h-px min-w-3 flex-1',
+                    isCompleted ? 'bg-primary' : 'bg-border',
+                  )}
+                />
+              ) : null}
             </li>
           )
         })}
@@ -70,7 +105,7 @@ export function SetupStepIndicator({
         aria-valuemin={0}
         aria-valuemax={steps.length}
         aria-valuenow={displayedStep}
-        className="h-1 overflow-hidden rounded-full bg-muted"
+        className="h-1 overflow-hidden rounded-full bg-muted sm:sr-only"
       >
         <div
           className="h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none"
@@ -91,7 +126,7 @@ export function SetupStepError({ error }: { error: Error }) {
         <AlertTitle>Something went wrong</AlertTitle>
         <AlertDescription>{error.message}</AlertDescription>
       </Alert>
-      <div className="flex flex-col gap-2 sm:flex-row">
+      <Stack gap={2} className="sm:flex-row">
         <Button onClick={() => void router.invalidate()}>Try again</Button>
         <Button
           variant="outline"
@@ -99,7 +134,7 @@ export function SetupStepError({ error }: { error: Error }) {
         >
           Back to setup
         </Button>
-      </div>
+      </Stack>
     </div>
   )
 }
@@ -127,25 +162,25 @@ export function SetupRouteError({ error }: { error: Error }) {
 
   if (!issue) {
     return (
-      <div className="focused-flow flex min-h-0 flex-1 items-center p-4 sm:p-6">
+      <FocusedFlowLayout align="center">
         <div className="w-full max-w-xl space-y-4">
           <Alert variant="destructive">
             <AlertTitle>Something went wrong</AlertTitle>
             <AlertDescription>{error.message}</AlertDescription>
           </Alert>
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <Stack gap={2} className="sm:flex-row">
             <Button onClick={() => void router.invalidate()}>Retry</Button>
             <Button variant="outline" onClick={goBack}>
               Go back
             </Button>
-          </div>
+          </Stack>
         </div>
-      </div>
+      </FocusedFlowLayout>
     )
   }
 
   return (
-    <div className="focused-flow flex min-h-0 flex-1 items-center p-4 sm:p-6">
+    <FocusedFlowLayout align="center">
       <div className="w-full max-w-xl space-y-4">
         <Alert variant="destructive">
           <AlertTitle>{issue.title}</AlertTitle>
@@ -155,22 +190,20 @@ export function SetupRouteError({ error }: { error: Error }) {
         <Card size="sm">
           <CardContent className="space-y-4">
             <div className="space-y-1">
-              <p className="text-sm font-medium">Use CLI setup</p>
-              <p className="text-sm text-muted-foreground">
-                Complete first-run setup directly on the backend host:
-              </p>
+              <p className="text-sm font-medium">Set up in Terminal</p>
+              <Text variant="muted">Run this on the Mac that hosts Oore:</Text>
               <code className="block rounded-md bg-muted px-2 py-1 text-xs">
                 oore setup
               </code>
             </div>
             <div className="space-y-1">
               <p className="text-sm font-medium">
-                Publish through protected ingress
+                Connect through Cloudflare Access
               </p>
-              <p className="text-sm text-muted-foreground">
+              <Text variant="muted">
                 Use a named tunnel that Cloudflare Access protects. Do not use a
                 public Quick Tunnel for Oore.
-              </p>
+              </Text>
               <code className="block rounded-md bg-muted px-2 py-1 text-xs">
                 cloudflared tunnel run &lt;tunnel-name&gt;
               </code>
@@ -178,20 +211,15 @@ export function SetupRouteError({ error }: { error: Error }) {
                 href="https://docs.oore.build/operate/access/cloudflare-access"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-block text-xs text-primary underline underline-offset-2"
+                className="inline-block text-xs text-foreground underline underline-offset-2"
               >
-                Open the Cloudflare Access guide
+                Cloudflare Access guide
               </a>
             </div>
             {hostedUi ? (
               <div className="space-y-1">
-                <p className="text-sm font-medium">
-                  Use local/self-hosted web UI
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  If backend stays local-only, run the bundled local web
-                  launcher:
-                </p>
+                <p className="text-sm font-medium">Open Oore locally</p>
+                <Text variant="muted">For a local instance, run:</Text>
                 <code className="block rounded-md bg-muted px-2 py-1 text-xs">
                   oore-web --backend-url {backendUrlArgument}
                 </code>
@@ -200,7 +228,7 @@ export function SetupRouteError({ error }: { error: Error }) {
           </CardContent>
         </Card>
 
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <Stack gap={2} className="sm:flex-row">
           <Button onClick={() => void router.invalidate()}>Retry</Button>
           <Button variant="outline" onClick={goBack}>
             Go back
@@ -209,10 +237,10 @@ export function SetupRouteError({ error }: { error: Error }) {
             variant="outline"
             onClick={() => window.open('https://docs.oore.build', '_blank')}
           >
-            Open docs
+            Documentation
           </Button>
-        </div>
+        </Stack>
       </div>
-    </div>
+    </FocusedFlowLayout>
   )
 }

@@ -1,38 +1,42 @@
 ---
 title: 'Team and access'
-description: 'Invite people, assign the access they need, and choose how your team signs in to Oore.'
 status: implemented
+description: 'Let other people sign in, give them the right roles, and send build news to Slack.'
 ---
 
-Invite people to your Oore instance, give them access to the right projects, and control how they sign in.
+Local Only lets one person use Oore from the Mac that runs it. These guides
+open Oore to a team. Do them in this order.
 
-## Add people
+## 1. Let people sign in
 
-Start with an invitation, then assign project access separately:
+[Configure External Access](/team/access) so people can sign in from their
+own devices over HTTPS. Then pick how they sign in:
+
+- [External Access (OIDC)](/team/access/oidc) with Google, Microsoft Entra ID,
+  Okta, Auth0, or Keycloak. Choose this unless you already run an access
+  proxy.
+- [External Access (Trusted Proxy)](/team/access/trusted-proxy) when an
+  existing authentication proxy already checks who people are.
+
+## 2. Add people
 
 1. [Invite a team member](/team/invite) with an instance role.
 2. [Manage roles and project access](/team/roles) for the projects they need.
-3. [Disable or restore a user](/team/disable-users) when their access should change temporarily.
+3. [Disable or restore a user](/team/disable-users) when their access should
+   change.
 
-Instance roles control Oore-wide actions. Project roles control access within one project. Oore checks both on the backend; hiding a control in the web UI is not the authorization boundary.
+Instance roles control actions across Oore. Project roles control access
+inside one project. The backend checks both, so hiding a button in the web UI
+is not what keeps someone out. See [Roles and permissions](/reference/roles)
+for the full matrix.
 
-## Let your team sign in
+## 3. Keep the team informed
 
-**Local Only** is the default for one operator using the backend Mac over loopback. It does not provide ordinary sign-in from another device.
+[Send notifications to Slack](/team/notifications) for failed builds, store
+uploads, rollouts, and approvals.
 
-Configure [External Access](/team/access) when other people or devices need the instance:
+## Next step
 
-- **External Access (OIDC)** is the supported choice for most teams. Your identity provider handles sign-in, and Oore applies its own roles afterward.
-- **External Access (Trusted Proxy)** is an advanced choice when an existing authentication proxy is already the identity boundary.
-
-The hosted client at `ci.oore.build` is a static browser UI. It does not host your backend, proxy API traffic, run builds, or store your Oore data. Your browser must still reach your customer-operated backend over HTTPS.
-
-## Access boundaries
-
-- Invited users activate only when the email supplied by OIDC or Trusted Proxy matches their invitation.
-- Owner and Admin have implicit Maintainer-equivalent access to every project.
-- Developer and QA Viewer need explicit project membership. QA Viewer is always capped at Viewer.
-- Removing project access does not disable the user's Oore account.
-- Disabling a user revokes their Oore sessions and API tokens but does not delete their account or project data.
-
-See [Roles and permissions](/reference/roles) for the complete permission matrix.
+[Configure External Access](/team/access). To understand how sign-in, roles,
+and repository trust fit together, read
+[Oore's security model](/concepts/security).

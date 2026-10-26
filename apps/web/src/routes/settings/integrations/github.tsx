@@ -1,8 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useMemo } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
-  ArrowRight01Icon,
+  Copy01Icon,
   InformationCircleIcon,
   LinkSquare02Icon,
 } from '@hugeicons/core-free-icons'
@@ -17,33 +16,54 @@ import { usePreviewGitHubAppSetup } from '@/hooks/use-authorization-start'
 import { PageMeta } from '@/lib/seo'
 import { useActiveInstance } from '@/stores/instance-store'
 import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
-import {
-  DataTable,
-  useDataTable,
-  type DataTableColumnDef,
-} from '@/components/data-table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemSeparator,
+  ItemTitle,
+} from '@/components/ui/item'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
-import SetupHint from '@/components/setup-hint'
+import {
+  SettingsSection,
+  SettingsSurface,
+} from '@/components/settings/settings-section'
+import { Text } from '@/components/layout/text'
+import { stackVariants, textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
-interface EndpointRow {
-  label: string
-  value: string
+function EndpointRow({ label, value }: { label: string; value: string }) {
+  return (
+    <Item size="sm">
+      <ItemContent>
+        <ItemTitle>{label}</ItemTitle>
+        <ItemDescription className="line-clamp-none font-mono text-xs break-all">
+          {value}
+        </ItemDescription>
+      </ItemContent>
+      <ItemActions>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            void navigator.clipboard
+              .writeText(value)
+              .then(() => toast.success(`${label} copied`))
+          }
+        >
+          <HugeiconsIcon icon={Copy01Icon} />
+          Copy
+        </Button>
+      </ItemActions>
+    </Item>
+  )
 }
-
-const endpointColumns: Array<DataTableColumnDef<EndpointRow>> = [
-  {
-    accessorKey: 'label',
-    header: 'Endpoint',
-  },
-  {
-    accessorKey: 'value',
-    header: 'URL',
-  },
-]
 
 export const Route = createFileRoute('/settings/integrations/github')({
   staticData: {
@@ -51,9 +71,9 @@ export const Route = createFileRoute('/settings/integrations/github')({
       title: 'GitHub',
     },
   },
-  beforeLoad: () => {
+  beforeLoad: (context) => {
     const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'])
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'], context)
   },
   component: GitHubSetupPage,
 })
@@ -68,18 +88,6 @@ function GitHubSetupPage() {
   const backendUrl = resolveInstanceApiBaseUrl(instance) ?? ''
   const webhookUrl = `${backendUrl}/v1/webhooks/github`
   const redirectUrl = `${window.location.origin}/settings/integrations`
-  const endpointRows = useMemo(
-    () => [
-      { label: 'Webhook URL', value: webhookUrl },
-      { label: 'Redirect URL', value: redirectUrl },
-    ],
-    [redirectUrl, webhookUrl],
-  )
-  const endpointTable = useDataTable({
-    columns: endpointColumns,
-    data: endpointRows,
-    getRowId: (row) => row.label,
-  })
 
   function handleConnect() {
     if (!remoteEnabled) return
@@ -97,70 +105,74 @@ function GitHubSetupPage() {
   }
 
   return (
-    <PageLayout width="wide">
+    <PageLayout>
       <PageMeta title="Connect GitHub source" noindex />
-      <PageHeader
-        title="Connect GitHub source"
-        description="Generate and install a GitHub App source for repository access and webhook delivery."
-      />
+      <PageHeader title="Connect GitHub" />
 
-      <section className="grid gap-4 lg:grid-cols-2">
-        <Card size="sm" className="min-w-0">
-          <CardHeader>
-            <CardTitle>Connection flow</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              oore creates a GitHub App manifest, redirects you to GitHub, then
-              returns here after install.
-            </p>
-            <SetupHint
-              title="Generated GitHub App access"
-              items={[
-                'Repository contents, metadata, and pull requests are read-only.',
-                'Statuses and checks are writable so builds can report CI feedback.',
-                'Webhook events are push, pull_request, check_run, and check_suite.',
-              ]}
-            />
-            <Button
-              onClick={handleConnect}
-              disabled={
-                startMutation.isPending || preferencesLoading || !remoteEnabled
-              }
-            >
-              <HugeiconsIcon icon={LinkSquare02Icon} />
-              {preferencesLoading
-                ? 'Checking access...'
-                : !remoteEnabled
-                  ? 'External access required'
-                  : startMutation.isPending
-                    ? 'Starting...'
-                    : 'Create GitHub app'}
-              {!startMutation.isPending ? (
-                <HugeiconsIcon icon={ArrowRight01Icon} />
-              ) : null}
-            </Button>
-          </CardContent>
-        </Card>
+      {!remoteEnabled && !preferencesLoading ? (
+        <Alert>
+          <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+          <AlertDescription>
+            GitHub sources need external access. Turn it on in General settings
+            first.
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
-        <Card size="sm" className="min-w-0">
-          <CardHeader>
-            <CardTitle>Generated endpoints</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <DataTable table={endpointTable} />
-          </CardContent>
-        </Card>
-      </section>
+      <SettingsSection
+        title="GitHub App"
+        hint="Oore creates the app, sends you to GitHub to install it, and brings you back here."
+        actions={
+          <Button
+            onClick={handleConnect}
+            disabled={
+              startMutation.isPending || preferencesLoading || !remoteEnabled
+            }
+          >
+            <HugeiconsIcon icon={LinkSquare02Icon} />
+            {preferencesLoading
+              ? 'Checking access...'
+              : startMutation.isPending
+                ? 'Starting...'
+                : 'Create GitHub app'}
+          </Button>
+        }
+      >
+        <SettingsSurface>
+          <ul
+            className={cn(
+              textVariants({ variant: 'muted' }),
+              stackVariants({ gap: 1.5 }),
+              'list-disc pl-5',
+            )}
+          >
+            <li>
+              Repository contents, metadata, and pull requests are read-only.
+            </li>
+            <li>
+              Statuses and checks are writable so builds can report CI feedback.
+            </li>
+            <li>
+              Webhook events are <code>push</code>, <code>pull_request</code>,{' '}
+              <code>check_run</code>, and <code>check_suite</code>.
+            </li>
+          </ul>
+        </SettingsSurface>
+      </SettingsSection>
 
-      <Alert>
-        <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-        <AlertDescription>
-          {remoteEnabled
-            ? 'After GitHub installation, you will return to Sources with the connection status updated.'
-            : 'GitHub source connections require the backend to be in Remote mode. Update access policy in Preferences to continue.'}
-        </AlertDescription>
-      </Alert>
+      <SettingsSection title="Endpoints">
+        <SettingsSurface inset={false}>
+          <ItemGroup className="gap-0">
+            <EndpointRow label="Webhook URL" value={webhookUrl} />
+            <ItemSeparator className="my-0" />
+            <EndpointRow label="Redirect URL" value={redirectUrl} />
+          </ItemGroup>
+        </SettingsSurface>
+        <Text variant="caption">
+          Filled into the app manifest for you. Copy them only if you register
+          the app by hand.
+        </Text>
+      </SettingsSection>
     </PageLayout>
   )
 }

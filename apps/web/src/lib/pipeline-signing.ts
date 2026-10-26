@@ -1,4 +1,4 @@
-import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import { usesOwnApiKey, type PipelineFormValues } from '@/lib/pipeline-schema'
 import type {
   PipelineAndroidSigningResponse,
   PipelineIosSigningResponse,
@@ -155,6 +155,24 @@ export async function buildAndroidSigningPayload(
   }
 }
 
+/**
+ * Whether saving `payload` makes the daemon discard the stored provisioning
+ * profiles (the distribution changed) while App Store Connect can generate
+ * replacements (API or hybrid mode). The caller then runs a profile sync, so
+ * the next build does not fail on a pipeline with no profiles.
+ */
+export function iosProfilesNeedResync(
+  payload: UpdatePipelineIosSigningRequest,
+  previous?: PipelineIosSigningResponse,
+): boolean {
+  if (!previous || !payload.enabled) return false
+  if (payload.mode !== 'api' && payload.mode !== 'hybrid') return false
+  return (
+    payload.export_method !== undefined &&
+    payload.export_method !== previous.export_method
+  )
+}
+
 export async function buildIosSigningPayload(
   values: PipelineFormValues,
   files: IosSigningFiles,
@@ -167,6 +185,17 @@ export async function buildIosSigningPayload(
   const p12Password = trimToUndefined(values.ios_signing_p12_password)
   const apiKeyId = trimToUndefined(values.ios_signing_api_key_id)
   const apiIssuerId = trimToUndefined(values.ios_signing_api_issuer_id)
+  const usesApi =
+    values.ios_signing_mode === 'api' || values.ios_signing_mode === 'hybrid'
+  const apiKeySource = values.ios_signing_api_key_source || undefined
+  const ownApiKey = usesOwnApiKey(apiKeySource)
+  // Only API and hybrid mode use the key, so manual mode keeps the stored choice.
+  const sharedApiKeyId =
+    usesApi && apiKeySource
+      ? apiKeySource === 'own'
+        ? ''
+        : apiKeySource
+      : undefined
   const hasFiles =
     !!files.p12File ||
     !!files.apiKeyFile ||
@@ -174,13 +203,17 @@ export async function buildIosSigningPayload(
   const changed = previous
     ? values.ios_signing_enabled !== previous.enabled ||
       values.ios_signing_mode !== previous.mode ||
+      values.ios_signing_export_method !== previous.export_method ||
       bundleIds.join(',') !== previous.bundle_ids.join(',') ||
       teamId !== trimToUndefined(previous.team_id) ||
       apiKeyId !== trimToUndefined(previous.api_key_id) ||
       apiIssuerId !== trimToUndefined(previous.api_issuer_id) ||
+      (sharedApiKeyId !== undefined &&
+        sharedApiKeyId !== (previous.shared_api_key?.id ?? '')) ||
       !!p12Password ||
       hasFiles
     : values.ios_signing_enabled ||
+      values.ios_signing_export_method !== 'ad_hoc' ||
       bundleIds.length > 0 ||
       !!teamId ||
       !!p12Password ||
@@ -208,10 +241,15 @@ export async function buildIosSigningPayload(
     if (!p12Password && !previous?.has_p12_password) {
       errors.push('Manual/Hybrid iOS signing requires p12 password')
     }
+    // The daemon discards stored profiles when the export method changes.
+    const keepsStoredProfiles =
+      values.ios_signing_export_method === previous?.export_method
     for (const bundleId of bundleIds) {
-      const hasStoredProfile = previous?.provisioning_profiles.some(
-        (profile) => profile.bundle_id === bundleId && profile.has_profile,
-      )
+      const hasStoredProfile =
+        keepsStoredProfiles &&
+        previous?.provisioning_profiles.some(
+          (profile) => profile.bundle_id === bundleId && profile.has_profile,
+        )
       if (!files.profileFiles[bundleId] && !hasStoredProfile) {
         errors.push(
           `Manual/Hybrid iOS signing requires provisioning profile for ${bundleId}`,
@@ -220,9 +258,7 @@ export async function buildIosSigningPayload(
     }
   }
 
-  const needsApi =
-    values.ios_signing_enabled &&
-    (values.ios_signing_mode === 'api' || values.ios_signing_mode === 'hybrid')
+  const needsApi = values.ios_signing_enabled && usesApi && ownApiKey
   if (needsApi) {
     if (!apiKeyId && !previous?.api_key_id) {
       errors.push('API/Hybrid iOS signing requires API key ID')
@@ -251,7 +287,7 @@ export async function buildIosSigningPayload(
           : []
       }),
     ),
-    files.apiKeyFile ? files.apiKeyFile.text() : undefined,
+    files.apiKeyFile && ownApiKey ? files.apiKeyFile.text() : undefined,
     files.p12File ? fileToBase64(files.p12File) : undefined,
   ])
 
@@ -260,6 +296,7 @@ export async function buildIosSigningPayload(
     payload: {
       enabled: values.ios_signing_enabled,
       mode: values.ios_signing_mode,
+      export_method: values.ios_signing_export_method,
       team_id: teamId,
       bundle_ids: bundleIds,
       certificate:
@@ -271,8 +308,9 @@ export async function buildIosSigningPayload(
             }
           : undefined,
       provisioning_profiles: provisioningProfiles,
+      shared_api_key_id: sharedApiKeyId,
       api_credentials:
-        apiKeyId || apiIssuerId || apiPrivateKey
+        ownApiKey && (apiKeyId || apiIssuerId || apiPrivateKey)
           ? {
               key_id: apiKeyId ?? previous?.api_key_id,
               issuer_id: apiIssuerId ?? previous?.api_issuer_id,

@@ -11,17 +11,19 @@ import type { SearchInput } from '@/lib/search-input'
 
 interface BuildDetailSearch {
   install?: string
+  release?: string
+  tab?: string
 }
 
 export const Route = createFileRoute('/builds/$buildId')({
   staticData: {
     breadcrumb: {
-      title: 'Details',
+      title: 'Build',
     },
   },
-  beforeLoad: ({ search }) => {
+  beforeLoad: ({ search, ...context }) => {
     const instance = getActiveInstanceOrRedirect()
-    requireAuthOrRedirect(instance.id)
+    requireAuthOrRedirect(instance.id, context)
     const isQaViewer = useAuthStore.getState().user?.role === 'qa_viewer'
     if (search.install || isQaViewer) {
       void import('@/components/build-details/artifact-install-page')
@@ -31,6 +33,8 @@ export const Route = createFileRoute('/builds/$buildId')({
   },
   validateSearch: (search: SearchInput): BuildDetailSearch => ({
     install: searchString(search, 'install'),
+    release: searchString(search, 'release'),
+    tab: searchString(search, 'tab'),
   }),
   component: BuildDetailRoute,
 })

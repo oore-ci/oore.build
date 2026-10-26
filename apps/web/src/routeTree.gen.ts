@@ -20,6 +20,7 @@ import { Route as BuildsIndexRouteImport } from './routes/builds/index'
 import { Route as BuildsBuildIdRouteImport } from './routes/builds/$buildId'
 import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
 import { Route as ProjectsProjectIdRouteRouteImport } from './routes/projects/$projectId/route'
+import { Route as ReleasesReleaseIdRouteImport } from './routes/releases/$releaseId'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as SettingsApiTokensRouteImport } from './routes/settings/api-tokens'
 import { Route as SettingsArtifactsRouteImport } from './routes/settings/artifacts'
@@ -29,6 +30,8 @@ import { Route as SettingsNotificationsRouteRouteImport } from './routes/setting
 import { Route as SettingsPreferencesRouteImport } from './routes/settings/preferences'
 import { Route as SettingsRetentionRouteImport } from './routes/settings/retention'
 import { Route as SettingsRunnersRouteImport } from './routes/settings/runners'
+import { Route as SettingsSecretsRouteImport } from './routes/settings/secrets'
+import { Route as SettingsStoreCredentialsRouteImport } from './routes/settings/store-credentials'
 import { Route as SettingsUsersRouteImport } from './routes/settings/users'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as SetupCompleteRouteImport } from './routes/setup/complete'
@@ -105,6 +108,11 @@ const ProjectsProjectIdRouteRoute = ProjectsProjectIdRouteRouteImport.update({
   path: '/$projectId',
   getParentRoute: () => ProjectsRouteRoute,
 } as any)
+const ReleasesReleaseIdRoute = ReleasesReleaseIdRouteImport.update({
+  id: '/releases/$releaseId',
+  path: '/releases/$releaseId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -160,6 +168,21 @@ const SettingsRunnersRoute = SettingsRunnersRouteImport.update({
 } as any).lazy(() =>
   import('./routes/settings/runners.lazy').then((d) => d.Route),
 )
+const SettingsSecretsRoute = SettingsSecretsRouteImport.update({
+  id: '/secrets',
+  path: '/secrets',
+  getParentRoute: () => SettingsRouteRoute,
+} as any).lazy(() =>
+  import('./routes/settings/secrets.lazy').then((d) => d.Route),
+)
+const SettingsStoreCredentialsRoute =
+  SettingsStoreCredentialsRouteImport.update({
+    id: '/store-credentials',
+    path: '/store-credentials',
+    getParentRoute: () => SettingsRouteRoute,
+  } as any).lazy(() =>
+    import('./routes/settings/store-credentials.lazy').then((d) => d.Route),
+  )
 const SettingsUsersRoute = SettingsUsersRouteImport.update({
   id: '/users',
   path: '/users',
@@ -293,12 +316,15 @@ export interface FileRoutesByFullPath {
   '/settings/notifications': typeof SettingsNotificationsRouteRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/releases/$releaseId': typeof ReleasesReleaseIdRoute
   '/settings/api-tokens': typeof SettingsApiTokensRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
+  '/settings/secrets': typeof SettingsSecretsRoute
+  '/settings/store-credentials': typeof SettingsStoreCredentialsRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -328,12 +354,15 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/releases/$releaseId': typeof ReleasesReleaseIdRoute
   '/settings/api-tokens': typeof SettingsApiTokensRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
+  '/settings/secrets': typeof SettingsSecretsRoute
+  '/settings/store-credentials': typeof SettingsStoreCredentialsRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -370,12 +399,15 @@ export interface FileRoutesById {
   '/settings/notifications': typeof SettingsNotificationsRouteRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
+  '/releases/$releaseId': typeof ReleasesReleaseIdRoute
   '/settings/api-tokens': typeof SettingsApiTokensRoute
   '/settings/artifacts': typeof SettingsArtifactsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/preferences': typeof SettingsPreferencesRoute
   '/settings/retention': typeof SettingsRetentionRoute
   '/settings/runners': typeof SettingsRunnersRoute
+  '/settings/secrets': typeof SettingsSecretsRoute
+  '/settings/store-credentials': typeof SettingsStoreCredentialsRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -414,12 +446,15 @@ export interface FileRouteTypes {
     | '/settings/notifications'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/releases/$releaseId'
     | '/settings/api-tokens'
     | '/settings/artifacts'
     | '/settings/audit-log'
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
+    | '/settings/secrets'
+    | '/settings/store-credentials'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -449,12 +484,15 @@ export interface FileRouteTypes {
     | '/login'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/releases/$releaseId'
     | '/settings/api-tokens'
     | '/settings/artifacts'
     | '/settings/audit-log'
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
+    | '/settings/secrets'
+    | '/settings/store-credentials'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -490,12 +528,15 @@ export interface FileRouteTypes {
     | '/settings/notifications'
     | '/auth/callback'
     | '/builds/$buildId'
+    | '/releases/$releaseId'
     | '/settings/api-tokens'
     | '/settings/artifacts'
     | '/settings/audit-log'
     | '/settings/preferences'
     | '/settings/retention'
     | '/settings/runners'
+    | '/settings/secrets'
+    | '/settings/store-credentials'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -529,6 +570,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRouteWithChildren
   AuthCallbackRoute: typeof AuthCallbackRoute
+  ReleasesReleaseIdRoute: typeof ReleasesReleaseIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -610,6 +652,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdRouteRouteImport
       parentRoute: typeof ProjectsRouteRoute
     }
+    '/releases/$releaseId': {
+      id: '/releases/$releaseId'
+      path: '/releases/$releaseId'
+      fullPath: '/releases/$releaseId'
+      preLoaderRoute: typeof ReleasesReleaseIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings/': {
       id: '/settings/'
       path: '/'
@@ -671,6 +720,20 @@ declare module '@tanstack/react-router' {
       path: '/runners'
       fullPath: '/settings/runners'
       preLoaderRoute: typeof SettingsRunnersRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/secrets': {
+      id: '/settings/secrets'
+      path: '/secrets'
+      fullPath: '/settings/secrets'
+      preLoaderRoute: typeof SettingsSecretsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/store-credentials': {
+      id: '/settings/store-credentials'
+      path: '/store-credentials'
+      fullPath: '/settings/store-credentials'
+      preLoaderRoute: typeof SettingsStoreCredentialsRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/users': {
@@ -931,6 +994,8 @@ interface SettingsRouteRouteChildren {
   SettingsPreferencesRoute: typeof SettingsPreferencesRoute
   SettingsRetentionRoute: typeof SettingsRetentionRoute
   SettingsRunnersRoute: typeof SettingsRunnersRoute
+  SettingsSecretsRoute: typeof SettingsSecretsRoute
+  SettingsStoreCredentialsRoute: typeof SettingsStoreCredentialsRoute
   SettingsUsersRoute: typeof SettingsUsersRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
 }
@@ -944,6 +1009,8 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsPreferencesRoute: SettingsPreferencesRoute,
   SettingsRetentionRoute: SettingsRetentionRoute,
   SettingsRunnersRoute: SettingsRunnersRoute,
+  SettingsSecretsRoute: SettingsSecretsRoute,
+  SettingsStoreCredentialsRoute: SettingsStoreCredentialsRoute,
   SettingsUsersRoute: SettingsUsersRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 }
@@ -980,6 +1047,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   SetupRoute: SetupRouteWithChildren,
   AuthCallbackRoute: AuthCallbackRoute,
+  ReleasesReleaseIdRoute: ReleasesReleaseIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

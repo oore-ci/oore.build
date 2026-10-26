@@ -15,6 +15,9 @@ serde_yaml.workspace = true
 sha2.workspace = true
 utoipa.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [[bin]]
 name = "openapi-export"
 path = "src/bin/openapi_export.rs"

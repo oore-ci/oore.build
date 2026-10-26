@@ -54,6 +54,9 @@ export const BUILD_IDS = {
   succeeded4: 'build-demo-011',
   succeeded5: 'build-demo-012',
   succeeded6: 'build-demo-013',
+  awaitingApproval1: 'build-demo-014',
+  failedPublish1: 'build-demo-015',
+  succeeded7: 'build-demo-016',
 } as const
 
 // ── Runner IDs ────────────────────────────────────────────────────
@@ -73,6 +76,7 @@ export const NOTIFICATION_CHANNEL_IDS = {
   webhook: 'notif-demo-001',
   mattermost: 'notif-demo-002',
   email: 'notif-demo-003',
+  slack: 'notif-demo-004',
 } as const
 
 // ── User IDs ──────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ use oore_contract::{
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::AppState;
@@ -28,7 +28,7 @@ use crate::util::{api_err, now_unix};
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
 /// Upload URL TTL: 30 minutes for uploads.
-const UPLOAD_URL_TTL_SECS: u64 = 30 * 60;
+pub(crate) const UPLOAD_URL_TTL_SECS: u64 = 30 * 60;
 
 /// Download URL TTL: 15 minutes for downloads.
 const DOWNLOAD_URL_TTL_SECS: u64 = 15 * 60;
@@ -37,7 +37,7 @@ const DOWNLOAD_URL_TTL_SECS: u64 = 15 * 60;
 pub const MAX_LOCAL_UPLOAD_BYTES: usize = 512 * 1024 * 1024;
 
 /// Valid artifact types.
-const VALID_ARTIFACT_TYPES: &[&str] = &["apk", "ipa", "app", "generic"];
+const VALID_ARTIFACT_TYPES: &[&str] = &["apk", "ipa", "app", "aab", "generic"];
 
 /// Keep artifact batches aligned with the maximum build-list page used by the UI.
 const MAX_ARTIFACT_BUILD_IDS: usize = 200;
@@ -77,7 +77,7 @@ fn row_to_artifact(row: &sqlx::sqlite::SqliteRow) -> Artifact {
     }
 }
 
-async fn require_project_artifact_read(
+pub(crate) async fn require_project_artifact_read(
     pool: &sqlx::SqlitePool,
     auth: &AuthUser,
     project_id: &str,
@@ -364,11 +364,17 @@ async fn finish_artifact(
         )
     })?;
     if result.rows_affected() == 0 {
+        if available {
+            remove_abandoned_upload(&state, &job_id, &artifact_id).await;
+        }
         return Err(api_err(
             StatusCode::CONFLICT,
             "artifact_not_pending",
             "Artifact is not pending or does not belong to this runner job",
         ));
+    }
+    if available {
+        crate::artifact_sizes::record_artifact_size(&pool, &artifact_id).await;
     }
     let row = sqlx::query("SELECT * FROM artifacts WHERE id = ?1")
         .bind(&artifact_id)
@@ -385,6 +391,33 @@ async fn finish_artifact(
     Ok(Json(CompleteArtifactResponse {
         artifact: row_to_artifact(&row),
     }))
+}
+
+/// An upload that finished after the stale-upload sweep gave up on it left a
+/// file no row will ever point to. Delete it.
+async fn remove_abandoned_upload(state: &AppState, job_id: &str, artifact_id: &str) {
+    let file_path: Option<String> = match sqlx::query_scalar(
+        "SELECT file_path FROM artifacts WHERE id = ?1 AND build_id = ?2 \
+         AND state = 'failed' AND error_message = 'upload reservation expired'",
+    )
+    .bind(artifact_id)
+    .bind(job_id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(file_path) => file_path,
+        Err(error) => {
+            warn!(%artifact_id, %error, "failed to look up an abandoned upload");
+            return;
+        }
+    };
+    let Some(file_path) = file_path else {
+        return;
+    };
+    let storage = state.storage.read().await.clone();
+    if let Err(error) = storage.delete_object(&file_path).await {
+        warn!(%artifact_id, %file_path, %error, "failed to delete an abandoned upload");
+    }
 }
 
 pub async fn complete_artifact(
@@ -764,4 +797,101 @@ pub async fn download_local_artifact(
             .insert(header::CONTENT_DISPOSITION, value);
     }
     Ok(response)
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use sqlx::SqlitePool;
+
+    async fn count(pool: &SqlitePool, sql: &'static str) -> i64 {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn allowing_app_bundles_keeps_artifacts_and_their_references() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let migrator = sqlx::migrate!("./migrations");
+        // Everything before 068_aab_artifact_type.sql.
+        migrator.run_to(67, &pool).await.unwrap();
+        for statement in [
+            "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+             VALUES ('u1', 'lead@example.com', 'sub', 'owner', 0, 0)",
+            "INSERT INTO projects (id, name, created_by, created_at, updated_at) \
+             VALUES ('p1', 'App', 'u1', 0, 0)",
+            "INSERT INTO pipelines (id, project_id, name, created_at, updated_at) \
+             VALUES ('pl1', 'p1', 'release', 0, 0)",
+            "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, \
+             queued_at, created_at, updated_at) \
+             VALUES ('b1', 'p1', 'pl1', 1, 'succeeded', 'manual', 0, 0, 0)",
+            "INSERT INTO artifacts (id, build_id, name, artifact_type, file_path, checksum, created_at, state) \
+             VALUES ('a1', 'b1', 'app-release.aab', 'generic', 'k1', 'c1', 0, 'available')",
+            "INSERT INTO artifact_download_tokens (id, artifact_id, token_hash, prefix, created_by, expires_at, created_at) \
+             VALUES ('t1', 'a1', 'h', 'p', 'u1', 9999999999, 0)",
+            "INSERT INTO releases (id, project_id, build_id, artifact_id, store, track, state, created_at, updated_at) \
+             VALUES ('r1', 'p1', 'b1', 'a1', 'google_play', 'internal', 'complete', 0, 0)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+
+        migrator.run(&pool).await.unwrap();
+
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT COUNT(*) FROM artifact_download_tokens WHERE artifact_id = 'a1'"
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT COUNT(*) FROM releases WHERE artifact_id = 'a1'"
+            )
+            .await,
+            1
+        );
+        assert_eq!(count(&pool, "PRAGMA foreign_keys").await, 1);
+        assert!(
+            sqlx::query("PRAGMA foreign_key_check")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(integrity, "ok");
+        sqlx::query(
+            "INSERT INTO artifacts (id, build_id, name, artifact_type, file_path, created_at) \
+             VALUES ('a2', 'b1', 'app-release-2.aab', 'aab', 'k2', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            sqlx::query(
+                "INSERT INTO artifacts (id, build_id, name, artifact_type, file_path, created_at) \
+                 VALUES ('a3', 'b1', 'x', 'zip', 'k3', 0)",
+            )
+            .execute(&pool)
+            .await
+            .is_err()
+        );
+        // Deleting still cascades, so foreign keys point at the new table.
+        sqlx::query("DELETE FROM artifacts WHERE id = 'a1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM artifact_download_tokens").await,
+            0
+        );
+    }
 }

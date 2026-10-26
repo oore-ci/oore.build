@@ -1,0 +1,121 @@
+---
+title: 'Deliver to TestFlight and the App Store'
+status: implemented
+description: 'Upload every signed iOS build to a TestFlight group, then send a tested build to the App Store.'
+---
+
+On this page you turn on uploads to App Store Connect, so every build of the
+`iOS` pipeline reaches your testers through TestFlight. Then you send a build
+to the App Store.
+
+The runner uploads from your Mac over outbound HTTPS, so this works in Local
+Only. Nothing needs to reach your Mac from the internet.
+
+## What you need
+
+- The signed `iOS` pipeline from
+  [Sign the iOS build for TestFlight](/start/ios/signing).
+- Testers who are users of your App Store Connect team, for an internal
+  TestFlight group.
+- The TestFlight app on each tester's iPhone.
+
+## 1. Create a TestFlight group
+
+1. In App Store Connect, open your app and its **TestFlight** tab.
+2. Under **Internal Testing**, create a group, such as `Internal QA`.
+3. Add your testers to the group.
+
+## 2. Turn on uploads
+
+1. In Oore, open the `iOS` pipeline and its **Publishing** tab.
+2. Under **App Store Connect**, check the readiness list. **App Store
+   distribution** and **App Store Connect API key** both show as ready.
+3. Turn on **Upload to App Store Connect after each successful build**.
+4. For **Destination**, choose **TestFlight**.
+5. In **TestFlight groups**, enter `Internal QA`.
+6. Optional: under **Release notes**, enter what testers should check in
+   **What to Test**.
+7. Under **Export compliance**, leave **Uses non-exempt encryption** off if
+   the app uses only encryption built into iOS, such as HTTPS.
+8. Select **Turn on App Store publishing**.
+
+## 3. Run a build
+
+Select **Run build**, keep the `iOS` pipeline and branch, and select
+**Run build** again.
+
+After the build, sign, and artifact steps, the runner adds a
+`publish-app-store` step. It uploads the IPA to App Store Connect. Oore then
+waits while Apple processes the build, answers the export compliance question,
+and adds the build to `Internal QA`.
+
+## Check the result
+
+- The build ends as **Succeeded**, with a succeeded `publish-app-store` step.
+- On the build page, the **Release** tab first shows **Processing**. When
+  Apple finishes, it shows **Complete**, because internal groups need no
+  review.
+- App Store Connect lists the build under **TestFlight** in `Internal QA`.
+- Testers see the new build in the TestFlight app and can install it.
+
+Apple's processing usually takes several minutes, and sometimes longer.
+
+## 4. Send a build to the App Store
+
+When testers are happy with a build, send that same build to the App Store.
+First, fill in the app's App Store listing in App Store Connect, such as
+screenshots, description, and privacy details. Apple rejects a submission
+without them.
+
+Then choose one way:
+
+- **Promote the tested build.** Add environments to the project and promote
+  the TestFlight build into the App Store, with an approval if you want one.
+  Nothing is rebuilt. See
+  [Promote builds between environments](/build/distribute/environments).
+- **Upload straight to the App Store.** On the **Publishing** tab, change
+  **Destination** to **App Store** and turn on **Submit for review**. Turn on
+  **Phased release** to release over seven days. The next build is attached
+  to the App Store version and submitted.
+
+The release shows **In review** while Apple reviews it. Once the version is
+live, a phased release shows **Rolling out** until it is **Complete**.
+
+## Troubleshooting
+
+**The release fails with "has no app with bundle ID"**
+
+Create the app in App Store Connect with the same bundle ID, then run a new
+build.
+
+**The upload fails with a bundle version error**
+
+Each upload needs a higher build number. Check that **iOS build args**
+contains `--build-number=$OORE_VERSION_CODE`. If the app had builds before
+Oore, set **Build number offset** above the highest one.
+
+**`publish-app-store` fails after you fixed the cause**
+
+Select **Retry App Store upload** on the failed build. Oore uploads the
+stored IPA again without rebuilding or signing again. See
+[Retry a store upload](/build/run/retry-step).
+
+**Testers need to install builds straight from Oore instead**
+
+That needs an **Ad hoc** distribution, registered devices, and an HTTPS
+address that the iPhone can reach, which Local Only does not provide. See
+[Register an iOS test device](/build/distribute/ios-devices) and
+[Install an iOS build](/build/distribute/install/ios).
+
+## Next step
+
+Your iOS app now reaches testers on every build. From here:
+
+- [Build on every push](/build/sources/github): turn on External Access, then
+  connect GitHub or GitLab.
+- [Move the pipeline into `.oore.yaml`](/build/pipelines/oore-yaml) so it is
+  reviewed with your code.
+- [Let your team sign in](/team/access) from their own devices.
+
+For every App Store Connect setting, see
+[Publish to TestFlight and the App Store](/build/distribute/app-store).

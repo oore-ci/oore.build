@@ -1,14 +1,12 @@
+import type { IosSigningFiles } from '@/lib/pipeline-signing'
 import { useState } from 'react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { toast } from '@/lib/toast'
 
-import type {
-  ConcurrencyPolicy,
-  RegisteredIosDevice,
-  TriggerConfig,
-  UpdatePipelineRequest,
-} from '@oore/client/models'
+import type { RegisteredIosDevice } from '@oore/client/models'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
+import { canChangeApprovalPolicy } from '@/hooks/use-permissions'
+import { useAuthStore } from '@/stores/auth-store'
 import { searchString } from '@/lib/search-input'
 import type { SearchInput } from '@/lib/search-input'
 import {
@@ -18,26 +16,36 @@ import {
 import { requireProjectPermissionOrRedirect } from '@/lib/project-route-guard'
 import {
   usePipeline,
+  usePipelines,
   usePipelineAndroidSigning,
   usePipelineIosDevices,
   usePipelineIosSigning,
   useRegisterPipelineIosDevice,
+  useRepositoryWorkflows,
   useSyncPipelineIosSigning,
   useUpdatePipeline,
   useUpdatePipelineAndroidSigning,
   useUpdatePipelineIosSigning,
 } from '@/hooks/use-pipelines'
+import {
+  usePipelineAppStorePublish,
+  usePipelineGooglePlayPublish,
+} from '@/hooks/use-pipeline-publish'
 import { useProject } from '@/hooks/use-projects'
 import {
-  executionConfigFromForm,
+  buildNumberOffsetField,
+  runsOnField,
   hasCustomFallback,
-  parseCsv,
+  pipelineRepositoryFile,
+  pipelineUpdateFromForm,
   selectedPlatforms,
+  sizeBudgetFormFields,
   toMultiline,
 } from '@/lib/pipeline-form-utils'
 import {
   buildAndroidSigningPayload,
   buildIosSigningPayload,
+  iosProfilesNeedResync,
 } from '@/lib/pipeline-signing'
 import { PageMeta } from '@/lib/seo'
 import {
@@ -46,13 +54,15 @@ import {
   type DataTableColumnDef,
 } from '@/components/data-table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { CollectionError } from '@/components/collection'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import { Skeleton } from '@/components/ui/skeleton'
 import PipelineForm from '@/components/pipeline-form'
+import { PipelineFormSection } from '@/components/pipeline-form-section'
+import { Text } from '@/components/layout/text'
 
 const iosDeviceColumns: Array<DataTableColumnDef<RegisteredIosDevice>> = [
   { accessorKey: 'name', header: 'Name', enableSorting: false },
@@ -63,6 +73,10 @@ const iosDeviceColumns: Array<DataTableColumnDef<RegisteredIosDevice>> = [
   },
   { accessorKey: 'status', header: 'Status', enableSorting: false },
 ]
+
+function describeProfileSync(updatedProfiles: number) {
+  return `${updatedProfiles} provisioning profile${updatedProfiles === 1 ? '' : 's'} synced from App Store Connect`
+}
 
 function IosDeviceTable({ devices }: { devices: Array<RegisteredIosDevice> }) {
   const table = useDataTable({
@@ -91,13 +105,13 @@ export const Route = createFileRoute(
 )({
   staticData: {
     breadcrumb: {
-      title: 'Edit Pipeline',
+      title: 'Edit',
     },
   },
   validateSearch: parseEditPipelineSearch,
-  beforeLoad: async ({ params }) => {
+  beforeLoad: async ({ params, ...context }) => {
     const instance = getActiveInstanceOrRedirect()
-    const token = requireAuthOrRedirect(instance.id)
+    const token = requireAuthOrRedirect(instance.id, context)
     await requireProjectPermissionOrRedirect({
       action: 'write',
       instance,
@@ -116,10 +130,31 @@ function EditPipelinePage() {
   const { data: projectData } = useProject(projectId)
   const manualOnlyTriggers =
     projectData?.project.repository_provider === 'local_git'
+  const instanceRole = useAuthStore((state) => state.user?.role)
+  const canChangeApproval = canChangeApprovalPolicy(
+    instanceRole,
+    projectData?.project.current_user_role,
+  )
   const { data, isLoading, error } = usePipeline(pipelineId)
+  // The other pipelines that would read a committed repository file too.
+  const projectPipelinesQuery = usePipelines(projectId, { limit: 200 })
+  const otherPipelines = (projectPipelinesQuery.data?.pipelines ?? []).filter(
+    (pipeline) => pipeline.id !== pipelineId,
+  )
+  // The Workflow selector needs the file's workflows; without them (no
+  // file, or the source is unreachable) it stays hidden.
+  const repositoryFilesQuery = useRepositoryWorkflows(
+    projectId,
+    data?.pipeline.config_path_explicit
+      ? { path: data.pipeline.config_path }
+      : undefined,
+    { enabled: !!data && !!projectData?.project.repository_id },
+  )
   const signingQuery = usePipelineAndroidSigning(pipelineId)
   const iosSigningQuery = usePipelineIosSigning(pipelineId)
   const iosDevicesQuery = usePipelineIosDevices(pipelineId)
+  const appStorePublishQuery = usePipelineAppStorePublish(pipelineId)
+  const googlePlayPublishQuery = usePipelineGooglePlayPublish(pipelineId)
   const updateMutation = useUpdatePipeline()
   const updateSigningMutation = useUpdatePipelineAndroidSigning()
   const updateIosSigningMutation = useUpdatePipelineIosSigning()
@@ -143,6 +178,26 @@ function EditPipelinePage() {
     )
   }
 
+  // Saving builds the signing payload from these, so editing on top of a
+  // failed read would turn stored signing off.
+  const signingLoadError = signingQuery.error ?? iosSigningQuery.error
+  if (data && signingLoadError) {
+    return (
+      <PageLayout width="wide">
+        <PageMeta title={label} noindex />
+        <PageHeader title={label} />
+        <CollectionError
+          title="Could not load signing settings"
+          description={`Editing waits for them so saving can't turn signing off. ${signingLoadError.message}`}
+          onRetry={() => {
+            if (signingQuery.isError) void signingQuery.refetch()
+            if (iosSigningQuery.isError) void iosSigningQuery.refetch()
+          }}
+        />
+      </PageLayout>
+    )
+  }
+
   if (error || !data) {
     return (
       <PageLayout width="wide">
@@ -161,10 +216,19 @@ function EditPipelinePage() {
   const platformSet = new Set(pipeline.execution_config.platforms)
   const custom = hasCustomFallback(pipeline)
 
+  const repositoryFile = pipelineRepositoryFile(
+    repositoryFilesQuery.data?.workflows ?? [],
+    pipeline,
+  )
+  const workflowSource = repositoryFile
+    ? { path: repositoryFile.path, workflows: repositoryFile.workflows }
+    : undefined
+
   const formInitialValues: PipelineFormValues = {
     name: pipeline.name,
     config_mode: pipeline.config_path_explicit ? 'explicit' : 'auto',
     config_path: pipeline.config_path,
+    workflow: pipeline.workflow ?? '',
     platform_android: platformSet.has('android'),
     platform_ios: platformSet.has('ios'),
     platform_macos: platformSet.has('macos'),
@@ -180,12 +244,18 @@ function EditPipelinePage() {
     android_signing_debug_key_password: '',
     ios_signing_enabled: iosSigningQuery.data?.enabled ?? false,
     ios_signing_mode: iosSigningQuery.data?.mode ?? 'manual',
+    ios_signing_export_method: iosSigningQuery.data?.export_method ?? 'ad_hoc',
     ios_signing_team_id: iosSigningQuery.data?.team_id ?? '',
     ios_signing_bundle_ids: (iosSigningQuery.data?.bundle_ids ?? []).join('\n'),
     ios_signing_p12_password: '',
     ios_signing_api_key_id: iosSigningQuery.data?.api_key_id ?? '',
     ios_signing_api_issuer_id: iosSigningQuery.data?.api_issuer_id ?? '',
+    ios_signing_api_key_source:
+      iosSigningQuery.data?.shared_api_key?.id ??
+      (iosSigningQuery.data?.has_api_key ? 'own' : ''),
     flutter_version: pipeline.execution_config.flutter_version ?? '',
+    build_number_offset: buildNumberOffsetField(pipeline.execution_config),
+    runs_on: runsOnField(pipeline.execution_config),
     enable_customization: custom,
     pre_build_commands: toMultiline(
       pipeline.execution_config.commands.pre_build,
@@ -215,7 +285,22 @@ function EditPipelinePage() {
       ),
     ),
     artifact_patterns: toMultiline(pipeline.execution_config.artifact_patterns),
+    isolation: pipeline.execution_config.isolation ?? 'host',
+    timeout_minutes: String(pipeline.timeout_minutes),
     trigger_events: manualOnlyTriggers ? [] : pipeline.trigger_config.events,
+    tags: manualOnlyTriggers
+      ? ''
+      : (pipeline.trigger_config.tags ?? []).join(', '),
+    paths: manualOnlyTriggers
+      ? ''
+      : toMultiline(pipeline.trigger_config.paths ?? []),
+    paths_ignore: manualOnlyTriggers
+      ? ''
+      : toMultiline(pipeline.trigger_config.paths_ignore ?? []),
+    schedules: (pipeline.trigger_config.schedules ?? []).map((schedule) => ({
+      cron: schedule.cron,
+      branch: schedule.branch ?? '',
+    })),
     cancel_previous: pipeline.concurrency.cancel_previous,
     branches: manualOnlyTriggers
       ? ''
@@ -223,49 +308,25 @@ function EditPipelinePage() {
     max_concurrent: pipeline.concurrency.max_concurrent
       ? String(pipeline.concurrency.max_concurrent)
       : undefined,
+    approval_required: pipeline.approval.required,
+    approval_events: pipeline.approval.events ?? [],
+    ...sizeBudgetFormFields(pipeline.size_budget),
   }
 
   async function handleSubmit(
     values: PipelineFormValues,
     releaseKeystoreFile: File | null,
     debugKeystoreFile: File | null,
-    iosSigningFiles: {
-      p12File: File | null
-      apiKeyFile: File | null
-      profileFiles: Record<string, File | null>
-    },
+    iosSigningFiles: IosSigningFiles,
   ) {
-    const platforms = selectedPlatforms(values)
-    if (platforms.length === 0) {
+    if (selectedPlatforms(values).length === 0) {
       setValidationErrors(['Pick at least one platform to build'])
       return
     }
-
-    const trigger_config: TriggerConfig = manualOnlyTriggers
-      ? { events: [], branches: [] }
-      : {
-          events: values.trigger_events,
-          branches: parseCsv(values.branches),
-        }
-
-    const concurrency: ConcurrencyPolicy = {
-      cancel_previous: values.cancel_previous,
-      max_concurrent: values.max_concurrent
-        ? Number(values.max_concurrent)
-        : undefined,
-    }
-
-    const payload: UpdatePipelineRequest = {
-      name: values.name.trim(),
-      config_path:
-        values.config_mode === 'explicit'
-          ? values.config_path?.trim()
-          : '.oore.yaml',
-      config_path_explicit: values.config_mode === 'explicit',
-      execution_config: executionConfigFromForm(values),
-      trigger_config,
-      concurrency,
-    }
+    const payload = pipelineUpdateFromForm(values, pipeline.workflow, {
+      canChangeApproval,
+      manualOnlyTriggers,
+    })
 
     const [androidSigning, iosSigning] = await Promise.all([
       buildAndroidSigningPayload(
@@ -296,13 +357,33 @@ function EditPipelinePage() {
           data: signingPayload,
         })
       }
+      let profileSyncNote = ''
       if (iosSigningPayload && retrySigning !== 'android') {
         await updateIosSigningMutation.mutateAsync({
           pipelineId: pipeline.id,
           data: iosSigningPayload,
         })
+        // The daemon discarded the stored profiles with the distribution
+        // change; regenerate them now so the next build does not fail for
+        // lack of a profile.
+        if (iosProfilesNeedResync(iosSigningPayload, iosSigningQuery.data)) {
+          try {
+            const response = await syncIosSigningMutation.mutateAsync(
+              pipeline.id,
+            )
+            profileSyncNote = `; ${describeProfileSync(response.updated_profiles)}`
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'Unknown error'
+            toast.error(
+              `Pipeline updated, but iOS profiles could not be synced: ${message}. Press Sync profiles under iOS signing before the next build.`,
+            )
+            return
+          }
+        }
       }
-      toast.success(retrySigning ? 'Signing updated' : 'Pipeline updated')
+      toast.success(
+        `${retrySigning ? 'Signing updated' : 'Pipeline updated'}${profileSyncNote}`,
+      )
       await navigate({
         to: '/projects/$projectId/pipelines/$pipelineId',
         params: { projectId, pipelineId },
@@ -349,7 +430,7 @@ function EditPipelinePage() {
           ? ` (${response.warnings.length} warning${response.warnings.length === 1 ? '' : 's'})`
           : ''
       toast.success(
-        `iOS signing sync completed: ${response.updated_profiles} profile${response.updated_profiles === 1 ? '' : 's'} updated${warningSuffix}`,
+        `iOS signing sync completed: ${describeProfileSync(response.updated_profiles)}${warningSuffix}`,
       )
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error'
@@ -357,108 +438,136 @@ function EditPipelinePage() {
     }
   }
 
+  const storedIosSigning = iosSigningQuery.data
+  // App Store Connect can regenerate profiles only with API credentials.
+  const iosProfileSyncAvailable =
+    !!storedIosSigning?.enabled &&
+    (storedIosSigning.mode === 'api' || storedIosSigning.mode === 'hybrid')
+  const iosSigningActions = iosProfileSyncAvailable ? (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={syncIosSigningMutation.isPending}
+      onClick={() => void handleSyncIosSigning()}
+    >
+      {syncIosSigningMutation.isPending ? 'Syncing...' : 'Sync profiles'}
+    </Button>
+  ) : undefined
+  const iosAppStorePublishing = appStorePublishQuery.data
+    ? {
+        configured: appStorePublishQuery.data.config.enabled,
+        link: (
+          <Link
+            to="/projects/$projectId/pipelines/$pipelineId"
+            params={{ projectId, pipelineId }}
+            search={{ tab: 'publishing' }}
+            className="underline underline-offset-4"
+          >
+            {appStorePublishQuery.data.config.enabled
+              ? 'Open publishing'
+              : 'Set up publishing'}
+          </Link>
+        ),
+      }
+    : undefined
+
   return (
-    <PageLayout width="wide">
+    <PageLayout>
       <PageMeta title={label} noindex />
-      <PageHeader
-        title={`Edit: ${pipeline.name}`}
-        description={
-          retrySigning
-            ? `Fix and retry ${retrySigning} signing without creating the pipeline again.`
-            : 'Update pipeline configuration.'
+      <PageHeader title={`Edit ${pipeline.name}`} />
+      {retrySigning ? (
+        <Alert>
+          <AlertDescription>
+            Fix and retry {retrySigning} signing without creating the pipeline
+            again.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      <PipelineForm
+        initialValues={formInitialValues}
+        manualOnlyTriggers={manualOnlyTriggers}
+        canChangeApproval={canChangeApproval}
+        onSubmit={handleSubmit}
+        onCancel={() =>
+          void navigate({
+            to: '/projects/$projectId/pipelines/$pipelineId',
+            params: { projectId, pipelineId },
+          })
         }
-      />
-      <div className="w-full max-w-4xl">
-        <PipelineForm
-          initialValues={formInitialValues}
-          manualOnlyTriggers={manualOnlyTriggers}
-          onSubmit={handleSubmit}
-          onCancel={() =>
-            void navigate({
-              to: '/projects/$projectId/pipelines/$pipelineId',
-              params: { projectId, pipelineId },
-            })
-          }
-          submitLabel={retrySigning ? `Retry ${retrySigning} signing` : 'Save'}
-          isPending={
-            updateMutation.isPending ||
-            updateSigningMutation.isPending ||
-            updateIosSigningMutation.isPending
-          }
-          validationErrors={validationErrors}
-          retrySigning={retrySigning}
-          signingError={signingError}
-          signingData={signingQuery.data}
-          iosSigningData={iosSigningQuery.data}
-        >
-          {iosSigningQuery.data?.enabled &&
-            (iosSigningQuery.data.mode === 'api' ||
-              iosSigningQuery.data.mode === 'hybrid') && (
-              <Card className="mt-6">
-                <CardContent className="space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-medium">
-                        Registered iOS Devices
-                      </h3>
-                      <p className="text-xs text-muted-foreground">
-                        Register UDIDs and sync provisioning profiles for
-                        API/hybrid modes.
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={syncIosSigningMutation.isPending}
-                      onClick={() => void handleSyncIosSigning()}
-                    >
-                      {syncIosSigningMutation.isPending
-                        ? 'Syncing...'
-                        : 'Sync Profiles'}
-                    </Button>
-                  </div>
+        submitLabel={
+          retrySigning ? `Retry ${retrySigning} signing` : 'Save changes'
+        }
+        isPending={
+          updateMutation.isPending ||
+          updateSigningMutation.isPending ||
+          updateIosSigningMutation.isPending
+        }
+        validationErrors={validationErrors}
+        retrySigning={retrySigning}
+        signingError={signingError}
+        signingData={signingQuery.data}
+        iosSigningData={iosSigningQuery.data}
+        iosSigningActions={iosSigningActions}
+        iosAppStorePublishing={iosAppStorePublishing}
+        googlePlayUpload={!!googlePlayPublishQuery.data?.config?.enabled}
+        otherPipelines={otherPipelines}
+        publishSettings={{
+          googlePlay: googlePlayPublishQuery.data?.config ?? undefined,
+          appStore: appStorePublishQuery.data?.config,
+        }}
+        workflowSource={workflowSource}
+      >
+        {iosProfileSyncAvailable &&
+          storedIosSigning.export_method === 'ad_hoc' && (
+            <PipelineFormSection
+              title="Registered iOS devices"
+              hint="Ad hoc builds install only on these devices. Registering one re-syncs the profiles."
+            >
+              <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+                <Input
+                  aria-label="Device name"
+                  placeholder="Device name"
+                  value={deviceName}
+                  onChange={(event) => setDeviceName(event.target.value)}
+                />
+                <Input
+                  aria-label="Device UDID"
+                  placeholder="UDID"
+                  className="font-mono"
+                  value={deviceUdid}
+                  onChange={(event) => setDeviceUdid(event.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={registerIosDeviceMutation.isPending}
+                  onClick={() => void handleRegisterDevice()}
+                >
+                  {registerIosDeviceMutation.isPending
+                    ? 'Registering...'
+                    : 'Register device'}
+                </Button>
+              </div>
 
-                  <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-                    <Input
-                      aria-label="Device name"
-                      placeholder="Device name"
-                      value={deviceName}
-                      onChange={(event) => setDeviceName(event.target.value)}
-                    />
-                    <Input
-                      aria-label="Device UDID"
-                      placeholder="UDID"
-                      className="font-mono"
-                      value={deviceUdid}
-                      onChange={(event) => setDeviceUdid(event.target.value)}
-                    />
-                    <Button
-                      type="button"
-                      disabled={registerIosDeviceMutation.isPending}
-                      onClick={() => void handleRegisterDevice()}
-                    >
-                      {registerIosDeviceMutation.isPending
-                        ? 'Registering...'
-                        : 'Register Device'}
-                    </Button>
-                  </div>
-
-                  {iosDevicesQuery.isLoading ? (
-                    <p className="text-xs text-muted-foreground">
-                      Loading devices...
-                    </p>
-                  ) : iosDevicesQuery.data?.devices.length ? (
-                    <IosDeviceTable devices={iosDevicesQuery.data.devices} />
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      No iOS devices registered for this pipeline.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-        </PipelineForm>
-      </div>
+              {iosDevicesQuery.isLoading ? (
+                <Text variant="muted">Loading devices...</Text>
+              ) : iosDevicesQuery.isError ? (
+                <CollectionError
+                  title="Failed to load registered devices"
+                  description={iosDevicesQuery.error.message}
+                  onRetry={() => void iosDevicesQuery.refetch()}
+                />
+              ) : iosDevicesQuery.data?.devices.length ? (
+                <IosDeviceTable devices={iosDevicesQuery.data.devices} />
+              ) : (
+                <Text variant="muted">
+                  No iOS devices registered for this pipeline.
+                </Text>
+              )}
+            </PipelineFormSection>
+          )}
+      </PipelineForm>
     </PageLayout>
   )
 }

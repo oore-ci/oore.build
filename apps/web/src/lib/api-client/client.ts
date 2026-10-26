@@ -1,6 +1,6 @@
 import {
   createOoreClient,
-  isOoreApiError,
+  OoreApiError,
   type OoreClient,
 } from '@oore/client/client'
 import {
@@ -14,17 +14,16 @@ import {
 } from '@tanstack/react-query'
 
 import { READ_ONLY_REASON, isDemoMutationBlocked } from '@/lib/demo-mode'
-import { ApiClientError } from './api-error'
-
 const appFetch: typeof fetch = async (input, init) => {
   const request = new Request(input, init)
   const method = request.method.toUpperCase()
   const path = new URL(request.url).pathname
 
   if (isDemoMutationBlocked(method, path)) {
-    throw new ApiClientError(403, {
+    throw new OoreApiError(READ_ONLY_REASON, {
       code: 'demo_read_only',
-      error: READ_ONLY_REASON,
+      request,
+      response: new Response(null, { status: 403 }),
     })
   }
 
@@ -38,19 +37,7 @@ export function createWebOoreClient({
   baseUrl: string
   token?: string
 }): OoreClient {
-  const client = createOoreClient({ baseUrl, fetch: appFetch, token })
-
-  client.interceptors.error.use((error) => {
-    if (!isOoreApiError(error)) return error
-
-    return new ApiClientError(error.status, {
-      code: error.code ?? 'unknown_error',
-      details: error.details,
-      error: error.message,
-    })
-  })
-
-  return client
+  return createOoreClient({ baseUrl, fetch: appFetch, token })
 }
 
 export function scopeOoreQueryKey(

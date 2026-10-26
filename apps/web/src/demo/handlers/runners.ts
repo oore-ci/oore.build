@@ -1,5 +1,5 @@
 import { demoApi } from './api'
-import { HttpResponse, delay } from 'msw'
+import { HttpResponse, delay, http } from 'msw'
 import * as z from 'zod'
 import { ago } from '../seed'
 import { requireDemoInstancePermission } from '../authorization'
@@ -51,6 +51,10 @@ export const runnerHandlers = [
       online_total: demoState.runners.filter(
         (runner) => runner.status === 'online' || runner.status === 'busy',
       ).length,
+      queued_total: demoState.builds.filter(
+        (build) => build.status === 'queued',
+      ).length,
+      unmatched_queued_total: 0,
     })
   }),
 
@@ -59,7 +63,10 @@ export const runnerHandlers = [
     const forbidden = requireDemoInstancePermission(request, 'runners:write')
     if (forbidden) return forbidden
     const body = z
-      .object({ name: z.string().optional() })
+      .object({
+        name: z.string().optional(),
+        custom_labels: z.array(z.string()).optional(),
+      })
       .parse(await request.json())
     const runner = demoState.runners.find((r) => r.id === params.runner_id)
     if (!runner) {
@@ -68,7 +75,35 @@ export const runnerHandlers = [
         { status: 404 },
       )
     }
+    if (body.custom_labels) {
+      const previous = new Set(runner.custom_labels ?? [])
+      const detected = (runner.labels ?? []).filter(
+        (label) => !previous.has(label),
+      )
+      runner.labels = [...new Set([...detected, ...body.custom_labels])].sort()
+    }
     Object.assign(runner, body, { updated_at: ago(0) })
     return HttpResponse.json({ runner })
   }),
+
+  http.post(
+    '*/v1/runners/:runner_id/caches/purge',
+    async ({ params, request }) => {
+      await delay(200)
+      const forbidden = requireDemoInstancePermission(request, 'runners:write')
+      if (forbidden) return forbidden
+      const runner = demoState.runners.find((r) => r.id === params.runner_id)
+      if (!runner) {
+        return HttpResponse.json(
+          { error: 'Runner not found', code: 'not_found' },
+          { status: 404 },
+        )
+      }
+      Object.assign(runner, {
+        cache_purge_requested_at: ago(0),
+        updated_at: ago(0),
+      })
+      return HttpResponse.json({ runner })
+    },
+  ),
 ]

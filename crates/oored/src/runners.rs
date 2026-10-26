@@ -5,10 +5,12 @@ use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
-    ApiError, BuildDetailResponse, BuildEvent, BuildStatus, ClaimJobRequest, ClaimJobResponse,
-    ClaimedJob, JobStatusResponse, ListRunnersResponse, RUNNER_PROTOCOL_VERSION,
-    RegisterRunnerRequest, RegisterRunnerResponse, Runner, RunnerHeartbeatRequest, RunnerStatus,
-    UpdateJobStatusRequest, UpdateRunnerRequest, UpdateRunnerResponse,
+    ApiError, BuildDetailResponse, BuildStatus, ClaimJobRequest, ClaimJobResponse, ClaimedJob,
+    JobStatusResponse, ListRunnersResponse, RUNNER_PROTOCOL_VERSION, RegisterRunnerRequest,
+    RegisterRunnerResponse, Runner, RunnerDiskPressure, RunnerHeartbeatRequest,
+    RunnerHeartbeatResponse, RunnerMetrics, RunnerStatus, UpdateJobStatusRequest,
+    UpdateRunnerRequest, UpdateRunnerResponse, effective_runner_labels, normalize_runner_labels,
+    runner_disk_pressure,
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -16,8 +18,11 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::AppState;
-use crate::builds::transition_build;
+use crate::builds::{
+    RunnerResults, fetch_build_events, transition_build, transition_build_with_results,
+};
 use crate::extractors::AuthUser;
+use crate::incidents::{self, IncidentInput};
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::token::{generate_token, hash_token};
@@ -153,31 +158,33 @@ impl FromRequestParts<Arc<AppState>> for RunnerAuth {
 
 // ── Row conversion ──────────────────────────────────────────────
 
+fn json_labels(raw: &str) -> Vec<String> {
+    serde_json::from_str(raw).unwrap_or_default()
+}
+
 fn row_to_runner(row: &sqlx::sqlite::SqliteRow) -> Runner {
     let caps_str: String = row.get("capabilities");
     let capabilities: serde_json::Value = serde_json::from_str(&caps_str).unwrap_or_default();
+    let metrics: Option<RunnerMetrics> = row
+        .get::<Option<String>, _>("metrics")
+        .and_then(|raw| serde_json::from_str(&raw).ok());
 
     Runner {
         id: row.get("id"),
         name: row.get("name"),
         status: row.get("status"),
         capabilities,
+        labels: json_labels(&row.get::<String, _>("labels")),
+        custom_labels: json_labels(&row.get::<String, _>("custom_labels")),
+        disk_pressure: metrics
+            .as_ref()
+            .and_then(|metrics| runner_disk_pressure(metrics.disk_free_bytes)),
+        metrics,
         last_heartbeat_at: row.get("last_heartbeat_at"),
         registered_by: row.get("registered_by"),
+        cache_purge_requested_at: row.get("cache_purge_requested_at"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
-    }
-}
-
-fn row_to_build_event(row: &sqlx::sqlite::SqliteRow) -> BuildEvent {
-    BuildEvent {
-        id: row.get("id"),
-        build_id: row.get("build_id"),
-        from_status: row.get("from_status"),
-        to_status: row.get("to_status"),
-        actor: row.get("actor"),
-        reason: row.get("reason"),
-        created_at: row.get("created_at"),
     }
 }
 
@@ -201,6 +208,10 @@ pub async fn register_runner(
         ));
     }
 
+    let custom_labels = normalize_runner_labels(&req.labels)
+        .map_err(|error| api_err(StatusCode::BAD_REQUEST, "invalid_labels", error))?;
+    let labels = effective_runner_labels(&req.capabilities, &custom_labels);
+
     let token = generate_token();
     let token_hash = hash_token(&token);
     let runner_id = Uuid::new_v4().to_string();
@@ -210,13 +221,15 @@ pub async fn register_runner(
     let pool = &state.db;
 
     sqlx::query(
-        "INSERT INTO runners (id, name, token_hash, status, capabilities, registered_by, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, 'offline', ?4, ?5, ?6, ?6)",
+        "INSERT INTO runners (id, name, token_hash, status, capabilities, custom_labels, labels, registered_by, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, 'offline', ?4, ?5, ?6, ?7, ?8, ?8)",
     )
     .bind(&runner_id)
     .bind(name)
     .bind(&token_hash)
     .bind(&caps_str)
+    .bind(serde_json::to_string(&custom_labels).unwrap_or_else(|_| "[]".to_string()))
+    .bind(serde_json::to_string(&labels).unwrap_or_else(|_| "[]".to_string()))
     .bind(&auth.0.user_id)
     .bind(now)
     .execute(pool)
@@ -249,8 +262,13 @@ pub async fn register_runner(
         name: name.to_string(),
         status: "offline".to_string(),
         capabilities: req.capabilities,
+        labels,
+        custom_labels,
+        metrics: None,
+        disk_pressure: None,
         last_heartbeat_at: None,
         registered_by: Some(auth.0.user_id),
+        cache_purge_requested_at: None,
         created_at: now,
         updated_at: now,
     };
@@ -264,7 +282,7 @@ pub async fn runner_heartbeat(
     Path(runner_id): Path<String>,
     runner_auth: RunnerAuth,
     Json(req): Json<RunnerHeartbeatRequest>,
-) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+) -> ApiResult<RunnerHeartbeatResponse> {
     // Prevent cross-runner access
     if runner_auth.runner_id != runner_id {
         return Err(api_err(
@@ -288,33 +306,62 @@ pub async fn runner_heartbeat(
 
     let pool = &state.db;
 
+    let previous = sqlx::query("SELECT name, custom_labels, metrics FROM runners WHERE id = ?1")
+        .bind(&runner_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, runner_id = %runner_id, "failed to load runner for heartbeat");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to update runner",
+            )
+        })?
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Runner not found"))?;
+    let runner_name: String = previous.get("name");
+    let previous_pressure = previous
+        .get::<Option<String>, _>("metrics")
+        .and_then(|raw| serde_json::from_str::<RunnerMetrics>(&raw).ok())
+        .and_then(|metrics| runner_disk_pressure(metrics.disk_free_bytes));
+
+    let mut update = QueryBuilder::<Sqlite>::new("UPDATE runners SET status = ");
+    update
+        .push_bind(&req.status)
+        .push(", last_heartbeat_at = ")
+        .push_bind(now)
+        .push(", updated_at = ")
+        .push_bind(now);
     // Only overwrite capabilities when the runner sends a non-empty object
-    let result = if has_capabilities {
-        let caps_str = serde_json::to_string(&req.capabilities).unwrap_or_else(|_| "{}".to_string());
-        sqlx::query(
-            "UPDATE runners SET status = ?1, capabilities = ?2, last_heartbeat_at = ?3, updated_at = ?3 \
-             WHERE id = ?4",
-        )
-        .bind(&req.status)
-        .bind(&caps_str)
-        .bind(now)
-        .bind(&runner_id)
-        .execute(pool)
-        .await
-    } else {
-        sqlx::query(
-            "UPDATE runners SET status = ?1, last_heartbeat_at = ?2, updated_at = ?2 \
-             WHERE id = ?3",
-        )
-        .bind(&req.status)
-        .bind(now)
-        .bind(&runner_id)
-        .execute(pool)
-        .await
+    if has_capabilities {
+        let custom_labels = json_labels(&previous.get::<String, _>("custom_labels"));
+        let labels = effective_runner_labels(&req.capabilities, &custom_labels);
+        update
+            .push(", capabilities = ")
+            .push_bind(
+                serde_json::to_string(&req.capabilities).unwrap_or_else(|_| "{}".to_string()),
+            )
+            .push(", labels = ")
+            .push_bind(serde_json::to_string(&labels).unwrap_or_else(|_| "[]".to_string()));
     }
-    .map_err(|e| {
+    let metrics = req.metrics.map(|metrics| RunnerMetrics {
+        collected_at: Some(now),
+        ..metrics
+    });
+    if let Some(metrics) = &metrics {
+        update
+            .push(", metrics = ")
+            .push_bind(serde_json::to_string(metrics).unwrap_or_default());
+    }
+    update.push(" WHERE id = ").push_bind(&runner_id);
+
+    let result = update.build().execute(pool).await.map_err(|e| {
         error!(error = %e, runner_id = %runner_id, "failed to update runner heartbeat");
-        api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to update runner")
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to update runner",
+        )
     })?;
 
     if result.rows_affected() == 0 {
@@ -325,19 +372,188 @@ pub async fn runner_heartbeat(
         ));
     }
 
-    Ok(StatusCode::NO_CONTENT)
+    if let Some(metrics) = &metrics {
+        let pressure = runner_disk_pressure(metrics.disk_free_bytes);
+        if pressure != previous_pressure
+            && let Err(error) =
+                record_disk_pressure(pool, &runner_id, &runner_name, metrics, pressure).await
+        {
+            warn!(%error, runner_id = %runner_id, "failed to record runner disk pressure");
+        }
+    }
+
+    // A runner reports the purge request it last completed; clear it unless a
+    // newer request arrived since.
+    let purged_at = req
+        .capabilities
+        .pointer("/caches/purged_at")
+        .and_then(serde_json::Value::as_i64);
+    let cache_purge_requested_at = settle_cache_purge_request(pool, &runner_id, purged_at)
+        .await
+        .map_err(|e| {
+            error!(error = %e, runner_id = %runner_id, "failed to read runner cache purge request");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to update runner",
+            )
+        })?;
+
+    Ok(Json(RunnerHeartbeatResponse {
+        cache_purge_requested_at,
+    }))
+}
+
+/// Clears a purge request the runner has completed and returns the one still
+/// pending, if any.
+async fn settle_cache_purge_request(
+    pool: &sqlx::SqlitePool,
+    runner_id: &str,
+    purged_at: Option<i64>,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar(
+        "UPDATE runners SET cache_purge_requested_at = CASE \
+           WHEN cache_purge_requested_at <= ?1 THEN NULL \
+           ELSE cache_purge_requested_at END \
+         WHERE id = ?2 RETURNING cache_purge_requested_at",
+    )
+    .bind(purged_at)
+    .bind(runner_id)
+    .fetch_one(pool)
+    .await
+}
+
+/// `POST /v1/runners/{runner_id}/caches/purge` — ask a runner to delete its
+/// dependency caches before its next build (admin/owner only).
+pub async fn purge_runner_caches(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(runner_id): Path<String>,
+) -> ApiResult<UpdateRunnerResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "runners", "write").await?;
+
+    let pool = &state.db;
+    let now = now_unix();
+    let row = sqlx::query(
+        "UPDATE runners SET cache_purge_requested_at = ?1, updated_at = ?1 \
+         WHERE id = ?2 RETURNING *",
+    )
+    .bind(now)
+    .bind(&runner_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, runner_id = %runner_id, "failed to request runner cache purge");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to request cache purge",
+        )
+    })?
+    .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Runner not found"))?;
+
+    let details = serde_json::json!({ "requested_by": auth.0.email }).to_string();
+    let _ = write_audit_log(
+        pool,
+        Some(&auth.0.user_id),
+        "runner_cache_purge_requested",
+        "runner",
+        Some(&runner_id),
+        Some(&details),
+    )
+    .await;
+    info!(runner_id = %runner_id, requested_by = %auth.0.email, "runner cache purge requested");
+
+    Ok(Json(UpdateRunnerResponse {
+        runner: row_to_runner(&row),
+    }))
+}
+
+/// Open, escalate or resolve the runner's low-disk incident. Called only when
+/// the pressure level changes, so steady heartbeats do not bump the incident.
+async fn record_disk_pressure(
+    pool: &sqlx::SqlitePool,
+    runner_id: &str,
+    runner_name: &str,
+    metrics: &RunnerMetrics,
+    pressure: Option<RunnerDiskPressure>,
+) -> anyhow::Result<()> {
+    let deduplication_key = format!("runner-disk:{runner_id}");
+    let Some(pressure) = pressure else {
+        return incidents::resolve_incident(pool, &deduplication_key).await;
+    };
+    let severity = match pressure {
+        RunnerDiskPressure::Warning => "warning",
+        RunnerDiskPressure::Critical => "critical",
+    };
+    warn!(
+        runner_id,
+        disk_free_bytes = metrics.disk_free_bytes,
+        severity,
+        "runner disk space is low"
+    );
+    incidents::open_incident(
+        pool,
+        IncidentInput {
+            deduplication_key: &deduplication_key,
+            severity,
+            reason: "low_disk",
+            resource_kind: "runner",
+            resource_id: runner_id,
+            resource_name: runner_name,
+            repair_action: "Free disk space",
+            repair_url: "/settings/runners",
+            audience_resource: "runners",
+            audience_action: "write",
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// SQL condition that holds while `$build`'s pipeline has a free slot under
+/// its `concurrency.max_concurrent` limit. A missing, null or zero limit
+/// means no limit. Builds claimed by a runner (`scheduled`), `assigned` or
+/// `running` take a slot. The status list must stay identical to the partial
+/// index `idx_builds_pipeline_active` (migration 077) so SQLite can use it.
+macro_rules! pipeline_has_free_slot {
+    ($build:literal) => {
+        concat!(
+            " AND NOT EXISTS ( \
+               SELECT 1 FROM pipelines pl \
+               WHERE pl.id = ",
+            $build,
+            ".pipeline_id \
+                 AND json_extract(pl.concurrency, '$.max_concurrent') > 0 \
+                 AND ( \
+                   SELECT COUNT(*) FROM builds active \
+                   WHERE active.pipeline_id = pl.id \
+                     AND active.status IN ('scheduled', 'assigned', 'running') \
+                 ) >= json_extract(pl.concurrency, '$.max_concurrent') \
+             ) "
+        )
+    };
 }
 
 /// Atomically linearize a direct-runner claim against the operational pause.
 ///
 /// The initial queue lookup chooses the oldest eligible build. Rechecking the
-/// pause and source identity in the queued -> scheduled update closes races
-/// with an operator change while a claim request is in flight.
-async fn schedule_eligible_direct_runner_build(
+/// pause, source identity and the pipeline's `max_concurrent` limit in the
+/// queued -> scheduled update closes races with an operator change, or with
+/// another runner's claim, while a claim request is in flight. The limit is
+/// race-safe because the slot COUNT and `SET status = 'scheduled'` run in the
+/// same UPDATE statement, and SQLite runs one writer at a time, so two claims
+/// cannot both take the last free slot. A build stuck in scheduled (requeued
+/// after 60 s) or assigned (requeued when its 300 s lease expires) holds its
+/// slot until it is requeued. The build moves on to assigned, bound to the
+/// runner and its signing grant, in the same transaction, so an interrupted
+/// claim never strands it in scheduled.
+pub(crate) async fn claim_eligible_direct_runner_build(
     pool: &sqlx::SqlitePool,
     build_id: &str,
     runner_id: &str,
     actor: &str,
+    signing_token_hash: &str,
 ) -> Result<bool, (StatusCode, Json<ApiError>)> {
     let mut tx = pool.begin().await.map_err(|e| {
         error!(error = %e, "failed to start runner claim transaction");
@@ -348,10 +564,18 @@ async fn schedule_eligible_direct_runner_build(
         )
     })?;
     let now = now_unix();
-    let result = sqlx::query(
+    let result = sqlx::query(concat!(
         "UPDATE builds SET status = 'scheduled', updated_at = ?1 \
          WHERE id = ?2 AND status = 'queued' \
-           AND EXISTS (SELECT 1 FROM runners runner WHERE runner.id = ?3) \
+           AND (approval_state IS NULL OR approval_state != 'pending') ",
+        pipeline_has_free_slot!("builds"),
+        " AND EXISTS ( \
+             SELECT 1 FROM runners runner WHERE runner.id = ?3 \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM json_each(builds.config_snapshot, '$.runs_on') required \
+                 WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
+               ) \
+           ) \
            AND EXISTS ( \
              SELECT 1 FROM projects p \
              JOIN integration_repositories r ON r.id = p.repository_id \
@@ -368,7 +592,7 @@ async fn schedule_eligible_direct_runner_build(
                    AND incident.reason IN ('expired', 'rejected', 'refresh_failed') \
                ) \
            )",
-    )
+    ))
     .bind(now)
     .bind(build_id)
     .bind(runner_id)
@@ -401,6 +625,48 @@ async fn schedule_eligible_direct_runner_build(
     .await
     .map_err(|e| {
         error!(error = %e, build_id = %build_id, "failed to record runner claim event");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to claim build",
+        )
+    })?;
+
+    let assigned = sqlx::query(
+        "UPDATE builds SET status = 'assigned', runner_id = ?1, signing_token_hash = ?2, updated_at = ?3 \
+         WHERE id = ?4 AND status = 'scheduled' AND runner_id IS NULL",
+    )
+    .bind(runner_id)
+    .bind(signing_token_hash)
+    .bind(now)
+    .bind(build_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, build_id = %build_id, "failed to assign claimed build");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to claim build",
+        )
+    })?;
+    if assigned.rows_affected() != 1 {
+        tx.rollback().await.ok();
+        return Ok(false);
+    }
+    sqlx::query(
+        "INSERT INTO build_events \
+         (id, build_id, from_status, to_status, actor, reason, created_at) \
+         VALUES (?1, ?2, 'scheduled', 'assigned', ?3, 'assigned to runner', ?4)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(build_id)
+    .bind(actor)
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        error!(error = %e, build_id = %build_id, "failed to record runner assignment event");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "store_error",
@@ -509,6 +775,99 @@ async fn fail_credential_blocked_builds(
     Ok(())
 }
 
+const NEXT_ELIGIBLE_BUILD_SQL: &str = concat!(
+    "SELECT b.* FROM builds b \
+     JOIN projects p ON p.id = b.project_id \
+     JOIN integration_repositories r ON r.id = p.repository_id \
+     JOIN integration_installations inst ON inst.id = r.installation_id \
+     JOIN runners runner ON runner.id = ?1 \
+     LEFT JOIN instance_preferences pref ON pref.id = 1 \
+     WHERE b.status = 'queued' \
+       AND (b.approval_state IS NULL OR b.approval_state != 'pending') ",
+    pipeline_has_free_slot!("b"),
+    " AND NOT EXISTS ( \
+         SELECT 1 FROM json_each(b.config_snapshot, '$.runs_on') required \
+         WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
+       ) \
+       AND json_extract(b.config_snapshot, '$.repository_id') = p.repository_id \
+       AND COALESCE(pref.direct_macos_runner_paused, 0) = 0 \
+       AND NOT EXISTS ( \
+         SELECT 1 FROM operator_incidents incident \
+         WHERE incident.status = 'open' \
+           AND incident.resource_kind = 'source' \
+           AND incident.resource_id = inst.integration_id \
+           AND incident.reason IN ('expired', 'rejected', 'refresh_failed') \
+       ) \
+     ORDER BY b.queued_at ASC, b.id ASC LIMIT 1",
+);
+
+/// The oldest queued build this runner may take.
+///
+/// A missing repository remains ineligible. Missing preferences means the
+/// ordinary running state. Filtering before ordering prevents blocked work,
+/// work that needs labels this runner lacks, and work from a pipeline already
+/// at its `max_concurrent` limit, from starving later eligible builds. A
+/// pipeline with no limit runs as many builds as there are runners.
+async fn next_eligible_build(
+    pool: &sqlx::SqlitePool,
+    runner_id: &str,
+) -> sqlx::Result<Option<sqlx::sqlite::SqliteRow>> {
+    sqlx::query(NEXT_ELIGIBLE_BUILD_SQL)
+        .bind(runner_id)
+        .fetch_optional(pool)
+        .await
+}
+
+/// Ends the builds a runner still holds once it can no longer be running
+/// them: an assigned build goes back to the queue, a running one fails with
+/// `reason`. Returns the IDs of the builds it failed.
+pub(crate) async fn release_runner_builds(
+    pool: &sqlx::SqlitePool,
+    scheduler: &crate::scheduler::Scheduler,
+    runner_id: &str,
+    reason: &str,
+) -> sqlx::Result<Vec<String>> {
+    let rows = sqlx::query(
+        "SELECT id, status FROM builds \
+         WHERE runner_id = ?1 AND status IN ('assigned', 'running')",
+    )
+    .bind(runner_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut failed = Vec::new();
+    for row in rows {
+        let build_id: String = row.get("id");
+        let from_status: String = row.get("status");
+        let target = if from_status == "running" {
+            BuildStatus::Failed
+        } else {
+            BuildStatus::Queued
+        };
+        match transition_build(pool, &build_id, target, Some("system"), Some(reason)).await {
+            Ok(_) => {
+                info!(build_id = %build_id, runner_id = %runner_id, to = %target, reason, "released build held by runner");
+                if target == BuildStatus::Failed {
+                    scheduler.publish_event(crate::scheduler::BuildStateEvent {
+                        build_id: build_id.clone(),
+                        from_status: Some(from_status),
+                        to_status: target.to_string(),
+                        actor: Some("system".to_string()),
+                        reason: Some(reason.to_string()),
+                        timestamp: now_unix(),
+                    });
+                    failed.push(build_id);
+                }
+            }
+            // The runner reported, or someone canceled, in the meantime.
+            Err(e) => {
+                warn!(build_id = %build_id, runner_id = %runner_id, error = ?e, "could not release build held by runner");
+            }
+        }
+    }
+    Ok(failed)
+}
+
 /// `POST /v1/runners/{runner_id}/claim` — runner claims next available build.
 pub async fn claim_job(
     State(state): State<Arc<AppState>>,
@@ -535,32 +894,29 @@ pub async fn claim_job(
     }
 
     let pool = &state.db;
-    fail_credential_blocked_builds(pool).await?;
 
-    // A missing repository remains ineligible. Missing preferences means the
-    // ordinary running state. Filtering before ordering prevents blocked work
-    // from starving later eligible builds.
-    let build_row = sqlx::query(
-        "SELECT b.* FROM builds b \
-         JOIN projects p ON p.id = b.project_id \
-         JOIN integration_repositories r ON r.id = p.repository_id \
-         JOIN integration_installations inst ON inst.id = r.installation_id \
-         LEFT JOIN instance_preferences pref ON pref.id = 1 \
-         WHERE b.status = 'queued' \
-           AND json_extract(b.config_snapshot, '$.repository_id') = p.repository_id \
-           AND COALESCE(pref.direct_macos_runner_paused, 0) = 0 \
-           AND NOT EXISTS ( \
-             SELECT 1 FROM operator_incidents incident \
-             WHERE incident.status = 'open' \
-               AND incident.resource_kind = 'source' \
-               AND incident.resource_id = inst.integration_id \
-               AND incident.reason IN ('expired', 'rejected', 'refresh_failed') \
-           ) \
-         ORDER BY b.queued_at ASC, b.id ASC LIMIT 1",
+    // A runner runs one build at a time and reports its result before it
+    // claims again, so a build still bound to it was lost, for example to a
+    // crash or restart.
+    release_runner_builds(
+        pool,
+        &state.scheduler,
+        &runner_id,
+        "The runner restarted or moved on without reporting this build's result",
     )
-    .fetch_optional(pool)
     .await
     .map_err(|e| {
+        error!(error = %e, runner_id = %runner_id, "failed to release builds held by runner");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to claim build",
+        )
+    })?;
+
+    fail_credential_blocked_builds(pool).await?;
+
+    let build_row = next_eligible_build(pool, &runner_id).await.map_err(|e| {
         error!(error = %e, "failed to query queued builds");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -620,56 +976,49 @@ pub async fn claim_job(
         );
     }
 
+    // The runner checks a repository file's `runs_on` against these, since the
+    // scheduler only sees the pipeline's.
+    let runner_labels: Option<String> =
+        sqlx::query_scalar("SELECT labels FROM runners WHERE id = ?1")
+            .bind(&runner_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, runner_id = %runner_id, "failed to load runner labels");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to claim build",
+                )
+            })?;
+    if let Some(snapshot) = config_snapshot.as_object_mut() {
+        snapshot.insert(
+            "runner_labels".to_string(),
+            json_labels(runner_labels.as_deref().unwrap_or("[]")).into(),
+        );
+    }
+
+    let retry_steps = crate::step_retry::retry_steps_from_snapshot(&config_snapshot);
     let actor_str = format!("runner:{runner_id}");
-
-    // Atomically transition queued -> scheduled while rechecking the policy
-    // gates. A successful update is the linearization point for drain behavior.
-    if !schedule_eligible_direct_runner_build(pool, &build_id, &runner_id, &actor_str).await? {
-        return Ok(Json(ClaimJobResponse { job: None }));
-    }
-
-    // Complete the valid queued -> scheduled -> assigned sequence.
-    let assigned = transition_build(
-        pool,
-        &build_id,
-        BuildStatus::Assigned,
-        Some(&actor_str),
-        Some("assigned to runner"),
-    )
-    .await;
-
-    match assigned {
-        Ok(_) => {}
-        Err(e) => {
-            warn!(build_id = %build_id, error = ?e, "failed to transition build to assigned");
-            return Ok(Json(ClaimJobResponse { job: None }));
-        }
-    }
 
     // Bind an unguessable signing grant to this active assignment. The raw
     // capability is returned once to the trusted runner parent and never
     // persisted or exposed to repository-controlled child processes.
     let signing_token = generate_token();
     let signing_token_hash = hash_token(&signing_token);
-    let result = sqlx::query(
-        "UPDATE builds SET runner_id = ?1, signing_token_hash = ?2 \
-         WHERE id = ?3 AND status = 'assigned' AND runner_id IS NULL",
+
+    // Atomically take the build from queued to assigned while rechecking the
+    // policy gates. A successful update is the linearization point for drain
+    // behavior.
+    if !claim_eligible_direct_runner_build(
+        pool,
+        &build_id,
+        &runner_id,
+        &actor_str,
+        &signing_token_hash,
     )
-    .bind(&runner_id)
-    .bind(&signing_token_hash)
-    .bind(&build_id)
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, build_id = %build_id, "failed to set runner_id on build");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to assign runner to build",
-        )
-    })?;
-    if result.rows_affected() != 1 {
-        warn!(build_id = %build_id, "build assignment changed before signing grant was bound");
+    .await?
+    {
         return Ok(Json(ClaimJobResponse { job: None }));
     }
 
@@ -694,6 +1043,7 @@ pub async fn claim_job(
             branch,
             lease_expires_at,
             signing_token,
+            retry_steps,
         }),
     }))
 }
@@ -769,54 +1119,32 @@ pub async fn update_job_status(
         .as_deref()
         .unwrap_or("status update from runner");
 
-    // Use transition_build for state transition
-    let mut build =
-        transition_build(pool, &job_id, target_status, Some(&actor_str), Some(reason)).await?;
-
-    // Persist step results and exit code
-    if !req.steps.is_empty() || req.exit_code.is_some() {
-        let steps_json = serde_json::to_string(&req.steps).unwrap_or_else(|_| "[]".to_string());
-        sqlx::query("UPDATE builds SET step_results = ?1, exit_code = ?2 WHERE id = ?3")
-            .bind(if req.steps.is_empty() {
-                None
-            } else {
-                Some(&steps_json)
-            })
-            .bind(req.exit_code)
-            .bind(&job_id)
-            .execute(pool)
-            .await
-            .map_err(|e| {
-                error!(error = %e, build_id = %job_id, "failed to persist step results");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "store_error",
-                    "Failed to persist step results",
-                )
-            })?;
-
-        if !req.steps.is_empty() {
-            build.step_results = Some(req.steps.clone());
-        }
-        build.exit_code = req.exit_code;
-    }
+    // The status change and the runner's results commit together, so a
+    // failed write never leaves a terminal build without its step results.
+    let steps_json = (!req.steps.is_empty())
+        .then(|| serde_json::to_string(&req.steps).unwrap_or_else(|_| "[]".to_string()));
+    let budgets_json = req.size_budgets.as_ref().map(|budgets| {
+        let budgets = checked_file_size_budgets(&job_id, budgets);
+        serde_json::to_string(&budgets).unwrap_or_else(|_| "[]".to_string())
+    });
+    let results = (!req.steps.is_empty() || req.exit_code.is_some() || budgets_json.is_some())
+        .then_some(RunnerResults {
+            step_results: steps_json.as_deref(),
+            exit_code: req.exit_code,
+            file_size_budgets: budgets_json.as_deref(),
+        });
+    let build = transition_build_with_results(
+        pool,
+        &job_id,
+        target_status,
+        Some(&actor_str),
+        Some(reason),
+        results,
+    )
+    .await?;
 
     // Fetch events for the response
-    let event_rows =
-        sqlx::query("SELECT * FROM build_events WHERE build_id = ?1 ORDER BY created_at ASC")
-            .bind(&job_id)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "failed to fetch build events");
-                api_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "store_error",
-                    "Failed to fetch build events",
-                )
-            })?;
-
-    let events = event_rows.iter().map(row_to_build_event).collect();
+    let events = fetch_build_events(pool, &job_id).await?;
 
     // Publish event for notification dispatch on terminal statuses
     if target_status.is_terminal() {
@@ -839,7 +1167,11 @@ pub async fn update_job_status(
         "runner updated job status"
     );
 
-    Ok(Json(BuildDetailResponse { build, events }))
+    Ok(Json(BuildDetailResponse {
+        build,
+        events,
+        retryable_steps: Vec::new(),
+    }))
 }
 
 /// `GET /v1/runners/{runner_id}/jobs/{job_id}` — check build status (for runner cancellation polling).
@@ -951,7 +1283,7 @@ pub async fn list_runners(
     let mut count = QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM runners");
     if let Some(search) = search {
         count
-            .push(" WHERE lower(name || ' ' || id || ' ' || status || ' ' || COALESCE(registered_by, 'embedded') || ' ' || capabilities_json) LIKE ")
+            .push(" WHERE lower(name || ' ' || id || ' ' || status || ' ' || COALESCE(registered_by, 'embedded') || ' ' || capabilities || ' ' || labels) LIKE ")
             .push_bind(format!("%{}%", search.to_lowercase()));
     }
     let total: i64 = count
@@ -982,7 +1314,7 @@ pub async fn list_runners(
     let mut query = QueryBuilder::<Sqlite>::new("SELECT * FROM runners");
     if let Some(search) = search {
         query
-            .push(" WHERE lower(name || ' ' || id || ' ' || status || ' ' || COALESCE(registered_by, 'embedded') || ' ' || capabilities_json) LIKE ")
+            .push(" WHERE lower(name || ' ' || id || ' ' || status || ' ' || COALESCE(registered_by, 'embedded') || ' ' || capabilities || ' ' || labels) LIKE ")
             .push_bind(format!("%{}%", search.to_lowercase()));
     }
     query
@@ -1006,14 +1338,40 @@ pub async fn list_runners(
 
     let runners = rows.iter().map(row_to_runner).collect();
 
+    let queue = sqlx::query(
+        "SELECT COUNT(*) AS queued_total, \
+                COALESCE(SUM(NOT EXISTS ( \
+                  SELECT 1 FROM runners runner \
+                  WHERE runner.status IN ('online', 'busy') \
+                    AND NOT EXISTS ( \
+                      SELECT 1 FROM json_each(b.config_snapshot, '$.runs_on') required \
+                      WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
+                    ) \
+                )), 0) AS unmatched_queued_total \
+         FROM builds b WHERE b.status = 'queued' \
+           AND (b.approval_state IS NULL OR b.approval_state != 'pending')",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to count queued builds");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list runners",
+        )
+    })?;
+
     Ok(Json(ListRunnersResponse {
         runners,
         total,
         online_total,
+        queued_total: queue.get("queued_total"),
+        unmatched_queued_total: queue.get("unmatched_queued_total"),
     }))
 }
 
-/// `PATCH /v1/runners/{runner_id}` — rename a runner (admin/owner only).
+/// `PATCH /v1/runners/{runner_id}` — rename a runner or set its labels (admin/owner only).
 pub async fn update_runner(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -1022,55 +1380,63 @@ pub async fn update_runner(
 ) -> ApiResult<UpdateRunnerResponse> {
     check_permission(&state.enforcer, &auth.0.role, "runners", "write").await?;
 
-    let name = req
-        .name
-        .as_deref()
-        .ok_or_else(|| {
-            api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_input",
-                "Runner name is required",
-            )
-        })?
-        .trim();
-
-    if name.is_empty() || name.len() > 255 {
+    let name = req.name.as_deref().map(str::trim);
+    if name.is_none() && req.custom_labels.is_none() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "Provide a runner name or custom labels",
+        ));
+    }
+    if name.is_some_and(|name| name.is_empty() || name.len() > 255) {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
             "invalid_name",
             "Runner name must be between 1 and 255 characters",
         ));
     }
+    let custom_labels = req
+        .custom_labels
+        .as_deref()
+        .map(normalize_runner_labels)
+        .transpose()
+        .map_err(|error| api_err(StatusCode::BAD_REQUEST, "invalid_labels", error))?;
 
     let now = now_unix();
     let pool = &state.db;
 
-    let existing = sqlx::query("SELECT name, registered_by FROM runners WHERE id = ?1")
-        .bind(&runner_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, runner_id = %runner_id, "failed to fetch runner");
-            api_err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "store_error",
-                "Failed to fetch runner",
-            )
-        })?
-        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Runner not found"))?;
+    let existing = sqlx::query(
+        "SELECT name, registered_by, capabilities, custom_labels FROM runners WHERE id = ?1",
+    )
+    .bind(&runner_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, runner_id = %runner_id, "failed to fetch runner");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch runner",
+        )
+    })?
+    .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Runner not found"))?;
 
     let previous_name: String = existing.get("name");
     let registered_by: Option<String> = existing.get("registered_by");
 
-    if registered_by.is_none() {
-        return Err(api_err(
-            StatusCode::CONFLICT,
-            "managed_runner_locked",
-            "Managed runner name cannot be changed",
-        ));
-    }
+    if let Some(name) = name
+        && previous_name != name
+    {
+        // Labels are scheduling policy, not identity, so managed runners keep
+        // them editable; only the name is owned by the daemon.
+        if registered_by.is_none() {
+            return Err(api_err(
+                StatusCode::CONFLICT,
+                "managed_runner_locked",
+                "Managed runner name cannot be changed",
+            ));
+        }
 
-    if previous_name != name {
         sqlx::query("UPDATE runners SET name = ?1, updated_at = ?2 WHERE id = ?3")
             .bind(name)
             .bind(now)
@@ -1109,6 +1475,48 @@ pub async fn update_runner(
             updated_by = %auth.0.email,
             "runner renamed"
         );
+    }
+
+    let previous_labels = json_labels(&existing.get::<String, _>("custom_labels"));
+    if let Some(custom_labels) = custom_labels
+        && custom_labels != previous_labels
+    {
+        let capabilities: serde_json::Value =
+            serde_json::from_str(&existing.get::<String, _>("capabilities")).unwrap_or_default();
+        let labels = effective_runner_labels(&capabilities, &custom_labels);
+        sqlx::query(
+            "UPDATE runners SET custom_labels = ?1, labels = ?2, updated_at = ?3 WHERE id = ?4",
+        )
+        .bind(serde_json::to_string(&custom_labels).unwrap_or_else(|_| "[]".to_string()))
+        .bind(serde_json::to_string(&labels).unwrap_or_else(|_| "[]".to_string()))
+        .bind(now)
+        .bind(&runner_id)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, runner_id = %runner_id, "failed to update runner labels");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to update runner",
+            )
+        })?;
+
+        let details = serde_json::json!({
+            "previous_labels": previous_labels,
+            "new_labels": custom_labels,
+            "updated_by": auth.0.email,
+        })
+        .to_string();
+        let _ = write_audit_log(
+            pool,
+            Some(&auth.0.user_id),
+            "runner_labels_updated",
+            "runner",
+            Some(&runner_id),
+            Some(&details),
+        )
+        .await;
     }
 
     let row = sqlx::query("SELECT * FROM runners WHERE id = ?1")
@@ -1252,10 +1660,840 @@ pub async fn delete_runner(
         )
     })?;
 
+    if let Err(error) = incidents::resolve_incident(pool, &format!("runner-disk:{runner_id}")).await
+    {
+        warn!(%error, runner_id = %runner_id, "failed to resolve deleted runner's disk incident");
+    }
+
     info!(
         runner_id = %runner_id,
         deleted_by = %auth.0.email,
         "runner deleted"
     );
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Longest `source` kept for a runner-sent budget.
+const MAX_BUDGET_SOURCE_CHARS: usize = 128;
+
+/// The runner-sent `.oore.yaml` budgets worth keeping: valid ones, at most one
+/// per platform, with a short single-line `source`. The runner validated the
+/// file already; this guards the snapshot against a runner that did not.
+fn checked_file_size_budgets(
+    build_id: &str,
+    budgets: &[oore_contract::TargetSizeBudget],
+) -> Vec<oore_contract::TargetSizeBudget> {
+    let mut kept: Vec<oore_contract::TargetSizeBudget> = Vec::new();
+    for budget in budgets {
+        let source: String = budget
+            .source
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .take(MAX_BUDGET_SOURCE_CHARS)
+            .collect();
+        // The check's Budget column shows the source; never leave it empty.
+        let source = if source.trim().is_empty() {
+            ".oore.yaml".to_string()
+        } else {
+            source
+        };
+        let errors = budget.budget.validate_at(&source);
+        if !errors.is_empty() {
+            warn!(build_id, errors = %errors.join("; "), "dropped an invalid size budget the runner sent");
+            continue;
+        }
+        if kept.iter().any(|seen| seen.platform == budget.platform) {
+            warn!(build_id, source = %source, "dropped a second size budget for one platform");
+            continue;
+        }
+        kept.push(oore_contract::TargetSizeBudget {
+            platform: budget.platform.clone(),
+            source,
+            budget: budget.budget.clone(),
+        });
+    }
+    kept
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+
+    async fn pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        for statement in [
+            "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+             VALUES ('u1', 'owner@example.com', 'sub', 'owner', 0, 0)",
+            "INSERT INTO integrations (id, provider, auth_mode, created_by, created_at, updated_at) \
+             VALUES ('i1', 'github', 'github_app', 'u1', 0, 0)",
+            "INSERT INTO integration_installations (id, integration_id, external_id, account_name, created_at, updated_at) \
+             VALUES ('inst1', 'i1', '1', 'acme', 0, 0)",
+            "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, created_at, updated_at) \
+             VALUES ('repo1', 'inst1', '1', 'acme/app', 0, 0)",
+            "INSERT INTO projects (id, name, created_by, repository_id, created_at, updated_at) \
+             VALUES ('p1', 'App', 'u1', 'repo1', 0, 0)",
+            "INSERT INTO pipelines (id, project_id, name, created_at, updated_at) VALUES ('pl1', 'p1', 'main', 0, 0)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+        pool
+    }
+
+    async fn insert_runner(pool: &sqlx::SqlitePool, id: &str, os: &str) {
+        let capabilities = serde_json::json!({ "os": os, "arch": "aarch64" });
+        let labels = effective_runner_labels(&capabilities, &[]);
+        sqlx::query(
+            "INSERT INTO runners (id, name, token_hash, status, capabilities, labels, created_at, updated_at) \
+             VALUES (?1, ?1, ?1, 'online', ?2, ?3, 0, 0)",
+        )
+        .bind(id)
+        .bind(capabilities.to_string())
+        .bind(serde_json::to_string(&labels).unwrap())
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn queue_build(pool: &sqlx::SqlitePool, id: &str, number: i64, runs_on: &[&str]) {
+        let snapshot = serde_json::json!({ "repository_id": "repo1", "runs_on": runs_on });
+        sqlx::query(
+            "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, config_snapshot, queued_at, created_at, updated_at) \
+             VALUES (?1, 'p1', 'pl1', ?2, 'queued', 'manual', ?3, ?2, 0, 0)",
+        )
+        .bind(id)
+        .bind(number)
+        .bind(snapshot.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn next_build_id(pool: &sqlx::SqlitePool, runner_id: &str) -> Option<String> {
+        next_eligible_build(pool, runner_id)
+            .await
+            .unwrap()
+            .map(|row| row.get("id"))
+    }
+
+    #[tokio::test]
+    async fn linux_build_never_lands_on_a_macos_runner() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        insert_runner(&pool, "linux", "linux").await;
+        queue_build(&pool, "linux-build", 1, &["linux"]).await;
+        queue_build(&pool, "mac-build", 2, &["macos"]).await;
+
+        // The older Linux build must not block the macOS runner's queue.
+        assert_eq!(
+            next_build_id(&pool, "mac").await.as_deref(),
+            Some("mac-build")
+        );
+        assert_eq!(
+            next_build_id(&pool, "linux").await.as_deref(),
+            Some("linux-build")
+        );
+        assert!(
+            !claim_eligible_direct_runner_build(&pool, "linux-build", "mac", "runner:mac", "h")
+                .await
+                .unwrap()
+        );
+        assert!(
+            claim_eligible_direct_runner_build(&pool, "linux-build", "linux", "runner:linux", "h")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn build_needs_every_runs_on_label() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        queue_build(&pool, "b1", 1, &["macos", "gpu"]).await;
+        assert_eq!(next_build_id(&pool, "mac").await, None);
+
+        sqlx::query("UPDATE runners SET labels = ?1 WHERE id = 'mac'")
+            .bind(r#"["arm64","gpu","macos"]"#)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(next_build_id(&pool, "mac").await.as_deref(), Some("b1"));
+    }
+
+    #[tokio::test]
+    async fn builds_from_before_runs_on_match_any_runner() {
+        let pool = pool().await;
+        insert_runner(&pool, "linux", "linux").await;
+        sqlx::query(
+            "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, config_snapshot, queued_at, created_at, updated_at) \
+             VALUES ('old', 'p1', 'pl1', 1, 'queued', 'manual', '{\"repository_id\":\"repo1\"}', 1, 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(next_build_id(&pool, "linux").await.as_deref(), Some("old"));
+    }
+
+    async fn limit_pipeline(pool: &sqlx::SqlitePool, pipeline_id: &str, max_concurrent: u32) {
+        sqlx::query("UPDATE pipelines SET concurrency = ?1 WHERE id = ?2")
+            .bind(
+                serde_json::json!({ "cancel_previous": false, "max_concurrent": max_concurrent })
+                    .to_string(),
+            )
+            .bind(pipeline_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn claim(pool: &sqlx::SqlitePool, runner_id: &str) -> Option<String> {
+        let build_id = next_build_id(pool, runner_id).await?;
+        let actor = format!("runner:{runner_id}");
+        claim_eligible_direct_runner_build(pool, &build_id, runner_id, &actor, "h")
+            .await
+            .unwrap()
+            .then_some(build_id)
+    }
+
+    #[tokio::test]
+    async fn max_concurrent_holds_extra_builds_in_the_queue_in_order() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac1", "macos").await;
+        insert_runner(&pool, "mac2", "macos").await;
+        limit_pipeline(&pool, "pl1", 1).await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        queue_build(&pool, "b3", 3, &[]).await;
+
+        assert_eq!(claim(&pool, "mac1").await.as_deref(), Some("b1"));
+        // A free runner leaves the next build queued while the slot is taken.
+        assert_eq!(claim(&pool, "mac2").await, None);
+        assert_eq!(
+            build_status(&pool, "b2").await,
+            ("queued".to_string(), None)
+        );
+        // A claim that raced the first one is refused when it writes.
+        assert!(
+            !claim_eligible_direct_runner_build(&pool, "b2", "mac2", "runner:mac2", "h")
+                .await
+                .unwrap()
+        );
+
+        // Running still holds the slot; finishing frees it for the oldest build.
+        set_build(&pool, "b1", "running", Some("mac1")).await;
+        assert_eq!(claim(&pool, "mac2").await, None);
+        set_build(&pool, "b1", "succeeded", Some("mac1")).await;
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("b2"));
+        assert_eq!(claim(&pool, "mac1").await, None);
+    }
+
+    #[tokio::test]
+    async fn max_concurrent_two_takes_exactly_two_builds() {
+        let pool = pool().await;
+        for runner in ["mac1", "mac2", "mac3"] {
+            insert_runner(&pool, runner, "macos").await;
+        }
+        limit_pipeline(&pool, "pl1", 2).await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        queue_build(&pool, "b3", 3, &[]).await;
+
+        assert_eq!(claim(&pool, "mac1").await.as_deref(), Some("b1"));
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("b2"));
+        assert_eq!(claim(&pool, "mac3").await, None);
+        assert!(
+            !claim_eligible_direct_runner_build(&pool, "b3", "mac3", "runner:mac3", "h")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            build_status(&pool, "b3").await,
+            ("queued".to_string(), None)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_assigned_build_holds_its_slot() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac1", "macos").await;
+        insert_runner(&pool, "mac2", "macos").await;
+        limit_pipeline(&pool, "pl1", 1).await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        set_build(&pool, "b1", "assigned", Some("mac1")).await;
+
+        assert_eq!(claim(&pool, "mac2").await, None);
+        set_build(&pool, "b1", "queued", None).await;
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("b1"));
+    }
+
+    #[tokio::test]
+    async fn the_slot_count_reads_the_active_builds_index() {
+        let pool = pool().await;
+        let plan: Vec<String> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {NEXT_ELIGIBLE_BUILD_SQL}"
+        )))
+        .bind("mac")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get("detail"))
+        .collect();
+        assert!(
+            plan.iter()
+                .any(|detail| detail.contains("idx_builds_pipeline_active")),
+            "{plan:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn max_concurrent_counts_only_its_own_pipeline() {
+        let pool = pool().await;
+        sqlx::query(
+            "INSERT INTO pipelines (id, project_id, name, created_at, updated_at) \
+             VALUES ('pl2', 'p1', 'nightly', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for runner in ["mac1", "mac2", "mac3"] {
+            insert_runner(&pool, runner, "macos").await;
+        }
+        limit_pipeline(&pool, "pl1", 1).await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        sqlx::query(
+            "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, config_snapshot, queued_at, created_at, updated_at) \
+             VALUES ('other', 'p1', 'pl2', 3, 'queued', 'manual', '{\"repository_id\":\"repo1\"}', 3, 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(claim(&pool, "mac1").await.as_deref(), Some("b1"));
+        // The full pipeline's older build does not block the other pipeline.
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("other"));
+        assert_eq!(claim(&pool, "mac3").await, None);
+    }
+
+    #[tokio::test]
+    async fn a_pipeline_without_max_concurrent_is_unlimited() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac1", "macos").await;
+        insert_runner(&pool, "mac2", "macos").await;
+        sqlx::query("UPDATE pipelines SET concurrency = '{\"cancel_previous\":true,\"max_concurrent\":null}'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+
+        assert_eq!(claim(&pool, "mac1").await.as_deref(), Some("b1"));
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("b2"));
+    }
+
+    fn metrics(disk_free_bytes: u64) -> RunnerMetrics {
+        RunnerMetrics {
+            cpu_percent: 10.0,
+            memory_used_bytes: GIB,
+            memory_total_bytes: 16 * GIB,
+            disk_free_bytes,
+            disk_total_bytes: 500 * GIB,
+            cache_bytes: None,
+            collected_at: None,
+        }
+    }
+
+    async fn disk_incident(pool: &sqlx::SqlitePool) -> Option<(String, String)> {
+        sqlx::query(
+            "SELECT status, severity FROM operator_incidents WHERE deduplication_key = 'runner-disk:mac'",
+        )
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+        .map(|row| (row.get("status"), row.get("severity")))
+    }
+
+    #[tokio::test]
+    async fn low_disk_opens_escalates_and_resolves_an_incident() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+
+        let low = metrics(15 * GIB);
+        record_disk_pressure(
+            &pool,
+            "mac",
+            "mac",
+            &low,
+            runner_disk_pressure(low.disk_free_bytes),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            disk_incident(&pool).await,
+            Some(("open".into(), "warning".into()))
+        );
+        let notified: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM operator_incident_notifications")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(notified, 1);
+
+        let critical = metrics(5 * GIB);
+        record_disk_pressure(
+            &pool,
+            "mac",
+            "mac",
+            &critical,
+            runner_disk_pressure(critical.disk_free_bytes),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            disk_incident(&pool).await,
+            Some(("open".into(), "critical".into()))
+        );
+
+        record_disk_pressure(&pool, "mac", "mac", &metrics(100 * GIB), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            disk_incident(&pool).await,
+            Some(("resolved".into(), "critical".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn purge_request_clears_only_once_the_runner_caught_up() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO runners (id, name, token_hash, status, capabilities, created_at, updated_at, cache_purge_requested_at) \
+             VALUES ('r1', 'Mac Studio', 'hash', 'online', '{}', 0, 0, 100)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            settle_cache_purge_request(&pool, "r1", None).await.unwrap(),
+            Some(100)
+        );
+        assert_eq!(
+            settle_cache_purge_request(&pool, "r1", Some(99))
+                .await
+                .unwrap(),
+            Some(100)
+        );
+        assert_eq!(
+            settle_cache_purge_request(&pool, "r1", Some(100))
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            settle_cache_purge_request(&pool, "r1", Some(100))
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    async fn build_status(pool: &sqlx::SqlitePool, id: &str) -> (String, Option<String>) {
+        let row = sqlx::query("SELECT status, runner_id FROM builds WHERE id = ?1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        (row.get("status"), row.get("runner_id"))
+    }
+
+    async fn last_event(pool: &sqlx::SqlitePool, id: &str) -> (String, String, Option<String>) {
+        let row = sqlx::query(
+            "SELECT from_status, to_status, reason FROM build_events \
+             WHERE build_id = ?1 ORDER BY rowid DESC LIMIT 1",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (
+            row.get("from_status"),
+            row.get("to_status"),
+            row.get("reason"),
+        )
+    }
+
+    async fn set_build(pool: &sqlx::SqlitePool, id: &str, status: &str, runner: Option<&str>) {
+        sqlx::query("UPDATE builds SET status = ?1, runner_id = ?2, updated_at = 0 WHERE id = ?3")
+            .bind(status)
+            .bind(runner)
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_claim_assigns_the_build_in_one_step() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        queue_build(&pool, "b1", 1, &[]).await;
+
+        assert!(
+            claim_eligible_direct_runner_build(&pool, "b1", "mac", "runner:mac", "hash")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            build_status(&pool, "b1").await,
+            ("assigned".to_string(), Some("mac".to_string()))
+        );
+        let hash: Option<String> =
+            sqlx::query_scalar("SELECT signing_token_hash FROM builds WHERE id = 'b1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(hash.as_deref(), Some("hash"));
+        let transitions: Vec<(String, String)> = sqlx::query_as(
+            "SELECT from_status, to_status FROM build_events WHERE build_id = 'b1' ORDER BY rowid",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            transitions,
+            [
+                ("queued".to_string(), "scheduled".to_string()),
+                ("scheduled".to_string(), "assigned".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_assignment_leaves_the_build_queued() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        sqlx::query(
+            "CREATE TRIGGER fail_assign BEFORE UPDATE OF status ON builds \
+             WHEN NEW.status = 'assigned' BEGIN SELECT RAISE(ABORT, 'busy'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            claim_eligible_direct_runner_build(&pool, "b1", "mac", "runner:mac", "hash")
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            build_status(&pool, "b1").await,
+            ("queued".to_string(), None)
+        );
+        let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM build_events")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(events, 0);
+
+        sqlx::query("DROP TRIGGER fail_assign")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            claim_eligible_direct_runner_build(&pool, "b1", "mac", "runner:mac", "hash")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_scheduled_build_left_by_an_interrupted_claim_is_requeued() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        set_build(&pool, "b1", "scheduled", None).await;
+
+        assert!(
+            crate::background::requeue_expired_claims(&pool, 59)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            crate::background::requeue_expired_claims(&pool, 61)
+                .await
+                .unwrap(),
+            ["b1"]
+        );
+        assert_eq!(build_status(&pool, "b1").await.0, "queued");
+        assert_eq!(
+            last_event(&pool, "b1").await,
+            (
+                "scheduled".to_string(),
+                "queued".to_string(),
+                Some("runner claim was interrupted".to_string())
+            )
+        );
+        assert_eq!(next_build_id(&pool, "mac").await.as_deref(), Some("b1"));
+    }
+
+    #[tokio::test]
+    async fn a_restarted_runner_releases_the_builds_it_held() {
+        let pool = pool().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let mut events = scheduler.subscribe_events();
+        insert_runner(&pool, "mac", "macos").await;
+        insert_runner(&pool, "other", "macos").await;
+        queue_build(&pool, "running", 1, &[]).await;
+        queue_build(&pool, "assigned", 2, &[]).await;
+        queue_build(&pool, "elsewhere", 3, &[]).await;
+        set_build(&pool, "running", "running", Some("mac")).await;
+        set_build(&pool, "assigned", "assigned", Some("mac")).await;
+        set_build(&pool, "elsewhere", "running", Some("other")).await;
+
+        let failed = release_runner_builds(&pool, &scheduler, "mac", "runner restarted")
+            .await
+            .unwrap();
+        assert_eq!(failed, ["running"]);
+        assert_eq!(
+            build_status(&pool, "running").await,
+            ("failed".to_string(), None)
+        );
+        assert_eq!(
+            last_event(&pool, "running").await,
+            (
+                "running".to_string(),
+                "failed".to_string(),
+                Some("runner restarted".to_string())
+            )
+        );
+        assert_eq!(
+            build_status(&pool, "assigned").await,
+            ("queued".to_string(), None)
+        );
+        assert_eq!(build_status(&pool, "elsewhere").await.0, "running");
+
+        let event = events.try_recv().unwrap();
+        assert_eq!(event.build_id, "running");
+        assert_eq!(event.to_status, "failed");
+        assert!(events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_build_fails_once_its_runner_stops_heart_beating() {
+        let pool = pool().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        insert_runner(&pool, "gone", "macos").await;
+        insert_runner(&pool, "alive", "macos").await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        set_build(&pool, "b1", "running", Some("gone")).await;
+        set_build(&pool, "b2", "running", Some("alive")).await;
+        sqlx::query("UPDATE runners SET last_heartbeat_at = 1000 WHERE id = 'gone'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE runners SET last_heartbeat_at = 1290 WHERE id = 'alive'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(
+            crate::background::fail_builds_of_lost_runners(&pool, &scheduler, 1299)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            crate::background::fail_builds_of_lost_runners(&pool, &scheduler, 1301)
+                .await
+                .unwrap(),
+            ["b1"]
+        );
+        assert_eq!(build_status(&pool, "b1").await.0, "failed");
+        assert_eq!(
+            last_event(&pool, "b1").await.2.as_deref(),
+            Some("Lost contact with the runner: it stopped sending heartbeats")
+        );
+        assert_eq!(build_status(&pool, "b2").await.0, "running");
+    }
+
+    #[tokio::test]
+    async fn the_files_size_budgets_are_kept_in_the_snapshot_with_the_result() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        let budgets = r#"[{"platform":"android","source":"targets.android.budgets","budget":{"mode":"fail","rules":[{"kind":"aab","max_bytes":10}]}}]"#;
+        let snapshot = |pool: sqlx::SqlitePool, id: &'static str| async move {
+            let raw: String =
+                sqlx::query_scalar("SELECT config_snapshot FROM builds WHERE id = ?1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap()
+        };
+        for (id, number, sent) in [
+            ("b1", 1, Some(budgets)),
+            ("b2", 2, Some("[]")),
+            ("b3", 3, None),
+        ] {
+            queue_build(&pool, id, number, &[]).await;
+            set_build(&pool, id, "running", Some("mac")).await;
+            // As a rerun would have copied it.
+            sqlx::query(
+                "UPDATE builds SET config_snapshot = json_set(config_snapshot, '$.file_size_budgets', json('[1]')) WHERE id = ?1 AND ?2",
+            )
+            .bind(id)
+            .bind(id != "b1")
+            .execute(&pool)
+            .await
+            .unwrap();
+            transition_build_with_results(
+                &pool,
+                id,
+                BuildStatus::Succeeded,
+                Some("runner:mac"),
+                None,
+                Some(RunnerResults {
+                    step_results: Some("[]"),
+                    exit_code: Some(0),
+                    file_size_budgets: sent,
+                }),
+            )
+            .await
+            .unwrap();
+        }
+
+        let b1 = snapshot(pool.clone(), "b1").await;
+        assert_eq!(b1["file_size_budgets"][0]["budget"]["mode"], "fail");
+        assert_eq!(b1["repository_id"], "repo1");
+        // The file sets none now.
+        assert!(
+            snapshot(pool.clone(), "b2")
+                .await
+                .get("file_size_budgets")
+                .is_none()
+        );
+        // A runner that sends nothing leaves the snapshot alone.
+        assert_eq!(
+            snapshot(pool.clone(), "b3").await["file_size_budgets"],
+            serde_json::json!([1])
+        );
+    }
+
+    #[test]
+    fn runner_sent_budgets_are_checked_before_they_are_kept() {
+        let sent: Vec<oore_contract::TargetSizeBudget> = serde_json::from_value(serde_json::json!([
+            {"platform":"android","source":"targets.android.budgets\nforged line","budget":{"mode":"fail","rules":[{"kind":"aab","max_bytes":10}]}},
+            {"platform":"android","source":"second","budget":{"mode":"fail","rules":[{"kind":"apk","max_bytes":10}]}},
+            {"platform":"ios","source":"x".repeat(500),"budget":{"mode":"fail","rules":[{"kind":"ipa","max_bytes":0}]}},
+        ]))
+        .unwrap();
+        let kept = super::checked_file_size_budgets("b1", &sent);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0].source, "targets.android.budgets forged line");
+        assert_eq!(kept[0].budget.rules[0].max_bytes, Some(10));
+
+        let long: Vec<oore_contract::TargetSizeBudget> =
+            serde_json::from_value(serde_json::json!([
+                {"platform":"ios","source":"y".repeat(500),"budget":{"mode":"warn","rules":[]}},
+            ]))
+            .unwrap();
+        assert_eq!(
+            super::checked_file_size_budgets("b1", &long)[0]
+                .source
+                .len(),
+            128
+        );
+
+        let blank: Vec<oore_contract::TargetSizeBudget> =
+            serde_json::from_value(serde_json::json!([
+                {"platform":"ios","source":" \n\t ","budget":{"mode":"warn","rules":[]}},
+            ]))
+            .unwrap();
+        assert_eq!(
+            super::checked_file_size_budgets("b1", &blank)[0].source,
+            ".oore.yaml"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_status_change_rolls_back_when_its_event_cannot_be_recorded() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        set_build(&pool, "b1", "running", Some("mac")).await;
+        sqlx::query(
+            "CREATE TRIGGER fail_events BEFORE INSERT ON build_events \
+             BEGIN SELECT RAISE(ABORT, 'busy'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let results = RunnerResults {
+            step_results: Some("[]"),
+            exit_code: Some(0),
+            file_size_budgets: None,
+        };
+        let (status, _) = transition_build_with_results(
+            &pool,
+            "b1",
+            BuildStatus::Succeeded,
+            Some("runner:mac"),
+            None,
+            Some(results),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            build_status(&pool, "b1").await,
+            ("running".to_string(), Some("mac".to_string()))
+        );
+        let exit_code: Option<i64> =
+            sqlx::query_scalar("SELECT exit_code FROM builds WHERE id = 'b1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(exit_code, None);
+
+        // Once the event can be written, the status and results land together.
+        sqlx::query("DROP TRIGGER fail_events")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let results = RunnerResults {
+            step_results: Some("[]"),
+            exit_code: Some(0),
+            file_size_budgets: None,
+        };
+        let build = transition_build_with_results(
+            &pool,
+            "b1",
+            BuildStatus::Succeeded,
+            Some("runner:mac"),
+            None,
+            Some(results),
+        )
+        .await
+        .unwrap();
+        assert_eq!(build.status, "succeeded");
+        assert_eq!(build.exit_code, Some(0));
+    }
 }

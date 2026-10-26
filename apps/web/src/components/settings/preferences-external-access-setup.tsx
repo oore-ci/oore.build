@@ -46,6 +46,7 @@ import {
   ItemTitle,
 } from '@/components/ui/item'
 import { Spinner } from '@/components/ui/spinner'
+import { splitRowVariants } from '@/lib/recipes'
 
 export function ExternalAccessSetup({
   identityQuery,
@@ -235,7 +236,7 @@ export function ExternalAccessSetup({
 
       {networkSettingsQuery.error ? (
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Failed to load network settings:{' '}
               {networkSettingsQuery.error.message}
@@ -254,7 +255,7 @@ export function ExternalAccessSetup({
 
       {identityQuery.error ? (
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Failed to load identity settings: {identityQuery.error.message}
             </span>
@@ -305,7 +306,7 @@ export function ExternalAccessSetup({
           <CardContent className="space-y-3">
             {preflightQuery.error ? (
               <Alert variant="destructive">
-                <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <AlertDescription className={splitRowVariants()}>
                   <span>
                     Failed to run readiness checks:{' '}
                     {preflightQuery.error.message}

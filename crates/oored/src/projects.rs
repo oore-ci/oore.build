@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-use std::process::Command;
 use std::sync::Arc;
 
 use axum::Json;
@@ -16,12 +14,14 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::extractors::AuthUser;
+use crate::integrations::local_git::{
+    assert_git_repo, normalize_repo_path, resolve_default_branch,
+};
 use crate::project_rbac::{
-    EffectiveProjectRole, ProjectPermission, require_project_permission,
+    EffectiveProjectRole, ProjectPermission, effective_member_role, require_project_permission,
     resolve_effective_project_role,
 };
 use crate::rbac::check_permission;
-use crate::session::AuthSource;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
 
@@ -78,43 +78,6 @@ fn row_to_project(
     })
 }
 
-fn project_role_level(role: ProjectRole) -> u8 {
-    match role {
-        ProjectRole::Maintainer => 3,
-        ProjectRole::Developer => 2,
-        ProjectRole::Viewer => 1,
-    }
-}
-
-fn lesser_project_role(left: ProjectRole, right: ProjectRole) -> ProjectRole {
-    if project_role_level(left) <= project_role_level(right) {
-        left
-    } else {
-        right
-    }
-}
-
-fn effective_member_role_for_response(
-    stored_role: ProjectRole,
-    instance_role: &str,
-    auth_source: &AuthSource,
-) -> ProjectRole {
-    if instance_role == "qa_viewer" {
-        return ProjectRole::Viewer;
-    }
-
-    if *auth_source == AuthSource::ApiToken {
-        let cap = if instance_role == "developer" {
-            ProjectRole::Developer
-        } else {
-            ProjectRole::Viewer
-        };
-        return lesser_project_role(stored_role, cap);
-    }
-
-    stored_role
-}
-
 fn project_role_for_response(
     effective_role: &EffectiveProjectRole,
 ) -> Result<ProjectRole, (StatusCode, Json<ApiError>)> {
@@ -129,81 +92,6 @@ fn project_role_for_response(
     }
 }
 
-fn normalize_local_repo_path(raw: &str) -> Result<PathBuf, (StatusCode, Json<ApiError>)> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "invalid_input",
-            "local_repository_path is required",
-        ));
-    }
-
-    let candidate = PathBuf::from(trimmed);
-    if !candidate.is_absolute() {
-        return Err(api_err(
-            StatusCode::BAD_REQUEST,
-            "invalid_input",
-            "local_repository_path must be an absolute path",
-        ));
-    }
-
-    std::fs::canonicalize(&candidate).map_err(|_| {
-        api_err(
-            StatusCode::BAD_REQUEST,
-            "invalid_input",
-            "local_repository_path does not exist or is not accessible",
-        )
-    })
-}
-
-fn assert_git_repo(path: &std::path::Path) -> Result<(), (StatusCode, Json<ApiError>)> {
-    let path_str = path.to_string_lossy().into_owned();
-
-    let inside = Command::new("git")
-        .args([
-            "-C",
-            path_str.as_str(),
-            "rev-parse",
-            "--is-inside-work-tree",
-        ])
-        .output();
-    if let Ok(output) = inside
-        && output.status.success()
-        && String::from_utf8_lossy(&output.stdout).trim() == "true"
-    {
-        return Ok(());
-    }
-
-    let bare = Command::new("git")
-        .args(["-C", path_str.as_str(), "rev-parse", "--is-bare-repository"])
-        .output();
-    if let Ok(output) = bare
-        && output.status.success()
-        && String::from_utf8_lossy(&output.stdout).trim() == "true"
-    {
-        return Ok(());
-    }
-
-    Err(api_err(
-        StatusCode::BAD_REQUEST,
-        "invalid_repository",
-        "local_repository_path is not a valid git repository",
-    ))
-}
-
-fn resolve_default_branch(path: &std::path::Path) -> Option<String> {
-    let path_str = path.to_string_lossy().into_owned();
-    Command::new("git")
-        .args(["-C", path_str.as_str(), "symbolic-ref", "--short", "HEAD"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
 struct LocalRepoInspection {
     canonical_str: String,
     default_branch: Option<String>,
@@ -215,8 +103,8 @@ async fn inspect_local_repo_for_project(
 ) -> Result<LocalRepoInspection, (StatusCode, Json<ApiError>)> {
     let raw_path = raw_path.to_string();
     tokio::task::spawn_blocking(move || {
-        let canonical_path = normalize_local_repo_path(&raw_path)?;
-        assert_git_repo(&canonical_path)?;
+        let canonical_path = normalize_repo_path(&raw_path, "local_repository_path")?;
+        assert_git_repo(&canonical_path, "local_repository_path")?;
 
         let default_branch = resolve_default_branch(&canonical_path);
         let canonical_str = canonical_path.to_string_lossy().into_owned();
@@ -739,11 +627,8 @@ pub async fn list_projects(
                         "Invalid project role in database",
                     )
                 })?;
-                let current_user_role = effective_member_role_for_response(
-                    stored_role,
-                    &auth.0.role,
-                    &auth.0.auth_source,
-                );
+                let current_user_role =
+                    effective_member_role(stored_role, &auth.0.role, &auth.0.auth_source);
                 row_to_project(row, current_user_role)
             })
             .collect::<Result<Vec<_>, (StatusCode, Json<ApiError>)>>()?
@@ -1181,6 +1066,19 @@ pub async fn delete_project(
         }
     }
 
+    // Feedback rows go with their builds; their screenshots are removed after
+    // the commit, best effort, since a stray screenshot is harmless.
+    let screenshot_keys = crate::build_feedback::screenshot_keys_for_project(&mut *tx, &project_id)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to load project feedback screenshots");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to delete project",
+            )
+        })?;
+
     // Delete terminal builds first (non-cascading FK on builds.project_id)
     sqlx::query(
         "DELETE FROM builds WHERE project_id = ?1 \
@@ -1219,6 +1117,11 @@ pub async fn delete_project(
             "Failed to delete project",
         )
     })?;
+
+    if !screenshot_keys.is_empty() {
+        let storage = state.storage.read().await.clone();
+        crate::build_feedback::delete_screenshots(&storage, &screenshot_keys).await;
+    }
 
     let details = serde_json::json!({
         "deleted_by": auth.0.email,

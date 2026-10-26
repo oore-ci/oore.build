@@ -1,4 +1,5 @@
 import { useMemo, type ReactNode } from 'react'
+import { Link } from '@tanstack/react-router'
 
 import { CollectionError, CollectionFrame } from '@/components/collection'
 import {
@@ -13,8 +14,12 @@ import {
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
 import { Badge } from '@/components/ui/badge'
+import { formatEnumLabel } from '@/lib/format-utils'
 import { relativeTime } from '@/lib/format-utils'
 import type { AuditLogEntry } from '@oore/client/models'
+import { ROLE_LABELS } from './-user-role-labels'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 export type AuditSort =
   | 'created_at'
@@ -29,13 +34,38 @@ const AUDIT_SORTS = [
   'resource_type',
 ] satisfies ReadonlyArray<AuditSort>
 
+const PROPER_WORDS = new Map([
+  ['api', 'API'],
+  ['github', 'GitHub'],
+  ['gitlab', 'GitLab'],
+  ['oidc', 'OIDC'],
+  ['qa', 'QA'],
+  ['smtp', 'SMTP'],
+  ['url', 'URL'],
+])
+
 function auditActionLabel(action: string) {
-  const words = action.replace(/[._-]+/g, ' ')
-  return words.charAt(0).toLocaleUpperCase() + words.slice(1)
+  return formatEnumLabel(action.replace(/[.-]+/g, '_'))
+    .split(' ')
+    .map((word) => PROPER_WORDS.get(word.toLowerCase()) ?? word)
+    .join(' ')
 }
 
-function auditResourceLabel(resourceType: string) {
-  return resourceType.replaceAll('_', ' ')
+// Details are free text from the daemon and can carry raw role values.
+function auditDetails(details: string) {
+  return details.replace(
+    /\b(owner|admin|developer|qa_viewer)\b/g,
+    (role) => ROLE_LABELS[role] ?? role,
+  )
+}
+
+function NotRecorded() {
+  return (
+    <span className="text-muted-foreground">
+      <span aria-hidden>—</span>
+      <span className="sr-only">Not recorded</span>
+    </span>
+  )
 }
 
 function AuditTime({ entry }: { entry: AuditLogEntry }) {
@@ -43,10 +73,64 @@ function AuditTime({ entry }: { entry: AuditLogEntry }) {
     <time
       dateTime={new Date(entry.created_at * 1000).toISOString()}
       title={new Date(entry.created_at * 1000).toLocaleString()}
-      className="text-xs whitespace-nowrap text-muted-foreground"
+      className={cn(textVariants({ variant: 'caption' }), 'whitespace-nowrap')}
     >
       {relativeTime(entry.created_at)}
     </time>
+  )
+}
+
+// The full id, linked to the resource when it has a page of its own.
+function AuditResourceId({
+  id,
+  type,
+}: {
+  id: string | null | undefined
+  type: string
+}) {
+  if (!id) return <NotRecorded />
+  const className = cn(
+    textVariants({ variant: 'mono' }),
+    'block max-w-48 truncate',
+  )
+  const linkClassName = `${className} hover:text-foreground hover:underline`
+  if (type === 'build')
+    return (
+      <Link
+        to="/builds/$buildId"
+        params={{ buildId: id }}
+        title={id}
+        className={linkClassName}
+      >
+        {id}
+      </Link>
+    )
+  if (type === 'project')
+    return (
+      <Link
+        to="/projects/$projectId"
+        params={{ projectId: id }}
+        title={id}
+        className={linkClassName}
+      >
+        {id}
+      </Link>
+    )
+  if (type === 'integration')
+    return (
+      <Link
+        to="/settings/integrations/$integrationId"
+        params={{ integrationId: id }}
+        title={id}
+        className={linkClassName}
+      >
+        {id}
+      </Link>
+    )
+  return (
+    <span title={id} className={className}>
+      {id}
+    </span>
   )
 }
 
@@ -86,20 +170,32 @@ const auditColumns: Array<DataTableColumnDef<AuditLogEntry>> = [
     ),
     cell: ({ row }) => (
       <Badge variant="secondary">
-        {auditResourceLabel(row.original.resource_type)}
+        {formatEnumLabel(row.original.resource_type)}
       </Badge>
     ),
   },
   {
     accessorKey: 'resource_id',
     header: 'Resource ID',
-    cell: ({ row }) => row.original.resource_id?.slice(0, 8) ?? 'Not available',
+    cell: ({ row }) => (
+      <AuditResourceId
+        id={row.original.resource_id}
+        type={row.original.resource_type}
+      />
+    ),
     enableSorting: false,
   },
   {
     accessorKey: 'details',
     header: 'Details',
-    cell: ({ row }) => row.original.details ?? 'Not available',
+    cell: ({ row }) =>
+      row.original.details ? (
+        <span className="block max-w-md min-w-48 wrap-break-word whitespace-normal">
+          {auditDetails(row.original.details)}
+        </span>
+      ) : (
+        <NotRecorded />
+      ),
     enableSorting: false,
   },
 ]
@@ -109,8 +205,10 @@ export function AuditLogCollection({
   emptyState,
   entries,
   error,
+  activeFilterCount,
   filters,
   isFiltered,
+  onClearFilters,
   isLoading,
   isRefreshing,
   onPageChange,
@@ -127,8 +225,10 @@ export function AuditLogCollection({
   emptyState: ReactNode
   entries: Array<AuditLogEntry>
   error: Error | null
+  activeFilterCount: number
   filters: ReactNode
   isFiltered: boolean
+  onClearFilters: () => void
   isLoading: boolean
   isRefreshing: boolean
   onPageChange: (page: number) => void
@@ -176,12 +276,15 @@ export function AuditLogCollection({
         <DataTable
           table={table}
           filters={filters}
+          activeFilterCount={activeFilterCount}
+          onClearFilters={isFiltered ? onClearFilters : undefined}
           search={{
             value: query,
             onChange: onSearch,
             placeholder: 'Search actions',
           }}
           pagination={{ onPageChange, page, pageSize, total }}
+          isLoading={isLoading}
           emptyMessage={
             isLoading
               ? 'Loading audit entries…'

@@ -14,10 +14,15 @@ base64.workspace = true
 hex.workspace = true
 libc = "0.2"
 oore-contract = { path = "../oore-contract" }
+oore-google-play = { path = "../oore-google-play" }
 reqwest.workspace = true
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+xmlparser = "0.13"
 sha2.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "process", "sync", "time"] }
 zeroize.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net", "io-util"] }

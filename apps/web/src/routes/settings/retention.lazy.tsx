@@ -13,14 +13,17 @@ import {
 } from '@/hooks/use-retention'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
+import { FormActions } from '@/components/form-actions'
 import {
   SettingsSection,
   SettingsSurface,
+  SettingsSurfaceSeparator,
 } from '@/components/settings/settings-section'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { ApiClientError, getApiErrorMessage } from '@/lib/api-client/api-error'
+import { isOoreApiError } from '@oore/client/client'
+import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import {
   Form,
   FormControl,
@@ -39,10 +42,10 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Spinner } from '@/components/ui/spinner'
-import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { RetentionSummaryCard } from './-retention-summary-card'
+import { Stack } from '@/components/layout/stack'
+import { splitRowVariants } from '@/lib/recipes'
 
 export const Route = createLazyFileRoute('/settings/retention')({
   component: RetentionPage,
@@ -93,7 +96,7 @@ function EnabledRetentionFields({
     <>
       <SettingsSection
         title="Retention criteria"
-        description="A build is cleaned up when it matches any configured limit. Leave a field empty to disable that limit."
+        hint="A build is cleaned up when it matches any limit. Leave a field empty to disable that limit."
       >
         <div className="grid gap-4 sm:grid-cols-3">
           <FormField
@@ -141,7 +144,7 @@ function EnabledRetentionFields({
             name="max_artifact_size_mb"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Max artifact size (MB)</FormLabel>
+                <FormLabel>Max artifact storage per project (MB)</FormLabel>
                 <FormControl>
                   <Input
                     type="number"
@@ -150,7 +153,10 @@ function EnabledRetentionFields({
                     {...field}
                   />
                 </FormControl>
-                <FormDescription>Per-project artifact size cap</FormDescription>
+                <FormDescription>
+                  Oldest builds are cleaned up once a project&apos;s artifacts
+                  exceed this
+                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -158,12 +164,9 @@ function EnabledRetentionFields({
         </div>
       </SettingsSection>
 
-      <Separator className="-mx-4 w-auto sm:-mx-5" />
+      <SettingsSurfaceSeparator />
 
-      <SettingsSection
-        title="Cleanup behavior"
-        description="Choose what the cleanup removes and how often it runs."
-      >
+      <SettingsSection title="Cleanup behavior">
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField
             control={form.control}
@@ -177,7 +180,7 @@ function EnabledRetentionFields({
                   items={CLEANUP_TARGETS}
                 >
                   <FormControl>
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                   </FormControl>
@@ -211,7 +214,7 @@ function EnabledRetentionFields({
                   items={CLEANUP_INTERVAL_OPTIONS}
                 >
                   <FormControl>
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                   </FormControl>
@@ -233,11 +236,11 @@ function EnabledRetentionFields({
         </div>
       </SettingsSection>
 
-      <Separator className="-mx-4 w-auto sm:-mx-5" />
+      <SettingsSurfaceSeparator />
 
       <SettingsSection
         title="Protected statuses"
-        description="Builds with these statuses are never cleaned up, regardless of other criteria."
+        hint="Builds with these statuses are never cleaned up, whatever the other criteria say."
       >
         <FormField
           control={form.control}
@@ -272,11 +275,11 @@ function EnabledRetentionFields({
         />
       </SettingsSection>
 
-      <Separator className="-mx-4 w-auto sm:-mx-5" />
+      <SettingsSurfaceSeparator />
 
       <SettingsSection
         title="Dry run"
-        description="Log what the policy would remove without deleting builds or artifacts."
+        hint="Log what the policy would remove without deleting anything."
         actions={
           <FormField
             control={form.control}
@@ -379,16 +382,19 @@ function RetentionPage() {
         keep_statuses: values.keep_statuses,
         dry_run: values.dry_run,
         cleanup_interval_secs: Number(values.cleanup_interval_secs),
+        // The daemon replaces the whole policy, so keep settings this form
+        // does not show.
+        artifact_ttl_days: policy?.artifact_ttl_days,
       },
       {
         onSuccess: () => {
           toast.success('Retention policy updated')
+          form.reset(values)
         },
         onError: (error) => {
-          const message =
-            error instanceof ApiClientError
-              ? getApiErrorMessage(error, {})
-              : 'Failed to update retention policy'
+          const message = isOoreApiError(error)
+            ? getApiErrorMessage(error, {})
+            : 'Failed to update retention policy'
           toast.error(message)
         },
       },
@@ -399,18 +405,12 @@ function RetentionPage() {
     return (
       <PageLayout width="wide">
         <PageMeta title="Retention" />
-        <PageHeader
-          title="Retention"
-          description="Configure automatic cleanup of old builds and artifacts."
-        />
-        <div
-          className="flex flex-col gap-4"
-          aria-label="Loading retention settings"
-        >
+        <PageHeader title="Retention" />
+        <Stack gap={4} aria-label="Loading retention settings">
           <Skeleton className="h-4 w-48" />
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
-        </div>
+        </Stack>
       </PageLayout>
     )
   }
@@ -421,12 +421,9 @@ function RetentionPage() {
     return (
       <PageLayout width="wide">
         <PageMeta title="Retention" />
-        <PageHeader
-          title="Retention"
-          description="Configure automatic cleanup of old builds and artifacts."
-        />
+        <PageHeader title="Retention" />
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>Failed to load the retention policy: {message}</span>
             <Button
               type="button"
@@ -447,7 +444,6 @@ function RetentionPage() {
       <PageMeta title="Retention" />
       <PageHeader
         title="Retention"
-        description="Configure automatic cleanup of old builds and artifacts to manage disk usage."
         meta={
           <RetentionSummaryCard
             error={cleanupError}
@@ -467,7 +463,7 @@ function RetentionPage() {
               render={({ field }) => (
                 <SettingsSection
                   title="Automatic cleanup"
-                  description="Apply the policy below on a schedule. Running builds and protected statuses are never removed."
+                  hint="Running builds and protected statuses are never removed."
                   actions={
                     <FormItem>
                       <FormControl>
@@ -485,22 +481,18 @@ function RetentionPage() {
 
             {enabled ? (
               <>
-                <Separator className="-mx-4 w-auto sm:-mx-5" />
+                <SettingsSurfaceSeparator />
                 <EnabledRetentionFields form={form} />
               </>
             ) : null}
-
-            <Separator className="-mx-4 w-auto sm:-mx-5" />
-
-            <div className="flex justify-end">
-              <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? (
-                  <Spinner data-icon="inline-start" />
-                ) : null}
-                Save policy
-              </Button>
-            </div>
           </SettingsSurface>
+          <FormActions
+            className="mt-4"
+            disabled={!form.formState.isDirty}
+            disabledReason="No changes to save"
+            isPending={updateMutation.isPending}
+            submitLabel="Save changes"
+          />
         </form>
       </Form>
     </PageLayout>

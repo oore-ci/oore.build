@@ -1,79 +1,91 @@
 ---
 title: 'Configure a pipeline in the UI'
 status: implemented
-description: 'Create a pipeline in Oore when the repository does not own a workflow file.'
+description: 'Create a pipeline from a template in Oore when the repository has no workflow file.'
 ---
 
-Configure a pipeline in the UI when the repository does not contain a selected
-Oore workflow. UI configuration remains in Oore; it does not add or change a
-file in the repository.
+Create a pipeline in the Oore web UI when the repository has no Oore workflow
+file. The settings stay in Oore. Oore does not add or change any file in the
+repository.
 
 ## What you need
 
-- A project linked to a repository.
+- A project linked to a repository. See [Create a project](/build/projects/create).
 - Project developer, maintainer, instance admin, or instance owner access.
-- The commands and artifact patterns needed to build the application.
 
 ## 1. Open pipeline setup
 
-Open the project, select **Pipelines**, then select **Set up a build**.
+Open the project's **Pipelines** tab. Select **Set up a build** for the first
+pipeline, or **Add pipeline** when the project already has one.
 
-If Oore finds a valid repository workflow, it recommends that workflow. Select
-**Set up manually instead** only when you intend to configure the UI path.
+If Oore finds a valid `.oore.yaml` or `.oore.yml` on the default branch, it
+offers that workflow instead. Select **Set up manually** only when the
+pipeline should ignore the repository file.
 
-## 2. Choose a starting point
+## 2. Pick a template
 
-Under **Choose a starting point**, select the closest starter:
+Under **Start from**, select the closest template:
 
-- **Quick Debug APK** for the shortest Android build, with no uploaded
-  release-signing material required.
-- **Release Android** for a release Android pipeline.
-- **iOS + Android** or **All Platforms** for a wider mobile build.
-- **Custom** to start without template commands.
+| Template             | What it sets up                                                   |
+| -------------------- | ----------------------------------------------------------------- |
+| **Android test app** | A debug APK with `flutter build apk --debug`. No signing needed   |
+| **Release Android**  | A release Android build with release signing turned on            |
+| **iOS + Android**    | Both mobile platforms. Add signing before you run it              |
+| **All platforms**    | Android, iOS, and macOS                                           |
+| **Custom**           | Android only, with no template commands. Change anything you need |
 
-## 3. Review the configuration
+## 3. Review the settings
 
-Set the **Pipeline name** and **Build for platforms** values. Expand the
-remaining sections only when you need to change them:
+Every setting has a default that builds a standard Flutter app. Change only
+what your app needs:
 
-- **Configuration** for config selection, Flutter version, and commands.
-- **Environment Variables** for application build values.
-- **Artifacts** for one pattern per line.
-- **Triggers** for source events, branch patterns, cancellation, and
-  concurrency.
+- **Basics** for the pipeline name, platforms, Flutter version, and build
+  number offset.
+- **Build** for commands before and after the platform build, per-platform
+  arguments and overrides, environment variables, artifact patterns, and the
+  runner.
+- **Signing** for Android keystores and iOS certificates or API keys.
+- **Triggers** for source events, branch and path filters, schedules, limits,
+  and approvals.
 
-For a local Git repository, the UI correctly limits the pipeline to manual UI
-or API triggers because there is no source webhook.
+**What will run** shows the exact steps the runner
+will run with these settings.
+
+A project that points at a repository on the Oore Mac has no source to send
+push or pull request events. Its builds start from the UI, the API, or a
+schedule.
 
 ## 4. Create the pipeline
 
-Select **Create**.
+Select **Create pipeline**.
 
-## Verify the result
+## Check the result
 
-Oore shows **Pipeline created** and lists the pipeline on the project. Open it
-and confirm the expected platforms, commands, artifact patterns, and trigger
-settings.
+Oore shows `Pipeline created` and opens **Run build** with the new pipeline
+selected. Run a build and check that it ends as **Succeeded** with the
+artifacts you expect.
 
 ## Troubleshooting
 
-**A repository workflow takes precedence**
+**Oore uses the repository file instead of these settings**
 
-For an automatic config path, Oore checks `.oore.yaml` and then `.oore.yml`.
-If a selected file exists, it owns the build. Remove or intentionally change
-that repository selection if the UI should own the pipeline.
+A pipeline whose **Config source** is
+**Use repo config if found (.oore.yaml, .oore.yml)** uses the file whenever it
+exists at the commit being built. Remove the file, or have this pipeline read
+a different path with **Choose a config file**.
 
-**A repository workflow is invalid**
+**Oore reports that the repository workflow is invalid**
 
-Repair the selected file. Oore does not fall back to a different UI definition
-when the selected file exists but is invalid.
+Fix the file. Oore never falls back to the UI settings when the selected file
+exists but is invalid.
 
-**Webhook triggers are unavailable**
+**Trigger events are unavailable**
 
-Local Git pipelines are manual only. Connect GitHub or GitLab through
-**Sources** before configuring source-event triggers.
+Pipelines for a repository on the Oore Mac start from the UI, the API, or a
+schedule. Connect [GitHub](/build/sources/github) or [GitLab](/build/sources/gitlab) to
+build on pushes and pull requests.
 
 ## Next step
 
-[Trigger a build](/build/run/trigger) and verify the pipeline on one pinned
-revision.
+[Trigger a build](/build/run/trigger). When the pipeline works, consider
+[moving it into `.oore.yaml`](/build/pipelines/oore-yaml).

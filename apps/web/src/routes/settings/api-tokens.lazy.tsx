@@ -72,8 +72,8 @@ import TokenCreatedDialog from '@/components/token-created-dialog'
 import type { SortDirection } from '@/components/data-table-features'
 import type { ApiTokenSort, ApiTokensSearch } from './api-tokens'
 import { ApiTokenInventory } from './-api-token-inventory'
-import { ROLE_LABELS } from './-user-role-labels'
-import { useTime } from '@/hooks/use-time'
+import { ROLE_DESCRIPTIONS, ROLE_LABELS } from './-user-role-labels'
+import { splitRowVariants } from '@/lib/recipes'
 
 export const Route = createLazyFileRoute('/settings/api-tokens')({
   component: ApiTokensPage,
@@ -121,18 +121,21 @@ function CreateTokenDialog({
 
   const userRoleIndex = ROLE_HIERARCHY.indexOf(authUser?.role ?? 'qa_viewer')
   const availableRoles = ROLE_HIERARCHY.slice(userRoleIndex)
+  // Developer is the least privileged role that can trigger builds, which is
+  // what most tokens are for. Users below it can only mint their own role.
+  const defaultRole = availableRoles.includes('developer')
+    ? 'developer'
+    : (authUser?.role ?? 'qa_viewer')
 
   const form = useForm<CreateTokenFormValues>({
     resolver: zodResolver(createTokenSchema),
     defaultValues: {
       name: '',
-      role: authUser?.role ?? 'developer',
+      role: defaultRole,
       expiry: '90',
     },
     mode: 'onBlur',
   })
-
-  const time = useTime()
 
   function handleClose(nextOpen: boolean) {
     if (!nextOpen) {
@@ -145,7 +148,7 @@ function CreateTokenDialog({
     const expiresAt =
       values.expiry === 'never'
         ? undefined
-        : Math.floor(time / 1000) + Number(values.expiry) * 24 * 60 * 60
+        : Math.floor(Date.now() / 1000) + Number(values.expiry) * 24 * 60 * 60
 
     createMutation.mutate(
       {
@@ -181,7 +184,10 @@ function CreateTokenDialog({
         </DialogHeader>
 
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <form
+            onSubmit={(event) => void form.handleSubmit(onSubmit)(event)}
+            className="space-y-4"
+          >
             <FormField
               control={form.control}
               name="name"
@@ -215,7 +221,7 @@ function CreateTokenDialog({
                     items={ROLE_LABELS}
                   >
                     <FormControl>
-                      <SelectTrigger>
+                      <SelectTrigger className="w-full">
                         <SelectValue placeholder="Select role" />
                       </SelectTrigger>
                     </FormControl>
@@ -228,7 +234,8 @@ function CreateTokenDialog({
                     </SelectContent>
                   </Select>
                   <FormDescription>
-                    The token will have the permissions of this role.
+                    {ROLE_DESCRIPTIONS[field.value] ??
+                      'The token will have the permissions of this role.'}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -247,7 +254,7 @@ function CreateTokenDialog({
                     items={EXPIRY_OPTIONS}
                   >
                     <FormControl>
-                      <SelectTrigger>
+                      <SelectTrigger className="w-full">
                         <SelectValue placeholder="Select expiry" />
                       </SelectTrigger>
                     </FormControl>
@@ -362,7 +369,6 @@ function ApiTokensPage() {
       <PageMeta title="API tokens" noindex />
       <PageHeader
         title="API tokens"
-        description="Manage credentials for programmatic access to this instance."
         actions={
           canWrite ? (
             <Button onClick={() => setCreateOpen(true)}>
@@ -376,7 +382,7 @@ function ApiTokensPage() {
       {tokensQuery.error ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>Failed to load API tokens: {tokensQuery.error.message}</span>
             <Button
               variant="outline"

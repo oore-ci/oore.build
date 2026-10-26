@@ -13,9 +13,13 @@ import { useIndexAuthGuard } from '@/hooks/use-index-auth-guard'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import {
-  DashboardBuildOverview,
+  DashboardBuildActivity,
   DashboardGettingStarted,
 } from '@/components/dashboard-sections'
+import DashboardBuildIncident from '@/components/dashboard-build-incident'
+import { DashboardBuildHealth } from '@/components/dashboard-build-health'
+import { DashboardProjectHealth } from '@/components/dashboard-project-health'
+import { DashboardStoreHealth } from '@/components/dashboard-store-health'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -23,13 +27,18 @@ import { Skeleton } from '@/components/ui/skeleton'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { Spinner } from '@/components/ui/spinner'
-import { useBuilds } from '@/hooks/use-builds'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { useAttention } from '@/hooks/use-attention'
+import { useBuilds, type BuildInsightsWindow } from '@/hooks/use-builds'
 import { useIntegrations } from '@/hooks/use-integrations'
 import {
-  useMarkOperatorIncidentRead,
-  useOperatorIncidents,
-} from '@/hooks/use-operator-incidents'
-import { useHasPermissions } from '@/hooks/use-permissions'
+  canChangeApprovalPolicy,
+  useHasPermissions,
+} from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
 import { useRunners } from '@/hooks/use-runners'
 import { useSetupStatus } from '@/hooks/use-setup'
@@ -39,11 +48,26 @@ import { PageMeta } from '@/lib/seo'
 import { isManagedFrontend } from '@/lib/managed-frontend'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
-import { OperatorIncidentAlert } from '@/components/operator-incident-alert'
 import { createWebOoreClient } from '@/lib/api-client/client'
+import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
+import { useListNavigation } from '@/hooks/use-list-navigation'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 
-const loadQaReleasesPage = () => import('@/components/qa-releases-page')
-const QaReleasesPage = lazy(loadQaReleasesPage)
+const SetupChecklist = lazy(() => import('@/components/setup-checklist'))
+const ReleaseBoard = lazy(() =>
+  import('@/components/releases/release-board').then((module) => ({
+    default: module.ReleaseBoard,
+  })),
+)
+const ReleaseActivity = lazy(() =>
+  import('@/components/releases/release-activity').then((module) => ({
+    default: module.ReleaseActivity,
+  })),
+)
+
+const QaReleasesPage = lazy(() => import('@/components/qa-releases-page'))
 const TriggerBuildDrawer = lazy(
   () => import('@/components/trigger-build-drawer'),
 )
@@ -51,7 +75,7 @@ const TriggerBuildDrawer = lazy(
 export const Route = createFileRoute('/')({
   staticData: {
     breadcrumb: {
-      title: 'Dashboard',
+      title: 'Home',
     },
   },
   component: IndexPage,
@@ -78,15 +102,8 @@ function selectDashboardBuilds({ builds }: ListBuildsResponse) {
   return {
     builds,
     active: builds.filter((build) => ACTIVE_BUILD_STATUSES.has(build.status)),
-    completedCount: completed.length,
     recentCompleted: completed.slice(0, 6),
-    successfulCount: completed.filter((build) => build.status === 'succeeded')
-      .length,
   }
-}
-
-function selectBuildTotal({ total }: ListBuildsResponse): number {
-  return total
 }
 
 function selectHasActiveIntegration({
@@ -100,10 +117,6 @@ function selectRunnerSummary({ online_total, total }: ListRunnersResponse) {
     online: online_total,
     total,
   }
-}
-
-function normalizeUrl(value: string): string {
-  return value.replace(/\/+$/, '')
 }
 
 async function detectReachableLocalDaemonUrl(): Promise<string | null> {
@@ -123,12 +136,13 @@ async function detectReachableLocalDaemonUrl(): Promise<string | null> {
 
 function IndexPage() {
   const instance = useActiveInstance()
-  const { data: status, isLoading, error } = useSetupStatus()
+  const { data: status, isLoading, error, refetch } = useSetupStatus()
   const [showAddInstance, setShowAddInstance] = useState(false)
   const [isDetectingLocalInstance, setIsDetectingLocalInstance] =
     useState(false)
   const autoDetectAttemptedRef = useRef(false)
   const authUser = useAuthStore((s) => s.user)
+  useListNavigation(authUser?.role !== 'qa_viewer')
 
   useMountEffect(() => {
     if (instance || autoDetectAttemptedRef.current) return
@@ -151,12 +165,7 @@ function IndexPage() {
           return
         }
         if (!detectedUrl) return
-        const existingInstance = Object.values(store.instances).find(
-          (candidate) =>
-            normalizeUrl(candidate.url) === normalizeUrl(detectedUrl),
-        )
-        const instanceId =
-          existingInstance?.id ?? store.addInstance('Local', detectedUrl)
+        const instanceId = store.addInstance('Local', detectedUrl)
         store.setActiveInstance(instanceId)
       })
       .catch(() => {
@@ -173,12 +182,10 @@ function IndexPage() {
     return (
       <div className="flex flex-1 items-center justify-center">
         <PageMeta />
-        <div className="flex items-center gap-3">
+        <Row gap={3}>
           <Spinner className="size-5" />
-          <p className="text-sm text-muted-foreground">
-            Detecting local daemon...
-          </p>
-        </div>
+          <Text variant="muted">Looking for Oore on this Mac...</Text>
+        </Row>
       </div>
     )
   }
@@ -187,10 +194,10 @@ function IndexPage() {
     return (
       <div className="flex flex-1 items-center justify-center">
         <PageMeta />
-        <div className="flex items-center gap-3">
+        <Row gap={3}>
           <Spinner className="size-5" />
-          <p className="text-sm text-muted-foreground">Signing in...</p>
-        </div>
+          <Text variant="muted">Signing in...</Text>
+        </Row>
       </div>
     )
   }
@@ -205,31 +212,49 @@ function IndexPage() {
               <img src="/logo.svg" alt="Oore CI logo" className="size-full" />
             </div>
             <h1 className="text-3xl font-bold tracking-tight">Oore CI</h1>
-            <p className="text-sm text-muted-foreground">
-              Self-hosted mobile CI and app distribution platform.
-              <br />
-              Connect a backend instance to begin.
-            </p>
+            <Text variant="muted">
+              Build your mobile app on a Mac you control. Share an install link
+              with your team.
+            </Text>
           </div>
 
           <Card size="sm">
             <CardHeader>
-              <CardTitle>Instance registry</CardTitle>
+              <CardTitle>Join your team</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Add a backend instance to start setup or connect to an
-                already-configured daemon.
-              </p>
+              <Text variant="muted">
+                Have an Oore address? Connect and sign in to find your team’s
+                projects and builds.
+              </Text>
               <Button
                 onClick={() => setShowAddInstance(true)}
                 className="w-full"
               >
                 <HugeiconsIcon icon={Add01Icon} />
-                Add instance
+                Connect to Oore
               </Button>
             </CardContent>
           </Card>
+          <div className="space-y-3 text-center">
+            <h2 className="font-medium">Set up Oore on your Mac</h2>
+            <Text variant="muted">
+              Install Oore on macOS and keep the Mac running during builds.
+            </Text>
+            <Button
+              variant="outline"
+              render={
+                <a
+                  href="https://docs.oore.build/start/install"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                />
+              }
+              nativeButton={false}
+            >
+              Setup guide
+            </Button>
+          </div>
         </div>
 
         <AddInstanceDialog
@@ -244,12 +269,10 @@ function IndexPage() {
     return (
       <div className="flex flex-1 items-center justify-center">
         <PageMeta />
-        <div className="flex items-center gap-3">
+        <Row gap={3}>
           <Spinner className="size-5" />
-          <p className="text-sm text-muted-foreground">
-            Connecting to backend...
-          </p>
-        </div>
+          <Text variant="muted">Connecting to Oore...</Text>
+        </Row>
       </div>
     )
   }
@@ -267,6 +290,16 @@ function IndexPage() {
               running.
             </AlertDescription>
           </Alert>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button onClick={() => void refetch()}>Retry</Button>
+            <Button variant="outline" onClick={() => setShowAddInstance(true)}>
+              Change connection
+            </Button>
+          </div>
+          <AddInstanceDialog
+            open={showAddInstance}
+            onOpenChange={setShowAddInstance}
+          />
         </div>
       </div>
     )
@@ -298,10 +331,10 @@ function IndexPage() {
   return (
     <div className="flex flex-1 items-center justify-center">
       <PageMeta />
-      <div className="flex items-center gap-3">
+      <Row gap={3}>
         <Spinner className="size-5" />
-        <p className="text-sm text-muted-foreground">Loading...</p>
-      </div>
+        <Text variant="muted">Loading...</Text>
+      </Row>
     </div>
   )
 }
@@ -310,12 +343,21 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
   const navigate = useNavigate()
   const [canWriteIntegrations, canWriteProjects, canWriteBuilds] =
     useHasPermissions(['integrations:write', 'projects:write', 'builds:write'])
-  const incidentsQuery = useOperatorIncidents({
-    enabled: canWriteIntegrations,
-  })
-  const markIncidentRead = useMarkOperatorIncidentRead()
+  const attention = useAttention()
+  const canApprove = canChangeApprovalPolicy(
+    useAuthStore((s) => s.user?.role),
+    undefined,
+  )
 
-  const projectsQuery = useProjects({ limit: 1 })
+  const scope = useFirstAppScope()
+  const guidedProjectId = useFirstAppStore(
+    (state) => state.progress[scope]?.projectId,
+  )
+  const projectsQuery = useProjects({
+    limit: 1,
+    sort: 'created_at',
+    direction: 'desc',
+  })
   const projects = projectsQuery.data?.projects ?? []
   const integrationsQuery = useIntegrations(
     { limit: 1 },
@@ -334,18 +376,9 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
     { limit: 50 },
     { select: selectDashboardBuilds },
   )
-  const runningBuildsQuery = useBuilds(
-    { status: 'running', limit: 1 },
-    { select: selectBuildTotal },
-  )
-  const waitingBuildsQuery = useBuilds(
-    { status: 'queued,scheduled,assigned', limit: 1 },
-    { select: selectBuildTotal },
-  )
+  const [insightsDays, setInsightsDays] = useState<BuildInsightsWindow>(7)
   const activeBuilds = recentBuildsQuery.data?.active ?? []
   const recentCompletedBuilds = recentBuildsQuery.data?.recentCompleted ?? []
-  const completedBuilds = recentBuildsQuery.data?.completedCount ?? 0
-  const successfulBuilds = recentBuildsQuery.data?.successfulCount ?? 0
   const hasProjects = projects.length > 0
   const integrationsResolved =
     !integrationsQuery.isLoading && !integrationsQuery.error
@@ -353,25 +386,54 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
     runtimeMode === 'remote' &&
     integrationsResolved &&
     integrationsQuery.data === false
-  const integrationConnectTo = '/settings/integrations'
-  const onlineRunners = runnersQuery.data?.online ?? 0
-  const totalRunners = runnersQuery.data?.total ?? 0
   const noOnlineRunners = !!runnersQuery.data && runnersQuery.data.online === 0
-  const canShowRunBuild = hasProjects && !noOnlineRunners && canWriteBuilds
+  const canShowRunBuild = hasProjects && canWriteBuilds
   const blockedBuilds = activeBuilds.filter(
     (build) => build.runner_policy_block_reason,
   )
 
+  if (
+    projectsQuery.isLoading ||
+    recentBuildsQuery.isLoading ||
+    runnersQuery.isLoading
+  ) {
+    return (
+      <PageLayout width="wide">
+        <PageHeader title="Home" />
+        <div className="space-y-8" role="status" aria-label="Loading Home">
+          <Skeleton className="h-48 w-full" />
+          <Skeleton className="h-80 w-full" />
+        </div>
+      </PageLayout>
+    )
+  }
+
+  const runBuildButton = (
+    <Button disabled={noOnlineRunners}>
+      <HugeiconsIcon icon={PlayIcon} data-icon="inline-start" />
+      Run build
+    </Button>
+  )
+
   return (
     <PageLayout width="wide">
-      <div className="flex flex-col gap-8">
+      <Stack gap={8}>
         <PageHeader
-          title="Dashboard"
+          title="Home"
           actions={
-            canShowRunBuild ? (
+            !canShowRunBuild ? undefined : noOnlineRunners ? (
+              <Tooltip>
+                <TooltipTrigger render={<span tabIndex={0} />}>
+                  {runBuildButton}
+                </TooltipTrigger>
+                <TooltipContent>
+                  No runner is online, so a build would only wait.
+                </TooltipContent>
+              </Tooltip>
+            ) : (
               <Suspense fallback={null}>
                 <TriggerBuildDrawer
-                  description="Choose a project and pipeline to run a manual build."
+                  description="Choose a project, pipeline and branch to build."
                   onBuildCreated={(buildId) => {
                     void navigate({
                       to: '/builds/$buildId',
@@ -379,23 +441,12 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
                     })
                   }}
                 >
-                  <Button>
-                    <HugeiconsIcon icon={PlayIcon} data-icon="inline-start" />
-                    Run build
-                  </Button>
+                  {runBuildButton}
                 </TriggerBuildDrawer>
               </Suspense>
-            ) : undefined
+            )
           }
         />
-
-        {incidentsQuery.data?.incidents.map((incident) => (
-          <OperatorIncidentAlert
-            incident={incident}
-            key={incident.id}
-            onRead={() => markIncidentRead.mutate(incident.id)}
-          />
-        ))}
 
         {!projectsQuery.isLoading &&
         !projectsQuery.error &&
@@ -403,10 +454,20 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
           <DashboardGettingStarted
             canWriteIntegrations={canWriteIntegrations}
             canWriteProjects={canWriteProjects}
-            integrationConnectTo={integrationConnectTo}
             noConnectedSources={noConnectedSources}
+            noOnlineRunners={noOnlineRunners}
             runtimeMode={runtimeMode}
           />
+        ) : null}
+
+        {hasProjects &&
+        (guidedProjectId || recentBuildsQuery.data?.builds.length === 0) ? (
+          <Suspense fallback={<Skeleton className="h-16 w-full" />}>
+            <SetupChecklist
+              projectId={guidedProjectId ?? projects[0].id}
+              variant="summary"
+            />
+          </Suspense>
         ) : null}
 
         {projectsQuery.error ? (
@@ -424,32 +485,46 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
           </Alert>
         ) : null}
 
-        {hasProjects || projectsQuery.isLoading || projectsQuery.error ? (
-          <DashboardBuildOverview
+        <DashboardBuildIncident
+          items={
+            hasProjects
+              ? attention.items
+              : // First run lists connecting a runner as a step already.
+                attention.items.filter((item) => item.key !== 'no-runner')
+          }
+        />
+
+        {hasProjects || projectsQuery.error ? (
+          <DashboardBuildActivity
             activeBuilds={activeBuilds}
             blockedBuilds={blockedBuilds}
-            completedBuilds={completedBuilds}
             error={recentBuildsQuery.error}
             isLoading={recentBuildsQuery.isLoading}
-            noOnlineRunners={hasProjects && noOnlineRunners}
-            onlineRunners={onlineRunners}
             onRetry={() => void recentBuildsQuery.refetch()}
             recentBuilds={recentCompletedBuilds}
-            runnersError={!!runnersQuery.error}
-            runnersLoading={runnersQuery.isLoading}
-            runningBuilds={runningBuildsQuery.data ?? 0}
-            statusCountsError={
-              !!runningBuildsQuery.error || !!waitingBuildsQuery.error
-            }
-            statusCountsLoading={
-              runningBuildsQuery.isLoading || waitingBuildsQuery.isLoading
-            }
-            successfulBuilds={successfulBuilds}
-            totalRunners={totalRunners}
-            waitingBuilds={waitingBuildsQuery.data ?? 0}
           />
         ) : null}
-      </div>
+
+        {hasProjects ? (
+          <Suspense fallback={null}>
+            <ReleaseBoard />
+            <ReleaseActivity limit={3} showProject />
+          </Suspense>
+        ) : null}
+
+        {hasProjects ? (
+          <DashboardBuildHealth
+            canApprove={canApprove}
+            days={insightsDays}
+            onDaysChange={setInsightsDays}
+            onlineRunners={runnersQuery.data?.online}
+          />
+        ) : null}
+
+        {hasProjects ? <DashboardStoreHealth /> : null}
+
+        {hasProjects ? <DashboardProjectHealth days={insightsDays} /> : null}
+      </Stack>
     </PageLayout>
   )
 }

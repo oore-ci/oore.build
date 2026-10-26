@@ -15,11 +15,14 @@ permissions:
 jobs:
   autotag:
     name: Cut release tag
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
-    # Only run after validate completes — but since validate is a separate workflow,
-    # we rely on branch protection rules to enforce this ordering.
+    # Git and gh only. A fresh hosted runner keeps the checkout token off any
+    # persistent machine.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Branch protection requires validation before a release branch moves,
+    # so this does not wait for the Validate workflow.
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -29,7 +32,6 @@ jobs:
           AUTOTAG_CHANNEL: ${{ github.ref_name }}
           AUTOTAG_BRANCH: ${{ github.ref_name }}
           AUTOTAG_SHA: ${{ github.sha }}
-          GITHUB_TOKEN: ${{ github.token }}
         run: bash tools/autotag.sh
 
       - name: Start release

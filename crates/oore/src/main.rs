@@ -24,7 +24,7 @@ use oore_contract::{
     SetupOidcStartResponse, SetupOidcVerifyRequest, SetupOidcVerifyResponse,
     SetupPreferencesRequest, SetupState, SetupStateFile, SetupStatus, SetupSummaryResponse,
     SetupTrustedProxyConfigureRequest, UserProfileResponse, local_recovery_socket_path,
-    parse_repository_pipeline_yaml,
+    parse_repository_config,
 };
 use oore_runner::RunnerConfig;
 use ring::aead::{self, AES_256_GCM, Aad, BoundKey, NONCE_LEN, Nonce, NonceSequence, UnboundKey};
@@ -42,6 +42,7 @@ mod managed_services;
 mod setup_journey;
 mod uninstaller;
 mod update_supervisor;
+mod update_transaction;
 
 const FAVICON_DATA_URI: &str = "data:image/svg+xml;base64,PHN2ZwogIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICB2aWV3Qm94PSIxMDAgMTAwIDMyMCAzMjAiCiAgcm9sZT0iaW1nIgogIGFyaWEtbGFiZWxsZWRieT0idGl0bGUgZGVzY3JpcHRpb24iCj4KICA8dGl0bGUgaWQ9InRpdGxlIj5Pb3JlPC90aXRsZT4KICA8ZGVzYyBpZD0iZGVzY3JpcHRpb24iPgogICAgQSBjaXJjdWxhciBidWlsZCBzd2VlcCBjb25uZWN0aW5nIGEgc291cmNlIGNvbW1pdCB0byBhbiBhcnRpZmFjdC4KICA8L2Rlc2M+CiAgPGRlZnM+CiAgICA8bWFzawogICAgICBpZD0iY3V0b3V0cyIKICAgICAgeD0iMCIKICAgICAgeT0iMCIKICAgICAgd2lkdGg9IjUxMiIKICAgICAgaGVpZ2h0PSI1MTIiCiAgICAgIG1hc2tVbml0cz0idXNlclNwYWNlT25Vc2UiCiAgICA+CiAgICAgIDxyZWN0IHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiBmaWxsPSJ3aGl0ZSIgLz4KICAgICAgPGNpcmNsZSBjeD0iMTczIiBjeT0iMzQ5IiByPSIxNiIgZmlsbD0iYmxhY2siIC8+CiAgICAgIDxyZWN0IHg9IjMyOSIgeT0iMTk3IiB3aWR0aD0iNjYiIGhlaWdodD0iMTEiIGZpbGw9ImJsYWNrIiAvPgogICAgPC9tYXNrPgogIDwvZGVmcz4KICA8ZyBmaWxsPSIjYmI0ZDAwIiBtYXNrPSJ1cmwoI2N1dG91dHMpIj4KICAgIDxjaXJjbGUKICAgICAgY3g9IjI1NCIKICAgICAgY3k9IjI2MCIKICAgICAgcj0iMTE5IgogICAgICBmaWxsPSJub25lIgogICAgICBzdHJva2U9IiNiYjRkMDAiCiAgICAgIHN0cm9rZS13aWR0aD0iMjIiCiAgICAvPgogICAgPGNpcmNsZSBjeD0iMTczIiBjeT0iMzQ5IiByPSIzNSIgLz4KICAgIDxyZWN0IHg9IjMxNSIgeT0iMTcwIiB3aWR0aD0iNzkiIGhlaWdodD0iOTAiIHJ4PSIxNSIgLz4KICA8L2c+Cjwvc3ZnPgo=";
 const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:8787";
@@ -126,14 +127,21 @@ enum Commands {
     Uninstall(uninstaller::UninstallArgs),
     /// Configure this device and finish first-run setup
     Setup(Box<SetupArgs>),
+    /// Create a short-lived frontend pairing invitation
     Frontend(FrontendArgs),
+    /// Create a Local Only session or import an existing session
     Login(LoginArgs),
     /// Mint a single-use browser recovery link over the local management socket.
     Recovery(RecoveryArgs),
+    /// Show public setup status and authenticated runtime details
     Status(StatusArgs),
+    /// Register, start, install, or remove a Direct macOS runner
     Runner(RunnerArgs),
+    /// Read or write persistent CLI defaults
     Config(ConfigArgs),
+    /// Check the host and selected build-platform toolchains
     Doctor(DoctorArgs),
+    /// Validate repository pipeline configuration
     Pipeline(PipelineArgs),
     /// Print the installed oore version
     Version,
@@ -349,8 +357,6 @@ fn legacy_component_artifact_exists(
         ),
         install_manifest::InstallComponent::Runner => (
             vec![
-                install_root.join("bin/fvm"),
-                install_root.join("libexec/fvm"),
                 install_root.join("runner.json"),
                 install_root.join("managed-runner.json"),
                 install_root.join(oore_runner::RUNNER_RELEASE_MARKER_FILE),
@@ -851,6 +857,10 @@ struct PipelineArgs {
 enum PipelineSubcommand {
     /// Validate repository pipeline YAML using the runner's schema.
     Validate(PipelineValidateArgs),
+    /// Print the steps a build runs for each workflow and platform.
+    Plan(PipelinePlanArgs),
+    /// Rewrite a version 1 pipeline file as version 2.
+    Migrate(PipelineMigrateArgs),
 }
 
 #[derive(Debug, Args)]
@@ -860,12 +870,207 @@ struct PipelineValidateArgs {
     path: PathBuf,
 }
 
+#[derive(Debug, Args)]
+struct PipelinePlanArgs {
+    /// Repository pipeline file to plan.
+    #[arg(default_value = ".oore.yaml")]
+    path: PathBuf,
+    /// Plan only this workflow (version 2). Defaults to every workflow.
+    #[arg(long)]
+    workflow: Option<String>,
+    /// Plan only these platforms, as a run that selects them would.
+    #[arg(long = "platform", value_name = "PLATFORM")]
+    platforms: Vec<String>,
+    /// Print the plans as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct PipelineMigrateArgs {
+    /// Version 1 pipeline file to migrate.
+    #[arg(default_value = ".oore.yaml")]
+    path: PathBuf,
+    /// Write the version 2 file to FILE instead of printing it.
+    #[arg(long, short = 'o', value_name = "FILE", conflicts_with_all = ["write", "check"])]
+    output: Option<PathBuf>,
+    /// Replace PATH with the version 2 file.
+    #[arg(long, conflicts_with = "check")]
+    write: bool,
+    /// Print no file; fail while PATH is still version 1.
+    #[arg(long)]
+    check: bool,
+}
+
+fn read_pipeline_config(path: &Path) -> anyhow::Result<oore_contract::RepositoryConfig> {
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    parse_repository_config(&raw).map_err(anyhow::Error::msg)
+}
+
 fn handle_pipeline_validate(args: PipelineValidateArgs) -> anyhow::Result<()> {
-    let raw = fs::read_to_string(&args.path)
-        .with_context(|| format!("failed to read {}", args.path.display()))?;
-    parse_repository_pipeline_yaml(&raw).map_err(anyhow::Error::msg)?;
+    let config = read_pipeline_config(&args.path)?;
+    for notice in config.notices() {
+        eprintln!("note: {notice}");
+    }
     println!("{} is valid", args.path.display());
     Ok(())
+}
+
+fn handle_pipeline_plan(args: PipelinePlanArgs) -> anyhow::Result<()> {
+    let config = read_pipeline_config(&args.path)?;
+    let platforms = args
+        .platforms
+        .iter()
+        .map(|platform| {
+            serde_json::from_value::<oore_contract::BuildPlatform>(serde_json::Value::String(
+                platform.to_ascii_lowercase(),
+            ))
+            .map_err(|_| {
+                anyhow::anyhow!("unknown platform '{platform}'; use android, ios or macos")
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let workflows: Vec<Option<String>> = match (&args.workflow, config.workflow_names()) {
+        (Some(workflow), _) => vec![Some(workflow.clone())],
+        (None, names) if names.is_empty() => vec![None],
+        (None, names) => names
+            .into_iter()
+            .map(|name| Some(name.to_string()))
+            .collect(),
+    };
+    let mut plans = Vec::new();
+    for workflow in &workflows {
+        let plan = config
+            .plan(oore_contract::PlanRequest {
+                workflow: workflow.as_deref(),
+                selected_platforms: (!platforms.is_empty()).then_some(platforms.as_slice()),
+                build_play_bundle: false,
+            })
+            .map_err(anyhow::Error::msg)?;
+        plans.push(plan);
+    }
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&plans)?);
+    } else {
+        println!("{} (version {})", args.path.display(), config.version());
+        for plan in &plans {
+            print!("\n{}", render_pipeline_plan(plan));
+        }
+    }
+    for notice in config.notices() {
+        eprintln!("note: {notice}");
+    }
+    Ok(())
+}
+
+fn handle_pipeline_migrate(args: PipelineMigrateArgs) -> anyhow::Result<()> {
+    use oore_contract::pipeline_migrate::{MigrateOutcome, migrate_pipeline_config};
+
+    let path = args.path.display();
+    let raw = fs::read_to_string(&args.path).with_context(|| format!("failed to read {path}"))?;
+    let migration = match migrate_pipeline_config(&raw).map_err(anyhow::Error::msg)? {
+        MigrateOutcome::AlreadyV2 => {
+            eprintln!("{path} is already version 2; nothing to migrate");
+            return Ok(());
+        }
+        MigrateOutcome::Migrated(migration) => migration,
+    };
+    if args.check {
+        anyhow::bail!(
+            "{path} is version 1; run `oore pipeline migrate --write {path}` to migrate it"
+        );
+    }
+    for warning in &migration.warnings {
+        eprintln!("warning: {warning}");
+    }
+    for note in &migration.notes {
+        eprintln!("note: {note}");
+    }
+    let destination = match (&args.output, args.write) {
+        (Some(output), _) => output.as_path(),
+        (None, true) => args.path.as_path(),
+        (None, false) => {
+            print!("{}", migration.yaml);
+            return Ok(());
+        }
+    };
+    fs::write(destination, &migration.yaml)
+        .with_context(|| format!("failed to write {}", destination.display()))?;
+    if args.write {
+        eprintln!("Migrated {path} to version 2. Review it before committing.");
+    } else {
+        eprintln!(
+            "Wrote the version 2 file to {}. Review it before committing.",
+            destination.display()
+        );
+    }
+    Ok(())
+}
+
+fn render_pipeline_plan(plan: &oore_contract::PipelinePlan) -> String {
+    let platform_names = |platforms: &[oore_contract::BuildPlatform]| {
+        platforms
+            .iter()
+            .map(|platform| oore_contract::pipeline_config::platform_key(platform))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut out = String::new();
+    out.push_str(&match &plan.workflow {
+        Some(workflow) => format!("workflow {workflow}\n"),
+        None => "pipeline\n".to_string(),
+    });
+    out.push_str(&format!(
+        "  platforms: {}\n",
+        platform_names(&plan.platforms)
+    ));
+    out.push_str(&format!(
+        "  flutter: {}\n",
+        plan.flutter_version
+            .as_deref()
+            .unwrap_or("from .fvmrc, else stable")
+    ));
+    if !plan.runs_on.is_empty() {
+        out.push_str(&format!("  runs_on: {}\n", plan.runs_on.join(", ")));
+    }
+    if !plan.env.is_empty() {
+        out.push_str("  env:\n");
+        for entry in &plan.env {
+            out.push_str(&format!("    {}={}\n", entry.key, entry.value));
+        }
+    }
+    out.push_str("  steps:\n");
+    for (index, step) in plan.steps.iter().enumerate() {
+        let mut tags = vec![step.phase.as_str().to_string()];
+        if let Some(platform) = &step.platform {
+            tags.push(oore_contract::pipeline_config::platform_key(platform).to_string());
+        }
+        if let Some(report) = &step.test_report {
+            tags.push(format!("tests: {report}"));
+        }
+        out.push_str(&format!(
+            "    {}. {} [{}]\n",
+            index + 1,
+            step.name,
+            tags.join(", ")
+        ));
+        for line in step.run.lines() {
+            out.push_str(&format!("       $ {line}\n"));
+        }
+    }
+    out.push_str("  artifacts:\n");
+    for pattern in &plan.artifact_patterns {
+        out.push_str(&format!("    {pattern}\n"));
+    }
+    let publish = plan.publish.describe();
+    if !publish.is_empty() {
+        out.push_str("  publish:\n");
+        for line in publish {
+            out.push_str(&format!("    {line}\n"));
+        }
+    }
+    out
 }
 
 #[derive(Debug, Args)]
@@ -884,6 +1089,12 @@ struct UpdateArgs {
     /// the installed VERSION file; falls back to stable.
     #[arg(long)]
     channel: Option<String>,
+
+    /// Move this installation to the --channel release channel in place
+    ///
+    /// The target release must be the same as or newer than the installed version.
+    #[arg(long, default_value = "false", requires = "channel")]
+    switch_channel: bool,
 
     /// GitHub repository in `owner/name` format
     ///
@@ -1189,6 +1400,10 @@ struct RunnerRegisterArgs {
     /// Runner name (defaults to hostname)
     #[arg(long)]
     name: Option<String>,
+    /// Extra label for pipelines to select with `runs_on`, added to the
+    /// detected labels such as `macos-15` and `xcode-16`. Repeatable.
+    #[arg(long = "label")]
+    labels: Vec<String>,
     /// Auth session token for registration
     #[arg(long, env = "OORE_SESSION_TOKEN")]
     token: String,
@@ -1264,6 +1479,11 @@ struct DoctorArgs {
     /// Check Android, iOS, and macOS requirements.
     #[arg(long, conflicts_with = "platform")]
     all: bool,
+
+    /// Run the one-click backend update preflight that the web UI shows.
+    /// Run it as the account that owns the install, without sudo.
+    #[arg(long, conflicts_with_all = ["platform", "all"])]
+    update: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -1285,18 +1505,8 @@ fn now_epoch_secs() -> i64 {
 }
 
 fn resolve_data_dir() -> anyhow::Result<PathBuf> {
-    for key in ["OORED_DATA_DIR", "OORE_DATA_DIR"] {
-        if let Ok(raw) = std::env::var(key) {
-            let trimmed = raw.trim();
-            if !trimmed.is_empty() {
-                return Ok(PathBuf::from(trimmed));
-            }
-        }
-    }
-
-    let data_dir =
-        dirs::data_dir().context("could not determine platform data directory (dirs::data_dir)")?;
-    Ok(data_dir.join("oore"))
+    oore_contract::data_paths::resolve_data_dir(|key| std::env::var(key).ok(), dirs::data_dir())
+        .context("could not determine platform data directory (dirs::data_dir)")
 }
 
 fn resolve_db_path(override_path: Option<&str>) -> anyhow::Result<PathBuf> {
@@ -1674,28 +1884,6 @@ async fn connect_db(path: &PathBuf) -> anyhow::Result<SqlitePool> {
     Ok(pool)
 }
 
-fn setup_state_to_str(state: SetupState) -> &'static str {
-    match state {
-        SetupState::Uninitialized => "uninitialized",
-        SetupState::BootstrapPending => "bootstrap_pending",
-        SetupState::IdpConfigured => "idp_configured",
-        SetupState::OwnerCreated => "owner_created",
-        SetupState::Ready => "ready",
-        _ => "unknown",
-    }
-}
-
-fn str_to_setup_state(s: &str) -> anyhow::Result<SetupState> {
-    match s {
-        "uninitialized" => Ok(SetupState::Uninitialized),
-        "bootstrap_pending" => Ok(SetupState::BootstrapPending),
-        "idp_configured" => Ok(SetupState::IdpConfigured),
-        "owner_created" => Ok(SetupState::OwnerCreated),
-        "ready" => Ok(SetupState::Ready),
-        other => anyhow::bail!("unknown setup state: {other}"),
-    }
-}
-
 struct SingleNonce(Option<[u8; NONCE_LEN]>);
 
 impl NonceSequence for SingleNonce {
@@ -1705,34 +1893,20 @@ impl NonceSequence for SingleNonce {
     }
 }
 
-fn resolve_encryption_key_path() -> anyhow::Result<PathBuf> {
-    if let Ok(path) = std::env::var("OORE_ENCRYPTION_KEY_FILE") {
-        let trimmed = path.trim();
-        if !trimmed.is_empty() {
-            return Ok(PathBuf::from(trimmed));
-        }
-    }
-
-    if let Ok(data_dir) = std::env::var("OORED_DATA_DIR")
-        && !data_dir.trim().is_empty()
-    {
-        return Ok(PathBuf::from(data_dir.trim()).join("encryption.key"));
-    }
-    if let Ok(data_dir) = std::env::var("OORE_DATA_DIR")
-        && !data_dir.trim().is_empty()
-    {
-        return Ok(PathBuf::from(data_dir.trim()).join("encryption.key"));
-    }
-
-    let data_dir =
-        dirs::data_dir().context("could not determine platform data directory (dirs::data_dir)")?;
-    Ok(data_dir.join("oore").join("encryption.key"))
+/// Load the daemon's encryption key, generating one only for a database
+/// that holds no encrypted data. An existing key must decrypt the database's
+/// key check value, so the CLI never writes ciphertext the daemon cannot read.
+async fn load_or_generate_encryption_key(pool: &SqlitePool) -> anyhow::Result<Vec<u8>> {
+    load_or_generate_encryption_key_at(pool, &resolve_key_path()?).await
 }
 
-fn load_or_generate_encryption_key() -> anyhow::Result<Vec<u8>> {
-    let path = resolve_encryption_key_path()?;
+async fn load_or_generate_encryption_key_at(
+    pool: &SqlitePool,
+    path: &Path,
+) -> anyhow::Result<Vec<u8>> {
+    let check = load_encryption_key_check(pool).await?;
     if path.exists() {
-        let key = fs::read(&path)
+        let key = fs::read(path)
             .with_context(|| format!("failed to read encryption key: {}", path.display()))?;
         if key.len() != 32 {
             anyhow::bail!(
@@ -1741,7 +1915,23 @@ fn load_or_generate_encryption_key() -> anyhow::Result<Vec<u8>> {
                 key.len()
             );
         }
+        if let Some(check) = check
+            && decrypt_secret(&check, &key).ok().as_deref()
+                != Some(oore_contract::data_paths::ENCRYPTION_KEY_CHECK_PLAINTEXT)
+        {
+            anyhow::bail!(
+                "encryption key {} does not match this database. Restore the original key with `oore backup restore`, or set OORED_DATA_DIR to the directory that holds it.",
+                path.display()
+            );
+        }
         return Ok(key);
+    }
+
+    if check.is_some() || database_has_encrypted_data(pool).await? {
+        anyhow::bail!(
+            "encryption key {} is missing, but the database already holds data encrypted with it. Refusing to generate a new key. Restore the original key with `oore backup restore`, or set OORED_DATA_DIR to the directory that holds it.",
+            path.display()
+        );
     }
 
     if let Some(parent) = path.parent() {
@@ -1753,15 +1943,82 @@ fn load_or_generate_encryption_key() -> anyhow::Result<Vec<u8>> {
     let mut key = vec![0u8; 32];
     rng.fill(&mut key)
         .map_err(|_| anyhow::anyhow!("failed to generate encryption key"))?;
-    fs::write(&path, &key)
+    fs::write(path, &key)
         .with_context(|| format!("failed to write encryption key: {}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
             .with_context(|| format!("failed to set permissions on {}", path.display()))?;
     }
     Ok(key)
+}
+
+/// The daemon's key check value, if this database has one.
+async fn load_encryption_key_check(pool: &SqlitePool) -> anyhow::Result<Option<String>> {
+    let has_table: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'encryption_key_check')",
+    )
+    .fetch_one(pool)
+    .await
+    .context("failed to inspect database schema for encryption_key_check")?;
+    if !has_table {
+        return Ok(None);
+    }
+    sqlx::query_scalar("SELECT check_ciphertext FROM encryption_key_check WHERE id = 1")
+        .fetch_optional(pool)
+        .await
+        .context("failed to load the encryption key check value")
+}
+
+/// Whether any column named like `*encrypted*` holds a value.
+async fn database_has_encrypted_data(pool: &SqlitePool) -> anyhow::Result<bool> {
+    let columns: Vec<(String, String)> = sqlx::query_as(
+        "SELECT m.name, c.name
+         FROM sqlite_master m, pragma_table_info(m.name) c
+         WHERE m.type = 'table'
+           AND m.name NOT LIKE 'sqlite_%'
+           AND c.name LIKE '%encrypted%'",
+    )
+    .fetch_all(pool)
+    .await
+    .context("failed to list encrypted columns")?;
+    for (table, column) in columns {
+        let table = format!("\"{}\"", table.replace('"', "\"\""));
+        let column = format!("\"{}\"", column.replace('"', "\"\""));
+        // Identifiers come from sqlite_master and are quoted.
+        let exists: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS (SELECT 1 FROM {table} WHERE {column} IS NOT NULL AND {column} != '')"
+        )))
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("failed to inspect {table}.{column}"))?;
+        if exists {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn decrypt_secret(ciphertext_b64: &str, key: &[u8]) -> anyhow::Result<String> {
+    let data = BASE64
+        .decode(ciphertext_b64)
+        .context("failed to decode base64 ciphertext")?;
+    anyhow::ensure!(
+        data.len() >= NONCE_LEN + AES_256_GCM.tag_len(),
+        "ciphertext too short"
+    );
+    let (nonce_bytes, ciphertext_and_tag) = data.split_at(NONCE_LEN);
+    let mut nonce = [0u8; NONCE_LEN];
+    nonce.copy_from_slice(nonce_bytes);
+    let unbound_key = UnboundKey::new(&AES_256_GCM, key)
+        .map_err(|_| anyhow::anyhow!("invalid encryption key"))?;
+    let mut opening_key = aead::OpeningKey::new(unbound_key, SingleNonce(Some(nonce)));
+    let mut in_out = ciphertext_and_tag.to_vec();
+    let plaintext = opening_key
+        .open_in_place(Aad::empty(), &mut in_out)
+        .map_err(|_| anyhow::anyhow!("decryption failed"))?;
+    String::from_utf8(plaintext.to_vec()).context("decrypted data is not valid UTF-8")
 }
 
 fn encrypt_secret(plaintext: &str, key: &[u8]) -> anyhow::Result<String> {
@@ -1872,7 +2129,9 @@ async fn load_state<'e>(
             let schema_version: i64 = row.try_get("schema_version")?;
             let instance_id: String = row.try_get("instance_id")?;
             let state_str: String = row.try_get("setup_state")?;
-            let setup_state = str_to_setup_state(&state_str)?;
+            let setup_state = state_str
+                .parse::<SetupState>()
+                .map_err(anyhow::Error::msg)?;
 
             let bootstrap_token = {
                 let hash: Option<String> = row.try_get("bootstrap_token_hash")?;
@@ -1981,7 +2240,7 @@ async fn save_state<'e>(
     )
     .bind(state.schema_version as i64)
     .bind(&state.instance_id)
-    .bind(setup_state_to_str(state.setup_state))
+    .bind(state.setup_state.to_string())
     .bind(state.bootstrap_token.as_ref().map(|t| &t.hash))
     .bind(state.bootstrap_token.as_ref().map(|t| t.expires_at))
     .bind(state.bootstrap_token.as_ref().and_then(|t| t.consumed_at))
@@ -2253,7 +2512,7 @@ async fn handle_setup_init(args: SetupInitArgs, quiet: bool) -> anyhow::Result<(
         .context(
             "trusted-proxy setup init requires a shared secret; pass --shared-secret-file or set OORE_TRUSTED_PROXY_SHARED_SECRET_FILE",
         )?;
-        let key = load_or_generate_encryption_key()?;
+        let key = load_or_generate_encryption_key(&pool).await?;
         encrypted_shared_secret = Some(encrypt_secret(&shared_secret, &key)?);
         has_shared_secret = encrypted_shared_secret.is_some();
         trusted_proxy_cidrs = cidrs;
@@ -2917,17 +3176,6 @@ async fn wait_for_oidc_callback(listener: TcpListener) -> anyhow::Result<(String
 
 // ── Interactive setup flow ──────────────────────────────────────
 
-fn state_label(state: SetupState) -> &'static str {
-    match state {
-        SetupState::Uninitialized => "uninitialized",
-        SetupState::BootstrapPending => "bootstrap_pending",
-        SetupState::IdpConfigured => "idp_configured",
-        SetupState::OwnerCreated => "owner_created",
-        SetupState::Ready => "ready",
-        _ => "unknown",
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OidcSettingsAction {
     Reuse,
@@ -3219,8 +3467,7 @@ async fn handle_setup_oidc_interactive(
         "Control plane",
         format!(
             "URL: {daemon_url}\nInstance: {}\nSetup state: {}",
-            status.instance_id,
-            state_label(status.state)
+            status.instance_id, status.state
         ),
     )?;
 
@@ -4353,6 +4600,7 @@ async fn handle_runner_register_with_lifecycle_lock(
         .json(&serde_json::json!({
             "name": name,
             "capabilities": capabilities,
+            "labels": args.labels,
         }))
         .send()
         .await?;
@@ -5481,7 +5729,51 @@ fn add_signing_warnings(checks: &mut Vec<DoctorCheckResult>) {
     }
 }
 
+fn run_update_doctor(json: bool) -> anyhow::Result<()> {
+    use oore_contract::RuntimeUpdateCheckStatus;
+
+    let install_root = resolve_install_root()?;
+    // Taking the lifecycle lock puts back a daemon an interrupted update held.
+    if let Err(error) = install_lock::InstallLock::acquire(&install_root) {
+        eprintln!("Skipped interrupted update recovery: {error:#}");
+    }
+    let preflight = oore_contract::runtime_update_preflight::run(&install_root);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&preflight)?);
+    } else {
+        println!(
+            "oore doctor -- backend update preflight for {}",
+            install_root.display()
+        );
+        for check in &preflight.checks {
+            let status = match check.status {
+                RuntimeUpdateCheckStatus::Pass => "ok",
+                RuntimeUpdateCheckStatus::Warn => "warning",
+                RuntimeUpdateCheckStatus::Fail => "failed",
+            };
+            println!(
+                "  [{status}] {:<30} {}",
+                check.label,
+                check.detail.as_deref().unwrap_or("")
+            );
+            if let Some(fix) = check.fix.as_deref() {
+                println!("      Fix: {fix}");
+            }
+        }
+        if preflight.ready {
+            println!("One-click backend updates are available.");
+        }
+    }
+    match oore_contract::runtime_update_preflight::first_failure(&preflight) {
+        Some(check) => anyhow::bail!("backend update preflight failed: {}", check.label),
+        None => Ok(()),
+    }
+}
+
 fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
+    if args.update {
+        return run_update_doctor(args.json);
+    }
     let mut checks: Vec<DoctorCheckResult> = Vec::new();
 
     let base_checks: [(&str, &[&str], &str); 1] = [(
@@ -5498,27 +5790,24 @@ fn run_doctor_checks(args: DoctorArgs) -> anyhow::Result<()> {
         }
     }
 
-    let fvm_available = command_version("fvm", &["--version"]);
-    if let Some(version) = &fvm_available {
-        checks.push(doctor_check("fvm", "ok", Some(version.clone()), None));
-    } else {
-        checks.push(doctor_check(
-            "fvm",
-            "ok",
-            Some("managed by Oore; prepared automatically on the first Flutter build".to_string()),
-            None,
-        ));
-    }
-
     if let Some(version) = command_version("flutter", &["--version"]) {
         checks.push(doctor_check("flutter", "ok", Some(version), None));
     } else {
         checks.push(doctor_check(
             "flutter",
             "ok",
-            Some(
-                "managed by Oore through FVM; downloaded and cached on the first build".to_string(),
-            ),
+            Some("not installed; host builds need it, VM builds use the image's".to_string()),
+            None,
+        ));
+    }
+
+    if let Some(version) = command_version("tart", &["--version"]) {
+        checks.push(doctor_check("tart", "ok", Some(version), None));
+    } else {
+        checks.push(doctor_check(
+            "tart",
+            "ok",
+            Some("not installed; only pipelines with isolation: vm need it".to_string()),
             None,
         ));
     }
@@ -5706,6 +5995,25 @@ fn http_client() -> anyhow::Result<reqwest::Client> {
         .context("failed to build HTTP client")
 }
 
+const RELEASE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// A release download that receives no bytes for this long is treated as
+/// stalled. Slow but progressing downloads are bounded only by the total limit.
+const RELEASE_READ_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const RELEASE_METADATA_TIMEOUT: Duration = Duration::from_secs(120);
+const RELEASE_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const RELEASE_DOWNLOAD_ATTEMPTS: u32 = 3;
+
+/// The client for release index, signature and archive downloads. Unlike the
+/// loopback daemon client, it never waits forever on a stalled network.
+fn release_http_client() -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(format!("oore/{}/update", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(RELEASE_CONNECT_TIMEOUT)
+        .read_timeout(RELEASE_READ_IDLE_TIMEOUT)
+        .build()
+        .context("failed to build the release download client")
+}
+
 fn normalized_release_signing_public_key() -> anyhow::Result<String> {
     RELEASE_SIGNING_PUBLIC_KEY
         .lines()
@@ -5778,38 +6086,108 @@ fn verify_signed_release_metadata(
     Ok(())
 }
 
+enum ReleaseDownloadError {
+    Retryable(anyhow::Error),
+    Fatal(anyhow::Error),
+}
+
+fn release_download_status_is_retryable(status: reqwest::StatusCode) -> bool {
+    status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+}
+
+async fn download_release_bytes_once(
+    client: &reqwest::Client,
+    url: &str,
+    description: &str,
+    limit: usize,
+) -> Result<Vec<u8>, ReleaseDownloadError> {
+    use ReleaseDownloadError::{Fatal, Retryable};
+
+    let total_timeout = if limit > MAX_RELEASE_METADATA_BYTES {
+        RELEASE_ARCHIVE_TIMEOUT
+    } else {
+        RELEASE_METADATA_TIMEOUT
+    };
+    let mut response = client
+        .get(url)
+        .timeout(total_timeout)
+        .send()
+        .await
+        .map_err(|error| {
+            Retryable(
+                anyhow::Error::new(error).context(format!("failed to download {description}")),
+            )
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        let error = anyhow::anyhow!("{description} download failed with HTTP {status}: {url}");
+        return Err(if release_download_status_is_retryable(status) {
+            Retryable(error)
+        } else {
+            Fatal(error)
+        });
+    }
+    if let Some(length) = response.content_length()
+        && length > limit as u64
+    {
+        return Err(Fatal(anyhow::anyhow!(
+            "{description} exceeds the size limit"
+        )));
+    }
+    let mut bytes = Vec::new();
+    loop {
+        let chunk = response.chunk().await.map_err(|error| {
+            let context = if error.is_timeout() {
+                format!(
+                    "{description} download stalled or exceeded its {}-minute limit",
+                    total_timeout.as_secs().div_ceil(60)
+                )
+            } else {
+                format!("failed to read {description}")
+            };
+            Retryable(anyhow::Error::new(error).context(context))
+        })?;
+        let Some(chunk) = chunk else {
+            break;
+        };
+        if bytes.len().saturating_add(chunk.len()) > limit {
+            return Err(Fatal(anyhow::anyhow!(
+                "{description} exceeds the size limit"
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
 async fn download_release_bytes(
     client: &reqwest::Client,
     url: &str,
     description: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<u8>> {
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("failed to download {description}"))?
-        .error_for_status()
-        .with_context(|| format!("{description} download failed: {url}"))?;
-    if let Some(length) = response.content_length() {
-        anyhow::ensure!(
-            length <= limit as u64,
-            "{description} exceeds the size limit"
-        );
+    let mut attempt = 1;
+    loop {
+        match download_release_bytes_once(client, url, description, limit).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(ReleaseDownloadError::Fatal(error)) => return Err(error),
+            Err(ReleaseDownloadError::Retryable(error)) if attempt >= RELEASE_DOWNLOAD_ATTEMPTS => {
+                return Err(error.context(format!(
+                    "{description} download failed after {RELEASE_DOWNLOAD_ATTEMPTS} attempts"
+                )));
+            }
+            Err(ReleaseDownloadError::Retryable(error)) => {
+                let delay = Duration::from_secs(2u64.pow(attempt));
+                eprintln!(
+                    "Warning: {error:#}; retrying in {} seconds ({}/{RELEASE_DOWNLOAD_ATTEMPTS})...",
+                    delay.as_secs(),
+                    attempt + 1
+                );
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+            }
+        }
     }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .with_context(|| format!("failed to read {description}"))?
-    {
-        anyhow::ensure!(
-            bytes.len().saturating_add(chunk.len()) <= limit,
-            "{description} exceeds the size limit"
-        );
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
 }
 
 async fn download_verified_release_metadata(
@@ -5851,7 +6229,7 @@ async fn fetch_latest_release(
         &format!("{} release index", channel.as_str()),
     )
     .await?;
-    let release: ReleaseManifest =
+    let mut release: ReleaseManifest =
         serde_json::from_slice(&payload).context("failed to parse release index JSON")?;
     if release.schema_version != 1 || release.channel != channel.as_str() {
         anyhow::bail!(
@@ -5865,12 +6243,21 @@ async fn fetch_latest_release(
             release.tag
         );
     }
+    // A mirror serves the same signed checksum manifest, so assets stay bound
+    // to the release key wherever they are downloaded from.
+    if let Ok(base) = std::env::var("OORE_RELEASE_BASE_URL") {
+        installer::validate_release_base_url(&base)?;
+        release.download_base_url = format!("{}/{}", base.trim_end_matches('/'), release.tag);
+        return Ok(release);
+    }
     let expected_download_base = format!(
         "https://github.com/{repo}/releases/download/{}",
         release.tag
     );
     if release.download_base_url.trim_end_matches('/') != expected_download_base {
-        anyhow::bail!("release index asset source does not match GitHub repo {repo}");
+        anyhow::bail!(
+            "release index asset source does not match GitHub repo {repo}; to update through a release mirror, set OORE_RELEASE_BASE_URL to the mirror's release download origin"
+        );
     }
     Ok(release)
 }
@@ -5924,12 +6311,8 @@ fn resolve_install_root() -> anyhow::Result<PathBuf> {
 
     // Prefer deriving install root from the current executable path so `oore update` works even
     // when users install to a non-default root and don't export `OORE_INSTALL_ROOT`.
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(bin_dir) = exe.parent()
-        && bin_dir.file_name() == Some(std::ffi::OsStr::new("bin"))
-        && let Some(root) = bin_dir.parent()
-    {
-        return Ok(root.to_path_buf());
+    if let Some(root) = oore_contract::install_root::install_root_for_current_executable() {
+        return Ok(root);
     }
 
     let home = dirs::home_dir().context("could not determine home directory")?;
@@ -6609,8 +6992,11 @@ fn read_restore_journal(path: &Path) -> anyhow::Result<Option<BackupRestoreJourn
     Ok(Some(journal))
 }
 
+/// The encryption key path, resolved exactly as `oored` resolves it.
 fn resolve_key_path() -> anyhow::Result<PathBuf> {
-    Ok(resolve_data_dir()?.join(BACKUP_KEY_FILE))
+    Ok(oore_contract::data_paths::encryption_key_path(
+        &resolve_data_dir()?,
+    ))
 }
 
 fn set_private_permissions(path: &Path) -> anyhow::Result<()> {
@@ -7105,7 +7491,16 @@ async fn restore_bounded_update_backup(
         status.success(),
         "the backup restore process failed with {status}"
     );
-    let outcome = commit_prepared_backup_restore(stage.path(), database, key, false, true)?;
+    // The commit opens SQLite through its own Tokio runtime, which panics when
+    // started on a runtime worker thread. Run it on a blocking thread instead.
+    let stage_path = stage.path().to_path_buf();
+    let database = database.to_path_buf();
+    let key = key.to_path_buf();
+    let outcome = tokio::task::spawn_blocking(move || {
+        commit_prepared_backup_restore(&stage_path, &database, &key, false, true)
+    })
+    .await
+    .context("the backup restore commit stopped unexpectedly")??;
     print_managed_runner_recovery(&outcome);
     Ok(())
 }
@@ -8304,8 +8699,6 @@ fn render_runner_launch_daemon(
         <string>{}</string>
         <key>PATH</key>
         <string>{}</string>
-        <key>FVM_CACHE_PATH</key>
-        <string>{}</string>
         <key>{}</key>
         <string>{}</string>
     </dict>
@@ -8326,7 +8719,6 @@ fn render_runner_launch_daemon(
 "#,
         launchd_xml_escape(&home.display().to_string()),
         launchd_xml_escape(path),
-        launchd_xml_escape(&working_dir.join("toolchains/flutter").display().to_string()),
         oore_runner::RUNNER_SERVICE_ACK_PATH_ENV,
         launchd_xml_escape(&acknowledgement.display().to_string()),
         launchd_xml_escape(&working_dir.display().to_string()),
@@ -8491,22 +8883,34 @@ fn stop_user_launchd_service(service: &str) -> anyhow::Result<()> {
     if !output.status.success() && user_launchd_service_loaded(service) {
         anyhow::bail!("failed to stop legacy runner service {service}");
     }
-    if !wait_for_launchd_service_unloaded(|| Ok(user_launchd_service_loaded(service)))? {
+    if !wait_for_launchd_service_unloaded(LAUNCHD_RUNNER_UNLOAD_TIMEOUT, || {
+        Ok(user_launchd_service_loaded(service))
+    })? {
         anyhow::bail!("failed to stop legacy runner service {service}");
     }
     Ok(())
 }
 
+/// How long a runner service may take to leave launchd after bootout.
+const LAUNCHD_RUNNER_UNLOAD_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the daemon or web service may take to leave launchd after bootout.
+/// It covers launchd's default 20 second exit timeout before it kills the job.
+const LAUNCHD_SERVICE_UNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
+
 fn wait_for_launchd_service_unloaded(
+    timeout: Duration,
     mut is_loaded: impl FnMut() -> anyhow::Result<bool>,
 ) -> anyhow::Result<bool> {
-    for _ in 0..20 {
+    let deadline = Instant::now() + timeout;
+    loop {
         if !is_loaded()? {
             return Ok(true);
         }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
-    Ok(false)
 }
 
 fn system_launchd_service_loaded(service: &str) -> anyhow::Result<bool> {
@@ -8569,7 +8973,9 @@ fn stop_system_launchd_service(service: &str) -> anyhow::Result<()> {
         "/bin/launchctl",
         &[OsStr::new("bootout"), OsStr::new(service)],
     );
-    if !wait_for_launchd_service_unloaded(|| system_launchd_service_loaded(service))? {
+    if !wait_for_launchd_service_unloaded(LAUNCHD_RUNNER_UNLOAD_TIMEOUT, || {
+        system_launchd_service_loaded(service)
+    })? {
         anyhow::bail!("failed to stop system runner service {service}");
     }
     Ok(())
@@ -9107,7 +9513,7 @@ async fn handle_runner_install_service_inner(
         })
         .transpose()?;
 
-    authorize_system_service_restart()?;
+    let sudo_keepalive = authorize_system_service_restart()?;
     let system_was_loaded = system_launchd_service_loaded(&system_service)?;
     if system_was_loaded && previous_system_contents.is_none() {
         anyhow::bail!(
@@ -9138,7 +9544,12 @@ async fn handle_runner_install_service_inner(
         let barrier =
             acquire_runner_claim_barrier(&active_runner.daemon_url, args.state_file.as_deref())
                 .await?;
-        if let Err(error) = barrier.wait_for_runner(&active_runner.runner_id).await {
+        if let Err(error) = async {
+            barrier.wait_for_runner(&active_runner.runner_id).await?;
+            sudo_keepalive.ensure_active()
+        }
+        .await
+        {
             barrier
                 .release()
                 .await
@@ -9348,7 +9759,7 @@ fn handle_runner_uninstall_service() -> anyhow::Result<()> {
     let system_service_present =
         system_plist.exists() || user_launchd_service_loaded(&system_service);
     if system_service_present {
-        authorize_system_service_restart()?;
+        let _sudo_keepalive = authorize_system_service_restart()?;
         stop_system_launchd_service(&system_service)?;
         if let Some(path) = &system_acknowledgement {
             clear_runner_service_acknowledgement(path)?;
@@ -9548,7 +9959,7 @@ fn daemon_data_paths_from_plist(
     };
     let data_dir = env_value("OORED_DATA_DIR")
         .or_else(|| env_value("OORE_DATA_DIR"))
-        .map(&absolute)
+        .map(absolute)
         .or_else(|| {
             env_value("HOME").map(|home| {
                 absolute(home)
@@ -9561,11 +9972,10 @@ fn daemon_data_paths_from_plist(
     let database = value_from_program_arguments(&program_arguments, "--state-file")
         .as_deref()
         .or_else(|| env_value("OORE_SETUP_STATE_FILE"))
-        .map(&absolute)
+        .map(absolute)
         .unwrap_or_else(|| data_dir.join(BACKUP_DATABASE_FILE));
-    let key = env_value("OORE_ENCRYPTION_KEY_FILE")
-        .map(&absolute)
-        .unwrap_or_else(|| data_dir.join(BACKUP_KEY_FILE));
+    // oored has no key path override: the key always lives in its data root.
+    let key = oore_contract::data_paths::encryption_key_path(&data_dir);
     Ok((database, key))
 }
 
@@ -9649,6 +10059,16 @@ fn restart_launchd_service(label: &str) -> anyhow::Result<()> {
         if !status.success() && launchd_service_loaded(label) {
             anyhow::bail!("failed to stop managed service {label} before restart");
         }
+        // Bootstrapping while the old job is still tearing down fails with
+        // "Input/output error" or "already in progress".
+        if !wait_for_launchd_service_unloaded(LAUNCHD_SERVICE_UNLOAD_TIMEOUT, || {
+            Ok(launchd_service_loaded(label))
+        })? {
+            anyhow::bail!(
+                "managed service {label} did not unload within {} seconds of being stopped for restart",
+                LAUNCHD_SERVICE_UNLOAD_TIMEOUT.as_secs()
+            );
+        }
     }
 
     let mut bootstrap = std::process::Command::new(command);
@@ -9696,6 +10116,14 @@ fn stop_launchd_service(label: &str) -> anyhow::Result<()> {
     if !status.success() && launchd_service_loaded(label) {
         anyhow::bail!("failed to stop managed service {label}");
     }
+    if !wait_for_launchd_service_unloaded(LAUNCHD_SERVICE_UNLOAD_TIMEOUT, || {
+        Ok(launchd_service_loaded(label))
+    })? {
+        anyhow::bail!(
+            "managed service {label} did not unload within {} seconds of being stopped",
+            LAUNCHD_SERVICE_UNLOAD_TIMEOUT.as_secs()
+        );
+    }
     Ok(())
 }
 
@@ -9727,7 +10155,71 @@ fn run_command_with_timeout(
     }
 }
 
-fn authorize_system_service_restart() -> anyhow::Result<()> {
+/// How long the interactive sudo password prompt may wait for an answer. It
+/// runs before anything is stopped, so a timeout leaves every service as it was.
+const SUDO_PROMPT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// How often a held sudo ticket is refreshed. macOS expires an idle ticket
+/// after five minutes by default, while a runner drain can wait 30 minutes.
+const SUDO_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Keeps the sudo ticket granted by `authorize_system_service_restart` fresh
+/// until it is dropped, so privileged `sudo -n` steps that follow a long
+/// runner drain, and their rollback, still run.
+#[must_use = "dropping the keepalive stops refreshing administrator access"]
+struct SudoKeepalive {
+    stop: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SudoKeepalive {
+    fn start() -> Self {
+        let (stop, stopped) = std::sync::mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || {
+            while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                stopped.recv_timeout(SUDO_KEEPALIVE_INTERVAL)
+            {
+                let mut refresh = std::process::Command::new("/usr/bin/sudo");
+                refresh
+                    .args(["-n", "-v"])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                // A failed refresh is reported by the privileged step that
+                // needs the ticket, which checks it before changing anything.
+                let _ = run_command_with_timeout(
+                    &mut refresh,
+                    "refreshing administrator access",
+                    Duration::from_secs(15),
+                );
+            }
+        });
+        Self {
+            stop: Some(stop),
+            thread: Some(thread),
+        }
+    }
+
+    /// Confirms that privileged steps can still run without a prompt.
+    fn ensure_active(&self) -> anyhow::Result<()> {
+        let output = sudo_tool_output("/usr/bin/true", &[])?;
+        anyhow::ensure!(
+            output.status.success(),
+            "administrator access expired before Oore could restart its services; nothing was stopped. Run `sudo -v`, then retry"
+        );
+        Ok(())
+    }
+}
+
+impl Drop for SudoKeepalive {
+    fn drop(&mut self) {
+        self.stop.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn authorize_system_service_restart() -> anyhow::Result<SudoKeepalive> {
     use std::io::IsTerminal;
 
     let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
@@ -9737,7 +10229,7 @@ fn authorize_system_service_restart() -> anyhow::Result<()> {
             output.status.success(),
             "administrator access is required; run `sudo -v` in an interactive terminal, then retry"
         );
-        return Ok(());
+        return Ok(SudoKeepalive::start());
     }
 
     eprintln!("\nAdministrator access is required to manage Oore's macOS system services.");
@@ -9747,12 +10239,18 @@ fn authorize_system_service_restart() -> anyhow::Result<()> {
     let status = run_command_with_timeout(
         &mut command,
         "requesting administrator access",
-        Duration::from_secs(60),
-    )?;
+        SUDO_PROMPT_TIMEOUT,
+    )
+    .with_context(|| {
+        format!(
+            "the administrator password prompt was not answered within {} minutes; no service changes were made",
+            SUDO_PROMPT_TIMEOUT.as_secs() / 60
+        )
+    })?;
     if !status.success() {
         anyhow::bail!("administrator access was not granted; no service changes were made");
     }
-    Ok(())
+    Ok(SudoKeepalive::start())
 }
 
 async fn endpoint_is_healthy(client: &reqwest::Client, url: &str) -> bool {
@@ -9853,7 +10351,6 @@ fn copy_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Result
         "bin/oore",
         "bin/oored",
         "bin/oore-web",
-        "bin/fvm",
         "VERSION",
         "WEB_VERSION",
         "CHANNEL",
@@ -9876,10 +10373,6 @@ fn copy_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Result
     let web = install_root.join("web-dist");
     if web.is_dir() {
         copy_dir_recursive(&web, &snapshot.join("web-dist"))?;
-    }
-    let fvm = install_root.join("libexec/fvm");
-    if fvm.is_dir() {
-        copy_dir_recursive(&fvm, &snapshot.join("libexec/fvm"))?;
     }
     Ok(())
 }
@@ -10011,7 +10504,6 @@ fn restore_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Res
         "bin/oore",
         "bin/oored",
         "bin/oore-web",
-        "bin/fvm",
         "VERSION",
         "WEB_VERSION",
         "CHANNEL",
@@ -10039,13 +10531,6 @@ fn restore_release_snapshot(install_root: &Path, snapshot: &Path) -> anyhow::Res
     } else if destination.exists() {
         fs::remove_dir_all(destination)?;
     }
-    let source = snapshot.join("libexec/fvm");
-    let destination = install_root.join("libexec/fvm");
-    if source.is_dir() {
-        atomic_replace_directory(&source, &destination)?;
-    } else if destination.exists() {
-        fs::remove_dir_all(destination)?;
-    }
     Ok(())
 }
 
@@ -10060,13 +10545,11 @@ fn install_staged_release(
         ("bin/oore", true),
         ("bin/oored", true),
         ("bin/oore-web", true),
-        ("bin/fvm", true),
         ("VERSION", false),
     ] {
         let selected = match relative {
             "bin/oored" => payload.is_none_or(|payload| payload.control_plane),
             "bin/oore-web" => payload.is_none_or(|payload| payload.web),
-            "bin/fvm" => payload.is_none_or(|payload| payload.runner),
             _ => true,
         };
         if !selected {
@@ -10086,10 +10569,6 @@ fn install_staged_release(
         atomic_replace_directory(&web, &install_root.join("web-dist"))?;
         fs::write(install_root.join("WEB_CHANNEL"), channel.as_str())?;
         fs::write(install_root.join("WEB_GITHUB_REPO"), repo)?;
-    }
-    let fvm = stage.join("libexec/fvm");
-    if payload.is_none_or(|payload| payload.runner) && fvm.is_dir() {
-        atomic_replace_directory(&fvm, &install_root.join("libexec/fvm"))?;
     }
     let license = stage.join("LICENSE");
     if license.is_file() {
@@ -10774,6 +11253,10 @@ struct DeferredUpdateServiceControl<'a> {
     install_root: &'a Path,
     transaction_dir: &'a Path,
     client: &'a reqwest::Client,
+    /// The candidate daemon moved out of `bin/` by `stop_managed_service`. It
+    /// lives as long as the control so that a rollback which fails before it
+    /// restores the previous release, or unwinds, still leaves a daemon to run.
+    quiesced_candidate: Option<update_supervisor::QuiescedCandidateDaemon>,
 }
 
 impl UpdateServiceControl for DeferredUpdateServiceControl<'_> {
@@ -10784,6 +11267,15 @@ impl UpdateServiceControl for DeferredUpdateServiceControl<'_> {
         );
         // The boot-time daemon is KeepAlive. Publishing bin/oored is the only
         // restart action needed, and avoids an interactive sudo dependency.
+        // After a failed rollback the only executable left may be the
+        // quiesced candidate, which is still better than no daemon at all.
+        if let Some(candidate) = self.quiesced_candidate.as_ref()
+            && candidate.restore()?
+        {
+            eprintln!(
+                "Restarting the daemon on the candidate release because the rollback did not restore the previous one."
+            );
+        }
         Ok(())
     }
 
@@ -10855,7 +11347,9 @@ impl UpdateServiceControl for DeferredUpdateServiceControl<'_> {
             label == DAEMON_SERVICE_LABEL,
             "deferred backend update cannot stop unrelated service {label}"
         );
-        update_supervisor::quiesce_candidate_daemon(self.install_root, self.transaction_dir)?;
+        let candidate =
+            update_supervisor::quiesce_candidate_daemon(self.install_root, self.transaction_dir)?;
+        self.quiesced_candidate = Some(candidate);
         Ok(())
     }
 
@@ -11008,8 +11502,8 @@ async fn resume_daemon_for_planned_barrier<C: UpdateServiceControl>(
         services.daemon_is_managed && !services.defer_daemon_restart,
         "the runner claim barrier cannot resume without the managed daemon"
     );
-    let expected_version = compiled_daemon_package_version(&install_root.join("bin/oored"))?;
     control.restart_managed_service(DAEMON_SERVICE_LABEL)?;
+    let expected_version = compiled_daemon_package_version(&install_root.join("bin/oored"))?;
     control
         .wait_for_daemon_release(
             &services.daemon_ready_url,
@@ -11032,6 +11526,7 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
     claim_barrier: Option<&RunnerClaimBarrier>,
     services: &UpdateServicePlan,
     rollback_state: Option<&UpdateRollbackState>,
+    mut transaction: Option<&mut update_transaction::UpdateTransaction>,
     control: &mut C,
 ) -> anyhow::Result<()> {
     if let Some(barrier) = claim_barrier {
@@ -11039,6 +11534,9 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
     }
     ensure_runner_release_marker(install_root)?;
     let update_result: anyhow::Result<()> = async {
+        if let Some(transaction) = transaction.as_deref_mut() {
+            transaction.record(update_transaction::UpdatePhase::Installing)?;
+        }
         install_staged_release(
             staged_release,
             install_root,
@@ -11054,6 +11552,9 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
         }
         if let Some(migration) = daemon_migration {
             migration.apply()?;
+        }
+        if let Some(transaction) = transaction.as_deref_mut() {
+            transaction.record(update_transaction::UpdatePhase::Installed)?;
         }
         services
             .activate_dependencies(control, ReleaseActivation::Installed)
@@ -11074,7 +11575,8 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
     }
     .await;
     if let Err(error) = update_result {
-        eprintln!("Update failed; restoring the previous release...");
+        eprintln!("Update failed: {error:#}");
+        eprintln!("Restoring the previous release...");
         let rollback: anyhow::Result<()> = async {
             if let Some(snapshot) = runner_migration {
                 snapshot.stop_and_restore_files()?;
@@ -11089,9 +11591,21 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
                 }
                 services.stop_daemon_for_database_restore(control).await?;
                 if let Some(state) = rollback_state {
+                    if let Some(transaction) = transaction.as_deref_mut() {
+                        transaction.record_rollback(Some(update_transaction::DatabaseRestore {
+                            backup: state.backup.clone(),
+                            database: state.database.clone(),
+                            key: state.key.clone(),
+                        }))?;
+                    }
                     restore_bounded_update_backup(&state.backup, &state.database, &state.key)
                         .await?;
                 }
+            }
+            if let Some(transaction) = transaction.as_deref_mut()
+                && transaction.phase() != update_transaction::UpdatePhase::RollingBack
+            {
+                transaction.record_rollback(None)?;
             }
             if let Some(migration) = daemon_migration {
                 migration.rollback()?;
@@ -11123,6 +11637,13 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
         }
         .await;
         if let Err(rollback_error) = rollback {
+            let rollback_error = match transaction.as_deref() {
+                Some(transaction) => rollback_error.context(format!(
+                    "the update record stays in {}, and the next Oore install, setup, update or uninstall command finishes the recovery",
+                    transaction.path().display()
+                )),
+                None => rollback_error,
+            };
             let recovery = match claim_barrier {
                 Some(barrier) => {
                     resume_daemon_for_planned_barrier(install_root, barrier, services, control)
@@ -11131,13 +11652,19 @@ async fn install_release_with_rollback<C: UpdateServiceControl>(
                 None => Ok(()),
             };
             return match recovery {
-                Ok(()) => Err(error.context(format!("rollback also failed: {rollback_error}"))),
+                Ok(()) => Err(error.context(format!("rollback also failed: {rollback_error:#}"))),
                 Err(recovery_error) => Err(error.context(format!(
-                    "rollback also failed: {rollback_error}; restarting the daemon for the runner claim barrier also failed: {recovery_error}"
+                    "rollback also failed: {rollback_error:#}; restarting the daemon for the runner claim barrier also failed: {recovery_error}"
                 ))),
             };
         }
+        if let Some(transaction) = transaction {
+            transaction.finish();
+        }
         return Err(error);
+    }
+    if let Some(transaction) = transaction {
+        transaction.finish();
     }
     let barrier_release = match claim_barrier {
         Some(barrier) => barrier.release().await,
@@ -11174,6 +11701,27 @@ struct PreparedUpdateProvenance {
     archive: String,
     archive_sha256: String,
     manifest_sha256: String,
+}
+
+/// A signed release index stays valid forever, so a stale mirror, a cache, or a
+/// rerun of an old release job can serve an older one. Updates only install what
+/// an index listed, so the installed release on the same channel is a version
+/// this machine has already seen, and that channel's latest can never be older.
+fn reject_stale_release_index(
+    channel: ReleaseChannel,
+    installed: &semver::Version,
+    prepared: &PreparedUpdateRelease,
+) -> anyhow::Result<()> {
+    if prepared.provenance.is_none() || infer_channel_from_version(installed) != channel {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        prepared.version >= *installed,
+        "the signed {} release index lists {}, older than the installed {installed}; refusing a stale or rolled-back release index, try again later",
+        channel.as_str(),
+        prepared.version
+    );
+    Ok(())
 }
 
 fn require_unsigned_staged_update_acceptance(version: &str) -> anyhow::Result<()> {
@@ -11317,10 +11865,8 @@ async fn prepare_update_release(
     println!("Checksum verified (SHA-256).");
 
     let temporary = tempfile::tempdir().context("failed to create temporary directory")?;
-    let decoder = flate2::read::GzDecoder::new(&archive_bytes[..]);
-    tar::Archive::new(decoder)
-        .unpack(temporary.path())
-        .context("failed to extract archive")?;
+    installer::unpack_full_release(&archive_bytes[..], temporary.path(), &release.version)
+        .context("the release archive failed validation")?;
     validate_prepared_release(temporary.path())?;
     let package_version = compiled_daemon_package_version(&temporary.path().join("bin/oored"))?;
     Ok(PreparedUpdateRelease {
@@ -11408,24 +11954,29 @@ fn load_backend_update_manifest(
         .transpose()
         .with_context(|| {
             format!(
-                "cannot identify the current device role from {}; repair this manifest before updating",
+                "cannot identify the current device role from {}",
                 manifest_path.display()
             )
         })?
     else {
         anyhow::bail!(
-            "this bootstrap-only installation has no backend profile; finish `oore install` before using backend updates"
+            "this bootstrap-only installation has no backend for `oore update` to update. To update the CLI, rerun the CLI bootstrap. To install a device role, run `oore install`"
         );
     };
-    anyhow::ensure!(
-        matches!(
-            manifest.profile,
-            install_manifest::InstallProfile::Complete
-                | install_manifest::InstallProfile::ControlPlane
+    let profile = installed_profile_name(manifest.profile);
+    match manifest.profile {
+        install_manifest::InstallProfile::Complete
+        | install_manifest::InstallProfile::ControlPlane => {}
+        install_manifest::InstallProfile::CliOnly => anyhow::bail!(
+            "the cli-only profile has no backend for `oore update` to update. To update the CLI, rerun the CLI bootstrap with the same channel and install root"
         ),
-        "the {} profile has no managed backend to update with `oore update`",
-        installed_profile_name(manifest.profile)
-    );
+        install_manifest::InstallProfile::WebNode => anyhow::bail!(
+            "the web-node profile has no backend for `oore update` to update. Run `oore-web update` on this Web node instead"
+        ),
+        install_manifest::InstallProfile::Runner => anyhow::bail!(
+            "the {profile} profile has no backend for `oore update` to update. To move it to a new release, run `oore uninstall`, which keeps Oore data, rerun the CLI bootstrap, then run `oore install --profile {profile}`"
+        ),
+    }
     anyhow::ensure!(
         manifest.lifecycle.state == install_manifest::InstallState::Ready,
         "finish `oore setup` before updating this backend profile"
@@ -11442,7 +11993,6 @@ fn load_backend_update_manifest(
 #[derive(Clone, Copy)]
 struct UpdatePayloadSelection {
     control_plane: bool,
-    runner: bool,
     web: bool,
 }
 
@@ -11453,12 +12003,37 @@ struct ProfileUpdatePlan {
     payload: UpdatePayloadSelection,
 }
 
+/// The one rule for leaving the installed channel: it needs `--switch-channel`,
+/// except to promote a pre-release to the stable build of the same version.
+fn ensure_channel_change_allowed(
+    installed_channel: &str,
+    installed_version: &semver::Version,
+    channel: ReleaseChannel,
+    target_version: &semver::Version,
+    switch_channel: bool,
+) -> anyhow::Result<()> {
+    let prerelease_to_stable = matches!(installed_channel, "alpha" | "beta")
+        && channel == ReleaseChannel::Stable
+        && !installed_version.pre.is_empty()
+        && target_version.pre.is_empty()
+        && installed_version.major == target_version.major
+        && installed_version.minor == target_version.minor
+        && installed_version.patch == target_version.patch;
+    anyhow::ensure!(
+        installed_channel == channel.as_str() || prerelease_to_stable || switch_channel,
+        "updates stay on the installed {installed_channel} channel; pass --switch-channel to move this installation to the {} channel",
+        channel.as_str()
+    );
+    Ok(())
+}
+
 fn prepare_profile_update_plan(
     manifest: Option<install_manifest::InstallManifest>,
     prepared: &PreparedUpdateRelease,
     channel: ReleaseChannel,
     repository: &str,
     include_web: bool,
+    switch_channel: bool,
 ) -> anyhow::Result<Option<ProfileUpdatePlan>> {
     let Some(manifest) = manifest else {
         return Ok(None);
@@ -11474,22 +12049,18 @@ fn prepare_profile_update_plan(
         installed_version,
         prepared.version
     );
-    let same_release_stream =
-        manifest.release.channel == channel.as_str() && manifest.release.repository == repository;
-    let prerelease_to_stable = manifest.release.repository == repository
-        && matches!(manifest.release.channel.as_str(), "alpha" | "beta")
-        && channel == ReleaseChannel::Stable
-        && !installed_version.pre.is_empty()
-        && prepared.version.pre.is_empty()
-        && installed_version.major == prepared.version.major
-        && installed_version.minor == prepared.version.minor
-        && installed_version.patch == prepared.version.patch;
     anyhow::ensure!(
-        same_release_stream || prerelease_to_stable,
-        "profile updates must stay on the recorded {} channel and {} repository, except for a same-version-line alpha or beta promotion to stable",
-        manifest.release.channel,
+        manifest.release.repository == repository,
+        "profile updates must stay on the recorded {} repository",
         manifest.release.repository
     );
+    ensure_channel_change_allowed(
+        &manifest.release.channel,
+        &installed_version,
+        channel,
+        &prepared.version,
+        switch_channel,
+    )?;
     let release = install_manifest::InstallRelease::new(
         prepared.version.to_string(),
         channel.as_str().to_string(),
@@ -11499,7 +12070,6 @@ fn prepare_profile_update_plan(
     )?;
     let payload = UpdatePayloadSelection {
         control_plane: true,
-        runner: manifest.profile == install_manifest::InstallProfile::Complete,
         web: include_web && manifest.profile == install_manifest::InstallProfile::Complete,
     };
     Ok(Some(ProfileUpdatePlan {
@@ -11567,19 +12137,26 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
     };
     let client = http_client()?;
     let prepared = prepare_update_release(
-        &client,
+        &release_http_client()?,
         &repo,
         channel,
         args.staged_release.as_deref(),
         false,
     )
     .await?;
+    reject_stale_release_index(channel, &current, &prepared)?;
     if current >= prepared.version && !args.force {
         return Ok(());
     }
     anyhow::ensure!(!args.check, "deferred update cannot use --check");
-    let profile_update =
-        prepare_profile_update_plan(profile_manifest, &prepared, channel, &repo, false)?;
+    let profile_update = prepare_profile_update_plan(
+        profile_manifest,
+        &prepared,
+        channel,
+        &repo,
+        false,
+        args.switch_channel,
+    )?;
 
     let managed_runner_service = managed_runner_update_service(&install_root)?;
     if profile_update.as_ref().is_some_and(|profile| {
@@ -11632,7 +12209,7 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
 
     fs::create_dir_all(&install_root)?;
     let update_stage = tempfile::Builder::new()
-        .prefix(".supervised-update-")
+        .prefix(update_supervisor::TRANSACTION_PREFIX)
         .tempdir_in(&install_root)
         .context("failed to create supervised update transaction")?;
     let staged_release = update_stage.path().join("release");
@@ -11738,6 +12315,7 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
         install_root: &install_root,
         transaction_dir: update_stage.path(),
         client: &client,
+        quiesced_candidate: None,
     };
     let result = install_release_with_rollback(
         &staged_release,
@@ -11750,6 +12328,7 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
         Some(&barrier),
         &services,
         Some(&rollback),
+        None,
         &mut control,
     )
     .await;
@@ -11766,27 +12345,85 @@ async fn run_deferred_update(args: &UpdateArgs, status_path: &Path) -> anyhow::R
 
 async fn handle_deferred_update(args: UpdateArgs) -> anyhow::Result<()> {
     let install_root = resolve_install_root()?;
-    let _lifecycle_lock = install_lock::InstallLock::acquire(&install_root)?;
     let status_path =
         require_deferred_path(args.deferred_status_file.as_ref(), "deferred-status-file")?;
-    update_supervisor::record_owned_result(&status_path, run_deferred_update(&args, &status_path))
-        .await
+    update_supervisor::record_owned_result(&status_path, async {
+        let _lifecycle_lock = install_lock::InstallLock::acquire(&install_root)?;
+        run_deferred_update(&args, &status_path).await
+    })
+    .await
 }
 
 async fn handle_update_supervisor(args: UpdateSupervisorArgs) -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
+    supervise_update_request(&resolve_install_root()?, &args.request_file).await
+}
 
-    let install_root = resolve_install_root()?;
+async fn supervise_update_request(install_root: &Path, request_file: &Path) -> anyhow::Result<()> {
+    let status_path = install_root.join(".runtime-update-status.json");
     let expected = install_root
         .join("run/runtime-update-queue")
         .join("request.json");
+    // A launch with nothing queued has no attempt to report on.
     anyhow::ensure!(
-        args.request_file == expected,
+        install_path_exists(&expected)?,
+        "no runtime update request is queued at {}",
+        expected.display()
+    );
+    let claimed = claim_update_request(install_root, request_file, &expected).and_then(|active| {
+        match read_claimed_update_request(&active, &status_path) {
+            Ok(request) => Ok((active, request)),
+            Err(error) => {
+                let _ = fs::remove_file(&active);
+                Err(error)
+            }
+        }
+    });
+    let (active, request) = match claimed {
+        Ok(claimed) => claimed,
+        Err(error) => {
+            // Drop the unusable request so the next click can queue a fresh attempt.
+            let _ = fs::remove_file(&expected);
+            update_supervisor::record_failure(&status_path, &error)?;
+            return Err(error);
+        }
+    };
+    let result = handle_deferred_update(UpdateArgs {
+        check: false,
+        force: false,
+        channel: None,
+        switch_channel: false,
+        repo: None,
+        staged_release: None,
+        ensure_managed_runner: false,
+        deferred_parent_pid: Some(request.parent_pid),
+        deferred_state_file: Some(request.database),
+        deferred_key_file: Some(request.key),
+        deferred_daemon_url: Some(request.daemon_url),
+        deferred_status_file: Some(request.status),
+    })
+    .await;
+    let cleanup = fs::remove_file(&active).context("failed to clear runtime update request");
+    match (result, cleanup) {
+        (Err(error), _) => Err(error),
+        (Ok(()), Err(error)) => Err(error),
+        (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
+fn claim_update_request(
+    install_root: &Path,
+    request_file: &Path,
+    expected: &Path,
+) -> anyhow::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+
+    anyhow::ensure!(
+        request_file == expected,
         "runtime update request must be {}",
         expected.display()
     );
-    let metadata = fs::symlink_metadata(&args.request_file)
-        .with_context(|| format!("failed to inspect {}", args.request_file.display()))?;
+    let metadata = fs::symlink_metadata(request_file)
+        .with_context(|| format!("failed to inspect {}", request_file.display()))?;
     anyhow::ensure!(
         metadata.file_type().is_file(),
         "runtime update request is not a file"
@@ -11803,34 +12440,105 @@ async fn handle_update_supervisor(args: UpdateSupervisorArgs) -> anyhow::Result<
     let active = install_root
         .join("run")
         .join(format!("runtime-update-active-{}.json", std::process::id()));
-    fs::rename(&args.request_file, &active).context("failed to claim runtime update request")?;
-    let result = async {
-        let request: DeferredRuntimeUpdateRequest = serde_json::from_slice(
-            &fs::read(&active).context("failed to read runtime update request")?,
-        )
-        .context("invalid runtime update request")?;
-        handle_deferred_update(UpdateArgs {
-            check: false,
-            force: false,
-            channel: None,
-            repo: None,
-            staged_release: None,
-            ensure_managed_runner: false,
-            deferred_parent_pid: Some(request.parent_pid),
-            deferred_state_file: Some(request.database),
-            deferred_key_file: Some(request.key),
-            deferred_daemon_url: Some(request.daemon_url),
-            deferred_status_file: Some(request.status),
-        })
-        .await
+    fs::rename(request_file, &active).context("failed to claim runtime update request")?;
+    Ok(active)
+}
+
+fn read_claimed_update_request(
+    active: &Path,
+    status_path: &Path,
+) -> anyhow::Result<DeferredRuntimeUpdateRequest> {
+    let request: DeferredRuntimeUpdateRequest =
+        serde_json::from_slice(&fs::read(active).context("failed to read runtime update request")?)
+            .context("invalid runtime update request")?;
+    anyhow::ensure!(
+        request.status == status_path,
+        "runtime update status file must be {}",
+        status_path.display()
+    );
+    Ok(request)
+}
+
+/// Keeps Ctrl-C and a closed terminal from killing `oore update` while it has
+/// services stopped or files half replaced. SIGINT is ignored. SIGHUP points
+/// standard output and error at /dev/null, so writes after an SSH drop neither
+/// fail nor stop the update. Dropping the shield restores both handlers.
+struct InterruptShield {
+    previous: Vec<(libc::c_int, libc::sigaction)>,
+}
+
+extern "C" fn detach_output_from_closed_terminal(_signal: libc::c_int) {
+    // SAFETY: `open`, `dup2` and `close` are async-signal-safe, and the path
+    // is a NUL-terminated static string.
+    unsafe {
+        let null = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
+        if null >= 0 {
+            libc::dup2(null, libc::STDOUT_FILENO);
+            libc::dup2(null, libc::STDERR_FILENO);
+            if null > libc::STDERR_FILENO {
+                libc::close(null);
+            }
+        }
     }
-    .await;
-    let cleanup = fs::remove_file(&active).context("failed to clear runtime update request");
-    match (result, cleanup) {
-        (Err(error), _) => Err(error),
-        (Ok(()), Err(error)) => Err(error),
-        (Ok(()), Ok(())) => Ok(()),
+}
+
+impl InterruptShield {
+    fn engage() -> anyhow::Result<Self> {
+        let mut shield = Self {
+            previous: Vec::new(),
+        };
+        let hangup: extern "C" fn(libc::c_int) = detach_output_from_closed_terminal;
+        for (signal, handler) in [
+            (libc::SIGINT, libc::SIG_IGN),
+            (libc::SIGHUP, hangup as libc::sighandler_t),
+        ] {
+            // SAFETY: Both structures are zero-initialised plain C data that
+            // `sigaction` reads and writes for the duration of the call.
+            unsafe {
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = handler;
+                libc::sigemptyset(&mut action.sa_mask);
+                let mut previous: libc::sigaction = std::mem::zeroed();
+                if libc::sigaction(signal, &action, &mut previous) != 0 {
+                    return Err(std::io::Error::last_os_error())
+                        .context("failed to protect the update from interruption");
+                }
+                shield.previous.push((signal, previous));
+            }
+        }
+        println!("Ctrl-C is disabled until the update finishes or rolls back.");
+        Ok(shield)
     }
+}
+
+impl Drop for InterruptShield {
+    fn drop(&mut self) {
+        for (signal, previous) in self.previous.drain(..).rev() {
+            // SAFETY: `previous` is the action `sigaction` returned for `signal`.
+            unsafe {
+                libc::sigaction(signal, &previous, std::ptr::null_mut());
+            }
+        }
+    }
+}
+
+/// Whether the installed `VERSION` belongs to this binary's release. Release
+/// binaries carry only the base version, so `0.1.48-alpha.3` matches `0.1.48`.
+fn installed_version_matches_binary(installed: &str, binary: &str) -> bool {
+    match (parse_semver_loose(installed), parse_semver_loose(binary)) {
+        (Ok(installed), Ok(binary)) => {
+            (installed.major, installed.minor, installed.patch)
+                == (binary.major, binary.minor, binary.patch)
+        }
+        _ => true,
+    }
+}
+
+/// The installed release metadata an update decision is based on. `oore
+/// update` reads it before downloading and again under the lifecycle lock, and
+/// refuses to continue when another command changed it in between.
+fn installed_release_identity(install_root: &Path) -> [Option<String>; 3] {
+    ["VERSION", "CHANNEL", "GITHUB_REPO"].map(|name| read_trimmed_file(&install_root.join(name)))
 }
 
 async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
@@ -11839,16 +12547,7 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     if defer_daemon_restart {
         return handle_deferred_update(args).await;
     }
-    let _lifecycle_lock = if args.check {
-        None
-    } else {
-        Some(install_lock::InstallLock::acquire(&install_root)?)
-    };
-    let profile_manifest = if args.check {
-        None
-    } else {
-        load_backend_update_manifest(&install_root)?
-    };
+    let release_identity = installed_release_identity(&install_root);
     let current_str = read_trimmed_file(&install_root.join("VERSION"))
         .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
     let current = parse_semver_loose(&current_str).context("failed to parse current version")?;
@@ -11860,60 +12559,96 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         .or_else(|| read_installed_repo(&install_root))
         .unwrap_or_else(|| DEFAULT_GITHUB_REPO.to_string());
 
-    let channel = if let Some(raw) = &args.channel {
-        ReleaseChannel::parse(raw)?
-    } else if let Some(ch) = read_installed_channel(&install_root) {
-        ch
-    } else {
-        infer_channel_from_version(&current)
+    let installed_channel = read_installed_channel(&install_root)
+        .unwrap_or_else(|| infer_channel_from_version(&current));
+    let channel = match &args.channel {
+        Some(raw) => ReleaseChannel::parse(raw)?,
+        None => installed_channel,
     };
 
-    let client = http_client()?;
+    // Download and verify before taking the lifecycle lock, so a slow or
+    // stalled network never blocks other install, setup or uninstall commands.
     let prepared = prepare_update_release(
-        &client,
+        &release_http_client()?,
         &repo,
         channel,
         args.staged_release.as_deref(),
         args.check,
     )
     .await?;
+    let _lifecycle_lock = if args.check {
+        None
+    } else {
+        let lock = install_lock::InstallLock::acquire(&install_root)?;
+        anyhow::ensure!(
+            installed_release_identity(&install_root) == release_identity,
+            "the installation changed while the update was downloading; run `oore update` again"
+        );
+        Some(lock)
+    };
+    // Checked after the release lookup so `--check` reports the same verdict as
+    // a real run.
+    let profile_manifest = load_backend_update_manifest(&install_root);
     let latest = &prepared.version;
     println!("Channel:         {}", channel.as_str());
     println!("GitHub repo:     {repo}");
     println!("Current version: {current}");
     println!("Latest version:  {latest} ({})", prepared.label);
+    if channel != installed_channel {
+        ensure_channel_change_allowed(
+            installed_channel.as_str(),
+            &current,
+            channel,
+            latest,
+            args.switch_channel,
+        )?;
+        anyhow::ensure!(
+            current <= *latest,
+            "cannot switch from the {} channel to the {} channel yet: its latest release {latest} is older than the installed {current}, and updates never downgrade; wait for a newer {} release",
+            installed_channel.as_str(),
+            channel.as_str(),
+            channel.as_str()
+        );
+    }
 
+    reject_stale_release_index(channel, &current, &prepared)?;
     if current >= *latest && !args.force {
         println!("Already up to date.");
         return Ok(());
     }
 
+    let profile_update = prepare_profile_update_plan(
+        profile_manifest?,
+        &prepared,
+        channel,
+        &repo,
+        true,
+        args.switch_channel,
+    )?;
+    if channel != installed_channel {
+        let verb = if args.check {
+            "Channel switch"
+        } else {
+            "Switching channel"
+        };
+        println!(
+            "{verb}: {} -> {}",
+            installed_channel.as_str(),
+            channel.as_str()
+        );
+    }
     if current < *latest {
         println!("Update available: {current} -> {latest}");
     } else {
         println!("Reinstalling version {latest} (--force).");
     }
     if args.check {
+        println!("Run `oore update` without --check to install it.");
         return Ok(());
     }
-    let profile_update =
-        prepare_profile_update_plan(profile_manifest, &prepared, channel, &repo, true)?;
+    let client = http_client()?;
     fs::create_dir_all(&install_root)
         .with_context(|| format!("failed to create install root {}", install_root.display()))?;
-    let update_stage = tempfile::Builder::new()
-        .prefix(".update-")
-        .tempdir_in(&install_root)
-        .context("failed to create update staging directory")?;
-    let staged_release = update_stage.path().join("release");
-    copy_dir_recursive(
-        prepared
-            .path
-            .as_deref()
-            .context("verified update release was not prepared")?,
-        &staged_release,
-    )?;
-    let previous_release = update_stage.path().join("previous");
-    copy_release_snapshot(&install_root, &previous_release)?;
 
     let (daemon_service_plist, daemon_service_is_system) =
         managed_service_plist(DAEMON_SERVICE_LABEL)?;
@@ -11946,13 +12681,43 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
             );
         }
     }
-    if (daemon_service_is_installed && daemon_service_is_system)
+    let sudo_keepalive = if (daemon_service_is_installed && daemon_service_is_system)
         || (runner_plist.is_file() && runner_is_system)
         || (web_is_managed && web_is_system)
         || args.ensure_managed_runner
     {
-        authorize_system_service_restart()?;
-    }
+        Some(authorize_system_service_restart()?)
+    } else {
+        None
+    };
+    // Stage only after the sudo prompt, so cancelling it leaves nothing behind.
+    let managed_runner_service = managed_runner_update_service(&install_root)?;
+    let recovery_services = [
+        daemon_service_is_installed.then_some(DAEMON_SERVICE_LABEL),
+        web_is_managed.then_some(WEB_SERVICE_LABEL),
+        managed_runner_service,
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::to_string)
+    .collect();
+    let mut transaction = update_transaction::UpdateTransaction::begin(
+        &install_root,
+        &current.to_string(),
+        &latest.to_string(),
+        recovery_services,
+        args.ensure_managed_runner,
+    )?;
+    let staged_release = transaction.path().join("release");
+    copy_dir_recursive(
+        prepared
+            .path
+            .as_deref()
+            .context("verified update release was not prepared")?,
+        &staged_release,
+    )?;
+    let previous_release = transaction.path().join("previous");
+    copy_release_snapshot(&install_root, &previous_release)?;
 
     let daemon_document = daemon_service_is_installed
         .then(|| plist_json(&daemon_service_plist))
@@ -12027,12 +12792,11 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
                 daemon_document
                     .as_ref()
                     .context("managed daemon migration is missing its plist")?,
-                update_stage.path(),
+                transaction.path(),
             )
         })
         .transpose()?;
 
-    let managed_runner_service = managed_runner_update_service(&install_root)?;
     let install_managed_runner = args.ensure_managed_runner;
     let managed_runner_service_existed = managed_runner_service.is_some();
     let runner_migration = install_managed_runner
@@ -12121,11 +12885,24 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
             "The backend was stopped before this update. It will remain running because stopping it after the maintenance barrier opens can interrupt a remote runner claim."
         );
     }
-    if let Err(error) = barrier.wait_for_all_work().await {
+    if let Err(error) = async {
+        barrier.wait_for_all_work().await?;
+        // The drain can outlast the sudo ticket. Check it before the first
+        // privileged step so an expired ticket fails before anything stops.
+        match sudo_keepalive.as_ref() {
+            Some(keepalive) => keepalive.ensure_active(),
+            None => Ok(()),
+        }
+    }
+    .await
+    {
         barrier.release().await?;
         return Err(error);
     }
 
+    // From here until the update finishes or rolls back, an interrupted
+    // process would leave services stopped or files half replaced.
+    let interrupt_shield = InterruptShield::engage()?;
     if daemon_service_is_installed {
         barrier.begin_planned_daemon_outage().await?;
         if let Err(error) = stop_launchd_service(DAEMON_SERVICE_LABEL) {
@@ -12221,9 +12998,11 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         Some(&barrier),
         &services,
         Some(&rollback_state),
+        Some(&mut transaction),
         &mut control,
     )
     .await;
+    drop(interrupt_shield);
     if let Err(error) = update_result {
         return match barrier.release().await {
             Ok(()) => Err(error),
@@ -12243,6 +13022,42 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Complete and Control plane profiles move forward in place with `oore update`.
+/// Returns `None` when only the preserve-data reinstall can reach the target.
+fn bootstrap_guard_next_step(
+    manifest: &install_manifest::InstallManifest,
+    current: &installer::ReleaseProvenance,
+    args: &BootstrapGuardArgs,
+    cli: &str,
+) -> Option<String> {
+    if !matches!(
+        manifest.profile,
+        install_manifest::InstallProfile::Complete | install_manifest::InstallProfile::ControlPlane
+    ) || manifest.lifecycle.state != install_manifest::InstallState::Ready
+        || current.repository != args.target_repository
+    {
+        return None;
+    }
+    let installed = semver::Version::parse(&current.version).ok()?;
+    let target = semver::Version::parse(&args.target_version).ok()?;
+    if target < installed {
+        return None;
+    }
+    let command = if current.channel == args.target_channel {
+        format!("{cli} update")
+    } else {
+        format!(
+            "{cli} update --channel {} --switch-channel",
+            args.target_channel
+        )
+    };
+    Some(format!(
+        "This profile updates in place. Run {command}.\n\
+         It installs the newest {} release, backs up Oore data, and restores the current release if verification fails.",
+        args.target_channel
+    ))
 }
 
 fn handle_bootstrap_guard(args: BootstrapGuardArgs) -> anyhow::Result<()> {
@@ -12329,11 +13144,16 @@ fn handle_bootstrap_guard(args: BootstrapGuardArgs) -> anyhow::Result<()> {
         || current.repository != args.target_repository;
     if release_changed && manifest.profile != install_manifest::InstallProfile::CliOnly {
         let cli = shell_word(&install_root.join("bin/oore").display().to_string());
+        let next_step =
+            bootstrap_guard_next_step(&manifest, &current, &args, &cli).unwrap_or_else(|| {
+                format!(
+                    "Run {cli} uninstall without --purge.\n\
+                     This preserves Oore data.\n\
+                     Then rerun the CLI bootstrap and install the same profile."
+                )
+            });
         anyhow::bail!(
-            "This profile records release {} ({}, {}), but the bootstrap selected {} ({}, {}).\n\
-             Run {cli} uninstall without --purge.\n\
-             This preserves Oore data.\n\
-             Then rerun the CLI bootstrap and install the same profile.",
+            "This profile records release {} ({}, {}), but the bootstrap selected {} ({}, {}).\n{next_step}",
             current.version,
             current.channel,
             current.repository,
@@ -12455,13 +13275,22 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Pipeline(pipeline) => match pipeline.command {
             PipelineSubcommand::Validate(args) => handle_pipeline_validate(args)?,
+            PipelineSubcommand::Plan(args) => handle_pipeline_plan(args)?,
+            PipelineSubcommand::Migrate(args) => handle_pipeline_migrate(args)?,
         },
         Commands::Version => {
             let install_root = resolve_install_root()?;
-            if let Some(v) = read_trimmed_file(&install_root.join("VERSION")) {
-                println!("{v}");
-            } else {
-                println!("{}", env!("CARGO_PKG_VERSION"));
+            let binary = env!("CARGO_PKG_VERSION");
+            match read_trimmed_file(&install_root.join("VERSION")) {
+                Some(installed) => {
+                    println!("{installed}");
+                    if !installed_version_matches_binary(&installed, binary) {
+                        eprintln!(
+                            "Warning: this oore binary is {binary}, but the installation records {installed}, so an update may have been interrupted. Run `oore update` to recover it, or rerun the installer for your channel."
+                        );
+                    }
+                }
+                None => println!("{binary}"),
             }
         }
         Commands::Update(args) => {
@@ -12482,4 +13311,839 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn key_check_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE trusted_proxy_settings (id INTEGER PRIMARY KEY, encrypted_shared_secret TEXT);
+             CREATE TABLE encryption_key_check (id INTEGER PRIMARY KEY, check_ciphertext TEXT NOT NULL, created_at INTEGER NOT NULL);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn setup_key_is_generated_only_for_a_database_without_ciphertext() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("encryption.key");
+        let pool = key_check_pool().await;
+
+        let key = load_or_generate_encryption_key_at(&pool, &path)
+            .await
+            .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), key);
+
+        fs::remove_file(&path).unwrap();
+        sqlx::query("INSERT INTO trusted_proxy_settings VALUES (1, ?1)")
+            .bind(encrypt_secret("secret", &key).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let error = load_or_generate_encryption_key_at(&pool, &path)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("is missing"));
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn setup_key_must_match_the_daemon_key_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("encryption.key");
+        let pool = key_check_pool().await;
+        let daemon_key = [1u8; 32];
+        sqlx::query("INSERT INTO encryption_key_check VALUES (1, ?1, 0)")
+            .bind(
+                encrypt_secret(
+                    oore_contract::data_paths::ENCRYPTION_KEY_CHECK_PLAINTEXT,
+                    &daemon_key,
+                )
+                .unwrap(),
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(
+            load_or_generate_encryption_key_at(&pool, &path)
+                .await
+                .is_err()
+        );
+        assert!(!path.exists());
+
+        fs::write(&path, [2u8; 32]).unwrap();
+        let error = load_or_generate_encryption_key_at(&pool, &path)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("does not match this database"));
+
+        fs::write(&path, daemon_key).unwrap();
+        assert_eq!(
+            load_or_generate_encryption_key_at(&pool, &path)
+                .await
+                .unwrap(),
+            daemon_key
+        );
+    }
+
+    fn queue_update_request(
+        install_root: &Path,
+        request: &serde_json::Value,
+        mode: u32,
+    ) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let request_file = install_root.join("run/runtime-update-queue/request.json");
+        fs::create_dir_all(request_file.parent().unwrap()).unwrap();
+        fs::write(&request_file, serde_json::to_vec(request).unwrap()).unwrap();
+        fs::set_permissions(&request_file, fs::Permissions::from_mode(mode)).unwrap();
+        request_file
+    }
+
+    fn recorded_update_status(install_root: &Path) -> oore_contract::RuntimeUpdateStatus {
+        serde_json::from_slice(&fs::read(install_root.join(".runtime-update-status.json")).unwrap())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn update_supervisor_records_failed_pre_checks_and_clears_the_request() {
+        let install_root = tempfile::tempdir().unwrap();
+        let status = install_root.path().join(".runtime-update-status.json");
+        let request = serde_json::json!({
+            "parent_pid": 4242,
+            "database": "/tmp/oore.db",
+            "key": "/tmp/oore.key",
+            "daemon_url": "http://127.0.0.1:8787",
+            "status": status,
+        });
+        let request_file = queue_update_request(install_root.path(), &request, 0o644);
+
+        let error = supervise_update_request(install_root.path(), &request_file)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "runtime update request permissions are too broad"
+        );
+        let recorded = recorded_update_status(install_root.path());
+        assert_eq!(recorded.phase, oore_contract::RuntimeUpdatePhase::Failed);
+        assert_eq!(
+            recorded.error.as_deref(),
+            Some("runtime update request permissions are too broad")
+        );
+        assert!(!request_file.exists());
+    }
+
+    #[tokio::test]
+    async fn update_supervisor_without_a_request_keeps_the_last_status() {
+        let install_root = tempfile::tempdir().unwrap();
+        let request_file = install_root
+            .path()
+            .join("run/runtime-update-queue/request.json");
+
+        supervise_update_request(install_root.path(), &request_file)
+            .await
+            .unwrap_err();
+
+        assert!(
+            !install_root
+                .path()
+                .join(".runtime-update-status.json")
+                .exists()
+        );
+    }
+
+    #[tokio::test]
+    async fn update_supervisor_records_invalid_requests_and_clears_the_claim() {
+        let install_root = tempfile::tempdir().unwrap();
+        let request = serde_json::json!({ "parent_pid": 4242 });
+        let request_file = queue_update_request(install_root.path(), &request, 0o600);
+
+        supervise_update_request(install_root.path(), &request_file)
+            .await
+            .unwrap_err();
+
+        let recorded = recorded_update_status(install_root.path());
+        assert_eq!(recorded.phase, oore_contract::RuntimeUpdatePhase::Failed);
+        assert!(
+            recorded
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("invalid runtime update request"))
+        );
+        assert!(!request_file.exists());
+        assert_eq!(
+            fs::read_dir(install_root.path().join("run"))
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("runtime-update-active-"))
+                .count(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn setup_states_keep_their_database_encoding() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = connect_db(&directory.path().join("setup.db"))
+            .await
+            .unwrap();
+        let mut state = new_setup_state(123);
+        for (value, text) in [
+            (SetupState::Uninitialized, "uninitialized"),
+            (SetupState::BootstrapPending, "bootstrap_pending"),
+            (SetupState::IdpConfigured, "idp_configured"),
+            (SetupState::OwnerCreated, "owner_created"),
+            (SetupState::Ready, "ready"),
+        ] {
+            state.setup_state = value;
+            save_state(&pool, &state).await.unwrap();
+            let stored: String =
+                sqlx::query_scalar("SELECT setup_state FROM setup_state WHERE id = 1")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(stored, text);
+            assert_eq!(load_state(&pool).await.unwrap().unwrap().setup_state, value);
+        }
+        sqlx::query("UPDATE setup_state SET setup_state = 'invalid'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            load_state(&pool).await.unwrap_err().to_string(),
+            "unknown setup state: invalid"
+        );
+        pool.close().await;
+    }
+
+    fn profile_manifest_on(version: &str, channel: &str) -> install_manifest::InstallManifest {
+        let release = install_manifest::InstallRelease::new(
+            version.to_string(),
+            channel.to_string(),
+            DEFAULT_GITHUB_REPO.to_string(),
+            format!("oore_{version}_darwin_arm64.tar.gz"),
+            "a".repeat(64),
+        )
+        .unwrap();
+        install_manifest::InstallManifest::new(
+            install_manifest::InstallProfile::ControlPlane,
+            release,
+            Vec::new(),
+        )
+        .unwrap()
+    }
+
+    fn signed_update_release(version: &str) -> PreparedUpdateRelease {
+        PreparedUpdateRelease {
+            path: None,
+            version: semver::Version::parse(version).unwrap(),
+            package_version: None,
+            label: format!("v{version}"),
+            provenance: Some(PreparedUpdateProvenance {
+                archive: format!("oore_{version}_darwin_arm64.tar.gz"),
+                archive_sha256: "b".repeat(64),
+                manifest_sha256: "c".repeat(64),
+            }),
+            _temporary: None,
+        }
+    }
+
+    fn plan_profile_update(
+        installed: (&str, &str),
+        target: (&str, ReleaseChannel),
+        switch_channel: bool,
+    ) -> anyhow::Result<ProfileUpdatePlan> {
+        prepare_profile_update_plan(
+            Some(profile_manifest_on(installed.0, installed.1)),
+            &signed_update_release(target.0),
+            target.1,
+            DEFAULT_GITHUB_REPO,
+            false,
+            switch_channel,
+        )
+        .map(Option::unwrap)
+    }
+
+    #[test]
+    fn updates_reject_a_signed_index_older_than_the_installed_release() {
+        let version = |raw| semver::Version::parse(raw).unwrap();
+        let installed = version("0.9.0-alpha.4");
+        let error = reject_stale_release_index(
+            ReleaseChannel::Alpha,
+            &installed,
+            &signed_update_release("0.9.0-alpha.3"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("older than the installed"));
+        for latest in ["0.9.0-alpha.4", "0.9.0-alpha.5"] {
+            reject_stale_release_index(
+                ReleaseChannel::Alpha,
+                &installed,
+                &signed_update_release(latest),
+            )
+            .unwrap();
+        }
+        // Another channel's index can trail the installed release; the channel
+        // switch check decides that case.
+        reject_stale_release_index(
+            ReleaseChannel::Stable,
+            &installed,
+            &signed_update_release("0.8.0"),
+        )
+        .unwrap();
+        let mut staged = signed_update_release("0.9.0-alpha.1");
+        staged.provenance = None;
+        reject_stale_release_index(ReleaseChannel::Alpha, &installed, &staged).unwrap();
+    }
+
+    #[test]
+    fn profile_updates_switch_channel_only_when_asked() {
+        let error = plan_profile_update(
+            ("0.1.47", "stable"),
+            ("0.1.48-alpha.1", ReleaseChannel::Alpha),
+            false,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "updates stay on the installed stable channel; pass --switch-channel to move this installation to the alpha channel"
+        );
+
+        let plan = plan_profile_update(
+            ("0.1.47", "stable"),
+            ("0.1.48-alpha.1", ReleaseChannel::Alpha),
+            true,
+        )
+        .unwrap();
+        assert_eq!(plan.release.version, "0.1.48-alpha.1");
+        assert_eq!(plan.release.channel, "alpha");
+
+        let plan = plan_profile_update(
+            ("0.1.48-alpha.2", "alpha"),
+            ("0.1.48-beta.1", ReleaseChannel::Beta),
+            true,
+        )
+        .unwrap();
+        assert_eq!(plan.release.channel, "beta");
+    }
+
+    #[test]
+    fn profile_channel_switches_never_downgrade() {
+        let error = plan_profile_update(
+            ("0.1.47", "stable"),
+            ("0.1.47-alpha.3", ReleaseChannel::Alpha),
+            true,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "profile updates cannot downgrade from 0.1.47 to 0.1.47-alpha.3"
+        );
+        let error = plan_profile_update(
+            ("0.1.48-alpha.1", "alpha"),
+            ("0.1.47", ReleaseChannel::Stable),
+            true,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "profile updates cannot downgrade from 0.1.48-alpha.1 to 0.1.47"
+        );
+    }
+
+    #[test]
+    fn channel_changes_follow_one_rule() {
+        let version = |raw| semver::Version::parse(raw).unwrap();
+        assert!(
+            ensure_channel_change_allowed(
+                "stable",
+                &version("0.1.47"),
+                ReleaseChannel::Beta,
+                &version("0.1.48-beta.1"),
+                false,
+            )
+            .is_err()
+        );
+        ensure_channel_change_allowed(
+            "stable",
+            &version("0.1.47"),
+            ReleaseChannel::Beta,
+            &version("0.1.48-beta.1"),
+            true,
+        )
+        .unwrap();
+        ensure_channel_change_allowed(
+            "beta",
+            &version("0.1.48-beta.2"),
+            ReleaseChannel::Stable,
+            &version("0.1.48"),
+            false,
+        )
+        .unwrap();
+    }
+
+    fn guard_next_step(
+        profile: install_manifest::InstallProfile,
+        installed: (&str, &str),
+        target: (&str, &str),
+    ) -> Option<String> {
+        let mut manifest = profile_manifest_on(installed.0, installed.1);
+        manifest.profile = profile;
+        manifest.components = profile.components().to_vec();
+        for service in profile.services() {
+            manifest.record_service(*service).unwrap();
+        }
+        manifest.mark_ready().unwrap();
+        let current = installer::ReleaseProvenance {
+            version: installed.0.to_string(),
+            channel: installed.1.to_string(),
+            repository: DEFAULT_GITHUB_REPO.to_string(),
+            archive: manifest.release.archive.clone(),
+            sha256: manifest.release.sha256.clone(),
+        };
+        let args = BootstrapGuardArgs {
+            target_version: target.0.to_string(),
+            target_channel: target.1.to_string(),
+            target_repository: DEFAULT_GITHUB_REPO.to_string(),
+        };
+        bootstrap_guard_next_step(&manifest, &current, &args, "oore")
+    }
+
+    #[test]
+    fn bootstrap_guard_points_backend_profiles_at_oore_update() {
+        use install_manifest::InstallProfile;
+
+        for profile in [InstallProfile::Complete, InstallProfile::ControlPlane] {
+            let step = guard_next_step(profile, ("0.1.47", "stable"), ("0.1.48", "stable"));
+            assert!(step.unwrap().contains("Run oore update."));
+            let step = guard_next_step(profile, ("0.1.47", "stable"), ("0.1.48-beta.1", "beta"));
+            assert!(
+                step.unwrap()
+                    .contains("Run oore update --channel beta --switch-channel.")
+            );
+            assert_eq!(
+                guard_next_step(profile, ("0.1.48", "stable"), ("0.1.47", "stable")),
+                None
+            );
+        }
+        for profile in [InstallProfile::Runner, InstallProfile::WebNode] {
+            assert_eq!(
+                guard_next_step(profile, ("0.1.47", "stable"), ("0.1.48", "stable")),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn profile_updates_promote_a_prerelease_to_its_stable_release_without_a_switch() {
+        let plan = plan_profile_update(
+            ("0.1.48-alpha.3", "alpha"),
+            ("0.1.48", ReleaseChannel::Stable),
+            false,
+        )
+        .unwrap();
+        assert_eq!(plan.release.channel, "stable");
+        assert!(
+            plan_profile_update(
+                ("0.1.48-alpha.3", "alpha"),
+                ("0.1.49", ReleaseChannel::Stable),
+                false,
+            )
+            .is_err()
+        );
+    }
+
+    /// Serves one canned HTTP response per connection and counts connections.
+    async fn serve_release_responses(
+        responses: Vec<&'static str>,
+    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/asset", listener.local_addr().unwrap());
+        let connections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = connections.clone();
+        tokio::spawn(async move {
+            for response in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut request = [0_u8; 1024];
+                let _ = stream.read(&mut request).await;
+                stream.write_all(response.as_bytes()).await.unwrap();
+                stream.shutdown().await.unwrap();
+            }
+        });
+        (url, connections)
+    }
+
+    #[tokio::test]
+    async fn release_downloads_retry_a_transient_server_error() {
+        let (url, connections) = serve_release_responses(vec![
+            "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+            "HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+        ])
+        .await;
+
+        let bytes = download_release_bytes(&release_http_client().unwrap(), &url, "asset", 64)
+            .await
+            .unwrap();
+
+        assert_eq!(bytes, b"hello");
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn release_downloads_do_not_retry_a_missing_asset() {
+        let (url, connections) = serve_release_responses(vec![
+            "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+            "HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+        ])
+        .await;
+
+        let error = download_release_bytes(&release_http_client().unwrap(), &url, "asset", 64)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("HTTP 404"), "{error:#}");
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn release_downloads_do_not_retry_an_oversized_asset() {
+        let (url, connections) = serve_release_responses(vec![
+            "HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+        ])
+        .await;
+
+        let error = download_release_bytes(&release_http_client().unwrap(), &url, "asset", 4)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "asset exceeds the size limit");
+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn dropping_the_sudo_keepalive_stops_it_without_waiting_for_a_refresh() {
+        let started = Instant::now();
+        drop(SudoKeepalive::start());
+        assert!(started.elapsed() < SUDO_KEEPALIVE_INTERVAL / 2);
+    }
+
+    #[test]
+    fn launchd_unload_waits_until_the_job_leaves_or_the_timeout_passes() {
+        let mut polls = 0;
+        assert!(
+            wait_for_launchd_service_unloaded(Duration::from_secs(5), || {
+                polls += 1;
+                Ok(polls < 3)
+            })
+            .unwrap()
+        );
+        assert_eq!(polls, 3);
+        assert!(
+            !wait_for_launchd_service_unloaded(Duration::from_millis(250), || Ok(true)).unwrap()
+        );
+    }
+
+    #[test]
+    fn the_interrupt_shield_ignores_ctrl_c_until_dropped() {
+        let shield = InterruptShield::engage().unwrap();
+        // SAFETY: SIGINT is ignored while the shield is engaged.
+        assert_eq!(unsafe { libc::raise(libc::SIGINT) }, 0);
+        drop(shield);
+        // SAFETY: Reads the current action without changing it.
+        let restored = unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(libc::SIGINT, std::ptr::null(), &mut action);
+            action.sa_sigaction
+        };
+        assert_ne!(restored, libc::SIG_IGN);
+    }
+
+    #[test]
+    fn prerelease_installs_match_their_base_binary_version() {
+        assert!(installed_version_matches_binary("0.1.48-alpha.3", "0.1.48"));
+        assert!(installed_version_matches_binary("0.1.48", "0.1.48"));
+        assert!(!installed_version_matches_binary("0.1.49", "0.1.48"));
+    }
+
+    #[derive(Default)]
+    struct ScriptedServiceControl {
+        calls: Vec<String>,
+        failures: BTreeSet<usize>,
+    }
+
+    impl ScriptedServiceControl {
+        fn record(&mut self, call: String) -> anyhow::Result<()> {
+            let index = self.calls.len();
+            self.calls.push(call.clone());
+            anyhow::ensure!(!self.failures.contains(&index), "{call} failed");
+            Ok(())
+        }
+    }
+
+    impl UpdateServiceControl for ScriptedServiceControl {
+        fn restart_managed_service(&mut self, label: &str) -> anyhow::Result<()> {
+            self.record(format!("restart {label}"))
+        }
+
+        async fn activate_runner_service(
+            &mut self,
+            label: &str,
+            _previous_pid: Option<u32>,
+            _ack: Option<&RunnerUpdateAck>,
+            activation: ReleaseActivation,
+        ) -> anyhow::Result<()> {
+            let activation = match activation {
+                ReleaseActivation::Installed => "installed",
+                ReleaseActivation::Restored => "restored",
+            };
+            self.record(format!("activate {label} {activation}"))
+        }
+
+        fn stop_managed_service(&mut self, label: &str) -> anyhow::Result<()> {
+            self.record(format!("stop {label}"))
+        }
+
+        async fn restart_unmanaged_daemon(&mut self, listen: &str) -> anyhow::Result<()> {
+            self.record(format!("restart unmanaged {listen}"))
+        }
+
+        async fn stop_unmanaged_daemon(&mut self, listen: &str) -> anyhow::Result<()> {
+            self.record(format!("stop unmanaged {listen}"))
+        }
+
+        async fn wait_for_endpoint(&mut self, url: &str, _name: &str) -> anyhow::Result<()> {
+            self.record(format!("wait {url}"))
+        }
+
+        async fn wait_for_daemon_release(
+            &mut self,
+            ready_url: &str,
+            expected_package_version: &str,
+            _name: &str,
+        ) -> anyhow::Result<()> {
+            self.record(format!("wait {ready_url} {expected_package_version}"))
+        }
+    }
+
+    const INSTALLED_CALLS: [&str; 5] = [
+        "restart build.oore.oored",
+        "wait http://127.0.0.1:8787/readyz 0.1.49",
+        "restart build.oore.oore-web",
+        "wait http://127.0.0.1:3000/",
+        "activate build.oore.oore-runner installed",
+    ];
+
+    const ROLLBACK_CALLS: [&str; 6] = [
+        "stop build.oore.oored",
+        "restart build.oore.oored",
+        "wait http://127.0.0.1:8787/readyz 0.1.48",
+        "restart build.oore.oore-web",
+        "wait http://127.0.0.1:3000/",
+        "activate build.oore.oore-runner restored",
+    ];
+
+    struct UpdateFixture {
+        _temporary: tempfile::TempDir,
+        install_root: PathBuf,
+        previous_release: PathBuf,
+        stage: PathBuf,
+    }
+
+    impl UpdateFixture {
+        fn new() -> Self {
+            let temporary = tempfile::tempdir().unwrap();
+            let install_root = temporary.path().join("oore");
+            let previous_release = temporary.path().join("previous");
+            let stage = temporary.path().join("stage");
+            for (root, version) in [
+                (&install_root, "0.1.48"),
+                (&previous_release, "0.1.48"),
+                (&stage, "0.1.49"),
+            ] {
+                for binary in ["oore", "oored", "oore-web"] {
+                    let path = root.join("bin").join(binary);
+                    fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    fs::write(&path, format!("{binary} {version}")).unwrap();
+                    set_executable(&path).unwrap();
+                }
+                fs::write(root.join("VERSION"), version).unwrap();
+            }
+            for root in [&install_root, &previous_release] {
+                fs::write(root.join("CHANNEL"), "stable").unwrap();
+                fs::write(root.join("GITHUB_REPO"), "oore-ci/oore.build").unwrap();
+            }
+            fs::create_dir(stage.join("web-dist")).unwrap();
+            fs::write(stage.join("web-dist/index.html"), "0.1.49").unwrap();
+            Self {
+                _temporary: temporary,
+                install_root,
+                previous_release,
+                stage,
+            }
+        }
+
+        fn services() -> UpdateServicePlan {
+            UpdateServicePlan {
+                profile_update: None,
+                defer_daemon_restart: false,
+                daemon_is_managed: true,
+                unmanaged_daemon_listen: None,
+                daemon_should_be_running: true,
+                daemon_ready_url: "http://127.0.0.1:8787/readyz".to_string(),
+                installed_version: "0.1.49".to_string(),
+                restored_version: "0.1.48".to_string(),
+                runner_service: Some(RUNNER_SERVICE_LABEL),
+                runner_previous_pid: None,
+                runner_ack: None,
+                runner_installed_version: "0.1.49".to_string(),
+                runner_restored_version: "0.1.48".to_string(),
+                install_managed_runner: false,
+                managed_runner_service_existed: false,
+                managed_runner_config_existed: false,
+                managed_runner_database: None,
+                web_is_managed: true,
+                web_was_running: true,
+                web_ready_url: Some("http://127.0.0.1:3000/".to_string()),
+            }
+        }
+
+        async fn install(&self, control: &mut ScriptedServiceControl) -> anyhow::Result<()> {
+            install_release_with_rollback(
+                &self.stage,
+                &self.install_root,
+                &self.previous_release,
+                ReleaseChannel::Beta,
+                "oore-ci/oore.build",
+                None,
+                None,
+                None,
+                &Self::services(),
+                None,
+                None,
+                control,
+            )
+            .await
+        }
+
+        fn read(&self, relative: &str) -> Option<String> {
+            fs::read_to_string(self.install_root.join(relative)).ok()
+        }
+
+        fn assert_release(&self, version: &str, channel: &str) {
+            for binary in ["oore", "oored", "oore-web"] {
+                assert_eq!(
+                    self.read(&format!("bin/{binary}")).as_deref(),
+                    Some(format!("{binary} {version}").as_str())
+                );
+            }
+            assert_eq!(self.read("VERSION").as_deref(), Some(version));
+            assert_eq!(self.read("CHANNEL").as_deref(), Some(channel));
+            // Markers are `v2:<nonce>:<executable identity>`; the nonce differs per write.
+            let identity =
+                |marker: &str| marker.trim_end().splitn(3, ':').nth(2).map(str::to_owned);
+            let expected =
+                oore_runner::runner_release_marker(&self.install_root.join("bin/oore")).unwrap();
+            let published = self.read(oore_runner::RUNNER_RELEASE_MARKER_FILE).unwrap();
+            assert_eq!(identity(&published), identity(&expected));
+            assert!(identity(&expected).is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn updates_install_the_staged_release_and_activate_every_service() {
+        let fixture = UpdateFixture::new();
+        let mut control = ScriptedServiceControl::default();
+
+        fixture.install(&mut control).await.unwrap();
+
+        assert_eq!(control.calls, INSTALLED_CALLS);
+        fixture.assert_release("0.1.49", "beta");
+        assert_eq!(fixture.read("WEB_VERSION").as_deref(), Some("0.1.49"));
+        assert_eq!(
+            fixture.read("web-dist/index.html").as_deref(),
+            Some("0.1.49")
+        );
+    }
+
+    #[tokio::test]
+    async fn updates_restore_the_previous_release_when_any_activation_step_fails() {
+        for failed_step in 0..INSTALLED_CALLS.len() {
+            let fixture = UpdateFixture::new();
+            let mut control = ScriptedServiceControl {
+                failures: BTreeSet::from([failed_step]),
+                ..Default::default()
+            };
+
+            let error = fixture.install(&mut control).await.unwrap_err();
+
+            assert_eq!(
+                error.to_string(),
+                format!("{} failed", INSTALLED_CALLS[failed_step]),
+            );
+            let expected = INSTALLED_CALLS[..=failed_step]
+                .iter()
+                .chain(ROLLBACK_CALLS.iter())
+                .collect::<Vec<_>>();
+            assert_eq!(control.calls.iter().collect::<Vec<_>>(), expected);
+            fixture.assert_release("0.1.48", "stable");
+            assert_eq!(fixture.read("WEB_VERSION"), None);
+            assert!(!fixture.install_root.join("web-dist").exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn updates_report_both_errors_when_the_rollback_also_fails() {
+        let fixture = UpdateFixture::new();
+        let rollback_restart = 1 + ROLLBACK_CALLS
+            .iter()
+            .position(|call| *call == "restart build.oore.oored")
+            .unwrap();
+        let mut control = ScriptedServiceControl {
+            failures: BTreeSet::from([0, rollback_restart]),
+            ..Default::default()
+        };
+
+        let error = fixture.install(&mut control).await.unwrap_err();
+
+        assert_eq!(
+            format!("{error:#}"),
+            "rollback also failed: restart build.oore.oored failed: restart build.oore.oored failed"
+        );
+        assert_eq!(control.calls.len(), rollback_restart + 1);
+        // The files were restored before the services failed to restart.
+        fixture.assert_release("0.1.48", "stable");
+    }
+
+    #[tokio::test]
+    async fn updates_refuse_to_start_without_an_installed_cli() {
+        let fixture = UpdateFixture::new();
+        fs::remove_file(fixture.install_root.join("bin/oore")).unwrap();
+        let mut control = ScriptedServiceControl::default();
+
+        assert!(fixture.install(&mut control).await.is_err());
+        assert!(control.calls.is_empty());
+        assert_eq!(fixture.read("VERSION").as_deref(), Some("0.1.48"));
+    }
 }

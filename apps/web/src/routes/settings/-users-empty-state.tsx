@@ -17,9 +17,8 @@ export function UsersEmptyState({
   state,
 }: {
   onClearSearch: () => void
-  state: 'empty' | 'no-results' | null
+  state: 'empty' | 'no-results'
 }) {
-  if (!state) return null
   const Icon = state === 'empty' ? UserMultiple02Icon : Search01Icon
 
   return (

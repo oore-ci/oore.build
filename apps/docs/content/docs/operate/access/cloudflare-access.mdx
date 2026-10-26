@@ -48,8 +48,8 @@ Replace every placeholder before you run a command.
 
 ## 1. Prepare Oore on loopback
 
-For a new backend, run `oore install` and select **Complete**. Select **Use Oore
-on this device** during setup. Finish the first Local Only sign-in.
+For a new backend, run `oore install` and select **Complete**. During setup,
+select **Use Oore on this Mac**. Finish the first Local Only sign-in.
 
 Keep the installed Oore UI open. You will use it to configure OIDC after the
 tunnel works.
@@ -206,15 +206,14 @@ Use a normal browser profile. Private browsing can block the cross-site Access
 cookie.
 
 1. Open [ci.oore.build](https://ci.oore.build).
-2. Open the instance switcher.
-3. Select **Add instance**.
-4. Enter a label and `https://<backend-host>`.
-5. Select **Open backend sign-in**.
-6. Complete the Cloudflare Access sign-in in the new tab.
-7. Return to the Add instance dialog.
-8. Select **Add**.
-9. Select **Sign in with OIDC**.
-10. Complete the OIDC sign-in.
+2. Open the instance switcher and select **Add instance**.
+3. In **Connect to Oore**, enter `https://<backend-host>` as the
+   **Oore address**, and a **Name (optional)**.
+4. Select **Sign in to server**.
+5. Complete the Cloudflare Access sign-in in the new tab.
+6. Return to the **Connect to Oore** dialog and select **Connect**.
+7. Select **Sign in with OIDC**.
+8. Complete the OIDC sign-in.
 
 The first sign-in opens the Cloudflare network gate. The second sign-in creates
 the Oore session and applies the Oore role.
@@ -389,12 +388,28 @@ A local adapter can hold the proof in a private file. A Worker can hold it as a
 Worker secret. Never keep the production proof in source or a static Transform
 Rule.
 
+## Verify the result
+
+- `oore status` on the backend Mac reports the backend, and `lsof` shows
+  `oored` listening only on `127.0.0.1:8787`.
+- Every boundary check in step 8 gives the expected result.
+- In a normal browser profile, `ci.oore.build` asks for the Cloudflare Access
+  sign-in, then the OIDC sign-in, and opens the dashboard as the expected
+  Owner.
+- After a reboot, `cloudflared tunnel info <tunnel-name>` shows an active
+  connector without a terminal open.
+
 ## Troubleshooting
 
 ### The backend hostname returns `502`
 
 Confirm that `oored` listens on `127.0.0.1:8787`. Confirm that the tunnel uses
 the same address and port.
+
+### **Sign in to server** is unavailable
+
+The dialog enables it only after you enter a valid HTTPS **Oore address**.
+Enter `https://<backend-host>` first.
 
 ### Access keeps requesting sign-in
 

@@ -207,13 +207,24 @@ pub struct NormalizedWebhookEvent {
     pub action: Option<String>,
     pub change_number: Option<String>,
     pub branch: Option<String>,
+    /// Tag name for tag pushes.
+    pub tag: Option<String>,
     pub commit_sha: Option<String>,
     pub previous_commit_sha: Option<String>,
+    /// Files changed by a push, when the payload lists all of its commits.
+    pub changed_files: Option<Vec<String>>,
+    /// Revision a pull request's changes are compared against.
+    pub compare_base: Option<String>,
+    /// Branch a pull or merge request targets.
+    pub target_branch: Option<String>,
     pub actor: Option<String>,
     pub payload: serde_json::Value,
 }
 
-pub fn start_webhook_processor(pool: sqlx::SqlitePool) -> mpsc::Sender<()> {
+pub fn start_webhook_processor(
+    pool: sqlx::SqlitePool,
+    encryption_key: Vec<u8>,
+) -> mpsc::Sender<()> {
     let (sender, mut receiver) = mpsc::channel::<()>(WEBHOOK_WAKE_CAPACITY);
 
     let worker_pool = pool.clone();
@@ -229,7 +240,9 @@ pub fn start_webhook_processor(pool: sqlx::SqlitePool) -> mpsc::Sender<()> {
                     }
                 };
 
-                if let Err(error) = process_claimed_webhook(&worker_pool, &webhook_id).await {
+                if let Err(error) =
+                    process_claimed_webhook(&worker_pool, &encryption_key, &webhook_id).await
+                {
                     error!(%error, %webhook_id, "webhook processing failed");
                     if let Err(store_error) =
                         record_webhook_processing_error(&worker_pool, &webhook_id, &error).await
@@ -468,6 +481,32 @@ fn verify_github_signature(signature_header: &str, body: &[u8], secret: &[u8]) -
             == 0
 }
 
+/// Files added, modified or removed across a push's commits. `None` when the
+/// payload does not list every commit (`total_commits` above the list) or
+/// lists none, as for a new branch pushed without new commits.
+fn push_changed_files(
+    payload: &serde_json::Value,
+    total_commits: Option<u64>,
+) -> Option<Vec<String>> {
+    let commits = payload.get("commits")?.as_array()?;
+    // GitHub lists at most 2048 commits and gives no total.
+    if commits.is_empty()
+        || commits.len() >= 2048
+        || total_commits.is_some_and(|total| total > commits.len() as u64)
+    {
+        return None;
+    }
+    let mut files = std::collections::BTreeSet::new();
+    for commit in commits {
+        for key in ["added", "modified", "removed"] {
+            for file in commit.get(key)?.as_array()? {
+                files.insert(file.as_str()?.to_string());
+            }
+        }
+    }
+    Some(files.into_iter().collect())
+}
+
 fn normalize_github_event(
     event_type: &str,
     delivery_id: &str,
@@ -481,9 +520,12 @@ fn normalize_github_event(
         .map(String::from);
     let repository_external_id = json_id(payload.pointer("/repository/id"));
 
+    let git_ref = payload.get("ref").and_then(|v| v.as_str()).unwrap_or("");
+    let tag = (event_type == "push")
+        .then(|| git_ref.strip_prefix("refs/tags/").map(String::from))
+        .flatten();
     let (branch, commit_sha) = match event_type {
         "push" => {
-            let git_ref = payload.get("ref").and_then(|v| v.as_str()).unwrap_or("");
             let branch = git_ref.strip_prefix("refs/heads/").map(String::from);
             let sha = payload
                 .get("after")
@@ -534,8 +576,18 @@ fn normalize_github_event(
         action,
         change_number,
         branch,
+        tag,
         commit_sha,
         previous_commit_sha: None,
+        changed_files: (event_type == "push")
+            .then(|| push_changed_files(payload, None))
+            .flatten(),
+        compare_base: (event_type == "pull_request")
+            .then(|| json_non_empty_string(payload.pointer("/pull_request/base/sha")))
+            .flatten(),
+        target_branch: (event_type == "pull_request")
+            .then(|| json_non_empty_string(payload.pointer("/pull_request/base/ref")))
+            .flatten(),
         actor,
         payload: payload.clone(),
     }
@@ -782,9 +834,12 @@ fn normalize_gitlab_event(
     payload: &serde_json::Value,
 ) -> NormalizedWebhookEvent {
     let repository_external_id = json_id(payload.pointer("/project/id"));
+    let git_ref = payload.get("ref").and_then(|v| v.as_str()).unwrap_or("");
+    let tag = (event_type == "Tag Push Hook")
+        .then(|| git_ref.strip_prefix("refs/tags/").map(String::from))
+        .flatten();
     let (branch, commit_sha) = match event_type {
-        "Push Hook" => {
-            let git_ref = payload.get("ref").and_then(|v| v.as_str()).unwrap_or("");
+        "Push Hook" | "Tag Push Hook" => {
             let branch = git_ref.strip_prefix("refs/heads/").map(String::from);
             let sha = payload
                 .get("checkout_sha")
@@ -841,8 +896,26 @@ fn normalize_gitlab_event(
         action,
         change_number,
         branch,
+        tag,
         commit_sha,
         previous_commit_sha,
+        changed_files: (event_type == "Push Hook")
+            .then(|| {
+                push_changed_files(
+                    payload,
+                    payload
+                        .get("total_commits_count")
+                        .and_then(serde_json::Value::as_u64),
+                )
+            })
+            .flatten(),
+        // Comparing from the target branch name diffs against the merge base.
+        compare_base: (event_type == "Merge Request Hook")
+            .then(|| json_non_empty_string(payload.pointer("/object_attributes/target_branch")))
+            .flatten(),
+        target_branch: (event_type == "Merge Request Hook")
+            .then(|| json_non_empty_string(payload.pointer("/object_attributes/target_branch")))
+            .flatten(),
         actor,
         payload: payload.clone(),
     }
@@ -877,12 +950,32 @@ async fn registered_target_repository_matches(
     Ok(matches)
 }
 
+/// GitHub marks a deleted branch or tag with `deleted`. GitLab sends an
+/// all-zero `after` and no `checkout_sha`.
+fn is_ref_deletion(payload: &serde_json::Value) -> bool {
+    payload.get("deleted").and_then(serde_json::Value::as_bool) == Some(true)
+        || payload
+            .get("after")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|after| !after.is_empty() && after.bytes().all(|byte| byte == b'0'))
+}
+
 async fn webhook_trigger_decision(
     pool: &sqlx::SqlitePool,
     event: &NormalizedWebhookEvent,
 ) -> anyhow::Result<WebhookTriggerDecision> {
     match event.event_type.as_str() {
-        "push" | "Push Hook" => {
+        "push" | "Push Hook" | "Tag Push Hook" => {
+            if is_ref_deletion(&event.payload) {
+                return Ok(WebhookTriggerDecision::Ignore(
+                    "ref deletion does not introduce a revision",
+                ));
+            }
+            if event.commit_sha.as_deref().is_none_or(str::is_empty) {
+                return Ok(WebhookTriggerDecision::Ignore(
+                    "push has no revision to build",
+                ));
+            }
             // Preserve existing push behavior when an immutable provider ID is absent,
             // while rejecting any provider ID that explicitly mismatches this integration.
             if let Some(repository_external_id) = event.repository_external_id.as_deref()
@@ -1067,7 +1160,11 @@ async fn fail_exhausted_webhook_leases(pool: &sqlx::SqlitePool) -> Result<u64, s
 }
 
 /// Load and process one claimed webhook event.
-async fn process_claimed_webhook(pool: &sqlx::SqlitePool, webhook_id: &str) -> anyhow::Result<()> {
+async fn process_claimed_webhook(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    webhook_id: &str,
+) -> anyhow::Result<()> {
     let Some(row) = sqlx::query(
         "SELECT w.integration_id, w.provider_delivery_id, w.event_type, w.payload, i.provider \
          FROM integration_webhooks w \
@@ -1113,7 +1210,7 @@ async fn process_claimed_webhook(pool: &sqlx::SqlitePool, webhook_id: &str) -> a
         _ => return Err(anyhow::anyhow!("unsupported webhook provider: {provider}")),
     };
 
-    process_webhook_event(pool, webhook_id, &event).await
+    process_webhook_event(pool, encryption_key, webhook_id, &event).await
 }
 
 async fn record_webhook_processing_error(
@@ -1152,10 +1249,11 @@ async fn record_webhook_processing_error(
 
 async fn process_webhook_event(
     pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
     webhook_id: &str,
     event: &NormalizedWebhookEvent,
 ) -> anyhow::Result<()> {
-    use crate::builds::trigger_build_from_webhook;
+    use crate::builds::{ChangeSet, WebhookBuildTrigger, trigger_build_from_webhook};
 
     let decision = webhook_trigger_decision(pool, event).await?;
 
@@ -1185,15 +1283,30 @@ async fn process_webhook_event(
     if decision == WebhookTriggerDecision::Trigger
         && let Some(repo) = event.repository_full_name.as_deref()
     {
+        let changes = match (
+            &event.changed_files,
+            event.compare_base.as_deref(),
+            event.commit_sha.as_deref(),
+        ) {
+            (Some(files), _, _) => ChangeSet::Files(files),
+            (None, Some(base), Some(head)) => ChangeSet::Compare { base, head },
+            _ => ChangeSet::Unknown,
+        };
         match trigger_build_from_webhook(
             pool,
-            webhook_id,
-            &event.integration_id,
-            repo,
-            event.branch.as_deref(),
-            event.commit_sha.as_deref(),
-            &event.event_type,
-            event.actor.as_deref(),
+            encryption_key,
+            &WebhookBuildTrigger {
+                webhook_id,
+                integration_id: &event.integration_id,
+                repo_full_name: repo,
+                event_type: &event.event_type,
+                branch: event.branch.as_deref(),
+                tag: event.tag.as_deref(),
+                target_branch: event.target_branch.as_deref(),
+                commit_sha: event.commit_sha.as_deref(),
+                actor: event.actor.as_deref(),
+                changes,
+            },
         )
         .await
         {
@@ -1203,6 +1316,11 @@ async fn process_webhook_event(
                     builds_created = builds.len(),
                     "webhook triggered builds"
                 );
+            }
+            // Store errors are usually contention. Retrying is safe because
+            // each pipeline builds a delivery at most once.
+            Err((status, body)) if status.is_server_error() => {
+                anyhow::bail!("failed to trigger builds: {}", body.0.error);
             }
             Err(e) => {
                 error!(error = ?e, webhook_id = %webhook_id, "failed to trigger builds from webhook");
@@ -1244,4 +1362,308 @@ async fn process_webhook_event(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn github_tag_push_carries_the_tag_and_no_branch() {
+        let payload = serde_json::json!({
+            "ref": "refs/tags/v1.4.0",
+            "after": "abc123",
+            "repository": { "full_name": "acme/app", "id": 7 },
+            "commits": [],
+        });
+        let event = normalize_github_event("push", "d1", "i1", &payload);
+        assert_eq!(event.tag.as_deref(), Some("v1.4.0"));
+        assert_eq!(event.branch, None);
+        assert_eq!(event.commit_sha.as_deref(), Some("abc123"));
+        assert_eq!(event.changed_files, None);
+    }
+
+    #[test]
+    fn github_pull_request_carries_its_target_branch() {
+        let payload = serde_json::json!({
+            "action": "opened",
+            "number": 3,
+            "repository": { "full_name": "acme/app", "id": 7 },
+            "pull_request": {
+                "head": { "ref": "feature/login", "sha": "abc123", "repo": { "id": 7 } },
+                "base": { "ref": "main", "sha": "def456", "repo": { "id": 7 } },
+            },
+        });
+        let event = normalize_github_event("pull_request", "d1", "i1", &payload);
+        assert_eq!(event.branch.as_deref(), Some("feature/login"));
+        assert_eq!(event.target_branch.as_deref(), Some("main"));
+        let push = normalize_github_event(
+            "push",
+            "d2",
+            "i1",
+            &serde_json::json!({ "ref": "refs/heads/main", "after": "abc123" }),
+        );
+        assert_eq!(push.target_branch, None);
+    }
+
+    #[test]
+    fn push_changed_files_needs_the_full_commit_list() {
+        let payload = serde_json::json!({
+            "commits": [
+                { "added": ["lib/a.dart"], "modified": ["pubspec.yaml"], "removed": [] },
+                { "added": [], "modified": ["lib/a.dart"], "removed": ["old.txt"] },
+            ],
+        });
+        assert_eq!(
+            push_changed_files(&payload, None),
+            Some(vec![
+                "lib/a.dart".to_string(),
+                "old.txt".to_string(),
+                "pubspec.yaml".to_string(),
+            ])
+        );
+        // GitLab lists 20 commits and reports the total.
+        assert_eq!(push_changed_files(&payload, Some(21)), None);
+        assert_eq!(
+            push_changed_files(&serde_json::json!({ "commits": [] }), None),
+            None
+        );
+    }
+
+    #[test]
+    fn gitlab_tag_push_and_merge_request_base() {
+        let tag = normalize_gitlab_event(
+            "Tag Push Hook",
+            "d1",
+            "i1",
+            "acme/app",
+            &serde_json::json!({ "ref": "refs/tags/v2", "checkout_sha": "def456", "project": { "id": 7 } }),
+        );
+        assert_eq!(tag.tag.as_deref(), Some("v2"));
+        assert_eq!(tag.commit_sha.as_deref(), Some("def456"));
+
+        let merge_request = normalize_gitlab_event(
+            "Merge Request Hook",
+            "d2",
+            "i1",
+            "acme/app",
+            &serde_json::json!({
+                "project": { "id": 7 },
+                "object_attributes": {
+                    "source_branch": "feature",
+                    "target_branch": "main",
+                    "last_commit": { "id": "fff" },
+                },
+            }),
+        );
+        assert_eq!(merge_request.compare_base.as_deref(), Some("main"));
+        assert_eq!(merge_request.target_branch.as_deref(), Some("main"));
+        assert_eq!(merge_request.tag, None);
+    }
+
+    async fn pool(provider: &str) -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        for statement in [
+            "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+             VALUES ('u1', 'lead@example.com', 'sub', 'owner', 0, 0)"
+                .to_string(),
+            format!(
+                "INSERT INTO integrations (id, provider, auth_mode, created_by, created_at, updated_at) \
+                 VALUES ('i1', '{provider}', 'github_app', 'u1', 0, 0)"
+            ),
+            "INSERT INTO integration_installations (id, integration_id, external_id, account_name, created_at, updated_at) \
+             VALUES ('inst1', 'i1', '42', 'acme', 0, 0)"
+                .to_string(),
+            "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, created_at, updated_at) \
+             VALUES ('r1', 'inst1', '7', 'acme/app', 0, 0)"
+                .to_string(),
+            "INSERT INTO projects (id, name, repository_id, created_by, created_at, updated_at) \
+             VALUES ('p1', 'App', 'r1', 'u1', 0, 0)"
+                .to_string(),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(statement))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        for pipeline in ["pl1", "pl2"] {
+            sqlx::query(
+                "INSERT INTO pipelines (id, project_id, name, trigger_config, created_at, updated_at) \
+                 VALUES (?1, 'p1', ?1, '{\"events\":[\"push\",\"tag_push\"],\"branches\":[\"*\"],\"tags\":[\"*\"]}', 0, 0)",
+            )
+            .bind(pipeline)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        pool
+    }
+
+    async fn receive(pool: &sqlx::SqlitePool, webhook_id: &str) {
+        sqlx::query(
+            "INSERT INTO integration_webhooks (id, integration_id, provider_delivery_id, event_type, payload, status, received_at, processing_started_at, processing_attempts) \
+             VALUES (?1, 'i1', ?1, 'push', '{}', 'received', 0, 0, 1)",
+        )
+        .bind(webhook_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn webhook_status(pool: &sqlx::SqlitePool, webhook_id: &str) -> String {
+        sqlx::query_scalar("SELECT status FROM integration_webhooks WHERE id = ?1")
+            .bind(webhook_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn builds_per_pipeline(pool: &sqlx::SqlitePool) -> Vec<(String, i64)> {
+        sqlx::query_as(
+            "SELECT pipeline_id, COUNT(*) FROM builds GROUP BY pipeline_id ORDER BY pipeline_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn gitlab_branch_and_tag_deletions_start_no_builds() {
+        let pool = pool("gitlab").await;
+        let zeros = "0000000000000000000000000000000000000000";
+        for (webhook_id, event_type, git_ref) in [
+            ("branch", "Push Hook", "refs/heads/feature"),
+            ("tag", "Tag Push Hook", "refs/tags/v1.0.0"),
+        ] {
+            receive(&pool, webhook_id).await;
+            let payload = serde_json::json!({
+                "ref": git_ref,
+                "before": "abc123",
+                "after": zeros,
+                "checkout_sha": null,
+                "project": { "id": 7 },
+                "commits": [],
+                "total_commits_count": 0,
+            });
+            let event = normalize_gitlab_event(event_type, webhook_id, "i1", "acme/app", &payload);
+            process_webhook_event(&pool, &[0; 32], webhook_id, &event)
+                .await
+                .unwrap();
+            assert_eq!(webhook_status(&pool, webhook_id).await, "ignored");
+        }
+        assert_eq!(builds_per_pipeline(&pool).await, []);
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_file_retries_only_pipelines_with_a_workflow() {
+        // No GitHub credentials, so reading the pipeline file fails.
+        let pool = pool("github").await;
+        let payload = serde_json::json!({
+            "ref": "refs/heads/main",
+            "after": "abc123",
+            "repository": { "full_name": "acme/app", "id": 7 },
+            "commits": [],
+        });
+
+        // Without a workflow, the trigger settings apply as before.
+        receive(&pool, "wh1").await;
+        let event = normalize_github_event("push", "wh1", "i1", &payload);
+        process_webhook_event(&pool, &[0; 32], "wh1", &event)
+            .await
+            .unwrap();
+        assert_eq!(webhook_status(&pool, "wh1").await, "processed");
+        assert_eq!(
+            builds_per_pipeline(&pool).await,
+            [("pl1".to_string(), 1), ("pl2".to_string(), 1)]
+        );
+
+        // A pipeline with a workflow builds from a v2 file whose `on` is
+        // unknown, so it is skipped and the delivery fails for a retry. The
+        // workflow-less pipeline after it still builds on this attempt.
+        sqlx::query("UPDATE pipelines SET workflow = 'release' WHERE id = 'pl1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        receive(&pool, "wh2").await;
+        let event = normalize_github_event("push", "wh2", "i1", &payload);
+        let error = process_webhook_event(&pool, &[0; 32], "wh2", &event)
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Could not read the pipeline file"),
+            "{error:#}"
+        );
+        record_webhook_processing_error(&pool, "wh2", &error)
+            .await
+            .unwrap();
+        assert_eq!(webhook_status(&pool, "wh2").await, "received");
+        assert_eq!(
+            builds_per_pipeline(&pool).await,
+            [("pl1".to_string(), 1), ("pl2".to_string(), 2)]
+        );
+
+        // Once the pipeline no longer needs its file, the retry builds it
+        // without building the other pipeline twice.
+        sqlx::query("UPDATE pipelines SET workflow = NULL WHERE id = 'pl1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        process_webhook_event(&pool, &[0; 32], "wh2", &event)
+            .await
+            .unwrap();
+        assert_eq!(webhook_status(&pool, "wh2").await, "processed");
+        assert_eq!(
+            builds_per_pipeline(&pool).await,
+            [("pl1".to_string(), 2), ("pl2".to_string(), 2)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_build_insert_is_retried_without_duplicating_builds() {
+        let pool = pool("github").await;
+        receive(&pool, "wh1").await;
+        let payload = serde_json::json!({
+            "ref": "refs/heads/main",
+            "after": "abc123",
+            "repository": { "full_name": "acme/app", "id": 7 },
+            "commits": [],
+        });
+        let event = normalize_github_event("push", "wh1", "i1", &payload);
+        sqlx::query(
+            "CREATE TRIGGER fail_pl2 BEFORE INSERT ON builds WHEN NEW.pipeline_id = 'pl2' \
+             BEGIN SELECT RAISE(ABORT, 'database is locked'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let error = process_webhook_event(&pool, &[0; 32], "wh1", &event)
+            .await
+            .unwrap_err();
+        record_webhook_processing_error(&pool, "wh1", &error)
+            .await
+            .unwrap();
+        assert_eq!(webhook_status(&pool, "wh1").await, "received");
+        assert_eq!(builds_per_pipeline(&pool).await, [("pl1".to_string(), 1)]);
+
+        sqlx::query("DROP TRIGGER fail_pl2")
+            .execute(&pool)
+            .await
+            .unwrap();
+        process_webhook_event(&pool, &[0; 32], "wh1", &event)
+            .await
+            .unwrap();
+        assert_eq!(webhook_status(&pool, "wh1").await, "processed");
+        assert_eq!(
+            builds_per_pipeline(&pool).await,
+            [("pl1".to_string(), 1), ("pl2".to_string(), 1)]
+        );
+    }
 }

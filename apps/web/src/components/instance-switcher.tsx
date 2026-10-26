@@ -24,14 +24,16 @@ import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 import { getInstanceIcon } from '@/lib/instance-icons'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useHotkeys } from '@tanstack/react-hotkeys'
+import { useSwitchInstance } from '@/hooks/use-switch-instance'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
+import { textVariants } from '@/lib/recipes'
 
 export default function InstanceSwitcher() {
   const [showAddDialog, setShowAddDialog] = useState(false)
   const activeInstance = useActiveInstance()
   const isMobile = useIsMobile()
   const instances = useInstanceStore((state) => state.instances)
-  const setActiveInstance = useInstanceStore((state) => state.setActiveInstance)
+  const switchInstance = useSwitchInstance()
   const instanceList = Object.values(instances)
   const ActiveInstanceIcon = getInstanceIcon(activeInstance?.icon)
 
@@ -41,9 +43,11 @@ export default function InstanceSwitcher() {
         key: (idx + 1).toString(),
         mod: true,
       },
-      callback: () => setActiveInstance(instance.id),
+      callback: () => void switchInstance(instance.id),
+      options: { meta: { name: `Switch to ${instance.label}` } },
     })),
-    { preventDefault: true },
+    // Mod shortcuts fire inside text fields by default.
+    { preventDefault: true, ignoreInputs: true },
   )
 
   return (
@@ -78,7 +82,9 @@ export default function InstanceSwitcher() {
               sideOffset={4}
             >
               <DropdownMenuGroup>
-                <DropdownMenuLabel className="text-xs text-muted-foreground">
+                <DropdownMenuLabel
+                  className={textVariants({ variant: 'caption' })}
+                >
                   Instances
                 </DropdownMenuLabel>
                 {instanceList.map((candidate, index) => {
@@ -87,7 +93,7 @@ export default function InstanceSwitcher() {
                   return (
                     <DropdownMenuItem
                       key={candidate.id}
-                      onClick={() => setActiveInstance(candidate.id)}
+                      onClick={() => void switchInstance(candidate.id)}
                       className="min-w-0 gap-2 rounded-r-none p-2"
                       aria-selected={candidate.id == activeInstance?.id}
                     >

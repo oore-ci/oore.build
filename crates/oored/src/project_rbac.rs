@@ -34,37 +34,35 @@ pub enum ProjectPermission {
     ReadArtifacts,
     WriteArtifacts,
     DeleteArtifacts,
+    /// Pause or halt a store release.
+    OperateRelease,
+    /// Create, raise, resume, complete or approve a store release.
+    ManageReleases,
+    /// Approve or reject a gated build, and change a pipeline's approval policy.
+    ApproveBuild,
 }
 
 // ── Resolution ──────────────────────────────────────────────────
 
-/// Map an instance role to the maximum project role it may exercise.
-///
-/// `owner` and `admin` are handled earlier (they get `InstanceAdmin`), so this
-/// only matters for downgraded instance roles like `developer` or `qa_viewer`.
-fn max_project_role_for_instance_role(instance_role: &str) -> ProjectRole {
-    match instance_role {
-        "developer" => ProjectRole::Developer,
-        // qa_viewer (and any unknown role) caps at Viewer
-        _ => ProjectRole::Viewer,
+/// Apply instance-role limits to an existing project membership.
+/// Owner/admin bypass belongs to callers; this also serves project-list responses.
+pub(crate) fn effective_member_role(
+    stored_role: ProjectRole,
+    instance_role: &str,
+    auth_source: &AuthSource,
+) -> ProjectRole {
+    if instance_role == "qa_viewer" {
+        return ProjectRole::Viewer;
     }
-}
-
-fn project_role_level(role: &ProjectRole) -> u8 {
-    match role {
-        ProjectRole::Maintainer => 3,
-        ProjectRole::Developer => 2,
-        ProjectRole::Viewer => 1,
+    if *auth_source == AuthSource::ApiToken {
+        return match (instance_role, stored_role) {
+            ("developer", ProjectRole::Maintainer | ProjectRole::Developer) => {
+                ProjectRole::Developer
+            }
+            _ => ProjectRole::Viewer,
+        };
     }
-}
-
-/// Return the lesser of two project roles.
-fn min_project_role(a: ProjectRole, b: ProjectRole) -> ProjectRole {
-    if project_role_level(&a) <= project_role_level(&b) {
-        a
-    } else {
-        b
-    }
+    stored_role
 }
 
 /// Resolve the effective project role for a user on a given project.
@@ -113,12 +111,7 @@ pub async fn resolve_effective_project_role(
             )
         })?;
 
-        let effective = if instance_role == "qa_viewer" || *auth_source == AuthSource::ApiToken {
-            let cap = max_project_role_for_instance_role(instance_role);
-            min_project_role(role, cap)
-        } else {
-            role
-        };
+        let effective = effective_member_role(role, instance_role, auth_source);
 
         return Ok(EffectiveProjectRole::Member(effective));
     }
@@ -151,6 +144,7 @@ fn role_has_permission(role: &ProjectRole, perm: ProjectPermission) -> bool {
                 | ProjectPermission::CancelBuild
                 | ProjectPermission::ReadArtifacts
                 | ProjectPermission::WriteArtifacts
+                | ProjectPermission::OperateRelease
         ),
         ProjectRole::Viewer => matches!(
             perm,
@@ -223,5 +217,91 @@ pub fn effective_role_string(effective_role: &EffectiveProjectRole) -> Option<St
         EffectiveProjectRole::InstanceAdmin => Some("maintainer".to_string()),
         EffectiveProjectRole::Member(role) => Some(role.to_string()),
         EffectiveProjectRole::None => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn membership_limits_match_project_responses_and_authorization() {
+        use AuthSource::{ApiToken, Session};
+        use ProjectRole::{Developer, Maintainer, Viewer};
+
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE project_members (project_id TEXT, user_id TEXT, role TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO project_members VALUES ('project', 'member', 'viewer')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        for (instance_role, source, expected) in [
+            ("developer", Session, [Maintainer, Developer, Viewer]),
+            ("developer", ApiToken, [Developer, Developer, Viewer]),
+            ("qa_viewer", Session, [Viewer, Viewer, Viewer]),
+            ("qa_viewer", ApiToken, [Viewer, Viewer, Viewer]),
+            ("unknown", Session, [Maintainer, Developer, Viewer]),
+            ("unknown", ApiToken, [Viewer, Viewer, Viewer]),
+        ] {
+            for (stored, expected) in [Maintainer, Developer, Viewer].into_iter().zip(expected) {
+                sqlx::query("UPDATE project_members SET role = ?1")
+                    .bind(stored.to_string())
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    effective_member_role(stored, instance_role, &source),
+                    expected
+                );
+                assert_eq!(
+                    resolve_effective_project_role(
+                        &pool,
+                        "member",
+                        instance_role,
+                        "project",
+                        &source
+                    )
+                    .await
+                    .unwrap(),
+                    EffectiveProjectRole::Member(expected)
+                );
+            }
+            assert_eq!(
+                resolve_effective_project_role(
+                    &pool,
+                    "non-member",
+                    instance_role,
+                    "project",
+                    &source
+                )
+                .await
+                .unwrap(),
+                EffectiveProjectRole::None
+            );
+        }
+        for instance_role in ["owner", "admin"] {
+            for source in [Session, ApiToken] {
+                assert_eq!(
+                    resolve_effective_project_role(
+                        &pool,
+                        "non-member",
+                        instance_role,
+                        "project",
+                        &source
+                    )
+                    .await
+                    .unwrap(),
+                    EffectiveProjectRole::InstanceAdmin
+                );
+            }
+        }
     }
 }

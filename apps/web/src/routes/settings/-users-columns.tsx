@@ -5,9 +5,12 @@ import {
 } from '@/components/data-table'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { relativeTime } from '@/lib/format-utils'
+import { StatusBadge } from '@/components/status-badge'
+import { RelativeTime } from '@/components/relative-time'
 import { UserActions } from './-user-actions'
 import { ROLE_LABELS } from './-user-role-labels'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const ROLE_BADGE_VARIANT = {
   owner: 'outline',
@@ -15,12 +18,6 @@ const ROLE_BADGE_VARIANT = {
   developer: 'secondary',
   qa_viewer: 'outline',
 } satisfies Record<string, 'secondary' | 'outline'>
-
-const STATUS_BADGE_VARIANT = {
-  active: 'secondary',
-  invited: 'outline',
-  disabled: 'destructive',
-} satisfies Record<string, 'secondary' | 'outline' | 'destructive'>
 
 export interface UserColumnOptions {
   authUserId: string | undefined
@@ -33,17 +30,6 @@ function UserRoleBadge({ role }: { role: UserRole }) {
   return (
     <Badge variant={ROLE_BADGE_VARIANT[role] ?? 'outline'} className="text-xs">
       {ROLE_LABELS[role] ?? role}
-    </Badge>
-  )
-}
-
-function UserStatusBadge({ status }: { status: User['status'] }) {
-  return (
-    <Badge
-      variant={STATUS_BADGE_VARIANT[status] ?? 'outline'}
-      className="text-xs capitalize"
-    >
-      {status}
     </Badge>
   )
 }
@@ -91,7 +77,11 @@ export function getColumns(
           <span>
             {row.original.email}
             {isSelf ? (
-              <span className="ml-2 text-xs text-muted-foreground">(you)</span>
+              <span
+                className={cn(textVariants({ variant: 'caption' }), 'ml-2')}
+              >
+                (you)
+              </span>
             ) : null}
           </span>
         )
@@ -109,7 +99,13 @@ export function getColumns(
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title="Status" />
       ),
-      cell: ({ row }) => <UserStatusBadge status={row.original.status} />,
+      cell: ({ row }) => (
+        <StatusBadge
+          kind="user"
+          value={row.original.status}
+          className="text-xs"
+        />
+      ),
     },
     {
       accessorKey: 'created_at',
@@ -117,12 +113,10 @@ export function getColumns(
         <DataTableColumnHeader column={column} title="Joined" />
       ),
       cell: ({ row }) => (
-        <span
-          className="text-xs text-muted-foreground"
-          title={new Date(row.original.created_at * 1000).toLocaleString()}
-        >
-          {relativeTime(row.original.created_at)}
-        </span>
+        <RelativeTime
+          at={row.original.created_at}
+          className={textVariants({ variant: 'caption' })}
+        />
       ),
     },
     {

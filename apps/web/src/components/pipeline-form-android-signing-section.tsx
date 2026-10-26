@@ -5,15 +5,10 @@ import type {
   AndroidSigningProfile,
   PipelineAndroidSigningResponse,
 } from '@oore/client/models'
-import { PipelineFormSectionHeader } from '@/components/pipeline-form-section-header'
+import { PipelineFormSubsection } from '@/components/pipeline-form-section'
+import { FileField } from '@/components/file-field'
 import SetupHint from '@/components/setup-hint'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
 import {
   FormControl,
   FormField,
@@ -22,38 +17,22 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { Separator } from '@/components/ui/separator'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
-const ANDROID_GRADLE_SIGNING_SNIPPET = `android {
-    signingConfigs {
-        release {
-            storeFile file(System.getenv("OORE_ANDROID_KEYSTORE_PATH"))
-            storePassword System.getenv("OORE_ANDROID_KEYSTORE_PASSWORD")
-            keyAlias System.getenv("OORE_ANDROID_KEY_ALIAS")
-            keyPassword System.getenv("OORE_ANDROID_KEY_PASSWORD")
-        }
-    }
-    buildTypes {
-        release {
-            signingConfig signingConfigs.release
-        }
-    }
-}`
+const ANDROID_GRADLE_DOCS_URL =
+  'https://docs.oore.build/build/sign/android/gradle'
 
 export function PipelineAndroidSigningSection({
   debugKeystoreFile,
   onDebugKeystoreFileChange,
-  onOpenChange,
   onReleaseKeystoreFileChange,
-  open,
   releaseKeystoreFile,
   signingData,
 }: {
   debugKeystoreFile: File | null
   onDebugKeystoreFileChange: (file: File | null) => void
-  onOpenChange: (open: boolean) => void
   onReleaseKeystoreFileChange: (file: File | null) => void
-  open: boolean
   releaseKeystoreFile: File | null
   signingData?: PipelineAndroidSigningResponse
 }) {
@@ -62,72 +41,86 @@ export function PipelineAndroidSigningSection({
   const debugEnabled = form.watch('android_signing_debug_enabled')
 
   return (
-    <Collapsible open={open} onOpenChange={onOpenChange}>
-      <Card>
-        <CollapsibleTrigger className="w-full cursor-pointer">
-          <CardHeader>
-            <PipelineFormSectionHeader
-              title="Android Signing"
-              summary={signingSummary(releaseEnabled, debugEnabled)}
-              open={open}
-            />
-          </CardHeader>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <CardContent className="space-y-4">
-            <SetupHint
-              title="Android project setup"
-              code={ANDROID_GRADLE_SIGNING_SNIPPET}
-              items={[
-                'For standard Flutter release builds, upload the keystore here and Oore prepares the signing files for the runner.',
-                'For custom Gradle flavors or signingConfigs, read the OORE_ANDROID_* environment variables shown below.',
-                'Oore also writes OORE_ANDROID_KEY_PROPERTIES_PATH if your Gradle setup prefers a generated key.properties file.',
-              ]}
-            />
-            <SigningToggle
-              name="android_signing_release_enabled"
-              label="Enable release signing"
-              stored={signingData?.release}
-              showOptionalHint={!releaseEnabled && !debugEnabled}
-            />
-            {releaseEnabled ? (
-              <SigningCredentials
-                kind="release"
-                file={releaseKeystoreFile}
-                onFileChange={onReleaseKeystoreFileChange}
-                stored={signingData?.release}
-              />
-            ) : null}
-            <Separator />
-            <SigningToggle
-              name="android_signing_debug_enabled"
-              label="Enable debug signing"
-              stored={signingData?.debug}
-            />
-            {debugEnabled ? (
-              <SigningCredentials
-                kind="debug"
-                file={debugKeystoreFile}
-                onFileChange={onDebugKeystoreFileChange}
-                stored={signingData?.debug}
-              />
-            ) : null}
-          </CardContent>
-        </CollapsibleContent>
-      </Card>
-    </Collapsible>
+    <PipelineFormSubsection
+      id="android-signing"
+      title="Android"
+      meta={
+        <span className={textVariants({ variant: 'caption' })}>
+          {signingSummary(releaseEnabled, debugEnabled)}
+        </span>
+      }
+    >
+      <SigningToggle
+        name="android_signing_release_enabled"
+        label="Enable release signing"
+        stored={signingData?.release}
+      />
+      {releaseEnabled ? (
+        <SigningCredentials
+          kind="release"
+          file={releaseKeystoreFile}
+          onFileChange={onReleaseKeystoreFileChange}
+          stored={signingData?.release}
+        />
+      ) : null}
+      <SigningToggle
+        name="android_signing_debug_enabled"
+        label="Enable debug signing"
+        stored={signingData?.debug}
+      />
+      {debugEnabled ? (
+        <SigningCredentials
+          kind="debug"
+          file={debugKeystoreFile}
+          onFileChange={onDebugKeystoreFileChange}
+          stored={signingData?.debug}
+        />
+      ) : null}
+      {releaseEnabled || debugEnabled ? (
+        <SetupHint
+          title="Android project setup"
+          items={[
+            <span key="post-build">
+              No Gradle changes needed. After each{' '}
+              <code>flutter build apk</code> or{' '}
+              <code>flutter build appbundle</code>, Oore re-signs its APKs or
+              App Bundle with your keystore in a separate{' '}
+              <code>android-sign</code> step. Output from other commands, such
+              as <code>./gradlew</code>, is not signed.
+            </span>,
+            <span key="variant">
+              Commands with <code>--debug</code> use the debug keystore, and all
+              others use the release keystore. A variant with signing turned off
+              keeps the Gradle signature. Build one variant per run.
+            </span>,
+            'Build commands never see the keystore or its passwords, so Gradle cannot read them.',
+            <span key="local-signing">
+              If Gradle loads a local <code>key.properties</code>, skip it when{' '}
+              <code>CI</code> is true. Oore sets <code>CI=true</code> for build
+              commands.{' '}
+              <a
+                href={ANDROID_GRADLE_DOCS_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-4"
+              >
+                Learn more
+              </a>
+            </span>,
+          ]}
+        />
+      ) : null}
+    </PipelineFormSubsection>
   )
 }
 
 function SigningToggle({
   label,
   name,
-  showOptionalHint = false,
   stored,
 }: {
   label: string
   name: 'android_signing_release_enabled' | 'android_signing_debug_enabled'
-  showOptionalHint?: boolean
   stored?: AndroidSigningProfile
 }) {
   const form = useFormContext<PipelineFormValues>()
@@ -144,18 +137,12 @@ function SigningToggle({
             />
             {label}
           </label>
-          {stored ? (
-            <p className="text-xs text-muted-foreground">
+          {stored && !field.value ? (
+            <Text variant="muted">
               {stored.has_keystore
                 ? `Stored keystore: ${stored.keystore_filename ?? 'present'}`
                 : `No stored ${name.includes('release') ? 'release' : 'debug'} keystore`}
-            </p>
-          ) : null}
-          {showOptionalHint ? (
-            <p className="text-xs text-muted-foreground">
-              Signing is optional for debug builds. Enable it when you're ready
-              to distribute release builds.
-            </p>
+            </Text>
           ) : null}
         </FormItem>
       )}
@@ -182,102 +169,89 @@ function SigningCredentials({
   const keyPasswordName = `${fieldPrefix}_key_password` as const
 
   return (
-    <Card size="sm">
-      <CardContent className="grid gap-3">
-        <FormItem>
-          <FormLabel>{title} keystore (.jks)</FormLabel>
-          <FormControl>
-            <Input
-              type="file"
-              accept=".jks,.keystore"
-              onChange={(event) =>
-                onFileChange(event.target.files?.[0] ?? null)
-              }
-            />
-          </FormControl>
-          <p className="text-xs text-muted-foreground">
-            {file
-              ? `Selected: ${file.name}`
-              : stored?.has_keystore
-                ? 'Keep existing keystore or select a new file'
-                : 'Select a JKS/keystore file'}
-          </p>
-        </FormItem>
-        <FormField
-          control={form.control}
-          name={aliasName}
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{title} key alias</FormLabel>
-              <FormControl>
-                <Input
-                  placeholder={
-                    kind === 'release' ? 'upload' : 'androiddebugkey'
-                  }
-                  className="font-mono"
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name={storePasswordName}
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{title} store password</FormLabel>
-              <FormControl>
-                <Input
-                  type="password"
-                  autoComplete="current-password"
-                  placeholder={
-                    stored?.has_store_password
-                      ? 'Leave empty to keep existing password'
-                      : ''
-                  }
-                  className="font-mono"
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name={keyPasswordName}
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{title} key password</FormLabel>
-              <FormControl>
-                <Input
-                  type="password"
-                  autoComplete="current-password"
-                  placeholder={
-                    stored?.has_key_password
-                      ? 'Leave empty to keep existing password'
-                      : ''
-                  }
-                  className="font-mono"
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      </CardContent>
-    </Card>
+    <div className="grid gap-3 rounded-[min(var(--radius-2xl),16px)] bg-muted/40 p-4">
+      <FileField
+        id={`android-${kind}-keystore`}
+        label={`${title} keystore (.jks)`}
+        accept=".jks,.keystore"
+        file={file}
+        onFileChange={onFileChange}
+        storedName={
+          stored?.has_keystore ? (stored.keystore_filename ?? true) : null
+        }
+        emptyLabel="No keystore stored yet"
+      />
+      <FormField
+        control={form.control}
+        name={aliasName}
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>{title} key alias</FormLabel>
+            <FormControl>
+              <Input
+                placeholder={kind === 'release' ? 'upload' : 'androiddebugkey'}
+                className="font-mono"
+                {...field}
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      <FormField
+        control={form.control}
+        name={storePasswordName}
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>{title} store password</FormLabel>
+            <FormControl>
+              <Input
+                type="password"
+                autoComplete="current-password"
+                placeholder={
+                  stored?.has_store_password
+                    ? 'Leave empty to keep existing password'
+                    : ''
+                }
+                className="font-mono"
+                {...field}
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      <FormField
+        control={form.control}
+        name={keyPasswordName}
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>{title} key password</FormLabel>
+            <FormControl>
+              <Input
+                type="password"
+                autoComplete="current-password"
+                placeholder={
+                  stored?.has_key_password
+                    ? 'Leave empty to keep existing password'
+                    : ''
+                }
+                className="font-mono"
+                {...field}
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    </div>
   )
 }
 
 function signingSummary(releaseEnabled: boolean, debugEnabled: boolean) {
-  if (!releaseEnabled && !debugEnabled) return 'Not configured'
-  return (
-    [releaseEnabled ? 'release' : '', debugEnabled ? 'debug' : '']
-      .filter(Boolean)
-      .join(' + ') + ' enabled'
-  )
+  if (releaseEnabled && debugEnabled)
+    return 'Release and debug builds are signed.'
+  if (releaseEnabled) return 'Release builds are signed.'
+  if (debugEnabled) return 'Debug builds are signed.'
+  return 'Optional. Needed before you distribute release builds.'
 }

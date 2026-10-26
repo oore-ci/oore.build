@@ -9,19 +9,7 @@ import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { createWebOoreClient } from '@/lib/api-client/client'
 import { useAuthStore } from '@/stores/auth-store'
 
-/**
- * Sanctioned reactive effect for the index page auth guard.
- *
- * This MUST re-run when `status` changes (it arrives asynchronously from
- * useSetupStatus()). A mount-only effect would never execute the guard logic
- * because `status` is undefined on the initial render.
- *
- * Handles three cases:
- * 1. Redirect to /setup when in setup mode (non-local)
- * 2. Auto local-login for loopback instances in local runtime mode
- * 3. Auto trusted-proxy login for configured proxy-authenticated instances
- * 4. Redirect to /login when token is expired on other configured instances
- */
+// Setup status arrives asynchronously, so authentication must react to it.
 export function useIndexAuthGuard(
   status: SetupStatus | undefined,
   instance: Instance | null,
@@ -60,93 +48,52 @@ export function useIndexAuthGuard(
         }
         return
       }
-
-      if (hasValidToken) return
-      if (autoLoginInstanceRef.current === instance.id) return
-
-      autoLoginInstanceRef.current = instance.id
-      setIsAutoSigningIn(true)
-      clearAuth()
-      void localLogin({ body: {}, client })
-        .then((response) => {
-          if (!response.user.user_id || !response.user.role) {
-            throw new Error('Incomplete user profile received from server')
-          }
-          setAuth(
-            response.session_token,
-            response.expires_at,
-            {
-              email: response.user.email,
-              oidc_subject: response.user.oidc_subject,
-              user_id: response.user.user_id,
-              role: response.user.role,
-              avatar_url: response.user.avatar_url ?? undefined,
-            },
-            'local',
-          )
-        })
-        .catch(() => {
-          autoLoginInstanceRef.current = null
-          clearAuth()
-          void navigate({ to: '/login' })
-        })
-        .finally(() => {
-          setIsAutoSigningIn(false)
-        })
+    } else if (status.remote_auth_mode !== 'trusted_proxy') {
+      if (status.is_configured && !hasValidToken) {
+        clearAuth()
+        void navigate({ to: '/login' })
+      }
+      return
+    } else if (!status.is_configured) {
       return
     }
 
-    if (status.remote_auth_mode === 'trusted_proxy') {
-      if (hasValidToken) return
-      if (!status.is_configured) return
-      if (autoLoginInstanceRef.current === instance.id) return
+    if (hasValidToken || autoLoginInstanceRef.current === instance.id) return
 
-      autoLoginInstanceRef.current = instance.id
-      setIsAutoSigningIn(true)
-      clearAuth()
-      void trustedProxyLogin({ client })
-        .then((response) => {
-          if (!response.user.user_id || !response.user.role) {
-            throw new Error('Incomplete user profile received from server')
-          }
-          setAuth(
-            response.session_token,
-            response.expires_at,
-            {
-              email: response.user.email,
-              oidc_subject: response.user.oidc_subject,
-              user_id: response.user.user_id,
-              role: response.user.role,
-              avatar_url: response.user.avatar_url ?? undefined,
-            },
-            'trusted_proxy',
-          )
-        })
-        .catch(() => {
-          autoLoginInstanceRef.current = null
-          clearAuth()
-          void navigate({ to: '/login' })
-        })
-        .finally(() => {
-          setIsAutoSigningIn(false)
-        })
-      return
-    }
+    autoLoginInstanceRef.current = instance.id
+    setIsAutoSigningIn(true)
+    clearAuth()
+    const method = status.runtime_mode === 'local' ? 'local' : 'trusted_proxy'
+    const login =
+      method === 'local'
+        ? localLogin({ body: {}, client })
+        : trustedProxyLogin({ client })
 
-    if (status.is_configured && !hasValidToken) {
-      clearAuth()
-      void navigate({ to: '/login' })
-    }
-  }, [
-    status,
-    instance,
-    authToken,
-    authExpiresAt,
-    navigate,
-    clearAuth,
-    setAuth,
-    setIsAutoSigningIn,
-  ])
+    void login
+      .then((response) => {
+        if (!response.user.user_id || !response.user.role) {
+          throw new Error('Incomplete user profile received from server')
+        }
+        setAuth(
+          response.session_token,
+          response.expires_at,
+          {
+            email: response.user.email,
+            oidc_subject: response.user.oidc_subject,
+            user_id: response.user.user_id,
+            role: response.user.role,
+            avatar_url: response.user.avatar_url ?? undefined,
+          },
+          method,
+        )
+      })
+      .catch(() => {
+        autoLoginInstanceRef.current = null
+        clearAuth()
+        void navigate({ to: '/login' })
+      })
+      .finally(() => setIsAutoSigningIn(false))
+  }, [status, instance, authToken, authExpiresAt, navigate, clearAuth, setAuth])
 
   return isAutoSigningIn
 }

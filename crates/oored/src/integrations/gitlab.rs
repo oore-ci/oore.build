@@ -212,16 +212,20 @@ async fn record_credential_health(
     status: &str,
 ) -> anyhow::Result<()> {
     let deduplication_key = format!("source-credential:{integration_id}");
-    if status == "valid" {
-        incidents::resolve_incident(pool, &deduplication_key).await?;
-        sqlx::query("UPDATE integrations SET status = 'active', updated_at = ?1 WHERE id = ?2")
-            .bind(now_unix())
-            .bind(integration_id)
-            .execute(pool)
-            .await?;
+    if status == "unknown" {
         return Ok(());
     }
-    if status == "unknown" {
+    let now = now_unix();
+    if status == "valid" {
+        incidents::resolve_incident(pool, &deduplication_key).await?;
+        sqlx::query(
+            "UPDATE integrations SET status = 'active', status_reason = NULL, \
+             status_checked_at = ?1, updated_at = ?1 WHERE id = ?2",
+        )
+        .bind(now)
+        .bind(integration_id)
+        .execute(pool)
+        .await?;
         return Ok(());
     }
     let source_name: String = sqlx::query_scalar(
@@ -258,8 +262,18 @@ async fn record_credential_health(
     )
     .await?;
     if matches!(status, "expired" | "rejected" | "refresh_failed") {
-        sqlx::query("UPDATE integrations SET status = 'error', updated_at = ?1 WHERE id = ?2")
-            .bind(now_unix())
+        sqlx::query(
+            "UPDATE integrations SET status = 'error', status_reason = ?1, \
+             status_checked_at = ?2, updated_at = ?2 WHERE id = ?3",
+        )
+        .bind(status)
+        .bind(now)
+        .bind(integration_id)
+        .execute(pool)
+        .await?;
+    } else {
+        sqlx::query("UPDATE integrations SET status_checked_at = ?1 WHERE id = ?2")
+            .bind(now)
             .bind(integration_id)
             .execute(pool)
             .await?;
@@ -561,8 +575,6 @@ struct GitLabTokenResponse {
     access_token: String,
     refresh_token: Option<String>,
     expires_in: Option<i64>,
-    #[allow(dead_code)]
-    token_type: Option<String>,
 }
 
 async fn refresh_oauth_access_token(
@@ -895,6 +907,147 @@ pub(crate) async fn resolve_branch_commit(
                 "Failed to parse GitLab commit response",
             )
         })
+}
+
+/// Files changed from `base` (a branch or commit) to `head`, measured from
+/// their merge base. `None` when GitLab timed out building the diff.
+pub(crate) async fn changed_files(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    target: (&str, &str, &str),
+    base: &str,
+    head: &str,
+) -> anyhow::Result<Option<Vec<String>>> {
+    #[derive(Deserialize)]
+    struct CompareResponse {
+        #[serde(default)]
+        diffs: Vec<CompareDiff>,
+        #[serde(default)]
+        compare_timeout: bool,
+    }
+    #[derive(Deserialize)]
+    struct CompareDiff {
+        new_path: String,
+        old_path: String,
+    }
+
+    let (host_url, auth_mode, repository_external_id) = target;
+    let host_url =
+        normalize_gitlab_host_url(host_url).map_err(|(_, body)| anyhow::anyhow!(body.0.error))?;
+    let token = access_token(pool, encryption_key, integration_id)
+        .await
+        .map_err(|(_, body)| anyhow::anyhow!(body.0.error))?;
+    let client = build_http_client().map_err(anyhow::Error::msg)?;
+    let mut request = client
+        .get(format!(
+            "{}/api/v4/projects/{}/repository/compare",
+            host_url,
+            urlencoding::encode(repository_external_id)
+        ))
+        .query(&[("from", base), ("to", head), ("straight", "false")])
+        .header("User-Agent", "oore-ci");
+    request = if auth_mode == "oauth_app" {
+        request.header("Authorization", format!("Bearer {token}"))
+    } else {
+        request.header("PRIVATE-TOKEN", token)
+    };
+    let response = request
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<CompareResponse>()
+        .await?;
+    if response.compare_timeout {
+        return Ok(None);
+    }
+    let mut files = Vec::with_capacity(response.diffs.len());
+    for diff in response.diffs {
+        if diff.old_path != diff.new_path {
+            files.push(diff.old_path);
+        }
+        files.push(diff.new_path);
+    }
+    Ok(Some(files))
+}
+
+/// One GitLab commit status, posted to `POST /projects/:id/statuses/:sha`.
+pub(crate) struct CommitStatus<'a> {
+    pub sha: &'a str,
+    pub state: &'a str,
+    pub name: &'a str,
+    pub git_ref: Option<&'a str>,
+    pub target_url: Option<&'a str>,
+    pub description: &'a str,
+}
+
+/// Set a commit status. Needs a credential with the `api` scope; GitLab
+/// refuses read-only tokens with 403.
+pub(crate) async fn set_commit_status(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    integration_id: &str,
+    host_url: &str,
+    auth_mode: &str,
+    repository_external_id: &str,
+    status: &CommitStatus<'_>,
+) -> anyhow::Result<()> {
+    let host_url =
+        normalize_gitlab_host_url(host_url).map_err(|(_, Json(e))| anyhow::anyhow!(e.error))?;
+    let token = access_token(pool, encryption_key, integration_id)
+        .await
+        .map_err(|(_, Json(e))| anyhow::anyhow!(e.error))?;
+    let client = build_http_client().map_err(|e| anyhow::anyhow!(e))?;
+    let mut body = serde_json::json!({
+        "state": status.state,
+        "name": status.name,
+        "description": status.description,
+    });
+    if let Some(git_ref) = status.git_ref {
+        body["ref"] = git_ref.into();
+    }
+    if let Some(target_url) = status.target_url {
+        body["target_url"] = target_url.into();
+    }
+    let request = client
+        .post(format!(
+            "{}/api/v4/projects/{}/statuses/{}",
+            host_url,
+            urlencoding::encode(repository_external_id),
+            urlencoding::encode(status.sha)
+        ))
+        .header("User-Agent", "oore-ci")
+        .json(&body);
+    let request = if auth_mode == "oauth_app" {
+        request.header("Authorization", format!("Bearer {token}"))
+    } else {
+        request.header("PRIVATE-TOKEN", token)
+    };
+    let response = request.send().await?;
+    let http_status = response.status();
+    // A 403 here usually means a read-only token, which still reads fine, so
+    // it is not recorded as a credential failure.
+    if http_status != reqwest::StatusCode::FORBIDDEN {
+        classify_authenticated_gitlab_response(pool, integration_id, auth_mode, http_status)
+            .await?;
+    }
+    if http_status.is_success() {
+        return Ok(());
+    }
+    let message = response.text().await.unwrap_or_default();
+    // GitLab rejects posting the state a status already has.
+    if http_status == reqwest::StatusCode::BAD_REQUEST
+        && message.contains("Cannot transition status")
+    {
+        return Ok(());
+    }
+    if http_status == reqwest::StatusCode::FORBIDDEN {
+        return Err(crate::commit_checks::Refused(
+            "GitLab refused the commit status; the source credential needs the api scope",
+        )
+        .into());
+    }
+    anyhow::bail!("GitLab returned {http_status} setting a commit status")
 }
 
 pub(crate) async fn compare_commits(
@@ -1509,6 +1662,8 @@ pub async fn gitlab_start(
         host_url,
         auth_mode: auth_mode.to_string(),
         status: integration_status.to_string(),
+        status_reason: None,
+        status_checked_at: None,
         display_name: Some(full_display_name),
         app_id: None,
         app_slug: None,
@@ -2318,7 +2473,7 @@ pub async fn replace_personal_token(
             "The GitLab source has no saved access token",
         ));
     }
-    sqlx::query("UPDATE integrations SET status = 'active', updated_at = ?1 WHERE id = ?2")
+    sqlx::query("UPDATE integrations SET status = 'active', status_reason = NULL, updated_at = ?1 WHERE id = ?2")
         .bind(now)
         .bind(&integration_id)
         .execute(&mut *tx)
@@ -2921,7 +3076,7 @@ async fn exchange_gitlab_code(
     .map_err(|e| format!("Failed to create installation: {e}"))?;
 
     // All critical writes succeeded — now activate the integration.
-    sqlx::query("UPDATE integrations SET status = 'active', updated_at = ?1 WHERE id = ?2")
+    sqlx::query("UPDATE integrations SET status = 'active', status_reason = NULL, updated_at = ?1 WHERE id = ?2")
         .bind(now)
         .bind(integration_id)
         .execute(&mut *tx)

@@ -1,6 +1,5 @@
-import { useEffect, useEffectEvent, useReducer, useRef } from 'react'
-import { streamBuildLogEvents, type BuildLogEvent } from '@oore/client/logs'
-import type { OoreClient } from '@oore/client/client'
+import { useEffect, useEffectEvent, useReducer, useState } from 'react'
+import { streamBuildLogEvents } from '@oore/client/logs'
 import type { BuildLogChunk } from '@oore/client/models'
 import { getBuildLogs } from '@oore/client/operations'
 
@@ -11,10 +10,17 @@ import {
 import { useApiContext } from '@/hooks/use-api-context'
 import { createWebOoreClient } from '@/lib/api-client/client'
 
-interface UseLogStreamResult {
+interface LogStreamState {
   logs: Array<BuildLogChunk>
   isStreaming: boolean
   isDone: boolean
+  /** The live stream was unavailable or dropped; lines arrive by polling. */
+  isPolling: boolean
+}
+
+interface UseLogStreamResult extends LogStreamState {
+  /** Try the live stream again after it dropped. */
+  reconnect: () => void
 }
 
 interface UseLogStreamOptions {
@@ -22,40 +28,23 @@ interface UseLogStreamOptions {
 }
 
 const POLL_INTERVAL_MS = 2500
-const POLL_BACKFILL_WINDOW = 500
+// Re-read a few recent lines in case they committed out of order.
+const POLL_BACKFILL_WINDOW = 50
+const POLL_PAGE_SIZE = 5000
 
-async function consumeBuildLogEvents({
-  buildId,
-  client,
-  onEvent,
-  signal,
-}: {
-  buildId: string
-  client: OoreClient
-  onEvent: (event: BuildLogEvent) => boolean
-  signal: AbortSignal
-}) {
-  for await (const event of streamBuildLogEvents({
-    client,
-    path: { build_id: buildId },
-    signal,
-  })) {
-    if (!onEvent(event)) break
-  }
-}
+type StreamAction = Partial<LogStreamState> | 'reset'
 
-type StreamAction = Partial<UseLogStreamResult> | 'reset'
-
-const initialStreamState: UseLogStreamResult = {
+const initialStreamState: LogStreamState = {
   logs: [],
   isStreaming: false,
   isDone: false,
+  isPolling: false,
 }
 
 function streamReducer(
-  state: UseLogStreamResult,
+  state: LogStreamState,
   action: StreamAction,
-): UseLogStreamResult {
+): LogStreamState {
   return action === 'reset' ? initialStreamState : { ...state, ...action }
 }
 
@@ -66,10 +55,8 @@ export function useLogStream(
 ): UseLogStreamResult {
   const onDone = useEffectEvent(() => options?.onDone?.())
   const [stream, updateStream] = useReducer(streamReducer, initialStreamState)
+  const [attempt, setAttempt] = useState(0)
   const { baseUrl, token } = useApiContext()
-  const logsBySequenceRef = useRef<Map<number, BuildLogChunk>>(new Map())
-  const orderedLogsRef = useRef<Array<BuildLogChunk>>([])
-  const lastSequenceRef = useRef(-1)
 
   useEffect(() => {
     if (!enabled || !baseUrl || !token) {
@@ -79,40 +66,53 @@ export function useLogStream(
 
     const client = createWebOoreClient({ baseUrl, token })
     const abort = new AbortController()
+    const logsBySequence = new Map<number, BuildLogChunk>()
+    let orderedLogs: Array<BuildLogChunk> = []
+    let lastSequence = -1
     let pollingTimer: ReturnType<typeof setInterval> | undefined
 
     function appendLogs(chunks: Array<BuildLogChunk>) {
-      if (chunks.length === 0) return
+      if (abort.signal.aborted || chunks.length === 0) return
 
-      const merged = mergeBuildLogChunks(
-        orderedLogsRef.current,
-        logsBySequenceRef.current,
-        chunks,
-      )
+      const merged = mergeBuildLogChunks(orderedLogs, logsBySequence, chunks)
       if (!merged.changed) return
 
-      orderedLogsRef.current = merged.logs
-      lastSequenceRef.current = merged.lastSequence
+      orderedLogs = merged.logs
+      lastSequence = merged.lastSequence
       updateStream({ logs: merged.logs })
     }
 
+    let polling = false
+    // Page until caught up so a long or verbose log never falls behind.
     async function pollOnce() {
-      const after = Math.max(-1, lastSequenceRef.current - POLL_BACKFILL_WINDOW)
+      if (polling) return
+      polling = true
       try {
-        const response = await getBuildLogs({
-          client,
-          path: { build_id: buildId },
-          query: { after_sequence: after >= 0 ? after : undefined },
-          signal: abort.signal,
-        })
-        appendLogs(response.logs)
+        let after = Math.max(-1, lastSequence - POLL_BACKFILL_WINDOW)
+        for (;;) {
+          const response = await getBuildLogs({
+            client,
+            path: { build_id: buildId },
+            query: {
+              after_sequence: after >= 0 ? after : undefined,
+              limit: POLL_PAGE_SIZE,
+            },
+            signal: abort.signal,
+          })
+          appendLogs(response.logs)
+          if (response.logs.length < POLL_PAGE_SIZE) break
+          after = response.logs.at(-1)?.sequence ?? after
+        }
       } catch {
         // Retry on the next interval.
+      } finally {
+        polling = false
       }
     }
 
     function startPolling() {
       if (pollingTimer) return
+      updateStream({ isPolling: true })
       void pollOnce()
       pollingTimer = setInterval(() => void pollOnce(), POLL_INTERVAL_MS)
     }
@@ -124,38 +124,32 @@ export function useLogStream(
     }
 
     updateStream('reset')
-    logsBySequenceRef.current = new Map()
-    orderedLogsRef.current = []
-    lastSequenceRef.current = -1
 
     const logBatcher = createLogFrameBatcher(appendLogs)
-    let streamDone = false
-    startPolling()
+    // Read what already exists while the live stream connects.
+    void pollOnce()
 
     void (async () => {
       try {
-        await consumeBuildLogEvents({
-          buildId,
+        for await (const event of streamBuildLogEvents({
           client,
+          path: { build_id: buildId },
           signal: abort.signal,
-          onEvent: (event) => {
-            stopPolling()
-            updateStream({ isStreaming: true })
+        })) {
+          if (abort.signal.aborted) return
+          stopPolling()
+          updateStream({ isStreaming: true, isPolling: false })
 
-            if (event.type === 'log') {
-              logBatcher.enqueue(event.chunk)
-            } else if (event.type === 'done') {
-              streamDone = true
-              logBatcher.flush()
-              updateStream({ isStreaming: false, isDone: true })
-              void pollOnce()
-              onDone()
-              return false
-            }
-            return true
-          },
-        })
-        if (streamDone) return
+          if (event.type === 'log') {
+            logBatcher.enqueue(event.chunk)
+          } else if (event.type === 'done') {
+            logBatcher.flush()
+            updateStream({ isStreaming: false, isDone: true, isPolling: false })
+            void pollOnce()
+            onDone()
+            return
+          }
+        }
       } catch {
         // Polling is the supported fallback when SSE is unavailable.
       }
@@ -171,7 +165,7 @@ export function useLogStream(
       logBatcher.cancel()
       stopPolling()
     }
-  }, [enabled, baseUrl, token, buildId])
+  }, [enabled, baseUrl, token, buildId, attempt])
 
-  return stream
+  return { ...stream, reconnect: () => setAttempt((value) => value + 1) }
 }

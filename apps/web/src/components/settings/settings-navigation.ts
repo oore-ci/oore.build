@@ -5,8 +5,10 @@ import {
   Delete02Icon,
   Key01Icon,
   Link04Icon,
+  LockPasswordIcon,
   Notification03Icon,
   Settings01Icon,
+  Store01Icon,
   UserMultiple02Icon,
 } from '@hugeicons/core-free-icons'
 
@@ -72,6 +74,20 @@ const SETTINGS_GROUPS = [
         to: '/settings/api-tokens',
         icon: Key01Icon,
         roles: OPERATOR_ROLES,
+      },
+      {
+        title: 'Secrets',
+        description: 'Encrypted values every build can reference.',
+        to: '/settings/secrets',
+        icon: LockPasswordIcon,
+        roles: ADMIN_ROLES,
+      },
+      {
+        title: 'Store credentials',
+        description: 'App Store Connect and Google Play keys for every app.',
+        to: '/settings/store-credentials',
+        icon: Store01Icon,
+        roles: ADMIN_ROLES,
       },
     ],
   },

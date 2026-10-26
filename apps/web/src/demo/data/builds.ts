@@ -18,6 +18,7 @@ export const demoBuilds: Array<Build> = [
     status: 'running',
     trigger_type: 'webhook',
     trigger_event: 'push',
+    trigger_actor: 'mina-patel',
     trigger_ref: 'refs/heads/main',
     commit_sha: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
     branch: 'main',
@@ -53,7 +54,7 @@ export const demoBuilds: Array<Build> = [
     build_number: 47,
     status: 'running',
     trigger_type: 'manual',
-    trigger_actor: USER_IDS.developer,
+    trigger_actor: 'demo+developer@oore.build',
     commit_sha: 'f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9',
     branch: 'main',
     changelog: 'Adds receipt sharing and improves payment retry messaging.',
@@ -84,6 +85,7 @@ export const demoBuilds: Array<Build> = [
     status: 'queued',
     trigger_type: 'webhook',
     trigger_event: 'push',
+    trigger_actor: 'jordan-kim',
     trigger_ref: 'refs/heads/main',
     commit_sha: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
     branch: 'main',
@@ -94,7 +96,47 @@ export const demoBuilds: Array<Build> = [
     updated_at: ago(60),
   },
 
+  // ── Build waiting for approval ────────────────────────────────
+  {
+    id: BUILD_IDS.awaitingApproval1,
+    project_id: PROJECT_IDS.flutterShop,
+    pipeline_id: PIPELINE_IDS.shopIos,
+    build_number: 144,
+    status: 'queued',
+    trigger_type: 'webhook',
+    trigger_actor: 'octocat',
+    trigger_event: 'tag_push',
+    trigger_ref: 'v2.4.0',
+    commit_sha: 'c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3',
+    approval: { state: 'pending', requested_at: ago(240) },
+    config_snapshot: {},
+    queued_at: ago(240),
+    created_at: ago(240),
+    updated_at: ago(240),
+  },
+
   // ── Succeeded builds ──────────────────────────────────────────
+  {
+    id: BUILD_IDS.succeeded7,
+    project_id: PROJECT_IDS.flutterShop,
+    pipeline_id: PIPELINE_IDS.shopAndroid,
+    build_number: 145,
+    status: 'succeeded',
+    trigger_type: 'webhook',
+    trigger_event: 'push',
+    trigger_ref: 'refs/heads/main',
+    commit_sha: 'e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4',
+    branch: 'main',
+    changelog: 'Order tracking on the home screen and smaller app size.',
+    config_snapshot: {},
+    runner_id: RUNNER_IDS.macStudio,
+    exit_code: 0,
+    queued_at: ago(5400),
+    started_at: ago(5340),
+    finished_at: ago(4800),
+    created_at: ago(5400),
+    updated_at: ago(4800),
+  },
   {
     id: BUILD_IDS.succeeded1,
     project_id: PROJECT_IDS.flutterShop,
@@ -103,6 +145,7 @@ export const demoBuilds: Array<Build> = [
     status: 'succeeded',
     trigger_type: 'webhook',
     trigger_event: 'push',
+    trigger_actor: 'octocat',
     trigger_ref: 'refs/heads/main',
     commit_sha: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1',
     branch: 'main',
@@ -159,6 +202,7 @@ export const demoBuilds: Array<Build> = [
     status: 'succeeded',
     trigger_type: 'webhook',
     trigger_event: 'push',
+    trigger_actor: 'priya-shah',
     commit_sha: 'c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2',
     branch: 'develop',
     config_snapshot: {},
@@ -195,7 +239,7 @@ export const demoBuilds: Array<Build> = [
     build_number: 140,
     status: 'succeeded',
     trigger_type: 'manual',
-    trigger_actor: USER_IDS.owner,
+    trigger_actor: 'demo+owner@oore.build',
     commit_sha: 'd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3',
     branch: 'main',
     changelog:
@@ -230,6 +274,61 @@ export const demoBuilds: Array<Build> = [
 
   // ── Failed builds ─────────────────────────────────────────────
   {
+    id: BUILD_IDS.failedPublish1,
+    project_id: PROJECT_IDS.flutterShop,
+    pipeline_id: PIPELINE_IDS.shopAndroid,
+    build_number: 141,
+    status: 'failed',
+    trigger_type: 'webhook',
+    trigger_event: 'push',
+    trigger_actor: 'mina-patel',
+    trigger_ref: 'refs/heads/main',
+    commit_sha: 'b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6',
+    branch: 'main',
+    config_snapshot: {},
+    runner_id: RUNNER_IDS.macStudio,
+    step_results: [
+      {
+        name: 'checkout',
+        status: 'succeeded',
+        exit_code: 0,
+        started_at: ago(3600),
+        finished_at: ago(3590),
+        duration_ms: 10000,
+      },
+      {
+        name: 'flutter build appbundle --release',
+        status: 'succeeded',
+        exit_code: 0,
+        started_at: ago(3590),
+        finished_at: ago(3020),
+        duration_ms: 570000,
+      },
+      {
+        name: 'artifacts',
+        status: 'succeeded',
+        exit_code: 0,
+        started_at: ago(3020),
+        finished_at: ago(3000),
+        duration_ms: 20000,
+      },
+      {
+        name: 'publish-play',
+        status: 'failed',
+        exit_code: 1,
+        started_at: ago(3000),
+        finished_at: ago(2990),
+        duration_ms: 10000,
+      },
+    ],
+    exit_code: 1,
+    queued_at: ago(3620),
+    started_at: ago(3600),
+    finished_at: ago(2990),
+    created_at: ago(3620),
+    updated_at: ago(2990),
+  },
+  {
     id: BUILD_IDS.failed1,
     project_id: PROJECT_IDS.nativePayments,
     pipeline_id: PIPELINE_IDS.paymentsAll,
@@ -237,6 +336,7 @@ export const demoBuilds: Array<Build> = [
     status: 'failed',
     trigger_type: 'webhook',
     trigger_event: 'push',
+    trigger_actor: 'jordan-kim',
     commit_sha: 'e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4',
     branch: 'feature/stripe-v3',
     config_snapshot: {},
@@ -251,7 +351,7 @@ export const demoBuilds: Array<Build> = [
         duration_ms: 60000,
       },
       {
-        name: 'flutter analyze',
+        name: 'flutter test',
         status: 'failed',
         exit_code: 1,
         started_at: ago(43140),
@@ -274,6 +374,7 @@ export const demoBuilds: Array<Build> = [
     status: 'failed',
     trigger_type: 'webhook',
     trigger_event: 'push',
+    trigger_actor: 'octocat',
     commit_sha: 'f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5',
     branch: 'develop',
     config_snapshot: {},
@@ -312,7 +413,7 @@ export const demoBuilds: Array<Build> = [
     build_number: 139,
     status: 'canceled',
     trigger_type: 'manual',
-    trigger_actor: USER_IDS.admin,
+    trigger_actor: 'demo+admin@oore.build',
     commit_sha: 'a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6',
     branch: 'release/1.5.0',
     config_snapshot: {},
@@ -344,6 +445,7 @@ export const demoBuilds: Array<Build> = [
     status: 'timed_out',
     trigger_type: 'webhook',
     trigger_event: 'push',
+    trigger_actor: 'priya-shah',
     commit_sha: 'b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7',
     branch: 'main',
     config_snapshot: {},
@@ -390,6 +492,7 @@ export const demoBuilds: Array<Build> = [
     status: 'succeeded',
     trigger_type: 'webhook',
     trigger_event: 'push',
+    trigger_actor: 'mina-patel',
     commit_sha: 'c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8',
     branch: 'main',
     config_snapshot: {},
@@ -409,6 +512,7 @@ export const demoBuilds: Array<Build> = [
     status: 'succeeded',
     trigger_type: 'webhook',
     trigger_event: 'push',
+    trigger_actor: 'jordan-kim',
     commit_sha: 'd0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9',
     branch: 'develop',
     config_snapshot: {},
@@ -427,7 +531,7 @@ export const demoBuilds: Array<Build> = [
     build_number: 44,
     status: 'succeeded',
     trigger_type: 'manual',
-    trigger_actor: USER_IDS.developer,
+    trigger_actor: 'demo+developer@oore.build',
     commit_sha: 'e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0',
     branch: 'release/3.2.0',
     changelog:
@@ -490,6 +594,59 @@ const demoBuildHistoryApps = [
   },
 ] as const
 
+const DEMO_HISTORY_ACTORS = [
+  'octocat',
+  'mina-patel',
+  'jordan-kim',
+  'priya-shah',
+]
+
+/** A mix of pushes, pull requests, manual runs and nightly schedules. */
+function demoHistoryTrigger(
+  index: number,
+): Pick<Build, 'trigger_actor' | 'trigger_event' | 'trigger_type'> {
+  if (index % 8 === 6) {
+    return { trigger_type: 'schedule', trigger_event: 'schedule' }
+  }
+  if (index % 8 === 3) {
+    return {
+      trigger_type: 'manual',
+      trigger_actor: 'demo+developer@oore.build',
+    }
+  }
+  return {
+    trigger_type: 'webhook',
+    trigger_event: index % 4 === 1 ? 'pull_request' : 'push',
+    trigger_actor: DEMO_HISTORY_ACTORS[index % DEMO_HISTORY_ACTORS.length],
+  }
+}
+
+// Typical FlutterShop Android step times, so a build's steps compare against
+// the pipeline's median.
+const SHOP_ANDROID_STEP_SECONDS = [
+  ['flutter pub get', 40],
+  ['flutter analyze', 55],
+  ['flutter build apk --release', 300],
+  ['flutter test --coverage', 100],
+] as const
+
+function demoShopAndroidSteps(startAge: number, index: number) {
+  let age = startAge
+  return SHOP_ANDROID_STEP_SECONDS.map(([name, seconds], step) => {
+    const duration = seconds + (((index + 1) * (step + 3) * 7) % 21) - 10
+    const result = {
+      name,
+      status: 'succeeded',
+      exit_code: 0,
+      started_at: ago(age),
+      finished_at: ago(age - duration),
+      duration_ms: duration * 1000,
+    }
+    age -= duration
+    return result
+  })
+}
+
 for (const [projectIndex, app] of demoBuildHistoryApps.entries()) {
   for (let index = 0; index < 24; index += 1) {
     const age = 259_200 + index * 14_400 + projectIndex * 600
@@ -501,8 +658,7 @@ for (const [projectIndex, app] of demoBuildHistoryApps.entries()) {
       pipeline_id: app.pipelineId,
       build_number: app.firstBuildNumber - index,
       status,
-      trigger_type: 'webhook',
-      trigger_event: 'push',
+      ...demoHistoryTrigger(index),
       trigger_ref: `refs/heads/${app.branch}`,
       commit_sha: (projectIndex * 24 + index + 1)
         .toString(16)
@@ -516,17 +672,32 @@ for (const [projectIndex, app] of demoBuildHistoryApps.entries()) {
       runner_id: index % 2 === 0 ? RUNNER_IDS.macStudio : RUNNER_IDS.macMini,
       exit_code:
         status === 'succeeded' ? 0 : status === 'failed' ? 1 : undefined,
+      step_results:
+        projectIndex === 0 && status !== 'canceled'
+          ? demoShopAndroidSteps(age - 60, index)
+          : undefined,
       queued_at: ago(age),
       started_at: ago(age - 60),
-      finished_at: ago(age - 420),
+      // Run times vary between about 5 and 11 minutes.
+      finished_at: ago(age - 360 - ((index * 97 + projectIndex * 61) % 340)),
       created_at: ago(age),
-      updated_at: ago(age - 420),
+      updated_at: ago(age - 360 - ((index * 97 + projectIndex * 61) % 340)),
     })
   }
 }
 
 // ── Build events for detail views ───────────────────────────────
 export const demoBuildEvents = {
+  [BUILD_IDS.awaitingApproval1]: [
+    {
+      id: 'evt-approval-001',
+      build_id: BUILD_IDS.awaitingApproval1,
+      to_status: 'queued',
+      actor: 'octocat',
+      reason: 'webhook: tag_push; waiting for approval',
+      created_at: ago(240),
+    },
+  ],
   [BUILD_IDS.running1]: [
     {
       id: 'evt-001',
@@ -586,7 +757,7 @@ export const demoBuildEvents = {
       build_id: BUILD_IDS.failed1,
       from_status: 'running',
       to_status: 'failed',
-      reason: 'flutter analyze exited with code 1',
+      reason: 'flutter test exited with code 1',
       created_at: ago(43080),
     },
   ],

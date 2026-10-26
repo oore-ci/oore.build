@@ -13,9 +13,14 @@ import type {
   UpdateProjectRequest,
 } from '@oore/client/models'
 import {
-  addProjectMemberMutation,
-  createProjectMutation,
-  deleteProjectMutation,
+  addProjectMember,
+  createProject,
+  deleteProject,
+  removeProjectMember,
+  updateProject,
+  updateProjectMember,
+} from '@oore/client/operations'
+import {
   getProjectOptions,
   getProjectQueryKey,
   listProjectMemberCandidatesOptions,
@@ -25,9 +30,6 @@ import {
   listProjectsInfiniteOptions,
   listProjectsOptions,
   listProjectsQueryKey,
-  removeProjectMemberMutation,
-  updateProjectMemberMutation,
-  updateProjectMutation,
 } from '@oore/client/react-query'
 
 import { useApiContext } from '@/hooks/use-api-context'
@@ -104,22 +106,12 @@ export function useProject(projectId: string) {
 export function useCreateProject() {
   const queryClient = useQueryClient()
   const { baseUrl, client, instanceId, token } = useApiContext()
-  const mutation = createProjectMutation({ client })
-  const mutationKey = scopeOoreQueryKey(instanceId, mutation.mutationKey ?? [])
 
   return useMutation({
-    mutationKey,
     mutationFn: (data: CreateProjectRequest) => {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
-      return mutation.mutationFn!(
-        { body: data, client },
-        {
-          client: queryClient,
-          meta: undefined,
-          mutationKey,
-        },
-      )
+      return createProject({ body: data, client, throwOnError: true })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -135,11 +127,8 @@ export function useCreateProject() {
 export function useUpdateProject() {
   const queryClient = useQueryClient()
   const { baseUrl, client, instanceId, token } = useApiContext()
-  const mutation = updateProjectMutation({ client })
-  const mutationKey = scopeOoreQueryKey(instanceId, mutation.mutationKey ?? [])
 
   return useMutation({
-    mutationKey,
     mutationFn: ({
       projectId,
       data,
@@ -149,18 +138,12 @@ export function useUpdateProject() {
     }) => {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
-      return mutation.mutationFn!(
-        {
-          body: data,
-          client,
-          path: { project_id: projectId },
-        },
-        {
-          client: queryClient,
-          meta: undefined,
-          mutationKey,
-        },
-      )
+      return updateProject({
+        body: data,
+        client,
+        path: { project_id: projectId },
+        throwOnError: true,
+      })
     },
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({
@@ -185,25 +168,16 @@ export function useUpdateProject() {
 export function useDeleteProject() {
   const queryClient = useQueryClient()
   const { baseUrl, client, instanceId, token } = useApiContext()
-  const mutation = deleteProjectMutation({ client })
-  const mutationKey = scopeOoreQueryKey(instanceId, mutation.mutationKey ?? [])
 
   return useMutation({
-    mutationKey,
     mutationFn: (projectId: string) => {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
-      return mutation.mutationFn!(
-        {
-          client,
-          path: { project_id: projectId },
-        },
-        {
-          client: queryClient,
-          meta: undefined,
-          mutationKey,
-        },
-      )
+      return deleteProject({
+        client,
+        path: { project_id: projectId },
+        throwOnError: true,
+      })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -251,26 +225,17 @@ export function useProjectMemberCandidates(projectId: string) {
 export function useAddProjectMember(projectId: string) {
   const queryClient = useQueryClient()
   const { baseUrl, client, instanceId, token } = useApiContext()
-  const mutation = addProjectMemberMutation({ client })
-  const mutationKey = scopeOoreQueryKey(instanceId, mutation.mutationKey ?? [])
 
   return useMutation({
-    mutationKey,
     mutationFn: (data: AddProjectMemberRequest) => {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
-      return mutation.mutationFn!(
-        {
-          body: data,
-          client,
-          path: { project_id: projectId },
-        },
-        {
-          client: queryClient,
-          meta: undefined,
-          mutationKey,
-        },
-      )
+      return addProjectMember({
+        body: data,
+        client,
+        path: { project_id: projectId },
+        throwOnError: true,
+      })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -298,11 +263,8 @@ export function useAddProjectMember(projectId: string) {
 export function useUpdateProjectMember(projectId: string) {
   const queryClient = useQueryClient()
   const { baseUrl, client, instanceId, token } = useApiContext()
-  const mutation = updateProjectMemberMutation({ client })
-  const mutationKey = scopeOoreQueryKey(instanceId, mutation.mutationKey ?? [])
 
   return useMutation({
-    mutationKey,
     mutationFn: ({
       userId,
       data,
@@ -312,18 +274,12 @@ export function useUpdateProjectMember(projectId: string) {
     }) => {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
-      return mutation.mutationFn!(
-        {
-          body: data,
-          client,
-          path: { project_id: projectId, user_id: userId },
-        },
-        {
-          client: queryClient,
-          meta: undefined,
-          mutationKey,
-        },
-      )
+      return updateProjectMember({
+        body: data,
+        client,
+        path: { project_id: projectId, user_id: userId },
+        throwOnError: true,
+      })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -342,25 +298,16 @@ export function useUpdateProjectMember(projectId: string) {
 export function useRemoveProjectMember(projectId: string) {
   const queryClient = useQueryClient()
   const { baseUrl, client, instanceId, token } = useApiContext()
-  const mutation = removeProjectMemberMutation({ client })
-  const mutationKey = scopeOoreQueryKey(instanceId, mutation.mutationKey ?? [])
 
   return useMutation({
-    mutationKey,
     mutationFn: (userId: string) => {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
-      return mutation.mutationFn!(
-        {
-          client,
-          path: { project_id: projectId, user_id: userId },
-        },
-        {
-          client: queryClient,
-          meta: undefined,
-          mutationKey,
-        },
-      )
+      return removeProjectMember({
+        client,
+        path: { project_id: projectId, user_id: userId },
+        throwOnError: true,
+      })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({

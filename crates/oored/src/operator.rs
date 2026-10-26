@@ -109,7 +109,10 @@ async fn mint_bootstrap_token(
     let row = sqlx::query("SELECT setup_state, instance_id FROM setup_state WHERE id = 1")
         .fetch_one(&mut *transaction)
         .await?;
-    let state = parse_setup_state(row.get("setup_state"))?;
+    let state = row
+        .get::<&str, _>("setup_state")
+        .parse::<SetupState>()
+        .map_err(anyhow::Error::msg)?;
     anyhow::ensure!(state != SetupState::Ready, "setup is already complete");
     let instance_id: String = row.get("instance_id");
     let token = generate_token();
@@ -941,15 +944,4 @@ fn row_to_managed_runner(row: SqliteRow) -> anyhow::Result<ManagedRunnerRecord> 
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
-}
-
-fn parse_setup_state(value: &str) -> anyhow::Result<SetupState> {
-    match value {
-        "uninitialized" => Ok(SetupState::Uninitialized),
-        "bootstrap_pending" => Ok(SetupState::BootstrapPending),
-        "idp_configured" => Ok(SetupState::IdpConfigured),
-        "owner_created" => Ok(SetupState::OwnerCreated),
-        "ready" => Ok(SetupState::Ready),
-        other => anyhow::bail!("unknown setup state: {other}"),
-    }
 }

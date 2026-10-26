@@ -19,6 +19,8 @@ import {
   requireSetupSessionOrRedirect,
 } from '@/lib/instance-context'
 import { SetupStepError } from '@/components/setup-route-components'
+import { Row } from '@/components/layout/row'
+import { Text } from '@/components/layout/text'
 
 export const Route = createFileRoute('/setup/complete')({
   beforeLoad: () => {
@@ -50,6 +52,13 @@ function CompleteStep() {
   const isLocalMode = status?.runtime_mode === 'local'
   const isOidcMode =
     status?.runtime_mode === 'remote' && status.remote_auth_mode === 'oidc'
+  const accessLabel = isLocalMode
+    ? 'This Mac only'
+    : isOidcMode
+      ? 'Team sign-in with an identity provider'
+      : status?.remote_auth_mode === 'trusted_proxy'
+        ? 'Trusted access proxy'
+        : 'Unknown'
 
   function handleComplete() {
     if (!sessionToken) return
@@ -68,9 +77,9 @@ function CompleteStep() {
       <PageMeta title="Setup Complete" />
       <div className="space-y-1">
         <h2 className="text-lg font-medium">Complete setup</h2>
-        <p className="text-sm text-muted-foreground">
+        <Text variant="muted">
           Review your configuration and finalize the instance.
-        </p>
+        </Text>
       </div>
 
       <div className="grid [&>[data-slot=collapsible]]:col-start-1 [&>[data-slot=collapsible]]:row-start-1">
@@ -86,35 +95,39 @@ function CompleteStep() {
                   <CardHeader>
                     <CardTitle>Configuration summary</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">State</span>
-                      <Badge variant="secondary" className="text-xs">
-                        {status?.state ?? summary?.state}
-                      </Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Instance</span>
-                      <code className="font-mono text-xs">
+                  <CardContent>
+                    <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
+                      <dt className="text-muted-foreground">Access</dt>
+                      <dd className="text-right">{accessLabel}</dd>
+                      {summary?.owner_email ? (
+                        <>
+                          <dt className="text-muted-foreground">Owner</dt>
+                          <dd className="truncate text-right">
+                            {summary.owner_email}
+                          </dd>
+                        </>
+                      ) : null}
+                      {isOidcMode && summary?.issuer_url ? (
+                        <>
+                          <dt className="text-muted-foreground">
+                            Identity provider
+                          </dt>
+                          <dd
+                            className="truncate text-right font-mono text-xs leading-5"
+                            title={summary.issuer_url}
+                          >
+                            {summary.issuer_url}
+                          </dd>
+                        </>
+                      ) : null}
+                      <dt className="text-muted-foreground">Instance ID</dt>
+                      <dd
+                        className="truncate text-right font-mono text-xs leading-5"
+                        title={summary?.instance_id ?? status?.instance_id}
+                      >
                         {summary?.instance_id ?? status?.instance_id}
-                      </code>
-                    </div>
-                    {summary?.issuer_url ? (
-                      <div className="flex justify-between gap-4">
-                        <span className="shrink-0 text-muted-foreground">
-                          OIDC Issuer
-                        </span>
-                        <code className="truncate font-mono text-xs">
-                          {summary.issuer_url}
-                        </code>
-                      </div>
-                    ) : null}
-                    {summary?.owner_email ? (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Owner</span>
-                        <span className="text-xs">{summary.owner_email}</span>
-                      </div>
-                    ) : null}
+                      </dd>
+                    </dl>
                   </CardContent>
                 </Card>
               ) : null}
@@ -122,10 +135,9 @@ function CompleteStep() {
               <Alert>
                 <AlertTitle>Finalize setup</AlertTitle>
                 <AlertDescription>
-                  This will lock down the initial setup wizard so it cannot be
-                  re-run. You can still change settings (authentication,
-                  preferences, users) from the admin panel after setup is
-                  complete.
+                  This locks the setup wizard so it cannot run again. You can
+                  still change sign-in, preferences and users from Settings
+                  afterwards.
                   {!isLocalMode
                     ? ' Verify your OIDC or proxy configuration is correct before proceeding.'
                     : ''}
@@ -202,12 +214,12 @@ function CompleteStep() {
                 </Alert>
               ) : null}
 
-              <div className="flex items-center gap-2 text-sm">
+              <Row gap={2} className="text-sm">
                 <span className="text-muted-foreground">Instance ID:</span>
                 <Badge variant="outline" className="font-mono text-xs">
                   {instanceId}
                 </Badge>
-              </div>
+              </Row>
 
               <div className="space-y-4">
                 <Separator />
@@ -225,7 +237,7 @@ function CompleteStep() {
                     nativeButton={false}
                     className="w-full"
                   >
-                    Go to Dashboard
+                    Build your first app
                   </Button>
                 )}
               </div>

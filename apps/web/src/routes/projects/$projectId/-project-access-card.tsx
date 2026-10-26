@@ -1,20 +1,12 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Add01Icon,
-  Delete02Icon,
-  MoreHorizontalCircle01Icon,
-} from '@hugeicons/core-free-icons'
+import { Add01Icon, Delete02Icon } from '@hugeicons/core-free-icons'
 import { useMemo, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { toast } from '@/lib/toast'
 import * as z from 'zod'
 
-import {
-  DataTable,
-  useDataTable,
-  type DataTableColumnDef,
-} from '@/components/data-table'
+import { DataTableRowActionsTrigger } from '@/components/data-table'
 import type {
   ProjectMember,
   ProjectMemberCandidate,
@@ -40,15 +32,21 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemSeparator,
+  ItemTitle,
+} from '@/components/ui/item'
 import { Button } from '@/components/ui/button'
 import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+  SettingsSection,
+  SettingsSurface,
+} from '@/components/settings/settings-section'
 import {
   Combobox,
   ComboboxContent,
@@ -78,7 +76,6 @@ import {
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
   Form,
@@ -98,6 +95,8 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 const accessSchema = z.object({
   user_id: z.string().min(1, 'Select a user.'),
@@ -141,36 +140,28 @@ function initials(
     .join('')
 }
 
-function MemberIdentity({ member }: { member: ProjectMember }) {
+function MemberAvatar({ member }: { member: ProjectMember }) {
   return (
-    <div className="flex min-w-0 items-center gap-3">
-      <Avatar size="sm">
-        {member.user_avatar_url ? (
-          <AvatarImage
-            src={member.user_avatar_url}
-            alt=""
-            referrerPolicy="no-referrer"
-          />
-        ) : null}
-        <AvatarFallback>
-          {initials({
-            email: member.user_email,
-            display_name: member.user_display_name,
-          })}
-        </AvatarFallback>
-      </Avatar>
-      <div className="min-w-0">
-        <p className="truncate font-medium">
-          {member.user_display_name ?? member.user_email}
-        </p>
-        {member.user_display_name ? (
-          <p className="truncate text-xs text-muted-foreground">
-            {member.user_email}
-          </p>
-        ) : null}
-      </div>
-    </div>
+    <Avatar size="sm">
+      {member.user_avatar_url ? (
+        <AvatarImage
+          src={member.user_avatar_url}
+          alt=""
+          referrerPolicy="no-referrer"
+        />
+      ) : null}
+      <AvatarFallback>
+        {initials({
+          email: member.user_email,
+          display_name: member.user_display_name,
+        })}
+      </AvatarFallback>
+    </Avatar>
   )
+}
+
+function hasImplicitAccess(instanceRole: string | undefined) {
+  return instanceRole === 'owner' || instanceRole === 'admin'
 }
 
 function MemberActions({
@@ -186,16 +177,13 @@ function MemberActions({
   onRoleChange: (role: ProjectRole) => void
   pending: boolean
 }) {
-  const hasImplicitAccess = instanceRole === 'owner' || instanceRole === 'admin'
   const isQaViewer = instanceRole === 'qa_viewer'
-  if (hasImplicitAccess) return null
+  if (hasImplicitAccess(instanceRole)) return null
+  const name = member.user_display_name ?? member.user_email
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" />}>
-        <span className="sr-only">Open menu</span>
-        <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
-      </DropdownMenuTrigger>
+      <DataTableRowActionsTrigger label={`Actions for ${name}`} />
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Actions</DropdownMenuLabel>
@@ -286,16 +274,9 @@ function AddProjectMemberDialog({ projectId }: { projectId: string }) {
 
   return (
     <Dialog open={open} onOpenChange={setDialogOpen}>
-      <DialogTrigger
-        render={
-          <Button
-            size="icon-sm"
-            aria-label="Add project member"
-            title="Add project member"
-          />
-        }
-      >
-        <HugeiconsIcon icon={Add01Icon} aria-hidden />
+      <DialogTrigger render={<Button />}>
+        <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" />
+        Add member
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
@@ -341,7 +322,9 @@ function AddProjectMemberDialog({ projectId }: { projectId: string }) {
                             <span className="min-w-0 flex-1 truncate">
                               {user.email}
                             </span>
-                            <span className="text-xs text-muted-foreground">
+                            <span
+                              className={textVariants({ variant: 'caption' })}
+                            >
                               {INSTANCE_ROLE_LABELS[user.role]}
                               {user.status === 'invited' ? ' · Invited' : ''}
                             </span>
@@ -460,90 +443,88 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
     })
   }
 
-  const memberColumns: Array<DataTableColumnDef<ProjectMember>> = [
-    {
-      accessorKey: 'user_email',
-      header: 'User',
-      cell: ({ row }) => <MemberIdentity member={row.original} />,
-      enableSorting: false,
-    },
-    {
-      accessorKey: 'user_role',
-      header: 'Instance role',
-      cell: ({ row }) => (
-        <Badge variant="outline">
-          {INSTANCE_ROLE_LABELS[row.original.user_role] ?? 'Unknown'}
-        </Badge>
-      ),
-      enableSorting: false,
-    },
-    {
-      accessorKey: 'role',
-      header: 'Project role',
-      cell: ({ row }) =>
-        PROJECT_ROLE_LABELS[
-          row.original.user_role === 'qa_viewer' ? 'viewer' : row.original.role
-        ],
-      enableSorting: false,
-    },
-    {
-      id: 'actions',
-      header: () => <span className="sr-only">Actions</span>,
-      cell: ({ row }) => (
-        <MemberActions
-          member={row.original}
-          instanceRole={row.original.user_role}
-          pending={updateMutation.isPending}
-          onRoleChange={(role) => updateRole(row.original, role)}
-          onRemove={() => setMemberToRemove(row.original)}
-        />
-      ),
-      enableHiding: false,
-      enableSorting: false,
-    },
-  ]
-  const memberTable = useDataTable({
-    columns: memberColumns,
-    data: members,
-    getRowId: (member) => member.id,
-  })
-
   const isLoading = membersQuery.isLoading
   const error = membersQuery.error
 
   return (
     <>
-      <Card size="sm">
-        <CardHeader>
-          <CardTitle>Project access</CardTitle>
-          <CardDescription>
-            Grant developers or QA viewers access to this project.
-          </CardDescription>
-          <CardAction>
-            <AddProjectMemberDialog projectId={projectId} />
-          </CardAction>
-        </CardHeader>
-        <CardContent>
+      <SettingsSection
+        title="Access"
+        actions={<AddProjectMemberDialog projectId={projectId} />}
+      >
+        <SettingsSurface inset={false}>
           {isLoading ? (
-            <div className="space-y-3">
+            <div className="space-y-3 p-4 sm:p-5">
               <Skeleton className="h-16 w-full" />
               <Skeleton className="h-16 w-full" />
             </div>
           ) : error ? (
-            <Alert variant="destructive">
+            <Alert variant="destructive" className="m-4 w-auto sm:m-5">
               <AlertDescription>
                 Failed to load project access: {error.message}
               </AlertDescription>
             </Alert>
           ) : members.length === 0 ? (
-            <p className="py-4 text-sm text-muted-foreground">
-              No explicit project members yet.
-            </p>
+            <Text variant="muted" className="p-4 sm:p-5">
+              No explicit project members yet. Owners and admins can always open
+              this project.
+            </Text>
           ) : (
-            <DataTable table={memberTable} />
+            <ItemGroup className="gap-0" role="list">
+              {members.flatMap((member, index) => {
+                const implicit = hasImplicitAccess(member.user_role)
+                const projectRole =
+                  PROJECT_ROLE_LABELS[
+                    member.user_role === 'qa_viewer' ? 'viewer' : member.role
+                  ]
+                const row = (
+                  <Item key={member.id} size="sm" role="listitem">
+                    <ItemMedia>
+                      <MemberAvatar member={member} />
+                    </ItemMedia>
+                    <ItemContent className="min-w-0">
+                      <ItemTitle className="max-w-full">
+                        <span className="truncate">
+                          {member.user_display_name ?? member.user_email}
+                        </span>
+                        <Badge variant="outline">
+                          {INSTANCE_ROLE_LABELS[member.user_role] ?? 'Unknown'}
+                        </Badge>
+                      </ItemTitle>
+                      <ItemDescription className="wrap-break-word">
+                        {member.user_display_name
+                          ? `${member.user_email} · `
+                          : ''}
+                        {implicit
+                          ? `Implicit ${projectRole.toLowerCase()} access from their instance role`
+                          : `${projectRole} on this project`}
+                      </ItemDescription>
+                    </ItemContent>
+                    <ItemActions>
+                      <MemberActions
+                        member={member}
+                        instanceRole={member.user_role}
+                        pending={updateMutation.isPending}
+                        onRoleChange={(role) => updateRole(member, role)}
+                        onRemove={() => setMemberToRemove(member)}
+                      />
+                    </ItemActions>
+                  </Item>
+                )
+                return index === 0
+                  ? [row]
+                  : [
+                      <ItemSeparator
+                        key={`separator-${member.id}`}
+                        className="my-0"
+                      />,
+                      row,
+                    ]
+              })}
+            </ItemGroup>
           )}
-        </CardContent>
-      </Card>
+        </SettingsSurface>
+      </SettingsSection>
 
       <AlertDialog
         open={memberToRemove !== null}

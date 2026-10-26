@@ -67,6 +67,21 @@ export function getIosAppMetadata(artifact: Artifact): IosAppMetadata | null {
 export function artifactInstallReadiness(
   artifact: Artifact,
 ): ArtifactInstallReadiness {
+  if (artifact.state !== 'available') {
+    return {
+      ready: false,
+      reason: 'This file is no longer available. Open a newer build.',
+    }
+  }
+  if (
+    artifact.expires_at != null &&
+    artifact.expires_at <= Math.floor(Date.now() / 1000)
+  ) {
+    return {
+      ready: false,
+      reason: 'This file has expired. Ask a developer for a fresh build.',
+    }
+  }
   if (artifact.artifact_type === 'apk') return { ready: true }
   if (artifact.artifact_type !== 'ipa') {
     return {
@@ -116,4 +131,20 @@ export function detectInstallDevice(userAgent: string): InstallDevice {
   }
   if (/Android/i.test(userAgent)) return 'android'
   return 'other'
+}
+
+const INSTALL_PLATFORMS = [
+  { type: 'apk', label: 'Android' },
+  { type: 'ipa', label: 'iOS' },
+] as const
+
+/** The newest installable file for each platform. */
+export function latestAppPerPlatform(artifacts: ReadonlyArray<Artifact>) {
+  const ready = artifacts
+    .filter((artifact) => artifactInstallReadiness(artifact).ready)
+    .sort((left, right) => right.created_at - left.created_at)
+  return INSTALL_PLATFORMS.flatMap(({ type, label }) => {
+    const artifact = ready.find((item) => item.artifact_type === type)
+    return artifact ? [{ artifact, label }] : []
+  })
 }

@@ -1,0 +1,4 @@
+version: 2
+targets:
+  android:
+    build: flutter build apk --release

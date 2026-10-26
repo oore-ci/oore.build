@@ -10,6 +10,7 @@ import {
 } from '@oore/client/operations'
 import {
   browseLocalGitDirectoriesOptions,
+  checkGitlabPersonalTokenMutationKey,
   getIntegrationOptions,
   getIntegrationQueryKey,
   listInstallationsOptions,
@@ -161,7 +162,13 @@ export function useGitLabTokenStatus(integrationId: string, enabled: boolean) {
   const { baseUrl, client, instanceId, token } = useApiContext()
 
   return useQuery({
-    queryKey: [instanceId, 'gitlab-token-status', integrationId],
+    queryKey: scopeOoreQueryKey(
+      instanceId,
+      checkGitlabPersonalTokenMutationKey({
+        client,
+        path: { id: integrationId },
+      }),
+    ),
     queryFn: ({ signal }) =>
       checkGitLabToken({ client, path: { id: integrationId }, signal }),
     enabled: enabled && !!baseUrl && !!token && !!integrationId,
@@ -172,6 +179,13 @@ export function useGitLabTokenStatus(integrationId: string, enabled: boolean) {
 export function useReplaceGitLabToken(integrationId: string) {
   const queryClient = useQueryClient()
   const { baseUrl, client, instanceId, token } = useApiContext()
+  const statusQueryKey = scopeOoreQueryKey(
+    instanceId,
+    checkGitlabPersonalTokenMutationKey({
+      client,
+      path: { id: integrationId },
+    }),
+  )
 
   return useMutation({
     mutationFn: (data: ReplaceGitLabTokenRequest) => {
@@ -185,10 +199,7 @@ export function useReplaceGitLabToken(integrationId: string) {
       })
     },
     onSuccess: (status) => {
-      queryClient.setQueryData(
-        [instanceId, 'gitlab-token-status', integrationId],
-        status,
-      )
+      queryClient.setQueryData(statusQueryKey, status)
       void queryClient.invalidateQueries({
         queryKey: scopeOoreQueryKey(
           instanceId,

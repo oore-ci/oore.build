@@ -18,27 +18,29 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { TabsContent } from '@/components/ui/tabs'
+import { PipelineFilter } from '@/routes/builds/-build-filter-controls'
 import type { ProjectBuildSort } from './-project-build-sort'
 import { ProjectBuildInventory } from './-project-build-inventory'
+import { Stack } from '@/components/layout/stack'
+import { splitRowVariants } from '@/lib/recipes'
 
 type ProjectBuildSearchUpdates = Partial<{
   direction: SortDirection
   page: number
   pageSize: 20 | 50 | 100
+  pipeline: string
   q: string
   sort: ProjectBuildSort
   status: string
 }>
 
 export function ProjectBuildsTab({
-  active,
   canTriggerBuild,
   onTriggerBuild,
   pipelineCount,
   projectHasSource,
   projectId,
 }: {
-  active: boolean
   canTriggerBuild: boolean
   onTriggerBuild: () => void
   pipelineCount: number
@@ -54,18 +56,19 @@ export function ProjectBuildsTab({
   const buildsQuery = useBuilds(
     {
       project_id: projectId,
-      branch: search.q,
+      pipeline_id: search.pipeline,
+      q: search.q,
       status: search.status,
       sort: search.sort,
       direction: search.direction,
       limit: pageSize,
       offset: page > 1 ? (page - 1) * pageSize : undefined,
     },
-    { enabled: active, refetchInterval: 15_000 },
+    { refetchInterval: 15_000 },
   )
   const builds = buildsQuery.data?.builds ?? []
   const total = buildsQuery.data?.total ?? 0
-  const hasFilters = !!search.q || !!search.status
+  const hasFilters = !!search.q || !!search.pipeline || !!search.status
 
   function updateSearch(updates: ProjectBuildSearchUpdates) {
     void navigate({
@@ -92,7 +95,12 @@ export function ProjectBuildsTab({
   }
 
   function clearFilters() {
-    updateSearch({ q: undefined, status: undefined, page: undefined })
+    updateSearch({
+      q: undefined,
+      pipeline: undefined,
+      status: undefined,
+      page: undefined,
+    })
   }
 
   const showFilteredEmpty =
@@ -102,89 +110,94 @@ export function ProjectBuildsTab({
 
   return (
     <TabsContent value="builds" className="min-h-0">
-      {active ? (
-        <div className="flex h-full min-h-0 flex-col gap-4 pt-2">
-          {buildsQuery.error ? (
-            <Alert variant="destructive">
-              <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-              <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <span>Failed to load builds: {buildsQuery.error.message}</span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void buildsQuery.refetch()}
-                >
-                  Retry
-                </Button>
-              </AlertDescription>
-            </Alert>
-          ) : null}
+      <Stack gap={4} className="h-full min-h-0 pt-2">
+        {buildsQuery.error ? (
+          <Alert variant="destructive">
+            <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+            <AlertDescription className={splitRowVariants()}>
+              <span>Failed to load builds: {buildsQuery.error.message}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void buildsQuery.refetch()}
+              >
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
-          {showTrueEmpty ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
+        {showTrueEmpty ? (
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <HugeiconsIcon icon={PlayIcon} />
+              </EmptyMedia>
+              <EmptyTitle>No builds yet</EmptyTitle>
+              <EmptyDescription>
+                {canTriggerBuild
+                  ? 'Run this project’s first pipeline to see its status, output, and artifacts here.'
+                  : 'Builds will appear here once triggered by a developer.'}
+              </EmptyDescription>
+            </EmptyHeader>
+            {canTriggerBuild && pipelineCount > 0 && projectHasSource ? (
+              <EmptyContent>
+                <Button size="sm" onClick={onTriggerBuild}>
                   <HugeiconsIcon icon={PlayIcon} />
-                </EmptyMedia>
-                <EmptyTitle>No builds yet</EmptyTitle>
-                <EmptyDescription>
-                  {canTriggerBuild
-                    ? 'Run this project’s first pipeline to see its status, output, and artifacts here.'
-                    : 'Builds will appear here once triggered by a developer.'}
-                </EmptyDescription>
-              </EmptyHeader>
-              {canTriggerBuild && pipelineCount > 0 && projectHasSource ? (
-                <EmptyContent>
-                  <Button size="sm" onClick={onTriggerBuild}>
-                    <HugeiconsIcon icon={PlayIcon} />
-                    Run first build
-                  </Button>
-                </EmptyContent>
-              ) : null}
-            </Empty>
-          ) : null}
+                  Run first build
+                </Button>
+              </EmptyContent>
+            ) : null}
+          </Empty>
+        ) : null}
 
-          {!buildsQuery.error &&
-          (buildsQuery.isLoading || total > 0 || showFilteredEmpty) ? (
-            <ProjectBuildInventory
-              builds={builds}
-              direction={direction}
-              filters={
-                <>
-                  {hasFilters ? (
-                    <Button variant="ghost" size="sm" onClick={clearFilters}>
-                      Clear filters
-                    </Button>
-                  ) : null}
-                  <DataTableSelectFilter
-                    value={search.status ?? 'all'}
-                    options={BUILD_STATUS_FILTER_OPTIONS}
-                    onValueChange={(value) =>
-                      updateSearch({
-                        status: value && value !== 'all' ? value : undefined,
-                        page: undefined,
-                      })
-                    }
-                  />
-                </>
-              }
-              isLoading={buildsQuery.isLoading}
-              onPageChange={(nextPage) =>
-                updateSearch({ page: nextPage > 1 ? nextPage : undefined })
-              }
-              onSearch={(value) =>
-                updateSearch({ q: value.trim() || undefined, page: undefined })
-              }
-              onSortChange={handleSortChange}
-              page={page}
-              pageSize={pageSize}
-              query={search.q ?? ''}
-              sort={sort}
-              total={total}
-            />
-          ) : null}
-        </div>
-      ) : null}
+        {!buildsQuery.error &&
+        (buildsQuery.isLoading || total > 0 || showFilteredEmpty) ? (
+          <ProjectBuildInventory
+            builds={builds}
+            direction={direction}
+            filters={
+              <>
+                <PipelineFilter
+                  className="w-44"
+                  filters={search}
+                  onChange={({ pipeline }) =>
+                    updateSearch({ pipeline, page: undefined })
+                  }
+                  projectId={projectId}
+                />
+                <DataTableSelectFilter
+                  value={search.status ?? 'all'}
+                  options={BUILD_STATUS_FILTER_OPTIONS}
+                  onValueChange={(value) =>
+                    updateSearch({
+                      status: value && value !== 'all' ? value : undefined,
+                      page: undefined,
+                    })
+                  }
+                />
+              </>
+            }
+            activeFilterCount={
+              Number(!!search.pipeline) + Number(!!search.status)
+            }
+            onClearFilters={hasFilters ? clearFilters : undefined}
+            isLoading={buildsQuery.isLoading}
+            onPageChange={(nextPage) =>
+              updateSearch({ page: nextPage > 1 ? nextPage : undefined })
+            }
+            onSearch={(value) =>
+              updateSearch({ q: value.trim() || undefined, page: undefined })
+            }
+            onSortChange={handleSortChange}
+            page={page}
+            pageSize={pageSize}
+            query={search.q ?? ''}
+            sort={sort}
+            total={total}
+          />
+        ) : null}
+      </Stack>
     </TabsContent>
   )
 }

@@ -1,0 +1,83 @@
+---
+title: 'How a build moves from queue to artifact'
+status: implemented
+description: 'Follow the decisions and boundaries between a build request, runner execution, and an available artifact.'
+---
+
+A build is a request tied to one project, pipeline, repository identity, and
+revision. Oore preserves those choices while the build moves through the
+backend, a Direct macOS runner, and artifact storage.
+
+## From request to eligible work
+
+A manual action, verified source event, or API request creates the build. Oore
+resolves the requested branch to a commit unless the request already pins one,
+then records the pipeline and repository identity for that build.
+
+The build waits in the queue until:
+
+- the instance allows new work
+- the linked source is still available
+- a compatible Direct macOS runner can claim it
+
+Turning off **Accept builds from approved repositories** is an operational pause. Active
+work drains, while eligible queued work waits. The control does not revoke
+repository trust.
+
+## The runner executes the pinned checkout
+
+After a claim, the Direct macOS runner checks out the build's pinned revision
+and chooses its pipeline configuration from that checkout. It prepares the
+selected Flutter toolchain, runs the repository stages, and streams logs back
+to the backend.
+
+Repository commands run in order. A non-zero command result stops later
+repository stages and makes the build fail. Cancellation can also win while
+work is queued, scheduled, assigned, or running; a claimed runner observes the
+canceled state and stops.
+
+After a supported build command produces an Android or iOS output, runner-owned
+signing may sign and verify that output before later repository stages such as
+`post_build` run. Signing remains outside the repository child process, but it
+is not guaranteed to wait until every repository command has finished.
+
+## Outputs become artifacts
+
+Only after the remaining repository stages succeed, the runner:
+
+1. finds files that match the pipeline's artifact patterns
+2. reserves an upload with the backend
+3. uploads each output through the configured storage path
+4. finalizes successful uploads before reporting completion
+
+Pending or failed uploads are not downloadable. When a pipeline declares
+artifact patterns, missing matches or failed finalization prevent that
+artifact-producing build from succeeding.
+
+## Results and retention are different moments
+
+The execution result can be `succeeded`, `failed`, `canceled`, or `timed_out`.
+Retention may later move a completed record and its artifact availability to
+`expired`, so a successful historical build does not imply that its files are
+still downloadable.
+
+Changing a project's linked source does not rewrite an active build's checkout
+identity. Queued work tied to the previous source is canceled rather than
+silently running a different repository.
+
+## What this means for you
+
+- The build detail's commit is the revision the runner uses.
+- Pipeline edits made later do not retarget an already-created build.
+- Pausing new claims does not cancel work that is already active.
+- Runner-owned signing can happen before later `post_build` repository
+  commands.
+- A green command sequence is not enough when required artifacts cannot be
+  collected and finalized.
+- Artifact expiry is a retention outcome, not a new execution failure.
+
+## Next step
+
+[Trigger a build](/build/run/trigger) to observe the lifecycle. Use the
+[build-state reference](/reference/build-states) for exact states and
+transitions.

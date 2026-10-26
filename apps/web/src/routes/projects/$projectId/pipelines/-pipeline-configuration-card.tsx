@@ -3,6 +3,10 @@ import type { ReactNode } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { RelativeTime } from '@/components/relative-time'
+import { formatEnumLabel } from '@/lib/format-utils'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Collapsible,
@@ -14,6 +18,7 @@ import type {
   PipelineAndroidSigningResponse,
   PipelineIosSigningResponse,
 } from '@oore/client/models'
+import { Text } from '@/components/layout/text'
 
 function Section({
   title,
@@ -40,9 +45,67 @@ function Section({
   )
 }
 
+const NONE = <span className="text-muted-foreground">—</span>
+
+/** A setting the overview loads on its own, so it can be pending or fail. */
+export type LoadedSetting<T> = {
+  data: T | undefined
+  isLoading: boolean
+  isError: boolean
+  refetch: () => void
+}
+
+export function SettingUnavailable({
+  onRetry,
+  what,
+}: {
+  onRetry: () => void
+  what: string
+}) {
+  return (
+    <span className="text-destructive">
+      Could not load {what}.{' '}
+      <Button
+        variant="link"
+        size="xs"
+        className="h-auto px-0 align-baseline text-sm text-destructive underline"
+        onClick={() => onRetry()}
+      >
+        Retry
+      </Button>
+    </span>
+  )
+}
+
+/** Skeleton while loading and Retry on failure, never a false "Not set up". */
+function SettingBody<T>({
+  children,
+  setting,
+  what,
+}: {
+  children: (data: T) => ReactNode
+  setting: LoadedSetting<T>
+  what: string
+}) {
+  if (setting.data !== undefined) return children(setting.data)
+  if (setting.isError) {
+    return (
+      <p className="py-1 text-sm">
+        <SettingUnavailable what={what} onRetry={setting.refetch} />
+      </p>
+    )
+  }
+  if (setting.isLoading) return <Skeleton className="my-1 h-5 w-48" />
+  return (
+    <Text variant="muted" className="py-1">
+      Not set up
+    </Text>
+  )
+}
+
 function KV({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex gap-4 py-1 text-xs">
+    <div className="flex gap-4 py-1 text-sm max-sm:flex-col max-sm:gap-0.5">
       <span className="w-40 shrink-0 text-muted-foreground">{label}</span>
       <span className="min-w-0 break-all">{children}</span>
     </div>
@@ -54,15 +117,28 @@ export function PipelineConfigurationCard({
   iosSigning,
   manualOnlyTriggers,
   pipeline,
+  publishing = [],
 }: {
-  androidSigning: PipelineAndroidSigningResponse | undefined
-  iosSigning: PipelineIosSigningResponse | undefined
+  /** Null when the viewer cannot read signing, so the section is hidden. */
+  androidSigning: LoadedSetting<PipelineAndroidSigningResponse> | null
+  iosSigning: LoadedSetting<PipelineIosSigningResponse> | null
   manualOnlyTriggers: boolean
   pipeline: Pipeline
+  /** One line per store the pipeline can publish to. */
+  publishing?: Array<{ label: string; value: ReactNode }>
 }) {
   return (
     <Card>
       <CardContent className="divide-y">
+        {publishing.length > 0 ? (
+          <Section title="Publishing" defaultOpen>
+            {publishing.map((line) => (
+              <KV key={line.label} label={line.label}>
+                {line.value}
+              </KV>
+            ))}
+          </Section>
+        ) : null}
         <Section title="Configuration" defaultOpen>
           <KV label="Config path">
             <span className="font-mono">{pipeline.config_path}</span>
@@ -74,20 +150,22 @@ export function PipelineConfigurationCard({
           </KV>
           <KV label="Flutter version">
             <span className="font-mono">
-              {pipeline.execution_config.flutter_version || 'auto'}
+              {pipeline.execution_config.flutter_version || (
+                <span className="font-sans">From .fvmrc, or stable</span>
+              )}
             </span>
           </KV>
           <KV label="Created">
-            {new Date(pipeline.created_at * 1000).toLocaleString()}
+            <RelativeTime at={pipeline.created_at} />
           </KV>
           <KV label="Updated">
-            {new Date(pipeline.updated_at * 1000).toLocaleString()}
+            <RelativeTime at={pipeline.updated_at} />
           </KV>
         </Section>
 
         <Section title="Triggers">
           {manualOnlyTriggers ? (
-            <KV label="Mode">manual only</KV>
+            <KV label="Mode">Manual only</KV>
           ) : (
             <>
               <KV label="Events">
@@ -99,12 +177,12 @@ export function PipelineConfigurationCard({
                         variant="outline"
                         className="text-[11px]"
                       >
-                        {event}
+                        {formatEnumLabel(event)}
                       </Badge>
                     ))}
                   </div>
                 ) : (
-                  'all events'
+                  'Every repository event'
                 )}
               </KV>
               <KV label="Branch patterns">
@@ -121,16 +199,16 @@ export function PipelineConfigurationCard({
                     ))}
                   </div>
                 ) : (
-                  'all branches'
+                  'All branches'
                 )}
               </KV>
             </>
           )}
           <KV label="Cancel previous">
-            {pipeline.concurrency.cancel_previous ? 'yes' : 'no'}
+            {pipeline.concurrency.cancel_previous ? 'Yes' : 'No'}
           </KV>
           <KV label="Max concurrent">
-            {pipeline.concurrency.max_concurrent ?? 'unlimited'}
+            {pipeline.concurrency.max_concurrent ?? 'No limit'}
           </KV>
         </Section>
 
@@ -139,21 +217,21 @@ export function PipelineConfigurationCard({
             <span className="font-mono">
               {pipeline.execution_config.commands.pre_build.length > 0
                 ? pipeline.execution_config.commands.pre_build.join(' && ')
-                : 'none'}
+                : NONE}
             </span>
           </KV>
           <KV label="Build">
             <span className="font-mono">
               {pipeline.execution_config.commands.build.length > 0
                 ? pipeline.execution_config.commands.build.join(' && ')
-                : 'none'}
+                : NONE}
             </span>
           </KV>
           <KV label="Post-build">
             <span className="font-mono">
               {pipeline.execution_config.commands.post_build.length > 0
                 ? pipeline.execution_config.commands.post_build.join(' && ')
-                : 'none'}
+                : NONE}
             </span>
           </KV>
           {(pipeline.execution_config.platform_build_args?.android.length ??
@@ -189,13 +267,13 @@ export function PipelineConfigurationCard({
               <span className="font-mono">
                 {[
                   pipeline.execution_config.platform_commands.android
-                    ? `android: ${pipeline.execution_config.platform_commands.android}`
+                    ? `Android: ${pipeline.execution_config.platform_commands.android}`
                     : '',
                   pipeline.execution_config.platform_commands.ios
-                    ? `ios: ${pipeline.execution_config.platform_commands.ios}`
+                    ? `iOS: ${pipeline.execution_config.platform_commands.ios}`
                     : '',
                   pipeline.execution_config.platform_commands.macos
-                    ? `macos: ${pipeline.execution_config.platform_commands.macos}`
+                    ? `macOS: ${pipeline.execution_config.platform_commands.macos}`
                     : '',
                 ]
                   .filter(Boolean)
@@ -206,109 +284,106 @@ export function PipelineConfigurationCard({
           <KV label="Env vars">
             {(pipeline.execution_config.env?.length ?? 0) > 0
               ? `${pipeline.execution_config.env!.length} configured`
-              : 'none'}
+              : NONE}
           </KV>
           <KV label="Artifact patterns">
             <span className="font-mono">
               {pipeline.execution_config.artifact_patterns.length > 0
                 ? pipeline.execution_config.artifact_patterns.join(', ')
-                : 'none'}
+                : NONE}
             </span>
           </KV>
         </Section>
 
-        {pipeline.execution_config.platforms.includes('android') ? (
+        {androidSigning &&
+        pipeline.execution_config.platforms.includes('android') ? (
           <Section title="Android signing">
-            {androidSigning ? (
-              <>
-                <KV label="Release">
-                  {androidSigning.release.enabled
-                    ? `enabled (${androidSigning.release.keystore_filename ?? 'keystore configured'})`
-                    : 'disabled'}
-                </KV>
-                <KV label="Debug">
-                  {androidSigning.debug.enabled
-                    ? `enabled (${androidSigning.debug.keystore_filename ?? 'keystore configured'})`
-                    : 'disabled'}
-                </KV>
-              </>
-            ) : (
-              <p className="py-1 text-xs text-muted-foreground">
-                Not configured
-              </p>
-            )}
+            <SettingBody setting={androidSigning} what="Android signing">
+              {(androidSigning) => (
+                <>
+                  <KV label="Release">
+                    {androidSigning.release.enabled
+                      ? `On · ${androidSigning.release.keystore_filename ?? 'keystore stored'}`
+                      : 'Off'}
+                  </KV>
+                  <KV label="Debug">
+                    {androidSigning.debug.enabled
+                      ? `On · ${androidSigning.debug.keystore_filename ?? 'keystore stored'}`
+                      : 'Off'}
+                  </KV>
+                </>
+              )}
+            </SettingBody>
           </Section>
         ) : null}
 
-        {pipeline.execution_config.platforms.includes('ios') ? (
+        {iosSigning && pipeline.execution_config.platforms.includes('ios') ? (
           <Section title="iOS signing">
-            {iosSigning ? (
-              <>
-                <KV label="Status">
-                  {iosSigning.enabled ? 'enabled' : 'disabled'}
-                </KV>
-                {iosSigning.enabled ? (
-                  <>
-                    <KV label="Mode">
-                      {iosSigning.mode === 'manual'
-                        ? 'Manual (.p12 + provisioning profiles)'
-                        : iosSigning.mode === 'api'
-                          ? 'API (App Store Connect)'
-                          : 'Hybrid (manual cert + API automation)'}
-                    </KV>
-                    {iosSigning.team_id ? (
-                      <KV label="Team ID">
-                        <span className="font-mono">{iosSigning.team_id}</span>
+            <SettingBody setting={iosSigning} what="iOS signing">
+              {(iosSigning) => (
+                <>
+                  <KV label="Status">{iosSigning.enabled ? 'On' : 'Off'}</KV>
+                  {iosSigning.enabled ? (
+                    <>
+                      <KV label="Mode">
+                        {iosSigning.mode === 'manual'
+                          ? 'Manual (.p12 + provisioning profiles)'
+                          : iosSigning.mode === 'api'
+                            ? 'API (App Store Connect)'
+                            : 'Hybrid (manual cert + API automation)'}
                       </KV>
-                    ) : null}
-                    {iosSigning.bundle_ids.length > 0 ? (
-                      <KV label="Bundle IDs">
-                        <div className="flex flex-wrap gap-1">
-                          {iosSigning.bundle_ids.map((id) => (
-                            <Badge
-                              key={id}
-                              variant="outline"
-                              className="font-mono text-[11px]"
-                            >
-                              {id}
-                            </Badge>
-                          ))}
-                        </div>
-                      </KV>
-                    ) : null}
-                    {iosSigning.mode === 'manual' ||
-                    iosSigning.mode === 'hybrid' ? (
-                      <KV label="Certificate">
-                        {iosSigning.has_p12
-                          ? (iosSigning.p12_filename ?? 'configured')
-                          : 'not uploaded'}
-                      </KV>
-                    ) : null}
-                    {iosSigning.mode === 'api' ||
-                    iosSigning.mode === 'hybrid' ? (
-                      <KV label="API key">
-                        {iosSigning.has_api_key
-                          ? `Key ${iosSigning.api_key_id ?? 'configured'}`
-                          : 'not configured'}
-                      </KV>
-                    ) : null}
-                    {iosSigning.provisioning_profiles.length > 0 ? (
-                      <KV label="Profiles">
-                        {iosSigning.provisioning_profiles.length} provisioning
-                        profile
-                        {iosSigning.provisioning_profiles.length === 1
-                          ? ''
-                          : 's'}
-                      </KV>
-                    ) : null}
-                  </>
-                ) : null}
-              </>
-            ) : (
-              <p className="py-1 text-xs text-muted-foreground">
-                Not configured
-              </p>
-            )}
+                      {iosSigning.team_id ? (
+                        <KV label="Team ID">
+                          <span className="font-mono">
+                            {iosSigning.team_id}
+                          </span>
+                        </KV>
+                      ) : null}
+                      {iosSigning.bundle_ids.length > 0 ? (
+                        <KV label="Bundle IDs">
+                          <div className="flex flex-wrap gap-1">
+                            {iosSigning.bundle_ids.map((id) => (
+                              <Badge
+                                key={id}
+                                variant="outline"
+                                className="font-mono text-[11px]"
+                              >
+                                {id}
+                              </Badge>
+                            ))}
+                          </div>
+                        </KV>
+                      ) : null}
+                      {iosSigning.mode === 'manual' ||
+                      iosSigning.mode === 'hybrid' ? (
+                        <KV label="Certificate">
+                          {iosSigning.has_p12
+                            ? (iosSigning.p12_filename ?? 'Stored')
+                            : 'Not uploaded'}
+                        </KV>
+                      ) : null}
+                      {iosSigning.mode === 'api' ||
+                      iosSigning.mode === 'hybrid' ? (
+                        <KV label="API key">
+                          {iosSigning.has_api_key
+                            ? `Key ${iosSigning.api_key_id ?? 'stored'}`
+                            : 'Not set up'}
+                        </KV>
+                      ) : null}
+                      {iosSigning.provisioning_profiles.length > 0 ? (
+                        <KV label="Profiles">
+                          {iosSigning.provisioning_profiles.length} provisioning
+                          profile
+                          {iosSigning.provisioning_profiles.length === 1
+                            ? ''
+                            : 's'}
+                        </KV>
+                      ) : null}
+                    </>
+                  ) : null}
+                </>
+              )}
+            </SettingBody>
           </Section>
         ) : null}
       </CardContent>

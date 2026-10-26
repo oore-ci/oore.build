@@ -1,0 +1,130 @@
+---
+title: 'Triggers, timeouts and approvals'
+status: implemented
+description: 'Choose which pushes, tags, changed paths and schedules start builds, cap build time, and hold builds for a maintainer.'
+---
+
+Decide which source events start a pipeline's builds, how long a build may
+run, and which builds wait for a maintainer first. You set all three on the
+pipeline's **Edit** page, so a commit cannot loosen them.
+
+Every field, pattern rule, and limit is in
+[Pipeline settings](/reference/config/pipeline-settings). For automation, use
+[Update a pipeline](/openapi/operations/update_pipeline).
+
+## What you need
+
+- Project developer, maintainer, instance admin, or instance owner access.
+  Changing the approval policy needs maintainer access or higher.
+- For push, tag, and pull request triggers, a project connected to
+  [GitHub](/build/sources/github) or [GitLab](/build/sources/gitlab). A
+  repository on the Oore Mac builds only from the UI, the API, or a schedule.
+- For tag builds from GitLab, **Tag push events** turned on in the project's
+  webhook.
+
+## 1. Open the trigger settings
+
+1. Open the project, then the pipeline.
+2. Select **Edit**.
+3. Scroll to **Triggers**.
+
+If the pipeline builds a workflow from a `.oore.yaml` version 2 file whose
+workflow or file sets `on`, that `on` decides which events start builds
+instead of **Events** and the patterns below. Schedules, the timeout, and
+approval still come from the pipeline. See
+[Triggers in version 2](/reference/config/oore-yaml-v2#triggers).
+
+## 2. Choose the events and branches
+
+1. Under **Events**, select **Push**, **Pull request**, **Tag push**, or a
+   combination.
+2. In **Branch patterns (optional)**, enter comma-separated globs such as
+   `main, release/*`. Leave it empty to build every branch.
+3. In **Tag patterns (optional)**, enter globs such as `v*` to build only
+   matching tags.
+
+Setting only one of the two pattern lists turns off the other kind of event.
+With only branch patterns, tag pushes do not start builds. With only tag
+patterns, branch pushes and pull requests do not start builds.
+
+## 3. Skip builds for unrelated changes
+
+Under **Changed paths**:
+
+- To build only when certain files change, list globs in
+  **Only these paths (optional)**, such as `lib/**, pubspec.*`.
+- To skip changes that touch only some files, list globs in
+  **Ignore these paths (optional)**, such as `*.md, docs/`.
+
+Path filters apply to pushes and pull requests, not to tags. When Oore cannot
+tell which files changed, it builds.
+
+## 4. Add a schedule
+
+Under **Schedules**, select **Add schedule**. Enter a cron expression in UTC,
+such as `0 2 * * 1-5` for 02:00 on weekdays, and optionally a branch. Without a branch, the schedule
+builds the project's default branch. A pipeline can have up to 10 schedules.
+
+## 5. Set the timeout
+
+Under **Limits**, set **Timeout (minutes)**, up to 1440 (24 hours). The default
+is 60. A build that runs longer is marked `timed_out` and stopped. A change
+applies to new builds and re-runs, not to builds that already exist.
+
+## 6. Require approval [#approval]
+
+Under **Approval**:
+
+1. Select **Builds wait for a maintainer before a runner picks them up**.
+2. Under **Which builds**, select the starts that need approval, such as
+   **Tag push** for release builds. Select nothing to hold every build.
+
+A held build that nobody approves or rejects is canceled after 7 days. To
+change that window, set `approval.expires_after_hours` through the API. To
+decide on a waiting build, see [Approve a build](/build/run/approve).
+
+Then select **Save changes**.
+
+## Verify the result
+
+1. Push a commit or tag that should match. A build starts within a few
+   seconds, and the build page shows the expected event and ref.
+2. Push one that should not match. No build starts.
+3. If you set approval, the matching build shows **Awaiting approval** until a
+   maintainer decides.
+4. For a schedule, the next build starts at the scheduled UTC time.
+
+## Troubleshooting
+
+### A push or pull request does not start a build
+
+Check the delivery first: [Troubleshoot source webhooks](/build/sources/webhooks/troubleshoot)
+shows whether GitHub or GitLab sent it and why Oore skipped it. Then compare
+the branch with **Branch patterns (optional)**, and the changed files with
+**Changed paths**.
+
+### Tags do not start builds
+
+**Tag push** is not selected, only branch patterns are set, or the tag does not
+match **Tag patterns (optional)**. On GitLab, turn on **Tag push events** in the
+webhook.
+
+### A version 2 file ignores the trigger settings
+
+The file's `on` replaces **Events** and the patterns. Change `on` in the file,
+or remove it to fall back to the pipeline's settings.
+
+### A scheduled run did not start
+
+The daemon was down at the due time. Oore starts a run that is less than five
+minutes late and skips older ones.
+
+### The approval settings are read-only
+
+Only project maintainers, instance admins, and the instance owner can change
+which builds wait for approval.
+
+## Next step
+
+[Approve a build](/build/run/approve) that waits for a maintainer, or
+[see builds on pull requests](/build/run/pull-request-checks).

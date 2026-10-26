@@ -23,14 +23,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Spinner } from '@/components/ui/spinner'
+import { FormActions } from '@/components/form-actions'
 import { ArtifactObjectStorageFields } from '@/components/settings/preferences-artifact-object-storage-fields'
 import {
   SettingsSection,
   SettingsSurface,
 } from '@/components/settings/settings-section'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { splitRowVariants } from '@/lib/recipes'
 
 export const artifactStorageSchema = z
   .object({
@@ -136,21 +138,18 @@ export function ArtifactStorageSettings({
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <Stack gap={5}>
       {isLoading ? (
-        <div
-          className="flex flex-col gap-3"
-          aria-label="Loading artifact storage settings"
-        >
+        <Stack gap={3} aria-label="Loading artifact storage settings">
           <Skeleton className="h-5 w-40" />
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
-        </div>
+        </Stack>
       ) : null}
 
       {error ? (
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>Failed to load artifact settings: {error.message}</span>
             <Button type="button" variant="outline" size="sm" onClick={onRetry}>
               Retry
@@ -161,7 +160,7 @@ export function ArtifactStorageSettings({
 
       {!isLoading && !error && !settings ? (
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>The response did not include artifact storage settings.</span>
             <Button type="button" variant="outline" size="sm" onClick={onRetry}>
               Retry
@@ -172,21 +171,21 @@ export function ArtifactStorageSettings({
 
       {!isLoading && !error && settings ? (
         <SettingsSection title="Storage provider">
-          <SettingsSurface className="flex flex-col gap-5">
-            {!canWrite ? (
-              <Alert>
-                <AlertDescription>
-                  You have read access only. Owner/Admin write permission is
-                  required to update settings.
-                </AlertDescription>
-              </Alert>
-            ) : null}
+          <Form {...form}>
+            <form
+              onSubmit={form.handleSubmit(onSubmit)}
+              className="flex flex-col gap-4"
+            >
+              <SettingsSurface className="flex flex-col gap-6">
+                {!canWrite ? (
+                  <Alert>
+                    <AlertDescription>
+                      You have read access only. Owner/Admin write permission is
+                      required to update settings.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
 
-            <Form {...form}>
-              <form
-                onSubmit={form.handleSubmit(onSubmit)}
-                className="flex flex-col gap-6"
-              >
                 <FormField
                   control={form.control}
                   name="backend_kind"
@@ -209,7 +208,7 @@ export function ArtifactStorageSettings({
                         }}
                       >
                         <FormControl>
-                          <SelectTrigger>
+                          <SelectTrigger className="w-full">
                             <SelectValue placeholder="Select backend" />
                           </SelectTrigger>
                         </FormControl>
@@ -242,7 +241,7 @@ export function ArtifactStorageSettings({
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Local base directory</FormLabel>
-                        <div className="flex items-center gap-2">
+                        <Row gap={2}>
                           <FormControl>
                             <Input
                               placeholder="/absolute/path/to/artifacts"
@@ -264,7 +263,7 @@ export function ArtifactStorageSettings({
                               <HugeiconsIcon icon={Folder02Icon} />
                             </Button>
                           ) : null}
-                        </div>
+                        </Row>
                         <FormDescription>
                           Absolute path on the daemon host where artifact files
                           are stored.
@@ -292,20 +291,19 @@ export function ArtifactStorageSettings({
                     settings={settings}
                   />
                 ) : null}
-
-                <Separator />
-
-                <div className="flex justify-end">
-                  <Button type="submit" disabled={!canWrite || isSaving}>
-                    {isSaving ? <Spinner data-icon="inline-start" /> : null}
-                    {isSaving ? 'Saving...' : 'Save'}
-                  </Button>
-                </div>
-              </form>
-            </Form>
-          </SettingsSurface>
+              </SettingsSurface>
+              {canWrite ? (
+                <FormActions
+                  disabled={!form.formState.isDirty}
+                  disabledReason="No changes to save"
+                  isPending={isSaving}
+                  submitLabel="Save changes"
+                />
+              ) : null}
+            </form>
+          </Form>
         </SettingsSection>
       ) : null}
-    </div>
+    </Stack>
   )
 }

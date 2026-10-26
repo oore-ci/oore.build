@@ -1,7 +1,7 @@
-import { GitLabCredentialsFields } from './-gitlab-credentials-fields'
 import type { UseFormReturn } from 'react-hook-form'
 
 import type { GitLabSetupForm } from './-gitlab-setup'
+import SetupHint from '@/components/setup-hint'
 import {
   FormControl,
   FormDescription,
@@ -10,6 +10,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -17,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
+import { Text } from '@/components/layout/text'
 
 type GitLabAuthStepProps = {
   form: UseFormReturn<GitLabSetupForm>
@@ -34,14 +35,11 @@ export function GitLabAuthStep({
 }: GitLabAuthStepProps) {
   return (
     <section className="space-y-4">
-      <Separator />
       <div>
-        <p className="text-sm font-medium text-muted-foreground">
-          2. Authenticate
-        </p>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="text-sm font-medium">2. Authenticate</p>
+        <Text variant="muted" className="mt-1">
           Choose the credential model that fits this GitLab source.
-        </p>
+        </Text>
       </div>
       <FormField
         control={form.control}
@@ -58,7 +56,7 @@ export function GitLabAuthStep({
               }}
             >
               <FormControl>
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
               </FormControl>
@@ -79,12 +77,102 @@ export function GitLabAuthStep({
           </FormItem>
         )}
       />
-      <GitLabCredentialsFields
-        form={form}
-        authMode={authMode}
-        hostUrl={hostUrl}
-        callbackUrl={callbackUrl}
-      />
+      {authMode === 'personal_token' ? (
+        <FormField
+          control={form.control}
+          name="access_token"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Access token</FormLabel>
+              <FormControl>
+                <Input type="password" {...field} placeholder="glpat-..." />
+              </FormControl>
+              <SetupHint
+                title="Required GitLab PAT scopes"
+                items={[
+                  <span key={0}>
+                    Select <code>read_user</code>, <code>read_api</code>, and{' '}
+                    <code>read_repository</code>.
+                  </span>,
+                  <span key={1}>
+                    To show build statuses on merge requests, select{' '}
+                    <code>api</code> instead of <code>read_api</code>.
+                  </span>,
+                  <span key={2}>
+                    Create it in{' '}
+                    <a
+                      href={`${hostUrl}/-/user_settings/personal_access_tokens`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium underline underline-offset-4"
+                    >
+                      GitLab access token settings
+                      <span className="sr-only"> (opens in a new tab)</span>
+                    </a>
+                    .
+                  </span>,
+                ]}
+              />
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      ) : (
+        <>
+          <FormField
+            control={form.control}
+            name="client_id"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Client ID</FormLabel>
+                <FormControl>
+                  <Input {...field} placeholder="Application ID" />
+                </FormControl>
+                <FormDescription>
+                  Create an OAuth application on {hostUrl} and paste its
+                  Application ID here.
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="client_secret"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Client secret</FormLabel>
+                <FormControl>
+                  <Input
+                    type="password"
+                    {...field}
+                    placeholder="Application secret"
+                  />
+                </FormControl>
+                <FormDescription>
+                  Use the Secret from the same GitLab OAuth application.
+                </FormDescription>
+                <SetupHint
+                  title="OAuth callback"
+                  items={[
+                    <span key={3}>
+                      Register this redirect URI in GitLab:{' '}
+                      <code>{callbackUrl}</code>
+                    </span>,
+                    <span key={4}>
+                      Request only <code>read_api</code> and{' '}
+                      <code>read_repository</code>; Oore does not request write
+                      scopes for this source.
+                    </span>,
+                    'Save this source, then choose Authorize on GitLab from its source details page.',
+                  ]}
+                />
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </>
+      )}
     </section>
   )
 }

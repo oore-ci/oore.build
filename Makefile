@@ -1,5 +1,5 @@
 .PHONY: \
-	build build-demo build-docs build-release-index build-site build-web \
+	build build-demo build-docs build-release-index build-site build-web bump-version \
 	check check-docs-types check-openapi check-rust \
 	clean-dev-state compile-web-release-launchers deployment-header-smoke dev-demo dev-docs dev-fresh-setup dev-site dev-web doctor \
 	deploy-demo deploy-demo-dist deploy-docs deploy-docs-dist \
@@ -10,7 +10,8 @@
 	package-release-assets preview-docs preview-site preview-web \
 	register-runner release-smoke run-daemon run-runner setup-token \
 	rust-target-size clean-rust-debug-dry-run clean-rust-debug \
-	test-deployment-headers test-rust test-site \
+	check-client-openapi smoke-install \
+	test-deployment-headers test-rust test-site test-tools test-web \
 	validate validate-ci validate-docs validate-frontend validate-rust \
 	validate-shell validate-web-launcher validate-workflows
 
@@ -94,6 +95,9 @@ deploy-demo-dist:
 
 lint-web:
 	cd apps/web && bun run lint
+
+test-web:
+	cd apps/web && bun test src
 
 # Documentation and public site
 dev-docs:
@@ -262,21 +266,41 @@ validate-workflows:
 	actionlint .github/workflows/*.yml
 
 validate-shell:
-	shellcheck --severity=error scripts/*.sh tools/*.sh
-	bash -n scripts/*.sh tools/*.sh
+	shellcheck scripts/*.sh tools/*.sh
+	@for script in scripts/*.sh tools/*.sh; do bash -n "$$script" || exit 1; done
 
-validate-ci: validate-workflows validate-shell
+# A leading ./ makes Bun treat the argument as a path instead of a name filter
+# that would also match apps/*/tools tests.
+test-tools:
+	bun test ./tools/
+
+validate-ci: validate-workflows validate-shell test-tools
+
+# Bootstraps the CLI built from this checkout through scripts/install.sh and
+# scripts/uninstall.sh over the unsigned loopback path. macOS only.
+smoke-install:
+	bash tools/install-smoke.sh
+
+# The web app builds against the published @oore/client; its bundled spec must
+# match the daemon's.
+check-client-openapi:
+	bun tools/check-client-openapi.ts apps/docs/public/openapi.json
 
 validate-web-launcher: build-web
+	bun test apps/web/tools/oore-web.test.js
 	bash tools/validate-standalone-web.sh
 
-validate-frontend: format-check lint-web validate-web-launcher
+validate-frontend: format-check lint-web test-web check-client-openapi validate-web-launcher
 
 validate-docs: format-check lint-docs lint-site test-site check-docs-types build-docs build-site
 
 validate-rust: format-rust-check lint-rust test-rust check-openapi
 
 validate: validate-ci validate-frontend validate-docs validate-rust
+
+bump-version:
+	@test -n "$(VERSION)" || { echo 'Usage: make bump-version VERSION=X.Y.Z' >&2; exit 1; }
+	bash tools/bump-workspace-version.sh "$(VERSION)"
 
 release-smoke:
 	bash tools/release-smoke.sh

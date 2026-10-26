@@ -702,6 +702,7 @@ async fn setup_runner(
             RunnerRegisterArgs {
                 daemon_url: backend_url.clone(),
                 name: nonempty_optional(name),
+                labels: Vec::new(),
                 token,
             },
             true,
