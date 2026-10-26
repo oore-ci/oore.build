@@ -18,6 +18,7 @@ import {
   RootNotFound,
 } from '@/components/root-route-boundaries'
 import SiteHeader from '@/components/site-header'
+import { Stack } from '@/components/layout/stack'
 
 export const Route = createRootRoute({
   beforeLoad: () => {
@@ -58,6 +59,7 @@ function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <a
         href="#main-content"
+        // oxlint-disable-next-line layout/max-class-utilities -- one-off skip link
         className="fixed top-2 left-2 z-100 -translate-y-20 px-3 py-2 text-sm font-medium text-foreground ring-2 ring-ring transition-transform focus:translate-y-0"
       >
         Skip to content
@@ -72,9 +74,9 @@ function RootLayout() {
             tabIndex={-1}
             className="flex flex-1 flex-col"
           >
-            <div className="@container/main flex min-h-0 flex-1 flex-col gap-2">
+            <Stack gap={2} className="@container/main min-h-0 flex-1">
               <Outlet />
-            </div>
+            </Stack>
           </main>
         </div>
       ) : showAppChrome ? (
@@ -97,9 +99,9 @@ function RootLayout() {
               data-slot="app-content-scroll-area"
               className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain"
             >
-              <div className="@container/main flex min-h-0 flex-1 flex-col gap-2">
+              <Stack gap={2} className="@container/main min-h-0 flex-1">
                 <Outlet />
-              </div>
+              </Stack>
             </div>
           </SidebarInset>
         </SidebarProvider>
@@ -111,9 +113,9 @@ function RootLayout() {
         >
           <ConnectivityBanner />
           <div className="flex flex-1 flex-col">
-            <div className="@container/main flex min-h-0 flex-1 flex-col gap-2">
+            <Stack gap={2} className="@container/main min-h-0 flex-1">
               <Outlet />
-            </div>
+            </Stack>
           </div>
         </main>
       )}

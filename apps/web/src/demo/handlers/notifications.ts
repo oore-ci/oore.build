@@ -29,6 +29,9 @@ const updateSmtpConfigSchema = z.object({
   tls_mode: smtpTlsModeSchema.nullish(),
   username: z.string().nullish(),
 })
+const slackMentionsSchema = z.array(
+  z.object({ identity: z.string(), member_id: z.string() }),
+)
 const createChannelSchema = z.toZod<CreateNotificationChannelRequest>()(
   z.object({
     name: z.string(),
@@ -39,6 +42,7 @@ const createChannelSchema = z.toZod<CreateNotificationChannelRequest>()(
     url: z.string().nullish(),
     secret: z.string().nullish(),
     smtp_config: smtpConfigSchema.nullish(),
+    slack_mentions: slackMentionsSchema.optional(),
   }),
 )
 const updateChannelSchema = z.toZod<UpdateNotificationChannelRequest>()(
@@ -50,6 +54,7 @@ const updateChannelSchema = z.toZod<UpdateNotificationChannelRequest>()(
     url: z.string().nullish(),
     secret: z.string().nullish(),
     smtp_config: updateSmtpConfigSchema.nullish(),
+    slack_mentions: slackMentionsSchema.nullish(),
   }),
 )
 
@@ -148,6 +153,7 @@ export const notificationHandlers = [
             recipients: body.smtp_config.recipients,
           }
         : undefined,
+      slack_mentions: body.slack_mentions ?? [],
       created_by: 'usr-demo-owner-001',
       created_at: now(),
       updated_at: now(),
@@ -219,6 +225,7 @@ export const notificationHandlers = [
                 body.smtp_config.recipients ?? existing.smtp_summary.recipients,
             }
           : existing.smtp_summary,
+      slack_mentions: body.slack_mentions ?? existing.slack_mentions,
       updated_at: now(),
     }
 

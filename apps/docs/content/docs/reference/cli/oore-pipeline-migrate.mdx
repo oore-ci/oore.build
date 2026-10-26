@@ -1,0 +1,119 @@
+---
+title: '`oore pipeline migrate`'
+status: implemented
+description: 'Rewrite a version 1 .oore.yaml as version 2 that runs the same commands.'
+---
+
+```text
+oore pipeline migrate [PATH] [--output FILE | --write | --check]
+```
+
+`PATH` defaults to `.oore.yaml`. The command reads a
+[version 1](/reference/config/oore-yaml) file and prints an equivalent
+[version 2](/reference/config/oore-yaml-v2) file on standard output. It reads
+only the file and contacts no backend.
+
+| Option                | Effect                                                                           |
+| --------------------- | -------------------------------------------------------------------------------- |
+| `--output FILE`, `-o` | Write the version 2 file to `FILE` instead of printing it.                       |
+| `--write`             | Replace `PATH` with the version 2 file.                                          |
+| `--check`             | Write nothing. Exit non-zero while `PATH` is still version 1, for example in CI. |
+
+```bash
+oore pipeline migrate                  # print the result
+oore pipeline migrate --write          # replace .oore.yaml
+oore pipeline migrate -o v2.oore.yaml config/mobile.oore.yaml
+```
+
+A file that already declares `version: 2` is never rewritten: the command says
+`.oore.yaml is already version 2; nothing to migrate` and exits successfully.
+An invalid version 1 file fails with the same errors as
+[`oore pipeline validate`](/reference/cli/oore-pipeline-validate).
+
+## What it checks
+
+Before printing or writing anything, the command validates the generated file
+and plans both files, as [`oore pipeline plan`](/reference/cli/oore-pipeline-plan)
+would. The new file must run the same commands in the same order, phase and
+platform, with the same env, artifact patterns, `runs_on`, `isolation`,
+Flutter version and `build_number_offset`, apart from the
+[shared `commands.build`](#what-cannot-be-expressed-exactly) case. If it would
+not, the command fails and writes nothing. `--write` therefore never replaces a file with one that
+does not validate.
+
+Warnings and notes go to standard error as `warning:` and `note:` lines, and
+the generated file carries the same explanations as comments. Review the file
+and run `oore pipeline plan` on it before committing.
+
+## How version 1 maps to version 2
+
+| Version 1                                       | Version 2                                                                                                   |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `platforms`                                     | One `targets` entry per platform, in the same order.                                                        |
+| Default build command and `platform_build_args` | `targets.<platform>.build`, written out in full, such as `flutter build apk --release --split-per-abi`.     |
+| `platform_commands.<platform>`                  | `targets.<platform>.build`. Build args for that platform, which version 1 ignored, are dropped with a note. |
+| Implicit `flutter pub get`                      | A `Get packages` step before your own `pre_build` steps.                                                    |
+| `commands.pre_build`, `commands.post_build`     | Named steps before and after `- build`.                                                                     |
+| `flutter_version`                               | `app.flutter`. A `.fvmrc` file still takes precedence.                                                      |
+| `env` list                                      | `env` map, in the same order.                                                                               |
+| `artifacts.patterns`                            | `artifacts` on the targets. See below.                                                                      |
+| `build_number_offset`, `runs_on`, `isolation`   | Unchanged.                                                                                                  |
+
+Steps get readable names: `Get packages`, `Analyze` and `Run tests` for the
+plain `flutter pub get`, `flutter analyze` and `flutter test` commands, and
+the command's first line, cut at 60 characters, otherwise. Repeated names get
+` (2)`, ` (3)` and so on. Target builds are named `Build Android`, `Build iOS`
+and `Build macOS`. Logs and commit checks show these names instead of
+`pre_build-1` and `build-1`, so rename the steps as you like.
+
+Version 1 has one artifact list for the whole build and version 2 one per
+target. When the version 1 list differs from what the targets would default
+to, every target gets the full list through a YAML anchor
+(`artifacts: &artifacts` on the first, `artifacts: *artifacts` on the rest).
+Oore keeps each pattern once, so the build collects the same files. A pattern
+listed twice is kept once, with a note.
+
+Comments in the version 1 file are not carried over.
+
+## What cannot be expressed exactly
+
+**The Google Play App Bundle.** When a pipeline's Google Play publishing is on
+and its Android build uses Oore's default command, version 1 also runs
+`flutter build appbundle --release` after the APK, with the same build args
+except `--split-per-abi`. That depends on the pipeline's settings, not the
+file, so the command does not guess: it writes a comment on
+`targets.android` with the build line to use, and prints a note. If the
+pipeline uploads to Google Play, append the bundle command to `build`, or
+build only the bundle:
+
+```yaml
+targets:
+  android:
+    build: flutter build apk --release && flutter build appbundle --release
+```
+
+Version 2 never adds the bundle step itself. See
+[Publish](/reference/config/oore-yaml-v2#publish).
+
+**A shared `commands.build`.** In version 1 a non-empty `commands.build` runs
+once in place of every platform's build command. Version 2 builds only
+through targets, so the commands become the first platform's
+`targets.<platform>.build`. Several commands are joined with `&&`, each in its
+own subshell so a `cd` or `export` in one does not reach the next, as when
+they ran as separate steps. The command prints a `warning:` and writes a
+`WARNING:` comment when:
+
+- `commands.build` has more than one command: the build log shows one step,
+  and a plain `flutter test` or `dart test` among them no longer reports test
+  results automatically;
+- `platforms` lists more than one platform: only the first becomes a target,
+  so the build counts only that platform as built.
+
+`platform_commands` and `platform_build_args`, which version 1 ignored next
+to a shared `commands.build`, are dropped with a note.
+
+**Artifact patterns containing `${{`.** Version 2 reads `${{ }}` in
+artifact patterns as a reference, so such a file is not migrated; change the
+pattern first.
+
+See [`.oore.yaml` version 2](/reference/config/oore-yaml-v2) for the schema.

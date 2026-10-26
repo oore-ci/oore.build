@@ -7,8 +7,8 @@ use oore_contract::{
     ApiError, CreateNotificationChannelRequest, DeleteNotificationChannelResponse,
     ListNotificationChannelsResponse, ListNotificationDeliveriesResponse, NotificationChannel,
     NotificationChannelResponse, NotificationChannelType, NotificationDelivery,
-    NotificationDeliveryStatus, SmtpConfig, SmtpConfigSummary, TestNotificationChannelResponse,
-    UpdateNotificationChannelRequest,
+    NotificationDeliveryStatus, SlackMention, SmtpConfig, SmtpConfigSummary,
+    TestNotificationChannelResponse, UpdateNotificationChannelRequest,
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -18,6 +18,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::crypto;
 use crate::extractors::AuthUser;
+use crate::notification_dispatch::{normalize_slack_identity, parse_slack_mentions};
 use crate::rbac::check_permission;
 use crate::store::write_audit_log;
 use crate::util::{api_err, now_unix};
@@ -54,6 +55,12 @@ fn row_to_channel(row: &sqlx::sqlite::SqliteRow) -> NotificationChannel {
         has_smtp_config: encrypted_config.is_some(),
         url_host: None,
         smtp_summary: None,
+        slack_mentions: parse_slack_mentions(
+            row.try_get::<Option<String>, _>("slack_mentions_json")
+                .ok()
+                .flatten()
+                .as_deref(),
+        ),
         created_by: row.get("created_by"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
@@ -124,6 +131,7 @@ const VALID_EVENTS: &[&str] = &[
     "rollout_completed",
     "release_approval_needed",
     "release_failed",
+    "qa_feedback",
 ];
 
 fn validate_events(events: &[String]) -> Result<(), (StatusCode, Json<ApiError>)> {
@@ -211,6 +219,77 @@ fn validate_slack_bot_token(
     Ok(())
 }
 
+const MAX_SLACK_MENTIONS: usize = 500;
+const MAX_SLACK_IDENTITY_LEN: usize = 320;
+
+/// Check Slack member mappings and return them as stored: identities trimmed
+/// and lowercased, `None` when there are none.
+fn validate_slack_mentions(
+    channel_type: NotificationChannelType,
+    mentions: &[SlackMention],
+) -> Result<Option<String>, (StatusCode, Json<ApiError>)> {
+    if mentions.is_empty() {
+        return Ok(None);
+    }
+    let invalid = |message: String| api_err(StatusCode::BAD_REQUEST, "invalid_input", message);
+    if channel_type != NotificationChannelType::Slack {
+        return Err(invalid(
+            "slack_mentions is only allowed for slack channels".to_string(),
+        ));
+    }
+    if mentions.len() > MAX_SLACK_MENTIONS {
+        return Err(invalid(format!(
+            "at most {MAX_SLACK_MENTIONS} Slack mentions are allowed"
+        )));
+    }
+    let mut cleaned: Vec<SlackMention> = Vec::with_capacity(mentions.len());
+    for mention in mentions {
+        let identity = normalize_slack_identity(&mention.identity);
+        if identity.is_empty() || identity.chars().count() > MAX_SLACK_IDENTITY_LEN {
+            return Err(invalid(format!(
+                "Slack mention identity must be 1-{MAX_SLACK_IDENTITY_LEN} characters"
+            )));
+        }
+        if identity.chars().any(char::is_whitespace) {
+            return Err(invalid(format!(
+                "Slack mention identity '{identity}' must not contain spaces"
+            )));
+        }
+        let member_id = mention.member_id.trim();
+        if !is_slack_member_id(member_id) {
+            return Err(invalid(format!(
+                "'{member_id}' is not a Slack member ID (for example U0123ABCD)"
+            )));
+        }
+        if cleaned.iter().any(|existing| existing.identity == identity) {
+            return Err(invalid(format!(
+                "Slack mention identity '{identity}' is listed more than once"
+            )));
+        }
+        cleaned.push(SlackMention {
+            identity,
+            member_id: member_id.to_string(),
+        });
+    }
+    serde_json::to_string(&cleaned).map(Some).map_err(|e| {
+        error!(error = %e, "failed to serialize Slack mentions");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "serialization_error",
+            "Failed to save Slack mentions",
+        )
+    })
+}
+
+/// Slack user IDs start with U (or W on Enterprise Grid) followed by
+/// uppercase letters and digits.
+fn is_slack_member_id(value: &str) -> bool {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some('U' | 'W'))
+        && (3..=24).contains(&value.len())
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
 fn validate_smtp_config(config: &SmtpConfig) -> Result<(), (StatusCode, Json<ApiError>)> {
     if config.host.trim().is_empty() {
         return Err(api_err(
@@ -272,6 +351,7 @@ pub async fn create_notification_channel(
     }
 
     validate_events(&req.events)?;
+    let slack_mentions_json = validate_slack_mentions(req.channel_type, &req.slack_mentions)?;
 
     let pool = &state.db;
     let project_id = validate_project_scope(pool, req.project_id.as_deref()).await?;
@@ -374,8 +454,8 @@ pub async fn create_notification_channel(
 
     sqlx::query(
         "INSERT INTO notification_channels \
-         (id, name, channel_type, enabled, event_filter_json, project_id, encrypted_url, encrypted_secret, encrypted_config, created_by, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+         (id, name, channel_type, enabled, event_filter_json, project_id, encrypted_url, encrypted_secret, encrypted_config, created_by, created_at, updated_at, slack_mentions_json) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12)",
     )
     .bind(&id)
     .bind(name)
@@ -388,6 +468,7 @@ pub async fn create_notification_channel(
     .bind(&encrypted_config)
     .bind(&auth.0.user_id)
     .bind(now)
+    .bind(&slack_mentions_json)
     .execute(pool)
     .await
     .map_err(|e| {
@@ -423,6 +504,7 @@ pub async fn create_notification_channel(
         has_smtp_config: encrypted_config.is_some(),
         url_host: None,
         smtp_summary: None,
+        slack_mentions: parse_slack_mentions(slack_mentions_json.as_deref()),
         created_by: Some(auth.0.user_id),
         created_at: now,
         updated_at: now,
@@ -627,6 +709,14 @@ pub async fn update_notification_channel(
         .parse::<NotificationChannelType>()
         .unwrap_or(NotificationChannelType::Webhook);
 
+    let slack_mentions_json = match req.slack_mentions.as_deref() {
+        Some(mentions) => validate_slack_mentions(channel_type, mentions)?,
+        None => existing
+            .try_get::<Option<String>, _>("slack_mentions_json")
+            .ok()
+            .flatten(),
+    };
+
     let (encrypted_url, encrypted_secret, encrypted_config) = match channel_type {
         NotificationChannelType::Webhook
         | NotificationChannelType::Mattermost
@@ -804,7 +894,7 @@ pub async fn update_notification_channel(
         "UPDATE notification_channels \
          SET name = ?1, enabled = ?2, event_filter_json = ?3, \
              encrypted_url = ?4, encrypted_secret = ?5, encrypted_config = ?6, updated_at = ?7, \
-             project_id = ?9 \
+             project_id = ?9, slack_mentions_json = ?10 \
          WHERE id = ?8",
     )
     .bind(name)
@@ -816,6 +906,7 @@ pub async fn update_notification_channel(
     .bind(now)
     .bind(&id)
     .bind(&project_id)
+    .bind(&slack_mentions_json)
     .execute(pool)
     .await
     .map_err(|e| {
@@ -1011,9 +1102,16 @@ pub async fn test_notification_channel(
                 })?;
 
             if channel_type == NotificationChannelType::Slack {
+                let mentions = parse_slack_mentions(
+                    row.try_get::<Option<String>, _>("slack_mentions_json")
+                        .ok()
+                        .flatten()
+                        .as_deref(),
+                );
                 crate::notification_dispatch::send_slack_test(
                     &url,
                     secret.as_deref(),
+                    &mentions,
                     &auth.0.email,
                 )
                 .await
@@ -1158,5 +1256,51 @@ mod tests {
         assert!(!json.contains("/services/"));
 
         assert!(row_to_channel(&row).smtp_summary.is_none());
+    }
+
+    fn mention(identity: &str, member_id: &str) -> SlackMention {
+        SlackMention {
+            identity: identity.to_string(),
+            member_id: member_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn slack_mentions_are_normalized_and_checked() {
+        let slack = NotificationChannelType::Slack;
+        let stored = validate_slack_mentions(
+            slack,
+            &[
+                mention(" Dev@Example.com ", "U0123ABCD"),
+                mention("octocat", " W0OCTO "),
+                mention("ÉLODIE+a=b,c@example.com", "U0ELO"),
+            ],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            parse_slack_mentions(Some(&stored)),
+            [
+                mention("dev@example.com", "U0123ABCD"),
+                mention("octocat", "W0OCTO"),
+                mention("élodie+a=b,c@example.com", "U0ELO"),
+            ]
+        );
+        assert_eq!(validate_slack_mentions(slack, &[]).unwrap(), None);
+
+        for bad in [
+            vec![mention("dev@example.com", "u0123abcd")],
+            vec![mention("dev@example.com", "<!channel>")],
+            vec![mention("", "U0123ABCD")],
+            vec![mention("two words", "U0123ABCD")],
+            vec![mention("a", "U0A"), mention("A", "U0B")],
+        ] {
+            let (status, _) = validate_slack_mentions(slack, &bad).unwrap_err();
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+        }
+        let (status, _) =
+            validate_slack_mentions(NotificationChannelType::Webhook, &[mention("a", "U0A")])
+                .unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 }

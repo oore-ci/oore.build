@@ -1,0 +1,145 @@
+---
+title: 'Sign the iOS build for TestFlight'
+status: implemented
+description: 'Create the app in App Store Connect, add an API key to Oore, and build a signed App Store IPA.'
+---
+
+On this page you give Oore an App Store Connect API key. With it, Oore creates
+the distribution certificate and provisioning profile itself, so you do not
+export certificates from Keychain Access. The result is a signed `.ipa` ready
+for TestFlight.
+
+## What you need
+
+- The `iOS` pipeline from [Build your first iOS app](/start/ios/first-build),
+  with one successful build.
+- A paid Apple Developer Program membership, and the **Admin** role in App
+  Store Connect.
+- Your app's bundle ID, such as `com.example.app`. Find it in Xcode under the
+  **Runner** target, on the **Signing & Capabilities** tab.
+- Your Apple Team ID, shown under **Membership details** in your
+  [Apple Developer account](https://developer.apple.com/account).
+- Instance owner or admin access in Oore, to store the key.
+
+## 1. Create the app in App Store Connect
+
+1. In your Apple Developer account, open **Identifiers** and register an App
+   ID with your app's bundle ID.
+2. In [App Store Connect](https://appstoreconnect.apple.com), open **Apps** and
+   create a new app with that bundle ID.
+
+Oore cannot create the app for you. Uploads for a bundle ID that has no app in
+App Store Connect fail.
+
+## 2. Create an App Store Connect API key
+
+1. In App Store Connect, open **Users and Access**, then **Integrations**, then
+   **App Store Connect API**.
+2. Under **Team Keys**, generate a key with the **Admin** role. Oore uses it to
+   create certificates and profiles and to upload builds.
+3. Download the `AuthKey_<KEY ID>.p8` file. Apple lets you download it only
+   once.
+4. Write down the **Key ID** and the **Issuer ID** shown on the same page.
+
+Keep the `.p8` file in a secure place outside Oore as well.
+
+## 3. Store the key in Oore
+
+1. In Oore, open **Settings > Store credentials**.
+2. Under **App Store Connect API keys**, select **Add key**.
+3. Enter a **Name**, the **Key ID**, and the **Issuer ID**, and choose the
+   `.p8` file for **Private key (.p8)**.
+4. Select **Add key**.
+
+Every pipeline on this instance can now use the key without another upload.
+
+## 4. Turn on iOS signing
+
+1. Open the `iOS` pipeline and select **Edit**.
+2. Under **Signing > iOS**, turn on **Enable iOS signing**.
+3. For **Distribution**, choose **App Store**.
+4. For **Signing mode**, choose **API (App Store Connect automation)**.
+5. Enter your **Apple Team ID**. In **Bundle identifiers**, enter the app's
+   bundle ID. Add one line for each app extension, after the main app.
+6. For **App Store Connect API key**, choose the key you added.
+7. Under **Build > Artifacts**, replace the pattern with
+   `build/ios/ipa/*.ipa`.
+8. Under **Build > Commands**, open **Per-platform arguments and overrides**.
+   In **iOS build args**, enter:
+
+   ```text
+   --build-number=$OORE_VERSION_CODE
+   ```
+
+   Every upload to App Store Connect needs a higher build number than the
+   last one. `$OORE_VERSION_CODE` grows with every build.
+
+9. Select **Save changes**.
+
+## 5. Sync the profiles
+
+When the save changed the distribution, the editor already synced the
+profiles. If the save message says how many provisioning profiles were
+synced from App Store Connect, skip this step.
+
+1. Select **Edit** again.
+2. Under **Signing**, select **Sync profiles** beside the **iOS** heading.
+
+Oore asks App Store Connect for an Apple Distribution certificate and an App
+Store provisioning profile for each bundle ID. It shows
+**iOS signing sync completed** with the number of profiles it synced.
+
+## 6. Run a signed build
+
+Stay logged in to your macOS account while iOS builds run. Apple signing
+needs your login session, and a build stops before checkout without one.
+
+Select **Run build**, keep the `iOS` pipeline and branch, and select
+**Run build** again.
+
+With signing on, the runner builds an `.ipa` and signs every bundle in it with
+a temporary keychain. Your repository's commands never see the key,
+certificate, or profiles.
+
+## Check the result
+
+The build ends as **Succeeded**, and **Artifacts** lists an `.ipa` file.
+Download it and check its signature:
+
+```bash
+unzip -q -o my_app.ipa -d ipa-check
+codesign -dv --verbose=2 ipa-check/Payload/Runner.app 2>&1 | grep Authority
+```
+
+Replace `my_app.ipa` with the file name that Oore shows. The first line
+printed starts with
+`Authority=Apple Distribution:` followed by your team name.
+
+An App Store IPA has no **Install** action in Oore. Testers install it through
+TestFlight, which you set up next.
+
+## Troubleshooting
+
+**Sync profiles fails or finds no profile**
+
+Check that the Apple Team ID and bundle ID are exact, that the app exists in
+App Store Connect, and that the API key has the **Admin** role.
+
+**The build stops before checkout and asks you to log in**
+
+Log in to the macOS account that runs Oore, keep the session open, and run
+the build again.
+
+**The build reports a missing profile for an extension**
+
+Add the extension's bundle ID on its own line in **Bundle identifiers**, save,
+and select **Sync profiles** again.
+
+**You sign with a certificate from Keychain Access instead**
+
+Use **Manual (.p12 + provisioning profiles)** as the signing mode. See
+[Configure manual iOS signing](/build/sign/ios/manual).
+
+## Next step
+
+[Deliver to TestFlight and the App Store](/start/ios/testflight).

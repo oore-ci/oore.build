@@ -24,6 +24,13 @@ import { Button } from '@/components/ui/button'
 import PageLayout from '@/components/page-layout'
 import { Spinner } from '@/components/ui/spinner'
 import { useTime } from '@/hooks/use-time'
+import { Text } from '@/components/layout/text'
+import {
+  stackVariants,
+  stickyActionBarVariants,
+  textVariants,
+} from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const expiryFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
@@ -118,21 +125,21 @@ export default function OperatorArtifactInstallPage({
           <h1 className="mt-3 text-2xl font-bold tracking-tight wrap-break-word sm:text-3xl">
             {appName}
           </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
+          <Text variant="muted" className="mt-2">
             {artifact.file_size != null
               ? formatFileSize(artifact.file_size)
               : 'Size unavailable'}
             {artifact.expires_at != null
               ? ` · ${expiryLabel(artifact.expires_at)}`
               : ''}
-          </p>
-          <p className="mt-1 text-sm break-all text-muted-foreground">
+          </Text>
+          <Text variant="muted" className="mt-1 break-all">
             Build #{build.build_number} · {artifact.name}
-          </p>
+          </Text>
           {iosApp ? (
-            <p className="mt-1 text-xs text-muted-foreground">
+            <Text variant="caption" className="mt-1">
               {iosApp.version}+{iosApp.buildNumber}
-            </p>
+            </Text>
           ) : null}
         </header>
 
@@ -187,7 +194,12 @@ export default function OperatorArtifactInstallPage({
           </Alert>
         ) : null}
 
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
+        <div
+          className={cn(
+            stickyActionBarVariants(),
+            'sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none',
+          )}
+        >
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -232,13 +244,18 @@ export default function OperatorArtifactInstallPage({
       </section>
 
       <section className="flex flex-col gap-4 pt-1">
-        <p className="text-sm text-muted-foreground">
+        <Text variant="muted">
           Teammates need to sign in and have access to this project. The file
           must still be available when they open the link.
-        </p>
+        </Text>
         <h2 className="text-sm font-medium">Before you install</h2>
         {isIos ? (
-          <ol className="flex flex-col gap-3 text-sm text-muted-foreground">
+          <ol
+            className={cn(
+              textVariants({ variant: 'muted' }),
+              stackVariants({ gap: 3 }),
+            )}
+          >
             <li className="flex gap-3">
               <span className="font-mono text-foreground">01</span>
               <span>Use Safari on the registered iPhone.</span>
@@ -256,7 +273,12 @@ export default function OperatorArtifactInstallPage({
             </li>
           </ol>
         ) : (
-          <ol className="flex flex-col gap-3 text-sm text-muted-foreground">
+          <ol
+            className={cn(
+              textVariants({ variant: 'muted' }),
+              stackVariants({ gap: 3 }),
+            )}
+          >
             <li className="flex gap-3">
               <span className="font-mono text-foreground">01</span>
               <span>

@@ -27,6 +27,7 @@ import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import { PageMeta } from '@/lib/seo'
 import { useSetupStore } from '@/stores/setup-store'
 import { SetupStepError } from '@/components/setup-route-components'
+import { Text } from '@/components/layout/text'
 
 const modeSchema = z.object({
   mode: z.enum(['local', 'remote_oidc', 'remote_trusted']),
@@ -170,9 +171,9 @@ function SetupModeStep() {
       <PageMeta title="Choose Access" />
       <div className="space-y-1">
         <h2 className="text-lg font-medium">How will you use Oore?</h2>
-        <p className="text-sm text-muted-foreground">
+        <Text variant="muted">
           Choose who can reach this instance and how they sign in.
-        </p>
+        </Text>
       </div>
 
       <Form {...form}>

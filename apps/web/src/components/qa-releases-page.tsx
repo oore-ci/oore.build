@@ -7,6 +7,7 @@ import {
   AppleIcon,
   ArrowDown01Icon,
   ArrowRight01Icon,
+  BubbleChatEditIcon,
   CancelCircleIcon,
   CheckmarkCircle02Icon,
   Clock01Icon,
@@ -39,6 +40,7 @@ import { releaseAudienceLabel } from '@/lib/releases'
 import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import QaBuildStatusBadge from '@/components/qa-build-status-badge'
+import { QaFeedbackDrawer } from '@/components/qa-feedback-drawer'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -72,6 +74,10 @@ import {
   ItemTitle,
 } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { focusRingVariants, rowVariants, textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const QA_BUILD_WINDOW = 100
 
@@ -162,7 +168,9 @@ function CurrentRelease({
       </h2>
       <Card>
         <CardHeader>
-          <CardTitle className="flex flex-wrap items-center gap-2 text-lg">
+          <CardTitle
+            className={cn(rowVariants({ gap: 2 }), 'flex-wrap text-lg')}
+          >
             {version}
             <QaBuildStatusBadge status={build.status} />
             <StoreReleaseBadge release={storeRelease} />
@@ -175,11 +183,11 @@ function CurrentRelease({
         </CardHeader>
         <CardContent>
           <h3 className="text-sm font-medium">What changed</h3>
-          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          <Text variant="muted" className="mt-1 max-w-2xl leading-relaxed">
             {build.changelog
               ? changelogSummary(build.changelog)
               : 'No release notes were provided for this version.'}
-          </p>
+          </Text>
         </CardContent>
         <CardFooter className="flex flex-wrap gap-2">
           {platforms.android ? (
@@ -294,6 +302,16 @@ function CurrentRelease({
               </Button>
             </>
           ) : null}
+          <QaFeedbackDrawer
+            appVersion={version}
+            artifactId={preferredArtifact?.id}
+            buildId={build.id}
+          >
+            <Button variant="outline">
+              <HugeiconsIcon icon={BubbleChatEditIcon} aria-hidden />
+              Feedback
+            </Button>
+          </QaFeedbackDrawer>
           <Button
             render={
               <Link
@@ -429,7 +447,13 @@ function BuildChecks({ build }: { build: Build }) {
 
   return (
     <Collapsible className="border-y">
-      <CollapsibleTrigger className="flex min-h-11 w-full items-center gap-3 py-2 text-left text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+      <CollapsibleTrigger
+        className={cn(
+          rowVariants({ gap: 3 }),
+          focusRingVariants(),
+          'min-h-11 w-full py-2 text-left text-sm',
+        )}
+      >
         <span className="font-medium">Build checks</span>
         <span className="text-muted-foreground">
           {passed} of {steps.length} completed
@@ -456,7 +480,7 @@ function BuildChecks({ build }: { build: Build }) {
               <ItemContent>
                 <ItemTitle>{step.name}</ItemTitle>
               </ItemContent>
-              <ItemActions className="text-xs text-muted-foreground">
+              <ItemActions className={textVariants({ variant: 'caption' })}>
                 {step.duration_ms != null
                   ? formatDuration(step.duration_ms / 1000)
                   : formatEnumLabel(step.status)}
@@ -690,10 +714,10 @@ export default function QaReleasesPage() {
       ) : null}
 
       {loading ? (
-        <div className="flex flex-col gap-4">
+        <Stack gap={4}>
           <Skeleton className="h-6 w-28" />
           <Skeleton className="h-64 w-full" />
-        </div>
+        </Stack>
       ) : null}
 
       {!loading && !error && selection.projectCount === 0 ? (

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Json;
@@ -7,13 +8,14 @@ use oore_contract::{
     ApiError, ApprovalPolicy, Build, BuildApproval, BuildApprovalRequest, BuildApprovalResponse,
     BuildApprovalState, BuildChangelogPreviewResponse, BuildContext, BuildDetailResponse,
     BuildEvent, BuildPlatform, BuildStatus, CancelBuildResponse, ConcurrencyPolicy,
-    CreateBuildRequest, CreateBuildResponse, DEFAULT_BUILD_TIMEOUT_MINUTES, ListBuildsResponse,
-    PipelineExecutionConfig, RerunBuildResponse, RunnerPolicyBlockReason, ScheduleTrigger,
-    TriggerConfig, scheduling_labels,
+    CreateBuildRequest, CreateBuildResponse, DEFAULT_BUILD_TIMEOUT_MINUTES,
+    ListBuildActorsResponse, ListBuildsResponse, PipelineExecutionConfig, RepositoryConfig,
+    RerunBuildResponse, RunnerPolicyBlockReason, ScheduleTrigger, TriggerConfig, TriggerEvent,
+    TriggerSpec, scheduling_labels,
 };
 use serde::Deserialize;
 use sqlx::Row;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::AppState;
@@ -206,6 +208,10 @@ pub async fn transition_build(
 pub(crate) struct RunnerResults<'a> {
     pub step_results: Option<&'a str>,
     pub exit_code: Option<i32>,
+    /// The size budgets the build's `.oore.yaml` sets, as a JSON array, once
+    /// the runner planned the build. Stored in the config snapshot as
+    /// `file_size_budgets`; an empty array removes it.
+    pub file_size_budgets: Option<&'a str>,
 }
 
 /// [`transition_build`], also storing the runner's results. The status
@@ -312,6 +318,20 @@ pub(crate) async fn transition_build_with_results(
             .execute(&mut *tx)
             .await
             .map_err(store_error("Failed to persist step results"))?;
+        if let Some(budgets) = results.file_size_budgets {
+            sqlx::query(
+                "UPDATE builds SET config_snapshot = CASE \
+                     WHEN json_array_length(?1) > 0 \
+                     THEN json_set(config_snapshot, '$.file_size_budgets', json(?1)) \
+                     ELSE json_remove(config_snapshot, '$.file_size_budgets') END \
+                 WHERE id = ?2 AND json_valid(config_snapshot)",
+            )
+            .bind(budgets)
+            .bind(build_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(store_error("Failed to persist size budgets"))?;
+        }
     }
 
     // Insert build event
@@ -376,6 +396,18 @@ fn create_config_snapshot(
         "repository_id": repository_id,
         "captured_at": now_unix(),
     })
+}
+
+/// Record the pipeline's v2 workflow, which the runner plans. Pipelines
+/// without one keep the snapshot they always had.
+fn set_snapshot_workflow(snapshot: &mut serde_json::Value, pipeline_row: &sqlx::sqlite::SqliteRow) {
+    if let Some(workflow) = pipeline_row
+        .try_get::<Option<String>, _>("workflow")
+        .ok()
+        .flatten()
+    {
+        snapshot["workflow"] = serde_json::json!(workflow);
+    }
 }
 
 fn validate_selected_platforms(
@@ -750,6 +782,15 @@ pub struct ListBuildsQuery {
     pub pipeline_id: Option<String>,
     pub status: Option<String>,
     pub branch: Option<String>,
+    /// Comma-separated trigger kinds: `manual`, `api`, `schedule`, or a
+    /// webhook event (`push`, `pull_request`, `tag_push`).
+    pub trigger: Option<String>,
+    /// Exact `trigger_actor`.
+    pub actor: Option<String>,
+    /// Unix seconds; builds created at or after this time.
+    pub created_after: Option<i64>,
+    /// Unix seconds; builds created before this time.
+    pub created_before: Option<i64>,
     /// Free-text search across build number, branch, commit, pipeline and
     /// project.
     pub q: Option<String>,
@@ -799,6 +840,223 @@ fn build_search_condition(query: &str, bind_values: &mut Vec<String>) -> String 
         ));
     }
     format!("({})", clauses.join(" OR "))
+}
+
+/// Trigger kinds `GET /v1/builds?trigger=` accepts. `manual`, `api` and
+/// `schedule` are trigger types; the rest are webhook events.
+const TRIGGER_TYPE_FILTERS: &[&str] = &["manual", "api", "schedule"];
+const TRIGGER_EVENT_FILTERS: &[&str] = &["push", "pull_request", "tag_push"];
+
+/// The `trigger_event` values each event filter matches. Webhook builds store
+/// the provider's event name: GitHub's `push`/`pull_request`, GitLab's
+/// `Push Hook`/`Merge Request Hook`, and `tag_push` for any tag push.
+fn trigger_event_aliases(event: &str) -> &'static [&'static str] {
+    match event {
+        "push" => &["push", "Push Hook"],
+        "pull_request" => &["pull_request", "Merge Request Hook"],
+        "tag_push" => &["tag_push", "Tag Push Hook"],
+        _ => &[],
+    }
+}
+const MAX_ACTOR_FILTER_CHARS: usize = 320;
+
+type ApiErr = (StatusCode, Json<ApiError>);
+
+fn invalid_input(message: &str) -> ApiErr {
+    api_err(StatusCode::BAD_REQUEST, "invalid_input", message)
+}
+
+/// Restricts builds to projects `viewer` belongs to. `None` sees every build
+/// (owners and admins).
+fn push_viewer_scope(viewer: Option<&str>, conditions: &mut Vec<String>, binds: &mut Vec<String>) {
+    if let Some(user_id) = viewer {
+        binds.push(user_id.to_string());
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = builds.project_id AND pm.user_id = ?{})",
+            binds.len()
+        ));
+    }
+}
+
+/// Splits a comma-separated filter into sorted, unique, non-empty values.
+fn split_filter_values(raw: &str) -> Vec<&str> {
+    let mut values = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    values
+}
+
+fn placeholders(values: &[&str], binds: &mut Vec<String>) -> String {
+    values
+        .iter()
+        .map(|value| {
+            binds.push((*value).to_string());
+            format!("?{}", binds.len())
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// WHERE conditions and their bind values for `GET /v1/builds`, scoped to
+/// what `viewer` may see. Every filter reads `builds` columns only so the
+/// count query needs no joins.
+fn build_list_conditions(
+    params: &ListBuildsQuery,
+    viewer: Option<&str>,
+) -> Result<(Vec<String>, Vec<String>), ApiErr> {
+    let mut conditions = Vec::new();
+    let mut bind_values: Vec<String> = Vec::new();
+
+    push_viewer_scope(viewer, &mut conditions, &mut bind_values);
+    if let Some(ref project_id) = params.project_id {
+        bind_values.push(project_id.clone());
+        conditions.push(format!("builds.project_id = ?{}", bind_values.len()));
+    }
+    if let Some(ref pipeline_id) = params.pipeline_id {
+        bind_values.push(pipeline_id.clone());
+        conditions.push(format!("builds.pipeline_id = ?{}", bind_values.len()));
+    }
+    if let Some(ref status) = params.status {
+        let values = split_filter_values(status);
+        if values.len() > 9 {
+            return Err(invalid_input(
+                "status accepts at most 9 comma-separated values",
+            ));
+        }
+        if values.is_empty() {
+            conditions.push("1 = 0".to_string());
+        } else {
+            conditions.push(format!(
+                "builds.status IN ({})",
+                placeholders(&values, &mut bind_values)
+            ));
+        }
+    }
+    if let Some(ref branch) = params.branch {
+        bind_values.push(branch.clone());
+        conditions.push(format!("builds.branch = ?{}", bind_values.len()));
+    }
+    if let Some(ref trigger) = params.trigger {
+        let values = split_filter_values(trigger);
+        if let Some(unknown) = values.iter().find(|value| {
+            !TRIGGER_TYPE_FILTERS.contains(value) && !TRIGGER_EVENT_FILTERS.contains(value)
+        }) {
+            return Err(invalid_input(&format!(
+                "unknown trigger '{unknown}'; use manual, api, schedule, push, pull_request, or tag_push"
+            )));
+        }
+        let (types, events): (Vec<&str>, Vec<&str>) = values
+            .into_iter()
+            .partition(|value| TRIGGER_TYPE_FILTERS.contains(value));
+        let mut clauses = Vec::new();
+        if !types.is_empty() {
+            clauses.push(format!(
+                "builds.trigger_type IN ({})",
+                placeholders(&types, &mut bind_values)
+            ));
+        }
+        if !events.is_empty() {
+            let stored = events
+                .iter()
+                .flat_map(|event| trigger_event_aliases(event).iter().copied())
+                .collect::<Vec<_>>();
+            clauses.push(format!(
+                "(builds.trigger_type = 'webhook' AND builds.trigger_event IN ({}))",
+                placeholders(&stored, &mut bind_values)
+            ));
+        }
+        conditions.push(if clauses.is_empty() {
+            "1 = 0".to_string()
+        } else {
+            format!("({})", clauses.join(" OR "))
+        });
+    }
+    if let Some(actor) = normalize_optional(params.actor.clone()) {
+        if actor.chars().count() > MAX_ACTOR_FILTER_CHARS {
+            return Err(invalid_input("actor must be at most 320 characters"));
+        }
+        bind_values.push(actor);
+        conditions.push(format!("builds.trigger_actor = ?{}", bind_values.len()));
+    }
+    for (value, name) in [
+        (params.created_after, "created_after"),
+        (params.created_before, "created_before"),
+    ] {
+        if value.is_some_and(|seconds| seconds < 0) {
+            return Err(invalid_input(&format!("{name} must not be negative")));
+        }
+    }
+    if let (Some(after), Some(before)) = (params.created_after, params.created_before)
+        && after >= before
+    {
+        return Err(invalid_input(
+            "created_after must be earlier than created_before",
+        ));
+    }
+    if let Some(after) = params.created_after {
+        bind_values.push(after.to_string());
+        conditions.push(format!(
+            "builds.created_at >= CAST(?{} AS INTEGER)",
+            bind_values.len()
+        ));
+    }
+    if let Some(before) = params.created_before {
+        bind_values.push(before.to_string());
+        conditions.push(format!(
+            "builds.created_at < CAST(?{} AS INTEGER)",
+            bind_values.len()
+        ));
+    }
+    if let Some(q) = normalize_optional(params.q.clone()) {
+        if q.chars().count() > 200 {
+            return Err(invalid_input("q must be at most 200 characters"));
+        }
+        conditions.push(build_search_condition(&q, &mut bind_values));
+    }
+
+    Ok((conditions, bind_values))
+}
+
+fn where_sql(conditions: &[String]) -> String {
+    if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    }
+}
+
+/// The `GET /v1/builds` page query: `bind_count` filter values, then the
+/// limit and offset.
+fn build_list_query(where_clause: &str, order_by: &str, bind_count: usize) -> String {
+    format!(
+        "SELECT builds.*, projects.name AS project_name, integration_repositories.id AS repository_id, integration_repositories.avatar_url AS project_avatar_url, \
+         integration_repositories.full_name AS repository_full_name, integrations.provider AS repository_provider, \
+         integrations.host_url AS repository_host_url, pipelines.name AS pipeline_name, runners.name AS runner_name, \
+         CASE \
+           WHEN builds.status != 'queued' THEN NULL \
+           WHEN integration_repositories.id IS NULL \
+             OR json_extract(builds.config_snapshot, '$.repository_id') IS NULL \
+             OR json_extract(builds.config_snapshot, '$.repository_id') != projects.repository_id \
+             THEN 'repository_unavailable' \
+           WHEN COALESCE(instance_preferences.direct_macos_runner_paused, 0) = 1 THEN 'instance_paused' \
+           ELSE NULL \
+         END AS runner_policy_block_reason \
+         FROM builds \
+         LEFT JOIN projects ON projects.id = builds.project_id \
+         LEFT JOIN integration_repositories ON integration_repositories.id = projects.repository_id \
+         LEFT JOIN integration_installations ON integration_installations.id = integration_repositories.installation_id \
+         LEFT JOIN integrations ON integrations.id = integration_installations.integration_id \
+         LEFT JOIN instance_preferences ON instance_preferences.id = 1 \
+         LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
+         LEFT JOIN runners ON runners.id = builds.runner_id \
+         {where_clause} ORDER BY {order_by} LIMIT ?{} OFFSET ?{}",
+        bind_count + 1,
+        bind_count + 2
+    )
 }
 
 fn build_order_clause(
@@ -1120,7 +1378,7 @@ pub async fn create_build(
     // Verify pipeline exists and belongs to this project
     let pipeline_row = sqlx::query(
         "SELECT id, config_path, config_path_explicit, execution_config, concurrency, \
-                timeout_minutes, approval_policy \
+                timeout_minutes, approval_policy, workflow \
          FROM pipelines WHERE id = ?1 AND project_id = ?2",
     )
     .bind(&req.pipeline_id)
@@ -1215,6 +1473,7 @@ pub async fn create_build(
     if let Some(selected_platforms) = selected_platforms {
         config_snapshot["selected_platforms"] = serde_json::json!(selected_platforms);
     }
+    set_snapshot_workflow(&mut config_snapshot, &pipeline_row);
 
     let snapshot_str = config_snapshot.to_string();
     let inserted = insert_build_with_retry(
@@ -1362,99 +1621,14 @@ pub async fn list_builds(
     let offset = params.offset.unwrap_or(0);
     let order_by = build_order_clause(params.sort.as_deref(), params.direction.as_deref())?;
 
-    // Build dynamic query with filters
-    let mut conditions = Vec::new();
-    let mut bind_values: Vec<String> = Vec::new();
+    let viewer =
+        (auth.0.role != "owner" && auth.0.role != "admin").then_some(auth.0.user_id.as_str());
+    let (conditions, bind_values) = build_list_conditions(&params, viewer)?;
 
-    if auth.0.role != "owner" && auth.0.role != "admin" {
-        bind_values.push(auth.0.user_id.clone());
-        conditions.push(format!(
-            "EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = builds.project_id AND pm.user_id = ?{})",
-            bind_values.len()
-        ));
-    }
-    if let Some(ref project_id) = params.project_id {
-        bind_values.push(project_id.clone());
-        conditions.push(format!("builds.project_id = ?{}", bind_values.len()));
-    }
-    if let Some(ref pipeline_id) = params.pipeline_id {
-        bind_values.push(pipeline_id.clone());
-        conditions.push(format!("builds.pipeline_id = ?{}", bind_values.len()));
-    }
-    if let Some(ref status) = params.status {
-        let mut values = status
-            .split(',')
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>();
-        values.sort_unstable();
-        values.dedup();
-        if values.len() > 9 {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_input",
-                "status accepts at most 9 comma-separated values",
-            ));
-        }
-        if values.is_empty() {
-            conditions.push("1 = 0".to_string());
-        }
-        let mut placeholders = Vec::new();
-        for value in values {
-            bind_values.push(value.to_string());
-            placeholders.push(format!("?{}", bind_values.len()));
-        }
-        if !placeholders.is_empty() {
-            conditions.push(format!("builds.status IN ({})", placeholders.join(", ")));
-        }
-    }
-    if let Some(ref branch) = params.branch {
-        bind_values.push(branch.clone());
-        conditions.push(format!("builds.branch = ?{}", bind_values.len()));
-    }
-    if let Some(q) = normalize_optional(params.q) {
-        if q.chars().count() > 200 {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_input",
-                "q must be at most 200 characters",
-            ));
-        }
-        conditions.push(build_search_condition(&q, &mut bind_values));
-    }
-
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
+    let where_clause = where_sql(&conditions);
 
     let count_query = format!("SELECT COUNT(*) FROM builds {where_clause}");
-    let list_query = format!(
-        "SELECT builds.*, projects.name AS project_name, integration_repositories.id AS repository_id, integration_repositories.avatar_url AS project_avatar_url, \
-         integration_repositories.full_name AS repository_full_name, integrations.provider AS repository_provider, \
-         integrations.host_url AS repository_host_url, pipelines.name AS pipeline_name, runners.name AS runner_name, \
-         CASE \
-           WHEN builds.status != 'queued' THEN NULL \
-           WHEN integration_repositories.id IS NULL \
-             OR json_extract(builds.config_snapshot, '$.repository_id') IS NULL \
-             OR json_extract(builds.config_snapshot, '$.repository_id') != projects.repository_id \
-             THEN 'repository_unavailable' \
-           WHEN COALESCE(instance_preferences.direct_macos_runner_paused, 0) = 1 THEN 'instance_paused' \
-           ELSE NULL \
-         END AS runner_policy_block_reason \
-         FROM builds \
-         LEFT JOIN projects ON projects.id = builds.project_id \
-         LEFT JOIN integration_repositories ON integration_repositories.id = projects.repository_id \
-         LEFT JOIN integration_installations ON integration_installations.id = integration_repositories.installation_id \
-         LEFT JOIN integrations ON integrations.id = integration_installations.integration_id \
-         LEFT JOIN instance_preferences ON instance_preferences.id = 1 \
-         LEFT JOIN pipelines ON pipelines.id = builds.pipeline_id \
-         LEFT JOIN runners ON runners.id = builds.runner_id \
-         {where_clause} ORDER BY {order_by} LIMIT ?{} OFFSET ?{}",
-        bind_values.len() + 1,
-        bind_values.len() + 2
-    );
+    let list_query = build_list_query(&where_clause, &order_by, bind_values.len());
 
     // Execute count query
     let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_query));
@@ -1482,6 +1656,74 @@ pub async fn list_builds(
     let builds = rows.iter().map(row_to_redacted_build).collect();
 
     Ok(Json(ListBuildsResponse { builds, total }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListBuildActorsQuery {
+    pub project_id: Option<String>,
+    pub q: Option<String>,
+    pub limit: Option<i64>,
+}
+
+/// Distinct actors of the builds `viewer` can see, most recently active first.
+async fn query_build_actors(
+    pool: &sqlx::SqlitePool,
+    params: &ListBuildActorsQuery,
+    viewer: Option<&str>,
+) -> Result<Vec<String>, ApiErr> {
+    let limit = params.limit.unwrap_or(50);
+    if limit <= 0 {
+        return Err(invalid_input("limit must be greater than zero"));
+    }
+    let limit = limit.min(200);
+    let mut conditions = vec!["builds.trigger_actor IS NOT NULL".to_string()];
+    let mut binds = Vec::new();
+    push_viewer_scope(viewer, &mut conditions, &mut binds);
+    if let Some(project_id) = normalize_optional(params.project_id.clone()) {
+        binds.push(project_id);
+        conditions.push(format!("builds.project_id = ?{}", binds.len()));
+    }
+    if let Some(q) = normalize_optional(params.q.clone()) {
+        if q.chars().count() > 200 {
+            return Err(invalid_input("q must be at most 200 characters"));
+        }
+        binds.push(format!("%{}%", escape_like(&q.to_lowercase())));
+        conditions.push(format!(
+            "lower(builds.trigger_actor) LIKE ?{} ESCAPE '\\'",
+            binds.len()
+        ));
+    }
+    let sql = format!(
+        "SELECT builds.trigger_actor FROM builds WHERE {} \
+         GROUP BY builds.trigger_actor \
+         ORDER BY MAX(builds.created_at) DESC, builds.trigger_actor LIMIT ?{}",
+        conditions.join(" AND "),
+        binds.len() + 1
+    );
+    let mut query = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql));
+    for bind in &binds {
+        query = query.bind(bind);
+    }
+    query.bind(limit).fetch_all(pool).await.map_err(|e| {
+        error!(error = %e, "failed to list build actors");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list build actors",
+        )
+    })
+}
+
+/// `GET /v1/builds/actors` — who triggered the builds the caller can see.
+pub async fn list_build_actors(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Query(params): Query<ListBuildActorsQuery>,
+) -> ApiResult<ListBuildActorsResponse> {
+    let viewer =
+        (auth.0.role != "owner" && auth.0.role != "admin").then_some(auth.0.user_id.as_str());
+    let actors = query_build_actors(&state.db, &params, viewer).await?;
+    Ok(Json(ListBuildActorsResponse { actors }))
 }
 
 /// `GET /v1/builds/{build_id}` — build detail with events timeline.
@@ -1873,7 +2115,8 @@ pub(crate) async fn queue_rerun(
     // Fetch source build
     let source_row = sqlx::query(
         "SELECT id, project_id, pipeline_id, build_number, status, \
-         trigger_ref, commit_sha, branch, changelog, config_snapshot, approval_requested_at \
+         trigger_ref, commit_sha, branch, changelog, config_snapshot, approval_requested_at, \
+         step_results \
          FROM builds WHERE id = ?1",
     )
     .bind(&build_id)
@@ -2054,11 +2297,12 @@ pub(crate) async fn queue_rerun(
             "timeout_secs".to_string(),
             serde_json::json!(i64::from(timeout_minutes) * 60),
         );
-        // A full re-run of a retry builds everything again.
-        snapshot.remove("retry_steps");
-        if let Some(steps) = &retry_steps {
-            snapshot.insert("retry_steps".to_string(), serde_json::json!(steps));
-        }
+        let step_results: Option<String> = source_row.get("step_results");
+        crate::step_retry::set_retry_snapshot(
+            snapshot,
+            retry_steps.as_deref(),
+            step_results.as_deref(),
+        );
     }
     let event_type = if retry_steps.is_some() {
         "retry"
@@ -2243,9 +2487,50 @@ pub struct WebhookBuildTrigger<'a> {
     pub branch: Option<&'a str>,
     /// Set for tag pushes, which match `trigger_config.tags`.
     pub tag: Option<&'a str>,
+    /// The branch a pull or merge request targets, which `.oore.yaml`
+    /// `on.pull_request.branches` matches.
+    pub target_branch: Option<&'a str>,
     pub commit_sha: Option<&'a str>,
     pub actor: Option<&'a str>,
     pub changes: ChangeSet<'a>,
+}
+
+/// A pipeline's repository file at a webhook revision, for its `on`. A
+/// missing or invalid file leaves the pipeline's trigger settings in charge,
+/// as before `on` was applied; an invalid file then fails the build with its
+/// error. `Err` carries why the provider could not be read.
+async fn pipeline_file_at(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    project_id: &str,
+    config_path: &str,
+    config_path_explicit: bool,
+    commit_sha: &str,
+) -> Result<Option<RepositoryConfig>, String> {
+    use crate::repository_workflows::{PipelineFile, load_pipeline_file};
+    match load_pipeline_file(
+        pool,
+        encryption_key,
+        project_id,
+        config_path,
+        config_path_explicit,
+        Some(commit_sha),
+    )
+    .await
+    {
+        Ok(Some(PipelineFile::Parsed { config, .. })) => Ok(Some(*config)),
+        Ok(Some(PipelineFile::Invalid { path, error })) => {
+            info!(
+                project_id,
+                path = %path,
+                error = %error,
+                "pipeline file is invalid; its trigger settings apply"
+            );
+            Ok(None)
+        }
+        Ok(_) => Ok(None),
+        Err((status, body)) => Err(format!("{status}: {}", body.0.error)),
+    }
 }
 
 /// Trigger builds from a webhook event.
@@ -2263,6 +2548,7 @@ pub async fn trigger_build_from_webhook(
         repo_full_name,
         branch,
         tag,
+        target_branch,
         commit_sha,
         actor,
         ..
@@ -2311,6 +2597,20 @@ pub async fn trigger_build_from_webhook(
     let now = now_unix();
     // Fetched at most once, and only when a pipeline filters on paths.
     let mut compared_files: Option<Option<Vec<String>>> = None;
+    // Pipeline files at this revision, read once per project and path.
+    let mut pipeline_files: HashMap<
+        (String, Option<String>),
+        Result<Option<RepositoryConfig>, String>,
+    > = HashMap::new();
+    // The first pipeline that could not be matched for want of its file;
+    // returned after every other pipeline had its chance to build.
+    let mut deferred: Option<(StatusCode, Json<ApiError>)> = None;
+    let file_event = match (canonical_event.as_str(), tag, branch) {
+        (_, Some(tag), _) => Some(TriggerEvent::Tag { tag }),
+        ("push", None, Some(branch)) => Some(TriggerEvent::Push { branch }),
+        ("pull_request", None, _) => Some(TriggerEvent::PullRequest { target_branch }),
+        _ => None,
+    };
 
     for project_row in &project_rows {
         let project_id: String = project_row.get("id");
@@ -2335,7 +2635,7 @@ pub async fn trigger_build_from_webhook(
         // Find enabled pipelines for this project
         let pipeline_rows = sqlx::query(
             "SELECT id, config_path, config_path_explicit, execution_config, trigger_config, concurrency, \
-                    timeout_minutes, approval_policy \
+                    timeout_minutes, approval_policy, workflow \
              FROM pipelines WHERE project_id = ?1 AND enabled = 1",
         )
         .bind(&project_id)
@@ -2368,13 +2668,93 @@ pub async fn trigger_build_from_webhook(
                     TriggerConfig::default()
                 });
 
-            if !trigger_config.should_trigger(event_type, branch, tag) {
+            // A v2 file's `on` replaces the trigger settings. Without a
+            // revision there is no file to read, and the build is skipped
+            // below anyway.
+            let workflow: Option<String> = pipeline_row.try_get("workflow").ok().flatten();
+            let sha = commit_sha.filter(|sha| !sha.is_empty());
+            if sha.is_some() && file_event.is_none() && workflow.is_some() {
+                // No `on` can match an event that is not a push, pull request
+                // or tag, so the file is not read. A pipeline with a workflow
+                // builds from a v2 file and must not fall back to its trigger
+                // settings.
+                debug!(
+                    pipeline_id = %pipeline_id,
+                    event_type = %event_type,
+                    "event is not a push, pull request or tag; skipping a pipeline with a workflow"
+                );
+                continue;
+            }
+            let file_on: Option<TriggerSpec> = match sha.filter(|_| file_event.is_some()) {
+                Some(sha) => {
+                    let key = (
+                        project_id.clone(),
+                        (config_path_explicit != 0).then(|| config_path.trim().to_string()),
+                    );
+                    if !pipeline_files.contains_key(&key) {
+                        let config = pipeline_file_at(
+                            pool,
+                            encryption_key,
+                            &project_id,
+                            &config_path,
+                            config_path_explicit != 0,
+                            sha,
+                        )
+                        .await;
+                        pipeline_files.insert(key.clone(), config);
+                    }
+                    match &pipeline_files[&key] {
+                        Ok(config) => config
+                            .as_ref()
+                            .and_then(|config| config.triggers(workflow.as_deref()))
+                            .cloned(),
+                        // A pipeline that picks a workflow builds from a v2
+                        // file, whose `on` may be far narrower than its
+                        // trigger settings. Skip it and fail the delivery
+                        // once every other pipeline has had its chance, so
+                        // the retry builds it without guessing.
+                        Err(error) if workflow.is_some() => {
+                            warn!(
+                                pipeline_id = %pipeline_id,
+                                error = %error,
+                                "could not read the pipeline file for a pipeline with a workflow; the delivery will be retried"
+                            );
+                            deferred.get_or_insert_with(|| {
+                                api_err(
+                                    StatusCode::BAD_GATEWAY,
+                                    "source_unavailable",
+                                    format!(
+                                        "Could not read the pipeline file to match its triggers: {error}"
+                                    ),
+                                )
+                            });
+                            continue;
+                        }
+                        Err(error) => {
+                            warn!(
+                                pipeline_id = %pipeline_id,
+                                error = %error,
+                                "could not read the pipeline file; its trigger settings apply"
+                            );
+                            None
+                        }
+                    }
+                }
+                None => None,
+            };
+
+            let ref_matches = match &file_on {
+                Some(on) => file_event.is_some_and(|event| on.matches_ref(event)),
+                None => trigger_config.should_trigger(event_type, branch, tag),
+            };
+            if !ref_matches {
                 info!(
                     pipeline_id = %pipeline_id,
                     event_type = %event_type,
                     branch = ?branch,
                     tag = ?tag,
-                    "webhook event filtered by trigger_config, skipping pipeline"
+                    from_file = file_on.is_some(),
+                    "webhook event filtered by the pipeline triggers, skipping pipeline"
                 );
                 continue;
             }
@@ -2388,7 +2768,11 @@ pub async fn trigger_build_from_webhook(
                 );
                 continue;
             }
-            if tag.is_none() && trigger_config.has_path_filters() {
+            let has_path_filters = match &file_on {
+                Some(on) => on.has_path_filters(),
+                None => trigger_config.has_path_filters(),
+            };
+            if tag.is_none() && has_path_filters {
                 let changed_files = match &trigger.changes {
                     ChangeSet::Unknown => None,
                     ChangeSet::Files(files) => Some(*files),
@@ -2408,7 +2792,11 @@ pub async fn trigger_build_from_webhook(
                         compared_files.as_ref().and_then(Option::as_deref)
                     }
                 };
-                if !trigger_config.paths_match(changed_files) {
+                let paths_match = match &file_on {
+                    Some(on) => on.paths_match(changed_files),
+                    None => trigger_config.paths_match(changed_files),
+                };
+                if !paths_match {
                     info!(
                         pipeline_id = %pipeline_id,
                         event_type = %event_type,
@@ -2421,7 +2809,7 @@ pub async fn trigger_build_from_webhook(
             let build_id = Uuid::new_v4().to_string();
             let approval_required = approval_policy.applies_to(&canonical_event);
 
-            let config_snapshot = create_config_snapshot(
+            let mut config_snapshot = create_config_snapshot(
                 &config_path,
                 config_path_explicit != 0,
                 &execution_config,
@@ -2431,6 +2819,7 @@ pub async fn trigger_build_from_webhook(
                 branch,
                 (&repository_id, &repo_url),
             );
+            set_snapshot_workflow(&mut config_snapshot, pipeline_row);
 
             let snapshot_str = config_snapshot.to_string();
             let inserted = insert_build_with_retry(
@@ -2527,6 +2916,9 @@ pub async fn trigger_build_from_webhook(
         }
     }
 
+    if let Some(error) = deferred {
+        return Err(error);
+    }
     Ok(created_builds)
 }
 
@@ -2539,7 +2931,7 @@ pub async fn create_scheduled_build(
 ) -> Result<String, (StatusCode, Json<ApiError>)> {
     let row = sqlx::query(
         "SELECT pl.project_id, pl.config_path, pl.config_path_explicit, pl.execution_config, \
-                pl.concurrency, pl.timeout_minutes, pl.approval_policy, \
+                pl.concurrency, pl.timeout_minutes, pl.approval_policy, pl.workflow, \
                 p.repository_id, p.default_branch \
          FROM pipelines pl JOIN projects p ON p.id = pl.project_id \
          WHERE pl.id = ?1 AND pl.enabled = 1",
@@ -2603,7 +2995,7 @@ pub async fn create_scheduled_build(
         serde_json::from_str(&row.get::<String, _>("concurrency")).unwrap_or_default();
     let (timeout_minutes, approval_policy) = pipeline_gates(&row);
     let approval_required = approval_policy.applies_to("schedule");
-    let config_snapshot = create_config_snapshot(
+    let mut config_snapshot = create_config_snapshot(
         &row.get::<String, _>("config_path"),
         row.try_get::<i32, _>("config_path_explicit").unwrap_or(0) != 0,
         &execution_config,
@@ -2613,6 +3005,7 @@ pub async fn create_scheduled_build(
         Some(&branch),
         (&repository_id, &repo_url),
     );
+    set_snapshot_workflow(&mut config_snapshot, &row);
 
     let now = now_unix();
     let build_id = Uuid::new_v4().to_string();
@@ -2740,6 +3133,7 @@ mod tests {
                 event_type: "push",
                 branch,
                 tag,
+                target_branch: None,
                 commit_sha: Some("abc123"),
                 actor: Some("octocat"),
                 changes,
@@ -3215,5 +3609,629 @@ mod tests {
         // Pipeline and project names match every build in them.
         assert_eq!(matches(&pool, "relea").await, ["b1", "b2", "b3"]);
         assert_eq!(matches(&pool, "app").await, ["b1", "b2", "b3"]);
+    }
+
+    fn list_params() -> ListBuildsQuery {
+        ListBuildsQuery {
+            project_id: None,
+            pipeline_id: None,
+            status: None,
+            branch: None,
+            trigger: None,
+            actor: None,
+            created_after: None,
+            created_before: None,
+            q: None,
+            limit: None,
+            offset: None,
+            sort: None,
+            direction: None,
+        }
+    }
+
+    async fn insert_filter_builds(pool: &sqlx::SqlitePool) {
+        sqlx::query(
+            "INSERT INTO projects (id, name, created_by, created_at, updated_at) \
+             VALUES ('p2', 'Other', 'u1', 0, 0)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO pipelines (id, project_id, name, created_at, updated_at) \
+             VALUES ('pl2', 'p2', 'nightly', 0, 0)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        for (id, project, pipeline, number, trigger_type, event, actor, created_at) in [
+            (
+                "push",
+                "p1",
+                "pl1",
+                1,
+                "webhook",
+                Some("push"),
+                Some("octocat"),
+                100,
+            ),
+            (
+                "pr",
+                "p1",
+                "pl1",
+                2,
+                "webhook",
+                Some("pull_request"),
+                Some("hubot"),
+                200,
+            ),
+            (
+                "tag",
+                "p1",
+                "pl1",
+                3,
+                "webhook",
+                Some("tag_push"),
+                Some("octocat"),
+                300,
+            ),
+            (
+                "manual",
+                "p1",
+                "pl1",
+                4,
+                "manual",
+                None,
+                Some("lead@example.com"),
+                400,
+            ),
+            (
+                "rerun",
+                "p1",
+                "pl1",
+                5,
+                "manual",
+                Some("rerun"),
+                Some("lead@example.com"),
+                500,
+            ),
+            (
+                "nightly",
+                "p2",
+                "pl2",
+                1,
+                "schedule",
+                Some("schedule"),
+                None,
+                600,
+            ),
+            (
+                "hidden",
+                "p2",
+                "pl2",
+                2,
+                "webhook",
+                Some("push"),
+                Some("stranger"),
+                700,
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, trigger_event, trigger_actor, queued_at, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, 'succeeded', ?5, ?6, ?7, ?8, ?8, ?8)",
+            )
+            .bind(id)
+            .bind(project)
+            .bind(pipeline)
+            .bind(number)
+            .bind(trigger_type)
+            .bind(event)
+            .bind(actor)
+            .bind(created_at)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    async fn listed(
+        pool: &sqlx::SqlitePool,
+        params: &ListBuildsQuery,
+        viewer: Option<&str>,
+    ) -> Vec<String> {
+        let (conditions, binds) = build_list_conditions(params, viewer).unwrap();
+        let sql = format!(
+            "SELECT id FROM builds {} ORDER BY created_at",
+            where_sql(&conditions)
+        );
+        let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql));
+        for bind in &binds {
+            q = q.bind(bind);
+        }
+        q.fetch_all(pool).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn builds_filter_by_trigger_kind() {
+        let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
+        insert_filter_builds(&pool).await;
+        let by = |trigger: &str| ListBuildsQuery {
+            trigger: Some(trigger.to_string()),
+            ..list_params()
+        };
+
+        assert_eq!(listed(&pool, &by("push"), None).await, ["push", "hidden"]);
+        assert_eq!(listed(&pool, &by("pull_request"), None).await, ["pr"]);
+        assert_eq!(listed(&pool, &by("tag_push"), None).await, ["tag"]);
+        // A rerun is manual whatever its event says.
+        assert_eq!(
+            listed(&pool, &by("manual"), None).await,
+            ["manual", "rerun"]
+        );
+        assert_eq!(listed(&pool, &by("schedule"), None).await, ["nightly"]);
+        assert_eq!(
+            listed(&pool, &by("schedule, pull_request,schedule"), None).await,
+            ["pr", "nightly"]
+        );
+        assert!(listed(&pool, &by(" , "), None).await.is_empty());
+
+        // GitLab builds store GitLab's event names.
+        for (id, number, event) in [
+            ("gl-push", 8, "Push Hook"),
+            ("gl-mr", 9, "Merge Request Hook"),
+        ] {
+            sqlx::query(
+                "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, trigger_event, queued_at, created_at, updated_at) \
+                 VALUES (?1, 'p1', 'pl1', ?2, 'succeeded', 'webhook', ?3, 800, 800, 800)",
+            )
+            .bind(id)
+            .bind(number)
+            .bind(event)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            listed(&pool, &by("push"), None).await,
+            ["push", "hidden", "gl-push"]
+        );
+        assert_eq!(
+            listed(&pool, &by("pull_request"), None).await,
+            ["pr", "gl-mr"]
+        );
+
+        let error = build_list_conditions(&by("push,cron"), None).unwrap_err();
+        assert_eq!(error.0, StatusCode::BAD_REQUEST);
+        assert!(error.1.error.contains("cron"), "{}", error.1.error);
+    }
+
+    #[tokio::test]
+    async fn builds_filter_by_actor_and_creation_time() {
+        let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
+        insert_filter_builds(&pool).await;
+
+        let actor = ListBuildsQuery {
+            actor: Some(" octocat ".to_string()),
+            ..list_params()
+        };
+        assert_eq!(listed(&pool, &actor, None).await, ["push", "tag"]);
+
+        // `created_after` is inclusive and `created_before` exclusive.
+        let window = ListBuildsQuery {
+            created_after: Some(200),
+            created_before: Some(500),
+            ..list_params()
+        };
+        assert_eq!(listed(&pool, &window, None).await, ["pr", "tag", "manual"]);
+
+        let combined = ListBuildsQuery {
+            trigger: Some("push,tag_push".to_string()),
+            actor: Some("octocat".to_string()),
+            created_after: Some(150),
+            ..list_params()
+        };
+        assert_eq!(listed(&pool, &combined, None).await, ["tag"]);
+
+        for invalid in [
+            ListBuildsQuery {
+                created_after: Some(500),
+                created_before: Some(500),
+                ..list_params()
+            },
+            ListBuildsQuery {
+                created_before: Some(-1),
+                ..list_params()
+            },
+            ListBuildsQuery {
+                actor: Some("a".repeat(321)),
+                ..list_params()
+            },
+        ] {
+            let error = build_list_conditions(&invalid, None).unwrap_err();
+            assert_eq!(error.0, StatusCode::BAD_REQUEST, "{}", error.1.error);
+        }
+    }
+
+    #[tokio::test]
+    async fn filters_and_actors_stay_inside_the_viewers_projects() {
+        let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
+        insert_filter_builds(&pool).await;
+        sqlx::query(
+            "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+             VALUES ('u2', 'dev@example.com', 'sub2', 'developer', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO project_members (id, project_id, user_id, role, created_by, created_at, updated_at) \
+             VALUES ('m1', 'p1', 'u2', 'developer', 'u1', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let push = ListBuildsQuery {
+            trigger: Some("push".to_string()),
+            ..list_params()
+        };
+        assert_eq!(listed(&pool, &push, Some("u2")).await, ["push"]);
+        let stranger = ListBuildsQuery {
+            actor: Some("stranger".to_string()),
+            ..list_params()
+        };
+        assert!(listed(&pool, &stranger, Some("u2")).await.is_empty());
+
+        let all = ListBuildActorsQuery {
+            project_id: None,
+            q: None,
+            limit: None,
+        };
+        assert_eq!(
+            query_build_actors(&pool, &all, None).await.unwrap(),
+            ["stranger", "lead@example.com", "octocat", "hubot"]
+        );
+        assert_eq!(
+            query_build_actors(&pool, &all, Some("u2")).await.unwrap(),
+            ["lead@example.com", "octocat", "hubot"]
+        );
+        let search = ListBuildActorsQuery {
+            project_id: Some("p1".to_string()),
+            q: Some("OCTO".to_string()),
+            limit: Some(5),
+        };
+        assert_eq!(
+            query_build_actors(&pool, &search, None).await.unwrap(),
+            ["octocat"]
+        );
+    }
+
+    /// The query plan of the handler's real page query for `params`.
+    async fn page_plan(pool: &sqlx::SqlitePool, params: &ListBuildsQuery) -> Vec<String> {
+        let (conditions, binds) = build_list_conditions(params, None).unwrap();
+        let order_by = build_order_clause(None, None).unwrap();
+        let sql = format!(
+            "EXPLAIN QUERY PLAN {}",
+            build_list_query(&where_sql(&conditions), &order_by, binds.len())
+        );
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for bind in &binds {
+            query = query.bind(bind);
+        }
+        let rows = query
+            .bind(20_i64)
+            .bind(0_i64)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        rows.iter().map(|row| row.get("detail")).collect()
+    }
+
+    #[tokio::test]
+    async fn builds_pages_read_an_index_in_page_order() {
+        let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
+        for (params, index) in [
+            (list_params(), "idx_builds_created_at"),
+            (
+                ListBuildsQuery {
+                    trigger: Some("manual".to_string()),
+                    ..list_params()
+                },
+                "idx_builds_trigger_type",
+            ),
+            (
+                ListBuildsQuery {
+                    actor: Some("octocat".to_string()),
+                    ..list_params()
+                },
+                "idx_builds_trigger_actor",
+            ),
+        ] {
+            let plan = page_plan(&pool, &params).await;
+            assert!(
+                plan.iter().any(|detail| detail.contains(index)),
+                "{index}: {plan:?}"
+            );
+            assert!(
+                !plan.iter().any(|detail| detail.contains("TEMP B-TREE")),
+                "{index} sorts the whole set: {plan:?}"
+            );
+        }
+    }
+
+    /// A local repository with the given files committed on `main`, linked
+    /// to project `p1` through a local Git source. Returns the commit.
+    fn commit_files(repo: &std::path::Path, files: &[(&str, &str)]) -> String {
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(["-c", "user.name=Oore", "-c", "user.email=oore@example.com"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            String::from_utf8(output.stdout).unwrap().trim().to_string()
+        };
+        if !repo.join(".git").exists() {
+            git(&["init", "-q", "-b", "main"]);
+        }
+        for (path, contents) in files {
+            std::fs::write(repo.join(path), contents).unwrap();
+        }
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "change"]);
+        git(&["rev-parse", "HEAD"])
+    }
+
+    async fn local_pool(repo: &std::path::Path) -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let repo = repo.to_str().unwrap();
+        for statement in [
+            "INSERT INTO users (id, email, oidc_subject, role, created_at, updated_at) \
+             VALUES ('u1', 'lead@example.com', 'sub', 'owner', 0, 0)",
+            "INSERT INTO integrations (id, provider, host_url, auth_mode, created_by, created_at, updated_at) \
+             VALUES ('i1', 'local_git', 'local://filesystem', 'local_path', 'u1', 0, 0)",
+            "INSERT INTO integration_installations (id, integration_id, external_id, account_name, created_at, updated_at) \
+             VALUES ('inst1', 'i1', ?1, 'local', 0, 0)",
+            "INSERT INTO integration_repositories (id, installation_id, external_id, full_name, default_branch, html_url, created_at, updated_at) \
+             VALUES ('r1', 'inst1', ?1, 'app', 'main', ?1, 0, 0)",
+            "INSERT INTO projects (id, name, repository_id, created_by, created_at, updated_at) \
+             VALUES ('p1', 'App', 'r1', 'u1', 0, 0)",
+        ] {
+            sqlx::query(statement)
+                .bind(repo)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        pool
+    }
+
+    async fn add_pipeline(
+        pool: &sqlx::SqlitePool,
+        id: &str,
+        workflow: Option<&str>,
+        trigger_config: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO pipelines (id, project_id, name, trigger_config, workflow, created_at, updated_at) \
+             VALUES (?1, 'p1', ?1, ?2, ?3, 0, 0)",
+        )
+        .bind(id)
+        .bind(trigger_config)
+        .bind(workflow)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    struct Revision<'a> {
+        event_type: &'a str,
+        branch: Option<&'a str>,
+        tag: Option<&'a str>,
+        target_branch: Option<&'a str>,
+        changes: ChangeSet<'a>,
+    }
+
+    /// Pipelines that build `revision` of `commit`, sorted.
+    async fn built(pool: &sqlx::SqlitePool, commit: &str, revision: Revision<'_>) -> Vec<String> {
+        let webhook_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO integration_webhooks (id, integration_id, provider_delivery_id, event_type, payload, received_at) \
+             VALUES (?1, 'i1', ?1, ?2, '{}', 0)",
+        )
+        .bind(&webhook_id)
+        .bind(revision.event_type)
+        .execute(pool)
+        .await
+        .unwrap();
+        let builds = trigger_build_from_webhook(
+            pool,
+            &[0; 32],
+            &WebhookBuildTrigger {
+                webhook_id: &webhook_id,
+                integration_id: "i1",
+                repo_full_name: "app",
+                event_type: revision.event_type,
+                branch: revision.branch,
+                tag: revision.tag,
+                target_branch: revision.target_branch,
+                commit_sha: Some(commit),
+                actor: Some("octocat"),
+                changes: revision.changes,
+            },
+        )
+        .await
+        .unwrap();
+        let mut pipelines = builds
+            .iter()
+            .map(|build| {
+                let workflow = build
+                    .config_snapshot
+                    .get("workflow")
+                    .and_then(|v| v.as_str());
+                match workflow {
+                    Some(workflow) => format!("{}:{workflow}", build.pipeline_id),
+                    None => build.pipeline_id.clone(),
+                }
+            })
+            .collect::<Vec<_>>();
+        pipelines.sort();
+        pipelines
+    }
+
+    const V2_FILE: &str = "version: 2\ntargets:\n  android:\n    build: flutter build apk\nworkflows:\n  adhoc:\n    on:\n      pull_request: { branches: [main] }\n  release:\n    on:\n      push: { branches: [main] }\n      tag: v*\n      paths: [lib/]\n";
+    const PUSH_TO_MAIN: &str = r#"{"events":["push"],"branches":["main"]}"#;
+
+    #[tokio::test]
+    async fn a_v2_file_on_decides_which_workflows_build() {
+        let repo = tempfile::tempdir().unwrap();
+        let commit = commit_files(repo.path(), &[(".oore.yaml", V2_FILE)]);
+        let pool = local_pool(repo.path()).await;
+        // The UI triggers say nothing about pull requests or tags; the file
+        // decides for pipelines that pick a workflow.
+        add_pipeline(&pool, "adhoc", Some("adhoc"), PUSH_TO_MAIN).await;
+        add_pipeline(&pool, "release", Some("release"), PUSH_TO_MAIN).await;
+        // Several workflows, none picked, no top-level `on`: the UI applies.
+        add_pipeline(&pool, "settings", None, PUSH_TO_MAIN).await;
+
+        let pull_request = |target_branch| Revision {
+            event_type: "pull_request",
+            branch: Some("feature/login"),
+            tag: None,
+            target_branch,
+            changes: ChangeSet::Unknown,
+        };
+        assert_eq!(
+            built(&pool, &commit, pull_request(Some("main"))).await,
+            ["adhoc:adhoc"]
+        );
+        assert!(
+            built(&pool, &commit, pull_request(Some("develop")))
+                .await
+                .is_empty()
+        );
+
+        let tag = |tag| Revision {
+            event_type: "push",
+            branch: None,
+            tag: Some(tag),
+            target_branch: None,
+            changes: ChangeSet::Unknown,
+        };
+        assert_eq!(
+            built(&pool, &commit, tag("v1.2.0")).await,
+            ["release:release"]
+        );
+        assert!(built(&pool, &commit, tag("nightly")).await.is_empty());
+
+        fn push<'a>(branch: &'a str, changed: &'a [String]) -> Revision<'a> {
+            Revision {
+                event_type: "push",
+                branch: Some(branch),
+                tag: None,
+                target_branch: None,
+                changes: ChangeSet::Files(changed),
+            }
+        }
+        let lib = ["lib/main.dart".to_string()];
+        let docs = ["README.md".to_string()];
+        assert_eq!(
+            built(&pool, &commit, push("main", &lib)).await,
+            ["release:release", "settings"]
+        );
+        // `on.paths` filters the release workflow; the UI pipeline has none.
+        assert_eq!(
+            built(&pool, &commit, push("main", &docs)).await,
+            ["settings"]
+        );
+        assert!(
+            built(&pool, &commit, push("feature/x", &lib))
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_and_missing_files_keep_the_trigger_settings() {
+        let repo = tempfile::tempdir().unwrap();
+        let without_file = commit_files(repo.path(), &[("README.md", "app")]);
+        let v1 = commit_files(
+            repo.path(),
+            &[(".oore.yaml", "version: 1\nplatforms: [android]\n")],
+        );
+        let v2_without_on = commit_files(
+            repo.path(),
+            &[(
+                ".oore.yaml",
+                "version: 2\ntargets:\n  android:\n    build: flutter build apk\n",
+            )],
+        );
+        let invalid = commit_files(repo.path(), &[(".oore.yaml", "version: 2\nnope: 1\n")]);
+        let pool = local_pool(repo.path()).await;
+        add_pipeline(&pool, "pl1", None, PUSH_TO_MAIN).await;
+
+        for commit in [&without_file, &v1, &v2_without_on, &invalid] {
+            let push = |branch| Revision {
+                event_type: "push",
+                branch: Some(branch),
+                tag: None,
+                target_branch: None,
+                changes: ChangeSet::Unknown,
+            };
+            assert_eq!(built(&pool, commit, push("main")).await, ["pl1"]);
+            assert!(built(&pool, commit, push("develop")).await.is_empty());
+            let pull_request = Revision {
+                event_type: "pull_request",
+                branch: Some("main"),
+                tag: None,
+                target_branch: Some("main"),
+                changes: ChangeSet::Unknown,
+            };
+            assert!(built(&pool, commit, pull_request).await.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn an_explicit_config_path_is_read_for_its_on() {
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir(repo.path().join(".oore")).unwrap();
+        let commit = commit_files(
+            repo.path(),
+            &[(
+                ".oore/release.yaml",
+                "version: 2\ntargets:\n  android:\n    build: flutter build apk\non:\n  tag: v*\n",
+            )],
+        );
+        let pool = local_pool(repo.path()).await;
+        add_pipeline(&pool, "pl1", None, PUSH_TO_MAIN).await;
+        sqlx::query(
+            "UPDATE pipelines SET config_path = '.oore/release.yaml', config_path_explicit = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let push = Revision {
+            event_type: "push",
+            branch: Some("main"),
+            tag: None,
+            target_branch: None,
+            changes: ChangeSet::Unknown,
+        };
+        assert!(built(&pool, &commit, push).await.is_empty());
+        let tag = Revision {
+            event_type: "push",
+            branch: None,
+            tag: Some("v3"),
+            target_branch: None,
+            changes: ChangeSet::Unknown,
+        };
+        assert_eq!(built(&pool, &commit, tag).await, ["pl1"]);
     }
 }

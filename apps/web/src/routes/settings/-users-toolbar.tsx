@@ -1,6 +1,8 @@
 import type { DataTableInstance } from '@/components/data-table'
 import { Button } from '@/components/ui/button'
 import type { User } from '@oore/client/models'
+import { Row } from '@/components/layout/row'
+import { textVariants } from '@/lib/recipes'
 
 interface UsersToolbarProps {
   onBulkDisable: (userIds: Array<string>) => void
@@ -12,8 +14,8 @@ export function UsersToolbar({ onBulkDisable, table }: UsersToolbarProps) {
   if (selectedRows.length === 0) return null
 
   return (
-    <div className="flex items-center gap-3">
-      <span className="text-sm text-muted-foreground" aria-live="polite">
+    <Row gap={3}>
+      <span className={textVariants({ variant: 'muted' })} aria-live="polite">
         {selectedRows.length} selected
       </span>
       <Button
@@ -25,6 +27,6 @@ export function UsersToolbar({ onBulkDisable, table }: UsersToolbarProps) {
       >
         Disable selected
       </Button>
-    </div>
+    </Row>
   )
 }

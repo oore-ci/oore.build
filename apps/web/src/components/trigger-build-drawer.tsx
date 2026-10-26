@@ -50,6 +50,8 @@ import type { BuildPlatform } from '@oore/client/models'
 import { useAuthStore } from '@/stores/auth-store'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { isNearScrollEnd } from '@/lib/scroll'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 
 const platformLabels = {
   android: 'Android',
@@ -782,9 +784,9 @@ export default function TriggerBuildDrawer({
               ) : (
                 <div className="space-y-1">
                   <p className="text-sm font-medium">Pipeline</p>
-                  <p className="text-sm text-muted-foreground">
+                  <Text variant="muted">
                     {fixedPipelineName ?? fixedPipelineId}
-                  </p>
+                  </Text>
                 </div>
               )}
 
@@ -910,7 +912,7 @@ export default function TriggerBuildDrawer({
               />
             </div>
             {/* Outside the scroll area so the footer never covers them. */}
-            <div className="flex shrink-0 flex-col gap-2 px-4 pb-4">
+            <Stack gap={2} className="shrink-0 px-4 pb-4">
               <TriggerBuildBlockingAlerts
                 projectId={projectId}
                 canConfigure={
@@ -954,7 +956,7 @@ export default function TriggerBuildDrawer({
                   .
                 </AlertDescription>
               </Alert>
-            </div>
+            </Stack>
 
             <TriggerBuildFooter
               queueOnly={queueOnly}

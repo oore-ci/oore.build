@@ -50,6 +50,10 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 import { createWebOoreClient } from '@/lib/api-client/client'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
+import { useListNavigation } from '@/hooks/use-list-navigation'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 
 const SetupChecklist = lazy(() => import('@/components/setup-checklist'))
 const ReleaseBoard = lazy(() =>
@@ -138,6 +142,7 @@ function IndexPage() {
     useState(false)
   const autoDetectAttemptedRef = useRef(false)
   const authUser = useAuthStore((s) => s.user)
+  useListNavigation(authUser?.role !== 'qa_viewer')
 
   useMountEffect(() => {
     if (instance || autoDetectAttemptedRef.current) return
@@ -177,12 +182,10 @@ function IndexPage() {
     return (
       <div className="flex flex-1 items-center justify-center">
         <PageMeta />
-        <div className="flex items-center gap-3">
+        <Row gap={3}>
           <Spinner className="size-5" />
-          <p className="text-sm text-muted-foreground">
-            Looking for Oore on this Mac...
-          </p>
-        </div>
+          <Text variant="muted">Looking for Oore on this Mac...</Text>
+        </Row>
       </div>
     )
   }
@@ -191,10 +194,10 @@ function IndexPage() {
     return (
       <div className="flex flex-1 items-center justify-center">
         <PageMeta />
-        <div className="flex items-center gap-3">
+        <Row gap={3}>
           <Spinner className="size-5" />
-          <p className="text-sm text-muted-foreground">Signing in...</p>
-        </div>
+          <Text variant="muted">Signing in...</Text>
+        </Row>
       </div>
     )
   }
@@ -209,10 +212,10 @@ function IndexPage() {
               <img src="/logo.svg" alt="Oore CI logo" className="size-full" />
             </div>
             <h1 className="text-3xl font-bold tracking-tight">Oore CI</h1>
-            <p className="text-sm text-muted-foreground">
+            <Text variant="muted">
               Build your mobile app on a Mac you control. Share an install link
               with your team.
-            </p>
+            </Text>
           </div>
 
           <Card size="sm">
@@ -220,10 +223,10 @@ function IndexPage() {
               <CardTitle>Join your team</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
+              <Text variant="muted">
                 Have an Oore address? Connect and sign in to find your team’s
                 projects and builds.
-              </p>
+              </Text>
               <Button
                 onClick={() => setShowAddInstance(true)}
                 className="w-full"
@@ -235,9 +238,9 @@ function IndexPage() {
           </Card>
           <div className="space-y-3 text-center">
             <h2 className="font-medium">Set up Oore on your Mac</h2>
-            <p className="text-sm text-muted-foreground">
+            <Text variant="muted">
               Install Oore on macOS and keep the Mac running during builds.
-            </p>
+            </Text>
             <Button
               variant="outline"
               render={
@@ -266,10 +269,10 @@ function IndexPage() {
     return (
       <div className="flex flex-1 items-center justify-center">
         <PageMeta />
-        <div className="flex items-center gap-3">
+        <Row gap={3}>
           <Spinner className="size-5" />
-          <p className="text-sm text-muted-foreground">Connecting to Oore...</p>
-        </div>
+          <Text variant="muted">Connecting to Oore...</Text>
+        </Row>
       </div>
     )
   }
@@ -328,10 +331,10 @@ function IndexPage() {
   return (
     <div className="flex flex-1 items-center justify-center">
       <PageMeta />
-      <div className="flex items-center gap-3">
+      <Row gap={3}>
         <Spinner className="size-5" />
-        <p className="text-sm text-muted-foreground">Loading...</p>
-      </div>
+        <Text variant="muted">Loading...</Text>
+      </Row>
     </div>
   )
 }
@@ -414,7 +417,7 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
 
   return (
     <PageLayout width="wide">
-      <div className="flex flex-col gap-8">
+      <Stack gap={8}>
         <PageHeader
           title="Home"
           actions={
@@ -521,7 +524,7 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
         {hasProjects ? <DashboardStoreHealth /> : null}
 
         {hasProjects ? <DashboardProjectHealth days={insightsDays} /> : null}
-      </div>
+      </Stack>
     </PageLayout>
   )
 }

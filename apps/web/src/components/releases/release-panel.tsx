@@ -30,6 +30,9 @@ import {
   releaseVersionLabel,
 } from '@/lib/releases'
 import { cn } from '@/lib/utils'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 /** Build detail's Release tab: every store release made from this build. */
 export function ReleasePanel({
@@ -81,7 +84,7 @@ export function ReleasePanel({
     : releases
 
   return (
-    <div className="flex flex-col gap-4">
+    <Stack gap={4}>
       {ordered.map((release) => (
         <ReleaseCard
           key={release.id}
@@ -89,7 +92,7 @@ export function ReleasePanel({
           selected={release.id === selectedReleaseId}
         />
       ))}
-    </div>
+    </Stack>
   )
 }
 
@@ -128,15 +131,15 @@ function ReleaseCard({
       aria-current={selected ? 'true' : undefined}
     >
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-1">
+        <Stack gap={1} className="min-w-0">
           <CardTitle>
             {RELEASE_STORE_LABEL[current.store]} · {current.track}
           </CardTitle>
-          <p className="font-mono text-xs text-muted-foreground tabular-nums">
+          <Text variant="mono" className="tabular-nums">
             {releaseVersionLabel(current)}
             {current.package_name ? ` · ${current.package_name}` : ''}
-          </p>
-        </div>
+          </Text>
+        </Stack>
         <div className="-mt-0.5">
           <ReleaseActions release={current} />
         </div>
@@ -144,28 +147,35 @@ function ReleaseCard({
       <CardContent className="flex flex-col gap-4">
         <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
           <ReleaseRollout release={current} />
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Next step</span>
+          <Stack gap={1}>
+            <span className={textVariants({ variant: 'caption' })}>
+              Next step
+            </span>
             <span className="text-sm">
               {releaseNextStep(current, nowSeconds)}
             </span>
-          </div>
-          <div className="flex flex-col items-start gap-1">
-            <span className="text-xs text-muted-foreground">Health</span>
+          </Stack>
+          <Stack gap={1} className="items-start">
+            <span className={textVariants({ variant: 'caption' })}>Health</span>
             <Badge variant={getReleaseHealthVariant(current.health)}>
               {RELEASE_HEALTH_LABEL[current.health]}
             </Badge>
             {current.crash_rate != null ? (
-              <span className="text-xs text-muted-foreground tabular-nums">
+              <span
+                className={cn(
+                  textVariants({ variant: 'caption' }),
+                  'tabular-nums',
+                )}
+              >
                 Crash rate {formatRolloutPercent(current.crash_rate)}
                 {current.crash_rate_threshold != null
                   ? ` (halts at ${formatRolloutPercent(current.crash_rate_threshold)})`
                   : ''}
               </span>
             ) : null}
-          </div>
+          </Stack>
         </div>
-        <p className="text-xs text-muted-foreground">
+        <Text variant="caption">
           Schedule:{' '}
           {(current.policy.steps ?? []).map(formatRolloutPercent).join(' → ')}
           {current.policy.interval_hours != null
@@ -174,14 +184,16 @@ function ReleaseCard({
           {current.approved_by_email
             ? ` · Approved by ${current.approved_by_email}`
             : ''}
-        </p>
+        </Text>
         <Separator />
         <section aria-label="Release history" className="flex flex-col gap-2">
-          <h3 className="text-xs font-medium text-muted-foreground">History</h3>
+          <h3
+            className={cn(textVariants({ variant: 'caption' }), 'font-medium')}
+          >
+            History
+          </h3>
           {detailQuery.error ? (
-            <p className="text-xs text-muted-foreground">
-              History could not be loaded.
-            </p>
+            <Text variant="caption">History could not be loaded.</Text>
           ) : detailQuery.isLoading ? (
             <Skeleton className="h-16 w-full" />
           ) : (
@@ -195,7 +207,7 @@ function ReleaseCard({
 
 function ReleaseHistory({ history }: { history: Array<ReleaseHistoryEntry> }) {
   if (history.length === 0) {
-    return <p className="text-xs text-muted-foreground">No history yet.</p>
+    return <Text variant="caption">No history yet.</Text>
   }
 
   return (

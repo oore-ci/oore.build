@@ -19,20 +19,22 @@ use oore_contract::{
     AndroidSigningBuildType, BuildIsolation, BuildPlatform, BuildStatus, ClaimJobRequest,
     ClaimJobResponse, ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse,
     IosExportMethod, JobStatusResponse, PUBLISH_APP_STORE_STEP, PUBLISH_PLAY_STEP,
-    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
-    PlatformBuildCommands, RUNNER_PROTOCOL_VERSION, RunnerAndroidSigningProfile,
-    RunnerAndroidSigningResponse, RunnerHeartbeatResponse, RunnerIosSigningBundle,
-    RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult,
-    RunnerRetryArtifactsResponse, StepResult, artifact_pattern_matches, is_valid_pipeline_env_key,
-    missing_runner_labels, normalize_runner_labels, parse_repository_pipeline_yaml,
-    replace_secret_references, store_version_code, validate_artifact_pattern,
-    validate_build_number_offset, validate_repository_config_path,
+    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlanPublish, PlanRequest,
+    PlanStep, PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION,
+    RunnerAndroidSigningProfile, RunnerAndroidSigningResponse, RunnerHeartbeatResponse,
+    RunnerIosSigningBundle, RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan,
+    RunnerPublishResult, RunnerRetryArtifactsResponse, StepPhase, StepResult, TargetSizeBudget,
+    artifact_pattern_matches, is_valid_pipeline_env_key, missing_runner_labels,
+    normalize_runner_labels, parse_repository_config, pipeline_config::select_v1_platforms,
+    plan_execution_config, replace_secret_references, store_version_code,
+    validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use zeroize::Zeroize;
 
+mod analyzer;
 mod app_store_upload;
 mod caches;
 mod metrics;
@@ -3588,12 +3590,14 @@ async fn claim_and_execute(
             exit_code: None,
             error_message: None,
             steps: &[],
+            size_budgets: None,
         },
         RetryPolicy::within(RUNNING_REPORT_WINDOW),
     )
     .await?;
 
     let mut cache_observation = None;
+    let mut file_size_budgets = None;
     let (steps, result) = execute_build(
         &job,
         client,
@@ -3601,6 +3605,7 @@ async fn claim_and_execute(
         config,
         caches.map(Arc::as_ref),
         &mut cache_observation,
+        &mut file_size_budgets,
     )
     .await;
     let finished_build = cache_observation.map(|observation| (observation, result.is_ok()));
@@ -3612,6 +3617,7 @@ async fn claim_and_execute(
             exit_code: Some(0),
             error_message: None,
             steps: &steps,
+            size_budgets: file_size_budgets.as_deref(),
         }),
         Err(e) => match e.downcast_ref::<BuildTerminated>() {
             Some(terminated) if terminated.status == CONTROLLER_UNAVAILABLE => Some(StatusReport {
@@ -3623,6 +3629,7 @@ async fn claim_and_execute(
                     CONTROLLER_GRACE.as_secs() / 60
                 )),
                 steps: &steps,
+                size_budgets: file_size_budgets.as_deref(),
             }),
             Some(_) => {
                 println!(
@@ -3637,6 +3644,7 @@ async fn claim_and_execute(
                 exit_code: Some(1),
                 error_message: Some(e.to_string()),
                 steps: &steps,
+                size_budgets: file_size_budgets.as_deref(),
             }),
         },
     };
@@ -3728,7 +3736,8 @@ const DEFAULT_FLUTTER_VERSION: &str = "stable";
 
 #[derive(Debug, Clone)]
 struct ResolvedExecutionPlan {
-    stage_commands: PipelineCommandStages,
+    /// Named steps in run order: pre-build, then build, then post-build.
+    steps: Vec<PlanStep>,
     artifact_patterns: Vec<String>,
     env: Vec<PipelineEnvVar>,
     /// `OORE_SECRET_<NAME>` variables backing `${{ secrets.NAME }}` in commands.
@@ -3744,6 +3753,11 @@ struct ResolvedExecutionPlan {
     /// image; host builds check that the runner's Flutter matches it.
     flutter_version: String,
     source: String,
+    /// The v2 file's store uploads, applied over the pipeline's Publish
+    /// settings by the publish steps. Empty otherwise.
+    publish: PlanPublish,
+    /// The v2 file's size budgets, reported with the build's result.
+    size_budgets: Vec<TargetSizeBudget>,
 }
 
 fn secret_env_var(name: &str) -> String {
@@ -3792,23 +3806,17 @@ fn apply_secret_references(
     }
 
     let mut referenced = std::collections::BTreeSet::new();
-    for (stage, commands) in [
-        ("pre_build", &mut plan.stage_commands.pre_build),
-        ("build", &mut plan.stage_commands.build),
-        ("post_build", &mut plan.stage_commands.post_build),
-    ] {
-        for (index, command) in commands.iter_mut().enumerate() {
-            let path = format!("commands.{stage}[{index}]");
-            let mut names = Vec::new();
-            *command = replace_secret_references(command, |name| {
-                names.push(name.to_string());
-                format!("${{{}}}", secret_env_var(name))
-            })
-            .map_err(|error| anyhow::anyhow!("{path} {error}"))?;
-            for name in names {
-                lookup_secret(secrets, &name, &path)?;
-                referenced.insert(name);
-            }
+    for step in &mut plan.steps {
+        let path = step.source.clone();
+        let mut names = Vec::new();
+        step.run = replace_secret_references(&step.run, |name| {
+            names.push(name.to_string());
+            format!("${{{}}}", secret_env_var(name))
+        })
+        .map_err(|error| anyhow::anyhow!("{path} {error}"))?;
+        for name in names {
+            lookup_secret(secrets, &name, &path)?;
+            referenced.insert(name);
         }
     }
     plan.secret_env = referenced
@@ -4083,81 +4091,6 @@ fn normalize_execution_config(
     })
 }
 
-fn build_default_command_with_args(base: &str, args: &[String]) -> String {
-    if args.is_empty() {
-        return base.to_string();
-    }
-    format!("{base} {}", args.join(" "))
-}
-
-fn default_platform_command(
-    platform: &BuildPlatform,
-    overrides: &PlatformBuildCommands,
-    args: &PlatformBuildArgs,
-) -> String {
-    match platform {
-        BuildPlatform::Android => overrides.android.clone().unwrap_or_else(|| {
-            build_default_command_with_args("flutter build apk --release", &args.android)
-        }),
-        BuildPlatform::Ios => overrides.ios.clone().unwrap_or_else(|| {
-            build_default_command_with_args("flutter build ios --release --no-codesign", &args.ios)
-        }),
-        BuildPlatform::Macos => overrides.macos.clone().unwrap_or_else(|| {
-            build_default_command_with_args("flutter build macos --release", &args.macos)
-        }),
-    }
-}
-
-/// Google Play only accepts App Bundles. When the pipeline uploads to Play
-/// and keeps the default Android command, build a bundle after the APK so
-/// the upload has something to send and QA installs still get an APK.
-fn default_play_bundle_command(args: &PlatformBuildArgs) -> String {
-    // `--split-per-abi` is APK-only; `flutter build appbundle` rejects it.
-    let args = args
-        .android
-        .iter()
-        .filter(|arg| arg.as_str() != "--split-per-abi")
-        .cloned()
-        .collect::<Vec<_>>();
-    build_default_command_with_args("flutter build appbundle --release", &args)
-}
-
-fn materialize_stage_commands(
-    config: &PipelineExecutionConfig,
-    include_default_platform_commands: bool,
-    build_play_bundle: bool,
-) -> PipelineCommandStages {
-    let mut pre_build = Vec::new();
-    if include_default_platform_commands && !config.platforms.is_empty() {
-        pre_build.push("flutter pub get".to_string());
-    }
-    pre_build.extend(config.commands.pre_build.clone());
-
-    let mut build = Vec::new();
-    if include_default_platform_commands {
-        for platform in &config.platforms {
-            build.push(default_platform_command(
-                platform,
-                &config.platform_commands,
-                &config.platform_build_args,
-            ));
-            if build_play_bundle
-                && *platform == BuildPlatform::Android
-                && config.platform_commands.android.is_none()
-            {
-                build.push(default_play_bundle_command(&config.platform_build_args));
-            }
-        }
-    }
-    build.extend(config.commands.build.clone());
-
-    PipelineCommandStages {
-        pre_build,
-        build,
-        post_build: config.commands.post_build.clone(),
-    }
-}
-
 fn load_ui_execution_config(
     snapshot: &serde_json::Value,
 ) -> anyhow::Result<PipelineExecutionConfig> {
@@ -4169,41 +4102,14 @@ fn load_ui_execution_config(
     normalize_execution_config(parsed)
 }
 
-fn apply_run_platform_selection(
-    mut config: PipelineExecutionConfig,
-    snapshot: &serde_json::Value,
-) -> anyhow::Result<PipelineExecutionConfig> {
-    let Some(raw) = snapshot.get("selected_platforms") else {
-        return Ok(config);
-    };
-    if raw.is_null() {
-        return Ok(config);
+/// The run's platform selection from the snapshot, when it made one.
+fn selected_platforms(snapshot: &serde_json::Value) -> anyhow::Result<Option<Vec<BuildPlatform>>> {
+    match snapshot.get("selected_platforms") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(raw) => serde_json::from_value(raw.clone())
+            .map(Some)
+            .map_err(|error| anyhow::anyhow!("Invalid selected_platforms in snapshot: {error}")),
     }
-
-    let selected: Vec<BuildPlatform> = serde_json::from_value(raw.clone())
-        .map_err(|error| anyhow::anyhow!("Invalid selected_platforms in snapshot: {error}"))?;
-    if selected.is_empty() {
-        anyhow::bail!("selected_platforms must include at least one target");
-    }
-    let has_duplicate = selected
-        .iter()
-        .enumerate()
-        .any(|(index, platform)| selected[..index].contains(platform));
-    if has_duplicate
-        || selected
-            .iter()
-            .any(|platform| !config.platforms.contains(platform))
-    {
-        anyhow::bail!("selected_platforms must be unique and configured by the workflow");
-    }
-    if selected.len() < config.platforms.len() && !config.commands.build.is_empty() {
-        anyhow::bail!(
-            "Per-run platform selection requires platform_commands or default platform commands; shared commands.build cannot be filtered safely"
-        );
-    }
-
-    config.platforms = selected;
-    Ok(config)
 }
 
 /// The scheduler matched this runner against the pipeline's `runs_on`. A
@@ -4283,48 +4189,60 @@ fn resolve_execution_plan(
         let content = fs::read_to_string(&full_path).map_err(|e| {
             anyhow::anyhow!("Failed to read config file {}: {e}", full_path.display())
         })?;
-        let file_config = parse_repository_pipeline_yaml(&content).map_err(|e| {
+        let file_config = parse_repository_config(&content).map_err(|e| {
             anyhow::anyhow!("Invalid pipeline config in {}: {}", full_path.display(), e)
         })?;
-        require_runner_labels(&file_config.runs_on, snapshot, rel_path)?;
-        let file_config = apply_run_platform_selection(file_config, snapshot)?;
+        require_runner_labels(file_config.runs_on(), snapshot, rel_path)?;
+        let selected = selected_platforms(snapshot)?;
+        let plan = file_config
+            .plan(PlanRequest {
+                // The pipeline's v2 workflow, when it names one.
+                workflow: snapshot.get("workflow").and_then(|v| v.as_str()),
+                selected_platforms: selected.as_deref(),
+                build_play_bundle,
+            })
+            .map_err(|e| anyhow::anyhow!("{rel_path}: {e}"))?;
         let resolved_flutter_version = fvmrc_version
-            .or_else(|| file_config.flutter_version.clone())
+            .or_else(|| plan.flutter_version.clone())
             .unwrap_or_else(|| DEFAULT_FLUTTER_VERSION.to_string());
-        let include_defaults = file_config.commands.build.is_empty();
-        let stage_commands =
-            materialize_stage_commands(&file_config, include_defaults, build_play_bundle);
 
         return Ok(ResolvedExecutionPlan {
-            stage_commands,
-            artifact_patterns: file_config.artifact_patterns,
-            env: file_config.env,
+            needs_xcode: needs_xcode(&plan.platforms),
+            steps: plan.steps,
+            artifact_patterns: plan.artifact_patterns,
+            env: plan.env,
             secret_env: Vec::new(),
             secret_env_keys: Default::default(),
-            build_number_offset: file_config.build_number_offset,
-            isolation: file_config.isolation,
-            needs_xcode: needs_xcode(&file_config.platforms),
+            build_number_offset: plan.build_number_offset,
+            isolation: plan.isolation,
             flutter_version: resolved_flutter_version,
             source: format!("file:{}", full_path.display()),
+            publish: plan.publish,
+            size_budgets: plan.size_budgets,
         });
     }
 
-    let fallback = apply_run_platform_selection(load_ui_execution_config(snapshot)?, snapshot)?;
+    let mut fallback = load_ui_execution_config(snapshot)?;
+    if let Some(selected) = selected_platforms(snapshot)? {
+        fallback = select_v1_platforms(fallback, &selected).map_err(anyhow::Error::msg)?;
+    }
     let resolved_flutter_version = fvmrc_version
         .or_else(|| fallback.flutter_version.clone())
         .unwrap_or_else(|| DEFAULT_FLUTTER_VERSION.to_string());
-    let stage_commands = materialize_stage_commands(&fallback, true, build_play_bundle);
+    let plan = plan_execution_config(&fallback, true, build_play_bundle);
     Ok(ResolvedExecutionPlan {
-        stage_commands,
-        artifact_patterns: fallback.artifact_patterns,
-        env: fallback.env,
+        needs_xcode: needs_xcode(&plan.platforms),
+        steps: plan.steps,
+        artifact_patterns: plan.artifact_patterns,
+        env: plan.env,
         secret_env: Vec::new(),
         secret_env_keys: Default::default(),
-        build_number_offset: fallback.build_number_offset,
-        isolation: fallback.isolation,
-        needs_xcode: needs_xcode(&fallback.platforms),
+        build_number_offset: plan.build_number_offset,
+        isolation: plan.isolation,
         flutter_version: resolved_flutter_version,
         source: "ui_fallback".to_string(),
+        publish: PlanPublish::default(),
+        size_budgets: Vec::new(),
     })
 }
 
@@ -4597,6 +4515,7 @@ async fn execute_build(
     config: &RunnerConfig,
     caches: Option<&RunnerCaches>,
     cache_observation: &mut Option<CacheObservation>,
+    file_size_budgets: &mut Option<Vec<TargetSizeBudget>>,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
     let mut log_seq = BuildLogCursor::default();
     let mut build_vm = None;
@@ -4609,6 +4528,7 @@ async fn execute_build(
         cache_observation,
         &mut log_seq,
         &mut build_vm,
+        file_size_budgets,
     )
     .await;
     // A build that ended before its last step still has its VM. A canceled
@@ -4796,17 +4716,33 @@ async fn execute_step_retry(
         }
     }
 
-    // Release notes kept in the repository are read from the build's commit.
-    let needs_source = retry_steps.iter().any(|step| step == PUBLISH_PLAY_STEP)
-        && publish_plan.google_play.as_ref().is_some_and(|play| {
-            play.release_notes == oore_contract::GooglePlayReleaseNotesSource::RepoFiles
-        });
+    // When the build took a retried upload's destination from `.oore.yaml`,
+    // the file at the build's commit decides it again; retrying without it
+    // could upload to the settings' track instead of the file's. Otherwise
+    // only release notes kept in the repository need the source.
+    let publish_from_file = job
+        .config_snapshot
+        .get(oore_contract::RETRY_PUBLISH_FROM_FILE)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let needs_source = publish_from_file
+        || (retry_steps.iter().any(|step| step == PUBLISH_PLAY_STEP)
+            && publish_plan.google_play.as_ref().is_some_and(|play| {
+                play.release_notes == oore_contract::GooglePlayReleaseNotesSource::RepoFiles
+            }));
     if needs_source {
         run_checkout(
             job, client, daemon_url, config, log_seq, workspace, authority, steps,
         )
         .await?;
     }
+    let file_publish = if publish_from_file {
+        resolve_execution_plan(workspace, &job.config_snapshot, false)
+            .map(|plan| plan.publish)
+            .context("Failed to read the pipeline file at the build's commit")?
+    } else {
+        PlanPublish::default()
+    };
 
     let step_name = "artifacts";
     let started = now_unix();
@@ -4883,14 +4819,12 @@ async fn execute_step_retry(
     };
     let finished = now_unix();
     let succeeded = restore.is_ok();
-    steps.push(StepResult {
-        name: step_name.to_string(),
-        status: if succeeded { "succeeded" } else { "failed" }.to_string(),
-        exit_code: Some(if succeeded { 0 } else { 1 }),
-        started_at: started,
-        finished_at: finished,
-        duration_ms: (finished - started) * 1000,
-    });
+    steps.push(artifacts_step_result(
+        succeeded,
+        Some(if succeeded { 0 } else { 1 }),
+        (started, finished),
+        &file_publish,
+    ));
     if let Err(error) = &restore {
         let _ = append_runner_log_line(
             client,
@@ -4933,6 +4867,7 @@ async fn execute_step_retry(
             ios_artifact_metadata: ipa.as_ref().map(|(_, metadata)| metadata),
             only: Some(retry_steps),
             authority,
+            file_publish: &file_publish,
         },
         steps,
     )
@@ -5037,6 +4972,7 @@ async fn run_checkout(
                 started_at: start,
                 finished_at: finished,
                 duration_ms: (finished - start) * 1000,
+                publish_from_file: false,
             });
             let _ = append_runner_log_line(
                 client,
@@ -5060,6 +4996,7 @@ async fn run_checkout(
                 started_at: start,
                 finished_at: finished,
                 duration_ms: (finished - start) * 1000,
+                publish_from_file: false,
             });
             let _ = append_runner_log_line(
                 client,
@@ -5094,6 +5031,7 @@ async fn execute_build_steps(
     cache_observation: &mut Option<CacheObservation>,
     log_seq: &mut BuildLogCursor,
     build_vm: &mut Option<BuildVm>,
+    file_size_budgets: &mut Option<Vec<TargetSizeBudget>>,
 ) -> (Vec<StepResult>, anyhow::Result<()>) {
     // Pin signer executables before any repository-controlled checkout or build stage runs.
     let android_signing_toolchain = AndroidSigningToolchain::discover();
@@ -5256,6 +5194,7 @@ async fn execute_build_steps(
         Ok(plan) => plan,
         Err(e) => return (steps, Err(e)),
     };
+    *file_size_budgets = Some(execution_plan.size_budgets.clone());
     let version_code =
         match store_version_code(job.build_number, execution_plan.build_number_offset) {
             Ok(code) => code,
@@ -5271,8 +5210,13 @@ async fn execute_build_steps(
     let mut signing_source: Option<&str> = None;
     let mut signing_variant: Option<AndroidSigningBuildType> = None;
     let mut signing_inputs: Option<AndroidSigningInputs> = None;
-    let build_commands = execution_plan.stage_commands.build.as_slice();
-    match determine_android_signing_variant(build_commands) {
+    let build_commands: Vec<String> = execution_plan
+        .steps
+        .iter()
+        .filter(|step| step.phase == StepPhase::Build)
+        .map(|step| step.run.clone())
+        .collect();
+    match determine_android_signing_variant(&build_commands) {
         Ok(Some(variant)) => {
             signing_variant = Some(variant);
             match fetch_job_android_signing(
@@ -5470,6 +5414,7 @@ async fn execute_build_steps(
                     started_at: started,
                     finished_at: finished,
                     duration_ms: (finished - started) * 1000,
+                    publish_from_file: false,
                 });
                 return (steps, Err(anyhow::anyhow!(message)));
             }
@@ -5531,6 +5476,7 @@ async fn execute_build_steps(
                 started_at: started,
                 finished_at: finished,
                 duration_ms: (finished - started) * 1000,
+                publish_from_file: false,
             });
             let _ = append_runner_log_line(
                 client,
@@ -5613,25 +5559,23 @@ async fn execute_build_steps(
     let ios_signing_expected = ios_signing_bundle.is_some();
     let mut ios_artifact_metadata: Option<serde_json::Value> = None;
     let mut signed_ipa_path: Option<PathBuf> = None;
-    for (stage_name, commands) in [
-        (
-            "pre_build",
-            execution_plan.stage_commands.pre_build.as_slice(),
-        ),
-        ("build", execution_plan.stage_commands.build.as_slice()),
-        (
-            "post_build",
-            execution_plan.stage_commands.post_build.as_slice(),
-        ),
-    ] {
-        for (index, command) in commands.iter().enumerate() {
+    for phase in StepPhase::ALL {
+        let stage_name = phase.as_str();
+        let phase_steps: Vec<PlanStep> = execution_plan
+            .steps
+            .iter()
+            .filter(|step| step.phase == phase)
+            .cloned()
+            .collect();
+        for plan_step in &phase_steps {
+            let command = &plan_step.run;
             if let Err(e) =
                 check_build_active(client, daemon_url, config, &job.build_id, &authority).await
             {
                 return (steps, Err(e));
             }
 
-            let step_name = format!("{stage_name}-{}", index + 1);
+            let step_name = plan_step.name.clone();
             let start = now_unix();
             let (normalized_command, command_applied) = match normalize_stage_command_for_execution(
                 stage_name,
@@ -5645,7 +5589,7 @@ async fn execute_build_steps(
             ios_signing_command_applied |= command_applied;
             let normalized_command = test_reports::with_test_file_reporter(
                 &normalized_command,
-                &step_test_reports_dir.join(format!("{step_name}.json")),
+                &step_test_reports_dir.join(format!("{}.json", report_file_stem(&step_name))),
             );
             let command_preview = render_command_preview(&normalized_command, &step_env);
 
@@ -5721,6 +5665,7 @@ async fn execute_build_steps(
                         started_at: start,
                         finished_at: finished,
                         duration_ms: (finished - start) * 1000,
+                        publish_from_file: false,
                     });
                     let _ = append_runner_log_line(
                         client,
@@ -5729,7 +5674,7 @@ async fn execute_build_steps(
                         &job.build_id,
                         log_seq,
                         "stdout",
-                        &step_end_marker(&format!("{stage_name}-{}", index + 1), "canceled", None),
+                        &step_end_marker(&plan_step.name, "canceled", None),
                     )
                     .await;
                     return (steps, Err(authority.terminated()));
@@ -5743,6 +5688,25 @@ async fn execute_build_steps(
                         Some(vm) => vm.vm.sync_workspace_out().await.err(),
                         None => None,
                     };
+                    if let Some(report) = plan_step.test_report.as_deref()
+                        && let Err(error) = copy_declared_test_report(
+                            &workspace,
+                            report,
+                            &test_reports_dir,
+                            &step_name,
+                        )
+                    {
+                        let _ = append_runner_log_line(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            log_seq,
+                            "stderr",
+                            &format!("[oore-tests] {error}"),
+                        )
+                        .await;
+                    }
                     report_step_tests(
                         client,
                         daemon_url,
@@ -5787,8 +5751,9 @@ async fn execute_build_steps(
                         started_at: start,
                         finished_at: finished,
                         duration_ms: (finished - start) * 1000,
+                        publish_from_file: false,
                     });
-                    let step_name = format!("{stage_name}-{}", index + 1);
+                    let step_name = plan_step.name.clone();
                     let _ = append_runner_log_line(
                         client,
                         daemon_url,
@@ -5807,6 +5772,31 @@ async fn execute_build_steps(
                         ),
                     )
                     .await;
+                    // Analysis shows what the failing change looks like, so
+                    // it runs here too; it never changes the result. After a
+                    // pre-build failure (dependencies, code generation) the
+                    // analyzer would only report the missing setup.
+                    if exit_code != 0
+                        && phase != StepPhase::PreBuild
+                        && let Err(error) = run_analyzer_step(
+                            client,
+                            daemon_url,
+                            config,
+                            &job.build_id,
+                            log_seq,
+                            AnalyzeInputs {
+                                workspace: &workspace,
+                                vm,
+                                env: &step_env,
+                                path_prefixes: &report_path_prefixes,
+                                authority: authority.clone(),
+                            },
+                            &mut steps,
+                        )
+                        .await
+                    {
+                        return (steps, Err(error));
+                    }
                     if exit_code != 0 {
                         let err = if exit_code == 127 && vm.is_some() {
                             anyhow::anyhow!(
@@ -5875,6 +5865,7 @@ Install the required tooling on the runner, set isolation: vm, or override build
                             started_at: signing_started,
                             finished_at: signing_finished,
                             duration_ms: (signing_finished - signing_started) * 1000,
+                            publish_from_file: false,
                         });
                         match signing_result {
                             Ok(artifacts) => {
@@ -5976,6 +5967,7 @@ Install the required tooling on the runner, set isolation: vm, or override build
                             started_at: signing_started,
                             finished_at: signing_finished,
                             duration_ms: (signing_finished - signing_started) * 1000,
+                            publish_from_file: false,
                         });
                         match signing_result {
                             Ok(signed_archive) => {
@@ -6080,6 +6072,27 @@ Install the required tooling on the runner, set isolation: vm, or override build
         }
     }
 
+    // While the toolchain (the VM, when there is one) is still up.
+    if let Err(error) = run_analyzer_step(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        AnalyzeInputs {
+            workspace: &workspace,
+            vm,
+            env: &step_env,
+            path_prefixes: &report_path_prefixes,
+            authority: authority.clone(),
+        },
+        &mut steps,
+    )
+    .await
+    {
+        return (steps, Err(error));
+    }
+
     // Every step has run; free the VM slot before the upload.
     if let Some(vm) = build_vm.take() {
         shutdown_build_vm(vm, true, client, daemon_url, config, &job.build_id, log_seq).await;
@@ -6106,19 +6119,12 @@ Install the required tooling on the runner, set isolation: vm, or override build
     )
     .await;
     let artifacts_finished = now_unix();
-    steps.push(StepResult {
-        name: "artifacts".to_string(),
-        status: if artifact_result.is_ok() {
-            "succeeded"
-        } else {
-            "failed"
-        }
-        .to_string(),
-        exit_code: artifact_result.as_ref().err().map(|_| 1),
-        started_at: artifacts_started,
-        finished_at: artifacts_finished,
-        duration_ms: (artifacts_finished - artifacts_started) * 1000,
-    });
+    steps.push(artifacts_step_result(
+        artifact_result.is_ok(),
+        artifact_result.as_ref().err().map(|_| 1),
+        (artifacts_started, artifacts_finished),
+        &execution_plan.publish,
+    ));
     if let Err(error) = artifact_result {
         return (steps, Err(error));
     }
@@ -6139,11 +6145,32 @@ Install the required tooling on the runner, set isolation: vm, or override build
             ios_artifact_metadata: ios_artifact_metadata.as_ref(),
             only: None,
             authority: &authority,
+            file_publish: &execution_plan.publish,
         },
         &mut steps,
     )
     .await;
     (steps, result)
+}
+
+/// The `artifacts` step's result. It always exists once publishing can run,
+/// so it carries the build-level `publish_from_file`: a retry of any publish
+/// step, including one that never ran, then reads the file again.
+fn artifacts_step_result(
+    succeeded: bool,
+    exit_code: Option<i32>,
+    (started, finished): (i64, i64),
+    file_publish: &PlanPublish,
+) -> StepResult {
+    StepResult {
+        name: "artifacts".to_string(),
+        status: if succeeded { "succeeded" } else { "failed" }.to_string(),
+        exit_code,
+        started_at: started,
+        finished_at: finished,
+        duration_ms: (finished - started) * 1000,
+        publish_from_file: !file_publish.is_empty(),
+    }
 }
 
 /// What the store uploads read: the build's outputs and the job's secrets.
@@ -6157,6 +6184,51 @@ struct PublishInputs<'a> {
     /// upload the pipeline turns on.
     only: Option<&'a [String]>,
     authority: &'a Arc<BuildAuthorityState>,
+    /// The v2 file's uploads, which replace the Publish settings' targets.
+    file_publish: &'a PlanPublish,
+}
+
+/// Records `step_name` as a failed upload that never started, with `error`
+/// in its log, and returns the error for the build.
+#[allow(clippy::too_many_arguments)]
+async fn fail_publish_step(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    steps: &mut Vec<StepResult>,
+    (step_name, title): (&str, &str),
+    error: String,
+    from_file: bool,
+) -> anyhow::Error {
+    let now = now_unix();
+    for (stream, line) in [
+        ("stdout", step_start_marker(step_name, title)),
+        ("stderr", format!("[oore-publish] {error}")),
+        ("stdout", step_end_marker(step_name, "failed", Some(1))),
+    ] {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            stream,
+            &line,
+        )
+        .await;
+    }
+    steps.push(StepResult {
+        name: step_name.to_string(),
+        status: "failed".to_string(),
+        exit_code: Some(1),
+        started_at: now,
+        finished_at: now,
+        duration_ms: 0,
+        publish_from_file: from_file,
+    });
+    anyhow::anyhow!(error).context(format!("{step_name} failed"))
 }
 
 /// Runs the store uploads the pipeline turns on, stopping at the first failure.
@@ -6177,9 +6249,10 @@ async fn run_publish_steps(
         ios_artifact_metadata,
         only,
         authority,
+        file_publish,
     } = inputs;
     let runs = |step: &str| only.is_none_or(|only| only.iter().any(|name| name == step));
-    let publish_plan = match fetch_job_publish_plan(
+    let settings = match fetch_job_publish_plan(
         client,
         daemon_url,
         config,
@@ -6193,11 +6266,40 @@ async fn run_publish_steps(
             anyhow::bail!("Failed to load publish settings for this build: {error}");
         }
     };
-    if let Some(play) = publish_plan
-        .google_play
-        .as_ref()
-        .filter(|_| runs(PUBLISH_PLAY_STEP))
-    {
+    let publish_plan = file_publish.apply(settings);
+    for note in &publish_plan.notes {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stdout",
+            &format!("[oore-publish] {note}"),
+        )
+        .await;
+    }
+    const PLAY_TITLE: &str = "Upload the App Bundle to Google Play";
+    const APP_STORE_TITLE: &str = "Upload the IPA to App Store Connect";
+    let google_play = match publish_plan.google_play {
+        Ok(play) => play.filter(|_| runs(PUBLISH_PLAY_STEP)),
+        Err(error) if runs(PUBLISH_PLAY_STEP) => {
+            return Err(fail_publish_step(
+                job,
+                client,
+                daemon_url,
+                config,
+                log_seq,
+                steps,
+                (PUBLISH_PLAY_STEP, PLAY_TITLE),
+                error,
+                file_publish.play.is_some(),
+            )
+            .await);
+        }
+        Err(_) => None,
+    };
+    if let Some(play) = google_play.as_ref() {
         let step_name = PUBLISH_PLAY_STEP;
         let started = now_unix();
         let _ = append_runner_log_line(
@@ -6207,7 +6309,7 @@ async fn run_publish_steps(
             &job.build_id,
             log_seq,
             "stdout",
-            &step_start_marker(step_name, "Upload the App Bundle to Google Play"),
+            &step_start_marker(step_name, PLAY_TITLE),
         )
         .await;
         let mut lines = Vec::new();
@@ -6265,6 +6367,7 @@ async fn run_publish_steps(
             started_at: started,
             finished_at: finished,
             duration_ms: (finished - started) * 1000,
+            publish_from_file: file_publish.play.is_some(),
         });
         match result {
             Ok(published) => {
@@ -6330,11 +6433,25 @@ async fn run_publish_steps(
         }
     }
 
-    if let Some(app_store) = publish_plan
-        .app_store
-        .as_ref()
-        .filter(|_| runs(PUBLISH_APP_STORE_STEP))
-    {
+    let app_store = match publish_plan.app_store {
+        Ok(app_store) => app_store.filter(|_| runs(PUBLISH_APP_STORE_STEP)),
+        Err(error) if runs(PUBLISH_APP_STORE_STEP) => {
+            return Err(fail_publish_step(
+                job,
+                client,
+                daemon_url,
+                config,
+                log_seq,
+                steps,
+                (PUBLISH_APP_STORE_STEP, APP_STORE_TITLE),
+                error,
+                file_publish.testflight.is_some(),
+            )
+            .await);
+        }
+        Err(_) => None,
+    };
+    if let Some(app_store) = app_store.as_ref() {
         let step_name = PUBLISH_APP_STORE_STEP;
         let started = now_unix();
         let _ = append_runner_log_line(
@@ -6344,7 +6461,7 @@ async fn run_publish_steps(
             &job.build_id,
             log_seq,
             "stdout",
-            &step_start_marker(step_name, "Upload the IPA to App Store Connect"),
+            &step_start_marker(step_name, APP_STORE_TITLE),
         )
         .await;
         let result = match (signed_ipa_path, ios_artifact_metadata) {
@@ -6390,6 +6507,7 @@ async fn run_publish_steps(
             started_at: started,
             finished_at: finished,
             duration_ms: (finished - started) * 1000,
+            publish_from_file: file_publish.testflight.is_some(),
         });
         match result {
             Ok((message, published)) => {
@@ -6974,6 +7092,70 @@ async fn report_publish_result(
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("the publish result was not sent")))
 }
 
+/// Test report file name for a step. Step names can hold spaces and
+/// punctuation; v1 names (`pre_build-1`) pass through unchanged.
+fn report_file_stem(step_name: &str) -> String {
+    step_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// Copy the report a v2 step declares in `reports.tests` into the reports
+/// directory the runner reads after every step.
+fn copy_declared_test_report(
+    workspace: &Path,
+    report: &str,
+    reports_dir: &Path,
+    step_name: &str,
+) -> Result<(), String> {
+    let source = workspace.join(report);
+    if !source.is_file() {
+        return Err(format!(
+            "step '{step_name}' declares reports.tests {report}, but the file was not written"
+        ));
+    }
+    let inside_workspace = match (source.canonicalize(), workspace.canonicalize()) {
+        (Ok(source), Ok(workspace)) => source.starts_with(workspace),
+        _ => false,
+    };
+    if !inside_workspace {
+        return Err(format!(
+            "step '{step_name}' declares reports.tests {report}, which resolves outside the workspace"
+        ));
+    }
+    // The collector skips larger reports anyway; do not copy them first.
+    let size = fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
+    if size > test_reports::MAX_REPORT_FILE_BYTES {
+        return Err(format!(
+            "step '{step_name}' declares reports.tests {report}, which is larger than {} MiB and is skipped",
+            test_reports::MAX_REPORT_FILE_BYTES / (1024 * 1024)
+        ));
+    }
+    let extension = source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("json");
+    fs::create_dir_all(reports_dir)
+        .and_then(|_| {
+            fs::copy(
+                &source,
+                reports_dir.join(format!(
+                    "{}-declared.{extension}",
+                    report_file_stem(step_name)
+                )),
+            )
+        })
+        .map(|_| ())
+        .map_err(|error| format!("could not read reports.tests {report}: {error}"))
+}
+
 /// Parse the reports a step wrote and send them to the daemon. Test reporting
 /// never fails the build; problems are logged instead.
 #[allow(clippy::too_many_arguments)]
@@ -7034,6 +7216,261 @@ async fn report_step_tests(
         )
         .await;
     }
+}
+
+/// Longest the analyzer may run. It is a report, so it never holds the build
+/// up for long.
+const ANALYZE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// Analyzer stderr kept for the log.
+const ANALYZE_STDERR_BYTES: usize = 16 * 1024;
+/// Diagnostics also printed to the build log.
+const ANALYZE_LOGGED_DIAGNOSTICS: usize = 10;
+
+/// Where the analyzer runs: the build's VM, or the host workspace.
+struct AnalyzeInputs<'a> {
+    workspace: &'a Path,
+    vm: Option<&'a BuildVm>,
+    env: &'a [(String, String)],
+    /// Workspace paths stripped from diagnostic file names.
+    path_prefixes: &'a [PathBuf],
+    /// Watched while the analyzer runs, so canceling the build stops it.
+    authority: Arc<BuildAuthorityState>,
+}
+
+/// Why `collect_analysis` has no report.
+enum AnalysisSkip {
+    /// The step is skipped for this reason; the build carries on.
+    Reason(String),
+    /// The build was canceled or lost while the analyzer ran.
+    Terminated,
+}
+
+impl From<String> for AnalysisSkip {
+    fn from(reason: String) -> Self {
+        AnalysisSkip::Reason(reason)
+    }
+}
+
+/// Reads all of `reader`, keeping the first `cap` bytes. Reading past the cap
+/// keeps the process from blocking on a full pipe.
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
+    reader: Option<R>,
+    cap: usize,
+) -> (Vec<u8>, bool) {
+    let mut kept = Vec::new();
+    let mut over = false;
+    let Some(mut reader) = reader else {
+        return (kept, over);
+    };
+    let mut chunk = [0u8; 8192];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(read) if kept.len() + read <= cap => kept.extend_from_slice(&chunk[..read]),
+            Ok(_) => over = true,
+        }
+    }
+    (kept, over)
+}
+
+/// Runs the analyzer script. `Err` is why there is no analysis.
+async fn collect_analysis(
+    inputs: &AnalyzeInputs<'_>,
+    cancel_fut: impl std::future::Future<Output = ()>,
+    stderr_lines: &mut Vec<String>,
+    mask: impl Fn(&str) -> String,
+) -> Result<(i32, oore_contract::RunnerAnalyzerReport), AnalysisSkip> {
+    let script = analyzer::analyze_script();
+    let spawned = match inputs.vm {
+        Some(vm) => vm.vm.spawn_step(&script, inputs.env).await,
+        None => {
+            let mut command = repository_shell_command(&script, inputs.workspace);
+            command
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true);
+            for (key, value) in inputs.env {
+                command.env(key, value);
+            }
+            scrub_managed_runner_env(&mut command);
+            command.spawn().map_err(anyhow::Error::from)
+        }
+    };
+    let mut child = spawned.map_err(|error| format!("could not start the analyzer: {error:#}"))?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let finished = tokio::select! {
+        finished = tokio::time::timeout(ANALYZE_TIMEOUT, async {
+            let (stdout, stderr) = tokio::join!(
+                read_capped(stdout, analyzer::MAX_OUTPUT_BYTES),
+                read_capped(stderr, ANALYZE_STDERR_BYTES)
+            );
+            (stdout, stderr, child.wait().await)
+        }) => finished.ok(),
+        () = cancel_fut => {
+            stop_process_group(&mut child).await;
+            return Err(AnalysisSkip::Terminated);
+        }
+    };
+    let Some(((stdout, stdout_over), (stderr, _), status)) = finished else {
+        // In a VM the child is the host's `tart exec`, which leads no process
+        // group, so this kills only that client. The analyzer may keep
+        // running in the guest until the VM stops, which follows right after
+        // this step (or the failed step that ran it).
+        stop_process_group(&mut child).await;
+        return Err(format!(
+            "the analyzer ran longer than {} minutes",
+            ANALYZE_TIMEOUT.as_secs() / 60
+        )
+        .into());
+    };
+    stderr_lines.extend(
+        String::from_utf8_lossy(&stderr)
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(&mask),
+    );
+    let exit_code = status
+        .map_err(|error| format!("could not wait for the analyzer: {error}"))?
+        .code();
+    if let Some(reason) = analyzer::skip_reason(exit_code) {
+        return Err(reason.to_string().into());
+    }
+    let exit_code = exit_code.unwrap_or(-1);
+    if stdout_over {
+        return Err(format!(
+            "the analyzer printed more than {} MiB",
+            analyzer::MAX_OUTPUT_BYTES / (1024 * 1024)
+        )
+        .into());
+    }
+    analyzer::parse_analyzer_output(
+        &String::from_utf8_lossy(&stdout),
+        inputs.path_prefixes,
+        mask,
+    )
+    .map(|report| (exit_code, report))
+    .map_err(|error| format!("{error} (exit code {exit_code})").into())
+}
+
+/// The `analyze` step: runs `dart analyze --format=json` in the app
+/// directory and reports its summary. It never fails the build; when there is
+/// nothing to analyze, or the analyzer cannot run, the step is skipped.
+/// `Err` means the build was canceled or lost while it ran.
+async fn run_analyzer_step(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    log_seq: &mut BuildLogCursor,
+    inputs: AnalyzeInputs<'_>,
+    steps: &mut Vec<StepResult>,
+) -> anyhow::Result<()> {
+    if !analyzer::analysis_enabled(inputs.env) {
+        return Ok(());
+    }
+    let started = now_unix();
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        build_id,
+        log_seq,
+        "stdout",
+        &step_start_marker(analyzer::ANALYZE_STEP, analyzer::ANALYZE_COMMAND),
+    )
+    .await;
+    let mut stderr_lines = Vec::new();
+    let outcome = {
+        let masker = &log_seq.masker;
+        let cancel = poll_cancellation(
+            client,
+            daemon_url,
+            config,
+            build_id,
+            inputs.authority.clone(),
+        );
+        collect_analysis(&inputs, cancel, &mut stderr_lines, |text| masker.mask(text)).await
+    };
+    let terminated = matches!(outcome, Err(AnalysisSkip::Terminated));
+    for line in stderr_lines.iter().take(20) {
+        let _ = append_runner_log_line(
+            client, daemon_url, config, build_id, log_seq, "stderr", line,
+        )
+        .await;
+    }
+    let mut lines = Vec::new();
+    let (status, exit_code) = match &outcome {
+        Ok((exit_code, report)) => {
+            lines.push(analyzer::summary_line(report));
+            lines.extend(analyzer::diagnostic_lines(
+                report,
+                ANALYZE_LOGGED_DIAGNOSTICS,
+            ));
+            let uploaded = client
+                .post(format!(
+                    "{}/v1/runners/{}/jobs/{}/analysis",
+                    daemon_url, config.runner_id, build_id
+                ))
+                .bearer_auth(&config.runner_token)
+                .json(report)
+                .timeout(CONTROL_REQUEST_TIMEOUT)
+                .send()
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|resp| {
+                    if resp.status().is_success() {
+                        Ok(())
+                    } else {
+                        Err(anyhow::anyhow!("{}", resp.status()))
+                    }
+                });
+            if let Err(error) = uploaded {
+                lines.push(format!(
+                    "[oore-analyze] Could not upload the analysis: {error}"
+                ));
+            }
+            ("succeeded", Some(*exit_code))
+        }
+        Err(AnalysisSkip::Reason(reason)) => {
+            lines.push(format!("[oore-analyze] Skipped: {reason}"));
+            ("skipped", None)
+        }
+        Err(AnalysisSkip::Terminated) => {
+            lines.push("[oore-analyze] Stopped: the build is no longer active".to_string());
+            ("skipped", None)
+        }
+    };
+    for line in &lines {
+        let _ = append_runner_log_line(
+            client, daemon_url, config, build_id, log_seq, "stdout", line,
+        )
+        .await;
+    }
+    let finished = now_unix();
+    steps.push(StepResult {
+        name: analyzer::ANALYZE_STEP.to_string(),
+        status: status.to_string(),
+        exit_code,
+        started_at: started,
+        finished_at: finished,
+        duration_ms: (finished - started) * 1000,
+        publish_from_file: false,
+    });
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        build_id,
+        log_seq,
+        "stdout",
+        &step_end_marker(analyzer::ANALYZE_STEP, status, exit_code),
+    )
+    .await;
+    if terminated {
+        return Err(inputs.authority.terminated());
+    }
+    Ok(())
 }
 
 fn step_start_marker(name: &str, command: &str) -> String {
@@ -7248,6 +7685,7 @@ fn artifact_type_for_extension(ext: &str) -> Option<&'static str> {
     match ext.to_lowercase().as_str() {
         "apk" => Some("apk"),
         "ipa" => Some("ipa"),
+        "aab" => Some("aab"),
         _ => None,
     }
 }
@@ -7431,23 +7869,7 @@ async fn scan_and_upload_artifacts(
             "metadata": metadata,
         });
 
-        let resp = client
-            .post(format!(
-                "{}/v1/runners/{}/jobs/{}/artifacts",
-                daemon_url, config.runner_id, build_id
-            ))
-            .bearer_auth(&config.runner_token)
-            .json(&body)
-            .send()
-            .await
-            .with_context(|| format!("failed to reserve artifact {name}"))?;
-
-        if !resp.status().is_success() {
-            anyhow::bail!(
-                "artifact reservation failed for {name} (HTTP {})",
-                resp.status()
-            );
-        }
+        let resp = reserve_artifact(client, daemon_url, config, build_id, name, body).await?;
 
         let create_resp: oore_contract::CreateArtifactResponse = resp.json().await?;
         let artifact_id = create_resp.artifact.id;
@@ -7514,6 +7936,56 @@ async fn scan_and_upload_artifacts(
     Ok(())
 }
 
+/// Reserves an artifact upload. A daemon older than the `aab` artifact type
+/// rejects it with `invalid_artifact_type`; the bundle is then reserved once
+/// more as `generic`, which is how those daemons stored App Bundles.
+async fn reserve_artifact(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    name: &str,
+    mut body: serde_json::Value,
+) -> anyhow::Result<reqwest::Response> {
+    let url = format!(
+        "{}/v1/runners/{}/jobs/{}/artifacts",
+        daemon_url, config.runner_id, build_id
+    );
+    let mut fell_back = false;
+    loop {
+        let resp = client
+            .post(&url)
+            .bearer_auth(&config.runner_token)
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("failed to reserve artifact {name}"))?;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(resp);
+        }
+        if !fell_back
+            && status == reqwest::StatusCode::BAD_REQUEST
+            && body["artifact_type"] == "aab"
+        {
+            let code = resp
+                .json::<oore_contract::ApiError>()
+                .await
+                .map(|error| error.code)
+                .unwrap_or_default();
+            if code == "invalid_artifact_type" {
+                println!(
+                    "  Daemon does not accept the aab artifact type yet; uploading {name} as generic"
+                );
+                body["artifact_type"] = serde_json::Value::from("generic");
+                fell_back = true;
+                continue;
+            }
+        }
+        anyhow::bail!("artifact reservation failed for {name} (HTTP {status})");
+    }
+}
+
 async fn abort_artifact(
     client: &reqwest::Client,
     daemon_url: &str,
@@ -7541,6 +8013,8 @@ struct StatusReport<'a> {
     exit_code: Option<i32>,
     error_message: Option<String>,
     steps: &'a [StepResult],
+    /// The file's size budgets, once the build was planned.
+    size_budgets: Option<&'a [TargetSizeBudget]>,
 }
 
 async fn report_status(
@@ -7549,12 +8023,15 @@ async fn report_status(
     config: &RunnerConfig,
     report: &StatusReport<'_>,
 ) -> anyhow::Result<()> {
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": report.status,
         "exit_code": report.exit_code,
         "error_message": report.error_message,
         "steps": report.steps,
     });
+    if let Some(size_budgets) = report.size_budgets {
+        body["size_budgets"] = serde_json::json!(size_budgets);
+    }
 
     let resp = client
         .post(format!(
@@ -7820,12 +8297,25 @@ async fn run_and_stream(
 
 #[cfg(test)]
 mod step_retry_tests {
-    use super::retry_artifact_path;
+    use super::{artifact_type_for_extension, retry_artifact_path};
+
+    #[test]
+    fn artifact_types_follow_the_file_extension() {
+        assert_eq!(artifact_type_for_extension("apk"), Some("apk"));
+        assert_eq!(artifact_type_for_extension("ipa"), Some("ipa"));
+        assert_eq!(artifact_type_for_extension("aab"), Some("aab"));
+        assert_eq!(artifact_type_for_extension("AAB"), Some("aab"));
+        assert_eq!(artifact_type_for_extension("txt"), None);
+    }
 
     #[test]
     fn reused_artifacts_go_where_a_build_leaves_them() {
         assert_eq!(
             retry_artifact_path("app-release.aab", "generic").as_deref(),
+            Some("build/app/outputs/bundle/release/app-release.aab")
+        );
+        assert_eq!(
+            retry_artifact_path("app-release.aab", "aab").as_deref(),
             Some("build/app/outputs/bundle/release/app-release.aab")
         );
         assert_eq!(
@@ -7849,8 +8339,187 @@ mod tests {
         choose_ios_export_method, load_ui_execution_config, pubspec_version_name,
         require_runner_labels, resolve_execution_plan,
     };
-    use oore_contract::{BuildIsolation, IosExportMethod};
+    use oore_contract::{BuildIsolation, IosExportMethod, StepPhase};
     use serde_json::json;
+
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("{prefix}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn canceling_the_build_stops_the_analyzer() {
+        use std::os::unix::fs::PermissionsExt;
+        let workspace = TempDir::new("oore-analyze-cancel");
+        let root = workspace.path();
+        std::fs::write(root.join("pubspec.yaml"), "name: app\n").unwrap();
+        std::fs::create_dir_all(root.join(".dart_tool")).unwrap();
+        std::fs::write(root.join(".dart_tool/package_config.json"), "{}").unwrap();
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let dart = bin.join("dart");
+        std::fs::write(&dart, "#!/bin/sh\nsleep 60\n").unwrap();
+        std::fs::set_permissions(&dart, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let env = vec![(
+            "PATH".to_string(),
+            format!("{}:/usr/bin:/bin", bin.display()),
+        )];
+        let inputs = super::AnalyzeInputs {
+            workspace: root,
+            vm: None,
+            env: &env,
+            path_prefixes: &[],
+            authority: std::sync::Arc::new(super::BuildAuthorityState::default()),
+        };
+        let started = std::time::Instant::now();
+        let outcome = super::collect_analysis(
+            &inputs,
+            tokio::time::sleep(std::time::Duration::from_millis(300)),
+            &mut Vec::new(),
+            str::to_string,
+        )
+        .await;
+        assert!(matches!(outcome, Err(super::AnalysisSkip::Terminated)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+    }
+
+    fn plan_commands(plan: &super::ResolvedExecutionPlan, phase: StepPhase) -> Vec<String> {
+        plan.steps
+            .iter()
+            .filter(|step| step.phase == phase)
+            .map(|step| step.run.clone())
+            .collect()
+    }
+
+    #[test]
+    fn v2_files_run_named_steps_through_the_same_plan() {
+        let workspace = TempDir::new("oore-v2-plan-test");
+        std::fs::write(
+            workspace.path().join(".oore.yaml"),
+            "version: 2\napp:\n  flutter: 3.47.7\ntargets:\n  android:\n    build: flutter build appbundle --release\n  ios:\n    build: flutter build ipa --release\nsteps:\n  - name: Get packages\n    run: flutter pub get\n  - build\n  - name: Notify\n    run: echo ${{ secrets.HOOK }}\nenv:\n  CHANNEL: beta\n",
+        )
+        .unwrap();
+
+        let plan = resolve_execution_plan(workspace.path(), &json!({}), true).unwrap();
+        let names: Vec<(&str, StepPhase)> = plan
+            .steps
+            .iter()
+            .map(|step| (step.name.as_str(), step.phase))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("Get packages", StepPhase::PreBuild),
+                ("Build Android", StepPhase::Build),
+                ("Build iOS", StepPhase::Build),
+                ("Notify", StepPhase::PostBuild),
+            ]
+        );
+        // v2 build commands are complete; a Play upload adds no hidden bundle step.
+        assert_eq!(
+            plan_commands(&plan, StepPhase::Build),
+            [
+                "flutter build appbundle --release",
+                "flutter build ipa --release"
+            ]
+        );
+        assert_eq!(plan.flutter_version, "3.47.7");
+        assert!(plan.needs_xcode);
+        assert_eq!(plan.env[0].key, "CHANNEL");
+
+        let secrets = std::collections::BTreeMap::from([("HOOK".to_string(), "x".to_string())]);
+        let resolved = super::apply_secret_references(plan, &secrets).unwrap();
+        assert_eq!(resolved.steps[3].run, "echo ${OORE_SECRET_HOOK}");
+
+        let android_only = resolve_execution_plan(
+            workspace.path(),
+            &json!({ "selected_platforms": ["android"] }),
+            false,
+        )
+        .unwrap();
+        assert_eq!(android_only.steps.len(), 3);
+        assert!(!android_only.needs_xcode);
+
+        std::fs::write(
+            workspace.path().join(".oore.yaml"),
+            "version: 2\ntargets:\n  android:\n    build: a\nworkflows:\n  adhoc: {}\n  release: {}\n",
+        )
+        .unwrap();
+        let error = resolve_execution_plan(workspace.path(), &json!({}), false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("choose one for the pipeline"), "{error}");
+        let release =
+            resolve_execution_plan(workspace.path(), &json!({ "workflow": "release" }), false)
+                .unwrap();
+        assert_eq!(release.steps[0].name, "Build Android");
+    }
+
+    #[test]
+    fn declared_test_reports_are_copied_for_collection() {
+        let workspace = TempDir::new("oore-declared-report-ws");
+        let reports = TempDir::new("oore-declared-report-out");
+        std::fs::create_dir_all(workspace.path().join("build")).unwrap();
+        std::fs::write(workspace.path().join("build/tests.json"), "{}").unwrap();
+
+        super::copy_declared_test_report(
+            workspace.path(),
+            "build/tests.json",
+            reports.path(),
+            "Unit tests",
+        )
+        .unwrap();
+        assert!(reports.path().join("Unit-tests-declared.json").is_file());
+
+        let error = super::copy_declared_test_report(
+            workspace.path(),
+            "build/missing.xml",
+            reports.path(),
+            "Unit tests",
+        )
+        .unwrap_err();
+        assert!(error.contains("was not written"), "{error}");
+
+        // Oversized reports are skipped, not copied. A sparse file keeps the
+        // test cheap.
+        std::fs::File::create(workspace.path().join("build/huge.json"))
+            .unwrap()
+            .set_len(super::test_reports::MAX_REPORT_FILE_BYTES + 1)
+            .unwrap();
+        let error = super::copy_declared_test_report(
+            workspace.path(),
+            "build/huge.json",
+            reports.path(),
+            "Huge",
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("larger than 64 MiB and is skipped"),
+            "{error}"
+        );
+        assert!(!reports.path().join("Huge-declared.json").exists());
+        assert_eq!(super::report_file_stem("pre_build-1"), "pre_build-1");
+        assert_eq!(
+            super::report_file_stem("Build iOS (pro)"),
+            "Build-iOS--pro-"
+        );
+    }
 
     #[test]
     fn host_flutter_must_match_a_pinned_version() {
@@ -7939,7 +8608,7 @@ mod tests {
 
         let plan = resolve_execution_plan(&workspace, &snapshot, true).unwrap();
         assert_eq!(
-            plan.stage_commands.build,
+            plan_commands(&plan, StepPhase::Build),
             vec![
                 "flutter build apk --release --split-per-abi --flavor=prod",
                 "flutter build appbundle --release --flavor=prod",
@@ -7948,7 +8617,7 @@ mod tests {
 
         let plan = resolve_execution_plan(&workspace, &snapshot, false).unwrap();
         assert_eq!(
-            plan.stage_commands.build,
+            plan_commands(&plan, StepPhase::Build),
             vec!["flutter build apk --release --split-per-abi --flavor=prod"]
         );
 
@@ -7961,7 +8630,7 @@ mod tests {
         });
         let plan = resolve_execution_plan(&workspace, &snapshot, true).unwrap();
         assert_eq!(
-            plan.stage_commands.build,
+            plan_commands(&plan, StepPhase::Build),
             vec!["flutter build apk --release"]
         );
         std::fs::remove_dir_all(&workspace).ok();
@@ -7982,9 +8651,12 @@ mod tests {
         let plan = resolve_execution_plan(&workspace, &json!({}), false).unwrap();
         assert_eq!(plan.isolation, BuildIsolation::Vm);
         assert_eq!(plan.flutter_version, "3.47.7");
-        assert_eq!(plan.stage_commands.pre_build, vec!["flutter pub get"]);
         assert_eq!(
-            plan.stage_commands.build,
+            plan_commands(&plan, StepPhase::PreBuild),
+            vec!["flutter pub get"]
+        );
+        assert_eq!(
+            plan_commands(&plan, StepPhase::Build),
             vec!["flutter build apk --release"]
         );
 
@@ -7996,7 +8668,10 @@ mod tests {
         let plan = resolve_execution_plan(&workspace, &json!({}), false).unwrap();
         assert_eq!(plan.isolation, BuildIsolation::Host);
         assert_eq!(plan.flutter_version, "3.47.7");
-        assert_eq!(plan.stage_commands.pre_build, vec!["flutter pub get"]);
+        assert_eq!(
+            plan_commands(&plan, StepPhase::PreBuild),
+            vec!["flutter pub get"]
+        );
 
         let _ = std::fs::remove_dir_all(&workspace);
     }
@@ -8095,11 +8770,19 @@ mod secret_tests {
 
     fn plan(env: &[(&str, &str)], build: &[&str]) -> ResolvedExecutionPlan {
         ResolvedExecutionPlan {
-            stage_commands: PipelineCommandStages {
-                pre_build: vec![],
-                build: build.iter().map(|c| c.to_string()).collect(),
-                post_build: vec![],
-            },
+            steps: build
+                .iter()
+                .enumerate()
+                .map(|(index, command)| PlanStep {
+                    name: format!("build-{}", index + 1),
+                    phase: StepPhase::Build,
+                    run: command.to_string(),
+                    source: format!("commands.build[{index}]"),
+                    platform: None,
+                    flavor: None,
+                    test_report: None,
+                })
+                .collect(),
             artifact_patterns: vec![],
             env: env
                 .iter()
@@ -8115,6 +8798,8 @@ mod secret_tests {
             needs_xcode: false,
             flutter_version: "stable".to_string(),
             source: "test".to_string(),
+            publish: PlanPublish::default(),
+            size_budgets: Vec::new(),
         }
     }
 
@@ -8144,7 +8829,7 @@ mod secret_tests {
         assert!(resolved.secret_env_keys.contains("AUTH"));
         assert!(!resolved.secret_env_keys.contains("FLAVOR"));
         assert_eq!(
-            resolved.stage_commands.build[0],
+            resolved.steps[0].run,
             "curl -H \"X-Token: ${OORE_SECRET_API_TOKEN}\" https://example.test"
         );
         assert_eq!(
@@ -8347,6 +9032,7 @@ mod publish_report_tests {
             version_name: None,
             rollout_fraction: Some(0.1),
             status: "in_progress".into(),
+            testflight_groups: None,
         };
         report_publish_result(
             &reqwest::Client::new(),
@@ -8442,6 +9128,7 @@ mod build_lifecycle_tests {
             exit_code: Some(0),
             error_message: None,
             steps: &[],
+            size_budgets: None,
         }
     }
 
@@ -8674,5 +9361,451 @@ mod build_lifecycle_tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+}
+
+#[cfg(test)]
+mod artifact_reservation_tests {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::{RunnerConfig, reserve_artifact};
+
+    /// Answers each connection with the next (status, body) and returns the
+    /// request bodies it received.
+    async fn daemon(
+        responses: Vec<(u16, &'static str)>,
+    ) -> (String, tokio::task::JoinHandle<Vec<serde_json::Value>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = tokio::spawn(async move {
+            let mut bodies = Vec::new();
+            for (status, body) in responses {
+                let Ok(Ok((mut socket, _))) =
+                    tokio::time::timeout(Duration::from_millis(500), listener.accept()).await
+                else {
+                    break;
+                };
+                let mut request = Vec::new();
+                let mut buf = [0u8; 4096];
+                let request_body = loop {
+                    let read = socket.read(&mut buf).await.unwrap();
+                    request.extend_from_slice(&buf[..read]);
+                    let text = String::from_utf8_lossy(&request).to_string();
+                    if let Some((head, rest)) = text.split_once("\r\n\r\n") {
+                        let length = head
+                            .lines()
+                            .find_map(|line| {
+                                let (key, value) = line.split_once(':')?;
+                                key.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())?
+                            })
+                            .unwrap_or(0);
+                        if rest.len() >= length || read == 0 {
+                            break rest.to_string();
+                        }
+                    } else if read == 0 {
+                        break String::new();
+                    }
+                };
+                bodies.push(serde_json::from_str(&request_body).unwrap());
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            bodies
+        });
+        (url, handle)
+    }
+
+    async fn reserve(url: &str, artifact_type: &str) -> anyhow::Result<reqwest::Response> {
+        let config = RunnerConfig {
+            runner_id: "r1".into(),
+            runner_token: "t".into(),
+            daemon_url: url.into(),
+            name: "runner".into(),
+        };
+        let body = serde_json::json!({ "name": "app.aab", "artifact_type": artifact_type });
+        reserve_artifact(&reqwest::Client::new(), url, &config, "b1", "app.aab", body).await
+    }
+
+    const INVALID_TYPE: &str =
+        r#"{"code":"invalid_artifact_type","error":"artifact_type must be one of: apk, ipa"}"#;
+
+    #[tokio::test]
+    async fn an_older_daemon_gets_app_bundles_as_generic() {
+        let (url, server) = daemon(vec![(400, INVALID_TYPE), (201, "{}")]).await;
+        assert!(reserve(&url, "aab").await.unwrap().status().is_success());
+        let bodies = server.await.unwrap();
+        assert_eq!(bodies.len(), 2);
+        assert_eq!(bodies[0]["artifact_type"], "aab");
+        assert_eq!(bodies[1]["artifact_type"], "generic");
+        assert_eq!(bodies[1]["name"], "app.aab");
+    }
+
+    #[tokio::test]
+    async fn falls_back_only_once_and_only_for_app_bundles() {
+        let (url, server) =
+            daemon(vec![(400, INVALID_TYPE), (400, INVALID_TYPE), (201, "{}")]).await;
+        assert!(reserve(&url, "aab").await.is_err());
+        assert_eq!(server.await.unwrap().len(), 2);
+
+        let (url, server) = daemon(vec![(400, INVALID_TYPE), (201, "{}")]).await;
+        assert!(reserve(&url, "apk").await.is_err());
+        assert_eq!(server.await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn other_rejections_are_not_retried() {
+        let body = r#"{"code":"invalid_name","error":"bad name"}"#;
+        let (url, server) = daemon(vec![(400, body), (201, "{}")]).await;
+        assert!(reserve(&url, "aab").await.is_err());
+        assert_eq!(server.await.unwrap().len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod file_publish_tests {
+    use super::*;
+    use oore_contract::{
+        AppStoreDestination, AppStorePublishConfig, GooglePlayPublishConfig,
+        RunnerAppStorePublishPlan, RunnerAppStoreUploadCredentials,
+    };
+    use serde_json::json;
+    use tokio::io::AsyncWriteExt;
+
+    const V2: &str = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle --release\n    publish:\n      play: { track: closed, rollout: 0.2 }\n  ios:\n    build: flutter build ipa --release\n    publish:\n      testflight: { group: Beta }\n";
+
+    fn workspace(name: &str, oore_yaml: Option<&str>) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("oore-file-publish-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        if let Some(yaml) = oore_yaml {
+            std::fs::write(dir.join(".oore.yaml"), yaml).unwrap();
+        }
+        dir
+    }
+
+    fn play_settings(track: &str, rollout_percent: Option<f64>) -> GooglePlayPublishConfig {
+        serde_json::from_value(json!({
+            "enabled": true,
+            "service_account_secret": "PLAY_KEY",
+            "package_name": "com.example.app",
+            "track": track,
+            "rollout_percent": rollout_percent,
+            "release_notes": "changelog",
+        }))
+        .unwrap()
+    }
+
+    fn app_store_settings(config: AppStorePublishConfig) -> RunnerAppStorePublishPlan {
+        RunnerAppStorePublishPlan {
+            config,
+            credentials: RunnerAppStoreUploadCredentials {
+                key_id: "KEY".to_string(),
+                issuer_id: "ISSUER".to_string(),
+                private_key_pem: "PEM".to_string(),
+            },
+        }
+    }
+
+    fn testflight(groups: &[&str]) -> AppStorePublishConfig {
+        AppStorePublishConfig {
+            enabled: true,
+            destination: AppStoreDestination::Testflight,
+            testflight_groups: groups.iter().map(|group| group.to_string()).collect(),
+            ..AppStorePublishConfig::default()
+        }
+    }
+
+    #[test]
+    fn a_v2_publish_plans_like_the_equivalent_publish_settings() {
+        let dir = workspace("same", Some(V2));
+        let plan = resolve_execution_plan(&dir, &json!({}), false).unwrap();
+        // The pipeline's settings upload elsewhere; the file says where.
+        let settings = RunnerPublishPlan {
+            changelog: Some("Fixes".to_string()),
+            google_play: Some(play_settings("production", None)),
+            app_store: Some(app_store_settings(testflight(&["Internal", "QA"]))),
+        };
+        let from_file = plan.publish.apply(settings);
+        // What the runner gets when the settings themselves say it.
+        let equivalent = RunnerPublishPlan {
+            changelog: Some("Fixes".to_string()),
+            google_play: Some(play_settings("closed", Some(20.0))),
+            app_store: Some(app_store_settings(testflight(&["Beta"]))),
+        };
+        assert_eq!(from_file.changelog, equivalent.changelog);
+        assert_eq!(from_file.google_play.unwrap(), equivalent.google_play);
+        assert_eq!(
+            from_file.app_store.unwrap().unwrap().config,
+            equivalent.app_store.unwrap().config
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn files_without_publish_keep_the_publish_settings() {
+        for (name, yaml) in [
+            ("none", None),
+            ("v1", Some("version: 1\nplatforms: [android]\n")),
+            (
+                "v2",
+                Some("version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n"),
+            ),
+        ] {
+            let dir = workspace(name, yaml);
+            let snapshot = json!({ "ui_execution_config": { "platforms": ["android"] } });
+            let plan = resolve_execution_plan(&dir, &snapshot, true).unwrap();
+            assert!(plan.publish.is_empty(), "{name}");
+            let effective = plan.publish.apply(RunnerPublishPlan {
+                changelog: None,
+                google_play: Some(play_settings("internal", None)),
+                app_store: None,
+            });
+            assert_eq!(
+                effective.google_play.unwrap(),
+                Some(play_settings("internal", None)),
+                "{name}"
+            );
+            std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// Answers every request with 200 and `body`, and returns the request
+    /// lines it saw once `requests` have arrived.
+    async fn daemon(
+        body: &'static str,
+        requests: usize,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            while seen.len() < requests {
+                let Ok(Ok((mut socket, _))) =
+                    tokio::time::timeout(Duration::from_secs(5), listener.accept()).await
+                else {
+                    break;
+                };
+                let mut buf = vec![0u8; 16 * 1024];
+                let read = socket.read(&mut buf).await.unwrap();
+                let head = String::from_utf8_lossy(&buf[..read]).to_string();
+                seen.push(head.lines().next().unwrap_or_default().to_string());
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            seen
+        });
+        (url, server)
+    }
+
+    #[tokio::test]
+    async fn file_publish_without_store_settings_fails_the_publish_step() {
+        let dir = workspace("missing", Some(V2));
+        let plan = resolve_execution_plan(&dir, &json!({}), false).unwrap();
+        // The publish plan has no stores turned on, then three log lines.
+        let (url, server) = daemon("{}", 4).await;
+        let config = RunnerConfig {
+            runner_id: "r1".to_string(),
+            runner_token: "token".to_string(),
+            daemon_url: url.clone(),
+            name: "test".to_string(),
+        };
+        let job = ClaimedJob {
+            build_id: "b1".to_string(),
+            project_id: "p1".to_string(),
+            pipeline_id: "pl1".to_string(),
+            build_number: 1,
+            config_snapshot: json!({}),
+            commit_sha: None,
+            branch: None,
+            lease_expires_at: 0,
+            signing_token: "signing".to_string(),
+            retry_steps: None,
+        };
+        let authority = Arc::new(BuildAuthorityState::with_grace(Duration::from_secs(60)));
+        let mut steps = Vec::new();
+        let error = run_publish_steps(
+            &job,
+            &reqwest::Client::new(),
+            &url,
+            &config,
+            &mut BuildLogCursor::default(),
+            PublishInputs {
+                workspace: &dir,
+                signing_workspace: &dir,
+                secrets: &Default::default(),
+                signed_ipa_path: None,
+                ios_artifact_metadata: None,
+                only: None,
+                authority: &authority,
+                file_publish: &plan.publish,
+            },
+            &mut steps,
+        )
+        .await
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.starts_with("publish-play failed: "), "{message}");
+        assert!(
+            message.contains(
+                "targets.android.publish.play publishes with the pipeline's Google Play settings, which are off"
+            ),
+            "{message}"
+        );
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].name, PUBLISH_PLAY_STEP);
+        assert_eq!(steps[0].status, "failed");
+        // A retry of this step reads the file again.
+        assert!(steps[0].publish_from_file);
+        let seen = server.await.unwrap();
+        assert!(
+            seen[0].starts_with("GET /v1/runners/r1/jobs/b1/publish "),
+            "{seen:?}"
+        );
+        assert!(
+            seen[1..]
+                .iter()
+                .all(|line| line.starts_with("POST /v1/runners/r1/jobs/b1/logs ")),
+            "{seen:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Answers by path: the job's secrets, a publish plan with Google Play
+    /// on, no stored artifacts, and `{}` for everything else.
+    async fn retry_daemon() -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            while let Ok(Ok((mut socket, _))) =
+                tokio::time::timeout(Duration::from_millis(500), listener.accept()).await
+            {
+                let mut buf = vec![0u8; 16 * 1024];
+                let read = socket.read(&mut buf).await.unwrap();
+                let head = String::from_utf8_lossy(&buf[..read]).to_string();
+                let line = head.lines().next().unwrap_or_default().to_string();
+                let body = if line.contains("/secrets ") {
+                    r#"{"secrets":[]}"#
+                } else if line.contains("/publish ") {
+                    r#"{"google_play":{"enabled":true,"service_account_secret":"PLAY","track":"internal"}}"#
+                } else if line.contains("/retry-artifacts ") {
+                    r#"{"artifacts":[]}"#
+                } else {
+                    "{}"
+                };
+                seen.push(line);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            seen
+        });
+        (url, server)
+    }
+
+    async fn retry_play(snapshot: serde_json::Value) -> (String, Vec<StepResult>) {
+        let dir = workspace(
+            &format!("retry-{}", snapshot.as_object().unwrap().len()),
+            None,
+        );
+        let (url, server) = retry_daemon().await;
+        let config = RunnerConfig {
+            runner_id: "r1".to_string(),
+            runner_token: "token".to_string(),
+            daemon_url: url.clone(),
+            name: "test".to_string(),
+        };
+        let job = ClaimedJob {
+            build_id: "b2".to_string(),
+            project_id: "p1".to_string(),
+            pipeline_id: "pl1".to_string(),
+            build_number: 2,
+            // No repo_url, so a checkout fails.
+            config_snapshot: snapshot,
+            commit_sha: None,
+            branch: None,
+            lease_expires_at: 0,
+            signing_token: "signing".to_string(),
+            retry_steps: Some(vec![PUBLISH_PLAY_STEP.to_string()]),
+        };
+        let authority = Arc::new(BuildAuthorityState::with_grace(Duration::from_secs(60)));
+        let mut steps = Vec::new();
+        let error = execute_step_retry(
+            &job,
+            &reqwest::Client::new(),
+            &url,
+            &config,
+            &mut BuildLogCursor::default(),
+            RetryWorkspace {
+                workspace: &dir,
+                signing_workspace: &dir,
+                authority: &authority,
+            },
+            &[PUBLISH_PLAY_STEP.to_string()],
+            &mut steps,
+        )
+        .await
+        .unwrap_err();
+        server.abort();
+        std::fs::remove_dir_all(&dir).ok();
+        (format!("{error:#}"), steps)
+    }
+
+    #[tokio::test]
+    async fn a_retry_of_a_settings_publish_does_not_need_the_source() {
+        // A v1 or form build: checking out would fail, and is not tried.
+        let (error, steps) = retry_play(json!({ "retry_steps": ["publish-play"] })).await;
+        assert!(
+            error.contains("the source build has no stored artifacts"),
+            "{error}"
+        );
+        assert!(!error.contains("repo_url"), "{error}");
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].name, "artifacts");
+    }
+
+    #[tokio::test]
+    async fn a_retry_of_a_file_publish_reads_the_file_at_the_commit() {
+        let (error, steps) = retry_play(json!({
+            "retry_steps": ["publish-play"],
+            oore_contract::RETRY_PUBLISH_FROM_FILE: true,
+        }))
+        .await;
+        assert!(error.contains("no repo_url"), "{error}");
+        assert!(steps.is_empty());
+    }
+
+    #[test]
+    fn the_artifacts_result_carries_the_build_level_file_flag() {
+        let dir = workspace("artifacts-flag", Some(V2));
+        let plan = resolve_execution_plan(&dir, &json!({}), false).unwrap();
+        let from_file = artifacts_step_result(true, None, (0, 1), &plan.publish);
+        assert_eq!(from_file.name, "artifacts");
+        assert!(from_file.publish_from_file);
+        let settings = artifacts_step_result(true, None, (0, 1), &PlanPublish::default());
+        assert!(!settings.publish_from_file);
+        // The flag survives the round trip the daemon stores it through.
+        let stored = serde_json::to_value(&from_file).unwrap();
+        assert_eq!(stored["publish_from_file"], json!(true));
+        assert!(
+            serde_json::to_value(&settings)
+                .unwrap()
+                .get("publish_from_file")
+                .is_none()
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

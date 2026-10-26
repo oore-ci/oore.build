@@ -14,27 +14,48 @@ upload hosts.
 
 ## What you need
 
+- Project developer, maintainer, instance admin, or instance owner access.
 - iOS signing with an App Store Connect API key, as in
   [Configure App Store Connect signing](/build/sign/ios/app-store-connect).
 - The app already exists in App Store Connect with the pipeline's bundle ID.
-- For TestFlight, the group names to distribute to.
+- For TestFlight, the names of the groups to distribute to.
 
 ## 1. Export for the App Store
 
-Set the iOS signing export method to `app_store` with
-`PUT /v1/pipelines/{pipeline_id}/ios-signing` and `"export_method": "app_store"`.
+1. Open the pipeline and select **Edit**.
+2. Under **Signing > iOS**, set **Distribution** to **App Store**.
+3. Select **Save changes**.
 
-- In API mode, **Sync Profiles** then creates App Store distribution profiles.
-- In manual mode, upload an App Store distribution profile for each bundle ID.
-  Oore rejects ad hoc or development profiles for this export method.
+- In API or Hybrid mode, saving discards the stored profiles and syncs App
+  Store distribution profiles from App Store Connect.
+- In Manual mode, upload an App Store distribution profile for each bundle
+  ID. Oore rejects ad hoc or development profiles for this distribution.
 
-Changing the export method removes the stored profiles, because ad hoc and App
-Store profiles are not interchangeable. App Store IPAs cannot be installed
-from Oore; testers install them through TestFlight.
+Ad hoc and App Store profiles are not interchangeable, which is why changing
+the distribution replaces them. App Store IPAs cannot be installed from Oore.
+Testers install them through TestFlight.
 
 ## 2. Turn on publishing
 
-Send the settings with `PUT /v1/pipelines/{pipeline_id}/publish/app-store`:
+1. Open the pipeline's **Publishing** tab.
+2. Under **App Store Connect**, check that the readiness list shows
+   **App Store distribution** and **App Store Connect API key** as ready.
+3. Turn on **Upload to App Store Connect after each successful build**.
+4. For **Destination**, choose **TestFlight** or **App Store**.
+   - For TestFlight, enter the **TestFlight groups**.
+   - For the App Store, turn on **Submit for review** to submit the version
+     once the build is attached. Then **Phased release** turns on Apple's
+     seven-day phased release.
+5. Under **Release notes**, add **What to Test** or **What's New** text per
+   locale.
+6. Under **Export compliance**, turn on **Uses non-exempt encryption** only if
+   the app uses encryption beyond what iOS provides, such as HTTPS.
+7. Select **Turn on App Store publishing**, or **Save changes** when
+   publishing was already on.
+
+For automation, set `"export_method": "app_store"` with
+`PUT /v1/pipelines/{pipeline_id}/ios-signing`, then send the publish settings
+with `PUT /v1/pipelines/{pipeline_id}/publish/app-store`:
 
 ```json
 {
@@ -46,9 +67,8 @@ Send the settings with `PUT /v1/pipelines/{pipeline_id}/publish/app-store`:
 }
 ```
 
-For an App Store release, set `"destination": "app_store"`. Then
-`submit_for_review` submits the version once the build is attached, and
-`phased_release` turns on Apple's seven-day phased release.
+For an App Store release, set `"destination": "app_store"`, then
+`submit_for_review` and `phased_release` as needed.
 
 ## What happens after a build
 
@@ -66,6 +86,15 @@ For an App Store release, set `"destination": "app_store"`. Then
 
 Pause, resume and complete on the release change Apple's phased release.
 Apple sets the percentages, so raising a step is not available.
+
+## Verify the result
+
+- The build shows a succeeded `publish-app-store` step.
+- The build's **Release** tab shows the release moving through
+  **Processing** to **Complete** for internal TestFlight groups, or to
+  **In review** for external groups and App Store submissions.
+- App Store Connect shows the build in the TestFlight groups, or attached to
+  the App Store version.
 
 ## Store health on Home
 
@@ -97,3 +126,8 @@ Pass `--build-number` to `flutter build ipa`.
 
 Apple does not accept "What's New" on an app's first version. The release
 history notes the skipped field and the release continues.
+
+## Next step
+
+[Promote builds between environments](/build/distribute/environments) to send
+a tested TestFlight build to the App Store without rebuilding it.

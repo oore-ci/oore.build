@@ -41,6 +41,8 @@ import type { ListIntegrationsResponse, Project } from '@oore/client/models'
 import { PageMeta } from '@/lib/seo'
 import { ProjectCollection } from './-project-collection'
 import type { ProjectSort } from './-project-collection'
+import { useListNavigation } from '@/hooks/use-list-navigation'
+import { Text } from '@/components/layout/text'
 
 const loadCreateProjectDialog = () => import('./-create-project-dialog')
 const CreateProjectDialog = lazy(loadCreateProjectDialog)
@@ -97,6 +99,7 @@ export const Route = createFileRoute('/projects/')({
 })
 
 function ProjectsListPage() {
+  useListNavigation()
   const scope = useFirstAppScope()
   const updateProgress = useFirstAppStore((state) => state.update)
   const search = useSearch({ from: '/projects/' })
@@ -239,9 +242,9 @@ function ProjectsListPage() {
                       Connect source
                     </Button>
                   ) : (
-                    <p className="text-xs text-muted-foreground">
+                    <Text variant="caption">
                       Ask an owner or admin to connect a source.
-                    </p>
+                    </Text>
                   )
                 ) : canWriteProjects ? (
                   <Button onClick={() => setCreateOpen(true)}>
@@ -249,9 +252,9 @@ function ProjectsListPage() {
                     Create project
                   </Button>
                 ) : (
-                  <p className="text-xs text-muted-foreground">
+                  <Text variant="caption">
                     Ask an owner or admin to create the first project.
-                  </p>
+                  </Text>
                 )}
               </EmptyContent>
             </Empty>

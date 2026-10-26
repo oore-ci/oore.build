@@ -130,6 +130,9 @@ use utoipa::{
         operations::update_pipeline,
         operations::delete_pipeline,
         operations::validate_pipeline,
+        operations::plan_pipeline,
+        operations::export_pipeline_yaml,
+        operations::import_pipeline_yaml,
         // ── Pipeline Signing (Android) ──
         operations::get_pipeline_android_signing,
         operations::update_pipeline_android_signing,
@@ -167,6 +170,7 @@ use utoipa::{
         operations::create_build,
         operations::preview_build_changelog,
         operations::list_builds,
+        operations::list_build_actors,
         operations::get_build_insights,
         operations::get_build,
         operations::cancel_build,
@@ -174,6 +178,9 @@ use utoipa::{
         operations::reject_build,
         operations::rerun_build,
         operations::retry_build_step,
+        operations::list_build_feedback,
+        operations::create_build_feedback,
+        operations::get_build_feedback_screenshot,
         // ── Releases ──
         operations::list_releases,
         operations::get_store_vitals,
@@ -187,6 +194,14 @@ use utoipa::{
         operations::complete_release,
         operations::approve_release,
         operations::list_release_events,
+        // ── Environments ──
+        operations::list_project_environments,
+        operations::create_project_environment,
+        operations::update_project_environment,
+        operations::delete_project_environment,
+        operations::promote_build,
+        operations::approve_promotion,
+        operations::reject_promotion,
         // ── Audit Logs ──
         operations::list_audit_logs,
         // ── API Tokens ──
@@ -213,12 +228,14 @@ use utoipa::{
         operations::get_job_retry_artifacts,
         operations::report_job_publish_result,
         operations::report_job_test_results,
+        operations::report_job_analysis,
         // ── Build Logs ──
         operations::append_build_logs,
         operations::get_build_logs,
         operations::stream_events,
         operations::stream_build_logs,
         operations::get_build_test_results,
+        operations::get_build_analysis,
         operations::create_stream_token,
         // ── Artifacts ──
         operations::create_artifact,
@@ -227,6 +244,7 @@ use utoipa::{
         operations::list_artifacts,
         operations::list_project_artifacts,
         operations::list_build_artifacts,
+        operations::get_build_size_report,
         operations::generate_download_link,
         operations::create_artifact_install_link,
         operations::get_ios_install_manifest,
@@ -374,6 +392,10 @@ use utoipa::{
         oore_contract::TriggerConfig,
         oore_contract::ScheduleTrigger,
         oore_contract::ApprovalPolicy,
+        oore_contract::SizeBudget,
+        oore_contract::SizeBudgetMode,
+        oore_contract::SizeBudgetRule,
+        oore_contract::TargetSizeBudget,
         oore_contract::ConcurrencyPolicy,
         oore_contract::Pipeline,
         oore_contract::CreatePipelineRequest,
@@ -383,6 +405,16 @@ use utoipa::{
         oore_contract::ListPipelinesResponse,
         oore_contract::ValidatePipelineRequest,
         oore_contract::ValidatePipelineResponse,
+        oore_contract::PlanPipelineRequest,
+        oore_contract::PlanPipelineResponse,
+        oore_contract::ExportPipelineYamlRequest,
+        oore_contract::ExportPipelineYamlResponse,
+        oore_contract::ImportPipelineYamlRequest,
+        oore_contract::ImportPipelineYamlResponse,
+        oore_contract::ImportedPlayPublish,
+        oore_contract::PipelinePlanPreview,
+        oore_contract::PipelinePlanStep,
+        oore_contract::StepPhase,
         // Publishing
         oore_contract::GooglePlayReleaseNotesSource,
         oore_contract::GooglePlayPublishConfig,
@@ -446,6 +478,7 @@ use utoipa::{
         oore_contract::BuildChangelogPreviewResponse,
         oore_contract::BuildDetailResponse,
         oore_contract::ListBuildsResponse,
+        oore_contract::ListBuildActorsResponse,
         oore_contract::BuildOutcomeTotals,
         oore_contract::DurationPercentiles,
         oore_contract::BuildInsightsDay,
@@ -482,6 +515,19 @@ use utoipa::{
         oore_contract::ListReleaseActivityResponse,
         oore_contract::ReleaseActionRequest,
         oore_contract::CreateReleaseRequest,
+        // Environments
+        oore_contract::ProjectEnvironment,
+        oore_contract::ApproverRole,
+        oore_contract::EnvironmentApprovers,
+        oore_contract::EnvironmentApprover,
+        oore_contract::EnvironmentApproversInput,
+        oore_contract::PromotionState,
+        oore_contract::EnvironmentPromotion,
+        oore_contract::ListProjectEnvironmentsResponse,
+        oore_contract::CreateProjectEnvironmentRequest,
+        oore_contract::UpdateProjectEnvironmentRequest,
+        oore_contract::CreatePromotionRequest,
+        oore_contract::PromotionDecisionRequest,
         // Runners
         oore_contract::RunnerStatus,
         oore_contract::Runner,
@@ -576,11 +622,28 @@ use utoipa::{
         oore_contract::TestRunOutcome,
         oore_contract::BuildTestFailure,
         oore_contract::BuildTestResultsResponse,
+        // Analyzer
+        oore_contract::AnalyzerSeverity,
+        oore_contract::AnalyzerDiagnostic,
+        oore_contract::AnalyzerCounts,
+        oore_contract::RunnerAnalyzerReport,
+        oore_contract::BuildAnalysis,
+        oore_contract::BuildAnalysisBaseline,
+        oore_contract::BuildAnalysisResponse,
+        // Tester feedback
+        oore_contract::CreateBuildFeedbackRequest,
+        oore_contract::BuildFeedback,
+        oore_contract::ListBuildFeedbackResponse,
+        // Artifact sizes
+        oore_contract::BuildSizeBaseline,
+        oore_contract::ArtifactSizeComparison,
+        oore_contract::BuildSizeReport,
         // Notification Channels
         oore_contract::NotificationChannelType,
         oore_contract::SmtpTlsMode,
         oore_contract::SmtpConfig,
         oore_contract::UpdateSmtpConfig,
+        oore_contract::SlackMention,
         oore_contract::NotificationDeliveryStatus,
         oore_contract::NotificationChannel,
         oore_contract::CreateNotificationChannelRequest,
@@ -619,6 +682,7 @@ use utoipa::{
         (name = "Pipeline Signing", description = "Code signing configuration — Android keystores, iOS certificates/profiles."),
         (name = "Builds", description = "Build lifecycle — queue, list, detail, cancel."),
         (name = "Releases", description = "Store releases — staged rollout records with pause, halt, resume, complete and approval."),
+        (name = "Environments", description = "Release environments on a project, such as internal, beta and production, and promotion of a build between them without a new build."),
         (name = "Runners", description = "Build runner management — register, heartbeat, job claim/status."),
         (name = "Build Logs", description = "Build log ingestion and retrieval — append, paginated fetch, SSE streaming."),
         (name = "Events", description = "Live build, runner and release changes over SSE."),
@@ -1899,6 +1963,56 @@ mod operations {
     )]
     pub(super) fn validate_pipeline() {}
 
+    /// Plan pipeline config
+    ///
+    /// Resolves the steps a build would run for a `.oore.yaml` or the
+    /// pipeline's form settings, with the same validation as
+    /// `oore pipeline validate`. Environment values are never returned and
+    /// secret references stay as written.
+    #[utoipa::path(post, path = "/v1/pipelines/plan", tag = "Pipelines",
+        request_body = PlanPipelineRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Plan or validation errors", body = PlanPipelineResponse),
+            (status = 400, description = "Neither or both sources given, or the file is too large", body = ApiError),
+        )
+    )]
+    pub(super) fn plan_pipeline() {}
+
+    /// Export pipeline settings as `.oore.yaml`
+    ///
+    /// Writes the pipeline's form settings as a `version: 2` `.oore.yaml`,
+    /// with `on` from the trigger settings and `publish` from the Publish
+    /// settings where they map exactly. The file is planned before it is
+    /// returned and runs what the settings run. Secret values and store
+    /// credentials never appear in it; secret references stay as written.
+    #[utoipa::path(post, path = "/v1/pipelines/export-yaml", tag = "Pipelines",
+        request_body = ExportPipelineYamlRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "The file, or why the settings cannot be exported", body = ExportPipelineYamlResponse),
+        )
+    )]
+    pub(super) fn export_pipeline_yaml() {}
+
+    /// Import `.oore.yaml` into pipeline settings
+    ///
+    /// Reads a `version: 2` `.oore.yaml` back into the pipeline's form
+    /// settings: the inverse of the export. The file is validated as
+    /// `oore pipeline validate` does. Settings are returned only when the
+    /// form can hold the whole file; exported again, they plan the same as
+    /// the file. Everything else is listed in `unsupported`. Nothing is
+    /// saved, and secret references stay as written.
+    #[utoipa::path(post, path = "/v1/pipelines/import-yaml", tag = "Pipelines",
+        request_body = ImportPipelineYamlRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "The form settings, or why the file cannot become them", body = ImportPipelineYamlResponse),
+            (status = 400, description = "The file is too large", body = ApiError),
+        )
+    )]
+    pub(super) fn import_pipeline_yaml() {}
+
     // ── Pipeline Publishing ──
 
     /// Get Google Play publish settings
@@ -2337,7 +2451,7 @@ mod operations {
 
     /// List builds
     ///
-    /// Returns builds, optionally filtered by project, pipeline, status, or branch, or searched with `q`.
+    /// Returns builds, optionally filtered by project, pipeline, status, branch, trigger, actor, or creation time, or searched with `q`.
     #[utoipa::path(get, path = "/v1/builds", tag = "Builds",
         params(
             ("limit" = Option<i64>, Query, description = "Page size (default 50)"),
@@ -2346,6 +2460,10 @@ mod operations {
             ("pipeline_id" = Option<String>, Query, description = "Filter by pipeline"),
             ("status" = Option<String>, Query, description = "Filter by one status or up to 9 comma-separated statuses"),
             ("branch" = Option<String>, Query, description = "Filter by exact branch name"),
+            ("trigger" = Option<String>, Query, description = "Filter by one or more comma-separated trigger kinds: manual, api, schedule, push, pull_request, or tag_push. The last three are webhook events."),
+            ("actor" = Option<String>, Query, description = "Filter by exact trigger actor (the user email for manual builds, the SCM login for webhook builds). At most 320 characters."),
+            ("created_after" = Option<i64>, Query, description = "Only builds created at or after this Unix time in seconds"),
+            ("created_before" = Option<i64>, Query, description = "Only builds created before this Unix time in seconds. Must be later than created_after."),
             ("q" = Option<String>, Query, description = "Search builds, case-insensitively, by build number (with or without #), part of the branch, the start of the commit SHA, or part of the pipeline or project name. At most 200 characters."),
             ("sort" = Option<String>, Query, description = "Sort by created_at, status, project_name, pipeline_name, or branch"),
             ("direction" = Option<String>, Query, description = "Sort direction: asc or desc"),
@@ -2357,6 +2475,23 @@ mod operations {
         )
     )]
     pub(super) fn list_builds() {}
+
+    /// List build actors
+    ///
+    /// Distinct trigger actors on builds the caller can see, most recently active first, for the builds list's actor filter.
+    #[utoipa::path(get, path = "/v1/builds/actors", tag = "Builds",
+        params(
+            ("project_id" = Option<String>, Query, description = "Only actors of this project's builds"),
+            ("q" = Option<String>, Query, description = "Case-insensitive part of the actor. At most 200 characters."),
+            ("limit" = Option<i64>, Query, description = "Maximum actors (default 50, at most 200)"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Build actors", body = ListBuildActorsResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+        )
+    )]
+    pub(super) fn list_build_actors() {}
 
     /// Get build insights
     ///
@@ -2635,6 +2770,132 @@ mod operations {
     )]
     pub(super) fn list_release_events() {}
 
+    // ── Environments ──
+
+    /// List project environments
+    ///
+    /// Environments in promotion order, each with its newest release, plus pending promotions and the most recent decided ones.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/environments", tag = "Environments",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Environments and promotions", body = ListProjectEnvironmentsResponse),
+            (status = 404, description = "Project not found", body = ApiError),
+        )
+    )]
+    pub(super) fn list_project_environments() {}
+
+    /// Create environment
+    ///
+    /// Adds an environment at the end of the promotion path. Requires the project maintainer role. A release recorded on the environment's store and track belongs to it.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/environments", tag = "Environments",
+        params(("project_id" = String, Path, description = "Project ID")),
+        request_body = CreateProjectEnvironmentRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Created environment", body = ProjectEnvironment),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Project not found", body = ApiError),
+            (status = 409, description = "Key, or store and track, already used", body = ApiError),
+        )
+    )]
+    pub(super) fn create_project_environment() {}
+
+    /// Update environment
+    ///
+    /// Changes the name, track, approval rule, rollout policy or position. Requires the project maintainer role.
+    #[utoipa::path(patch, path = "/v1/projects/{project_id}/environments/{environment_id}", tag = "Environments",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("environment_id" = String, Path, description = "Environment ID"),
+        ),
+        request_body = UpdateProjectEnvironmentRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated environment", body = ProjectEnvironment),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Store and track already used", body = ApiError),
+        )
+    )]
+    pub(super) fn update_project_environment() {}
+
+    /// Delete environment
+    ///
+    /// Its releases stay without an environment; its promotions are removed. Requires the project maintainer role.
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/environments/{environment_id}", tag = "Environments",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("environment_id" = String, Path, description = "Environment ID"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Deleted", body = OkResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "A promotion is in progress", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_project_environment() {}
+
+    /// Promote build
+    ///
+    /// Puts the version a build's live Google Play release already uploaded on the environment's track and records a release with the environment's rollout policy. Nothing is rebuilt. Promoting straight in requires the maintainer role; when the environment requires approval, a developer may ask and the promotion waits as `pending` without touching the store. Writes an audit log entry.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/promotions", tag = "Environments",
+        params(("project_id" = String, Path, description = "Project ID")),
+        request_body = CreatePromotionRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "The promotion, completed or pending", body = EnvironmentPromotion),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Project, environment or build not found", body = ApiError),
+            (status = 409, description = "Already in the environment, pending, unsupported store, or no live release to promote", body = ApiError),
+            (status = 502, description = "The store rejected the promotion", body = ApiError),
+        )
+    )]
+    pub(super) fn promote_build() {}
+
+    /// Approve promotion
+    ///
+    /// Approves a pending promotion and makes the store change as the approver. Requires one of the environment's approvers (by default any maintainer). API tokens cannot decide promotions. Writes an audit log entry.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/promotions/{promotion_id}/approve", tag = "Environments",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("promotion_id" = String, Path, description = "Promotion ID"),
+        ),
+        request_body(content = Option<PromotionDecisionRequest>, description = "Optional reason"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Completed promotion", body = EnvironmentPromotion),
+            (status = 403, description = "Not one of the environment's approvers, or an API token", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not pending, or the build changed while it waited", body = ApiError),
+            (status = 502, description = "The store rejected the promotion", body = ApiError),
+        )
+    )]
+    pub(super) fn approve_promotion() {}
+
+    /// Reject promotion
+    ///
+    /// Rejects a pending promotion; nothing changes at the store. Requires one of the environment's approvers (by default any maintainer). API tokens cannot decide promotions. Writes an audit log entry.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/promotions/{promotion_id}/reject", tag = "Environments",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("promotion_id" = String, Path, description = "Promotion ID"),
+        ),
+        request_body(content = Option<PromotionDecisionRequest>, description = "Optional reason"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Rejected promotion", body = EnvironmentPromotion),
+            (status = 403, description = "Not one of the environment's approvers, or an API token", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not pending", body = ApiError),
+        )
+    )]
+    pub(super) fn reject_promotion() {}
+
     /// Re-run build
     ///
     /// Creates a new build cloning the original build's config_snapshot, branch, and commit_sha.
@@ -2668,6 +2929,63 @@ mod operations {
         )
     )]
     pub(super) fn retry_build_step() {}
+
+    /// List build feedback
+    ///
+    /// Notes testers sent about this build, oldest first. Needs read access
+    /// to the build's project.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/feedback", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Feedback for the build", body = ListBuildFeedbackResponse),
+            (status = 404, description = "Build not found", body = ApiError),
+        )
+    )]
+    pub(super) fn list_build_feedback() {}
+
+    /// Send build feedback
+    ///
+    /// Files a tester's note against a build, with optional device, OS
+    /// version, app version and a PNG, JPEG or WebP screenshot of up to
+    /// 5 MiB. Anyone who can install the build's artifacts can send one. The
+    /// note shows on the build's timeline and is sent to the project's
+    /// notification channels as a `qa_feedback` event. Each person can send
+    /// 10 notes per 10 minutes.
+    #[utoipa::path(post, path = "/v1/builds/{build_id}/feedback", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        request_body = CreateBuildFeedbackRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Feedback recorded", body = BuildFeedback),
+            (status = 400, description = "Missing message, a field too long, or an artifact from another build", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Build not found", body = ApiError),
+            (status = 409, description = "A screenshot was attached but artifact storage is not configured", body = ApiError),
+            (status = 413, description = "Screenshot larger than 5 MiB", body = ApiError),
+            (status = 415, description = "Screenshot is not a PNG, JPEG or WebP image", body = ApiError),
+            (status = 429, description = "Too much feedback sent recently", body = ApiError),
+        )
+    )]
+    pub(super) fn create_build_feedback() {}
+
+    /// Get a build feedback screenshot
+    ///
+    /// Returns the screenshot attached to a feedback note, with the image
+    /// type detected from its bytes. Needs read access to the build's project.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/feedback/{feedback_id}/screenshot", tag = "Builds",
+        params(
+            ("build_id" = String, Path, description = "Build ID"),
+            ("feedback_id" = String, Path, description = "Feedback ID"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Screenshot image", body = BinaryPayload, content_type = "image/*"),
+            (status = 404, description = "Build, feedback or screenshot not found", body = ApiError),
+            (status = 500, description = "The screenshot could not be read from artifact storage", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_feedback_screenshot() {}
 
     // ── Runners ──
 
@@ -3075,6 +3393,44 @@ mod operations {
     )]
     pub(super) fn get_build_test_results() {}
 
+    /// Report the analyzer summary
+    ///
+    /// Runner reports the `dart analyze --format=json` summary of a build. A
+    /// later report replaces an earlier one. Only accepted while the build
+    /// runs.
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/analysis", tag = "Builds",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+        ),
+        request_body = RunnerAnalyzerReport,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Recorded", body = OkResponse),
+            (status = 403, description = "Runner does not match the assignment", body = ApiError),
+            (status = 404, description = "Build not found", body = ApiError),
+            (status = 409, description = "Build is not running", body = ApiError),
+        )
+    )]
+    pub(super) fn report_job_analysis() {}
+
+    /// Get the build's analyzer summary
+    ///
+    /// Returns the `dart analyze` counts and most severe diagnostics of a
+    /// build, with the baseline build on the base branch it compares with.
+    /// `analysis` is `null` when the build reported none.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/analysis", tag = "Builds",
+        params(
+            ("build_id" = String, Path, description = "Build ID"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Analyzer summary", body = BuildAnalysisResponse),
+            (status = 404, description = "Build not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_analysis() {}
+
     /// Stream build logs (SSE)
     ///
     /// Server-sent event stream of build logs. Requires a short-lived streaming
@@ -3156,6 +3512,22 @@ mod operations {
         )
     )]
     pub(super) fn list_artifacts() {}
+
+    /// Get build artifact sizes
+    ///
+    /// Returns the size of each artifact the build published and its change
+    /// from the latest earlier successful build of the same pipeline on the
+    /// base branch: a pull request's target branch, otherwise the project's
+    /// default branch.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/sizes", tag = "Artifacts",
+        params(("build_id" = String, Path, description = "Build ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Artifact sizes and changes", body = BuildSizeReport),
+            (status = 404, description = "Build not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_size_report() {}
 
     /// List available artifacts across a project
     #[utoipa::path(get, path = "/v1/projects/{project_id}/artifacts", tag = "Artifacts",

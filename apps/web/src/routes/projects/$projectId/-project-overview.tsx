@@ -24,6 +24,11 @@ import { latestAppPerPlatform } from '@/lib/artifact-install'
 import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
 import { formatFileSize, relativeTime } from '@/lib/format-utils'
 import type { LastPipelineBuild } from './-project-build-summary'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const OVERVIEW_PIPELINE_LIMIT = 5
 
@@ -40,12 +45,15 @@ function OverviewSection({
   const titleId = useId()
   return (
     <section aria-labelledby={titleId} className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <h2 id={titleId} className="text-sm font-medium text-muted-foreground">
+      <Row gap={3} className="justify-between">
+        <h2
+          id={titleId}
+          className={cn(textVariants({ variant: 'muted' }), 'font-medium')}
+        >
           {title}
         </h2>
         {action}
-      </div>
+      </Row>
       {children}
     </section>
   )
@@ -114,13 +122,13 @@ function PipelineSummary({
             <ItemActions>
               {lastBuild ? (
                 <>
-                  <span className="text-xs text-muted-foreground">
+                  <span className={textVariants({ variant: 'caption' })}>
                     #{lastBuild.buildNumber} · {relativeTime(lastBuild.time)}
                   </span>
                   <StatusBadge kind="build" value={lastBuild.status} />
                 </>
               ) : (
-                <span className="text-xs text-muted-foreground">
+                <span className={textVariants({ variant: 'caption' })}>
                   No recent builds
                 </span>
               )}
@@ -143,10 +151,10 @@ function LatestApps({
 
   if (apps.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
+      <Text variant="muted">
         No installable app in recent builds. Check output paths and iOS signing
         in the build details.
-      </p>
+      </Text>
     )
   }
 
@@ -222,7 +230,7 @@ export default function ProjectOverview({
   const showApps = !(setup && !loading && builds.length === 0)
 
   return (
-    <div className="flex flex-col gap-8 pt-3">
+    <Stack gap={8} className="pt-3">
       {setup}
       {pipelines.length > 0 ? (
         <OverviewSection
@@ -286,20 +294,20 @@ export default function ProjectOverview({
         ) : loading ? (
           <Skeleton className="h-40 w-full" />
         ) : builds.length ? (
-          <div role="list" className="flex flex-col gap-2">
+          <Stack role="list" gap={2}>
             {builds.slice(0, 5).map((build) => (
               <BuildItem key={build.id} build={build} />
             ))}
-          </div>
+          </Stack>
         ) : (
-          <p className="text-sm text-muted-foreground">
+          <Text variant="muted">
             {setup
               ? 'Builds show up here after the first run.'
               : 'No builds yet. Add a pipeline, then run a build.'}
-          </p>
+          </Text>
         )}
       </OverviewSection>
       <ReleaseActivity projectId={projectId} />
-    </div>
+    </Stack>
   )
 }

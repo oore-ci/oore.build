@@ -1,4 +1,9 @@
 {
-  "title": "Sources",
-  "pages": ["github", "gitlab", "webhooks/troubleshoot"]
+  "title": "Connect GitHub or GitLab",
+  "pages": [
+    "github",
+    "gitlab",
+    "../run/pull-request-checks",
+    "webhooks/troubleshoot"
+  ]
 }

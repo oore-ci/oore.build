@@ -4,15 +4,19 @@ pub mod app_store_connect_keys;
 pub mod app_store_publish;
 pub mod apple_api;
 pub mod artifact_install;
+pub mod artifact_sizes;
 pub mod artifact_tokens;
 pub mod artifacts;
 pub mod audit_logs;
 pub mod auth;
 pub mod background;
+pub mod build_analysis;
+pub mod build_feedback;
 pub mod build_insights;
 pub mod builds;
 pub mod commit_checks;
 pub mod crypto;
+pub mod environments;
 pub mod events;
 pub mod extractors;
 pub mod frontend_pairing;
@@ -2363,6 +2367,18 @@ pub async fn build_router_with_recovery(
         if let Err(e) = sched.reload_pending(pool).await {
             tracing::error!(error = %e, "failed to reload pending builds into scheduler");
         }
+        match environments::fail_interrupted_promotions(pool).await {
+            Ok(0) => {}
+            Ok(count) => {
+                tracing::warn!(
+                    count,
+                    "marked promotions interrupted by the restart as failed"
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to mark interrupted promotions as failed");
+            }
+        }
     }
 
     let external_access_network =
@@ -2745,6 +2761,15 @@ pub async fn build_router_with_recovery(
                 .delete(pipelines::delete_pipeline),
         )
         .route("/v1/pipelines/validate", post(pipelines::validate_pipeline))
+        .route("/v1/pipelines/plan", post(pipelines::plan_pipeline))
+        .route(
+            "/v1/pipelines/export-yaml",
+            post(pipelines::export_pipeline_yaml),
+        )
+        .route(
+            "/v1/pipelines/import-yaml",
+            post(pipelines::import_pipeline_yaml),
+        )
         .route(
             "/v1/pipelines/{pipeline_id}/android-signing",
             get(pipeline_signing::get_pipeline_android_signing)
@@ -2835,6 +2860,7 @@ pub async fn build_router_with_recovery(
             get(builds::preview_build_changelog),
         )
         .route("/v1/builds", get(builds::list_builds))
+        .route("/v1/builds/actors", get(builds::list_build_actors))
         .route(
             "/v1/builds/insights",
             get(build_insights::get_build_insights),
@@ -2857,6 +2883,24 @@ pub async fn build_router_with_recovery(
             "/v1/builds/{build_id}/tests",
             get(test_results::get_build_test_results),
         )
+        .route(
+            "/v1/builds/{build_id}/analysis",
+            get(build_analysis::get_build_analysis),
+        )
+        .route(
+            "/v1/builds/{build_id}/feedback",
+            get(build_feedback::list_build_feedback),
+        )
+        .route(
+            "/v1/builds/{build_id}/feedback",
+            post(build_feedback::create_build_feedback).layer(DefaultBodyLimit::max(
+                build_feedback::MAX_FEEDBACK_REQUEST_BYTES,
+            )),
+        )
+        .route(
+            "/v1/builds/{build_id}/feedback/{feedback_id}/screenshot",
+            get(build_feedback::get_build_feedback_screenshot),
+        )
         // Audit log endpoints
         .route("/v1/audit-logs", get(audit_logs::list_audit_logs))
         .route(
@@ -2869,6 +2913,28 @@ pub async fn build_router_with_recovery(
             post(releases::release_action),
         )
         .route("/v1/release-events", get(releases::list_release_activity))
+        .route(
+            "/v1/projects/{project_id}/environments",
+            get(environments::list_project_environments)
+                .post(environments::create_project_environment),
+        )
+        .route(
+            "/v1/projects/{project_id}/environments/{environment_id}",
+            axum::routing::patch(environments::update_project_environment)
+                .delete(environments::delete_project_environment),
+        )
+        .route(
+            "/v1/projects/{project_id}/promotions",
+            post(environments::promote_build),
+        )
+        .route(
+            "/v1/projects/{project_id}/promotions/{promotion_id}/approve",
+            post(environments::approve_promotion),
+        )
+        .route(
+            "/v1/projects/{project_id}/promotions/{promotion_id}/reject",
+            post(environments::reject_promotion),
+        )
         // API token endpoints
         .route(
             "/v1/api-tokens",
@@ -2936,6 +3002,10 @@ pub async fn build_router_with_recovery(
             "/v1/runners/{runner_id}/jobs/{job_id}/test-results",
             post(test_results::report_job_test_results),
         )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/analysis",
+            post(build_analysis::report_job_analysis),
+        )
         .route("/v1/runners", get(runners::list_runners))
         // Build log endpoints
         .route(
@@ -2968,6 +3038,10 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/builds/{build_id}/artifacts",
             get(artifacts::list_artifacts),
+        )
+        .route(
+            "/v1/builds/{build_id}/sizes",
+            get(artifact_sizes::get_build_size_report),
         )
         .route(
             "/v1/projects/{project_id}/artifacts",

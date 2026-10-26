@@ -1,8 +1,8 @@
 import { lazy, Suspense, useState } from 'react'
-import { Link, useNavigate, useRouter } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
 
-import type { Artifact, Build } from '@oore/client/models'
+import type { Build } from '@oore/client/models'
 import { DataTableRowActionsTrigger } from '@/components/data-table'
 import {
   DropdownMenu,
@@ -25,6 +25,7 @@ import {
   useHasPermissions,
 } from '@/hooks/use-permissions'
 import { useProject } from '@/hooks/use-projects'
+import { useCopyInstallLink } from '@/hooks/use-copy-install-link'
 
 const CancelBuildDialog = lazy(
   () => import('@/components/build-details/cancel-build-dialog'),
@@ -104,7 +105,7 @@ export default function BuildActionsMenu({ build }: { build: Build }) {
 }
 
 function InstallLinkItems({ build }: { build: Build }) {
-  const router = useRouter()
+  const copyInstallLink = useCopyInstallLink()
   const artifactsQuery = useArtifacts(build.id)
   const apps = latestAppPerPlatform(artifactsQuery.data?.artifacts ?? [])
 
@@ -113,26 +114,12 @@ function InstallLinkItems({ build }: { build: Build }) {
   }
   if (apps.length === 0) return null
 
-  function copyInstallLink(artifact: Artifact, label: string) {
-    const { href } = router.buildLocation({
-      to: '/builds/$buildId',
-      params: { buildId: build.id },
-      search: { install: artifact.id },
-    })
-    void navigator.clipboard
-      .writeText(new URL(href, window.location.origin).href)
-      .then(
-        () => toast.success(`${label} install link copied`),
-        () => toast.error('Could not copy link. Try again.'),
-      )
-  }
-
   return (
     <>
       {apps.map(({ artifact, label }) => (
         <DropdownMenuItem
           key={artifact.id}
-          onClick={() => copyInstallLink(artifact, label)}
+          onClick={() => copyInstallLink(build.id, artifact, label)}
         >
           {apps.length === 1
             ? 'Copy install link'

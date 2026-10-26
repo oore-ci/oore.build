@@ -340,6 +340,10 @@ pub(crate) fn publish_result(
         version_name: Some(field("version")?),
         rollout_fraction: None,
         status: "uploaded".to_string(),
+        testflight_groups: match config.destination {
+            AppStoreDestination::Testflight => Some(config.testflight_groups.clone()),
+            AppStoreDestination::AppStore => None,
+        },
     })
 }
 
@@ -404,6 +408,10 @@ mod tests {
         let result = publish_result(&metadata, &config).unwrap();
         assert_eq!(result.store, PublishStore::AppStore);
         assert_eq!(result.track, "QA, Beta");
+        assert_eq!(
+            result.testflight_groups,
+            Some(vec!["QA".to_string(), "Beta".to_string()])
+        );
         assert_eq!(result.package_name, "com.example.app");
         assert_eq!(result.version_code, 42);
         assert_eq!(result.version_name.as_deref(), Some("1.2.0"));

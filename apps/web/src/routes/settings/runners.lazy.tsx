@@ -60,6 +60,8 @@ import { Spinner } from '@/components/ui/spinner'
 import type { SortDirection } from '@/components/data-table-features'
 import type { RunnerSort, RunnersSearch } from './runners'
 import { RunnerInventory } from './-runner-inventory'
+import { Text } from '@/components/layout/text'
+import { splitRowVariants } from '@/lib/recipes'
 
 export const Route = createLazyFileRoute('/settings/runners')({
   component: RunnersSettingsPage,
@@ -176,9 +178,9 @@ function EditRunnerDialog({ runner, onClose }: EditRunnerDialogProps) {
                     />
                   </FormControl>
                   {isManaged ? (
-                    <p className="text-xs text-muted-foreground">
+                    <Text variant="caption">
                       Managed runner names are set from the build host.
-                    </p>
+                    </Text>
                   ) : null}
                   <FormMessage />
                 </FormItem>
@@ -199,11 +201,11 @@ function EditRunnerDialog({ runner, onClose }: EditRunnerDialogProps) {
                       {...field}
                     />
                   </FormControl>
-                  <p className="text-xs text-muted-foreground">
+                  <Text variant="caption">
                     {detectedLabels.length > 0
                       ? `Detected from the host: ${detectedLabels.join(', ')}.`
                       : 'Detected labels appear after the runner connects.'}
-                  </p>
+                  </Text>
                   <FormMessage />
                 </FormItem>
               )}
@@ -320,20 +322,20 @@ function RunnersSettingsPage() {
           </AlertDescription>
         </Alert>
       ) : runnersQuery.data && total > 0 ? (
-        <p className="text-sm text-muted-foreground">
+        <Text variant="muted">
           {queuedTotal === 0
             ? 'No builds are waiting for a runner.'
             : `${queuedTotal} ${queuedTotal === 1 ? 'build is' : 'builds are'} waiting for a runner.`}
           {unmatchedTotal > 0
             ? ` ${unmatchedTotal} ${unmatchedTotal === 1 ? 'needs' : 'need'} labels no online runner has.`
             : ''}
-        </p>
+        </Text>
       ) : null}
 
       {runnersQuery.error ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>Failed to load runners: {runnersQuery.error.message}</span>
             <Button
               variant="outline"
@@ -365,6 +367,7 @@ function RunnersSettingsPage() {
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
+            {/* oxlint-disable-next-line layout/max-class-utilities -- install command block */}
             <code className="w-full max-w-md rounded-md border bg-muted px-3 py-2 text-left font-mono text-xs break-all">
               ~/.oore/bin/oore install --profile runner
             </code>

@@ -25,14 +25,29 @@ import { PageMeta } from '@/lib/seo'
 import { BuildCollection } from './-build-collection'
 import { BuildsEmptyState } from './-builds-empty-state'
 import { BuildFilters } from './-build-filters'
+import {
+  BUILD_TRIGGER_FILTER_OPTIONS,
+  isBuildTrigger,
+  MAX_ACTOR_FILTER_LENGTH,
+  type BuildTrigger,
+} from './-build-filter-controls'
+import {
+  searchDateRangeBounds,
+  validSearchDate,
+} from '@/components/date-range-filter'
 import type { BuildSort } from './-build-sort'
+import { useListNavigation } from '@/hooks/use-list-navigation'
+import { splitRowVariants } from '@/lib/recipes'
 
 const TriggerBuildDrawer = lazy(
   () => import('@/components/trigger-build-drawer'),
 )
 
 interface BuildsSearch {
+  actor?: string
+  branch?: string
   direction?: SortDirection
+  from?: string
   page?: number
   pageSize?: 20 | 50 | 100
   pipeline?: string
@@ -40,7 +55,13 @@ interface BuildsSearch {
   q?: string
   sort?: BuildSort
   status?: string
+  to?: string
+  trigger?: BuildTrigger
 }
+
+const BUILD_TRIGGER_VALUES = Object.keys(BUILD_TRIGGER_FILTER_OPTIONS).filter(
+  isBuildTrigger,
+)
 
 const BUILD_SORT_VALUES = new Set<BuildSort>([
   'created_at',
@@ -60,12 +81,25 @@ function parseSearch(search: SearchInput): BuildsSearch {
   const status =
     statusValue && statusValue in BUILD_STATUS_FILTER_OPTIONS ? statusValue : ''
   const sort = searchChoice(search, 'sort', BUILD_SORT_VALUES)
+  const branch = searchString(search, 'branch')?.trim() ?? ''
+  const actorValue = searchString(search, 'actor')?.trim() ?? ''
+  // The API rejects longer actors; drop them rather than show an error.
+  const actor = actorValue.length > MAX_ACTOR_FILTER_LENGTH ? '' : actorValue
+  let from = validSearchDate(searchString(search, 'from'))
+  let to = validSearchDate(searchString(search, 'to'))
+  // `yyyy-MM-dd` sorts by date, so a reversed range just swaps.
+  if (from && to && from > to) [from, to] = [to, from]
 
   return {
     q: q || undefined,
     project: project || undefined,
     pipeline: pipeline || undefined,
     status: status && status !== 'all' ? status : undefined,
+    trigger: searchChoice(search, 'trigger', BUILD_TRIGGER_VALUES),
+    branch: branch || undefined,
+    actor: actor || undefined,
+    from,
+    to,
     sort,
     direction: searchString(search, 'direction') === 'asc' ? 'asc' : undefined,
     page: Number.isInteger(page) && page > 1 ? page : undefined,
@@ -86,6 +120,7 @@ export const Route = createFileRoute('/builds/')({
 })
 
 function OperationsBuildsPage() {
+  useListNavigation()
   const [buildDrawerOpen, setBuildDrawerOpen] = useState(false)
   const search = useSearch({ from: '/builds/' })
   const navigate = Route.useNavigate()
@@ -93,11 +128,17 @@ function OperationsBuildsPage() {
   const pageSize = search.pageSize ?? 20
   const sort = search.sort ?? 'created_at'
   const direction = search.direction ?? 'desc'
+  const createdBounds = searchDateRangeBounds(search.from, search.to)
   const buildsQuery = useBuilds({
     q: search.q,
     project_id: search.project,
     pipeline_id: search.pipeline,
     status: search.status,
+    trigger: search.trigger,
+    branch: search.branch,
+    actor: search.actor,
+    created_after: createdBounds.after,
+    created_before: createdBounds.before,
     sort,
     direction,
     limit: pageSize,
@@ -116,8 +157,19 @@ function OperationsBuildsPage() {
   const runtimeMode = setupStatusQuery.data?.runtime_mode ?? 'local'
   const missingProjects =
     !projectsQuery.isLoading && !projectsQuery.error && !hasProjects
-  const hasFilters =
-    !!search.q || !!search.project || !!search.pipeline || !!search.status
+  const activeFilterCount = [
+    search.project,
+    search.pipeline,
+    search.status,
+    search.trigger,
+    search.branch,
+    search.actor,
+    search.from || search.to,
+  ].filter(Boolean).length
+  const hasFilters = !!search.q || activeFilterCount > 0
+  const branchSuggestions = [
+    ...new Set(builds.flatMap((build) => (build.branch ? [build.branch] : []))),
+  ]
   const buildCapabilities = {
     triggerBuild: canTriggerBuild,
     writeProjects: canWriteProjects,
@@ -170,7 +222,7 @@ function OperationsBuildsPage() {
       {projectsQuery.error ? (
         <Alert>
           <HugeiconsIcon icon={InformationCircleIcon} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Project filters and build actions are temporarily unavailable.
             </span>
@@ -194,11 +246,7 @@ function OperationsBuildsPage() {
         />
       ) : (
         <BuildCollection
-          activeFilterCount={
-            Number(!!search.project) +
-            Number(!!search.pipeline) +
-            Number(!!search.status)
-          }
+          activeFilterCount={activeFilterCount}
           builds={builds}
           direction={direction}
           emptyState={
@@ -210,7 +258,13 @@ function OperationsBuildsPage() {
             />
           }
           error={buildsQuery.error}
-          filters={<BuildFilters filters={search} onChange={updateSearch} />}
+          filters={
+            <BuildFilters
+              branches={branchSuggestions}
+              filters={search}
+              onChange={updateSearch}
+            />
+          }
           isFiltered={hasFilters}
           isLoading={buildsQuery.isLoading}
           isRefreshing={buildsQuery.isFetching && !buildsQuery.isLoading}
@@ -220,6 +274,11 @@ function OperationsBuildsPage() {
               project: undefined,
               pipeline: undefined,
               status: undefined,
+              trigger: undefined,
+              branch: undefined,
+              actor: undefined,
+              from: undefined,
+              to: undefined,
               page: undefined,
             })
           }

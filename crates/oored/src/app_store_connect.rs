@@ -17,7 +17,7 @@ impl std::fmt::Display for AscError {
     }
 }
 
-type AscResult<T> = Result<T, AscError>;
+pub(crate) type AscResult<T> = Result<T, AscError>;
 
 #[derive(Debug, Deserialize)]
 struct Resource {
@@ -73,6 +73,34 @@ pub struct AscBetaDetail {
     /// Such as `READY_FOR_BETA_SUBMISSION`, `WAITING_FOR_BETA_REVIEW`,
     /// `IN_BETA_TESTING` or `BETA_REJECTED`.
     pub external: Option<String>,
+}
+
+/// An App Store version and the state Apple shows for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AscVersion {
+    pub id: String,
+    pub version_string: Option<String>,
+    /// `appVersionState`, or the older `appStoreState`.
+    pub state: Option<String>,
+}
+
+impl AscVersion {
+    fn from_resource(resource: Resource) -> Self {
+        Self {
+            version_string: attr_str(&resource, "versionString"),
+            state: attr_str(&resource, "appVersionState")
+                .or_else(|| attr_str(&resource, "appStoreState")),
+            id: resource.id,
+        }
+    }
+}
+
+/// Whether Apple lets the developer change a version in `state`, such as
+/// attaching another build.
+pub fn version_is_editable(state: &str) -> bool {
+    EDITABLE_VERSION_STATES
+        .split(',')
+        .any(|editable| editable == state)
 }
 
 /// App Store versions Apple still lets the developer edit, so one of them can
@@ -510,6 +538,57 @@ impl<'a> AppStoreConnect<'a> {
             .ok_or_else(|| AscError("App Store version creation returned no version".to_string()))
     }
 
+    /// The app's App Store version with this version string, in any state,
+    /// with its state. Promotion only; upload distribution keeps
+    /// `find_or_create_version`.
+    pub async fn find_version(&self, app_id: &str, version: &str) -> AscResult<Option<AscVersion>> {
+        let versions: ListEnvelope = self
+            .get(
+                "App Store version lookup",
+                &format!("/v1/apps/{app_id}/appStoreVersions"),
+                &[
+                    ("filter[versionString]", version),
+                    ("filter[platform]", "IOS"),
+                    (
+                        "fields[appStoreVersions]",
+                        "versionString,appVersionState,appStoreState",
+                    ),
+                    ("limit", "1"),
+                ],
+            )
+            .await?;
+        Ok(versions
+            .data
+            .into_iter()
+            .next()
+            .map(AscVersion::from_resource))
+    }
+
+    /// The app's version that Apple still lets the developer edit, if any,
+    /// with its version string and state. Promotion only.
+    pub async fn find_editable_version(&self, app_id: &str) -> AscResult<Option<AscVersion>> {
+        let editable: ListEnvelope = self
+            .get(
+                "Editable App Store version lookup",
+                &format!("/v1/apps/{app_id}/appStoreVersions"),
+                &[
+                    ("filter[appVersionState]", EDITABLE_VERSION_STATES),
+                    ("filter[platform]", "IOS"),
+                    (
+                        "fields[appStoreVersions]",
+                        "versionString,appVersionState,appStoreState",
+                    ),
+                    ("limit", "1"),
+                ],
+            )
+            .await?;
+        Ok(editable
+            .data
+            .into_iter()
+            .next()
+            .map(AscVersion::from_resource))
+    }
+
     pub async fn attach_build_to_version(&self, version_id: &str, build_id: &str) -> AscResult<()> {
         self.patch(
             "Attaching build to App Store version",
@@ -758,6 +837,91 @@ impl<'a> AppStoreConnect<'a> {
     }
 }
 
+/// The App Store Connect calls that hand a processed build out, to TestFlight
+/// groups or an App Store version. Distribution after an upload and
+/// promotion between environments share them; tests stand in for Apple.
+pub(crate) trait AscApi {
+    async fn find_app_id(&self, bundle_id: &str) -> AscResult<Option<String>>;
+    async fn beta_detail(&self, build_id: &str) -> AscResult<AscBetaDetail>;
+    async fn set_beta_whats_new(
+        &self,
+        build_id: &str,
+        locale: &str,
+        whats_new: &str,
+    ) -> AscResult<()>;
+    async fn list_beta_groups(&self, app_id: &str) -> AscResult<Vec<AscBetaGroup>>;
+    async fn add_build_to_groups(&self, build_id: &str, group_ids: &[String]) -> AscResult<()>;
+    async fn submit_for_beta_review(&self, build_id: &str) -> AscResult<()>;
+    async fn find_or_create_version(&self, app_id: &str, version: &str) -> AscResult<String>;
+    async fn find_version(&self, app_id: &str, version: &str) -> AscResult<Option<AscVersion>>;
+    async fn find_editable_version(&self, app_id: &str) -> AscResult<Option<AscVersion>>;
+    async fn attach_build_to_version(&self, version_id: &str, build_id: &str) -> AscResult<()>;
+    async fn set_version_whats_new(
+        &self,
+        version_id: &str,
+        locale: &str,
+        whats_new: &str,
+    ) -> AscResult<()>;
+    async fn enable_phased_release(&self, version_id: &str) -> AscResult<()>;
+    async fn disable_phased_release(&self, version_id: &str) -> AscResult<()>;
+    async fn submit_for_review(&self, app_id: &str, version_id: &str) -> AscResult<()>;
+}
+
+impl AscApi for AppStoreConnect<'_> {
+    async fn find_app_id(&self, bundle_id: &str) -> AscResult<Option<String>> {
+        AppStoreConnect::find_app_id(self, bundle_id).await
+    }
+    async fn beta_detail(&self, build_id: &str) -> AscResult<AscBetaDetail> {
+        AppStoreConnect::beta_detail(self, build_id).await
+    }
+    async fn set_beta_whats_new(
+        &self,
+        build_id: &str,
+        locale: &str,
+        whats_new: &str,
+    ) -> AscResult<()> {
+        AppStoreConnect::set_beta_whats_new(self, build_id, locale, whats_new).await
+    }
+    async fn list_beta_groups(&self, app_id: &str) -> AscResult<Vec<AscBetaGroup>> {
+        AppStoreConnect::list_beta_groups(self, app_id).await
+    }
+    async fn add_build_to_groups(&self, build_id: &str, group_ids: &[String]) -> AscResult<()> {
+        AppStoreConnect::add_build_to_groups(self, build_id, group_ids).await
+    }
+    async fn submit_for_beta_review(&self, build_id: &str) -> AscResult<()> {
+        AppStoreConnect::submit_for_beta_review(self, build_id).await
+    }
+    async fn find_or_create_version(&self, app_id: &str, version: &str) -> AscResult<String> {
+        AppStoreConnect::find_or_create_version(self, app_id, version).await
+    }
+    async fn find_version(&self, app_id: &str, version: &str) -> AscResult<Option<AscVersion>> {
+        AppStoreConnect::find_version(self, app_id, version).await
+    }
+    async fn find_editable_version(&self, app_id: &str) -> AscResult<Option<AscVersion>> {
+        AppStoreConnect::find_editable_version(self, app_id).await
+    }
+    async fn attach_build_to_version(&self, version_id: &str, build_id: &str) -> AscResult<()> {
+        AppStoreConnect::attach_build_to_version(self, version_id, build_id).await
+    }
+    async fn set_version_whats_new(
+        &self,
+        version_id: &str,
+        locale: &str,
+        whats_new: &str,
+    ) -> AscResult<()> {
+        AppStoreConnect::set_version_whats_new(self, version_id, locale, whats_new).await
+    }
+    async fn enable_phased_release(&self, version_id: &str) -> AscResult<()> {
+        AppStoreConnect::enable_phased_release(self, version_id).await
+    }
+    async fn disable_phased_release(&self, version_id: &str) -> AscResult<()> {
+        AppStoreConnect::disable_phased_release(self, version_id).await
+    }
+    async fn submit_for_review(&self, app_id: &str, version_id: &str) -> AscResult<()> {
+        AppStoreConnect::submit_for_review(self, app_id, version_id).await
+    }
+}
+
 /// Share of users Apple's phased release has reached on a given day.
 pub fn phased_release_fraction(day: Option<i64>) -> f64 {
     match day.unwrap_or(1) {
@@ -802,6 +966,10 @@ mod tests {
             vec![Some("v1".to_string()), None]
         );
         assert!(submission_item_versions(&json!({"data": []})).is_empty());
+        assert!(version_is_editable("PREPARE_FOR_SUBMISSION"));
+        assert!(version_is_editable("DEVELOPER_REJECTED"));
+        assert!(!version_is_editable("READY_FOR_SALE"));
+        assert!(!version_is_editable("WAITING_FOR_REVIEW"));
         assert!(version_is_submitted("WAITING_FOR_REVIEW"));
         assert!(!version_is_submitted("PREPARE_FOR_SUBMISSION"));
     }

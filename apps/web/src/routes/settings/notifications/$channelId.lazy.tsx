@@ -12,7 +12,6 @@ import {
   useUpdateNotificationChannel,
 } from '@/hooks/use-notification-channels'
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
-import { fromClientChannel } from '@/lib/notification-channels'
 import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
@@ -65,6 +64,7 @@ import {
   type NotificationChannelFormValues,
   updateNotificationChannelRequest,
 } from './-notification-form'
+import { splitRowVariants } from '@/lib/recipes'
 
 export const Route = createLazyFileRoute('/settings/notifications/$channelId')({
   component: NotificationChannelDetailPage,
@@ -89,8 +89,6 @@ function NotificationChannelDetailPage() {
   const deleteMutation = useDeleteNotificationChannel()
   const testMutation = useTestNotificationChannel()
   const channel = channelData?.channel
-    ? fromClientChannel(channelData.channel)
-    : undefined
   const deliveries = deliveriesData?.deliveries ?? []
   const form = useForm<NotificationChannelFormValues>({
     resolver: zodResolver(
@@ -148,7 +146,7 @@ function NotificationChannelDetailPage() {
       <PageLayout width="wide">
         <PageHeader title="Notification channel" />
         <Alert variant="destructive">
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               Failed to load notification channel: {channelError.message}
             </span>
@@ -236,7 +234,7 @@ function NotificationChannelDetailPage() {
           ) : deliveriesError ? (
             <div className="p-4 sm:p-5">
               <Alert variant="destructive">
-                <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <AlertDescription className={splitRowVariants()}>
                   <span>
                     Failed to load delivery history: {deliveriesError.message}
                   </span>

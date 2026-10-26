@@ -14,7 +14,7 @@ import {
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
 import { StatusBadge } from '@/components/status-badge'
-import { BuildSourceValue } from '@/components/table-values'
+import { BuildSourceValue, CELL_STACK } from '@/components/table-values'
 import { relativeTime } from '@/lib/format-utils'
 import {
   getStatusPresentation,
@@ -22,8 +22,17 @@ import {
   TRIGGER_TYPE_LABELS,
 } from '@/lib/status-variants'
 import type { Build } from '@oore/client/models'
+import { useTableDensity } from '@/stores/table-density-store'
 import BuildActionsMenu from './-build-actions-menu'
+import {
+  BUILD_TRIGGER_FILTER_OPTIONS,
+  webhookEventTrigger,
+} from './-build-filter-controls'
 import type { BuildSort } from './-build-sort'
+import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
+import { Stack } from '@/components/layout/stack'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const BUILD_TABLE_SORTS = [
   'project_name',
@@ -31,6 +40,15 @@ const BUILD_TABLE_SORTS = [
   'branch',
   'created_at',
 ] satisfies ReadonlyArray<BuildSort>
+
+/** The webhook event says more than "Webhook" does. */
+function buildTriggerLabel(build: Build) {
+  if (build.trigger_type === 'webhook' && build.trigger_event) {
+    const trigger = webhookEventTrigger(build.trigger_event)
+    if (trigger) return BUILD_TRIGGER_FILTER_OPTIONS[trigger]
+  }
+  return TRIGGER_TYPE_LABELS[build.trigger_type]
+}
 
 function projectName(build: Build) {
   return build.context?.project_name ?? 'Unknown project'
@@ -42,6 +60,7 @@ const columns: Array<DataTableColumnDef<Build>> = [
     header: 'Build',
     cell: ({ row }) => (
       <Link
+        {...LIST_NAV_ITEM}
         to="/builds/$buildId"
         params={{ buildId: row.original.id }}
         className="font-mono font-medium"
@@ -58,7 +77,7 @@ const columns: Array<DataTableColumnDef<Build>> = [
       <DataTableColumnHeader column={column} title="Project" />
     ),
     cell: ({ row }) => (
-      <div className="flex flex-col">
+      <div className={CELL_STACK}>
         <Link
           to="/projects/$projectId"
           params={{ projectId: row.original.project_id }}
@@ -87,7 +106,10 @@ const columns: Array<DataTableColumnDef<Build>> = [
       <DataTableColumnHeader column={column} title="Status" />
     ),
     cell: ({ row }) => (
-      <div className="flex flex-col items-start gap-0.5">
+      <Stack
+        gap={0.5}
+        className="items-start in-data-[density=compact]:flex-row in-data-[density=compact]:items-center in-data-[density=compact]:gap-2"
+      >
         <StatusBadge kind="build" value={row.original.status} />
         {row.original.approval?.state === 'pending' ? (
           <span className="text-xs text-warning">
@@ -102,7 +124,7 @@ const columns: Array<DataTableColumnDef<Build>> = [
             {getRunnerPolicyBlockLabel(row.original.runner_policy_block_reason)}
           </span>
         ) : null}
-      </div>
+      </Stack>
     ),
   },
   {
@@ -123,13 +145,24 @@ const columns: Array<DataTableColumnDef<Build>> = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Created" />
     ),
-    // How it started reads with when it started, which keeps the table inside
-    // an 1100px window without a separate Trigger column.
+    // How and by whom it started reads with when it started, which keeps the
+    // table inside an 1100px window without Trigger and Actor columns.
     cell: ({ row }) => (
-      <div className="flex flex-col">
+      <div className={CELL_STACK}>
         <span>{relativeTime(row.original.created_at)}</span>
-        <span className="text-xs text-muted-foreground">
-          {TRIGGER_TYPE_LABELS[row.original.trigger_type]}
+        <span
+          className={cn(
+            textVariants({ variant: 'caption' }),
+            'max-w-56 truncate',
+          )}
+        >
+          {buildTriggerLabel(row.original)}
+          {row.original.trigger_actor ? (
+            <span title={row.original.trigger_actor}>
+              {' · '}
+              {row.original.trigger_actor}
+            </span>
+          ) : null}
         </span>
       </div>
     ),
@@ -184,6 +217,7 @@ export function BuildCollection({
   sort: BuildSort
   total: number
 }) {
+  const [density, setDensity] = useTableDensity('builds')
   const sorting = useMemo(
     () => dataTableSortingState(sort, direction),
     [direction, sort],
@@ -218,6 +252,9 @@ export function BuildCollection({
         <DataTable
           table={table}
           filters={filters}
+          collapseFilters
+          density={density}
+          onDensityChange={setDensity}
           activeFilterCount={activeFilterCount}
           onClearFilters={isFiltered ? onClearFilters : undefined}
           search={{

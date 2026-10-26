@@ -1844,7 +1844,7 @@
           "Builds"
         ],
         "summary": "List builds",
-        "description": "Returns builds, optionally filtered by project, pipeline, status, or branch, or searched with `q`.",
+        "description": "Returns builds, optionally filtered by project, pipeline, status, branch, trigger, actor, or creation time, or searched with `q`.",
         "operationId": "list_builds",
         "parameters": [
           {
@@ -1904,6 +1904,44 @@
             }
           },
           {
+            "name": "trigger",
+            "in": "query",
+            "description": "Filter by one or more comma-separated trigger kinds: manual, api, schedule, push, pull_request, or tag_push. The last three are webhook events.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor",
+            "in": "query",
+            "description": "Filter by exact trigger actor (the user email for manual builds, the SCM login for webhook builds). At most 320 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "description": "Only builds created at or after this Unix time in seconds",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Only builds created before this Unix time in seconds. Must be later than created_after.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
             "name": "q",
             "in": "query",
             "description": "Search builds, case-insensitively, by build number (with or without #), part of the branch, the start of the commit SHA, or part of the pipeline or project name. At most 200 characters.",
@@ -1938,6 +1976,73 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListBuildsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/builds/actors": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "List build actors",
+        "description": "Distinct trigger actors on builds the caller can see, most recently active first, for the builds list's actor filter.",
+        "operationId": "list_build_actors",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "description": "Only actors of this project's builds",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive part of the actor. At most 200 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum actors (default 50, at most 200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Build actors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListBuildActorsResponse"
                 }
               }
             }
@@ -2059,6 +2164,54 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/builds/{build_id}/analysis": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Get the build's analyzer summary",
+        "description": "Returns the `dart analyze` counts and most severe diagnostics of a\nbuild, with the baseline build on the base branch it compares with.\n`analysis` is `null` when the build reported none.",
+        "operationId": "get_build_analysis",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Analyzer summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAnalysisResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -2233,6 +2386,237 @@
           },
           "409": {
             "description": "Build not in cancellable state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/builds/{build_id}/feedback": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "List build feedback",
+        "description": "Notes testers sent about this build, oldest first. Needs read access\nto the build's project.",
+        "operationId": "list_build_feedback",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Feedback for the build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListBuildFeedbackResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Send build feedback",
+        "description": "Files a tester's note against a build, with optional device, OS\nversion, app version and a PNG, JPEG or WebP screenshot of up to\n5 MiB. Anyone who can install the build's artifacts can send one. The\nnote shows on the build's timeline and is sent to the project's\nnotification channels as a `qa_feedback` event. Each person can send\n10 notes per 10 minutes.",
+        "operationId": "create_build_feedback",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBuildFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Feedback recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildFeedback"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing message, a field too long, or an artifact from another build",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A screenshot was attached but artifact storage is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Screenshot larger than 5 MiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Screenshot is not a PNG, JPEG or WebP image",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too much feedback sent recently",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/builds/{build_id}/feedback/{feedback_id}/screenshot": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Get a build feedback screenshot",
+        "description": "Returns the screenshot attached to a feedback note, with the image\ntype detected from its bytes. Needs read access to the build's project.",
+        "operationId": "get_build_feedback_screenshot",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "feedback_id",
+            "in": "path",
+            "description": "Feedback ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Screenshot image",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BinaryPayload"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build, feedback or screenshot not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The screenshot could not be read from artifact storage",
             "content": {
               "application/json": {
                 "schema": {
@@ -2574,6 +2958,54 @@
           },
           "409": {
             "description": "The build is still running, or this step cannot be retried for it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/builds/{build_id}/sizes": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Get build artifact sizes",
+        "description": "Returns the size of each artifact the build published and its change\nfrom the latest earlier successful build of the same pipeline on the\nbase branch: a pull request's target branch, otherwise the project's\ndefault branch.",
+        "operationId": "get_build_size_report",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Artifact sizes and changes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildSizeReport"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -4167,6 +4599,137 @@
           },
           "404": {
             "description": "Notification not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/pipelines/export-yaml": {
+      "post": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "Export pipeline settings as `.oore.yaml`",
+        "description": "Writes the pipeline's form settings as a `version: 2` `.oore.yaml`,\nwith `on` from the trigger settings and `publish` from the Publish\nsettings where they map exactly. The file is planned before it is\nreturned and runs what the settings run. Secret values and store\ncredentials never appear in it; secret references stay as written.",
+        "operationId": "export_pipeline_yaml",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportPipelineYamlRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The file, or why the settings cannot be exported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportPipelineYamlResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/pipelines/import-yaml": {
+      "post": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "Import `.oore.yaml` into pipeline settings",
+        "description": "Reads a `version: 2` `.oore.yaml` back into the pipeline's form\nsettings: the inverse of the export. The file is validated as\n`oore pipeline validate` does. Settings are returned only when the\nform can hold the whole file; exported again, they plan the same as\nthe file. Everything else is listed in `unsupported`. Nothing is\nsaved, and secret references stay as written.",
+        "operationId": "import_pipeline_yaml",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportPipelineYamlRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The form settings, or why the file cannot become them",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportPipelineYamlResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The file is too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/pipelines/plan": {
+      "post": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "Plan pipeline config",
+        "description": "Resolves the steps a build would run for a `.oore.yaml` or the\npipeline's form settings, with the same validation as\n`oore pipeline validate`. Environment values are never returned and\nsecret references stay as written.",
+        "operationId": "plan_pipeline",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanPipelineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Plan or validation errors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanPipelineResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Neither or both sources given, or the file is too large",
             "content": {
               "application/json": {
                 "schema": {
@@ -5789,6 +6352,312 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/environments": {
+      "get": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "List project environments",
+        "description": "Environments in promotion order, each with its newest release, plus pending promotions and the most recent decided ones.",
+        "operationId": "list_project_environments",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Environments and promotions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListProjectEnvironmentsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Create environment",
+        "description": "Adds an environment at the end of the promotion path. Requires the project maintainer role. A release recorded on the environment's store and track belongs to it.",
+        "operationId": "create_project_environment",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectEnvironmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Created environment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectEnvironment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Key, or store and track, already used",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/environments/{environment_id}": {
+      "delete": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Delete environment",
+        "description": "Its releases stay without an environment; its promotions are removed. Requires the project maintainer role.",
+        "operationId": "delete_project_environment",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment_id",
+            "in": "path",
+            "description": "Environment ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A promotion is in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Update environment",
+        "description": "Changes the name, track, approval rule, rollout policy or position. Requires the project maintainer role.",
+        "operationId": "update_project_environment",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment_id",
+            "in": "path",
+            "description": "Environment ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectEnvironmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated environment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectEnvironment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Store and track already used",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects/{project_id}/members": {
       "get": {
         "tags": [
@@ -6221,6 +7090,292 @@
           },
           "400": {
             "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/promotions": {
+      "post": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Promote build",
+        "description": "Puts the version a build's live Google Play release already uploaded on the environment's track and records a release with the environment's rollout policy. Nothing is rebuilt. Promoting straight in requires the maintainer role; when the environment requires approval, a developer may ask and the promotion waits as `pending` without touching the store. Writes an audit log entry.",
+        "operationId": "promote_build",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePromotionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The promotion, completed or pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentPromotion"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project, environment or build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already in the environment, pending, unsupported store, or no live release to promote",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the promotion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/promotions/{promotion_id}/approve": {
+      "post": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Approve promotion",
+        "description": "Approves a pending promotion and makes the store change as the approver. Requires one of the environment's approvers (by default any maintainer). API tokens cannot decide promotions. Writes an audit log entry.",
+        "operationId": "approve_promotion",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "promotion_id",
+            "in": "path",
+            "description": "Promotion ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PromotionDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed promotion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentPromotion"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not one of the environment's approvers, or an API token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not pending, or the build changed while it waited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the promotion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/promotions/{promotion_id}/reject": {
+      "post": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Reject promotion",
+        "description": "Rejects a pending promotion; nothing changes at the store. Requires one of the environment's approvers (by default any maintainer). API tokens cannot decide promotions. Writes an audit log entry.",
+        "operationId": "reject_promotion",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "promotion_id",
+            "in": "path",
+            "description": "Promotion ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PromotionDecisionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rejected promotion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentPromotion"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not one of the environment's approvers, or an API token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not pending",
             "content": {
               "application/json": {
                 "schema": {
@@ -8116,6 +9271,93 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/JobStatusResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/runners/{runner_id}/jobs/{job_id}/analysis": {
+      "post": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Report the analyzer summary",
+        "description": "Runner reports the `dart analyze --format=json` summary of a build. A\nlater report replaces an earlier one. Only accepted while the build\nruns.",
+        "operationId": "report_job_analysis",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerAnalyzerReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Runner does not match the assignment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Build is not running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -12043,6 +13285,74 @@
           }
         }
       },
+      "AnalyzerCounts": {
+        "type": "object",
+        "description": "Diagnostics counted by severity.",
+        "required": [
+          "errors",
+          "warnings",
+          "infos"
+        ],
+        "properties": {
+          "errors": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "infos": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "warnings": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AnalyzerDiagnostic": {
+        "type": "object",
+        "description": "One `dart analyze` diagnostic.",
+        "required": [
+          "severity",
+          "code",
+          "message",
+          "file",
+          "line",
+          "column"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The diagnostic code, such as `unused_import`."
+          },
+          "column": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "file": {
+            "type": "string",
+            "description": "Path relative to the build workspace, such as `lib/main.dart`."
+          },
+          "line": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/AnalyzerSeverity"
+          }
+        }
+      },
+      "AnalyzerSeverity": {
+        "type": "string",
+        "description": "Severity of a `dart analyze` diagnostic.",
+        "enum": [
+          "error",
+          "warning",
+          "info"
+        ]
+      },
       "AndroidSigningBuildType": {
         "type": "string",
         "enum": [
@@ -12392,6 +13702,14 @@
         },
         "additionalProperties": false
       },
+      "ApproverRole": {
+        "type": "string",
+        "description": "The lowest project role that may approve promotions into an environment.",
+        "enum": [
+          "maintainer",
+          "developer"
+        ]
+      },
       "Artifact": {
         "type": "object",
         "required": [
@@ -12572,6 +13890,53 @@
           "ios"
         ]
       },
+      "ArtifactSizeComparison": {
+        "type": "object",
+        "description": "One artifact's size, and its change from the matching baseline artifact.",
+        "required": [
+          "artifact_id",
+          "name",
+          "artifact_type",
+          "size_bytes"
+        ],
+        "properties": {
+          "artifact_id": {
+            "type": "string"
+          },
+          "artifact_type": {
+            "$ref": "#/components/schemas/ArtifactType"
+          },
+          "baseline_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of the baseline artifact this one was matched with."
+          },
+          "baseline_size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "delta_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "`size_bytes - baseline_size_bytes`; absent when nothing matched."
+          },
+          "name": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ArtifactStorageProvider": {
         "type": "string",
         "enum": [
@@ -12660,6 +14025,7 @@
           "apk",
           "ipa",
           "app",
+          "aab",
           "generic"
         ]
       },
@@ -12985,6 +14351,89 @@
           }
         }
       },
+      "BuildAnalysis": {
+        "type": "object",
+        "description": "A build's analyzer summary.",
+        "required": [
+          "counts",
+          "diagnostics",
+          "recorded_at"
+        ],
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/AnalyzerCounts"
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalyzerDiagnostic"
+            },
+            "description": "The most severe diagnostics, errors first, at most 50."
+          },
+          "recorded_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "BuildAnalysisBaseline": {
+        "type": "object",
+        "description": "The earlier build an analysis compares with: the latest successful build\nof the same pipeline on the base branch that reported one, as for sizes.",
+        "required": [
+          "build_id",
+          "build_number",
+          "branch",
+          "counts"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "build_id": {
+            "type": "string"
+          },
+          "build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/AnalyzerCounts"
+          }
+        }
+      },
+      "BuildAnalysisResponse": {
+        "type": "object",
+        "properties": {
+          "analysis": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildAnalysis",
+                "description": "`null` when the build reported no analysis."
+              }
+            ]
+          },
+          "base_branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The branch the build compares with: a pull request's target branch,\notherwise the default branch."
+          },
+          "baseline": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildAnalysisBaseline"
+              }
+            ]
+          }
+        }
+      },
       "BuildApproval": {
         "type": "object",
         "required": [
@@ -13223,6 +14672,70 @@
           },
           "to_status": {
             "type": "string"
+          }
+        }
+      },
+      "BuildFeedback": {
+        "type": "object",
+        "required": [
+          "id",
+          "build_id",
+          "author_email",
+          "message",
+          "has_screenshot",
+          "created_at"
+        ],
+        "properties": {
+          "app_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artifact_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author_email": {
+            "type": "string",
+            "description": "Email of the person who sent it."
+          },
+          "author_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_screenshot": {
+            "type": "boolean",
+            "description": "Fetch it from `GET /v1/builds/{build_id}/feedback/{feedback_id}/screenshot`."
+          },
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "os_version": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -13475,6 +14988,59 @@
             "type": "integer",
             "format": "int64",
             "description": "Queued and scheduled builds that a runner can pick up."
+          }
+        }
+      },
+      "BuildSizeBaseline": {
+        "type": "object",
+        "description": "The earlier build a size report compares against.",
+        "required": [
+          "build_id",
+          "build_number",
+          "branch"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "build_id": {
+            "type": "string"
+          },
+          "build_number": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "BuildSizeReport": {
+        "type": "object",
+        "required": [
+          "artifacts"
+        ],
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactSizeComparison"
+            }
+          },
+          "base_branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Branch the build is compared with: a pull request's target branch,\notherwise the project's default branch. Absent when neither is known."
+          },
+          "baseline": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildSizeBaseline",
+                "description": "The latest earlier successful build of the same pipeline on\n`base_branch` that recorded artifact sizes."
+              }
+            ]
           }
         }
       },
@@ -13921,6 +15487,53 @@
           }
         }
       },
+      "CreateBuildFeedbackRequest": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "app_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "App version the tester installed, such as `2.4.0+118`."
+          },
+          "artifact_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The build's artifact the tester installed. Must belong to this build."
+          },
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Device model, such as `Pixel 8` or `iPhone`."
+          },
+          "message": {
+            "type": "string",
+            "description": "What the tester saw. 1 to 4000 characters."
+          },
+          "os_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Operating system and version, such as `Android 15` or `iOS 18.1`."
+          },
+          "screenshot_base64": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional PNG, JPEG or WebP screenshot, base64 encoded, at most 5 MiB\ndecoded. Requires artifact storage."
+          }
+        }
+      },
       "CreateBuildRequest": {
         "type": "object",
         "required": [
@@ -14046,6 +15659,13 @@
             ],
             "description": "Webhook: HMAC secret for signing payloads. Slack: bot token with\n`users:read.email`, used to mention the triggering user. Optional."
           },
+          "slack_mentions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SlackMention"
+            },
+            "description": "Slack member IDs to mention (Slack only). Works without a bot token."
+          },
           "smtp_config": {
             "oneOf": [
               {
@@ -14117,6 +15737,16 @@
           "name": {
             "type": "string"
           },
+          "size_budget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SizeBudget"
+              }
+            ]
+          },
           "timeout_minutes": {
             "type": [
               "integer",
@@ -14134,6 +15764,13 @@
                 "$ref": "#/components/schemas/TriggerConfig"
               }
             ]
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A workflow the repository's `version: 2` file defines."
           }
         }
       },
@@ -14145,6 +15782,58 @@
         "properties": {
           "pipeline": {
             "$ref": "#/components/schemas/Pipeline"
+          }
+        }
+      },
+      "CreateProjectEnvironmentRequest": {
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "store",
+          "track"
+        ],
+        "properties": {
+          "approval_required": {
+            "type": "boolean"
+          },
+          "approvers": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentApproversInput",
+                "description": "Who may approve promotions. Defaults to any project maintainer."
+              }
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "rollout_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReleasePolicy",
+                "description": "Defaults to the standard schedule with no crash-rate halt."
+              }
+            ]
+          },
+          "store": {
+            "$ref": "#/components/schemas/ReleaseStore"
+          },
+          "submit_for_review": {
+            "type": "boolean",
+            "description": "App Store track only: submit the version for App Review after a\npromotion attaches the build."
+          },
+          "track": {
+            "type": "string"
           }
         }
       },
@@ -14191,6 +15880,28 @@
         "properties": {
           "project": {
             "$ref": "#/components/schemas/Project"
+          }
+        }
+      },
+      "CreatePromotionRequest": {
+        "type": "object",
+        "required": [
+          "build_id",
+          "environment_id"
+        ],
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "environment_id": {
+            "type": "string",
+            "description": "The environment to promote into."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -14434,6 +16145,200 @@
           }
         }
       },
+      "EnvironmentApprover": {
+        "type": "object",
+        "description": "A project member named as an approver.",
+        "required": [
+          "user_id",
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        }
+      },
+      "EnvironmentApprovers": {
+        "type": "object",
+        "description": "Who may approve or reject promotions into an environment.\n\nA member may decide when their project role is at least `role`, or when\nthey are one of `users` (developers and maintainers only). With no role\nand no users, any project maintainer may decide, as before approvers\nexisted. Instance owners and admins may always decide. API tokens never\ndecide: approvals are interactive.",
+        "required": [
+          "users"
+        ],
+        "properties": {
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApproverRole",
+                "description": "A developer role lets developers and maintainers approve."
+              }
+            ]
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentApprover"
+            },
+            "description": "Project members named as approvers. A user who leaves the project,\nor becomes a viewer, stops counting."
+          }
+        }
+      },
+      "EnvironmentApproversInput": {
+        "type": "object",
+        "description": "Approvers to set on an environment. Replaces the whole set; send an empty\nobject to go back to \"any maintainer\".",
+        "properties": {
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApproverRole"
+              }
+            ]
+          },
+          "user_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "User ids of project members who are developers or maintainers. At\nmost 20."
+          }
+        }
+      },
+      "EnvironmentPromotion": {
+        "type": "object",
+        "description": "A request to put an existing build into an environment.",
+        "required": [
+          "id",
+          "project_id",
+          "build_id",
+          "environment_id",
+          "environment_name",
+          "source_release_id",
+          "source_track",
+          "state",
+          "can_decide",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "build_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "can_decide": {
+            "type": "boolean",
+            "description": "Whether the caller may approve or reject this promotion now."
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "decided_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "decided_by_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environment_id": {
+            "type": "string"
+          },
+          "environment_name": {
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the promotion failed."
+          },
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release the promotion created, once completed."
+          },
+          "requested_by_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_environment_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the source release was, when it belongs to an environment."
+          },
+          "source_release_id": {
+            "type": "string",
+            "description": "The release the build is promoted from."
+          },
+          "source_track": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PromotionState"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "version_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "version_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "EventStreamReady": {
         "type": "object",
         "description": "`ready` event, the first event on every `GET /v1/events` connection.\nClients refetch once on `ready` after a reconnect, since events sent while\ndisconnected are not replayed.",
@@ -14462,6 +16367,95 @@
         "properties": {
           "reason": {
             "type": "string"
+          }
+        }
+      },
+      "ExportPipelineYamlRequest": {
+        "type": "object",
+        "description": "The pipeline settings to write out as a `version: 2` `.oore.yaml`.",
+        "required": [
+          "execution_config"
+        ],
+        "properties": {
+          "app_store": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AppStorePublishConfig",
+                "description": "The pipeline's App Store Connect settings, for `publish.testflight`.\nOnly the TestFlight group reaches the file."
+              }
+            ]
+          },
+          "execution_config": {
+            "$ref": "#/components/schemas/PipelineExecutionConfig",
+            "description": "The pipeline's form settings, as `POST /v1/pipelines/validate` takes them."
+          },
+          "google_play": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GooglePlayPublishConfig",
+                "description": "The pipeline's Google Play settings, for `publish.play`. Only the\ntrack, rollout and draft setting reach the file."
+              }
+            ]
+          },
+          "trigger_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TriggerConfig",
+                "description": "The pipeline's trigger settings, for the file's `on`. Left out, the\nfile has no `on` and the trigger settings keep applying."
+              }
+            ]
+          }
+        }
+      },
+      "ExportPipelineYamlResponse": {
+        "type": "object",
+        "required": [
+          "valid",
+          "errors",
+          "warnings",
+          "notes"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why the settings cannot be exported, one per entry."
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Settings that stay with the pipeline instead of moving to the file."
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "No errors: `yaml` is set."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Behaviour the file cannot reproduce exactly; each is also a\n`WARNING:` comment in the file."
+          },
+          "yaml": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The generated file. Planned, it runs what the settings run. Secret\nvalues never appear in it; secret references stay as written."
           }
         }
       },
@@ -15043,6 +17037,171 @@
           }
         }
       },
+      "ImportPipelineYamlRequest": {
+        "type": "object",
+        "description": "A `version: 2` `.oore.yaml` to read back into the pipeline editor's form,\nwith the settings the editor holds now.",
+        "required": [
+          "yaml"
+        ],
+        "properties": {
+          "app_store": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AppStorePublishConfig",
+                "description": "The pipeline's App Store Connect settings. The file's\n`publish.testflight` must match them."
+              }
+            ]
+          },
+          "execution_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PipelineExecutionConfig",
+                "description": "The form settings the editor holds now. They decide between\nequivalent ways of holding the file: the pipeline's Build commands\n(which the file runs as steps after the targets), build arguments or\na build command override."
+              }
+            ]
+          },
+          "google_play": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GooglePlayPublishConfig",
+                "description": "The pipeline's Google Play settings. The form does not edit them, so\nthe file's `publish.play` must match them."
+              }
+            ]
+          },
+          "trigger_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TriggerConfig",
+                "description": "The pipeline's trigger settings, whose schedules are kept. Left out\nfor repositories that only build manually, where the file's `on`\ncannot be held."
+              }
+            ]
+          },
+          "yaml": {
+            "type": "string",
+            "description": "The file's text."
+          }
+        }
+      },
+      "ImportPipelineYamlResponse": {
+        "type": "object",
+        "required": [
+          "valid",
+          "representable",
+          "errors",
+          "unsupported",
+          "notes"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The file's validation errors, one per entry."
+          },
+          "execution_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PipelineExecutionConfig",
+                "description": "The form settings. Exported again, they plan the same as the file."
+              }
+            ]
+          },
+          "google_play": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportedPlayPublish",
+                "description": "The file's `publish.play`."
+              }
+            ]
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the form drops without changing what runs, such as step names."
+          },
+          "representable": {
+            "type": "boolean",
+            "description": "Valid, and the form can hold all of it: `execution_config` is set."
+          },
+          "testflight_group": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file's `publish.testflight.group`."
+          },
+          "trigger_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TriggerConfig",
+                "description": "The trigger settings the file's `on` maps to, with the pipeline's\nschedules kept. Left out when the file has no `on`, so the pipeline's\ntrigger settings stay as they are."
+              }
+            ]
+          },
+          "unsupported": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the form cannot hold, one per entry, such as workflows, vars,\nflavors or an `on` the trigger settings cannot express."
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "The file parses and validates as `oore pipeline validate` checks it."
+          }
+        }
+      },
+      "ImportedPlayPublish": {
+        "type": "object",
+        "description": "A file's `publish.play`, as written.",
+        "required": [
+          "track"
+        ],
+        "properties": {
+          "draft": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Left out, the Publish settings decide."
+          },
+          "rollout_percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The staged rollout as a percentage. Left out, the Publish settings\ndecide."
+          },
+          "track": {
+            "type": "string"
+          }
+        }
+      },
       "InstancePreferences": {
         "type": "object",
         "required": [
@@ -15551,6 +17710,21 @@
           }
         }
       },
+      "ListBuildActorsResponse": {
+        "type": "object",
+        "description": "Distinct `trigger_actor` values on builds the caller can see, most\nrecently active first.",
+        "required": [
+          "actors"
+        ],
+        "properties": {
+          "actors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "ListBuildArtifactsRequest": {
         "type": "object",
         "required": [
@@ -15562,6 +17736,21 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "ListBuildFeedbackResponse": {
+        "type": "object",
+        "required": [
+          "feedback"
+        ],
+        "properties": {
+          "feedback": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildFeedback"
+            },
+            "description": "Oldest first."
           }
         }
       },
@@ -15708,6 +17897,29 @@
           "total": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ListProjectEnvironmentsResponse": {
+        "type": "object",
+        "required": [
+          "environments",
+          "promotions"
+        ],
+        "properties": {
+          "environments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectEnvironment"
+            },
+            "description": "Environments in promotion order."
+          },
+          "promotions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentPromotion"
+            },
+            "description": "Pending promotions and the most recent decided ones, newest first."
           }
         }
       },
@@ -16043,6 +18255,13 @@
             ],
             "description": "Project this channel is scoped to. Absent means the channel receives\nevents from every project, plus instance-wide events such as runner\noffline."
           },
+          "slack_mentions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SlackMention"
+            },
+            "description": "Slack member IDs to mention, matched against the person behind each\nevent (Slack only). Checked before the bot token lookup. Absent from\ndaemons that predate it, which is the same as none."
+          },
           "smtp_summary": {
             "oneOf": [
               {
@@ -16345,6 +18564,7 @@
           "concurrency",
           "timeout_minutes",
           "approval",
+          "size_budget",
           "enabled",
           "created_at",
           "updated_at"
@@ -16381,6 +18601,10 @@
           "project_id": {
             "type": "string"
           },
+          "size_budget": {
+            "$ref": "#/components/schemas/SizeBudget",
+            "description": "Artifact size limits the commit checks enforce."
+          },
           "timeout_minutes": {
             "type": "integer",
             "format": "int32",
@@ -16393,6 +18617,13 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `.oore.yaml` version 2 workflow this pipeline builds. `null`\nbuilds the file's only workflow, or its top level when it defines\nnone. That workflow's `on`, or the file's top-level `on`, replaces\n`trigger_config` for webhook events."
           }
         }
       },
@@ -16716,6 +18947,229 @@
           }
         }
       },
+      "PipelinePlanPreview": {
+        "type": "object",
+        "description": "A resolved plan. Environment values are left out; only their keys are listed.",
+        "required": [
+          "platforms",
+          "steps",
+          "env_keys",
+          "artifact_patterns",
+          "build_number_offset",
+          "runs_on",
+          "isolation"
+        ],
+        "properties": {
+          "artifact_patterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "build_number_offset": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "env_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "flutter_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "isolation": {
+            "$ref": "#/components/schemas/BuildIsolation"
+          },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            }
+          },
+          "runs_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PipelinePlanStep"
+            }
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PipelinePlanStep": {
+        "type": "object",
+        "description": "One command a build runs. Secret references stay as written.",
+        "required": [
+          "name",
+          "phase",
+          "run",
+          "source"
+        ],
+        "properties": {
+          "flavor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/StepPhase"
+          },
+          "platform": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildPlatform"
+              }
+            ]
+          },
+          "run": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Where the command comes from in the configuration."
+          },
+          "test_report": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Test report the step writes, when it declares one."
+          }
+        }
+      },
+      "PlanPipelineRequest": {
+        "type": "object",
+        "description": "What to plan: a repository file or the pipeline's form settings, never both.",
+        "properties": {
+          "build_play_bundle": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Google Play upload is on, so the default Android build also produces an\nApp Bundle. Applies to form settings and version 1 files."
+          },
+          "execution_config": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PipelineExecutionConfig",
+                "description": "The pipeline's form settings, as `POST /v1/pipelines/validate` takes them."
+              }
+            ]
+          },
+          "platforms": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            },
+            "description": "Plan only these platforms, as a run that selects them would."
+          },
+          "repository_yaml": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A `.oore.yaml` of either version."
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version 2 workflow to plan. Defaults to the file's first workflow."
+          }
+        }
+      },
+      "PlanPipelineResponse": {
+        "type": "object",
+        "required": [
+          "valid",
+          "errors",
+          "notices",
+          "workflows",
+          "available_platforms"
+        ],
+        "properties": {
+          "available_platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            },
+            "description": "Platforms the planned workflow builds before any platform selection."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The errors `oore pipeline validate` reports, one per entry."
+          },
+          "notices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Settings the file declares that this release does not act on yet."
+          },
+          "plan": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PipelinePlanPreview"
+              }
+            ]
+          },
+          "valid": {
+            "type": "boolean",
+            "description": "No errors: `plan` is set."
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`.oore.yaml` version, or none for form settings and unparseable files.",
+            "minimum": 0
+          },
+          "workflows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Workflows the file defines, in file order. Empty without workflows."
+          }
+        }
+      },
       "PlatformBuildArgs": {
         "type": "object",
         "required": [
@@ -16904,6 +19358,91 @@
           }
         }
       },
+      "ProjectEnvironment": {
+        "type": "object",
+        "description": "A release environment on a project, such as `internal` or `production`,\nwith its store target, rollout policy and approval rule.",
+        "required": [
+          "id",
+          "project_id",
+          "key",
+          "name",
+          "position",
+          "store",
+          "track",
+          "approval_required",
+          "approvers",
+          "rollout_policy",
+          "promotable",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "approval_required": {
+            "type": "boolean",
+            "description": "A promotion into this environment waits for an approval before\nanything changes at the store. `approvers` says who may give it."
+          },
+          "approvers": {
+            "$ref": "#/components/schemas/EnvironmentApprovers",
+            "description": "Who may approve or reject promotions into this environment. With no\nrole and no users, any project maintainer may."
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "description": "Stable identifier, unique in the project: lowercase letters, digits\nand dashes, starting with a letter."
+          },
+          "latest_release": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Release",
+                "description": "The newest release in this environment."
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Order on the promotion path, lowest first."
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "promotable": {
+            "type": "boolean",
+            "description": "Whether builds can be promoted into this environment."
+          },
+          "rollout_policy": {
+            "$ref": "#/components/schemas/ReleasePolicy",
+            "description": "Staged rollout policy for releases promoted into this environment.\nIts `approval` is always `none`; use `approval_required`. On the App\nStore track, a policy with more than one step turns on Apple's phased\nrelease, which follows Apple's own seven-day schedule."
+          },
+          "store": {
+            "$ref": "#/components/schemas/ReleaseStore"
+          },
+          "submit_for_review": {
+            "type": "boolean",
+            "description": "App Store track only: submit the App Store version for App Review\nonce a promotion attaches the build. Otherwise the version waits for\nsomeone to submit it in App Store Connect."
+          },
+          "track": {
+            "type": "string",
+            "description": "Play track (`internal`, `closed`, `open`, `production` or a custom\ntrack), or the App Store release track a store upload records."
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ProjectMember": {
         "type": "object",
         "required": [
@@ -17063,6 +19602,27 @@
           "maintainer",
           "developer",
           "viewer"
+        ]
+      },
+      "PromotionDecisionRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PromotionState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "promoting",
+          "completed",
+          "rejected",
+          "failed"
         ]
       },
       "PublishStore": {
@@ -17313,6 +19873,19 @@
             "type": "integer",
             "format": "int64"
           },
+          "environment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The project environment this release belongs to. Absent for projects\nwithout environments."
+          },
+          "environment_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "health": {
             "$ref": "#/components/schemas/ReleaseHealth"
           },
@@ -17354,6 +19927,13 @@
               "string",
               "null"
             ]
+          },
+          "promoted_from_release_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release this one was promoted from, without a new build."
           },
           "rollout_fraction": {
             "type": "number",
@@ -17749,7 +20329,8 @@
         "required": [
           "path",
           "valid",
-          "errors"
+          "errors",
+          "workflows"
         ],
         "properties": {
           "errors": {
@@ -17773,6 +20354,13 @@
           },
           "valid": {
             "type": "boolean"
+          },
+          "workflows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Workflows a valid `version: 2` file defines, in file order, which a\npipeline can pick. Empty for version 1 files and files without\nworkflows."
           }
         }
       },
@@ -18050,6 +20638,26 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "RunnerAnalyzerReport": {
+        "type": "object",
+        "description": "The summary of `dart analyze --format=json` a runner reports after the\nbuild's steps.",
+        "required": [
+          "counts",
+          "diagnostics"
+        ],
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/AnalyzerCounts"
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalyzerDiagnostic"
+            },
+            "description": "The most severe diagnostics, errors first. The daemon keeps at most\n50."
           }
         }
       },
@@ -18464,6 +21072,16 @@
           },
           "store": {
             "$ref": "#/components/schemas/PublishStore"
+          },
+          "testflight_groups": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "App Store uploads to TestFlight: the groups the build was uploaded\nfor, which the daemon records instead of reading the settings again."
           },
           "track": {
             "type": "string",
@@ -19131,6 +21749,90 @@
           }
         }
       },
+      "SizeBudget": {
+        "type": "object",
+        "description": "Artifact size limits a pipeline's commit checks enforce. Increase limits\ncompare with the same baseline as the build's size report; without a\nbaseline only `max_bytes` applies. Empty `rules` turns the budget off.",
+        "required": [
+          "mode",
+          "rules"
+        ],
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/SizeBudgetMode"
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SizeBudgetRule"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SizeBudgetMode": {
+        "type": "string",
+        "description": "What a pipeline's commit check does when an artifact is over its size\nbudget. The build itself never fails.",
+        "enum": [
+          "warn",
+          "fail"
+        ]
+      },
+      "SizeBudgetRule": {
+        "type": "object",
+        "description": "Size limits for one kind of artifact. A rule needs at least one limit.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "The artifact kind: its lowercase file extension, such as `aab`,\n`apk` or `ipa`."
+          },
+          "max_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Largest size allowed, in bytes."
+          },
+          "max_increase_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Largest growth allowed compared with the baseline build, in bytes."
+          },
+          "max_increase_percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Largest growth allowed compared with the baseline build, in percent."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SlackMention": {
+        "type": "object",
+        "description": "Maps a person to the Slack member mentioned in their notifications.",
+        "required": [
+          "identity",
+          "member_id"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "description": "Oore sign-in email (manual and API builds, releases) or Git username\n(push and merge request builds). Matched without regard to case."
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Slack member ID, such as `U0123ABCD`."
+          }
+        }
+      },
       "SmtpConfig": {
         "type": "object",
         "required": [
@@ -19242,6 +21944,15 @@
           }
         ]
       },
+      "StepPhase": {
+        "type": "string",
+        "description": "Where a step sits relative to the platform builds. Android signing and the\niOS export seam apply to `build` steps only.",
+        "enum": [
+          "pre_build",
+          "build",
+          "post_build"
+        ]
+      },
       "StepResult": {
         "type": "object",
         "required": [
@@ -19269,6 +21980,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "publish_from_file": {
+            "type": "boolean",
+            "description": "Publish steps only: where to upload came from the repository's\n`.oore.yaml` `publish`, so a retry of the step reads the file at the\nbuild's commit again."
           },
           "started_at": {
             "type": "integer",
@@ -19535,6 +22250,27 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "TargetSizeBudget": {
+        "type": "object",
+        "description": "A size budget a repository's `.oore.yaml` version 2 file sets on one\ntarget, after workflow overrides. That platform's commit check enforces it\non top of the pipeline's `size_budget`, which stays a floor.",
+        "required": [
+          "platform",
+          "source",
+          "budget"
+        ],
+        "properties": {
+          "budget": {
+            "$ref": "#/components/schemas/SizeBudget"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/BuildPlatform"
+          },
+          "source": {
+            "type": "string",
+            "description": "Where the budget came from, such as `targets.android.budgets`."
           }
         }
       },
@@ -19901,6 +22637,16 @@
             ],
             "format": "int32"
           },
+          "size_budgets": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/TargetSizeBudget"
+            },
+            "description": "The size budgets the build's `.oore.yaml` version 2 file sets, sent\nonce the runner planned the build. An empty list means the file sets\nnone; leaving it out keeps what the build has."
+          },
           "status": {
             "type": "string"
           },
@@ -19949,6 +22695,16 @@
               "null"
             ],
             "description": "New HMAC secret (webhook) or bot token (slack). Omit to keep existing;\npass empty string to clear."
+          },
+          "slack_mentions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SlackMention"
+            },
+            "description": "New Slack member mappings (Slack only). Omit to keep existing; pass an\nempty list to clear."
           },
           "smtp_config": {
             "oneOf": [
@@ -20122,6 +22878,16 @@
               "null"
             ]
           },
+          "size_budget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SizeBudget"
+              }
+            ]
+          },
           "timeout_minutes": {
             "type": [
               "integer",
@@ -20138,6 +22904,71 @@
               {
                 "$ref": "#/components/schemas/TriggerConfig"
               }
+            ]
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A workflow the repository's `version: 2` file defines. `null` clears\nit; leaving it out keeps the current one."
+          }
+        }
+      },
+      "UpdateProjectEnvironmentRequest": {
+        "type": "object",
+        "description": "Changes to an environment. The key and store are fixed once created.",
+        "properties": {
+          "approval_required": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "approvers": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentApproversInput",
+                "description": "Replaces who may approve promotions; leave out (or send null) to keep\nthem."
+              }
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "rollout_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReleasePolicy"
+              }
+            ]
+          },
+          "submit_for_review": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "track": {
+            "type": [
+              "string",
+              "null"
             ]
           }
         }
@@ -20576,6 +23407,16 @@
               "null"
             ]
           },
+          "size_budget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SizeBudget"
+              }
+            ]
+          },
           "timeout_minutes": {
             "type": [
               "integer",
@@ -20593,6 +23434,13 @@
                 "$ref": "#/components/schemas/TriggerConfig"
               }
             ]
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Checked against the workflows `repository_yaml` defines."
           }
         }
       },
@@ -20710,6 +23558,10 @@
     {
       "name": "Releases",
       "description": "Store releases — staged rollout records with pause, halt, resume, complete and approval."
+    },
+    {
+      "name": "Environments",
+      "description": "Release environments on a project, such as internal, beta and production, and promotion of a build between them without a new build."
     },
     {
       "name": "Runners",

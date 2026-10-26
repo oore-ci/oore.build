@@ -16,10 +16,12 @@ import {
 import { requireProjectPermissionOrRedirect } from '@/lib/project-route-guard'
 import {
   usePipeline,
+  usePipelines,
   usePipelineAndroidSigning,
   usePipelineIosDevices,
   usePipelineIosSigning,
   useRegisterPipelineIosDevice,
+  useRepositoryWorkflows,
   useSyncPipelineIosSigning,
   useUpdatePipeline,
   useUpdatePipelineAndroidSigning,
@@ -34,8 +36,10 @@ import {
   buildNumberOffsetField,
   runsOnField,
   hasCustomFallback,
-  pipelineRequestFromForm,
+  pipelineRepositoryFile,
+  pipelineUpdateFromForm,
   selectedPlatforms,
+  sizeBudgetFormFields,
   toMultiline,
 } from '@/lib/pipeline-form-utils'
 import {
@@ -58,6 +62,7 @@ import PageHeader from '@/components/page-header'
 import { Skeleton } from '@/components/ui/skeleton'
 import PipelineForm from '@/components/pipeline-form'
 import { PipelineFormSection } from '@/components/pipeline-form-section'
+import { Text } from '@/components/layout/text'
 
 const iosDeviceColumns: Array<DataTableColumnDef<RegisteredIosDevice>> = [
   { accessorKey: 'name', header: 'Name', enableSorting: false },
@@ -131,6 +136,20 @@ function EditPipelinePage() {
     projectData?.project.current_user_role,
   )
   const { data, isLoading, error } = usePipeline(pipelineId)
+  // The other pipelines that would read a committed repository file too.
+  const projectPipelinesQuery = usePipelines(projectId, { limit: 200 })
+  const otherPipelines = (projectPipelinesQuery.data?.pipelines ?? []).filter(
+    (pipeline) => pipeline.id !== pipelineId,
+  )
+  // The Workflow selector needs the file's workflows; without them (no
+  // file, or the source is unreachable) it stays hidden.
+  const repositoryFilesQuery = useRepositoryWorkflows(
+    projectId,
+    data?.pipeline.config_path_explicit
+      ? { path: data.pipeline.config_path }
+      : undefined,
+    { enabled: !!data && !!projectData?.project.repository_id },
+  )
   const signingQuery = usePipelineAndroidSigning(pipelineId)
   const iosSigningQuery = usePipelineIosSigning(pipelineId)
   const iosDevicesQuery = usePipelineIosDevices(pipelineId)
@@ -197,10 +216,19 @@ function EditPipelinePage() {
   const platformSet = new Set(pipeline.execution_config.platforms)
   const custom = hasCustomFallback(pipeline)
 
+  const repositoryFile = pipelineRepositoryFile(
+    repositoryFilesQuery.data?.workflows ?? [],
+    pipeline,
+  )
+  const workflowSource = repositoryFile
+    ? { path: repositoryFile.path, workflows: repositoryFile.workflows }
+    : undefined
+
   const formInitialValues: PipelineFormValues = {
     name: pipeline.name,
     config_mode: pipeline.config_path_explicit ? 'explicit' : 'auto',
     config_path: pipeline.config_path,
+    workflow: pipeline.workflow ?? '',
     platform_android: platformSet.has('android'),
     platform_ios: platformSet.has('ios'),
     platform_macos: platformSet.has('macos'),
@@ -282,6 +310,7 @@ function EditPipelinePage() {
       : undefined,
     approval_required: pipeline.approval.required,
     approval_events: pipeline.approval.events ?? [],
+    ...sizeBudgetFormFields(pipeline.size_budget),
   }
 
   async function handleSubmit(
@@ -294,7 +323,7 @@ function EditPipelinePage() {
       setValidationErrors(['Pick at least one platform to build'])
       return
     }
-    const payload = pipelineRequestFromForm(values, {
+    const payload = pipelineUpdateFromForm(values, pipeline.workflow, {
       canChangeApproval,
       manualOnlyTriggers,
     })
@@ -482,6 +511,12 @@ function EditPipelinePage() {
         iosSigningActions={iosSigningActions}
         iosAppStorePublishing={iosAppStorePublishing}
         googlePlayUpload={!!googlePlayPublishQuery.data?.config?.enabled}
+        otherPipelines={otherPipelines}
+        publishSettings={{
+          googlePlay: googlePlayPublishQuery.data?.config ?? undefined,
+          appStore: appStorePublishQuery.data?.config,
+        }}
+        workflowSource={workflowSource}
       >
         {iosProfileSyncAvailable &&
           storedIosSigning.export_method === 'ad_hoc' && (
@@ -516,9 +551,7 @@ function EditPipelinePage() {
               </div>
 
               {iosDevicesQuery.isLoading ? (
-                <p className="text-sm text-muted-foreground">
-                  Loading devices...
-                </p>
+                <Text variant="muted">Loading devices...</Text>
               ) : iosDevicesQuery.isError ? (
                 <CollectionError
                   title="Failed to load registered devices"
@@ -528,9 +561,9 @@ function EditPipelinePage() {
               ) : iosDevicesQuery.data?.devices.length ? (
                 <IosDeviceTable devices={iosDevicesQuery.data.devices} />
               ) : (
-                <p className="text-sm text-muted-foreground">
+                <Text variant="muted">
                   No iOS devices registered for this pipeline.
-                </p>
+                </Text>
               )}
             </PipelineFormSection>
           )}

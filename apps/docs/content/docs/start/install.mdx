@@ -1,105 +1,83 @@
 ---
 title: 'Install Oore'
 status: implemented
-description: 'Install the small Oore CLI bootstrap, then choose this device role.'
+description: 'Install the Oore CLI, then install the Complete role on this Mac.'
 ---
 
-The download script installs only the `oore` CLI. It does not install services, Flutter, or the web UI.
+On this page you install the `oore` CLI and use it to install Oore's services
+on this Mac. You pick the **Complete** role, which runs the control plane, the
+web UI, and a build runner on one Mac.
 
-After you choose a role with `oore install`, device setup starts.
+## What you need
 
-The guided v0.1.42 lifecycle supports macOS on `arm64` and `x86_64`.
-
-Published Linux web archives are standalone assets. They are not a guided Web node installation.
+- A Mac that passed [Check that your Mac is ready](/start/prerequisites).
+- Your macOS password, for the administrator prompt during setup.
 
 ## 1. Install the CLI
 
-Run the script as your normal user:
+Run the script as your normal user. Do not prefix it with `sudo`:
 
 ```bash
 curl -fsSL https://oore.build/install | bash
 ```
 
-The script verifies the signed stable release index and signed checksum manifest.
+The script checks the signature of the stable release index and the checksum
+of the CLI archive before it changes any file. It installs the CLI under
+`~/.oore` and can add `~/.oore/bin` to your shell path. It installs no
+services, Flutter, or web UI.
 
-It then verifies the CLI archive SHA-256 against that manifest.
+If the script changed your path, open a new terminal or run the `source`
+command it printed.
 
-A missing or invalid signature stops the installation before any file changes.
-
-It installs the CLI under `~/.oore` and can add `~/.oore/bin` to your shell path.
-
-The script never requests administrator access. Do not prefix it with `sudo`.
-
-If the script changes your path, open a new terminal or run the printed `source` command.
-
-## 2. Choose this device role
-
-For guided setup, run:
+## 2. Install the Complete role
 
 ```bash
 oore install
 ```
 
-Oore explains these five roles before it changes the device:
+Oore lists five roles and explains each one before it changes anything.
+Choose **Complete**, the default. Oore downloads the release bundle and
+installs the control plane, web UI, and runner.
 
-| Role          | Purpose                                                         |
-| ------------- | --------------------------------------------------------------- |
-| Complete      | Run the control plane, local web UI, and builds on this device. |
-| Control plane | Manage pipelines and runners without a local web UI or runner.  |
-| Runner        | Run builds for a control plane on another device.               |
-| Web node      | Serve the web UI for a control plane on another device.         |
-| CLI only      | Use the CLI without local Oore services.                        |
+An interactive install continues straight into `oore setup`, which is the next
+page. Leave the terminal open.
 
-Complete is the default interactive choice.
+## Check the result
 
-For an SSH script or another headless task, select the role explicitly:
-
-```bash
-oore install --profile runner
-```
-
-Use `--plan` to review the component plan without changes:
-
-```bash
-oore install --profile runner --plan
-```
-
-Oore downloads the matching release bundle. It installs only the components for the selected role.
-
-Complete and Control plane currently share one full bundle. Web node uses a web-only bundle. Runner and CLI only reuse the bootstrap CLI.
-
-## 3. Complete setup
-
-An interactive install continues to `oore setup`. A non-interactive install stops after component installation.
-
-For a non-interactive installation, run setup with explicit values or a configuration file:
-
-```bash
-chmod 600 ./oore-setup.yaml
-sudo -v
-oore setup --config ./oore-setup.yaml
-```
-
-Service profiles request administrator access only during setup. Oore shows the setup plan before that request.
-
-Without an interactive terminal, Oore never opens a password prompt. Run `sudo -v` before setup instead.
-
-The CLI only profile does not need administrator access.
-
-## Verify the result
+In a second terminal, run:
 
 ```bash
 oore version
 ```
 
-Setup must end with `<Profile> setup is ready.` Oore prints this message only after final service verification.
+The command prints the installed Oore version.
 
-Use `oore status` to inspect the connected control plane.
+## Troubleshooting
 
-For a remote Runner or Web node, pass `--daemon-url <URL>`.
+**The script stops with a signature or checksum error**
+
+The download did not match the signed release. Nothing was installed. Retry on
+a network that does not rewrite HTTPS traffic, then
+[report an issue](/operate/support/report-an-issue) if it still fails.
+
+**`oore: command not found`**
+
+Open a new terminal, or run the `source` command the script printed, so the
+shell picks up `~/.oore/bin`.
+
+**You are installing over SSH or from a script**
+
+Pass the role explicitly with `oore install --profile complete`. Add `--plan`
+to see the component plan without changes. A non-interactive install stops
+after the components; run `oore setup` with a configuration file next, as
+described in the [`oore setup` reference](/reference/cli/oore-setup).
+
+**You want to install a different role**
+
+The Runner, Control plane, Web node, and CLI only roles split Oore across
+machines. See [Split Oore across Macs](/operate/deploy/split-roles) and the
+[installer reference](/reference/config/installer).
 
 ## Next step
 
 [Complete first-run setup](/start/first-run).
-
-For release channels and custom paths, read the [installer reference](/reference/config/installer).

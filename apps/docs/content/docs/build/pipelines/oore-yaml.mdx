@@ -1,94 +1,150 @@
 ---
-title: 'Configure a repository pipeline'
+title: 'Move a pipeline into .oore.yaml'
 status: implemented
-description: 'Add and validate a repository-owned Oore pipeline in .oore.yaml.'
+description: 'Pick a pipeline format, generate a version 2 file from the pipeline editor, validate it, and commit it.'
 ---
 
-Add `.oore.yaml` to the repository so the pipeline definition is reviewed and
-versioned with the code it builds. The Direct macOS runner reads the selected
-file from the pinned checkout for each build.
+Move a pipeline's build settings into `.oore.yaml` so they are reviewed and
+versioned with the code they build. The runner reads the file from the exact
+commit it builds, so an old build always uses the instructions it was built
+with.
 
 ## What you need
 
-- A project whose repository you can edit.
+- A pipeline that builds successfully from the UI settings.
+- Write access to the repository.
 - Project developer, maintainer, instance admin, or instance owner access in
   Oore.
-- The `oore` operator CLI available where you edit the repository.
+- The `oore` CLI where you edit the repository, to validate the file.
 
-## 1. Add the workflow
+## Choose a format
 
-Create `.oore.yaml` in the repository root:
+Oore reads three kinds of pipeline definition. Use this table to pick one:
 
-```yaml
-version: 1
-platforms:
-  - android
-commands:
-  pre_build:
-    - flutter pub get
-  build:
-    - flutter build apk --release
-artifacts:
-  patterns:
-    - build/app/outputs/flutter-apk/*.apk
+| Format                 | Status        | Use it when                                                               |
+| ---------------------- | ------------- | ------------------------------------------------------------------------- |
+| UI settings            | `implemented` | You are getting started, or only Oore admins should change the build      |
+| `.oore.yaml` version 2 | `preview`     | The build should change with the code. Recommended for every new file     |
+| `.oore.yaml` version 1 | `implemented` | You already have a working version 1 file and need nothing from version 2 |
+
+Our recommendation:
+
+- **Start in the UI.** The templates get a first build running without a file.
+  The [tutorials](/start) do this.
+- **Write new files as version 2.** It is the format the pipeline editor
+  generates. It names each step, writes each platform's full build command
+  with nothing hidden, and is the only version that supports `workflows`,
+  `on` triggers, `publish`, and `vars`.
+- **Keep a working version 1 file** until you need one of those features.
+  Then convert it with `oore pipeline migrate`, which checks that the new file
+  runs the same commands.
+
+Version 2 is in preview. Like every configuration format in Oore `0.1.x`, it
+can still change. Version 1 files keep working unchanged.
+
+## 1. Generate the file
+
+1. Open the pipeline and select **Edit**.
+2. Scroll to **What will run** and keep **Form settings** selected.
+3. Under **Repository file**, select **Copy** or **Download**.
+
+Oore generates a version 2 file from the current settings. Before it shows
+the file, it plans it and checks that it runs the same steps as the form.
+Notes under the file say which settings it could not express and that keep
+applying from the pipeline, such as trigger settings that have no exact `on`
+equivalent.
+
+The file never contains secret values or store credentials. Env values are
+copied as written, so a value that should be secret belongs in
+[Secrets](/build/pipelines/secrets), referenced as `${{ secrets.NAME }}`.
+
+To convert an existing version 1 file instead, run:
+
+```bash
+oore pipeline migrate --write
 ```
 
-The schema rejects unknown fields. `platforms` must contain at least one of
-`android`, `ios`, or `macos`. Command stages are lists, while each
-`platform_commands` override is one string.
+## 2. Validate and preview the file
 
-For every field and accepted type, use the
-[`.oore.yaml` reference](/reference/config/oore-yaml).
-
-## 2. Validate the file
-
-Run the product validator before you commit the workflow:
+Save the file as `.oore.yaml` in the repository root, then run:
 
 ```bash
 oore pipeline validate .oore.yaml
+oore pipeline plan .oore.yaml
 ```
 
-A valid file exits successfully and prints:
+`validate` prints `.oore.yaml is valid`. `plan` prints the commands each build
+runs, in order and by step name.
+
+## 3. Commit the file
+
+Commit `.oore.yaml` to the branch Oore builds and push it. For a project that
+points at a repository on the Oore Mac, commit it in that repository.
+
+With the default **Config source**, a pipeline checks `.oore.yaml`, then
+`.oore.yml`, at the commit it builds. From the next build on, every pipeline
+in the project that reads that path builds from the file, and its form
+settings for the build stop applying. The pipeline editor names those
+pipelines before you copy the file.
+
+If the file defines several `workflows`, open each pipeline's **Edit** page
+and pick one under **Workflow**. A file with several workflows fails builds of
+a pipeline that has not picked one.
+
+## Create a pipeline from an existing file
+
+When the repository already has `.oore.yaml` or `.oore.yml` on its default
+branch, create the pipeline from it:
+
+1. Open the project's **Pipelines** tab and select
+   **Use repository workflow**. With other pipelines in the project, select
+   **Add pipeline**.
+2. Under **Start from**, Oore shows **Repository workflow found** and a
+   summary of the platforms, Flutter version, commands, and artifacts. If it
+   found several files, select the one to use.
+3. If the file defines several workflows, pick one under **Workflow**.
+4. Enter a **Pipeline name** and select **Create pipeline**.
+
+## Check the result
+
+Run a build. Its log contains a line like this:
 
 ```text
-.oore.yaml is valid
+Using pipeline config source: file:/.../.oore.yaml
 ```
 
-## 3. Create the pipeline
-
-1. Open the project and select **Pipelines**.
-2. Select **Set up a build**.
-3. Under **Repository workflow found**, select the intended file if Oore found
-   more than one.
-4. Review the pipeline name, platforms, triggers, and artifact patterns.
-5. Select **Create**.
-
-Without an explicit config path, Oore checks `.oore.yaml` and then
-`.oore.yml`. An explicitly selected path is the only path checked.
-
-## Verify the result
-
-Oore shows **Pipeline created** and returns to the project. Trigger a build and
-confirm its logs identify the repository workflow as the configuration source.
+The build's steps carry the names from the file, such as `Get packages` and
+`Build Android`. A build that still uses the form settings logs
+`ui_fallback` instead.
 
 ## Troubleshooting
 
 **Validation reports an unknown field**
 
-Remove or correct that field. Each `platform_build_args` platform accepts a
-list of strings.
+The schema rejects unknown fields. Compare the file with the
+[version 2 reference](/reference/config/oore-yaml-v2), or the
+[version 1 reference](/reference/config/oore-yaml) for a version 1 file.
 
-**Oore reports that the selected workflow is invalid**
+**The build fails because the workflow file is invalid**
 
-Fix the file at the build's pinned commit and validate it again. An invalid
-selected file fails visibly; Oore does not silently use the UI configuration.
+Fix the file at the commit the build used, validate it, and push again. Oore
+never falls back to the form settings when the file exists but is invalid.
 
-**The workflow is not discovered**
+**The build still logs `ui_fallback`**
 
-Confirm the file exists on the branch Oore is inspecting. For a workflow
-outside the repository root, choose **Use a specific config file path** and
-enter its repository-relative path.
+The file is not at the commit Oore built, or the pipeline reads another path.
+Check the branch, and the pipeline's **Config source**. To read a file outside
+the repository root, choose **Choose a config file** and enter its path.
+
+**A Google Play pipeline stops uploading after the move**
+
+Version 2 runs the Android build command as written. Make sure the Android
+target builds an App Bundle, such as `flutter build appbundle --release`, and
+keep an `.aab` artifact pattern.
 
 ## Next step
 
-[Trigger a build](/build/run/trigger) from the validated pipeline.
+[Use secrets in a pipeline](/build/pipelines/secrets) for tokens the file
+needs, or set up [triggers, timeouts, and approvals](/build/pipelines/triggers).
+For why the file wins over the UI settings, read
+[How Oore chooses pipeline configuration](/concepts/pipeline-configuration).

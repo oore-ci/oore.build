@@ -20,6 +20,9 @@ import {
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { ROLE_LABELS } from '@/routes/settings/-user-role-labels'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 const demoLoginSchema = z.object({
   email: z.email('Enter one of the demo email addresses.'),
@@ -114,9 +117,9 @@ export default function DemoLoginForm({ redirectTo }: { redirectTo: string }) {
 
         <div className="space-y-2">
           <Separator />
-          <p className="text-xs font-medium text-muted-foreground">
+          <Text variant="caption" className="font-medium">
             Demo accounts
-          </p>
+          </Text>
           <div className="grid grid-cols-2 gap-2">
             {DEMO_PERSONAS.map((persona) => (
               <Button
@@ -135,16 +138,21 @@ export default function DemoLoginForm({ redirectTo }: { redirectTo: string }) {
               >
                 <span>
                   <span className="block">{ROLE_LABELS[persona.role]}</span>
-                  <span className="block text-xs font-normal text-muted-foreground">
+                  <span
+                    className={cn(
+                      textVariants({ variant: 'caption' }),
+                      'block font-normal',
+                    )}
+                  >
                     {persona.displayName}
                   </span>
                 </span>
               </Button>
             ))}
           </div>
-          <p className="text-xs text-muted-foreground">
+          <Text variant="caption">
             All accounts use password <code>{DEMO_PASSWORD}</code>.
-          </p>
+          </Text>
         </div>
       </CardContent>
     </Card>

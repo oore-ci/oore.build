@@ -1,4 +1,5 @@
 import { StepStatusIcon } from './step-status-icon'
+import { StepDurationBar, StepMedianDelta } from './step-timing'
 import type { StepGroup } from './types'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { FileTerminalIcon } from '@hugeicons/core-free-icons'
@@ -13,9 +14,13 @@ import {
 } from '@/components/ui/item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { formatDuration } from '@/lib/format-utils'
+import { longestStepMs } from '@/lib/step-timings'
+import { cn } from '@/lib/utils'
+import { textVariants } from '@/lib/recipes'
 
 interface StepNavigationProps {
   groups: Array<StepGroup>
+  medians?: ReadonlyMap<string, number>
   selectedStep: string
   allLogCount: number
   onSelect: (step: string) => void
@@ -23,10 +28,13 @@ interface StepNavigationProps {
 
 export function StepNavigation({
   groups,
+  medians,
   selectedStep,
   allLogCount,
   onSelect,
 }: StepNavigationProps) {
+  // Bars share one scale, so the slowest step or median fills the track.
+  const longestMs = longestStepMs(groups, medians)
   return (
     <nav
       aria-label="Build steps"
@@ -34,7 +42,9 @@ export function StepNavigation({
     >
       <div className="flex shrink-0 items-center justify-between border-b px-3 py-2.5">
         <span className="text-xs font-medium">Steps</span>
-        <span className="text-xs text-muted-foreground tabular-nums">
+        <span
+          className={cn(textVariants({ variant: 'caption' }), 'tabular-nums')}
+        >
           {groups.length === 1 ? '1 step' : `${groups.length} steps`}
         </span>
       </div>
@@ -52,6 +62,8 @@ export function StepNavigation({
               selected={selectedStep === group.name}
               onClick={() => onSelect(group.name)}
               group={group}
+              longestMs={longestMs}
+              medianMs={medians?.get(group.name)}
             />
           ))}
         </ItemGroup>
@@ -66,13 +78,18 @@ function StepItem({
   name,
   lineCount,
   group,
+  longestMs = 0,
+  medianMs,
 }: {
   selected: boolean
   onClick: () => void
   name?: string
   lineCount?: number
   group?: StepGroup
+  longestMs?: number
+  medianMs?: number
 }) {
+  const durationMs = group?.durationMs
   const label = group?.name ?? name ?? ''
   const count = group?.logs.length ?? lineCount ?? 0
 
@@ -100,10 +117,20 @@ function StepItem({
         <ItemDescription className="font-mono text-[10px]">
           {formatLineCount(count)}
         </ItemDescription>
+        {durationMs != null && longestMs > 0 ? (
+          <StepDurationBar
+            durationMs={durationMs}
+            longestMs={longestMs}
+            medianMs={medianMs}
+          />
+        ) : null}
       </ItemContent>
-      {group?.durationMs != null ? (
-        <ItemActions className="font-mono text-[10px] text-muted-foreground">
-          {formatDuration(group.durationMs / 1000)}
+      {durationMs != null ? (
+        <ItemActions className="flex-col items-end gap-0.5 self-start font-mono text-[10px] text-muted-foreground">
+          <span>{formatDuration(durationMs / 1000)}</span>
+          {medianMs != null ? (
+            <StepMedianDelta durationMs={durationMs} medianMs={medianMs} />
+          ) : null}
         </ItemActions>
       ) : null}
     </Item>

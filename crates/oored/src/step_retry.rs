@@ -16,6 +16,7 @@ use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
     ApiError, Build, PUBLISH_APP_STORE_STEP, PUBLISH_PLAY_STEP, RETRYABLE_BUILD_STEPS,
     RerunBuildResponse, RetryBuildStepRequest, RunnerRetryArtifact, RunnerRetryArtifactsResponse,
+    StepResult,
 };
 use serde_json::Value;
 use sqlx::{FromRow, Row, SqlitePool};
@@ -54,6 +55,41 @@ pub(crate) fn retry_steps_from_snapshot(snapshot: &Value) -> Option<Vec<String>>
         .filter_map(|step| step.as_str().map(str::to_string))
         .collect();
     (!steps.is_empty()).then_some(steps)
+}
+
+pub(crate) use oore_contract::RETRY_PUBLISH_FROM_FILE;
+
+/// Whether a retry of `steps` must read the repository file again: the
+/// build's `artifacts` step says the file chose where it publishes, which
+/// covers a publish step that never ran, or a retried step says so itself
+/// (from runners that flag only publish steps).
+pub(crate) fn published_from_file(step_results: Option<&str>, steps: &[String]) -> bool {
+    step_results
+        .and_then(|raw| serde_json::from_str::<Vec<StepResult>>(raw).ok())
+        .is_some_and(|results| {
+            results.iter().any(|step| {
+                step.publish_from_file
+                    && (step.name == ARTIFACTS_STEP || steps.contains(&step.name))
+            })
+        })
+}
+
+/// Mark a rerun's snapshot: the steps a retry runs, and whether it reads the
+/// repository file again. A full re-run of a retry builds everything again.
+pub(crate) fn set_retry_snapshot(
+    snapshot: &mut serde_json::Map<String, Value>,
+    retry_steps: Option<&[String]>,
+    source_step_results: Option<&str>,
+) {
+    snapshot.remove("retry_steps");
+    snapshot.remove(RETRY_PUBLISH_FROM_FILE);
+    let Some(steps) = retry_steps else {
+        return;
+    };
+    snapshot.insert("retry_steps".to_string(), serde_json::json!(steps));
+    if published_from_file(source_step_results, steps) {
+        snapshot.insert(RETRY_PUBLISH_FROM_FILE.to_string(), Value::Bool(true));
+    }
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -431,6 +467,17 @@ mod tests {
         ];
         assert!(pick_bundle(&ambiguous).is_none());
         assert!(pick_bundle(&[artifact("app-release.apk")]).is_none());
+
+        // Newer runners store bundles as `aab`; older builds have them as
+        // `generic`. Both are found by name.
+        let typed = StoredArtifact {
+            artifact_type: "aab".to_string(),
+            ..artifact("app-release.aab")
+        };
+        assert_eq!(
+            pick_bundle(&[artifact("app-release.apk"), typed]).map(|a| a.artifact_type.as_str()),
+            Some("aab")
+        );
     }
 
     async fn pool_with_failed_publish(step_results: &str) -> SqlitePool {
@@ -526,6 +573,80 @@ mod tests {
                 .is_empty(),
             "publishing turned off"
         );
+    }
+
+    #[test]
+    fn a_retry_reads_the_file_only_for_steps_that_published_from_it() {
+        let mut from_file = step("publish-play", "failed");
+        from_file["publish_from_file"] = serde_json::json!(true);
+        let steps = serde_json::json!([
+            step("artifacts", "succeeded"),
+            from_file,
+            step("publish-app-store", "failed"),
+        ])
+        .to_string();
+        let play = [PUBLISH_PLAY_STEP.to_string()];
+        let app_store = [PUBLISH_APP_STORE_STEP.to_string()];
+        assert!(published_from_file(Some(&steps), &play));
+        assert!(!published_from_file(Some(&steps), &app_store));
+        let settings = serde_json::json!([step("publish-play", "failed")]).to_string();
+        assert!(!published_from_file(Some(&settings), &play));
+        assert!(!published_from_file(None, &play));
+    }
+
+    #[test]
+    fn retrying_an_upload_that_never_ran_reads_the_file_again() {
+        // The file named both stores; the Play upload failed before the App
+        // Store upload ran, so only the artifacts step carries the flag.
+        let mut artifacts = step("artifacts", "succeeded");
+        artifacts["publish_from_file"] = serde_json::json!(true);
+        let results = serde_json::json!([artifacts, step("publish-play", "failed")]).to_string();
+        let mut snapshot = serde_json::json!({ "retry_steps": ["publish-play"] })
+            .as_object()
+            .unwrap()
+            .clone();
+        let app_store = [PUBLISH_APP_STORE_STEP.to_string()];
+        set_retry_snapshot(&mut snapshot, Some(&app_store), Some(&results));
+        assert_eq!(
+            snapshot["retry_steps"],
+            serde_json::json!(["publish-app-store"])
+        );
+        assert_eq!(snapshot[RETRY_PUBLISH_FROM_FILE], serde_json::json!(true));
+
+        // A full re-run, or a retry of a settings build, carries neither.
+        set_retry_snapshot(&mut snapshot, None, Some(&results));
+        assert!(!snapshot.contains_key("retry_steps"));
+        assert!(!snapshot.contains_key(RETRY_PUBLISH_FROM_FILE));
+        let settings = serde_json::json!([step("artifacts", "succeeded")]).to_string();
+        set_retry_snapshot(&mut snapshot, Some(&app_store), Some(&settings));
+        assert!(!snapshot.contains_key(RETRY_PUBLISH_FROM_FILE));
+    }
+
+    #[test]
+    fn a_publish_step_that_never_ran_follows_the_build_level_flag() {
+        // The Play upload failed, so the App Store upload never ran and has
+        // no result; the artifacts step says the file chose the stores.
+        let mut artifacts = step("artifacts", "succeeded");
+        artifacts["publish_from_file"] = serde_json::json!(true);
+        let steps = serde_json::json!([
+            step("build-1", "succeeded"),
+            artifacts,
+            step("publish-play", "failed"),
+        ])
+        .to_string();
+        assert!(published_from_file(
+            Some(&steps),
+            &[PUBLISH_APP_STORE_STEP.to_string()]
+        ));
+        let settings = serde_json::json!([
+            step("artifacts", "succeeded"),
+            step("publish-play", "failed"),
+        ])
+        .to_string();
+        assert!(!published_from_file(
+            Some(&settings),
+            &[PUBLISH_APP_STORE_STEP.to_string()]
+        ));
     }
 
     #[tokio::test]

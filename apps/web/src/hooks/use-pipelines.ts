@@ -1,4 +1,5 @@
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -6,6 +7,9 @@ import {
 } from '@tanstack/react-query'
 import type {
   CreatePipelineRequest,
+  ExportPipelineYamlRequest,
+  ImportPipelineYamlRequest,
+  PlanPipelineRequest,
   RegisterIosDeviceRequest,
   UpdatePipelineAndroidSigningRequest,
   UpdatePipelineIosSigningRequest,
@@ -15,6 +19,9 @@ import type {
 import {
   createPipeline,
   deletePipeline,
+  exportPipelineYaml,
+  importPipelineYaml,
+  planPipeline,
   updatePipeline,
   validatePipeline,
   registerPipelineIosDevice,
@@ -271,6 +278,71 @@ export function useValidatePipeline() {
         return Promise.reject(new Error('Not authenticated'))
       return validatePipeline({ body: data, client })
     },
+  })
+}
+
+/**
+ * What a build would run for a `.oore.yaml` or the form's settings. Pass
+ * `null` to pause. The previous plan stays on screen while a new one loads.
+ */
+export function usePipelinePlan(body: PlanPipelineRequest | null) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useQuery({
+    queryKey: scopeOoreQueryKey(instanceId, ['planPipeline', body]),
+    queryFn: ({ signal }) =>
+      // SAFETY: the query is disabled while `body` is null.
+      planPipeline({ body: body as PlanPipelineRequest, client, signal }),
+    enabled: !!baseUrl && !!token && body !== null,
+    placeholderData: keepPreviousData,
+    staleTime: Infinity,
+  })
+}
+
+/**
+ * The form's settings as a `version: 2` `.oore.yaml`, from the daemon. Pass
+ * `null` to pause. The previous file stays on screen while a new one loads.
+ */
+export function usePipelineYamlExport(body: ExportPipelineYamlRequest | null) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useQuery({
+    queryKey: scopeOoreQueryKey(instanceId, ['exportPipelineYaml', body]),
+    queryFn: ({ signal }) =>
+      // SAFETY: the query is disabled while `body` is null.
+      exportPipelineYaml({
+        body: body as ExportPipelineYamlRequest,
+        client,
+        signal,
+      }),
+    enabled: !!baseUrl && !!token && body !== null,
+    placeholderData: keepPreviousData,
+    staleTime: Infinity,
+  })
+}
+
+/**
+ * An edited `.oore.yaml` read back into form settings, from the daemon.
+ * Pass `null` to pause. While a new answer loads the previous one stays as
+ * placeholder data, which callers check before applying it.
+ */
+export function usePipelineYamlImport(body: ImportPipelineYamlRequest | null) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useQuery({
+    queryKey: scopeOoreQueryKey(instanceId, ['importPipelineYaml', body]),
+    queryFn: ({ signal }) =>
+      // SAFETY: the query is disabled while `body` is null.
+      importPipelineYaml({
+        body: body as ImportPipelineYamlRequest,
+        client,
+        signal,
+      }),
+    enabled: !!baseUrl && !!token && body !== null,
+    placeholderData: keepPreviousData,
+    staleTime: Infinity,
+    // Keys carry the whole file, so old answers are dropped soon.
+    gcTime: 30_000,
   })
 }
 

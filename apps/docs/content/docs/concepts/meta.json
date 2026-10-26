@@ -1,0 +1,17 @@
+{
+  "title": "Concepts",
+  "pagesIndex": "index",
+  "pages": [
+    "index",
+    "which-setup",
+    "architecture",
+    "build-lifecycle",
+    "pipeline-configuration",
+    "runner-trust",
+    "signing",
+    "artifact-delivery",
+    "external-access",
+    "security",
+    "multiple-instances"
+  ]
+}

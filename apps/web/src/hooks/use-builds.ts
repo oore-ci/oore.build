@@ -34,7 +34,10 @@ import {
   getBuildOptions,
   getBuildLogsQueryKey,
   getBuildQueryKey,
+  getBuildAnalysisOptions,
+  getBuildSizeReportOptions,
   getBuildTestResultsOptions,
+  listBuildActorsOptions,
   listArtifactsOptions,
   listBuildsOptions,
   listBuildsQueryKey,
@@ -66,6 +69,10 @@ export function useBuilds<TData = ListBuildsResponse>(
     pipeline_id?: string
     status?: string
     branch?: string
+    trigger?: string
+    actor?: string
+    created_after?: number
+    created_before?: number
     q?: string
     sort?: 'created_at' | 'status' | 'project_name' | 'pipeline_name' | 'branch'
     direction?: 'asc' | 'desc'
@@ -98,6 +105,20 @@ export function useBuilds<TData = ListBuildsResponse>(
       hasActiveBuilds(query.state.data) ? pollInterval : false,
     placeholderData: keepPreviousData,
     select: options?.select,
+  })
+}
+
+/** Who triggered the builds the caller can see, for the actor filter. */
+export function useBuildActors(params: { project_id?: string; q?: string }) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  return useQuery({
+    ...scopeOoreQueryOptions(
+      instanceId,
+      listBuildActorsOptions({ client, query: { ...params, limit: 50 } }),
+    ),
+    enabled: !!baseUrl && !!token,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -392,6 +413,42 @@ export function useBuildTests(
   const query = scopeOoreQueryOptions(
     instanceId,
     getBuildTestResultsOptions({ client, path: { build_id: buildId } }),
+  )
+
+  return useQuery({
+    ...query,
+    enabled: !!baseUrl && !!token && !!buildId,
+    staleTime: 5_000,
+    refetchInterval: options?.refetchInterval,
+  })
+}
+
+export function useBuildAnalysis(
+  buildId: string,
+  options?: { refetchInterval?: number | false },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    getBuildAnalysisOptions({ client, path: { build_id: buildId } }),
+  )
+
+  return useQuery({
+    ...query,
+    enabled: !!baseUrl && !!token && !!buildId,
+    staleTime: 5_000,
+    refetchInterval: options?.refetchInterval,
+  })
+}
+
+export function useBuildSizeReport(
+  buildId: string,
+  options?: { refetchInterval?: number | false },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    getBuildSizeReportOptions({ client, path: { build_id: buildId } }),
   )
 
   return useQuery({

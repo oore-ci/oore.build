@@ -7,6 +7,13 @@ description: 'The strict repository-owned pipeline configuration schema used by 
 Place `.oore.yaml` in the repository root to keep pipeline execution settings
 with the code they build. `.oore.yml` is also recognized.
 
+This page describes `version: 1`. Files that declare `version: 2` use
+workflows, targets with full build commands, named steps, and `vars`, `secrets`
+and `flavor` references; see [`.oore.yaml` version 2](/reference/config/oore-yaml-v2).
+Both versions are accepted, and a version 1 file runs exactly as before. To
+move a file to version 2, run
+[`oore pipeline migrate`](/reference/cli/oore-pipeline-migrate).
+
 ```yaml
 version: 1
 
@@ -47,7 +54,7 @@ The schema rejects unknown fields.
 
 | Field                 | Type     | Required | Default                         |
 | --------------------- | -------- | -------- | ------------------------------- |
-| `version`             | integer  | Yes      | Must be `1`                     |
+| `version`             | integer  | Yes      | `1` for this schema             |
 | `platforms`           | string[] | Yes      | No default; must not be empty   |
 | `flutter_version`     | string   | No       | `stable`                        |
 | `commands`            | object   | No       | Empty stages                    |
@@ -163,6 +170,20 @@ commands:
 The runner reads and clears that directory after every command, including a
 command that failed.
 
+## Analyzer
+
+When the env var `OORE_ANALYZE` is `true`, the runner runs
+`dart analyze --format=json` in the workspace root as a step named `analyze`
+after the commands run, including when a build or post-build command failed.
+Analysis is off by default for now.
+It reports the error, warning and info counts and the 50 most severe
+diagnostics, which the build detail page and the
+[pull request check](/build/run/pull-request-checks#analyzer) show. The step
+never fails the build. It is skipped when the workspace root has no
+`pubspec.yaml`, has no `.dart_tool/package_config.json` (packages not
+resolved), `dart` is not on the `PATH`, or the analyzer runs longer than 5
+minutes.
+
 ## Artifacts
 
 When `artifacts` is omitted, Oore derives default patterns from `platforms`.
@@ -191,7 +212,7 @@ The runner reads the file from the pinned checkout used for the build. A
 configuration source is active. The version picks the VM image for
 `isolation: vm`. A host build uses the Runner's installed Flutter and fails
 when a pinned release does not match it; see
-[Install a pinned Flutter for host builds](/start/prerequisites#install-a-pinned-flutter-for-host-builds).
+[Install Flutter where the runner can find it](/start/prerequisites#2-install-flutter-where-the-runner-can-find-it).
 A repository file replaces the UI execution
 configuration for that run.
 
@@ -201,6 +222,6 @@ Validate the file before committing:
 oore pipeline validate .oore.yaml
 ```
 
-See [Configure a repository pipeline](/build/pipelines/oore-yaml) for the task
+See [Move a pipeline into `.oore.yaml`](/build/pipelines/oore-yaml) for the task
 and [`oore pipeline validate`](/reference/cli/oore-pipeline-validate) for the
 command contract.

@@ -15,6 +15,10 @@ import { AlertCircleIcon } from '@hugeicons/core-free-icons'
 
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import type {
+  PipelineConfigSource,
+  PipelinePublishSettings,
+} from '@/lib/pipeline-yaml-export'
+import type {
   PipelineAndroidSigningResponse,
   PipelineIosSigningResponse,
 } from '@oore/client/models'
@@ -31,9 +35,12 @@ import {
   previewPlatformCommands,
 } from '@/lib/pipeline-form-utils'
 import { PipelineBasicsSection } from '@/components/pipeline-form-basic-sections'
+import type { PipelineWorkflowSource } from '@/components/pipeline-form-basic-sections'
 import { PipelineSectionIndex } from '@/components/pipeline-form-section-index'
 import { PipelineBuildSection } from '@/components/pipeline-form-build-sections'
 import { PipelineTriggersSection } from '@/components/pipeline-form-triggers-section'
+import { PipelineSizeBudgetSection } from '@/components/pipeline-form-size-budget-section'
+import { PipelinePlanPanel } from '@/components/pipeline-plan-panel'
 import { PipelineSigningSection } from '@/components/pipeline-form-signing-section'
 import type { IosAppStorePublishing } from '@/components/pipeline-form-ios-signing-section'
 import {
@@ -78,6 +85,12 @@ interface PipelineFormProps {
   iosAppStorePublishing?: IosAppStorePublishing
   /** Google Play upload is on for this pipeline (unknown on new pipelines). */
   googlePlayUpload?: boolean
+  /** Publish settings, for the generated repository file's `publish`. */
+  publishSettings?: PipelinePublishSettings
+  /** The project's other pipelines, to warn when they read the same file. */
+  otherPipelines?: ReadonlyArray<PipelineConfigSource>
+  /** The pipeline file's v2 workflows, for the Workflow selector. */
+  workflowSource?: PipelineWorkflowSource
 }
 
 /** Fields with an error; an array field with several bad rows counts once. */
@@ -132,6 +145,9 @@ export default function PipelineForm({
   iosSigningActions,
   iosAppStorePublishing,
   googlePlayUpload = false,
+  publishSettings,
+  otherPipelines,
+  workflowSource,
 }: PipelineFormProps) {
   const form = useForm<PipelineFormValues>({
     resolver: zodResolver(pipelineFormSchema),
@@ -194,10 +210,12 @@ export default function PipelineForm({
   const sections = [
     { id: 'basics', label: 'Basics' },
     ...(repositoryWorkflow ? [] : [{ id: 'build', label: 'Build' }]),
+    { id: 'plan', label: 'Plan' },
     ...(values.platform_android || values.platform_ios
       ? [{ id: 'signing', label: 'Signing' }]
       : []),
     { id: 'triggers', label: 'Triggers' },
+    { id: 'size-budget', label: 'Size budget' },
   ]
 
   // Deep links such as `edit#ios-signing` land on their section once the
@@ -233,6 +251,7 @@ export default function PipelineForm({
         <PipelineBasicsSection
           configMode={configMode}
           repositoryWorkflow={repositoryWorkflow}
+          workflowSource={workflowSource}
         />
         {repositoryWorkflow ? null : (
           <PipelineBuildSection
@@ -243,6 +262,14 @@ export default function PipelineForm({
             previewDefaults={previewDefaults}
           />
         )}
+        <PipelinePlanPanel
+          manualOnlyTriggers={manualOnlyTriggers}
+          otherPipelines={otherPipelines}
+          playBundle={googlePlayUpload}
+          publish={publishSettings}
+          repositoryConfig={!!repositoryWorkflow}
+          values={values}
+        />
         <PipelineSigningSection
           androidSigningData={signingData}
           bundleIds={iosBundleIds}
@@ -265,6 +292,7 @@ export default function PipelineForm({
           canChangeApproval={canChangeApproval}
           manualOnlyTriggers={manualOnlyTriggers}
         />
+        <PipelineSizeBudgetSection />
 
         {validationErrors.length > 0 ? (
           <div>

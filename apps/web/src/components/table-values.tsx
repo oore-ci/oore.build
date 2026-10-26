@@ -1,4 +1,6 @@
 import type { BuildContext } from '@oore/client/models'
+import { textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 /** A cell with nothing to show: a quiet dash that reads as "None". */
 export function EmptyValue() {
@@ -42,16 +44,26 @@ export function CommitValue({
       target="_blank"
       rel="noreferrer"
       title={sha}
-      className="font-mono text-xs text-muted-foreground hover:text-foreground hover:underline"
+      className={cn(
+        textVariants({ variant: 'mono' }),
+        'hover:text-foreground hover:underline',
+      )}
     >
       {short}
     </a>
   ) : (
-    <span title={sha} className="font-mono text-xs text-muted-foreground">
+    <span title={sha} className={textVariants({ variant: 'mono' })}>
       {short}
     </span>
   )
 }
+
+/**
+ * A cell's primary value over its secondary detail, side by side in a
+ * compact table (`data-density="compact"`).
+ */
+export const CELL_STACK =
+  'flex flex-col in-data-[density=compact]:flex-row in-data-[density=compact]:items-baseline in-data-[density=compact]:gap-x-2'
 
 /** A build's branch with its commit underneath, one column for its source. */
 export function BuildSourceValue({
@@ -65,7 +77,7 @@ export function BuildSourceValue({
 }) {
   if (!branch && !commitSha) return <EmptyValue />
   return (
-    <div className="flex flex-col">
+    <div className={CELL_STACK}>
       {branch ? <span>{branch}</span> : <EmptyValue />}
       {commitSha ? <CommitValue context={context} sha={commitSha} /> : null}
     </div>

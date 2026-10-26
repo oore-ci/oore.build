@@ -43,6 +43,7 @@ import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
 import { StatusBadge } from '@/components/status-badge'
 import { toast } from '@/lib/toast'
 import type { LastPipelineBuild } from './-project-build-summary'
+import { splitRowVariants } from '@/lib/recipes'
 
 const PIPELINE_SORTS = ['created_at', 'name'] as const
 
@@ -288,7 +289,7 @@ export function ProjectPipelinesTab({
         {error ? (
           <Alert variant="destructive">
             <HugeiconsIcon icon={InformationCircleIcon} />
-            <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <AlertDescription className={splitRowVariants()}>
               <span>Failed to load pipelines: {error}</span>
               <Button variant="outline" size="sm" onClick={onRetry}>
                 Retry

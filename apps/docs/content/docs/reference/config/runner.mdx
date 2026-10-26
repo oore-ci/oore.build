@@ -1,0 +1,262 @@
+---
+title: 'Runner settings'
+status: implemented
+description: 'Runner labels, dependency cache directories and limits, Tart environment variables, VM images, and oore.image.yaml fields.'
+---
+
+These values belong to the Direct macOS runner on each Runner Mac. Environment
+variables on this page go in the runner's environment, not in a pipeline. To
+use them, see [Route builds with runner labels](/operate/runners/labels),
+[Manage dependency caches](/operate/runners/caches), and
+[Run builds in VMs](/operate/runners/vm-isolation).
+
+## Labels
+
+A runner advertises its detected labels plus its custom labels. A build goes
+only to a runner that has every label in the pipeline's `runs_on`. A pipeline
+without `runs_on` uses `macos`.
+
+### Detected labels
+
+The runner reports its host on every heartbeat, and Oore derives these labels
+from the report:
+
+| Label               | From                |
+| ------------------- | ------------------- |
+| `macos` or `linux`  | Operating system    |
+| `macos-15`          | macOS major version |
+| `xcode-16`          | Xcode major version |
+| `arm64` or `x86_64` | CPU architecture    |
+
+A macOS or Xcode upgrade changes these labels on the next heartbeat.
+
+### Custom labels
+
+| Rule       | Value                                          |
+| ---------- | ---------------------------------------------- |
+| Characters | `a`–`z`, `0`–`9`, `.`, `_` and `-`             |
+| Case       | Uppercase input is stored in lowercase         |
+| Length     | 1 to 64 characters                             |
+| Count      | Up to 32 per runner, and up to 32 in `runs_on` |
+
+Set custom labels with `--label` on
+[`oore runner register`](/reference/cli/oore-runner#oore-runner-register), in
+the **Edit runner** dialog, or with
+[Update a runner](/openapi/operations/update_runner) (`custom_labels`, the full
+list). Changing custom labels keeps the detected labels.
+
+### Where `runs_on` is read
+
+| Source                                      | Effect                                                                                                |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| The pipeline's **Runner labels (optional)** | The scheduler picks a runner with every label                                                         |
+| `runs_on` in `.oore.yaml`                   | The runner checks it after checkout and fails the build before any command runs when it lacks a label |
+
+The scheduler reads only the pipeline's value. See
+[Runner labels in `.oore.yaml`](/reference/config/oore-yaml#runner-labels).
+
+## Utilisation and disk space
+
+Every heartbeat carries CPU load, memory use, free disk space on the volume
+that holds build workspaces, and the total size of the runner's dependency
+caches. **Settings > Runners** shows them with the number of queued builds and
+the number that need labels no online runner has.
+
+| Free disk space   | Result                                     |
+| ----------------- | ------------------------------------------ |
+| Below 20 GiB      | A warning operator incident for the runner |
+| Below 10 GiB      | The incident is raised to critical         |
+| Back above 20 GiB | The incident resolves on its own           |
+
+Owners and Admins are notified when an incident opens.
+
+## Dependency caches
+
+The runner keeps one directory per tool and points build steps at it with an
+environment variable:
+
+| Cache                            | Directory         | Variable                     |
+| -------------------------------- | ----------------- | ---------------------------- |
+| pub                              | `pub`             | `PUB_CACHE`                  |
+| Gradle                           | `gradle`          | `GRADLE_USER_HOME`           |
+| CocoaPods downloads              | `cocoapods`       | `CP_CACHE_DIR`               |
+| CocoaPods spec repos             | `cocoapods-specs` | `CP_HOME_DIR`                |
+| Xcode DerivedData (VM builds)    | `derived-data`    | None. One folder per project |
+| Android SDK packages (VM builds) | `android-sdk`     | None                         |
+
+- The directories live under
+  `~/Library/Caches/build.oore/runner-caches/<runner>/` unless
+  `OORE_RUNNER_CACHE_DIR` moves them.
+- A pipeline variable with the same name as a cache variable overrides the
+  runner's value.
+- Host builds keep Xcode DerivedData in Xcode's default location. Each project
+  builds from the same workspace path on a runner, so it reuses one DerivedData
+  folder.
+- Before each build, the runner copies `~/.gradle/gradle.properties` into its
+  Gradle home, so proxy and JVM settings there still apply.
+
+### Cache keys
+
+After checkout, the build log lists each cache with the hash of its lockfiles:
+
+| Cache     | Lockfiles                             |
+| --------- | ------------------------------------- |
+| pub       | `pubspec.lock`                        |
+| Gradle    | The Gradle wrapper and settings files |
+| CocoaPods | `Podfile.lock`                        |
+
+- **hit**: a successful build with the same lockfiles has run on this runner.
+- **miss**: the lockfiles are new to this runner. The runner records the hash
+  when the build succeeds.
+
+### Size limit
+
+The runner measures its caches after each build. Above the limit, it deletes
+the least recently used entries until the total is below 90% of the limit.
+**Purge cache** deletes the caches and the DerivedData folders before the
+runner's next build.
+
+## Environment variables
+
+The runner reads these variables from its process environment. A runner that
+the Complete or Runner profile manages runs as a launchd service with a fixed
+environment of `HOME`, `PATH`, and one runner-internal path. `oore setup` and
+`oore update` refuse to manage that service when its definition has other
+variables, so these variables apply only to a runner started with
+`oore runner start`.
+
+| Variable                       | Default                                              | Role                                                                                                                             |
+| ------------------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `OORE_RUNNER_CACHE_DIR`        | `~/Library/Caches/build.oore/runner-caches/<runner>` | Where the dependency caches live                                                                                                 |
+| `OORE_RUNNER_CACHE_MAX_GB`     | `50`                                                 | Cache size limit in GiB                                                                                                          |
+| `OORE_TART_BIN`                | None                                                 | Path to the `tart` binary. Without it, the runner tries `/opt/homebrew/bin/tart`, `/usr/local/bin/tart`, then the service `PATH` |
+| `OORE_TART_IMAGE`              | `oore-flutter-{flutter}`                             | VM image name or OCI reference. `{flutter}` becomes the build's Flutter version                                                  |
+| `OORE_TART_BASE_IMAGE`         | Chosen by platform, see [Base images](#base-images)  | Base image for every image the runner builds                                                                                     |
+| `OORE_TART_IMAGE_MAX_AGE_DAYS` | `30`                                                 | Days an unused built image is kept. `0` keeps every image                                                                        |
+
+## VM images
+
+A pipeline with `isolation: vm` builds in a Tart VM cloned from an image. The
+runner needs Tart 2.41.1 or newer. `oore doctor` reports the installed version.
+
+### Image name
+
+The runner resolves the Flutter version the same way as for host builds: a
+checked-in `.fvmrc` wins, then `flutter_version` from the pipeline, then
+`stable`. It puts that version into `OORE_TART_IMAGE`.
+
+| Case                                   | Example name                          |
+| -------------------------------------- | ------------------------------------- |
+| Default                                | `oore-flutter-3.47.7`                 |
+| Android-only build                     | `oore-flutter-3.47.7-android`         |
+| Repository with `oore.image.yaml`      | `oore-flutter-3.47.7-1a2b3c4d5e6f`    |
+| `OORE_TART_IMAGE` with a registry path | `ghcr.io/acme/flutter:3.47.7-xcode26` |
+
+A name that contains `/` is an OCI reference. Tart pulls it on first use and
+keeps it cached. The runner does not build it.
+
+### Base images
+
+When the runner does not have a local image, it builds one before the first
+build that needs it. It starts from a base image:
+
+| Build platforms | Base                                        | Download | VM disk | Contents                                                                           |
+| --------------- | ------------------------------------------- | -------- | ------- | ---------------------------------------------------------------------------------- |
+| iOS or macOS    | `ghcr.io/cirruslabs/macos-tahoe-xcode:26.5` | ~69 GB   | 140 GB  | Xcode, CocoaPods, a JDK, the Android SDK, Flutter at `~/flutter`, Tart Guest Agent |
+| Android only    | `ghcr.io/cirruslabs/macos-tahoe-base`       | ~26 GB   | 50 GB   | Homebrew and the Tart Guest Agent. The runner adds a JDK and the Android SDK       |
+
+The runner then checks Flutter out at the requested tag or channel, precaches
+the artifacts for the platforms the image serves, accepts the Android licenses,
+and saves the local image. APFS stores VM disks sparsely, so actual disk use is
+lower than the VM disk size.
+
+The output streams into the build log under `vm-start`. Two builds that need
+the same missing image build it once.
+
+### Image cleanup
+
+Between builds, the runner deletes the `oore-flutter-*` images it built that
+no build used for `OORE_TART_IMAGE_MAX_AGE_DAYS`. It never deletes images it
+did not build, such as an image `OORE_TART_IMAGE` names, or base images.
+
+### Prebuilt images
+
+An image that `OORE_TART_IMAGE` names as an OCI reference must:
+
+- run the [Tart Guest Agent](https://github.com/cirruslabs/tart-guest-agent)
+  as a launchd global agent.
+- log in its build user automatically.
+- have Flutter on the `PATH` of a zsh login shell, along with the Xcode,
+  CocoaPods, JDK, and Android SDK that your apps need.
+
+Each image carries exactly one Flutter SDK.
+
+## `oore.image.yaml`
+
+`oore.image.yaml` at the repository root adds to the image for that project:
+
+```yaml
+version: 1
+base: ghcr.io/cirruslabs/macos-tahoe-xcode:26.5 # optional
+android_packages:
+  - 'platforms;android-36'
+  - 'ndk;28.2.13676358'
+brew:
+  - graphicsmagick
+setup:
+  - gem install bundler
+```
+
+| Field              | Meaning                                               |
+| ------------------ | ----------------------------------------------------- |
+| `version`          | Must be `1`                                           |
+| `base`             | Tart image to start from instead of the runner's base |
+| `android_packages` | Extra `sdkmanager` packages                           |
+| `brew`             | Extra Homebrew formulae                               |
+| `setup`            | Shell commands run last, after Flutter is installed   |
+
+The Flutter version still comes from `.fvmrc` or the pipeline. The image name
+adds a hash of the project, base, Flutter version, and file, so the image
+belongs to that project alone and an edit to the file builds a new image.
+
+## VM build sequence
+
+1. The runner checks out the repository on the host and resolves the image,
+   building it first if needed.
+2. It waits for a VM slot. Apple allows two macOS VMs per host, so a Mac runs
+   at most two VM builds at a time across all of its runners. A third build
+   waits, and its log says so.
+3. It clones the image, boots it headless, shares the workspace into the
+   guest, and copies it to `~/oore-workspace` on the guest disk. The
+   `vm-start` step records how long this took, usually 10 to 30 seconds, and
+   lists the caches it restored:
+   - pub and CocoaPods are shared under `~/oore-cache`, with `PUB_CACHE`,
+     `CP_CACHE_DIR`, and `CP_HOME_DIR` pointing there.
+   - Gradle runs from `~/.gradle` on the guest disk. Its dependencies,
+     transformed artifacts, build cache, and wrapper distributions are copied
+     in and back out. Its `gradle.properties` is the runner's, with
+     `org.gradle.caching=true` added unless that file sets
+     `org.gradle.caching`.
+   - Xcode DerivedData is kept per project and copied to its default folder.
+     The runner keeps the last complete copy while it saves a new one.
+   - Android SDK packages that a build installs and the image lacks are saved
+     and copied into later VMs.
+4. Every step runs in the guest through `tart exec`, with the same environment
+   and secrets as a host build. Secrets travel over the guest agent's channel
+   and are never written to the shared workspace. After each step, the guest
+   workspace is copied back to the host, which collects test reports and
+   artifacts.
+5. Android signing runs in the guest with the image's Android SDK and JDK. The
+   keystore is written only to a private directory on the VM disk. iOS signing
+   and artifact upload run on the host.
+6. The runner stops the guest's Gradle and Kotlin daemons, copies the caches
+   back, and logs how long each took. A canceled or timed-out build saves no
+   caches. Then it stops and deletes the VM. Every copy and Tart command has a
+   time limit. Between builds, the runner deletes any VM it left behind.
+
+## VM limits
+
+- Android emulators have no hardware acceleration inside a macOS guest.
+- App Store Connect upload uses `xcrun altool` on the host, so a Runner Mac
+  that uploads to TestFlight needs Xcode on the host.
+- Apple's Virtualization framework needs the runner account's login session.

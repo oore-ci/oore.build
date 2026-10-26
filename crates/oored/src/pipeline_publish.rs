@@ -535,7 +535,8 @@ pub async fn report_job_publish_result(
             record_play_release(ReleaseDeps::from(&*state), &job_id, &pipeline_id, &result).await
         }
         PublishStore::AppStore => {
-            crate::app_store_publish::record_upload(ReleaseDeps::from(&*state), &job_id).await
+            crate::app_store_publish::record_upload(ReleaseDeps::from(&*state), &job_id, &result)
+                .await
         }
     };
     let release_id = match recorded {
@@ -640,6 +641,8 @@ async fn record_play_release(
             state: release_state,
             rollout_fraction,
             policy,
+            environment_id: None,
+            promoted_from_release_id: None,
         },
         &ReleaseActor::System,
         Some("uploaded by the runner"),
@@ -675,6 +678,7 @@ mod tests {
             version_name: Some("1.0.0".into()),
             rollout_fraction: Some(0.05),
             status: "in_progress".into(),
+            testflight_groups: None,
         };
 
         let first = record_play_release(deps, "b1", "pl1", &result)

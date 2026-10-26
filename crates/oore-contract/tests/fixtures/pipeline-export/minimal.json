@@ -1,0 +1,6 @@
+{
+  "execution_config": {
+    "platforms": ["android"],
+    "artifact_patterns": ["build/app/outputs/flutter-apk/*.apk"]
+  }
+}

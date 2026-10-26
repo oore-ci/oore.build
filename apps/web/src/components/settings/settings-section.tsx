@@ -10,6 +10,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { stackVariants } from '@/lib/recipes'
 
 export function SettingsSurface({
   className,
@@ -112,7 +115,7 @@ export function SectionHeading({
   title: string
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-1">
+    <Stack gap={1} className="min-w-0">
       <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
         <Heading
           id={id}
@@ -133,7 +136,7 @@ export function SectionHeading({
           {status}
         </p>
       ) : null}
-    </div>
+    </Stack>
   )
 }
 
@@ -171,7 +174,8 @@ export function SettingsSection({
       id={id}
       aria-labelledby={titleId}
       className={cn(
-        'flex min-w-0 scroll-mt-[calc(var(--header-height)+4rem)] flex-col gap-4',
+        stackVariants({ gap: 4 }),
+        'min-w-0 scroll-mt-[calc(var(--header-height)+4rem)]',
         className,
       )}
     >
@@ -185,9 +189,9 @@ export function SettingsSection({
           title={title}
         />
         {actions ? (
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <Row gap={2} className="shrink-0 flex-wrap justify-end">
             {actions}
-          </div>
+          </Row>
         ) : null}
       </div>
       {children ?? null}

@@ -11,7 +11,7 @@ use ipnet::IpNet;
 use lettre::message::{Mailbox, header::ContentType};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
-use oore_contract::{NotificationChannelType, SmtpConfig, SmtpTlsMode};
+use oore_contract::{NotificationChannelType, SlackMention, SmtpConfig, SmtpTlsMode};
 use ring::hmac;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
@@ -154,6 +154,10 @@ struct Notification {
     release_id: Option<String>,
     /// Email of the user to mention on Slack.
     actor_email: Option<String>,
+    /// Git username behind a push or merge request build, matched against a
+    /// Slack channel's member mappings.
+    #[serde(default)]
+    actor_login: Option<String>,
     /// Generic JSON payload sent to webhook channels.
     payload: serde_json::Value,
 }
@@ -225,6 +229,7 @@ pub fn start_notification_dispatcher(
                         runner_id: Some(event.runner_id.clone()),
                         release_id: None,
                         actor_email: None,
+                        actor_login: None,
                         payload: runner_notification_payload(&event),
                     };
                     match enqueue(&runner_pool, &notification).await {
@@ -312,6 +317,63 @@ pub async fn dispatch_build_approval_needed(
     Ok(())
 }
 
+/// Event filter name and category for tester feedback from the QA portal.
+const QA_FEEDBACK_EVENT: &str = "qa_feedback";
+const FEEDBACK_CATEGORY: &str = "feedback";
+/// Slack section text is capped at 3000 characters.
+const SLACK_FEEDBACK_MESSAGE_CHARS: usize = 2800;
+
+/// Notify the build's project channels about a tester's feedback. Records
+/// the deliveries before returning and sends them in the background.
+pub async fn dispatch_build_feedback(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    feedback: &oore_contract::BuildFeedback,
+) -> anyhow::Result<()> {
+    let status: Option<String> = sqlx::query_scalar("SELECT status FROM builds WHERE id = ?1")
+        .bind(&feedback.build_id)
+        .fetch_optional(pool)
+        .await?;
+    let Some(status) = status else {
+        return Ok(());
+    };
+    let event = BuildStateEvent {
+        build_id: feedback.build_id.clone(),
+        from_status: None,
+        to_status: status,
+        actor: None,
+        reason: None,
+        timestamp: feedback.created_at,
+    };
+    let Some(mut notification) = build_notification(pool, &event, QA_FEEDBACK_EVENT).await? else {
+        return Ok(());
+    };
+    notification.category = FEEDBACK_CATEGORY.to_string();
+    // The tester may not be in the team's chat, and the person who triggered
+    // the build did not write the note; name the tester in the text instead
+    // of mentioning anyone.
+    notification.actor_email = None;
+    notification.actor_login = None;
+    notification.payload["event"] = serde_json::json!("build.qa_feedback");
+    notification.payload["feedback"] = serde_json::json!({
+        "id": feedback.id,
+        "author_email": feedback.author_email,
+        "author_name": feedback.author_name,
+        "message": feedback.message,
+        "device": feedback.device,
+        "os_version": feedback.os_version,
+        "app_version": feedback.app_version,
+        "artifact_id": feedback.artifact_id,
+        "has_screenshot": feedback.has_screenshot,
+        "created_at": feedback.created_at,
+    });
+    let deliveries = enqueue(pool, &notification).await?;
+    if !deliveries.is_empty() {
+        tokio::spawn(deliver(pool.clone(), encryption_key.into(), deliveries));
+    }
+    Ok(())
+}
+
 /// Record notifications for builds that finished since the last scan.
 /// Returns the deliveries to send.
 pub(crate) async fn notify_due_builds(pool: &SqlitePool) -> anyhow::Result<Vec<String>> {
@@ -390,6 +452,8 @@ async fn build_notification(
     };
 
     let trigger_actor: Option<String> = build_row.try_get("trigger_actor").ok().flatten();
+    let trigger_type: Option<String> = build_row.try_get("trigger_type").ok();
+    let (actor_email, actor_login) = build_actor(trigger_type.as_deref(), trigger_actor);
     Ok(Some(Notification {
         event_type: event_type.to_string(),
         category: "build".to_string(),
@@ -397,9 +461,25 @@ async fn build_notification(
         build_id: Some(event.build_id.clone()),
         runner_id: None,
         release_id: None,
-        actor_email: trigger_actor.filter(|actor| actor.contains('@')),
+        actor_email,
+        actor_login,
         payload: build_notification_payload(&build_row, event),
     }))
+}
+
+/// Who a build mentions: the signed-in email for manual and API builds, or
+/// the Git username for webhook builds. Scheduled builds have no person.
+fn build_actor(
+    trigger_type: Option<&str>,
+    trigger_actor: Option<String>,
+) -> (Option<String>, Option<String>) {
+    match trigger_actor {
+        Some(actor) if actor.contains('@') => (Some(actor), None),
+        Some(actor) if trigger_type == Some("webhook") && !actor.trim().is_empty() => {
+            (None, Some(actor))
+        }
+        _ => (None, None),
+    }
 }
 
 /// Record deliveries for a release or rollout event. Returns the deliveries
@@ -425,6 +505,7 @@ async fn dispatch_release_event(
         runner_id: None,
         release_id: Some(event.release_id.clone()),
         actor_email: event.actor.clone().filter(|actor| actor.contains('@')),
+        actor_login: None,
         payload: release_notification_payload(event, event_type, project_name.as_deref()),
     };
     enqueue(pool, &notification).await
@@ -633,6 +714,7 @@ async fn send(
                 || match notification.category.as_str() {
                     "runner" => runner_email_html(payload),
                     "release" => release_email_html(payload),
+                    FEEDBACK_CATEGORY => feedback_email_html(payload, link),
                     _ => build_email_html(payload),
                 },
             )
@@ -645,6 +727,7 @@ async fn send(
             let body = match notification.category.as_str() {
                 "runner" => runner_mattermost_payload(payload),
                 "release" => release_mattermost_payload(payload),
+                FEEDBACK_CATEGORY => feedback_mattermost_payload(payload),
                 _ => build_mattermost_payload(payload),
             };
             dispatch_http(
@@ -684,10 +767,15 @@ fn notification_link(public_url: Option<&str>, notification: &Notification) -> O
     if let Some(release_id) = &notification.release_id {
         return Some(format!("{base}/releases/{release_id}"));
     }
+    let tab = if notification.category == FEEDBACK_CATEGORY {
+        "?tab=timeline"
+    } else {
+        ""
+    };
     notification
         .build_id
         .as_ref()
-        .map(|build_id| format!("{base}/builds/{build_id}"))
+        .map(|build_id| format!("{base}/builds/{build_id}{tab}"))
 }
 
 /// Build the JSON notification payload for a runner state event.
@@ -892,6 +980,135 @@ fn release_mattermost_payload(payload: &serde_json::Value) -> serde_json::Value 
     })
 }
 
+// ── Tester feedback ──────────────────────────────────────────────
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let mut truncated: String = value.chars().take(max_chars).collect();
+    truncated.push('…');
+    truncated
+}
+
+/// "Project build #12: feedback from Name", with `bold` marking the project
+/// and every value passed through `escape`.
+fn feedback_summary(payload: &serde_json::Value, bold: &str, escape: fn(&str) -> String) -> String {
+    let project = escape(
+        payload["project_name"]
+            .as_str()
+            .unwrap_or("Unknown Project"),
+    );
+    let build_number = payload["build"]["build_number"].as_i64().unwrap_or(0);
+    let feedback = &payload["feedback"];
+    let author = feedback["author_name"]
+        .as_str()
+        .or_else(|| feedback["author_email"].as_str())
+        .unwrap_or("a tester");
+    format!(
+        "{bold}{project}{bold} build #{build_number}: feedback from {}",
+        escape(author)
+    )
+}
+
+/// Unescaped device, OS, app version and screenshot facts, in that order.
+fn feedback_context(payload: &serde_json::Value) -> Vec<String> {
+    let feedback = &payload["feedback"];
+    let mut context = Vec::new();
+    for (key, label) in [("device", ""), ("os_version", ""), ("app_version", "App ")] {
+        if let Some(value) = feedback[key].as_str().filter(|value| !value.is_empty()) {
+            context.push(format!("{label}{value}"));
+        }
+    }
+    if feedback["has_screenshot"].as_bool() == Some(true) {
+        context.push("Screenshot attached".to_string());
+    }
+    // The tester is named in the headline. Their email stays out of channel
+    // text when they have a display name; webhooks still get it as data.
+    context
+}
+
+/// Escape Markdown so tester text renders literally in Mattermost, including
+/// `@channel`-style mentions.
+fn markdown_escape(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\\' | '`' | '*' | '_' | '~' | '[' | ']' | '(' | ')' | '#' | '>' | '<' | '|' | '!' => {
+                escaped.push('\\');
+                escaped.push(c);
+            }
+            '@' => escaped.push_str("@\u{200B}"),
+            '&' => escaped.push_str("&amp;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+fn feedback_mattermost_payload(payload: &serde_json::Value) -> serde_json::Value {
+    let mut text = format!(
+        ":speech_balloon: {}",
+        feedback_summary(payload, "**", markdown_escape)
+    );
+    if let Some(message) = payload["feedback"]["message"].as_str() {
+        for line in message.lines() {
+            text.push_str("\n> ");
+            text.push_str(&markdown_escape(line));
+        }
+    }
+    let context = feedback_context(payload);
+    if !context.is_empty() {
+        text.push('\n');
+        text.push_str(
+            &context
+                .iter()
+                .map(|item| markdown_escape(item))
+                .collect::<Vec<_>>()
+                .join(" · "),
+        );
+    }
+    serde_json::json!({
+        "text": text,
+        "username": "Oore CI",
+        "icon_url": "https://static.oore.build/logo-avatar-192.png",
+    })
+}
+
+fn feedback_email_html(payload: &serde_json::Value, link: Option<&str>) -> (String, String) {
+    let subject = feedback_summary(payload, "", |value| value.to_string());
+    let heading = html_escape(&subject);
+    let message = html_escape(payload["feedback"]["message"].as_str().unwrap_or_default());
+    let context = feedback_context(payload)
+        .iter()
+        .map(|item| html_escape(item))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let button = link
+        .map(|link| {
+            format!(
+                r#"
+  <p style="margin-bottom: 0;"><a href="{}" style="display: inline-block; background: #2563eb; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none;">View feedback</a></p>"#,
+                html_escape(link)
+            )
+        })
+        .unwrap_or_default();
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html><body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto;">
+<div style="background: #2563eb; color: white; padding: 16px 24px; border-radius: 8px 8px 0 0;">
+  <h2 style="margin: 0;">{heading}</h2>
+</div>
+<div style="padding: 24px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+  <p style="white-space: pre-wrap; margin-top: 0;">{message}</p>
+  <p style="color: #6b7280; font-size: 14px;">{context}</p>{button}
+</div>
+<p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 16px;">Sent by Oore CI</p>
+</body></html>"#
+    );
+    (subject, html)
+}
+
 // ── Slack ────────────────────────────────────────────────────────
 
 /// Escape text for Slack mrkdwn so names cannot inject links or mentions.
@@ -912,8 +1129,28 @@ fn slack_message(
     link: Option<&str>,
     mention: Option<&str>,
 ) -> serde_json::Value {
+    // Tester-written text goes in a plain_text block, which Slack never
+    // parses for links, mentions or formatting.
+    let mut body = None;
     let (mut headline, context, button) = match category {
         "runner" => (runner_summary(payload, "*"), Vec::new(), None),
+        FEEDBACK_CATEGORY => {
+            let feedback = &payload["feedback"];
+            body = feedback["message"]
+                .as_str()
+                .map(|message| truncate_chars(message, SLACK_FEEDBACK_MESSAGE_CHARS));
+            (
+                format!(
+                    ":speech_balloon: {}",
+                    feedback_summary(payload, "*", slack_escape)
+                ),
+                feedback_context(payload)
+                    .into_iter()
+                    .map(|item| slack_escape(&item))
+                    .collect(),
+                Some("View feedback"),
+            )
+        }
         "release" => {
             let mut context = Vec::new();
             if let Some(reason) = payload["release"]["reason"].as_str() {
@@ -965,7 +1202,7 @@ fn slack_message(
     };
 
     let fallback = headline.clone();
-    if let Some(mention) = mention {
+    if let Some(mention) = mention.filter(|_| category != FEEDBACK_CATEGORY) {
         headline.push_str(&format!("\nTriggered by {mention}"));
     }
 
@@ -973,6 +1210,12 @@ fn slack_message(
         "type": "section",
         "text": { "type": "mrkdwn", "text": headline },
     })];
+    if let Some(body) = body.filter(|body| !body.is_empty()) {
+        blocks.push(serde_json::json!({
+            "type": "section",
+            "text": { "type": "plain_text", "text": body, "emoji": false },
+        }));
+    }
     if !context.is_empty() {
         blocks.push(serde_json::json!({
             "type": "context",
@@ -1027,16 +1270,50 @@ async fn slack_lookup_mention(bot_token: &str, email: &str) -> anyhow::Result<St
     }
 }
 
-/// Mention for `email`: a Slack user mention when the bot token can resolve
-/// it, otherwise the plain email so the message still names the person.
-async fn slack_mention(bot_token: Option<&str>, email: &str) -> String {
-    if let Some(token) = bot_token {
+/// A channel's stored Slack member mappings. Unreadable JSON reads as none.
+pub(crate) fn parse_slack_mentions(json: Option<&str>) -> Vec<SlackMention> {
+    json.and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_default()
+}
+
+/// The form identities are stored and matched in: trimmed and lowercased.
+pub(crate) fn normalize_slack_identity(identity: &str) -> String {
+    identity.trim().to_lowercase()
+}
+
+/// The mapped `<@U…>` mention for the first identity that has one.
+fn mapped_mention(mentions: &[SlackMention], identities: &[&str]) -> Option<String> {
+    identities.iter().find_map(|identity| {
+        let identity = normalize_slack_identity(identity);
+        mentions
+            .iter()
+            .find(|mention| normalize_slack_identity(&mention.identity) == identity)
+            .map(|mention| &mention.member_id)
+            .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()))
+            .map(|id| format!("<@{id}>"))
+    })
+}
+
+/// Mention for the person behind an event. A channel mapping wins, then a
+/// bot token lookup by email; otherwise the plain email or Git username, so
+/// the message still names the person.
+async fn slack_mention(
+    mentions: &[SlackMention],
+    bot_token: Option<&str>,
+    email: Option<&str>,
+    login: Option<&str>,
+) -> Option<String> {
+    let identities: Vec<&str> = email.into_iter().chain(login).collect();
+    if let Some(mention) = mapped_mention(mentions, &identities) {
+        return Some(mention);
+    }
+    if let (Some(token), Some(email)) = (bot_token, email) {
         match slack_lookup_mention(token, email).await {
-            Ok(mention) => return mention,
+            Ok(mention) => return Some(mention),
             Err(e) => warn!(error = %e, "Slack mention lookup failed; using email"),
         }
     }
-    slack_escape(email)
+    email.or(login).map(slack_escape)
 }
 
 fn decrypt_channel_field(
@@ -1064,10 +1341,20 @@ async fn dispatch_slack(
     let bot_token = decrypt_channel_field(channel_row, "encrypted_secret", encryption_key)
         .map_err(|e| anyhow::anyhow!("failed to decrypt channel {channel_id} bot token: {e}"))?;
 
-    let mention = match &notification.actor_email {
-        Some(email) => Some(slack_mention(bot_token.as_deref(), email).await),
-        None => None,
-    };
+    let mentions = parse_slack_mentions(
+        channel_row
+            .try_get::<Option<String>, _>("slack_mentions_json")
+            .ok()
+            .flatten()
+            .as_deref(),
+    );
+    let mention = slack_mention(
+        &mentions,
+        bot_token.as_deref(),
+        notification.actor_email.as_deref(),
+        notification.actor_login.as_deref(),
+    )
+    .await;
     let body = slack_message(
         &notification.category,
         &notification.payload,
@@ -1082,17 +1369,22 @@ async fn dispatch_slack(
 pub async fn send_slack_test(
     url: &str,
     bot_token: Option<&str>,
+    mentions: &[SlackMention],
     requester_email: &str,
 ) -> anyhow::Result<()> {
-    let mention_line = match bot_token {
-        Some(token) => match slack_lookup_mention(token, requester_email).await {
+    let mention_line = match (mapped_mention(mentions, &[requester_email]), bot_token) {
+        (Some(mention), _) => format!("Mentions work: hello {mention}."),
+        (None, Some(token)) => match slack_lookup_mention(token, requester_email).await {
             Ok(mention) => format!("Mentions work: hello {mention}."),
             Err(e) => format!(
                 "Mentions are not working for {}: {e}. Check that the bot token has `users:read.email` and that this email matches a Slack account.",
                 slack_escape(requester_email)
             ),
         },
-        None => "Add a bot token with `users:read.email` to mention the person who triggered each build.".to_string(),
+        (None, None) => format!(
+            "To mention people, map {} to a Slack member ID, or add a bot token with `users:read.email`.",
+            slack_escape(requester_email)
+        ),
     };
     let body = serde_json::json!({
         "text": "Oore can post to this channel.",
@@ -1560,8 +1852,69 @@ mod tests {
             runner_id: None,
             release_id: release_id.map(String::from),
             actor_email: None,
+            actor_login: None,
             payload: serde_json::Value::Null,
         }
+    }
+
+    fn mention(identity: &str, member_id: &str) -> SlackMention {
+        SlackMention {
+            identity: identity.to_string(),
+            member_id: member_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn builds_mention_the_signed_in_email_or_the_git_username() {
+        let actor = |actor: &str| Some(actor.to_string());
+        assert_eq!(
+            build_actor(Some("manual"), actor("dev@example.com")),
+            (actor("dev@example.com"), None)
+        );
+        assert_eq!(
+            build_actor(Some("webhook"), actor("octocat")),
+            (None, actor("octocat"))
+        );
+        assert_eq!(
+            build_actor(Some("schedule"), actor("schedule: 0 * * * *")),
+            (None, None)
+        );
+        assert_eq!(build_actor(Some("webhook"), None), (None, None));
+    }
+
+    #[tokio::test]
+    async fn channel_mappings_mention_without_a_bot_token() {
+        let mentions = [
+            mention("dev@example.com", "U0DEV"),
+            mention("octocat", "W0OCTO"),
+        ];
+        assert_eq!(
+            slack_mention(&mentions, None, Some("Dev@Example.com"), None).await,
+            Some("<@U0DEV>".to_string())
+        );
+        assert_eq!(
+            slack_mention(&mentions, None, None, Some("OctoCat")).await,
+            Some("<@W0OCTO>".to_string())
+        );
+        // Unmapped people are still named, escaped for mrkdwn.
+        assert_eq!(
+            slack_mention(&mentions, None, None, Some("<!here>")).await,
+            Some("&lt;!here&gt;".to_string())
+        );
+        assert_eq!(slack_mention(&mentions, None, None, None).await, None);
+        // Stored identities are lowercased with Unicode rules, so matching is too.
+        assert_eq!(
+            mapped_mention(
+                &[mention("élodie@example.com", "U0ELO")],
+                &["ÉLODIE@Example.com"]
+            ),
+            Some("<@U0ELO>".to_string())
+        );
+        // A stored ID that is not plain alphanumerics is never rendered.
+        assert_eq!(
+            mapped_mention(&[mention("x", "U1> <!channel")], &["x"]),
+            None
+        );
     }
 
     #[test]
@@ -1660,6 +2013,86 @@ mod tests {
         assert_eq!(
             notification_link(None, &notification(Some("b1"), None)),
             None
+        );
+    }
+
+    fn feedback_payload() -> serde_json::Value {
+        let mut payload = failed_build_payload();
+        payload["feedback"] = serde_json::json!({
+            "author_email": "qa@example.com",
+            "author_name": null,
+            "message": "@channel see [this](https://evil.example) <b>now</b>",
+            "device": "Pixel 8",
+            "os_version": "Android 15",
+            "app_version": "2.4.0+118",
+            "has_screenshot": false,
+        });
+        payload
+    }
+
+    #[test]
+    fn feedback_renders_tester_text_literally_in_every_channel() {
+        let payload = feedback_payload();
+        let mattermost = feedback_mattermost_payload(&payload);
+        let text = mattermost["text"].as_str().unwrap();
+        assert!(text.starts_with(
+            ":speech_balloon: **Kite \\<app\\>** build #42: feedback from qa@\u{200B}example.com"
+        ));
+        assert!(text.contains(
+            "\n> @\u{200B}channel see \\[this\\]\\(https://evil.example\\) \\<b\\>now\\</b\\>"
+        ));
+        assert!(text.ends_with("Pixel 8 · Android 15 · App 2.4.0+118"));
+
+        let (subject, html) = feedback_email_html(&payload, None);
+        assert_eq!(
+            subject,
+            "Kite <app> build #42: feedback from qa@example.com"
+        );
+        assert!(html.contains("&lt;b&gt;now&lt;/b&gt;"));
+        assert!(!html.contains("<b>now"));
+        assert!(!html.contains("View feedback"));
+        let (_, html) = feedback_email_html(
+            &payload,
+            Some("https://oore.example.com/builds/b1?tab=timeline"),
+        );
+        assert!(html.contains(r#"<a href="https://oore.example.com/builds/b1?tab=timeline" "#));
+        assert!(html.contains(">View feedback</a>"));
+
+        let slack = slack_message(FEEDBACK_CATEGORY, &payload, None, None);
+        assert_eq!(slack["blocks"][1]["text"]["type"], "plain_text");
+        assert_eq!(
+            slack["text"],
+            ":speech_balloon: *Kite &lt;app&gt;* build #42: feedback from qa@example.com"
+        );
+    }
+
+    #[test]
+    fn feedback_names_the_tester_without_their_email_when_a_name_exists() {
+        let mut payload = feedback_payload();
+        payload["feedback"]["author_name"] = "Quinn".into();
+        payload["feedback"]["has_screenshot"] = true.into();
+        let mattermost = feedback_mattermost_payload(&payload);
+        let text = mattermost["text"].as_str().unwrap();
+        assert!(text.contains("feedback from Quinn"));
+        assert!(!text.contains("qa@"));
+        let (subject, html) = feedback_email_html(&payload, None);
+        assert!(subject.ends_with("feedback from Quinn"));
+        assert!(!html.contains("qa@example.com"));
+        let slack = slack_message(FEEDBACK_CATEGORY, &payload, None, None);
+        assert!(!slack.to_string().contains("qa@example.com"));
+        assert_eq!(
+            slack["blocks"][2]["elements"][0]["text"],
+            "Pixel 8  ·  Android 15  ·  App 2.4.0+118  ·  Screenshot attached"
+        );
+    }
+
+    #[test]
+    fn feedback_links_open_the_build_timeline() {
+        let mut notification = notification(Some("b1"), None);
+        notification.category = FEEDBACK_CATEGORY.to_string();
+        assert_eq!(
+            notification_link(Some("https://oore.example.com"), &notification).as_deref(),
+            Some("https://oore.example.com/builds/b1?tab=timeline")
         );
     }
 
@@ -1787,6 +2220,66 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn failed_push_build_posts_to_its_project_channel_with_logs_and_mention() {
+        let (base, received) = capture_server().await;
+        let key = vec![7u8; 32];
+        let pool = channel_pool(&[], &key).await;
+        sqlx::query(
+            "INSERT INTO projects (id, name, created_by, created_at, updated_at) \
+             VALUES ('p2', 'Coin', 'u1', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO external_access_network_settings (id, public_url, created_at, updated_at) \
+             VALUES (1, 'https://ci.example.com/', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mentions = r#"[{"identity":"octocat","member_id":"U0OCTO"}]"#;
+        for (id, project_id) in [("kite", "p1"), ("coin", "p2")] {
+            sqlx::query(
+                "INSERT INTO notification_channels \
+                 (id, name, channel_type, enabled, project_id, encrypted_url, slack_mentions_json, \
+                  created_at, updated_at) \
+                 VALUES (?1, ?1, 'slack', 1, ?2, ?3, ?4, 0, 0)",
+            )
+            .bind(id)
+            .bind(project_id)
+            .bind(crypto::encrypt(&format!("{base}/{id}"), &key).unwrap())
+            .bind(mentions)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, \
+                 trigger_actor, branch, config_snapshot, queued_at, created_at, updated_at) \
+             VALUES ('b1', 'p1', 'pl1', 7, 'failed', 'webhook', 'octocat', 'main', '{}', 0, 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let ids = notify_due_builds(&pool).await.unwrap();
+        deliver(pool.clone(), key.clone().into(), ids).await;
+
+        let received = received.lock().unwrap().clone();
+        assert_eq!(received.len(), 1, "only the project's channel posts");
+        let (hook, body) = &received[0];
+        assert_eq!(hook, "kite");
+        let blocks = body["blocks"].as_array().unwrap();
+        let headline = blocks[0]["text"]["text"].as_str().unwrap();
+        assert!(headline.contains("*Kite* / Android: build #7 *failed*"));
+        assert!(headline.ends_with("Triggered by <@U0OCTO>"));
+        let button = &blocks.last().unwrap()["elements"][0];
+        assert_eq!(button["text"]["text"], "View logs");
+        assert_eq!(button["url"], "https://ci.example.com/builds/b1");
     }
 
     async fn channel_pool(channels: &[(&str, String)], key: &[u8]) -> SqlitePool {

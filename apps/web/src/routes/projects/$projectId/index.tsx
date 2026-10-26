@@ -51,18 +51,26 @@ import {
   selectProjectBuildSummary,
 } from './-project-build-summary'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
+import { useListNavigation } from '@/hooks/use-list-navigation'
 
 const ProjectOverview = lazy(() => import('./-project-overview'))
 
 const SetupChecklist = lazy(() => import('@/components/setup-checklist'))
 
 import type { ProjectBuildSort } from './-project-build-sort'
+import { Stack } from '@/components/layout/stack'
+import { splitRowVariants } from '@/lib/recipes'
 
 const loadTriggerBuildDrawer = () => import('@/components/trigger-build-drawer')
 const TriggerBuildDrawer = lazy(loadTriggerBuildDrawer)
 const ProjectBuildsTab = lazy(() =>
   import('./-project-detail-tabs').then((module) => ({
     default: module.ProjectBuildsTab,
+  })),
+)
+const ProjectEnvironmentsTab = lazy(() =>
+  import('./-project-environments-tab').then((module) => ({
+    default: module.ProjectEnvironmentsTab,
   })),
 )
 const loadProjectSettingsForm = () => import('./-project-settings-form')
@@ -83,7 +91,13 @@ const ProjectAccessCard = lazy(() =>
   })),
 )
 
-const TAB_VALUES = ['overview', 'pipelines', 'builds', 'settings'] as const
+const TAB_VALUES = [
+  'overview',
+  'pipelines',
+  'builds',
+  'environments',
+  'settings',
+] as const
 type TabValue = (typeof TAB_VALUES)[number]
 
 interface ProjectDetailSearch {
@@ -167,6 +181,7 @@ export const Route = createFileRoute('/projects/$projectId/')({
 })
 
 function ProjectDetailPage() {
+  useListNavigation()
   const { projectId } = Route.useParams()
   const scope = useFirstAppScope()
   const guidedProjectId = useFirstAppStore(
@@ -218,6 +233,9 @@ function ProjectDetailPage() {
   const canTriggerBuild =
     canTriggerBuildGlobally && hasProjectPermission(projectRole, 'builds:write')
   const canManageAccess = projectRole === 'maintainer'
+  const canManageReleases = projectRole === 'maintainer'
+  const canOperateReleases =
+    projectRole === 'maintainer' || projectRole === 'developer'
   const pipelineCount = search.pipelineQ
     ? (data?.pipeline_count ?? 0)
     : (pipelinesData?.total ?? data?.pipeline_count ?? 0)
@@ -296,7 +314,7 @@ function ProjectDetailPage() {
         <PageMeta title={label} noindex />
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>Failed to load project: {error.message}</span>
             <span className="flex gap-2">
               <Button
@@ -461,7 +479,7 @@ function ProjectDetailPage() {
       {!project.repository_id && !showSetup ? (
         <Alert>
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>
               This project has no repository.{' '}
               {canWriteInstanceSettings
@@ -486,7 +504,7 @@ function ProjectDetailPage() {
           <AlertDescription>
             {runnerPolicyBlockReason === 'instance_paused' ? (
               canWriteInstanceSettings ? (
-                <span className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <span className={splitRowVariants()}>
                   <span>
                     Runners are paused on{' '}
                     <Link
@@ -507,7 +525,7 @@ function ProjectDetailPage() {
                 </>
               )
             ) : (
-              <span className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className={splitRowVariants()}>
                 <span>
                   Oore cannot find this project&apos;s source repository. Builds
                   remain queued until{' '}
@@ -538,17 +556,21 @@ function ProjectDetailPage() {
         }}
         className="min-h-0 flex-1"
       >
-        <TabsList variant="line">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="pipelines">
-            Pipelines
-            {pipelineCount > 0 ? ` (${pipelineCount})` : ''}
-          </TabsTrigger>
-          <TabsTrigger value="builds">
-            Builds{buildCount > 0 ? ` (${buildCount})` : ''}
-          </TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
-        </TabsList>
+        {/* Five tabs outgrow a phone; the row scrolls instead of the page. */}
+        <div className="-mb-2 max-w-full shrink-0 overflow-x-auto pb-2">
+          <TabsList variant="line">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="pipelines">
+              Pipelines
+              {pipelineCount > 0 ? ` (${pipelineCount})` : ''}
+            </TabsTrigger>
+            <TabsTrigger value="builds">
+              Builds{buildCount > 0 ? ` (${buildCount})` : ''}
+            </TabsTrigger>
+            <TabsTrigger value="environments">Environments</TabsTrigger>
+            <TabsTrigger value="settings">Settings</TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="overview">
           {activeTab === 'overview' ? (
@@ -630,8 +652,18 @@ function ProjectDetailPage() {
           </Suspense>
         ) : null}
 
+        {activeTab === 'environments' ? (
+          <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+            <ProjectEnvironmentsTab
+              canManage={canManageReleases}
+              canOperate={canOperateReleases}
+              projectId={projectId}
+            />
+          </Suspense>
+        ) : null}
+
         <TabsContent value="settings">
-          <div className="flex flex-col gap-8 pt-2">
+          <Stack gap={8} className="pt-2">
             {activeTab === 'settings' ? (
               <Suspense fallback={<Skeleton className="h-48 w-full" />}>
                 {canWriteProjects ? (
@@ -698,7 +730,7 @@ function ProjectDetailPage() {
                 }
               />
             ) : null}
-          </div>
+          </Stack>
         </TabsContent>
       </Tabs>
 

@@ -7,6 +7,8 @@ import {
   RELEASE_STATE_LABEL,
 } from '@/lib/releases'
 import { cn } from '@/lib/utils'
+import { Row } from '@/components/layout/row'
+import { stackVariants } from '@/lib/recipes'
 
 export function ReleaseRollout({
   className,
@@ -18,11 +20,11 @@ export function ReleaseRollout({
   const percent = formatRolloutPercent(release.rollout_fraction)
 
   return (
-    <div className={cn('flex min-w-36 flex-col gap-1.5', className)}>
-      <div className="flex items-center justify-between gap-2">
+    <div className={cn(stackVariants({ gap: 1.5 }), 'min-w-36', className)}>
+      <Row gap={2} className="justify-between">
         <ReleaseStateBadge release={release} />
         <span className="font-mono text-xs tabular-nums">{percent}</span>
-      </div>
+      </Row>
       <Progress
         value={release.rollout_fraction * 100}
         aria-label={`Rollout ${percent} of users`}

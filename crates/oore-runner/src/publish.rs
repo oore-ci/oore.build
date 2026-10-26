@@ -342,6 +342,7 @@ pub(crate) async fn publish_to_google_play(
             _ => "completed",
         }
         .to_string(),
+        testflight_groups: None,
     })
 }
 

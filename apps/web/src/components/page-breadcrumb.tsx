@@ -16,6 +16,8 @@ import { useNotificationChannel } from '@/hooks/use-notification-channels'
 import { usePipeline } from '@/hooks/use-pipelines'
 import { useProject } from '@/hooks/use-projects'
 import { Separator } from '@/components/ui/separator'
+import { rowVariants, textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 /**
  * Breadcrumb leaves name the entity, not its type: the project's name, the
@@ -105,7 +107,11 @@ export default function PageBreadcrumb() {
         <Link
           to={parent.href}
           data-slot="breadcrumb-link"
-          className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground sm:hidden"
+          className={cn(
+            textVariants({ variant: 'muted' }),
+            rowVariants({ gap: 1 }),
+            'min-w-0 transition-colors hover:text-foreground sm:hidden',
+          )}
         >
           <HugeiconsIcon
             icon={ArrowLeft01Icon}

@@ -1,0 +1,113 @@
+---
+title: 'Which setup do I need?'
+status: implemented
+description: 'Choose between Local Only and External Access, local and connected repositories, browser clients, and one Mac or several.'
+---
+
+Oore asks you to make four choices. They depend on each other, so it helps to
+see them together before you install. Most teams should start with the
+defaults and change one thing at a time when a real need appears.
+
+| Choice                | Default            | Change it when                                                |
+| --------------------- | ------------------ | ------------------------------------------------------------- |
+| Who can sign in       | Local Only         | Anyone other than you, on another device, needs Oore          |
+| Where code comes from | Repository on disk | Pushes and pull requests should start builds                  |
+| Which browser client  | Installed web UI   | People reach Oore over HTTPS from their own devices           |
+| How many Macs         | One Mac            | One Mac cannot keep up, or builds must run away from the data |
+
+## Local Only or External Access
+
+**Local Only** is the default. You sign in without a password, but only over
+loopback: from the Mac that runs Oore, or through an SSH tunnel to it. There
+is one operator and no identity provider to set up.
+
+**External Access** lets other people and devices sign in over HTTPS. Your team
+signs in through an OpenID Connect provider such as Google or Okta, or through
+an access proxy you already run. Oore then applies its own instance and
+project roles. You provide the HTTPS address, DNS, certificate, and any tunnel
+or proxy. Oore does not set those up.
+
+Store delivery works the same in both modes. The runner uploads to Google Play
+and App Store Connect over outbound HTTPS, so testers on TestFlight or a Play
+testing track never need to reach your Mac.
+
+Two things do need External Access, or at least a reachable address:
+
+- Installing a build straight from Oore on a phone. The phone must reach the
+  install link. For iOS, the link must use HTTPS.
+- Connecting GitHub or GitLab, as described in the next section.
+
+Our view: stay on Local Only until a second person needs Oore. The tutorials
+in [Get started](/start) work end to end in Local Only, including delivery
+to testers through Google Play and TestFlight. Turning on External Access later
+is a settings change, described in
+[Configure External Access](/team/access), not a reinstall.
+
+## Repository on disk or GitHub and GitLab
+
+In Local Only, a project points at a Git repository on the Mac that runs Oore.
+Builds start from the UI, the API, or a schedule, because nothing tells Oore
+about new commits.
+
+With External Access, you can connect GitHub through a GitHub App, or GitLab
+through a personal access token or an OAuth application. Oore then lists your
+repositories, builds on pushes, tags, and pull requests, and reports each
+build back as a check on the commit. Local repository paths are not available in this mode.
+
+In both cases, creating a project is the moment you trust the repository.
+Its commands run with the runner account's permissions. See
+[How Oore trusts Direct macOS runners](/concepts/runner-trust).
+
+## Which browser client
+
+Every Oore browser client is the same static web app. Each one talks to your
+backend, which keeps all users, projects, builds, and artifacts.
+
+- **The installed web UI** comes with the Complete role and listens on
+  loopback. Use it in Local Only.
+- **The hosted UI at `ci.oore.build`** serves the web app from Oore's site.
+  Your browser still calls your backend directly, so the backend needs
+  External Access and an HTTPS address that allows `https://ci.oore.build`.
+  See [Connect the hosted UI](/operate/access/hosted-ui).
+- **A self-hosted static UI** is the same web app on a host you run, for teams
+  that do not want to load it from Oore's site. See
+  [Self-host the static UI](/operate/access/self-hosted-ui).
+- **A Web node** serves the web UI from another machine and proxies API calls
+  to the control plane. See [Split Oore across Macs](/operate/deploy/split-roles).
+
+## One Mac or several
+
+The **Complete** role puts the control plane, web UI, runner, and local
+artifact storage on one Mac. That is enough for one app team, and every
+tutorial assumes it.
+
+Change it only for a reason you can name:
+
+| Need                                      | What to add                                                                                    |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| More build capacity                       | A [Direct macOS runner](/operate/runners/direct) on another Mac                                |
+| A clean machine for every build           | [VM isolation](/operate/runners/vm-isolation) with Tart                                        |
+| Apps pinned to different Flutter versions | [VM isolation](/operate/runners/vm-isolation), one image per version                           |
+| Artifacts in object storage               | [S3 or R2 storage](/operate/storage/artifacts)                                                 |
+| Web UI on another machine                 | A [Web node](/operate/deploy/split-roles), on macOS or [Linux](/operate/deploy/linux-web-node) |
+
+The control plane always runs on macOS. Oore does not support a Linux control
+plane, or running repository commands inside the control plane itself.
+
+## What we recommend
+
+1. Install the Complete role on one Mac in Local Only, and follow
+   [Get started](/start) to a build in testers' hands.
+2. When a second person needs Oore, turn on
+   [External Access](/team/access) with OIDC, then connect
+   [GitHub](/build/sources/github) or [GitLab](/build/sources/gitlab).
+3. When builds queue for too long, add a
+   [Direct macOS runner](/operate/runners/direct).
+
+Verify each change before you make the next one.
+
+## Next step
+
+[Check that your Mac is ready](/start/prerequisites), or read
+[How Oore is structured](/concepts/architecture) for the parts behind these
+choices.

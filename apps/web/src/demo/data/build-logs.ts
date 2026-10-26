@@ -58,10 +58,15 @@ const flutterBuildLogs: Array<BuildLogChunk> = [
   },
   {
     sequence: 21,
-    content: 'Signing APK with release keystore...',
+    content:
+      'Font asset "MaterialIcons-Regular.otf" was tree-shaken, reducing it from 1645184 to 4076 bytes (99.8% reduction).',
     stream: 'stdout',
   },
-  { sequence: 22, content: 'V2 signing enabled.', stream: 'stdout' },
+  {
+    sequence: 22,
+    content: "Running Gradle task 'assembleRelease'... 41.3s",
+    stream: 'stdout',
+  },
   {
     sequence: 23,
     content:

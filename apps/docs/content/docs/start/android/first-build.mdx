@@ -1,0 +1,103 @@
+---
+title: 'Build your first Android app'
+status: implemented
+description: 'Create a project from a local repository, run the Android test app pipeline, and download the debug APK.'
+---
+
+On this page you create a project for your Flutter app, build a debug APK, and
+download it. A debug build needs no signing keys, so it is the quickest way to
+prove that Oore can build your app.
+
+## What you need
+
+- Oore set up on this Mac, from [Complete first-run setup](/start/first-run).
+- Android Studio and the Android SDK, from
+  [Check that your Mac is ready](/start/prerequisites).
+- A Flutter app in a Git repository on this Mac, with no `.oore.yaml` or
+  `.oore.yml` file.
+
+First, check the Android toolchain the runner will use:
+
+```bash
+oore doctor --platform android
+```
+
+The command ends with `All selected required checks passed.`
+
+## 1. Create the project
+
+1. In the Oore web UI, open **Projects** and select **New project**.
+2. Enter a **Name**.
+3. In **Path**, enter the absolute path to the app's Git repository, such as
+   `/Users/you/code/my_app`.
+4. Leave **Default branch** empty unless Oore should build a branch other than
+   the repository's default.
+5. Select **Create project**.
+
+<Callout type="warning" title="Repository trust">
+
+Creating a project trusts that repository's code to run with your macOS
+account's permissions. Use a repository you would run on this Mac yourself.
+[How Oore trusts Direct macOS runners](/concepts/runner-trust) explains why.
+
+</Callout>
+
+Oore shows `Project created` and opens the project.
+
+## 2. Create the pipeline
+
+1. On the project's **Pipelines** tab, select **Set up a build**.
+2. Under **Start from**, keep **Android test app** selected. It builds a debug
+   APK with `flutter build apk --debug` and needs no signing.
+3. Select **Create pipeline**.
+
+Oore shows `Pipeline created` and opens **Run build** with the new `Debug APK`
+pipeline selected.
+
+## 3. Run the build
+
+1. Check that **Branch** names the branch you want to build.
+2. Select **Run build**.
+
+Oore opens the build page. Follow the steps and the log as the runner fetches
+packages and builds the APK. A first build can take several minutes while
+Gradle downloads its dependencies.
+
+## Check the result
+
+The build ends as **Succeeded**. Under **Artifacts**, select **Download** next
+to the `.apk` file. The downloaded file is a non-empty `.apk`.
+
+To try it, drag the APK onto a running Android emulator, or install it on a
+phone connected with USB with `adb install <file>.apk`.
+
+![Oore build inventory showing queued, running, successful, failed, and canceled builds](/demo-builds.png)
+
+## Troubleshooting
+
+**The build stays queued**
+
+Open **Settings > Runners**. If no runner is **Online**, run `oore status` and
+check the runner service. If **Accept builds from approved repositories** is
+off, turn it on. Builds wait while it is off.
+
+**The build fails at the Flutter version check**
+
+The repository asks for a Flutter release that is not the one installed. Fix
+the installed version as in
+[Install Flutter where the runner can find it](/start/prerequisites#2-install-flutter-where-the-runner-can-find-it).
+
+**Oore offers a repository workflow instead of the templates**
+
+The repository already has an `.oore.yaml` or `.oore.yml` file. Select
+**Set up manually** to use the templates, or keep the workflow and read
+[Move a pipeline into `.oore.yaml`](/build/pipelines/oore-yaml).
+
+**The project form rejects the path**
+
+Use an absolute path to a folder that is already a Git repository on this Mac.
+The **Browse** button works only when you use Oore on this Mac.
+
+## Next step
+
+[Sign an Android release](/start/android/release).

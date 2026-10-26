@@ -1,34 +1,56 @@
 ---
-title: 'Start with Oore'
+title: 'Choose your path'
 status: implemented
-description: 'Install Oore in Local Only and produce your first debug APK on one Mac.'
+description: 'Follow one path from a fresh Mac to a signed build that testers can install.'
 ---
 
-Start here if you have a Flutter project and one Mac. The default journey ends
-with a downloaded debug APK built from a local Git repository.
+These tutorials take you from a Mac with nothing installed to a signed build
+that testers can install. Each page ends on a result you can check, and links
+to the next page.
 
-## Begin the default path
+## Set up Oore on one Mac
+
+Everyone starts here. You install Oore in **Local Only**, the default, where
+the control plane, web UI, runner, and artifact storage all run on one Mac and
+only that Mac can sign in.
+
+1. [Check that your Mac is ready](/start/prerequisites).
+2. [Install Oore](/start/install).
+3. [Complete first-run setup](/start/first-run).
+
+You are done when the Oore web UI shows **Home** and **Settings > Runners**
+lists one online runner.
+
+## Then ship your app
+
+Pick the platform you ship first. You can follow the other path later on the
+same install.
 
 <Cards>
-  <Card title="Check that your Mac is ready" href="/start/prerequisites">
-    Confirm the supported host, repository, and Android build prerequisites
-    before installing Oore.
+  <Card title="Ship an Android app" href="/start/android/first-build">
+    Build a debug APK, sign a release App Bundle, and deliver it to testers on
+    Google Play.
+  </Card>
+  <Card title="Ship an iOS app" href="/start/ios/first-build">
+    Build for iOS, sign it with an App Store Connect key, and deliver it to
+    TestFlight and the App Store.
   </Card>
 </Cards>
 
-Oore guides you through four focused jobs:
+None of these pages needs External Access, an identity provider, GitHub,
+GitLab, or object storage. Store uploads leave from your Mac, so Local Only is
+enough to reach Google Play and TestFlight.
 
-1. Check the Mac and local repository.
-2. Install the stable release and managed Direct macOS runner.
-3. Use the first loopback sign-in to initialize Local Only.
-4. Create a project and run **Quick Debug APK**.
+Two delivery options do need more setup, and the tutorials point to them
+where they fit:
 
-This path does not require External Access, an identity provider, GitHub or
-GitLab, signing credentials, or object storage.
+- Installing a build straight from Oore on a phone needs a URL the phone can
+  reach. For iOS, that URL must use HTTPS.
+- Letting other people sign in to Oore needs [External Access](/team/access).
 
-## Already partway through?
+If you are not sure Local Only fits your team, read
+[Which setup do I need?](/concepts/which-setup) first.
 
-- If Oore is installed, [open it for the first time](/start/first-run).
-- If you can already reach the **Dashboard**, [build your first debug APK](/start/first-build).
-- If you need other people or non-loopback access, finish the local build first,
-  then continue to [Team and access](/team).
+## Next step
+
+[Check that your Mac is ready](/start/prerequisites).

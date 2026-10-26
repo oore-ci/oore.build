@@ -1,4 +1,7 @@
 import ReactMarkdown from 'react-markdown'
+import { Text } from '@/components/layout/text'
+import { stackVariants, textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 export default function ChangelogMarkdown({ children }: { children: string }) {
   return (
@@ -16,17 +19,29 @@ export default function ChangelogMarkdown({ children }: { children: string }) {
           </a>
         ),
         ol: ({ children: listChildren }) => (
-          <ol className="mt-2 flex list-decimal flex-col gap-1 pl-5 text-sm text-muted-foreground">
+          <ol
+            className={cn(
+              textVariants({ variant: 'muted' }),
+              stackVariants({ gap: 1 }),
+              'mt-2 list-decimal pl-5',
+            )}
+          >
             {listChildren}
           </ol>
         ),
         p: ({ children: paragraphChildren }) => (
-          <p className="mt-2 text-sm whitespace-pre-wrap text-muted-foreground">
+          <Text variant="muted" className="mt-2 whitespace-pre-wrap">
             {paragraphChildren}
-          </p>
+          </Text>
         ),
         ul: ({ children: listChildren }) => (
-          <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-sm text-muted-foreground">
+          <ul
+            className={cn(
+              textVariants({ variant: 'muted' }),
+              stackVariants({ gap: 1 }),
+              'mt-2 list-disc pl-5',
+            )}
+          >
             {listChildren}
           </ul>
         ),

@@ -19,6 +19,9 @@ import {
 import { Badge } from '@/components/ui/badge'
 import type { SortDirection } from '@/components/data-table-features'
 import { ChannelActions } from './-channel-actions'
+import { focusRingVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
+import { Stack } from '@/components/layout/stack'
 
 export type NotificationSort = 'name' | 'type' | 'status' | 'updated_at'
 
@@ -42,7 +45,7 @@ function channelIdentity(channel: NotificationChannel) {
     <Link
       to="/settings/notifications/$channelId"
       params={{ channelId: channel.id }}
-      className="group block min-w-0 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      className={cn(focusRingVariants(), 'group block min-w-0 rounded-md')}
     >
       <span className="block truncate font-medium group-hover:underline">
         {channel.name}
@@ -177,9 +180,10 @@ export function NotificationInventory({
   })
 
   return (
-    <section
+    <Stack
       aria-label="Notification channel inventory"
-      className="flex min-h-0 min-w-0 flex-1 flex-col"
+      fill
+      render={<section />}
     >
       <DataTable
         table={table}
@@ -192,6 +196,6 @@ export function NotificationInventory({
         isLoading={isLoading}
         emptyMessage={isLoading ? 'Loading notification channels…' : undefined}
       />
-    </section>
+    </Stack>
   )
 }

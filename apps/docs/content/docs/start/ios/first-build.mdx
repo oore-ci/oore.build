@@ -1,0 +1,89 @@
+---
+title: 'Build your first iOS app'
+status: implemented
+description: 'Create an iOS pipeline and run an unsigned release build to prove that Xcode can build your app.'
+---
+
+On this page you build your app for iOS without signing it. The result is not
+installable, but it proves that Oore, Flutter, and Xcode can build the app on
+this Mac before you add Apple credentials on the next page.
+
+## What you need
+
+- Oore set up on this Mac, from [Complete first-run setup](/start/first-run).
+- Xcode, from [Check that your Mac is ready](/start/prerequisites).
+- A Flutter app with an `ios` folder, in a Git repository on this Mac, with no
+  `.oore.yaml` or `.oore.yml` file.
+
+First, check the Xcode toolchain the runner will use:
+
+```bash
+oore doctor --platform ios
+```
+
+The command ends with `All selected required checks passed.` It checks the
+signing tools, not your certificates. Oore checks signing credentials in each
+build.
+
+## 1. Create the project
+
+If you already created a project for this app in the Android path, open it and
+go to the next step.
+
+1. In the Oore web UI, open **Projects** and select **New project**.
+2. Enter a **Name**.
+3. In **Path**, enter the absolute path to the app's Git repository.
+4. Select **Create project**.
+
+Creating a project trusts that repository's code to run with your macOS
+account's permissions. Use a repository you would run on this Mac yourself.
+
+## 2. Create an iOS pipeline
+
+1. On the project's **Pipelines** tab, select **Set up a build**, or
+   **Add pipeline** if the project already has one.
+2. Under **Start from**, select **Custom**.
+3. Under **Basics**, enter `iOS` as the **Pipeline name**. Under
+   **Platforms**, clear **Android** and select **iOS**.
+4. Under **Build > Artifacts**, replace the pattern with:
+
+   ```text
+   build/ios/iphoneos/*.app
+   ```
+
+5. Select **Create pipeline**.
+
+Without signing, Oore runs `flutter build ios --release --no-codesign`. That
+command produces `Runner.app` instead of an `.ipa`, so the pattern above
+collects the app bundle. Oore zips it as `Runner.app.zip`.
+
+## 3. Run the build
+
+In **Run build**, check the **Branch**, then select **Run build**. Oore opens
+the build page.
+
+## Check the result
+
+The build ends as **Succeeded**, and **Artifacts** lists `Runner.app.zip`.
+Your app compiles for iOS on this Mac.
+
+## Troubleshooting
+
+**The build fails because CocoaPods is missing**
+
+Apps with plugins need CocoaPods. Install it with `sudo gem install cocoapods`,
+or `brew install cocoapods` if you use Homebrew. Then run the build again.
+
+**The build fails with "artifact patterns matched no files"**
+
+The pattern does not match the build output. Check that the pattern is
+exactly `build/ios/iphoneos/*.app`.
+
+**Xcode reports that a license or first launch is not complete**
+
+Open Xcode once, accept the license, and let it install its components. Then
+run `sudo xcodebuild -license accept` and build again.
+
+## Next step
+
+[Sign the iOS build for TestFlight](/start/ios/signing).

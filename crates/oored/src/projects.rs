@@ -1066,6 +1066,19 @@ pub async fn delete_project(
         }
     }
 
+    // Feedback rows go with their builds; their screenshots are removed after
+    // the commit, best effort, since a stray screenshot is harmless.
+    let screenshot_keys = crate::build_feedback::screenshot_keys_for_project(&mut *tx, &project_id)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to load project feedback screenshots");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to delete project",
+            )
+        })?;
+
     // Delete terminal builds first (non-cascading FK on builds.project_id)
     sqlx::query(
         "DELETE FROM builds WHERE project_id = ?1 \
@@ -1104,6 +1117,11 @@ pub async fn delete_project(
             "Failed to delete project",
         )
     })?;
+
+    if !screenshot_keys.is_empty() {
+        let storage = state.storage.read().await.clone();
+        crate::build_feedback::delete_screenshots(&storage, &screenshot_keys).await;
+    }
 
     let details = serde_json::json!({
         "deleted_by": auth.0.email,

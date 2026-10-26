@@ -2,7 +2,10 @@ import { expect, test } from 'bun:test'
 import { pipelineFormSchema } from '@/lib/pipeline-schema'
 import {
   parseRunnerLabels,
+  pipelineRepositoryFile,
   pipelineRequestFromForm,
+  pipelineUpdateFromForm,
+  sizeBudgetFormFields,
 } from '@/lib/pipeline-form-utils'
 
 const values = pipelineFormSchema.parse({
@@ -30,6 +33,8 @@ const values = pipelineFormSchema.parse({
   max_concurrent: '2',
   approval_required: true,
   approval_events: ['tag_push'],
+  size_budget_mode: 'warn',
+  size_budget_rules: [],
 })
 
 test('builds remote and local pipeline requests', () => {
@@ -146,4 +151,134 @@ test('schema rejects bad timeouts, labels and cron expressions', () => {
       schedules: Array.from({ length: 11 }, () => ({ cron: '@daily' })),
     }).success,
   ).toBe(false)
+})
+
+test('the workflow is created when set and updated only when it changes', () => {
+  const options = { canChangeApproval: false, manualOnlyTriggers: false }
+  expect(pipelineRequestFromForm(values, options).workflow).toBeUndefined()
+  const release = { ...values, workflow: ' release ' }
+  expect(pipelineRequestFromForm(release, options).workflow).toBe('release')
+
+  expect('workflow' in pipelineUpdateFromForm(values, null, options)).toBe(
+    false,
+  )
+  expect(
+    'workflow' in pipelineUpdateFromForm(release, 'release', options),
+  ).toBe(false)
+  expect(pipelineUpdateFromForm(release, 'adhoc', options).workflow).toBe(
+    'release',
+  )
+  expect(pipelineUpdateFromForm(values, 'adhoc', options).workflow).toBeNull()
+})
+
+test('the repository file is the explicit path or the first auto path', () => {
+  const file = (path) => ({ path, valid: true, errors: [], workflows: [] })
+  const files = [file('.oore.yml'), file('.oore/release.yaml')]
+  expect(
+    pipelineRepositoryFile(files, {
+      config_path: '.oore.yaml',
+      config_path_explicit: false,
+    })?.path,
+  ).toBe('.oore.yml')
+  expect(
+    pipelineRepositoryFile(files, {
+      config_path: '.oore/release.yaml',
+      config_path_explicit: true,
+    })?.path,
+  ).toBe('.oore/release.yaml')
+  expect(
+    pipelineRepositoryFile(files, {
+      config_path: 'ci/missing.yaml',
+      config_path_explicit: true,
+    }),
+  ).toBeUndefined()
+})
+
+test('the size budget converts MB to bytes and back', () => {
+  const budget = {
+    mode: 'fail',
+    rules: [
+      { kind: 'aab', max_bytes: 31_457_280, max_increase_percent: 5 },
+      { kind: 'ipa', max_increase_bytes: 25_000_000 },
+    ],
+  }
+  const fields = sizeBudgetFormFields(budget)
+  expect(fields.size_budget_rules[0]).toEqual({
+    kind: 'aab',
+    max_mb: '30',
+    max_increase_mb: '',
+    max_increase_percent: '5',
+  })
+  const request = pipelineRequestFromForm(
+    { ...values, ...fields },
+    { canChangeApproval: false, manualOnlyTriggers: false },
+  )
+  // A size set through the API keeps its exact bytes when the form saves.
+  expect(request.size_budget).toEqual({
+    mode: 'fail',
+    rules: [
+      {
+        kind: 'aab',
+        max_bytes: 31_457_280,
+        max_increase_bytes: undefined,
+        max_increase_percent: 5,
+      },
+      {
+        kind: 'ipa',
+        max_bytes: undefined,
+        max_increase_bytes: 25_000_000,
+        max_increase_percent: undefined,
+      },
+    ],
+  })
+  expect(sizeBudgetFormFields(undefined)).toEqual({
+    size_budget_mode: 'warn',
+    size_budget_rules: [],
+  })
+})
+
+test('schema rejects size budget rules without a limit, bad kinds and duplicates', () => {
+  const rule = { max_mb: '', max_increase_mb: '', max_increase_percent: '' }
+  const result = pipelineFormSchema.safeParse({
+    ...values,
+    size_budget_rules: [
+      { ...rule, kind: 'aab' },
+      { ...rule, kind: 'AAB', max_mb: '10' },
+      { ...rule, kind: 'apk', max_mb: '0', max_increase_percent: '-1' },
+      { ...rule, kind: 'apk', max_increase_mb: '1' },
+    ],
+  })
+  expect(result.success).toBe(false)
+  const issues = result.error.issues.map((issue) => [
+    issue.path.join('.'),
+    issue.message,
+  ])
+  expect(issues).toEqual(
+    expect.arrayContaining([
+      ['size_budget_rules.0.max_mb', 'Set at least one limit'],
+      [
+        'size_budget_rules.1.kind',
+        'Use a lowercase file extension, such as aab',
+      ],
+      [
+        'size_budget_rules.2.max_mb',
+        'Must be more than 0 and at most 1,048,576',
+      ],
+      ['size_budget_rules.2.max_increase_percent', 'Must be 0 to 100,000'],
+      ['size_budget_rules.3.kind', 'Another rule already covers this kind'],
+    ]),
+  )
+})
+
+test('schema rejects sizes that round to no bytes or exceed the cap', () => {
+  const rule = { kind: 'aab', max_increase_mb: '', max_increase_percent: '' }
+  const parse = (max_mb) =>
+    pipelineFormSchema.safeParse({
+      ...values,
+      size_budget_rules: [{ ...rule, max_mb }],
+    }).success
+  expect(parse('0.0000001')).toBe(false)
+  expect(parse('2000000')).toBe(false)
+  expect(parse('0.000001')).toBe(true)
+  expect(parse('30')).toBe(true)
 })

@@ -27,9 +27,11 @@ import {
   DropdownMenuGroup,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { PAGE_SEARCH } from '@/lib/keyboard-shortcuts'
 import {
   Table,
   TableBody,
@@ -40,11 +42,16 @@ import {
 } from '@/components/ui/table'
 import { formatEnumLabel } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
+import type { TableDensity } from '@/stores/table-density-store'
 import {
   dataTableColumnSortDirection,
   features,
   type DataTableFeatures,
 } from './data-table-features'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { rowVariants } from '@/lib/recipes'
 
 export type { DataTableFeatures } from './data-table-features'
 
@@ -162,6 +169,8 @@ function stickyColumnId(columnIds: Array<string>) {
 // Tighter than the primitive's px-4 between columns so dense tables such as
 // Builds fit an 1100px window, with the outer edges kept at px-4.
 const CELL_INSET = 'px-3 first:pl-4 last:pr-4'
+// Compact rows trade vertical padding for more rows in view.
+const COMPACT_CELL = 'in-data-[density=compact]:py-0.5'
 // The trailing row-actions column hugs its trigger.
 const ACTIONS_CELL = 'w-px pl-0'
 
@@ -175,9 +184,12 @@ const STICKY_BODY_CELL = cn(
 export function DataTable<TData extends RowData>({
   actions,
   activeFilterCount = 0,
+  collapseFilters = false,
+  density,
   emptyMessage,
   filters,
   isLoading = false,
+  onDensityChange,
   onClearFilters,
   pagination,
   search,
@@ -187,6 +199,13 @@ export function DataTable<TData extends RowData>({
   actions?: ReactNode
   /** Filters in effect, shown on the compact Filters disclosure. */
   activeFilterCount?: number
+  /**
+   * Keep filters in the Filters disclosure at every width, for tables with
+   * more filters than one toolbar row holds. It opens while any apply.
+   */
+  collapseFilters?: boolean
+  /** Compact rows tighten padding; offered in the Columns menu. */
+  density?: TableDensity
   emptyMessage?: ReactNode
   /** Collapse into a Filters disclosure when the toolbar is narrow. */
   filters?: ReactNode
@@ -194,6 +213,7 @@ export function DataTable<TData extends RowData>({
   isLoading?: boolean
   /** Pass while search or filters narrow the results. */
   onClearFilters?: () => void
+  onDensityChange?: (density: TableDensity) => void
   pagination?: {
     onPageChange: (page: number) => void
     page: number
@@ -207,7 +227,17 @@ export function DataTable<TData extends RowData>({
   }
   table: DataTableInstance<TData>
 }) {
-  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [filtersOpen, setFiltersOpen] = useState(
+    collapseFilters && activeFilterCount > 0,
+  )
+  // Collapsed filters open when some start to apply, such as on navigation.
+  const [seenFilterCount, setSeenFilterCount] = useState(activeFilterCount)
+  if (seenFilterCount !== activeFilterCount) {
+    setSeenFilterCount(activeFilterCount)
+    if (collapseFilters && seenFilterCount === 0 && activeFilterCount > 0) {
+      setFiltersOpen(true)
+    }
+  }
   const visibleColumns = table.getVisibleLeafColumns()
   const stickyId = stickyColumnId(visibleColumns.map((column) => column.id))
   const rows = table.getRowModel().rows
@@ -243,11 +273,12 @@ export function DataTable<TData extends RowData>({
   return (
     <div className="@container w-full">
       {hasToolbar ? (
-        <div className="flex flex-col gap-2 py-4">
-          <div className="flex items-center gap-2">
+        <Stack gap={2} className="py-4">
+          <Row gap={2}>
             {search ? (
               <Input
                 type="search"
+                {...PAGE_SEARCH}
                 value={search.value}
                 placeholder={search.placeholder}
                 aria-label={search.placeholder}
@@ -255,16 +286,18 @@ export function DataTable<TData extends RowData>({
                 className="min-w-0 flex-1 @2xl:max-w-sm"
               />
             ) : null}
-            <div className="ml-auto flex shrink-0 items-center gap-2">
+            <Row gap={2} className="ml-auto shrink-0">
               {filters ? (
                 <>
-                  <div className="hidden items-center gap-2 @2xl:flex">
-                    {clearFiltersButton}
-                    {filters}
-                  </div>
+                  {collapseFilters ? null : (
+                    <div className="hidden items-center gap-2 @2xl:flex">
+                      {clearFiltersButton}
+                      {filters}
+                    </div>
+                  )}
                   <Button
                     variant={filtersOpen ? 'outline' : 'secondary'}
-                    className="@2xl:hidden"
+                    className={collapseFilters ? undefined : '@2xl:hidden'}
                     aria-expanded={filtersOpen}
                     onClick={() => setFiltersOpen((open) => !open)}
                   >
@@ -285,7 +318,7 @@ export function DataTable<TData extends RowData>({
                 clearFiltersButton
               )}
               {actions}
-              {hideableColumns.length > 0 ? (
+              {hideableColumns.length > 0 || onDensityChange ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={<Button variant="secondary" />}
@@ -317,14 +350,35 @@ export function DataTable<TData extends RowData>({
                         </DropdownMenuCheckboxItem>
                       ))}
                     </DropdownMenuGroup>
+                    {onDensityChange ? (
+                      <>
+                        {hideableColumns.length > 0 ? (
+                          <DropdownMenuSeparator />
+                        ) : null}
+                        <DropdownMenuGroup>
+                          <DropdownMenuCheckboxItem
+                            checked={density === 'compact'}
+                            onCheckedChange={(value) =>
+                              onDensityChange(value ? 'compact' : 'comfortable')
+                            }
+                          >
+                            Compact rows
+                          </DropdownMenuCheckboxItem>
+                        </DropdownMenuGroup>
+                      </>
+                    ) : null}
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : null}
-            </div>
-          </div>
+            </Row>
+          </Row>
           {filters && filtersOpen ? (
             <div
-              className="flex flex-wrap items-center gap-2 rounded-md border p-2 @2xl:hidden"
+              className={cn(
+                rowVariants({ gap: 2 }),
+                'flex-wrap rounded-md border p-2',
+                !collapseFilters && '@2xl:hidden',
+              )}
               role="group"
               aria-label="Filters"
             >
@@ -332,9 +386,12 @@ export function DataTable<TData extends RowData>({
               {clearFiltersButton}
             </div>
           ) : null}
-        </div>
+        </Stack>
       ) : null}
-      <div className="overflow-hidden rounded-md border">
+      <div
+        className="overflow-hidden rounded-md border"
+        data-density={density === 'compact' ? 'compact' : undefined}
+      >
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -385,6 +442,7 @@ export function DataTable<TData extends RowData>({
                       key={cell.id}
                       className={cn(
                         CELL_INSET,
+                        COMPACT_CELL,
                         cell.column.id === 'actions' && ACTIONS_CELL,
                         cell.column.id === stickyId && STICKY_BODY_CELL,
                       )}
@@ -400,7 +458,7 @@ export function DataTable<TData extends RowData>({
                   colSpan={visibleColumns.length}
                   className="h-32 text-center whitespace-normal text-muted-foreground"
                 >
-                  <div className="flex flex-col items-center justify-center gap-3">
+                  <Stack gap={3} className="items-center justify-center">
                     <span>{emptyText}</span>
                     {isLoading ? null : onClearFilters ? (
                       <Button
@@ -415,7 +473,7 @@ export function DataTable<TData extends RowData>({
                         Clear search
                       </Button>
                     ) : null}
-                  </div>
+                  </Stack>
                 </TableCell>
               </TableRow>
             )}
@@ -423,12 +481,12 @@ export function DataTable<TData extends RowData>({
         </Table>
       </div>
       {pagination && pagination.total > 0 ? (
-        <div className="flex items-center justify-between gap-2 py-4">
-          <p className="text-sm text-muted-foreground tabular-nums">
+        <Row gap={2} className="justify-between py-4">
+          <Text variant="muted" className="tabular-nums">
             {firstResult}–{lastResult} of {pagination.total}
-          </p>
+          </Text>
           {pageCount > 1 ? (
-            <div className="flex items-center gap-2">
+            <Row gap={2}>
               <Button
                 variant="outline"
                 size="sm"
@@ -445,9 +503,9 @@ export function DataTable<TData extends RowData>({
               >
                 Next
               </Button>
-            </div>
+            </Row>
           ) : null}
-        </div>
+        </Row>
       ) : null}
     </div>
   )

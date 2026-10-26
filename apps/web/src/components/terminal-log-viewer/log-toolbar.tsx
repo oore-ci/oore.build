@@ -17,6 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { PAGE_SEARCH } from '@/lib/keyboard-shortcuts'
 import {
   InputGroup,
   InputGroupAddon,
@@ -24,6 +25,7 @@ import {
   InputGroupInput,
   InputGroupText,
 } from '@/components/ui/input-group'
+import { Row } from '@/components/layout/row'
 
 interface LogToolbarProps {
   searchQuery: string
@@ -69,10 +71,14 @@ export function LogToolbar({
   onDownload,
 }: LogToolbarProps) {
   return (
-    <div className="flex w-full min-w-0 shrink-0 items-center gap-1.5 max-sm:flex-wrap sm:justify-end">
+    <Row
+      gap={1.5}
+      className="w-full min-w-0 shrink-0 max-sm:flex-wrap sm:justify-end"
+    >
       <InputGroup className="w-full border-input bg-background sm:mr-auto sm:w-auto sm:max-w-72 sm:min-w-36 sm:flex-1">
         <InputGroupInput
           ref={searchInputRef}
+          {...PAGE_SEARCH}
           value={searchQuery}
           onChange={(event) => onSearchQueryChange(event.target.value)}
           placeholder={scope === 'step' ? 'Search this step' : 'Search log'}
@@ -152,7 +158,7 @@ export function LogToolbar({
         disabled={!hasAnyLines}
         onClick={onDownload}
       />
-    </div>
+    </Row>
   )
 }
 

@@ -5,6 +5,7 @@ import type {
   AuditLogEntry,
   Build,
   BuildEvent,
+  BuildFeedback,
   BuildLogChunk,
   BuildTestResultsResponse,
   ExternalAccessNetworkSettings,
@@ -32,6 +33,7 @@ import { demoArtifacts } from './data/artifacts'
 import { demoAuditLogs } from './data/audit-logs'
 import { demoBuildLogs } from './data/build-logs'
 import { demoBuildTests } from './data/build-tests'
+import { demoBuildFeedback } from './data/build-feedback'
 import { demoBuildEvents, demoBuilds } from './data/builds'
 import {
   demoInstallations,
@@ -42,6 +44,12 @@ import {
   demoNotificationChannels,
   demoNotificationDeliveries,
 } from './data/notification-channels'
+import {
+  demoEnvironments,
+  demoPromotions,
+  type DemoEnvironment,
+  type DemoPromotion,
+} from './data/environments'
 import { demoPipelines } from './data/pipelines'
 import {
   demoReleaseHistory,
@@ -109,9 +117,14 @@ interface DemoState {
   buildEvents: Partial<Record<string, Array<BuildEvent>>>
   buildLogs: Partial<Record<string, Array<BuildLogChunk>>>
   buildTests: Partial<Record<string, BuildTestResultsResponse>>
+  buildFeedback: Partial<Record<string, Array<BuildFeedback>>>
+  /** Uploaded screenshot bytes by feedback id; seeded ones are drawn. */
+  feedbackScreenshots: Partial<Record<string, Uint8Array<ArrayBuffer>>>
   artifacts: Partial<Record<string, Array<Artifact>>>
   releases: Array<DemoRelease>
   releaseHistory: Partial<Record<string, Array<ReleaseHistoryEntry>>>
+  environments: Array<DemoEnvironment>
+  promotions: Array<DemoPromotion>
   runners: Array<Runner>
   integrations: Array<IntegrationWithStatus>
   installations: Partial<Record<string, Array<IntegrationInstallation>>>
@@ -303,6 +316,7 @@ function makeDeveloperPipeline(): Pipeline {
     concurrency: { cancel_previous: true, max_concurrent: 1 },
     timeout_minutes: 60,
     approval: { required: false, events: [] },
+    size_budget: { mode: 'warn', rules: [] },
     enabled: true,
     created_at: ago(86400 * 10),
     updated_at: ago(3600 * 4),
@@ -340,6 +354,7 @@ function makePaginatedPipelines(): Array<Pipeline> {
         concurrency: { cancel_previous: true, max_concurrent: 1 },
         timeout_minutes: 60,
         approval: { required: false, events: [] },
+        size_budget: { mode: 'warn', rules: [] },
         enabled: true,
         created_at: ago(86400 * (30 - sequence)),
         updated_at: ago(3600 * (30 - sequence)),
@@ -587,6 +602,7 @@ export function createDemoState(
       has_url: true,
       has_secret: false,
       has_smtp_config: false,
+      slack_mentions: [],
       created_by: USER_IDS.admin,
       created_at: ago(86400 * 20),
       updated_at: ago(86400 * 5),
@@ -662,11 +678,35 @@ export function createDemoState(
               'build/ios/**/*.ipa',
             ],
           },
+          workflows: [],
         },
         {
           path: '.oore/invalid.yaml',
           valid: false,
           errors: ['execution.platforms must contain at least one platform'],
+          workflows: [],
+        },
+      ],
+      [PROJECT_IDS.nativePayments]: [
+        {
+          path: '.oore/release.yaml',
+          valid: true,
+          errors: [],
+          workflows: ['adhoc', 'release'],
+          execution: {
+            platforms: ['android'],
+            flutter_version: '3.24.3',
+            commands: {
+              pre_build: ['flutter pub get'],
+              build: [],
+              post_build: [],
+            },
+            isolation: 'host',
+            platform_build_args: { android: [], ios: [], macos: [] },
+            platform_commands: { android: 'flutter build apk --release' },
+            env_keys: ['PAYMENT_ENV'],
+            artifact_patterns: ['build/app/outputs/flutter-apk/*.apk'],
+          },
         },
       ],
     },
@@ -674,8 +714,12 @@ export function createDemoState(
     buildEvents: clone(demoBuildEvents),
     releases: clone(demoReleases),
     releaseHistory: clone(demoReleaseHistory),
+    environments: clone(demoEnvironments),
+    promotions: clone(demoPromotions),
     buildLogs: clone(demoBuildLogs),
     buildTests: clone(demoBuildTests),
+    buildFeedback: clone(demoBuildFeedback),
+    feedbackScreenshots: {},
     artifacts,
     runners,
     integrations: clone(demoIntegrations),
@@ -761,9 +805,12 @@ export function createDemoState(
     state.buildEvents = {}
     state.buildLogs = {}
     state.buildTests = {}
+    state.buildFeedback = {}
     state.artifacts = {}
     state.releases = []
     state.releaseHistory = {}
+    state.environments = []
+    state.promotions = []
     state.runners = []
     state.integrations = []
     state.installations = {}

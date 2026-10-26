@@ -1,4 +1,4 @@
 {
-  "title": "Troubleshooting",
-  "pages": ["troubleshoot", "known-limitations"]
+  "title": "Troubleshoot and recover",
+  "pages": ["troubleshoot", "../recover/reset", "../support/report-an-issue"]
 }

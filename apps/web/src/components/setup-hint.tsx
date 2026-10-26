@@ -4,21 +4,25 @@ import { Children } from 'react'
 import type { ReactNode } from 'react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { monoVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 interface SetupHintProps {
   title: string
   children?: ReactNode
   items?: Array<ReactNode>
   code?: string
-  /** Alternative snippets for the same setup, such as Groovy and Kotlin. */
-  codeTabs?: Array<{ label: string; code: string }>
   className?: string
 }
 
 function CodeBlock({ code }: { code: string }) {
   return (
-    <pre className="overflow-x-auto rounded-md bg-background p-3 font-mono text-[11px] leading-relaxed text-foreground ring-1 ring-foreground/10">
+    <pre
+      className={cn(
+        monoVariants({ size: '2xs' }),
+        'overflow-x-auto rounded-md bg-background p-3 leading-relaxed text-foreground ring-1 ring-foreground/10',
+      )}
+    >
       <code>{code}</code>
     </pre>
   )
@@ -29,7 +33,6 @@ export default function SetupHint({
   children,
   items,
   code,
-  codeTabs,
   className,
 }: SetupHintProps) {
   // Static guidance: a note, not a live alert that screen readers announce
@@ -48,22 +51,6 @@ export default function SetupHint({
           </ul>
         ) : null}
         {code ? <CodeBlock code={code} /> : null}
-        {codeTabs && codeTabs.length > 0 ? (
-          <Tabs defaultValue={codeTabs[0].label} className="mt-2 gap-2">
-            <TabsList>
-              {codeTabs.map((tab) => (
-                <TabsTrigger key={tab.label} value={tab.label}>
-                  {tab.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-            {codeTabs.map((tab) => (
-              <TabsContent key={tab.label} value={tab.label}>
-                <CodeBlock code={tab.code} />
-              </TabsContent>
-            ))}
-          </Tabs>
-        ) : null}
       </AlertDescription>
     </Alert>
   )

@@ -6,11 +6,18 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
     ApiError, ApprovalPolicy, BuildPlatform, ConcurrencyPolicy, CreatePipelineRequest,
-    CreatePipelineResponse, DEFAULT_BUILD_TIMEOUT_MINUTES, ListPipelinesResponse,
-    MAX_BUILD_TIMEOUT_MINUTES, OkResponse, Pipeline, PipelineDetailResponse,
-    PipelineExecutionConfig, TriggerConfig, UpdatePipelineRequest, ValidatePipelineRequest,
-    ValidatePipelineResponse, is_valid_pipeline_env_key, normalize_runner_labels,
-    parse_repository_pipeline_yaml, secret_expression_errors, validate_artifact_pattern,
+    CreatePipelineResponse, DEFAULT_BUILD_TIMEOUT_MINUTES, ExportPipelineYamlRequest,
+    ExportPipelineYamlResponse, ImportPipelineYamlRequest, ImportPipelineYamlResponse,
+    ImportedPlayPublish, ListPipelinesResponse, MAX_BUILD_TIMEOUT_MINUTES,
+    MAX_PLAN_REPOSITORY_YAML_BYTES, OkResponse, Pipeline, PipelineDetailResponse,
+    PipelineExecutionConfig, PipelinePlanPreview, PlanPipelineRequest, PlanPipelineResponse,
+    PlanRequest, RepositoryConfig, SizeBudget, TriggerConfig, UpdatePipelineRequest,
+    ValidatePipelineRequest, ValidatePipelineResponse, is_valid_pipeline_env_key,
+    is_valid_workflow_name, normalize_runner_labels, parse_repository_config,
+    pipeline_config::select_v1_platforms,
+    pipeline_export::{FormSettings, export_form_settings},
+    pipeline_import::{ImportContext, import_form_settings},
+    plan_execution_config, secret_expression_errors, validate_artifact_pattern,
     validate_build_number_offset, validate_repository_config_path,
 };
 use serde::Deserialize;
@@ -393,6 +400,84 @@ fn validate_concurrency(cp: &ConcurrencyPolicy) -> Vec<String> {
     errors
 }
 
+// ── Workflow selection ──────────────────────────────────────────
+
+fn normalize_workflow_name(name: &str) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let name = name.trim();
+    if !is_valid_workflow_name(name) {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_workflow",
+            "workflow must start with a letter or digit and use only letters, digits, '-' and '_' (max 64 chars)",
+        ));
+    }
+    Ok(name.to_string())
+}
+
+/// Why `workflow` cannot be planned from `config`, if it cannot.
+fn workflow_error(path: &str, config: &RepositoryConfig, workflow: &str) -> Option<String> {
+    let names = config.workflow_names();
+    if names.contains(&workflow) {
+        return None;
+    }
+    Some(match config {
+        RepositoryConfig::V1(_) => {
+            format!("{path} is a version 1 file; workflows need `version: 2`")
+        }
+        RepositoryConfig::V2(_) if names.is_empty() => {
+            format!("workflow '{workflow}' is not defined; {path} defines no workflows")
+        }
+        RepositoryConfig::V2(_) => format!(
+            "workflow '{workflow}' is not defined; {path} defines [{}]",
+            names.join(", ")
+        ),
+    })
+}
+
+/// Check `workflow` against the pipeline file on the project's default
+/// branch. A file that is missing, invalid or unreachable cannot be checked,
+/// so the name is accepted and a wrong one fails at build time.
+async fn check_workflow_in_repository(
+    state: &AppState,
+    project_id: &str,
+    config_path: &str,
+    config_path_explicit: bool,
+    workflow: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    use crate::repository_workflows::{PipelineFile, load_pipeline_file};
+    match load_pipeline_file(
+        &state.db,
+        &state.encryption_key,
+        project_id,
+        config_path,
+        config_path_explicit,
+        None,
+    )
+    .await
+    {
+        Ok(Some(PipelineFile::Parsed { path, config })) => {
+            match workflow_error(&path, &config, workflow) {
+                Some(message) => Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_workflow",
+                    message,
+                )),
+                None => Ok(()),
+            }
+        }
+        Ok(_) => Ok(()),
+        Err((status, body)) => {
+            warn!(
+                project_id,
+                status = %status,
+                error = %body.0.error,
+                "could not read the repository file to check the pipeline workflow"
+            );
+            Ok(())
+        }
+    }
+}
+
 // ── Row conversion ──────────────────────────────────────────────
 
 fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
@@ -421,6 +506,11 @@ fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default();
+    let size_budget: SizeBudget = row
+        .try_get::<String, _>("size_budget")
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
 
     Pipeline {
         id: row.get("id"),
@@ -433,6 +523,8 @@ fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
         concurrency,
         timeout_minutes,
         approval,
+        size_budget,
+        workflow: row.try_get("workflow").ok().flatten(),
         enabled: enabled_int != 0,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
@@ -596,9 +688,11 @@ pub async fn create_pipeline(
 
     let timeout_minutes = req.timeout_minutes.unwrap_or(DEFAULT_BUILD_TIMEOUT_MINUTES);
     let approval = req.approval.unwrap_or_default();
+    let size_budget = req.size_budget.unwrap_or_default();
     let gate_errors = [
         validate_timeout_minutes(timeout_minutes),
         validate_approval_policy(&approval),
+        size_budget.validate(),
     ]
     .concat();
     if !gate_errors.is_empty() {
@@ -609,6 +703,22 @@ pub async fn create_pipeline(
         ));
     }
 
+    let workflow = match req.workflow.as_deref() {
+        Some(name) => {
+            let name = normalize_workflow_name(name)?;
+            check_workflow_in_repository(
+                &state,
+                &project_id,
+                &config_path,
+                config_path_explicit,
+                &name,
+            )
+            .await?;
+            Some(name)
+        }
+        None => None,
+    };
+
     let now = now_unix();
     let pipeline_id = Uuid::new_v4().to_string();
 
@@ -617,8 +727,8 @@ pub async fn create_pipeline(
     let execution_config_json = serde_json::to_string(&execution_config).unwrap_or_default();
 
     sqlx::query(
-        "INSERT INTO pipelines (id, project_id, name, config_path, config_path_explicit, execution_config, trigger_config, concurrency, timeout_minutes, approval_policy, enabled, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?10, ?11, 1, ?9, ?9)",
+        "INSERT INTO pipelines (id, project_id, name, config_path, config_path_explicit, execution_config, trigger_config, concurrency, timeout_minutes, approval_policy, workflow, size_budget, enabled, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?10, ?11, ?12, ?13, 1, ?9, ?9)",
     )
     .bind(&pipeline_id)
     .bind(&project_id)
@@ -631,6 +741,8 @@ pub async fn create_pipeline(
     .bind(now)
     .bind(timeout_minutes)
     .bind(serde_json::to_string(&approval).unwrap_or_default())
+    .bind(&workflow)
+    .bind(serde_json::to_string(&size_budget).unwrap_or_default())
     .execute(&pool)
     .await
     .map_err(|e| {
@@ -667,6 +779,8 @@ pub async fn create_pipeline(
         concurrency,
         timeout_minutes,
         approval,
+        size_budget,
+        workflow,
         enabled: true,
         created_at: now,
         updated_at: now,
@@ -874,6 +988,7 @@ pub async fn update_pipeline(
         && req.concurrency.is_none()
         && req.timeout_minutes.is_none()
         && req.approval.is_none()
+        && req.workflow.is_none()
         && req.enabled.is_none()
     {
         return Ok(Json(CreatePipelineResponse {
@@ -1011,6 +1126,28 @@ pub async fn update_pipeline(
         pipeline.approval = approval;
     }
 
+    pipeline.size_budget = updated_size_budget(pipeline.size_budget, req.size_budget)?;
+
+    if let Some(workflow) = req.workflow {
+        pipeline.workflow = match workflow.as_deref() {
+            Some(name) => {
+                let name = normalize_workflow_name(name)?;
+                if pipeline.workflow.as_deref() != Some(name.as_str()) {
+                    check_workflow_in_repository(
+                        &state,
+                        &pipeline.project_id,
+                        &pipeline.config_path,
+                        pipeline.config_path_explicit,
+                        &name,
+                    )
+                    .await?;
+                }
+                Some(name)
+            }
+            None => None,
+        };
+    }
+
     if let Some(enabled) = req.enabled {
         pipeline.enabled = enabled;
     }
@@ -1019,7 +1156,7 @@ pub async fn update_pipeline(
     sqlx::query(
         "UPDATE pipelines \
          SET name = ?1, config_path = ?2, config_path_explicit = ?3, execution_config = ?4, trigger_config = ?5, concurrency = ?6, enabled = ?7, updated_at = ?8, \
-             timeout_minutes = ?10, approval_policy = ?11 \
+             timeout_minutes = ?10, approval_policy = ?11, workflow = ?12, size_budget = ?13 \
          WHERE id = ?9",
     )
     .bind(&pipeline.name)
@@ -1033,6 +1170,8 @@ pub async fn update_pipeline(
     .bind(&pipeline_id)
     .bind(pipeline.timeout_minutes)
     .bind(serde_json::to_string(&pipeline.approval).unwrap_or_default())
+    .bind(&pipeline.workflow)
+    .bind(serde_json::to_string(&pipeline.size_budget).unwrap_or_default())
     .execute(pool)
     .await
     .map_err(|e| {
@@ -1087,9 +1226,13 @@ pub async fn delete_pipeline(
     check_permission(&state.enforcer, &auth.0.role, "pipelines", "delete").await?;
 
     let pool = &state.db;
-    let artifact_paths = delete_pipeline_rows(pool, &pipeline_id).await?;
+    let DeletedPipelineFiles {
+        artifact_paths,
+        screenshot_keys,
+    } = delete_pipeline_rows(pool, &pipeline_id).await?;
 
     let storage = state.storage.read().await.clone();
+    crate::build_feedback::delete_screenshots(&storage, &screenshot_keys).await;
     let mut artifacts_left = 0;
     for file_path in &artifact_paths {
         if let Err(error) = storage.delete_object(file_path).await {
@@ -1119,12 +1262,20 @@ pub async fn delete_pipeline(
     Ok(Json(OkResponse { ok: true }))
 }
 
-/// Delete a pipeline and its finished builds. Returns the storage paths of the
-/// deleted builds' artifacts, which the caller removes after the commit.
+/// Storage objects of a deleted pipeline's builds, which the caller removes
+/// after the commit.
+#[derive(Debug)]
+struct DeletedPipelineFiles {
+    artifact_paths: Vec<String>,
+    screenshot_keys: Vec<String>,
+}
+
+/// Delete a pipeline and its finished builds. Returns the storage objects of
+/// the deleted builds' artifacts and feedback screenshots.
 async fn delete_pipeline_rows(
     pool: &sqlx::SqlitePool,
     pipeline_id: &str,
-) -> Result<Vec<String>, (StatusCode, Json<ApiError>)> {
+) -> Result<DeletedPipelineFiles, (StatusCode, Json<ApiError>)> {
     // Use a transaction so the active-build check, terminal-build cleanup,
     // and pipeline delete are atomic (prevents race with concurrent build creation).
     // IMMEDIATE takes the write lock up front, so a concurrent write cannot
@@ -1215,6 +1366,19 @@ async fn delete_pipeline_rows(
         )
     })?;
 
+    // Feedback rows go with their builds too.
+    let screenshot_keys =
+        crate::build_feedback::screenshot_keys_for_pipeline(&mut *tx, pipeline_id)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to list feedback screenshots for pipeline");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to delete pipeline",
+                )
+            })?;
+
     // Delete terminal builds first (non-cascading FK on builds.pipeline_id)
     sqlx::query(
         "DELETE FROM builds WHERE pipeline_id = ?1 \
@@ -1266,7 +1430,30 @@ async fn delete_pipeline_rows(
             "Failed to delete pipeline",
         )
     })?;
-    Ok(artifact_paths)
+    Ok(DeletedPipelineFiles {
+        artifact_paths,
+        screenshot_keys,
+    })
+}
+
+/// The budget after an update: the requested one when valid, otherwise the
+/// current one. Leaving the field out or sending `null` keeps it.
+fn updated_size_budget(
+    current: SizeBudget,
+    requested: Option<SizeBudget>,
+) -> Result<SizeBudget, (StatusCode, Json<ApiError>)> {
+    let Some(requested) = requested else {
+        return Ok(current);
+    };
+    let errors = requested.validate();
+    if !errors.is_empty() {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            errors.join("; "),
+        ));
+    }
+    Ok(requested)
 }
 
 /// `POST /v1/pipelines/validate` — dry-run validation of pipeline config.
@@ -1276,7 +1463,10 @@ pub async fn validate_pipeline(
     Json(req): Json<ValidatePipelineRequest>,
 ) -> ApiResult<ValidatePipelineResponse> {
     check_permission(&state.enforcer, &auth.0.role, "pipelines", "read").await?;
+    Ok(Json(validate_request(&req)))
+}
 
+fn validate_request(req: &ValidatePipelineRequest) -> ValidatePipelineResponse {
     let mut errors = Vec::new();
     let config_path_explicit = req.config_path_explicit.unwrap_or(false);
 
@@ -1296,6 +1486,10 @@ pub async fn validate_pipeline(
         errors.extend(validate_approval_policy(approval));
     }
 
+    if let Some(ref size_budget) = req.size_budget {
+        errors.extend(size_budget.validate());
+    }
+
     if let Some(ref path) = req.config_path {
         errors.extend(validate_config_path(path, config_path_explicit));
     } else if config_path_explicit {
@@ -1305,15 +1499,1000 @@ pub async fn validate_pipeline(
     if let Some(ref cfg) = req.execution_config {
         errors.extend(validate_execution_config(cfg));
     }
-    if let Some(ref yaml) = req.repository_yaml
-        && let Err(error) = parse_repository_pipeline_yaml(yaml)
-    {
-        errors.extend(error.lines().map(str::to_string));
+    let workflow = match req.workflow.as_deref() {
+        Some(name) => match normalize_workflow_name(name) {
+            Ok(name) => Some(name),
+            Err((_, body)) => {
+                errors.push(body.0.error);
+                None
+            }
+        },
+        None => None,
+    };
+    if let Some(ref yaml) = req.repository_yaml {
+        match parse_repository_config(yaml) {
+            Ok(config) => {
+                if let Some(error) = workflow
+                    .as_deref()
+                    .and_then(|workflow| workflow_error("repository_yaml", &config, workflow))
+                {
+                    errors.push(error);
+                }
+            }
+            Err(error) => errors.extend(error.lines().map(str::to_string)),
+        }
     }
 
     let valid = errors.is_empty();
 
-    Ok(Json(ValidatePipelineResponse { valid, errors }))
+    ValidatePipelineResponse { valid, errors }
+}
+
+/// `POST /v1/pipelines/plan` — the steps a build would run, without saving.
+pub async fn plan_pipeline(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<PlanPipelineRequest>,
+) -> ApiResult<PlanPipelineResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "pipelines", "read").await?;
+    Ok(Json(plan_request(req)?))
+}
+
+/// `POST /v1/pipelines/export-yaml` — the pipeline's form settings as a
+/// `version: 2` `.oore.yaml`, checked to plan the same as the settings.
+pub async fn export_pipeline_yaml(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<ExportPipelineYamlRequest>,
+) -> ApiResult<ExportPipelineYamlResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "pipelines", "read").await?;
+    Ok(Json(export_yaml_request(&req)))
+}
+
+fn export_yaml_request(req: &ExportPipelineYamlRequest) -> ExportPipelineYamlResponse {
+    let mut errors = validate_execution_config(&req.execution_config);
+    if let Some(triggers) = &req.trigger_config {
+        errors.extend(validate_trigger_config(triggers));
+    }
+    // The Publish settings get the checks their own endpoints apply, so a
+    // bad value comes back as that error instead of a generated file that
+    // fails to validate.
+    if let Some(play) = &req.google_play {
+        errors.extend(
+            oore_contract::validate_google_play_publish_config(play)
+                .into_iter()
+                .map(|error| format!("google_play: {error}")),
+        );
+    }
+    let app_store = match req
+        .app_store
+        .clone()
+        .map(crate::app_store_publish::normalize_config)
+    {
+        None => None,
+        Some(Ok(config)) => Some(config),
+        Some(Err(store_errors)) => {
+            errors.extend(
+                store_errors
+                    .into_iter()
+                    .map(|error| format!("app_store: {error}")),
+            );
+            None
+        }
+    };
+    let result = if errors.is_empty() {
+        export_form_settings(FormSettings {
+            execution: &req.execution_config,
+            triggers: req.trigger_config.as_ref(),
+            google_play: req.google_play.as_ref(),
+            app_store: app_store.as_ref(),
+        })
+    } else {
+        Err(errors.join("\n"))
+    };
+    match result {
+        Ok(export) => ExportPipelineYamlResponse {
+            valid: true,
+            errors: Vec::new(),
+            yaml: Some(export.yaml),
+            warnings: export.warnings,
+            notes: export.notes,
+        },
+        Err(error) => ExportPipelineYamlResponse {
+            valid: false,
+            errors: error_lines(&error),
+            yaml: None,
+            warnings: Vec::new(),
+            notes: Vec::new(),
+        },
+    }
+}
+
+/// `POST /v1/pipelines/import-yaml` — a `version: 2` `.oore.yaml` read back
+/// into the pipeline's form settings, checked to plan the same as the file.
+pub async fn import_pipeline_yaml(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(req): Json<ImportPipelineYamlRequest>,
+) -> ApiResult<ImportPipelineYamlResponse> {
+    check_permission(&state.enforcer, &auth.0.role, "pipelines", "read").await?;
+    if req.yaml.len() > MAX_PLAN_REPOSITORY_YAML_BYTES {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "repository_yaml_too_large",
+            format!(
+                "yaml must be at most {} KiB",
+                MAX_PLAN_REPOSITORY_YAML_BYTES / 1024
+            ),
+        ));
+    }
+    Ok(Json(import_yaml_request(&req)))
+}
+
+fn import_yaml_request(req: &ImportPipelineYamlRequest) -> ImportPipelineYamlResponse {
+    // The App Store settings are compared as their endpoint stores them.
+    let app_store = req
+        .app_store
+        .clone()
+        .map(|config| crate::app_store_publish::normalize_config(config.clone()).unwrap_or(config));
+    let result = import_form_settings(
+        &req.yaml,
+        ImportContext {
+            execution: req.execution_config.as_ref(),
+            triggers: req.trigger_config.as_ref(),
+            google_play: req.google_play.as_ref(),
+            app_store: app_store.as_ref(),
+        },
+    );
+    let mut import = match result {
+        Ok(import) => import,
+        Err(error) => {
+            return ImportPipelineYamlResponse {
+                valid: false,
+                representable: false,
+                errors: error_lines(&error),
+                unsupported: Vec::new(),
+                notes: Vec::new(),
+                execution_config: None,
+                trigger_config: None,
+                google_play: None,
+                testflight_group: None,
+            };
+        }
+    };
+    // The form saves through the same checks as the settings endpoints.
+    let mut save_errors = Vec::new();
+    if let Some(config) = &import.execution {
+        save_errors.extend(validate_execution_config(config));
+    }
+    if let Some(triggers) = &import.triggers {
+        save_errors.extend(validate_trigger_config(triggers));
+    }
+    if !save_errors.is_empty() {
+        import.unsupported.extend(
+            save_errors
+                .into_iter()
+                .map(|error| format!("The form cannot save these settings: {error}")),
+        );
+        import.execution = None;
+        import.triggers = None;
+    }
+    ImportPipelineYamlResponse {
+        valid: true,
+        representable: import.execution.is_some(),
+        errors: Vec::new(),
+        unsupported: import.unsupported,
+        notes: import.notes,
+        execution_config: import.execution,
+        trigger_config: import.triggers,
+        google_play: import.play.map(|play| ImportedPlayPublish {
+            track: play.track,
+            rollout_percent: play
+                .rollout
+                .map(oore_contract::pipeline_config::play_rollout_percent),
+            draft: play.draft,
+        }),
+        testflight_group: import.testflight.map(|testflight| testflight.group),
+    }
+}
+
+fn plan_request(
+    req: PlanPipelineRequest,
+) -> Result<PlanPipelineResponse, (StatusCode, Json<ApiError>)> {
+    let mut selected: Vec<BuildPlatform> = Vec::new();
+    for platform in req.platforms.unwrap_or_default() {
+        if !selected.contains(&platform) {
+            selected.push(platform);
+        }
+    }
+    let selected = (!selected.is_empty()).then_some(selected.as_slice());
+    let play = req.build_play_bundle.unwrap_or(false);
+    match (req.repository_yaml, req.execution_config) {
+        (Some(yaml), None) => {
+            if yaml.len() > MAX_PLAN_REPOSITORY_YAML_BYTES {
+                return Err(api_err(
+                    StatusCode::BAD_REQUEST,
+                    "repository_yaml_too_large",
+                    format!(
+                        "repository_yaml must be at most {} KiB",
+                        MAX_PLAN_REPOSITORY_YAML_BYTES / 1024
+                    ),
+                ));
+            }
+            Ok(plan_repository_yaml(
+                &yaml,
+                req.workflow.as_deref(),
+                selected,
+                play,
+            ))
+        }
+        (None, Some(config)) => Ok(plan_form_config(
+            config,
+            req.workflow.as_deref(),
+            selected,
+            play,
+        )),
+        _ => Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_plan_request",
+            "Send exactly one of repository_yaml or execution_config",
+        )),
+    }
+}
+
+fn invalid_plan(errors: Vec<String>) -> PlanPipelineResponse {
+    PlanPipelineResponse {
+        valid: false,
+        errors,
+        notices: Vec::new(),
+        version: None,
+        workflows: Vec::new(),
+        available_platforms: Vec::new(),
+        plan: None,
+    }
+}
+
+fn error_lines(error: &str) -> Vec<String> {
+    error.lines().map(str::to_string).collect()
+}
+
+/// Plan a repository file the way the runner does. Parsing validates every
+/// workflow within the contract crate's limits; planning one workflow twice
+/// (all platforms, then the selection) stays within the same bounds.
+fn plan_repository_yaml(
+    raw: &str,
+    workflow: Option<&str>,
+    selected: Option<&[BuildPlatform]>,
+    build_play_bundle: bool,
+) -> PlanPipelineResponse {
+    let config = match parse_repository_config(raw) {
+        Ok(config) => config,
+        Err(error) => return invalid_plan(error_lines(&error)),
+    };
+    let workflows: Vec<String> = config
+        .workflow_names()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let workflow = workflow
+        .map(str::to_string)
+        .or_else(|| workflows.first().cloned());
+    let mut response = PlanPipelineResponse {
+        version: Some(config.version()),
+        notices: config.notices(),
+        workflows,
+        ..invalid_plan(Vec::new())
+    };
+    let request = PlanRequest {
+        workflow: workflow.as_deref(),
+        selected_platforms: None,
+        build_play_bundle,
+    };
+    let full = match config.plan(request) {
+        Ok(plan) => plan,
+        Err(error) => {
+            response.errors = error_lines(&error);
+            return response;
+        }
+    };
+    response.available_platforms = full.platforms.clone();
+    let plan = match selected {
+        None => full,
+        Some(selected) => match config.plan(PlanRequest {
+            selected_platforms: Some(selected),
+            ..request
+        }) {
+            Ok(plan) => plan,
+            Err(error) => {
+                response.errors = error_lines(&error);
+                return response;
+            }
+        },
+    };
+    response.valid = true;
+    // Where this workflow publishes, until the plan preview has a field for it.
+    response.notices.extend(plan.publish.describe());
+    response.plan = Some(PipelinePlanPreview::from(plan));
+    response
+}
+
+/// Plan the pipeline's form settings the way the runner does when the
+/// repository has no `.oore.yaml`: default commands included.
+fn plan_form_config(
+    config: PipelineExecutionConfig,
+    workflow: Option<&str>,
+    selected: Option<&[BuildPlatform]>,
+    build_play_bundle: bool,
+) -> PlanPipelineResponse {
+    let mut errors = validate_execution_config(&config);
+    if let Some(workflow) = workflow {
+        errors.push(format!(
+            "workflow '{workflow}' was requested, but workflows need a `version: 2` .oore.yaml"
+        ));
+    }
+    if !errors.is_empty() {
+        return invalid_plan(errors);
+    }
+    let available_platforms = config.platforms.clone();
+    let config = match selected {
+        None => config,
+        Some(selected) => match select_v1_platforms(config, selected) {
+            Ok(config) => config,
+            Err(error) => {
+                return PlanPipelineResponse {
+                    available_platforms,
+                    ..invalid_plan(error_lines(&error))
+                };
+            }
+        },
+    };
+    let plan = plan_execution_config(&config, true, build_play_bundle);
+    PlanPipelineResponse {
+        valid: true,
+        available_platforms,
+        plan: Some(PipelinePlanPreview::from(plan)),
+        ..invalid_plan(Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+    use oore_contract::StepPhase;
+
+    fn yaml_request(yaml: &str) -> PlanPipelineRequest {
+        PlanPipelineRequest {
+            repository_yaml: Some(yaml.to_string()),
+            execution_config: None,
+            workflow: None,
+            platforms: None,
+            build_play_bundle: None,
+        }
+    }
+
+    const V1: &str = r#"
+version: 1
+platforms: [android, ios]
+commands:
+  pre_build: ["dart run build_runner build"]
+env:
+  - key: API_URL
+    value: https://staging.example.com
+"#;
+
+    #[test]
+    fn plans_a_v1_file_with_defaults() {
+        let response = plan_request(yaml_request(V1)).unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        assert_eq!(response.version, Some(1));
+        assert!(response.workflows.is_empty());
+        assert_eq!(
+            response.available_platforms,
+            vec![BuildPlatform::Android, BuildPlatform::Ios]
+        );
+        let plan = response.plan.unwrap();
+        let runs: Vec<(&str, StepPhase)> = plan
+            .steps
+            .iter()
+            .map(|step| (step.run.as_str(), step.phase))
+            .collect();
+        assert_eq!(runs[0], ("flutter pub get", StepPhase::PreBuild));
+        assert_eq!(
+            runs[1],
+            ("dart run build_runner build", StepPhase::PreBuild)
+        );
+        assert!(
+            plan.steps
+                .iter()
+                .any(|step| step.platform == Some(BuildPlatform::Ios))
+        );
+        // Keys only: values never leave the daemon.
+        assert_eq!(plan.env_keys, vec!["API_URL".to_string()]);
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(!json.contains("staging.example.com"));
+    }
+
+    #[test]
+    fn narrows_a_v1_file_to_the_selected_platform() {
+        let mut request = yaml_request(V1);
+        request.platforms = Some(vec![BuildPlatform::Ios, BuildPlatform::Ios]);
+        let response = plan_request(request).unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        assert_eq!(response.available_platforms.len(), 2);
+        let plan = response.plan.unwrap();
+        assert_eq!(plan.platforms, vec![BuildPlatform::Ios]);
+        assert!(
+            plan.steps
+                .iter()
+                .all(|step| step.platform != Some(BuildPlatform::Android))
+        );
+    }
+
+    const V2: &str = r#"
+version: 2
+app:
+  flavors: [dev, prod]
+targets:
+  android:
+    build: flutter build apk --flavor ${{ flavor }}
+  ios:
+    build: flutter build ipa --flavor ${{ flavor }}
+env:
+  SIGNING_TOKEN: ${{ secrets.SIGNING_TOKEN }}
+steps:
+  - name: Test
+    run: flutter test --dart-define=TOKEN=${{ secrets.SIGNING_TOKEN }}
+  - build
+  - name: Notify
+    run: echo done
+workflows:
+  nightly:
+    flavors: [dev]
+  release:
+    targets: [android]
+    flavors: [prod]
+"#;
+
+    #[test]
+    fn plans_a_v2_workflow_and_keeps_secrets_literal() {
+        let response = plan_request(yaml_request(V2)).unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        assert_eq!(response.version, Some(2));
+        assert_eq!(response.workflows, vec!["nightly", "release"]);
+        // Several workflows: the first is planned and a notice says so.
+        assert!(!response.notices.is_empty());
+        let plan = response.plan.unwrap();
+        assert_eq!(plan.workflow.as_deref(), Some("nightly"));
+        let android = plan
+            .steps
+            .iter()
+            .find(|step| step.platform == Some(BuildPlatform::Android))
+            .unwrap();
+        assert_eq!(android.phase, StepPhase::Build);
+        assert_eq!(android.flavor.as_deref(), Some("dev"));
+        assert!(android.run.contains("--flavor dev"));
+        let test = plan.steps.iter().find(|step| step.name == "Test").unwrap();
+        assert!(test.run.contains("${{ secrets.SIGNING_TOKEN }}"));
+        assert_eq!(plan.env_keys, vec!["SIGNING_TOKEN".to_string()]);
+
+        let mut request = yaml_request(V2);
+        request.workflow = Some("release".to_string());
+        let response = plan_request(request).unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        assert_eq!(response.available_platforms, vec![BuildPlatform::Android]);
+        let plan = response.plan.unwrap();
+        assert_eq!(plan.workflow.as_deref(), Some("release"));
+        assert!(
+            plan.steps
+                .iter()
+                .filter(|step| step.platform.is_some())
+                .all(|step| step.flavor.as_deref() == Some("prod"))
+        );
+    }
+
+    #[test]
+    fn notes_where_the_planned_workflow_publishes() {
+        let yaml = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n    publish:\n      play: { track: production, draft: true }\nworkflows:\n  release: {}\n  adhoc:\n    targets:\n      android:\n        build: flutter build apk\n";
+        let line = "android publishes to the Google Play production track as a draft (targets.android.publish.play)";
+        let mut request = yaml_request(yaml);
+        request.workflow = Some("release".to_string());
+        let response = plan_request(request).unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        assert!(
+            response.notices.iter().any(|notice| notice == line),
+            "{:?}",
+            response.notices
+        );
+
+        let mut request = yaml_request(yaml);
+        request.workflow = Some("adhoc".to_string());
+        let response = plan_request(request).unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        assert!(!response.notices.iter().any(|notice| notice == line));
+    }
+
+    #[test]
+    fn reports_the_same_errors_as_validate() {
+        let broken = "version: 2\ntargets:\n  android:\n    build: flutter build apk\nsteps:\n  - name: Test\n    run: echo ${{ vars.MISSING }}\n";
+        let expected = parse_repository_config(broken).unwrap_err();
+        let response = plan_request(yaml_request(broken)).unwrap();
+        assert!(!response.valid);
+        assert!(response.plan.is_none());
+        assert_eq!(response.errors, error_lines(&expected));
+        assert!(
+            response.errors.iter().any(|e| e.contains("vars.MISSING")),
+            "{:?}",
+            response.errors
+        );
+
+        let mut request = yaml_request(V2);
+        request.workflow = Some("missing".to_string());
+        let response = plan_request(request).unwrap();
+        assert!(!response.valid);
+        assert_eq!(response.version, Some(2));
+        assert!(!response.errors.is_empty());
+    }
+
+    #[test]
+    fn plans_form_settings_and_rejects_bad_requests() {
+        let config: PipelineExecutionConfig = serde_json::from_value(serde_json::json!({
+            "platforms": ["android"],
+            "commands": { "pre_build": [], "build": [], "post_build": ["echo ok"] },
+            "env": [{ "key": "TOKEN", "value": "hunter2" }],
+        }))
+        .unwrap();
+        let response = plan_request(PlanPipelineRequest {
+            repository_yaml: None,
+            execution_config: Some(config.clone()),
+            workflow: None,
+            platforms: None,
+            build_play_bundle: Some(true),
+        })
+        .unwrap();
+        assert!(response.valid, "{:?}", response.errors);
+        let plan = response.plan.unwrap();
+        assert!(plan.steps.iter().any(|step| step.run.contains("appbundle")));
+        assert_eq!(plan.steps.last().unwrap().phase, StepPhase::PostBuild);
+        // Generated steps say so; the user's commands keep their own index.
+        assert_eq!(plan.steps[0].source, "default");
+        assert_eq!(plan.steps.last().unwrap().source, "commands.post_build[0]");
+        assert!(!serde_json::to_string(&plan).unwrap().contains("hunter2"));
+
+        let both = PlanPipelineRequest {
+            repository_yaml: Some(V1.to_string()),
+            execution_config: Some(config),
+            workflow: None,
+            platforms: None,
+            build_play_bundle: None,
+        };
+        assert_eq!(plan_request(both).unwrap_err().0, StatusCode::BAD_REQUEST);
+        let large = "#".repeat(MAX_PLAN_REPOSITORY_YAML_BYTES + 1);
+        assert_eq!(
+            plan_request(yaml_request(&large)).unwrap_err().0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    use oore_contract::StepPhase;
+
+    fn request(json: serde_json::Value) -> ExportPipelineYamlRequest {
+        serde_json::from_value(json).unwrap()
+    }
+
+    fn form_request() -> ExportPipelineYamlRequest {
+        request(serde_json::json!({
+            "execution_config": {
+                "platforms": ["android", "ios"],
+                "flutter_version": "3.24.5",
+                "commands": {
+                    "pre_build": ["dart run build_runner build"],
+                    "build": ["./scripts/upload-symbols.sh"],
+                    "post_build": ["flutter test --dart-define=DSN=${{ secrets.SENTRY_DSN }}"],
+                },
+                "platform_build_args": { "android": ["--split-per-abi"], "ios": [], "macos": [] },
+                "platform_commands": {},
+                "env": [
+                    { "key": "API_URL", "value": "https://staging.example.com" },
+                    { "key": "SIGNING_TOKEN", "value": "${{ secrets.SIGNING_TOKEN }}" },
+                ],
+                "artifact_patterns": ["build/app/outputs/flutter-apk/*.apk", "build/ios/ipa/*.ipa"],
+                "build_number_offset": 7,
+                "runs_on": ["xcode-16"],
+            },
+            "trigger_config": {
+                "events": ["push", "tag_push"],
+                "branches": ["main"],
+                "tags": ["v*"],
+                "schedules": [{ "cron": "@daily" }],
+            },
+            "google_play": {
+                "enabled": true,
+                "service_account_secret": "PLAY_SERVICE_ACCOUNT_JSON",
+                "package_name": "com.example.shop",
+                "track": "beta",
+                "rollout_percent": 25.0,
+                "draft": false,
+            },
+            "app_store": {
+                "enabled": true,
+                "destination": "testflight",
+                "testflight_groups": ["Internal QA"],
+                "release_notes": [{ "locale": "en-US", "whats_new": "Private notes" }],
+            },
+        }))
+    }
+
+    /// The plan of the generated file, through the plan endpoint.
+    fn plan_yaml(yaml: &str) -> PlanPipelineResponse {
+        plan_request(PlanPipelineRequest {
+            repository_yaml: Some(yaml.to_string()),
+            execution_config: None,
+            workflow: None,
+            platforms: None,
+            build_play_bundle: None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn the_generated_file_plans_like_the_form() {
+        let req = form_request();
+        let response = export_yaml_request(&req);
+        assert!(response.valid, "{:?}", response.errors);
+        let yaml = response.yaml.unwrap();
+
+        let form = plan_request(PlanPipelineRequest {
+            repository_yaml: None,
+            execution_config: Some(req.execution_config),
+            workflow: None,
+            platforms: None,
+            build_play_bundle: Some(true),
+        })
+        .unwrap()
+        .plan
+        .unwrap();
+        let file = plan_yaml(&yaml);
+        assert!(file.valid, "{:?}\n{yaml}", file.errors);
+        assert_eq!(file.version, Some(2));
+        let file = file.plan.unwrap();
+
+        // Same commands in the same order. The Play bundle joins the Android
+        // build, and the Build commands run right after the target builds.
+        let runs = |plan: &PipelinePlanPreview| -> Vec<(String, Option<BuildPlatform>)> {
+            plan.steps
+                .iter()
+                .map(|step| (step.run.clone(), step.platform.clone()))
+                .collect()
+        };
+        let mut expected = runs(&form);
+        let bundle = expected.remove(3);
+        expected[2].0 = format!("{} && {}", expected[2].0, bundle.0);
+        assert_eq!(runs(&file), expected);
+        let phases: Vec<StepPhase> = file.steps.iter().map(|step| step.phase).collect();
+        assert_eq!(
+            phases,
+            [
+                StepPhase::PreBuild,
+                StepPhase::PreBuild,
+                StepPhase::Build,
+                StepPhase::Build,
+                StepPhase::PostBuild,
+                StepPhase::PostBuild,
+            ]
+        );
+        assert_eq!(file.env_keys, form.env_keys);
+        assert_eq!(file.platforms, form.platforms);
+        assert_eq!(file.flutter_version, form.flutter_version);
+        assert_eq!(file.artifact_patterns, form.artifact_patterns);
+        assert_eq!(file.build_number_offset, 7);
+        assert_eq!(file.runs_on, form.runs_on);
+        assert_eq!(file.isolation, form.isolation);
+    }
+
+    #[test]
+    fn secret_values_and_credentials_stay_out_of_the_file() {
+        let response = export_yaml_request(&form_request());
+        let yaml = response.yaml.unwrap();
+        for leaked in [
+            "PLAY_SERVICE_ACCOUNT_JSON",
+            "com.example.shop",
+            "Private notes",
+        ] {
+            assert!(!yaml.contains(leaked), "{leaked} in\n{yaml}");
+        }
+        assert!(
+            yaml.contains("SIGNING_TOKEN: ${{ secrets.SIGNING_TOKEN }}"),
+            "{yaml}"
+        );
+        assert!(yaml.contains("${{ secrets.SENTRY_DSN }}"), "{yaml}");
+    }
+
+    #[test]
+    fn triggers_and_publish_map_onto_on_and_publish() {
+        let response = export_yaml_request(&form_request());
+        let yaml = response.yaml.unwrap();
+        let config = parse_repository_config(&yaml).unwrap();
+        let on = config.triggers(None).unwrap();
+        use oore_contract::pipeline_config::TriggerEvent;
+        assert!(on.matches_ref(TriggerEvent::Push { branch: "main" }));
+        assert!(!on.matches_ref(TriggerEvent::Push { branch: "dev" }));
+        assert!(on.matches_ref(TriggerEvent::Tag { tag: "v1.2.0" }));
+        assert!(!on.matches_ref(TriggerEvent::PullRequest {
+            target_branch: Some("main")
+        }));
+        // Schedules stay with the pipeline.
+        assert!(
+            response.notes.iter().any(|note| note.contains("Schedules")),
+            "{:?}",
+            response.notes
+        );
+
+        let plan = config.plan(oore_contract::PlanRequest::default()).unwrap();
+        let play = plan.publish.play.unwrap();
+        assert_eq!(play.spec.track, "beta");
+        assert_eq!(play.spec.rollout, Some(0.25));
+        assert_eq!(play.spec.draft, Some(false));
+        assert!(play.error.is_none());
+        assert_eq!(plan.publish.testflight.unwrap().spec.group, "Internal QA");
+
+        // Without the publish settings the file publishes nothing and the
+        // Android build makes no bundle.
+        let mut req = form_request();
+        req.google_play = None;
+        req.app_store = None;
+        let yaml = export_yaml_request(&req).yaml.unwrap();
+        assert!(!yaml.contains("publish:"), "{yaml}");
+        assert!(!yaml.contains("appbundle"), "{yaml}");
+    }
+
+    #[test]
+    fn invalid_settings_return_the_validation_errors() {
+        let mut req = form_request();
+        req.execution_config.platforms.clear();
+        req.trigger_config.as_mut().unwrap().events = vec!["release".to_string()];
+        let response = export_yaml_request(&req);
+        assert!(!response.valid);
+        assert!(response.yaml.is_none());
+        assert!(
+            response
+                .errors
+                .iter()
+                .any(|error| error.contains("at least one platform")),
+            "{:?}",
+            response.errors
+        );
+        assert!(
+            response
+                .errors
+                .iter()
+                .any(|error| error.contains("Invalid event")),
+            "{:?}",
+            response.errors
+        );
+
+        // Publish settings get their own endpoints' checks.
+        let mut req = form_request();
+        req.google_play.as_mut().unwrap().track = "no spaces allowed".to_string();
+        req.app_store.as_mut().unwrap().testflight_groups.clear();
+        let response = export_yaml_request(&req);
+        assert!(!response.valid);
+        assert!(
+            response
+                .errors
+                .iter()
+                .any(|error| error.starts_with("google_play: track")),
+            "{:?}",
+            response.errors
+        );
+        assert!(
+            response
+                .errors
+                .iter()
+                .any(|error| error.starts_with("app_store: TestFlight publishing needs")),
+            "{:?}",
+            response.errors
+        );
+    }
+
+    fn import_request(yaml: &str, from: &ExportPipelineYamlRequest) -> ImportPipelineYamlRequest {
+        ImportPipelineYamlRequest {
+            yaml: yaml.to_string(),
+            execution_config: Some(from.execution_config.clone()),
+            trigger_config: from.trigger_config.clone(),
+            google_play: from.google_play.clone(),
+            app_store: from.app_store.clone(),
+        }
+    }
+
+    #[test]
+    fn the_exported_file_imports_back_to_the_settings() {
+        let req = form_request();
+        let yaml = export_yaml_request(&req).yaml.unwrap();
+        let response = import_yaml_request(&import_request(&yaml, &req));
+        assert!(
+            response.valid && response.representable,
+            "{:?}",
+            response.unsupported
+        );
+        assert!(response.errors.is_empty() && response.unsupported.is_empty());
+        assert_eq!(
+            serde_json::to_value(response.execution_config.as_ref().unwrap()).unwrap(),
+            serde_json::to_value(&req.execution_config).unwrap()
+        );
+        // `on` maps back, and the schedule stays with the pipeline.
+        let triggers = response.trigger_config.clone().unwrap();
+        assert_eq!(triggers.events, ["push", "tag_push"]);
+        assert_eq!(triggers.schedules.len(), 1);
+        assert_eq!(
+            response.google_play,
+            Some(ImportedPlayPublish {
+                track: "beta".to_string(),
+                rollout_percent: Some(25.0),
+                draft: Some(false),
+            })
+        );
+        assert_eq!(response.testflight_group.as_deref(), Some("Internal QA"));
+
+        // Exported again from what came back, the file is the same.
+        let again = export_yaml_request(&ExportPipelineYamlRequest {
+            execution_config: response.execution_config.unwrap(),
+            trigger_config: response.trigger_config,
+            google_play: req.google_play,
+            app_store: req.app_store,
+        });
+        assert_eq!(again.yaml.as_deref(), Some(yaml.as_str()));
+    }
+
+    #[test]
+    fn import_keeps_secret_references_and_returns_no_credentials() {
+        let req = form_request();
+        let yaml = export_yaml_request(&req).yaml.unwrap();
+        let response = import_yaml_request(&import_request(&yaml, &req));
+        let body = serde_json::to_string(&response).unwrap();
+        assert!(body.contains("${{ secrets.SIGNING_TOKEN }}"), "{body}");
+        assert!(body.contains("${{ secrets.SENTRY_DSN }}"), "{body}");
+        for private in [
+            "PLAY_SERVICE_ACCOUNT_JSON",
+            "com.example.shop",
+            "Private notes",
+        ] {
+            assert!(!body.contains(private), "{private} in {body}");
+        }
+    }
+
+    #[test]
+    fn import_reports_errors_and_what_the_form_cannot_hold() {
+        let req = form_request();
+        let invalid = import_yaml_request(&import_request(
+            "version: 2
+targets: [",
+            &req,
+        ));
+        assert!(!invalid.valid && !invalid.representable);
+        assert!(!invalid.errors.is_empty());
+        assert!(invalid.execution_config.is_none());
+
+        let workflows = "version: 2\ntargets:\n  android:\n    build: flutter build apk --release\nsteps:\n  - name: Get packages\n    run: flutter pub get\n  - build\nworkflows:\n  release: {}\n  adhoc: {}\n";
+        let response = import_yaml_request(&import_request(workflows, &req));
+        assert!(response.valid, "{:?}", response.errors);
+        assert!(!response.representable);
+        assert!(response.execution_config.is_none());
+        assert!(
+            response.unsupported[0].starts_with("workflows (release, adhoc)"),
+            "{:?}",
+            response.unsupported
+        );
+
+        // A changed publish target belongs to the Publish settings.
+        let yaml = export_yaml_request(&req)
+            .yaml
+            .unwrap()
+            .replace("track: beta", "track: production");
+        let response = import_yaml_request(&import_request(&yaml, &req));
+        assert!(response.valid && !response.representable);
+        assert_eq!(response.google_play.unwrap().track, "production");
+        assert!(
+            response.unsupported[0].starts_with("publish.play"),
+            "{:?}",
+            response.unsupported
+        );
+    }
+}
+
+#[cfg(test)]
+mod size_budget_tests {
+    use super::*;
+
+    fn budget(raw: &str) -> SizeBudget {
+        serde_json::from_str(raw).unwrap()
+    }
+
+    #[test]
+    fn an_update_without_a_size_budget_keeps_the_current_one() {
+        let current = budget(r#"{"mode":"fail","rules":[{"kind":"aab","max_bytes":10}]}"#);
+        for raw in [r#"{"size_budget":null}"#, "{}"] {
+            let req: UpdatePipelineRequest = serde_json::from_str(raw).unwrap();
+            assert_eq!(
+                updated_size_budget(current.clone(), req.size_budget).unwrap(),
+                current,
+                "{raw}"
+            );
+        }
+
+        let req: UpdatePipelineRequest =
+            serde_json::from_str(r#"{"size_budget":{"rules":[]}}"#).unwrap();
+        assert_eq!(
+            updated_size_budget(current.clone(), req.size_budget).unwrap(),
+            SizeBudget::default()
+        );
+        let req: UpdatePipelineRequest =
+            serde_json::from_str(r#"{"size_budget":{"rules":[{"kind":"apk"}]}}"#).unwrap();
+        let (status, body) = updated_size_budget(current, req.size_budget).unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body.0.error.contains("'apk' needs a limit"),
+            "{}",
+            body.0.error
+        );
+    }
+
+    #[test]
+    fn validate_reports_size_budget_errors() {
+        let req: ValidatePipelineRequest = serde_json::from_str(
+            r#"{"size_budget":{"mode":"fail","rules":[{"kind":"aab","max_bytes":0}]}}"#,
+        )
+        .unwrap();
+        let response = validate_request(&req);
+        assert!(!response.valid);
+        assert_eq!(
+            response.errors,
+            ["size_budget max_bytes for 'aab' must be greater than 0"]
+        );
+
+        let req: ValidatePipelineRequest = serde_json::from_str(
+            r#"{"size_budget":{"mode":"fail","rules":[{"kind":"aab","max_bytes":1}]}}"#,
+        )
+        .unwrap();
+        assert!(validate_request(&req).valid);
+    }
+}
+
+#[cfg(test)]
+mod workflow_tests {
+    use super::*;
+
+    #[test]
+    fn a_workflow_must_be_defined_by_a_version_2_file() {
+        let v2 = parse_repository_config(
+            "version: 2\ntargets:\n  android:\n    build: flutter build apk\nworkflows:\n  adhoc: {}\n  release: {}\n",
+        )
+        .unwrap();
+        assert_eq!(workflow_error(".oore.yaml", &v2, "release"), None);
+        assert_eq!(
+            workflow_error(".oore.yaml", &v2, "nightly").as_deref(),
+            Some("workflow 'nightly' is not defined; .oore.yaml defines [adhoc, release]")
+        );
+        let none = parse_repository_config(
+            "version: 2\ntargets:\n  android:\n    build: flutter build apk\n",
+        )
+        .unwrap();
+        assert_eq!(
+            workflow_error(".oore.yaml", &none, "adhoc").as_deref(),
+            Some("workflow 'adhoc' is not defined; .oore.yaml defines no workflows")
+        );
+        let v1 = parse_repository_config("version: 1\nplatforms: [android]\n").unwrap();
+        assert_eq!(
+            workflow_error(".oore.yml", &v1, "adhoc").as_deref(),
+            Some(".oore.yml is a version 1 file; workflows need `version: 2`")
+        );
+        assert_eq!(normalize_workflow_name(" release ").unwrap(), "release");
+        assert!(normalize_workflow_name("bad name").is_err());
+        assert!(normalize_workflow_name("").is_err());
+    }
 }
 
 #[cfg(test)]
@@ -1355,9 +2534,25 @@ mod delete_tests {
             .await
             .unwrap();
 
-        let paths = delete_pipeline_rows(&pool, "pl1").await.unwrap();
+        sqlx::query(
+            "INSERT INTO build_feedback (id, build_id, author_user_id, author_email, message, \
+             screenshot_key, created_at) \
+             VALUES ('f1', 'b1', 'qa', 'qa@example.com', 'hi', 'feedback/p1/b1/f1.png', 0), \
+                    ('f2', 'b1', 'qa', 'qa@example.com', 'no shot', NULL, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
-        assert_eq!(paths, ["artifacts/b1/app.aab"]);
+        let files = delete_pipeline_rows(&pool, "pl1").await.unwrap();
+
+        assert_eq!(files.artifact_paths, ["artifacts/b1/app.aab"]);
+        assert_eq!(files.screenshot_keys, ["feedback/p1/b1/f1.png"]);
+        let feedback: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM build_feedback")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(feedback, 0);
         let pipelines: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pipelines")
             .fetch_one(&pool)
             .await

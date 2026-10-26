@@ -22,6 +22,7 @@ import {
   ItemTitle,
 } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Text } from '@/components/layout/text'
 
 /** The secret name new Google Play publish settings pick by default. */
 export const PLAY_SERVICE_ACCOUNT_SECRET = 'PLAY_SERVICE_ACCOUNT'
@@ -86,7 +87,7 @@ export function GooglePlayServiceAccountPanel({
           </Item>
         </SettingsSurface>
       )}
-      <p className="text-xs text-muted-foreground">
+      <Text variant="caption">
         Stored with the other{' '}
         <Link to="/settings/secrets" className="underline underline-offset-4">
           instance secrets
@@ -100,7 +101,7 @@ export function GooglePlayServiceAccountPanel({
         >
           Learn more
         </a>
-      </p>
+      </Text>
       <SecretValueDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}

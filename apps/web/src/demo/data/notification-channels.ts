@@ -2,6 +2,7 @@ import {
   BUILD_IDS,
   DEMO_USER_ID,
   NOTIFICATION_CHANNEL_IDS,
+  PROJECT_IDS,
   USER_IDS,
   ago,
 } from '../seed'
@@ -19,6 +20,7 @@ export const demoNotificationChannels: Array<NotificationChannel> = [
     has_secret: true,
     has_smtp_config: false,
     url_host: 'hooks.acme-corp.dev',
+    slack_mentions: [],
     created_by: DEMO_USER_ID,
     created_at: ago(86400 * 14),
     updated_at: ago(86400 * 2),
@@ -33,6 +35,7 @@ export const demoNotificationChannels: Array<NotificationChannel> = [
     has_secret: false,
     has_smtp_config: false,
     url_host: 'chat.acme-corp.dev',
+    slack_mentions: [],
     created_by: USER_IDS.admin,
     created_at: ago(86400 * 7),
     updated_at: ago(86400 * 7),
@@ -46,6 +49,7 @@ export const demoNotificationChannels: Array<NotificationChannel> = [
     has_url: false,
     has_secret: false,
     has_smtp_config: true,
+    slack_mentions: [],
     smtp_summary: {
       host: 'smtp.acme-corp.dev',
       port: 587,
@@ -57,6 +61,25 @@ export const demoNotificationChannels: Array<NotificationChannel> = [
     created_by: DEMO_USER_ID,
     created_at: ago(86400 * 3),
     updated_at: ago(86400 * 3),
+  },
+  {
+    id: NOTIFICATION_CHANNEL_IDS.slack,
+    name: 'FlutterShop Slack',
+    channel_type: 'slack',
+    enabled: true,
+    events: ['failed', 'rollout_halted', 'release_approval_needed'],
+    project_id: PROJECT_IDS.flutterShop,
+    has_url: true,
+    has_secret: false,
+    has_smtp_config: false,
+    url_host: 'hooks.slack.com',
+    slack_mentions: [
+      { identity: 'demo+owner@oore.build', member_id: 'U04OWNER01' },
+      { identity: 'octocat', member_id: 'U04OCTOCAT' },
+    ],
+    created_by: DEMO_USER_ID,
+    created_at: ago(86400 * 5),
+    updated_at: ago(86400 * 1),
   },
 ]
 

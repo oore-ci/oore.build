@@ -1,32 +1,212 @@
 ---
 title: 'Upgrade Oore'
 status: implemented
-description: 'Update a profile in place, or preserve data when you change its release stream.'
+description: 'Update an installation in place, switch its release channel, or move to another release stream without losing data.'
 ---
 
-For a Ready Complete or Control plane installation, update the current release stream in place:
+Move an Oore installation to a newer release. Most upgrades are one command
+on the backend Mac. Use the longer procedures below only to change the release
+channel, to move to an older release or another profile, or to leave
+v0.1.41.
+
+Every option of the update commands is in the
+[`oore update` reference](/reference/cli/oore-update).
+
+## What you need
+
+- Terminal access to the backend Mac, and to the Web node if it runs on
+  another host.
+- A record of the installation's profile, release channel, install root, and
+  release repository. The procedures below reuse them.
+- Administrator access on the Mac. The update restarts launchd services.
+- The target release's notes.
+- Free disk space for the download and the rollback files.
+
+## Update in place
+
+For a Ready Complete or Control plane installation, stay on the current
+channel and update in place:
+
+1. Check for a release:
+
+   ```bash
+   oore update --check
+   ```
+
+   The check verifies the signed channel index and checksum manifest. It does
+   not download or run the release.
+
+2. Update:
+
+   ```bash
+   oore update
+   ```
+
+   Oore drains active runner work, creates a backup, restarts the managed
+   services, and verifies the new release. If verification fails, it restores
+   the previous release.
+
+3. On a separate Web node, run `oore-web update`. For a Web node on Linux, see
+   [Update the Web node](/operate/deploy/linux-web-node#update-the-web-node).
+
+You can also update from the web UI. When a release is available, the sidebar
+shows **Updates available**, which opens **Update Oore**.
+
+## Switch the release channel
+
+To move a Ready Complete or Control plane installation to another channel in
+place, name the channel and confirm the switch:
 
 ```bash
-oore update --check
-oore update
+oore update --check --channel alpha
+oore update --channel alpha --switch-channel
 ```
 
-Oore drains active runner work, creates a backup, restarts managed services, and verifies the new release. It restores the prior release when verification fails.
+On a separate Web node, run `oore-web update --channel alpha --switch-channel`
+so that both halves follow the same channel. Later updates, including those
+from the web UI, stay on the new channel.
 
-Use `oore-web update` on a separate Web node.
+A switch never downgrades. If the target channel's latest release is older
+than the installed version, the update stops without changes. See
+[Choose a release channel](/operate/releases#change-the-update-stream).
 
-See the [`oore update` reference](/reference/cli/oore-update) for every option, release mirrors, and the next step for other roles.
+## Move to an older release or another profile [#preserve-data]
 
-## When an in-place update fails
+`oore update` never downgrades, and `oore install` does not replace live
+profile components across release streams. To move to an older release, keep
+the data and reinstall the same profile from the target stream. This procedure
+covers macOS release installations only. For a source-built installation, use
+its own deployment procedure.
 
-`oore update` prints why the new release was rejected, then restores the previous release. If `oore status` still reports a refused connection afterwards, check the daemon service and its binary:
+1. For a Complete or Control plane installation, create a
+   [verified backup](/operate/maintain/backups/create).
+
+2. Check the target channel:
+
+   ```bash
+   oore update --check --channel beta
+   ```
+
+3. Remove the current components. Do not add `--purge`. A normal uninstall
+   keeps the database, configuration, logs, and runner registration.
+
+   ```bash
+   oore uninstall
+   ```
+
+4. Install the bootstrap CLI for the target stream, with the same install root
+   and release repository as before. For the default stable installation, run:
+
+   ```bash
+   curl -fsSL https://oore.build/install | bash
+   ```
+
+   For a custom installation, pass its recorded values:
+
+   ```bash
+   oore_install_root=/Users/example/.oore-beta
+   oore_channel=beta
+   oore_repository=oore-ci/oore.build
+
+   curl -fsSL https://oore.build/install | \
+     env OORE_CHANNEL="$oore_channel" \
+         OORE_INSTALL_ROOT="$oore_install_root" \
+         OORE_GITHUB_REPO="$oore_repository" \
+     bash
+   ```
+
+   The bootstrap verifies the signed release metadata and the new CLI's
+   SHA-256 checksum. If publication fails, it restores the previous files.
+
+5. Install the profile that the installation already records. Replace the
+   path and `complete` with your recorded values. Valid profiles are
+   `complete`, `control-plane`, `runner`, `web-node`, and `cli-only`.
+
+   ```bash
+   /Users/example/.oore-beta/bin/oore install --profile complete
+   ```
+
+   An interactive install continues through setup and service repair. After a
+   non-interactive install, run setup with the existing values. A CLI only
+   profile does not need `sudo -v`.
+
+   ```bash
+   chmod 600 ./oore-setup.yaml
+   sudo -v
+   /Users/example/.oore-beta/bin/oore setup --config ./oore-setup.yaml
+   ```
+
+To change the profile itself, follow the same steps and select the new profile
+in step 5.
+
+## Upgrade from v0.1.41
+
+v0.1.42 replaced install modes with profiles. Leave v0.1.41 with the bootstrap,
+which removes the old payload and keeps your data.
+
+1. Record the topology. Map the old mode to a new profile:
+
+   | v0.1.41 mode | v0.1.42 profile |
+   | ------------ | --------------- |
+   | `all`        | `complete`      |
+   | `frontend`   | `web-node`      |
+
+   The old `backend` mode included both a control plane and a runner, and
+   v0.1.42 has no identical profile. Decide which roles that Mac keeps before
+   you start. Do not guess.
+
+2. Start the v0.1.42 bootstrap with the same install root, channel, and
+   repository. It detects an exact v0.1.41 installation, downloads and
+   verifies the v0.1.42 candidate, and shows a removal plan that keeps your
+   data.
+
+3. Approve `oore uninstall --legacy-v0-1-41` when the bootstrap offers it.
+   Oore verifies the old payload and services before it removes anything, and
+   asks for administrator access for protected launchd definitions. The
+   database, configuration, logs, and runner registration stay.
+
+4. Run `oore install` and select the profile from step 1.
+
+For a non-interactive bootstrap, run `sudo -v` first, then set
+`OORE_LEGACY_UPGRADE=true` to approve the displayed plan. Do not use
+`--purge`. The legacy path rejects it.
+
+## Verify the result
+
+1. Check the version. Replace the path with your install root:
+
+   ```bash
+   /Users/example/.oore-beta/bin/oore version
+   ```
+
+   The version matches the target release.
+
+2. For a procedure that ran setup, confirm that it ended with
+   `<Profile> setup is ready.` Oore prints this only after it verifies the
+   services.
+
+3. Run `oore status`. For a remote role, add `--daemon-url <URL>`.
+
+4. For a Runner or Complete profile, run a small build from an approved
+   repository.
+
+## Troubleshooting
+
+### An in-place update fails [#when-an-in-place-update-fails]
+
+`oore update` prints why it rejected the new release, then restores the
+previous one. If `oore status` still reports a refused connection afterwards,
+check the daemon service and its binary:
 
 ```bash
 sudo launchctl print system/build.oore.oored | grep -E 'state|last exit'
 ls -l ~/.oore/bin/oored
 ```
 
-A `last exit code = 78` together with a missing `bin/oored` means launchd has nothing to start. Download the `oore_<version>_darwin_<arch>.tar.gz` archive for the version `oore version` reports, verify it against the release's signed checksums, and put the daemon back:
+A `last exit code = 78` together with a missing `bin/oored` means launchd has
+nothing to start. Download the `oore_<version>_darwin_<arch>.tar.gz` archive
+for the version that `oore version` reports, verify it against the release's
+signed checksums, and put the daemon back:
 
 ```bash
 tar -xzf oore_<version>_darwin_<arch>.tar.gz
@@ -35,180 +215,50 @@ sudo launchctl kickstart -k system/build.oore.oored
 oore status
 ```
 
-This touches only the daemon binary. The database, configuration, and runner registration stay as they were.
+This touches only the daemon binary. The database, configuration, and runner
+registration stay as they were.
 
-## When a web UI update is interrupted
+### The web UI stays down after an update from the web UI [#when-a-web-ui-update-is-interrupted]
 
-An update started from the web UI moves `bin/oored` aside while it backs up the database. If the Mac restarts or the update supervisor is killed during that window, launchd has no daemon to start and the web UI stays down.
+An update started from the web UI moves `bin/oored` aside while it backs up the
+database. If the Mac restarts or the update supervisor is killed during that
+window, launchd has no daemon to start.
 
-Run any lifecycle command from Terminal on the backend Mac to recover, for example:
+Run any lifecycle command from Terminal on the backend Mac, for example:
 
 ```bash
 oore doctor --update
 ```
 
-Oore puts the held daemon back, restores the previous CLI when the update had already replaced it, marks the update as failed, and restarts the daemon. If the restart needs administrator access that `oore setup` did not grant, Oore prints the `sudo launchctl kickstart` command to run. `oore update` and the next web UI update run the same recovery first.
-
-If the update was interrupted while it rolled back a failed release, Oore restores the new daemon so that the service can start, and keeps the previous release in the `.supervised-update-*` directory it names. Check `logs/update-supervisor.log` before you try again.
-
-When Oore cannot ask launchd whether the update supervisor still runs, the web UI marks an update with no progress for 45 minutes as failed, so you can start a new attempt.
-
-## Switch the release channel
-
-To move a Ready Complete or Control plane installation to another channel in place, name the channel and confirm the switch:
-
-```bash
-oore update --check --channel alpha
-oore update --channel alpha --switch-channel
-```
-
-On a separate Web node, run `oore-web update --channel alpha --switch-channel` so that both halves follow the same channel. Later updates, including those from the web UI, stay on the new channel.
-
-A switch never downgrades. If the target channel's latest release is older than the installed version, the update stops without changes. See [Choose a release channel](/operate/releases#change-the-update-stream).
-
-`oore install` does not replace live profile components across release streams. Use the preserve-data procedure below to move to an older release or to change the profile.
-
-This guided update procedure supports macOS only. To update a Web node that runs on Linux, see [Run a Web node on Linux](/operate/deploy/linux-web-node#update-the-web-node).
-
-## Upgrade from v0.1.41
-
-Start the v0.1.42 bootstrap with the same install root, channel, and repository.
-
-The bootstrap detects an exact v0.1.41 installation before it publishes the new CLI.
-
-It downloads and verifies the v0.1.42 candidate first. That candidate then shows a preserve-data removal plan.
-
-Approve `oore uninstall --legacy-v0-1-41` when the bootstrap offers it.
-
-Oore verifies the old payload and services before any removal. It requests administrator access for protected launchd definitions.
-
-The removal preserves the database, configuration, logs, and runner registration.
-
-The bootstrap then installs the v0.1.42 CLI. Run `oore install` and select the matching new profile.
-
-Use these mappings:
-
-| v0.1.41 mode | v0.1.42 profile |
-| ------------ | --------------- |
-| `all`        | `complete`      |
-| `frontend`   | `web-node`      |
-
-The old `backend` mode included both a control plane and a runner. v0.1.42 has no identical profile.
-
-Do not guess a replacement profile for `backend`. Record the required topology before this upgrade.
-
-For a non-interactive bootstrap, activate administrator access first with `sudo -v`.
-
-Then set `OORE_LEGACY_UPGRADE=true` to approve the displayed legacy plan.
-
-Do not use `--purge`. The legacy recovery path rejects it.
-
-## What you need
-
-- Record the existing profile, release channel, install root, and release repository.
-- For Complete or Control plane, create a [verified Oore backup](/operate/maintain/backups/create).
-- Read the target release notes.
-- Keep enough free space for downloads and rollback files.
-
-## 1. Check for a release
-
-```bash
-oore update --check
-```
-
-This command verifies the signed channel index and checksum manifest. It does not download or execute a release candidate.
-
-To inspect another channel, add `--channel stable`, `--channel beta`, or `--channel alpha`.
-
-## 2. Remove the current components
-
-Run the normal uninstall before you replace the bootstrap CLI:
-
-```bash
-oore uninstall
-```
-
-Do not add `--purge`. Normal uninstall preserves Oore data.
-
-## 3. Install the next bootstrap CLI
-
-Use the same channel, install root, and release repository as the current installation.
-
-For the default stable installation, run:
-
-```bash
-curl -fsSL https://oore.build/install | bash
-```
-
-For a custom installation, pass its recorded values:
-
-```bash
-oore_install_root=/Users/example/.oore-beta
-oore_channel=beta
-oore_repository=oore-ci/oore.build
-
-curl -fsSL https://oore.build/install | \
-  env OORE_CHANNEL="$oore_channel" \
-      OORE_INSTALL_ROOT="$oore_install_root" \
-      OORE_GITHUB_REPO="$oore_repository" \
-  bash
-```
-
-The bootstrap verifies signed release metadata, then verifies the new CLI with SHA-256.
-
-If publication fails, the bootstrap restores the prior files.
-
-## 4. Install the same profile
-
-Use the same profile that the installation already records:
-
-```bash
-/Users/example/.oore-beta/bin/oore install --profile complete
-```
-
-Valid profiles are `complete`, `control-plane`, `runner`, `web-node`, and `cli-only`.
-
-Replace the example path and `complete` with the recorded installation values.
-
-Do not select another profile during this release change.
-
-An interactive install continues through setup and service repair.
-
-After a non-interactive install, run setup with the existing values:
-
-```bash
-chmod 600 ./oore-setup.yaml
-sudo -v
-/Users/example/.oore-beta/bin/oore setup --config ./oore-setup.yaml
-```
-
-CLI only setup does not need `sudo -v`.
-
-## Verify the result
-
-```bash
-/Users/example/.oore-beta/bin/oore version
-```
-
-Replace the example path with the recorded install root. Verify that the version matches the target release.
-
-Setup must end with `<Profile> setup is ready.` Oore prints this message only after final service verification.
-
-Use `oore status` to inspect the connected control plane. For a remote role, pass `--daemon-url <URL>`.
-
-For a Runner or Complete profile, run a small build from an approved repository.
-
-## Failure behavior
-
-The bootstrap and component installer bind downloads to the signed release manifest before publication.
-
-If component publication fails, Oore restores the previous component files when safe.
-
-If installation fails after normal uninstall, the preserved Oore data remains. Correct the error, then repeat the bootstrap and profile installation.
-
-Do not use hidden staged-archive or supervisor options.
-
-For a source-built installation, use its deployment procedure. This release change flow covers release installations only.
+Oore puts the held daemon back, restores the previous CLI if the update had
+already replaced it, marks the update as failed, and restarts the daemon. If
+the restart needs administrator access that `oore setup` did not grant, Oore
+prints the `sudo launchctl kickstart` command to run. `oore update` and the
+next web UI update run the same recovery first.
+
+If the update was interrupted while it rolled back a failed release, Oore
+restores the new daemon so that the service can start, and keeps the previous
+release in the `.supervised-update-*` directory it names. Check
+`logs/update-supervisor.log` before you try again.
+
+### The web UI shows an update that never finishes
+
+When Oore cannot ask launchd whether the update supervisor still runs, the web
+UI marks an update with no progress for 45 minutes as failed. Start a new
+attempt after that.
+
+### Installation fails after `oore uninstall`
+
+The preserved data stays in place. The bootstrap and installer tie every
+download to the signed release manifest and restore the previous component
+files when it is safe. Fix the reported error, then repeat the bootstrap and
+the profile installation. Do not use hidden staged-archive or supervisor
+options.
+
+### The update says the channel's release is older
+
+A channel switch never downgrades. To move to an older release, follow
+[Move to an older release or another profile](#preserve-data).
 
 ## Next step
 

@@ -33,6 +33,9 @@ import {
   SettingsSection,
   SettingsSurface,
 } from '@/components/settings/settings-section'
+import { Text } from '@/components/layout/text'
+import { stackVariants, textVariants } from '@/lib/recipes'
+import { cn } from '@/lib/utils'
 
 function EndpointRow({ label, value }: { label: string; value: string }) {
   return (
@@ -136,7 +139,13 @@ function GitHubSetupPage() {
         }
       >
         <SettingsSurface>
-          <ul className="flex list-disc flex-col gap-1.5 pl-5 text-sm text-muted-foreground">
+          <ul
+            className={cn(
+              textVariants({ variant: 'muted' }),
+              stackVariants({ gap: 1.5 }),
+              'list-disc pl-5',
+            )}
+          >
             <li>
               Repository contents, metadata, and pull requests are read-only.
             </li>
@@ -159,10 +168,10 @@ function GitHubSetupPage() {
             <EndpointRow label="Redirect URL" value={redirectUrl} />
           </ItemGroup>
         </SettingsSurface>
-        <p className="text-xs text-muted-foreground">
+        <Text variant="caption">
           Filled into the app manifest for you. Copy them only if you register
           the app by hand.
-        </p>
+        </Text>
       </SettingsSection>
     </PageLayout>
   )

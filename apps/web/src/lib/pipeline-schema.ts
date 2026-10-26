@@ -43,11 +43,65 @@ export const scheduleSchema = z.object({
   branch: z.string().optional(),
 })
 
+export const SIZE_BUDGET_MODES = ['warn', 'fail'] as const
+export const MAX_SIZE_BUDGET_RULES = 20
+
+const SIZE_BUDGET_KIND = /^[a-z0-9]{1,16}$/
+
+/** 1 TB: far above any app, and well inside a safe integer of bytes. */
+export const MAX_SIZE_BUDGET_MB = 1_048_576
+export const MAX_SIZE_BUDGET_PERCENT = 100_000
+const MEBIBYTE = 1024 * 1024
+
+/** Empty, or a number that passes `valid`. */
+function optionalAmount(valid: (amount: number) => boolean, message: string) {
+  return z
+    .string()
+    .optional()
+    .refine((value) => {
+      const trimmed = value?.trim()
+      if (!trimmed) return true
+      const amount = Number(trimmed)
+      return Number.isFinite(amount) && valid(amount)
+    }, message)
+}
+
+/** One size budget rule. Sizes are in MB (1,048,576 bytes), as Oore shows them. */
+export const sizeBudgetRuleSchema = z
+  .object({
+    kind: z
+      .string()
+      .trim()
+      .regex(SIZE_BUDGET_KIND, 'Use a lowercase file extension, such as aab'),
+    // The server stores bytes, so a size must round to at least one byte.
+    max_mb: optionalAmount(
+      (mb) => Math.round(mb * MEBIBYTE) >= 1 && mb <= MAX_SIZE_BUDGET_MB,
+      `Must be more than 0 and at most ${MAX_SIZE_BUDGET_MB.toLocaleString('en-US')}`,
+    ),
+    max_increase_mb: optionalAmount(
+      (mb) => mb >= 0 && mb <= MAX_SIZE_BUDGET_MB,
+      `Must be 0 to ${MAX_SIZE_BUDGET_MB.toLocaleString('en-US')}`,
+    ),
+    max_increase_percent: optionalAmount(
+      (percent) => percent >= 0 && percent <= MAX_SIZE_BUDGET_PERCENT,
+      `Must be 0 to ${MAX_SIZE_BUDGET_PERCENT.toLocaleString('en-US')}`,
+    ),
+  })
+  .refine(
+    (rule) =>
+      [rule.max_mb, rule.max_increase_mb, rule.max_increase_percent].some(
+        (value) => value?.trim(),
+      ),
+    { message: 'Set at least one limit', path: ['max_mb'] },
+  )
+
 export const pipelineFormSchema = z
   .object({
     name: z.string().min(1, 'Name is required'),
     config_mode: z.enum(['auto', 'explicit']),
     config_path: z.string().optional(),
+    /** A `.oore.yaml` version 2 workflow; empty builds the file's default. */
+    workflow: z.string().optional(),
     platform_android: z.boolean(),
     platform_ios: z.boolean(),
     platform_macos: z.boolean(),
@@ -123,6 +177,10 @@ export const pipelineFormSchema = z
       .max(MAX_SCHEDULES, `At most ${MAX_SCHEDULES} schedules`),
     approval_required: z.boolean(),
     approval_events: z.array(z.string()),
+    size_budget_mode: z.enum(SIZE_BUDGET_MODES),
+    size_budget_rules: z
+      .array(sizeBudgetRuleSchema)
+      .max(MAX_SIZE_BUDGET_RULES, `At most ${MAX_SIZE_BUDGET_RULES} rules`),
     cancel_previous: z.boolean(),
     branches: z.string().optional(),
     max_concurrent: z
@@ -134,6 +192,18 @@ export const pipelineFormSchema = z
       ),
   })
   .superRefine((data, ctx) => {
+    const kinds = new Set<string>()
+    data.size_budget_rules.forEach((rule, index) => {
+      const kind = rule.kind.trim()
+      if (kinds.has(kind)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Another rule already covers this kind',
+          path: ['size_budget_rules', index, 'kind'],
+        })
+      }
+      kinds.add(kind)
+    })
     if (data.config_mode === 'explicit' && !data.config_path?.trim()) {
       ctx.addIssue({
         code: 'custom',

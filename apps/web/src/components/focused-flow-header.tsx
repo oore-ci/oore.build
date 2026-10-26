@@ -1,4 +1,4 @@
-/**
+import { Text } from '@/components/layout/text' /**
  * The header every focused flow (sign-in, setup, sign-in callback) opens with,
  * so moving between them never changes the page's anchor.
  */
@@ -15,9 +15,9 @@ export function FocusedFlowHeader({
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {description ? (
-          <p className="text-sm text-balance text-muted-foreground">
+          <Text variant="muted" className="text-balance">
             {description}
-          </p>
+          </Text>
         ) : null}
       </div>
     </header>

@@ -1,0 +1,82 @@
+---
+title: 'How Oore trusts Direct macOS runners'
+status: implemented
+description: 'Understand repository trust, runner placement, claim eligibility, and the limits of direct execution.'
+---
+
+A Direct macOS runner executes repositories that an owner or admin has chosen
+to trust. It is a compatibility-first build executor, not a sandbox for
+hostile repository code.
+
+## Source linking is the trust decision
+
+Creating a project or changing its linked source authorizes that repository's
+checkout, dependencies, and commands to run with the Direct runner account's
+permissions. Oore does not ask for a second per-repository execution approval.
+
+Verified GitHub and GitLab events can create work only for an immutable
+revision that belongs to the linked repository. External-fork and ambiguous
+revisions are ignored rather than executed automatically.
+
+## The runner is a separate process
+
+Complete profile setup enrolls a managed Direct macOS runner on the control-plane Mac.
+An operator can add a Runner profile on another Mac. In both placements:
+
+- `oored` remains the control-plane authority
+- the runner token identifies the runner
+- protocol compatibility and job assignment are checked before work is
+  returned
+- repository commands run with the runner's macOS account permissions
+
+The control plane returns the registration token once, and the CLI stores it in the
+runner configuration without displaying it. Protect that configuration.
+Embedded and hybrid execution are unavailable.
+
+## Eligibility is not another trust grant
+
+Before a runner claims queued work, the control plane checks that the instance is
+accepting new builds and the linked source remains available. The
+**Accept builds from approved repositories** control under **Settings > Runners** pauses or
+resumes new claims.
+
+Turning it off lets active work drain and leaves queued work waiting. It does
+not cancel active jobs, revoke a project's repository trust, or introduce a
+second approval list.
+
+## Each job stays bound to its source
+
+A claimed job carries the repository identity, pinned revision, selected
+pipeline information, and a scoped signing capability. The runner retrieves
+signing material through assignment-bound paths rather than placing those
+values in repository configuration.
+
+If an operator relinks the project, queued work for the previous repository is
+canceled. Already-active work keeps its build-bound identity instead of
+silently switching repositories.
+
+## Defense-in-depth has a limit
+
+Oore uses private workspaces, a job-bound checkout proxy for GitLab,
+managed-environment scrubbing, runner-owned signing, output verification, and
+cleanup to reduce accidental leakage. Those controls do not isolate malicious
+code already trusted to run under the same macOS account.
+
+A dedicated non-admin runner account reduces the host authority available to a
+build. Strong isolation for untrusted contributions requires disposable macOS
+virtual machines and is outside the supported V1 runner model.
+
+## What this means for you
+
+- Link only repositories that you trust under the Runner account.
+- Treat source relinking as a new execution trust decision.
+- Protect the runner token and the network path to a runner on another Mac.
+- Use the operational pause to drain work, not as a repository approval
+  mechanism.
+- Do not rely on Direct mode to contain hostile dependencies or build scripts.
+
+## Next step
+
+[Operate a Direct macOS runner](/operate/runners/direct). Use the generated
+[Runners API reference](/reference/api/categories/runners) for exact runner
+operations and payloads.

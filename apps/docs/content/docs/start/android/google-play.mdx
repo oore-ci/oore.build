@@ -1,0 +1,121 @@
+---
+title: 'Deliver to testers on Google Play'
+status: implemented
+description: 'Upload the first bundle by hand, connect a service account, and let Oore publish every release build to internal testing.'
+---
+
+On this page you put the signed App Bundle in front of testers through Google
+Play's internal testing track. You upload the first bundle by hand, because
+Google Play does not let the API create an app or its first release. After
+that, every build of the release pipeline uploads itself.
+
+The runner uploads from your Mac over outbound HTTPS, so this works in Local
+Only. Nothing needs to reach your Mac from the internet.
+
+## What you need
+
+- A signed `app-release.aab` from [Sign an Android release](/start/android/release).
+- A Google Play Console developer account.
+- Access to a Google Cloud project, to create a service account.
+- Instance owner or admin access in Oore, to store the service account key.
+
+## 1. Upload the first bundle by hand
+
+1. In [Play Console](https://play.google.com/console), create the app.
+2. Open the app's **Internal testing** track. Add your testers by email.
+3. Create a release on that track, upload the `app-release.aab` you
+   downloaded from Oore, and roll it out.
+
+When Play Console asks, let Google manage the app signing key. Your keystore
+stays the upload key, which Oore uses for every later bundle.
+
+## 2. Create a service account
+
+1. In the [Google Cloud console](https://console.cloud.google.com), turn on
+   the **Google Play Android Developer API** for your project.
+2. Create a service account, then add a key of type **JSON** and download it.
+3. In Play Console, open **Users and permissions** and invite the service
+   account's email address. Give it the release permissions for this app, and
+   **View app information** so Oore can show the app's crash and ANR rates.
+
+Google can take a few minutes to accept a newly invited service account.
+
+## 3. Store the key in Oore
+
+1. In Oore, open **Settings > Store credentials**.
+2. Under **Google Play service account**, select **Add service account**.
+3. Keep the name `PLAY_SERVICE_ACCOUNT`. Select **Load from file** and choose
+   the JSON key file.
+4. Select **Add secret**.
+
+Oore stores the key as an encrypted instance secret named
+`PLAY_SERVICE_ACCOUNT`. Nobody can read it back, and builds see it only as
+`***` in logs.
+
+## 4. Turn on publishing
+
+1. Open the `Release Android` pipeline and its **Publishing** tab.
+2. Under **Google Play**, turn on
+   **Upload to Google Play after each successful build**.
+3. For **Service account key**, choose `PLAY_SERVICE_ACCOUNT`.
+4. For **Track**, choose **Internal testing**.
+5. Under **Advanced**, enter the application ID in **Expected package**, such
+   as `com.example.app`.
+6. Select **Test credentials**. Oore shows **Google Play accepted the key**.
+7. Select **Turn on Google Play publishing**.
+
+The readiness list at the top of the section now shows every item as ready:
+release signing, the service account key, Google Play access, and the App
+Bundle build.
+
+## 5. Run a release build
+
+Select **Run build**, keep the `Release Android` pipeline and branch, and
+select **Run build** again.
+
+After the build, sign, and artifact steps, the runner adds a `publish-play`
+step. It checks that the new version code is higher than every version on the
+track, uploads the bundle, and rolls it out to internal testing.
+
+## Check the result
+
+- The build ends as **Succeeded**, with a succeeded `publish-play` step whose
+  log names the `internal` track.
+- Play Console shows the new version on **Internal testing**.
+- A tester opens the internal testing link from Play Console on an Android
+  phone, accepts the invitation, and installs the app from Google Play.
+
+## Troubleshooting
+
+**Test credentials fails**
+
+The message gives Google's reason. Most often the service account is not
+invited for this app in Play Console, the invitation is still being
+processed, or the API is turned off in the Google Cloud project.
+
+**`publish-play` fails because the version code is not higher**
+
+The message names both numbers. If the app already had releases before Oore,
+open the pipeline's **Edit** page and set **Build number offset** above the
+highest version code on Google Play. Then run a new build.
+
+**`publish-play` fails after you fixed the cause**
+
+Select **Retry Google Play upload** on the failed build. Oore uploads the
+stored bundle again without rebuilding. See
+[Retry a store upload](/build/run/retry-step).
+
+## Next step
+
+Your Android app now reaches testers on every release build. From here:
+
+- [Promote a tested build to production](/build/distribute/environments)
+  without rebuilding it, with an approval and a staged rollout.
+- [Build on every push](/build/sources/github): turn on External Access, then
+  connect GitHub or GitLab.
+- [Move the pipeline into `.oore.yaml`](/build/pipelines/oore-yaml) so it is
+  reviewed with your code.
+- Ship the same app on iOS: [Build your first iOS app](/start/ios/first-build).
+
+For every Google Play setting, such as staged rollouts and release notes, see
+[Publish to Google Play](/build/distribute/google-play).

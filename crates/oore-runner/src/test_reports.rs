@@ -19,7 +19,7 @@ pub(crate) const TEST_REPORTS_SUBDIR: &str = ".oore/test-reports";
 const MAX_FAILURES_PER_REPORT: usize = 200;
 const MAX_MESSAGE_BYTES: usize = 2048;
 const MAX_STACK_TRACE_BYTES: usize = 4096;
-const MAX_REPORT_FILE_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_REPORT_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 const TEST_COMMANDS: [&[&str]; 4] = [
     &["flutter", "test"],
@@ -123,7 +123,7 @@ pub(crate) fn summary_line(report: &RunnerTestReport) -> String {
 }
 
 /// macOS temp paths often appear both as `/var/...` and `/private/var/...`.
-fn workspace_prefixes(workspace: &Path) -> Vec<String> {
+pub(crate) fn workspace_prefixes(workspace: &Path) -> Vec<String> {
     let mut prefixes = vec![format!("{}/", workspace.display())];
     if let Ok(canonical) = workspace.canonicalize() {
         let canonical = format!("{}/", canonical.display());
@@ -134,7 +134,7 @@ fn workspace_prefixes(workspace: &Path) -> Vec<String> {
     prefixes
 }
 
-fn strip_prefixes(value: &str, prefixes: &[String]) -> String {
+pub(crate) fn strip_prefixes(value: &str, prefixes: &[String]) -> String {
     let mut value = value.to_string();
     for prefix in prefixes {
         value = value.replace(prefix.as_str(), "");
@@ -142,7 +142,7 @@ fn strip_prefixes(value: &str, prefixes: &[String]) -> String {
     value
 }
 
-fn truncate(value: &str, max_bytes: usize) -> String {
+pub(crate) fn truncate(value: &str, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value.to_string();
     }

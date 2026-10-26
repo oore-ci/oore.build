@@ -1,78 +1,119 @@
 ---
 title: 'Check that your Mac is ready'
 status: implemented
-description: 'Verify the small host requirements for the Oore CLI and your selected device role.'
+description: 'Confirm the Mac can run Oore and has the Flutter and platform tools your first build needs.'
 ---
 
-The Oore bootstrap needs a supported Mac, internet access, and standard macOS command-line tools.
+On this page you check the Mac that will run Oore and install the tools your
+app's builds need. In Local Only, this one Mac runs the control plane, the web
+UI, and the runner, so it also does the building.
 
-You do not need a project, Flutter, Xcode, or Android Studio to install Oore.
+## What you need
 
-## Bootstrap requirements
+- A Mac with an `arm64` (Apple silicon) or `x86_64` (Intel) processor.
+- A normal macOS account with administrator access. Oore asks for
+  administrator access once, to install its services.
+- Internet access over HTTPS to `oore.build`, `releases.oore.build`, and
+  GitHub Releases.
+- A Flutter app in a Git repository on this Mac.
 
-- Use macOS on an `arm64` or `x86_64` processor.
-- Use a normal macOS account.
-- Allow HTTPS access to the Oore release index and GitHub Releases.
-- Keep `curl`, `tar`, and `ssh-keygen` available.
-- Keep the macOS system tools `/usr/bin/stat`, `/usr/bin/lockf`, and `/usr/bin/shasum`. The installer calls them by absolute path, so Homebrew GNU coreutils earlier in `PATH` do not affect it.
+## 1. Check the host
 
-Run these commands to verify the host:
+Run these commands in Terminal:
 
 ```bash
 uname -s
 uname -m
-command -v curl tar ssh-keygen
+command -v curl tar ssh-keygen git
 ls /usr/bin/stat /usr/bin/lockf /usr/bin/shasum
 ```
 
-The first command must print `Darwin`. The second command must print `arm64` or `x86_64`.
+The first command prints `Darwin`. The second prints `arm64` or `x86_64`. The
+other two commands print a path for every tool. If `git` is missing, run
+`xcode-select --install` to install the Xcode Command Line Tools.
 
-## Requirements by device role
+The installer calls `stat`, `lockf`, and `shasum` by their `/usr/bin` paths,
+so Homebrew GNU coreutils earlier in your `PATH` do not affect it.
 
-Choose a role during `oore install`.
+## 2. Install Flutter where the runner can find it
 
-| Role          | Extra host requirements                                                                               |
-| ------------- | ----------------------------------------------------------------------------------------------------- |
-| Complete      | Administrator access for services. Add Git and platform tools before builds that need them.           |
-| Control plane | Administrator access for the control-plane service.                                                   |
-| Runner        | Administrator access for the runner service. Add Git and platform tools before builds that need them. |
-| Web node      | Administrator access for the web service.                                                             |
-| CLI only      | No service permission or local build toolchain.                                                       |
+The Oore runner runs as the macOS account that installs Oore. Its `PATH` is
+`/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`, so a
+Flutter that only your shell's `PATH` finds is not enough. Link `flutter` and
+`dart` into one of those folders.
 
-SSH sessions are supported. Oore automatically uses terminal setup over SSH.
+Install the Flutter version your app uses. If the repository has an `.fvmrc`
+file, use the version in it. Replace `3.47.7` with your version:
 
-## Flutter and platform tools
-
-A build asks for the Flutter version in `.fvmrc` when it exists, then `flutter_version` from `.oore.yaml`, then `stable`.
-
-A pipeline with `isolation: vm` builds in a Tart VM made from the image for that version, so the Runner Mac needs no Flutter at all. See [Run builds in VMs](/operate/runners/vm-isolation).
-
-A host build uses the Flutter installed on the Runner Mac and cannot switch versions. Before the first step, the Runner runs `flutter --version` with the same `PATH` as the build. When the requested version is a release such as `3.47.7`, the build fails unless that is exactly the version installed. A channel such as `stable` is not checked.
-
-### Install a pinned Flutter for host builds
-
-The Runner service searches `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` and `/bin`, so put `flutter` and `dart` in one of them. Run these as the user the Runner service runs as, replacing `3.47.7` with the version in `.fvmrc`:
-
-```sh
+```bash
 git clone --branch 3.47.7 --depth 1 https://github.com/flutter/flutter.git ~/flutter-3.47.7
 ln -sf ~/flutter-3.47.7/bin/flutter /opt/homebrew/bin/flutter
 ln -sf ~/flutter-3.47.7/bin/dart /opt/homebrew/bin/dart
-flutter --version
-flutter precache --android --ios
-flutter doctor --android-licenses
 ```
 
-On an Intel Mac, use `/usr/local/bin` instead of `/opt/homebrew/bin`. `flutter --version` must print the version you cloned. If it prints another one, an older `flutter` comes earlier on the `PATH`; run `which -a flutter` to find it. The next build picks the new version up without restarting the Runner. A host has one Flutter at a time, so apps pinned to different versions need `isolation: vm`.
+On an Intel Mac, use `/usr/local/bin` instead of `/opt/homebrew/bin`.
 
-Install platform tools only on runners that need them:
+Before each build, the runner compares the installed Flutter with the version
+the build asks for: the one in `.fvmrc`, then the pipeline's Flutter version,
+then `stable`. If a release such as `3.47.7` differs from the installed one,
+the build fails before its first step. A channel such as `stable` is not
+checked.
 
-- Before any repository build, install Git.
-- For Android builds, install a JDK and the Android SDK.
-- For iOS or macOS builds, install Xcode.
-- For signed Apple artifacts, provide the required signing material.
+## 3. Install the platform tools
 
-Oore reports missing build tools for the affected build. Their absence does not block CLI or control-plane setup.
+Install the tools for the platform you ship first. You can add the other one
+later.
+
+- **Android.** Install [Android Studio](https://developer.android.com/studio)
+  in `/Applications` and let it install the default Android SDK in
+  `~/Library/Android/sdk`. Then accept the SDK licenses with
+  `flutter doctor --android-licenses`.
+- **iOS.** Install Xcode from the App Store, open it once to finish its setup,
+  and run `sudo xcodebuild -license accept`.
+
+Then download the Flutter engine files for those platforms:
+
+```bash
+flutter precache --android --ios
+```
+
+## Check the result
+
+```bash
+flutter --version
+flutter doctor
+```
+
+`flutter --version` prints the version you installed. `flutter doctor` shows
+a check mark for **Android toolchain**, **Xcode**, or both, depending on what
+you installed. After you install Oore, `oore doctor --platform android` or
+`oore doctor --platform ios` runs the same checks the runner needs.
+
+## Troubleshooting
+
+**`flutter --version` prints a different version**
+
+An older `flutter` comes earlier on the `PATH`. Run `which -a flutter` to find
+it, then remove it or fix the link in `/opt/homebrew/bin`.
+
+**`ln` fails because `/opt/homebrew/bin` does not exist**
+
+That folder exists only when Homebrew is installed. Link into
+`/usr/local/bin` instead. If that folder is missing too, create it with
+`sudo mkdir -p /usr/local/bin`.
+
+**The app needs two Flutter versions**
+
+A Mac has one Flutter for host builds. To build apps pinned to different
+versions on one Mac, use [VM isolation](/operate/runners/vm-isolation), which
+picks a VM image by Flutter version.
+
+**You want builds to run on a different Mac**
+
+Finish this path on one Mac first. Then
+[add a Direct macOS runner](/operate/runners/direct) on the other Mac, or read
+[Which setup do I need?](/concepts/which-setup).
 
 ## Next step
 
-[Install the Oore CLI](/start/install).
+[Install Oore](/start/install).

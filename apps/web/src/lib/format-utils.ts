@@ -30,6 +30,16 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
+/** `+1.2 MB (+5.2%)`, `-300 B (-0.1%)` or `No change`. */
+export function formatSizeChange(delta: number, baseline: number): string {
+  if (delta === 0) return 'No change'
+  const sign = delta > 0 ? '+' : '-'
+  const size = `${sign}${formatFileSize(Math.abs(delta))}`
+  if (baseline <= 0) return size
+  const percent = (delta / baseline) * 100
+  return `${size} (${percent > 0 ? '+' : ''}${percent.toFixed(1)}%)`
+}
+
 export function formatAbsoluteTime(epochSecs: number): string {
   return new Date(epochSecs * 1000).toLocaleString()
 }

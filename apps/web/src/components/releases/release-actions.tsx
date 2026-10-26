@@ -35,6 +35,8 @@ import {
   releaseVersionLabel,
 } from '@/lib/releases'
 import { toast } from '@/lib/toast'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
 
 /**
  * Release controls. The server decides which actions the caller may take
@@ -58,7 +60,7 @@ export function ReleaseActions({
   if (!canHalt && menuActions.length === 0) return null
 
   return (
-    <div className="flex items-center justify-end gap-1">
+    <Row gap={1} className="justify-end">
       {canHalt ? (
         <Button
           variant="outline"
@@ -109,7 +111,7 @@ export function ReleaseActions({
           }}
         />
       ) : null}
-    </div>
+    </Row>
   )
 }
 
@@ -165,7 +167,7 @@ function ReleaseActionDialog({
             {copy.description(release)}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="flex flex-col gap-2">
+        <Stack gap={2}>
           <Label htmlFor={reasonId}>Reason (optional)</Label>
           <Textarea
             id={reasonId}
@@ -174,7 +176,7 @@ function ReleaseActionDialog({
             placeholder="Recorded in the release history"
             rows={2}
           />
-        </div>
+        </Stack>
         <AlertDialogFooter>
           <Button
             variant="outline"

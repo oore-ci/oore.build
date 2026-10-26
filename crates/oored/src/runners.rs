@@ -511,13 +511,43 @@ async fn record_disk_pressure(
     Ok(())
 }
 
+/// SQL condition that holds while `$build`'s pipeline has a free slot under
+/// its `concurrency.max_concurrent` limit. A missing, null or zero limit
+/// means no limit. Builds claimed by a runner (`scheduled`), `assigned` or
+/// `running` take a slot. The status list must stay identical to the partial
+/// index `idx_builds_pipeline_active` (migration 077) so SQLite can use it.
+macro_rules! pipeline_has_free_slot {
+    ($build:literal) => {
+        concat!(
+            " AND NOT EXISTS ( \
+               SELECT 1 FROM pipelines pl \
+               WHERE pl.id = ",
+            $build,
+            ".pipeline_id \
+                 AND json_extract(pl.concurrency, '$.max_concurrent') > 0 \
+                 AND ( \
+                   SELECT COUNT(*) FROM builds active \
+                   WHERE active.pipeline_id = pl.id \
+                     AND active.status IN ('scheduled', 'assigned', 'running') \
+                 ) >= json_extract(pl.concurrency, '$.max_concurrent') \
+             ) "
+        )
+    };
+}
+
 /// Atomically linearize a direct-runner claim against the operational pause.
 ///
 /// The initial queue lookup chooses the oldest eligible build. Rechecking the
-/// pause and source identity in the queued -> scheduled update closes races
-/// with an operator change while a claim request is in flight. The build
-/// moves on to assigned, bound to the runner and its signing grant, in the
-/// same transaction, so an interrupted claim never strands it in scheduled.
+/// pause, source identity and the pipeline's `max_concurrent` limit in the
+/// queued -> scheduled update closes races with an operator change, or with
+/// another runner's claim, while a claim request is in flight. The limit is
+/// race-safe because the slot COUNT and `SET status = 'scheduled'` run in the
+/// same UPDATE statement, and SQLite runs one writer at a time, so two claims
+/// cannot both take the last free slot. A build stuck in scheduled (requeued
+/// after 60 s) or assigned (requeued when its 300 s lease expires) holds its
+/// slot until it is requeued. The build moves on to assigned, bound to the
+/// runner and its signing grant, in the same transaction, so an interrupted
+/// claim never strands it in scheduled.
 pub(crate) async fn claim_eligible_direct_runner_build(
     pool: &sqlx::SqlitePool,
     build_id: &str,
@@ -534,11 +564,12 @@ pub(crate) async fn claim_eligible_direct_runner_build(
         )
     })?;
     let now = now_unix();
-    let result = sqlx::query(
+    let result = sqlx::query(concat!(
         "UPDATE builds SET status = 'scheduled', updated_at = ?1 \
          WHERE id = ?2 AND status = 'queued' \
-           AND (approval_state IS NULL OR approval_state != 'pending') \
-           AND EXISTS ( \
+           AND (approval_state IS NULL OR approval_state != 'pending') ",
+        pipeline_has_free_slot!("builds"),
+        " AND EXISTS ( \
              SELECT 1 FROM runners runner WHERE runner.id = ?3 \
                AND NOT EXISTS ( \
                  SELECT 1 FROM json_each(builds.config_snapshot, '$.runs_on') required \
@@ -561,7 +592,7 @@ pub(crate) async fn claim_eligible_direct_runner_build(
                    AND incident.reason IN ('expired', 'rejected', 'refresh_failed') \
                ) \
            )",
-    )
+    ))
     .bind(now)
     .bind(build_id)
     .bind(runner_id)
@@ -744,43 +775,47 @@ async fn fail_credential_blocked_builds(
     Ok(())
 }
 
+const NEXT_ELIGIBLE_BUILD_SQL: &str = concat!(
+    "SELECT b.* FROM builds b \
+     JOIN projects p ON p.id = b.project_id \
+     JOIN integration_repositories r ON r.id = p.repository_id \
+     JOIN integration_installations inst ON inst.id = r.installation_id \
+     JOIN runners runner ON runner.id = ?1 \
+     LEFT JOIN instance_preferences pref ON pref.id = 1 \
+     WHERE b.status = 'queued' \
+       AND (b.approval_state IS NULL OR b.approval_state != 'pending') ",
+    pipeline_has_free_slot!("b"),
+    " AND NOT EXISTS ( \
+         SELECT 1 FROM json_each(b.config_snapshot, '$.runs_on') required \
+         WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
+       ) \
+       AND json_extract(b.config_snapshot, '$.repository_id') = p.repository_id \
+       AND COALESCE(pref.direct_macos_runner_paused, 0) = 0 \
+       AND NOT EXISTS ( \
+         SELECT 1 FROM operator_incidents incident \
+         WHERE incident.status = 'open' \
+           AND incident.resource_kind = 'source' \
+           AND incident.resource_id = inst.integration_id \
+           AND incident.reason IN ('expired', 'rejected', 'refresh_failed') \
+       ) \
+     ORDER BY b.queued_at ASC, b.id ASC LIMIT 1",
+);
+
 /// The oldest queued build this runner may take.
 ///
 /// A missing repository remains ineligible. Missing preferences means the
 /// ordinary running state. Filtering before ordering prevents blocked work,
-/// and work that needs labels this runner lacks, from starving later eligible
-/// builds.
+/// work that needs labels this runner lacks, and work from a pipeline already
+/// at its `max_concurrent` limit, from starving later eligible builds. A
+/// pipeline with no limit runs as many builds as there are runners.
 async fn next_eligible_build(
     pool: &sqlx::SqlitePool,
     runner_id: &str,
 ) -> sqlx::Result<Option<sqlx::sqlite::SqliteRow>> {
-    sqlx::query(
-        "SELECT b.* FROM builds b \
-         JOIN projects p ON p.id = b.project_id \
-         JOIN integration_repositories r ON r.id = p.repository_id \
-         JOIN integration_installations inst ON inst.id = r.installation_id \
-         JOIN runners runner ON runner.id = ?1 \
-         LEFT JOIN instance_preferences pref ON pref.id = 1 \
-         WHERE b.status = 'queued' \
-           AND (b.approval_state IS NULL OR b.approval_state != 'pending') \
-           AND NOT EXISTS ( \
-             SELECT 1 FROM json_each(b.config_snapshot, '$.runs_on') required \
-             WHERE required.value NOT IN (SELECT value FROM json_each(runner.labels)) \
-           ) \
-           AND json_extract(b.config_snapshot, '$.repository_id') = p.repository_id \
-           AND COALESCE(pref.direct_macos_runner_paused, 0) = 0 \
-           AND NOT EXISTS ( \
-             SELECT 1 FROM operator_incidents incident \
-             WHERE incident.status = 'open' \
-               AND incident.resource_kind = 'source' \
-               AND incident.resource_id = inst.integration_id \
-               AND incident.reason IN ('expired', 'rejected', 'refresh_failed') \
-           ) \
-         ORDER BY b.queued_at ASC, b.id ASC LIMIT 1",
-    )
-    .bind(runner_id)
-    .fetch_optional(pool)
-    .await
+    sqlx::query(NEXT_ELIGIBLE_BUILD_SQL)
+        .bind(runner_id)
+        .fetch_optional(pool)
+        .await
 }
 
 /// Ends the builds a runner still holds once it can no longer be running
@@ -1088,10 +1123,16 @@ pub async fn update_job_status(
     // failed write never leaves a terminal build without its step results.
     let steps_json = (!req.steps.is_empty())
         .then(|| serde_json::to_string(&req.steps).unwrap_or_else(|_| "[]".to_string()));
-    let results = (!req.steps.is_empty() || req.exit_code.is_some()).then_some(RunnerResults {
-        step_results: steps_json.as_deref(),
-        exit_code: req.exit_code,
+    let budgets_json = req.size_budgets.as_ref().map(|budgets| {
+        let budgets = checked_file_size_budgets(&job_id, budgets);
+        serde_json::to_string(&budgets).unwrap_or_else(|_| "[]".to_string())
     });
+    let results = (!req.steps.is_empty() || req.exit_code.is_some() || budgets_json.is_some())
+        .then_some(RunnerResults {
+            step_results: steps_json.as_deref(),
+            exit_code: req.exit_code,
+            file_size_budgets: budgets_json.as_deref(),
+        });
     let build = transition_build_with_results(
         pool,
         &job_id,
@@ -1632,6 +1673,48 @@ pub async fn delete_runner(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Longest `source` kept for a runner-sent budget.
+const MAX_BUDGET_SOURCE_CHARS: usize = 128;
+
+/// The runner-sent `.oore.yaml` budgets worth keeping: valid ones, at most one
+/// per platform, with a short single-line `source`. The runner validated the
+/// file already; this guards the snapshot against a runner that did not.
+fn checked_file_size_budgets(
+    build_id: &str,
+    budgets: &[oore_contract::TargetSizeBudget],
+) -> Vec<oore_contract::TargetSizeBudget> {
+    let mut kept: Vec<oore_contract::TargetSizeBudget> = Vec::new();
+    for budget in budgets {
+        let source: String = budget
+            .source
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .take(MAX_BUDGET_SOURCE_CHARS)
+            .collect();
+        // The check's Budget column shows the source; never leave it empty.
+        let source = if source.trim().is_empty() {
+            ".oore.yaml".to_string()
+        } else {
+            source
+        };
+        let errors = budget.budget.validate_at(&source);
+        if !errors.is_empty() {
+            warn!(build_id, errors = %errors.join("; "), "dropped an invalid size budget the runner sent");
+            continue;
+        }
+        if kept.iter().any(|seen| seen.platform == budget.platform) {
+            warn!(build_id, source = %source, "dropped a second size budget for one platform");
+            continue;
+        }
+        kept.push(oore_contract::TargetSizeBudget {
+            platform: budget.platform.clone(),
+            source,
+            budget: budget.budget.clone(),
+        });
+    }
+    kept
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1755,6 +1838,165 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(next_build_id(&pool, "linux").await.as_deref(), Some("old"));
+    }
+
+    async fn limit_pipeline(pool: &sqlx::SqlitePool, pipeline_id: &str, max_concurrent: u32) {
+        sqlx::query("UPDATE pipelines SET concurrency = ?1 WHERE id = ?2")
+            .bind(
+                serde_json::json!({ "cancel_previous": false, "max_concurrent": max_concurrent })
+                    .to_string(),
+            )
+            .bind(pipeline_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn claim(pool: &sqlx::SqlitePool, runner_id: &str) -> Option<String> {
+        let build_id = next_build_id(pool, runner_id).await?;
+        let actor = format!("runner:{runner_id}");
+        claim_eligible_direct_runner_build(pool, &build_id, runner_id, &actor, "h")
+            .await
+            .unwrap()
+            .then_some(build_id)
+    }
+
+    #[tokio::test]
+    async fn max_concurrent_holds_extra_builds_in_the_queue_in_order() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac1", "macos").await;
+        insert_runner(&pool, "mac2", "macos").await;
+        limit_pipeline(&pool, "pl1", 1).await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        queue_build(&pool, "b3", 3, &[]).await;
+
+        assert_eq!(claim(&pool, "mac1").await.as_deref(), Some("b1"));
+        // A free runner leaves the next build queued while the slot is taken.
+        assert_eq!(claim(&pool, "mac2").await, None);
+        assert_eq!(
+            build_status(&pool, "b2").await,
+            ("queued".to_string(), None)
+        );
+        // A claim that raced the first one is refused when it writes.
+        assert!(
+            !claim_eligible_direct_runner_build(&pool, "b2", "mac2", "runner:mac2", "h")
+                .await
+                .unwrap()
+        );
+
+        // Running still holds the slot; finishing frees it for the oldest build.
+        set_build(&pool, "b1", "running", Some("mac1")).await;
+        assert_eq!(claim(&pool, "mac2").await, None);
+        set_build(&pool, "b1", "succeeded", Some("mac1")).await;
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("b2"));
+        assert_eq!(claim(&pool, "mac1").await, None);
+    }
+
+    #[tokio::test]
+    async fn max_concurrent_two_takes_exactly_two_builds() {
+        let pool = pool().await;
+        for runner in ["mac1", "mac2", "mac3"] {
+            insert_runner(&pool, runner, "macos").await;
+        }
+        limit_pipeline(&pool, "pl1", 2).await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        queue_build(&pool, "b3", 3, &[]).await;
+
+        assert_eq!(claim(&pool, "mac1").await.as_deref(), Some("b1"));
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("b2"));
+        assert_eq!(claim(&pool, "mac3").await, None);
+        assert!(
+            !claim_eligible_direct_runner_build(&pool, "b3", "mac3", "runner:mac3", "h")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            build_status(&pool, "b3").await,
+            ("queued".to_string(), None)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_assigned_build_holds_its_slot() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac1", "macos").await;
+        insert_runner(&pool, "mac2", "macos").await;
+        limit_pipeline(&pool, "pl1", 1).await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        set_build(&pool, "b1", "assigned", Some("mac1")).await;
+
+        assert_eq!(claim(&pool, "mac2").await, None);
+        set_build(&pool, "b1", "queued", None).await;
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("b1"));
+    }
+
+    #[tokio::test]
+    async fn the_slot_count_reads_the_active_builds_index() {
+        let pool = pool().await;
+        let plan: Vec<String> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {NEXT_ELIGIBLE_BUILD_SQL}"
+        )))
+        .bind("mac")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get("detail"))
+        .collect();
+        assert!(
+            plan.iter()
+                .any(|detail| detail.contains("idx_builds_pipeline_active")),
+            "{plan:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn max_concurrent_counts_only_its_own_pipeline() {
+        let pool = pool().await;
+        sqlx::query(
+            "INSERT INTO pipelines (id, project_id, name, created_at, updated_at) \
+             VALUES ('pl2', 'p1', 'nightly', 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for runner in ["mac1", "mac2", "mac3"] {
+            insert_runner(&pool, runner, "macos").await;
+        }
+        limit_pipeline(&pool, "pl1", 1).await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+        sqlx::query(
+            "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, trigger_type, config_snapshot, queued_at, created_at, updated_at) \
+             VALUES ('other', 'p1', 'pl2', 3, 'queued', 'manual', '{\"repository_id\":\"repo1\"}', 3, 0, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(claim(&pool, "mac1").await.as_deref(), Some("b1"));
+        // The full pipeline's older build does not block the other pipeline.
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("other"));
+        assert_eq!(claim(&pool, "mac3").await, None);
+    }
+
+    #[tokio::test]
+    async fn a_pipeline_without_max_concurrent_is_unlimited() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac1", "macos").await;
+        insert_runner(&pool, "mac2", "macos").await;
+        sqlx::query("UPDATE pipelines SET concurrency = '{\"cancel_previous\":true,\"max_concurrent\":null}'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        queue_build(&pool, "b1", 1, &[]).await;
+        queue_build(&pool, "b2", 2, &[]).await;
+
+        assert_eq!(claim(&pool, "mac1").await.as_deref(), Some("b1"));
+        assert_eq!(claim(&pool, "mac2").await.as_deref(), Some("b2"));
     }
 
     fn metrics(disk_free_bytes: u64) -> RunnerMetrics {
@@ -2092,6 +2334,105 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_files_size_budgets_are_kept_in_the_snapshot_with_the_result() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        let budgets = r#"[{"platform":"android","source":"targets.android.budgets","budget":{"mode":"fail","rules":[{"kind":"aab","max_bytes":10}]}}]"#;
+        let snapshot = |pool: sqlx::SqlitePool, id: &'static str| async move {
+            let raw: String =
+                sqlx::query_scalar("SELECT config_snapshot FROM builds WHERE id = ?1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap()
+        };
+        for (id, number, sent) in [
+            ("b1", 1, Some(budgets)),
+            ("b2", 2, Some("[]")),
+            ("b3", 3, None),
+        ] {
+            queue_build(&pool, id, number, &[]).await;
+            set_build(&pool, id, "running", Some("mac")).await;
+            // As a rerun would have copied it.
+            sqlx::query(
+                "UPDATE builds SET config_snapshot = json_set(config_snapshot, '$.file_size_budgets', json('[1]')) WHERE id = ?1 AND ?2",
+            )
+            .bind(id)
+            .bind(id != "b1")
+            .execute(&pool)
+            .await
+            .unwrap();
+            transition_build_with_results(
+                &pool,
+                id,
+                BuildStatus::Succeeded,
+                Some("runner:mac"),
+                None,
+                Some(RunnerResults {
+                    step_results: Some("[]"),
+                    exit_code: Some(0),
+                    file_size_budgets: sent,
+                }),
+            )
+            .await
+            .unwrap();
+        }
+
+        let b1 = snapshot(pool.clone(), "b1").await;
+        assert_eq!(b1["file_size_budgets"][0]["budget"]["mode"], "fail");
+        assert_eq!(b1["repository_id"], "repo1");
+        // The file sets none now.
+        assert!(
+            snapshot(pool.clone(), "b2")
+                .await
+                .get("file_size_budgets")
+                .is_none()
+        );
+        // A runner that sends nothing leaves the snapshot alone.
+        assert_eq!(
+            snapshot(pool.clone(), "b3").await["file_size_budgets"],
+            serde_json::json!([1])
+        );
+    }
+
+    #[test]
+    fn runner_sent_budgets_are_checked_before_they_are_kept() {
+        let sent: Vec<oore_contract::TargetSizeBudget> = serde_json::from_value(serde_json::json!([
+            {"platform":"android","source":"targets.android.budgets\nforged line","budget":{"mode":"fail","rules":[{"kind":"aab","max_bytes":10}]}},
+            {"platform":"android","source":"second","budget":{"mode":"fail","rules":[{"kind":"apk","max_bytes":10}]}},
+            {"platform":"ios","source":"x".repeat(500),"budget":{"mode":"fail","rules":[{"kind":"ipa","max_bytes":0}]}},
+        ]))
+        .unwrap();
+        let kept = super::checked_file_size_budgets("b1", &sent);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0].source, "targets.android.budgets forged line");
+        assert_eq!(kept[0].budget.rules[0].max_bytes, Some(10));
+
+        let long: Vec<oore_contract::TargetSizeBudget> =
+            serde_json::from_value(serde_json::json!([
+                {"platform":"ios","source":"y".repeat(500),"budget":{"mode":"warn","rules":[]}},
+            ]))
+            .unwrap();
+        assert_eq!(
+            super::checked_file_size_budgets("b1", &long)[0]
+                .source
+                .len(),
+            128
+        );
+
+        let blank: Vec<oore_contract::TargetSizeBudget> =
+            serde_json::from_value(serde_json::json!([
+                {"platform":"ios","source":" \n\t ","budget":{"mode":"warn","rules":[]}},
+            ]))
+            .unwrap();
+        assert_eq!(
+            super::checked_file_size_budgets("b1", &blank)[0].source,
+            ".oore.yaml"
+        );
+    }
+
+    #[tokio::test]
     async fn a_status_change_rolls_back_when_its_event_cannot_be_recorded() {
         let pool = pool().await;
         insert_runner(&pool, "mac", "macos").await;
@@ -2108,6 +2449,7 @@ mod tests {
         let results = RunnerResults {
             step_results: Some("[]"),
             exit_code: Some(0),
+            file_size_budgets: None,
         };
         let (status, _) = transition_build_with_results(
             &pool,
@@ -2139,6 +2481,7 @@ mod tests {
         let results = RunnerResults {
             step_results: Some("[]"),
             exit_code: Some(0),
+            file_size_budgets: None,
         };
         let build = transition_build_with_results(
             &pool,

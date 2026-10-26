@@ -36,12 +36,11 @@ Record the store password, alias, and key password when prompted.
 ## 2. Add the signing profile
 
 1. Open the project, then open the pipeline for editing.
-2. Expand **Android Signing**.
-3. Turn on **Enable release signing**.
-4. Select the **Release keystore (.jks)** file.
-5. Enter **Release key alias**, **Release store password**, and
+2. Under **Signing > Android**, turn on **Enable release signing**.
+3. Select the **Release keystore (.jks)** file.
+4. Enter **Release key alias**, **Release store password**, and
    **Release key password**.
-6. Select **Save**.
+5. Select **Save changes**.
 
 Use **Enable debug signing** only when that pipeline's supported Flutter build
 command produces a debug artifact that needs a specific key.
@@ -56,6 +55,22 @@ not receive signing files, passwords, or Oore signing capability tokens. For a
 supported Flutter Android build command, the runner-owned signer signs and
 verifies the produced artifacts outside the repository checkout.
 
+### Flavored apps
+
+Signing works the same with `--flavor`. After each `flutter build apk` or
+`flutter build appbundle` command, the runner signs every `.apk` or `.aab`
+under `build/app/outputs`, including flavored output. Two things change:
+
+- Gradle writes a flavored App Bundle to a folder named after the flavor, such
+  as `build/app/outputs/bundle/prodRelease/app-prod-release.aab`. Under
+  **Build > Artifacts**, use a pattern that matches it, such as
+  `build/app/outputs/bundle/**/*.aab`, instead of
+  `build/app/outputs/bundle/release/*.aab`.
+- Every flavor in one run must use the same variant, such as release. To build
+  several flavors, run one `flutter build` command per flavor, such as
+  `flutter build appbundle --release --flavor prod`. Each command signs all the
+  output of that kind under `build/app/outputs`, so every flavor is signed.
+
 ## Verify the result
 
 The build reaches `succeeded`, and its log includes an `android-sign` step
@@ -69,8 +84,12 @@ apksigner verify --print-certs my-app-release.apk
 For an App Bundle, use:
 
 ```bash
-jarsigner -verify -strict my-app-release.aab
+jarsigner -verify my-app-release.aab
 ```
+
+The output includes `jar verified.` Do not add `-strict`. Upload keys are
+self-signed and App Bundles are not timestamped, which `-strict` reports as
+errors even for a correctly signed bundle.
 
 ## Troubleshooting
 

@@ -1,4 +1,8 @@
 import { cn } from '@/lib/utils'
+import { Row } from '@/components/layout/row'
+import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
+import { textVariants } from '@/lib/recipes'
 
 interface PageHeaderProps {
   title: string
@@ -17,26 +21,29 @@ export default function PageHeader({
 }: PageHeaderProps) {
   return (
     <header className={cn('space-y-3', divided && 'border-b pb-5')}>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <Stack gap={4} className="sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
           {description ? (
-            <p className="max-w-[65ch] text-sm text-muted-foreground">
+            <Text variant="muted" className="max-w-[65ch]">
               {description}
-            </p>
+            </Text>
           ) : null}
         </div>
         {actions ? (
-          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+          <Row gap={2} className="w-full flex-wrap sm:w-auto sm:justify-end">
             {actions}
-          </div>
+          </Row>
         ) : null}
-      </div>
+      </Stack>
 
       {meta ? (
-        <div className="flex flex-wrap items-center gap-2 pt-2 text-xs text-muted-foreground">
+        <Row
+          gap={2}
+          className={cn(textVariants({ variant: 'caption' }), 'flex-wrap pt-2')}
+        >
           {meta}
-        </div>
+        </Row>
       ) : null}
     </header>
   )

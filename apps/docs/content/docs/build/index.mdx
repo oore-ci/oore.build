@@ -1,41 +1,60 @@
 ---
-title: 'Build and distribute'
+title: 'Build and ship'
 status: implemented
-description: 'Create projects, run pipelines, sign mobile builds, and deliver artifacts with Oore.'
+description: 'Task guides for projects, pipelines, builds, sources, signing, and delivery.'
 ---
 
-Start with a repository you trust, create one project for it, and choose
-whether the pipeline lives with the repository or in Oore.
+These guides each do one job on an Oore instance that already runs. If you are
+starting from nothing, follow [Get started](/start) first. It strings the
+tasks below into one path for Android and one for iOS.
 
-## Build from a repository
+## Set up what Oore builds
 
-For the default Local Only path, [create a project](/build/projects/create)
-from a Git repository on the backend Mac. Then choose one pipeline path:
+- [Create a project](/build/projects/create) for each repository.
+- [Configure a pipeline in the UI](/build/pipelines/use-the-ui) from a
+  template.
+- [Move a pipeline into `.oore.yaml`](/build/pipelines/oore-yaml) so it
+  changes with the code. This page also helps you pick a format.
+- [Use secrets in a pipeline](/build/pipelines/secrets) for tokens and keys.
+- [Set triggers, timeouts, and approvals](/build/pipelines/triggers).
 
-- [Configure `.oore.yaml`](/build/pipelines/oore-yaml) when the build
-  definition should travel with the commit.
-- [Configure a pipeline in the UI](/build/pipelines/use-the-ui) when the
-  repository does not contain an Oore workflow.
+## Run and control builds
 
-When the pipeline is ready, [trigger a build](/build/run/trigger) and follow
-the build to a result you can verify.
+- [Trigger a build](/build/run/trigger) by hand.
+- [Approve a build](/build/run/approve) that waits for a maintainer.
+- [Cancel a build](/build/run/cancel).
+- [Retry a store upload](/build/run/retry-step) without rebuilding.
 
-## Add a connected source
+## Build on every push and pull request
 
-External Access can discover repositories and receive verified webhook
-events through [GitHub](/build/sources/github) or
-[GitLab](/build/sources/gitlab). Creating or relinking a project remains the
-decision that trusts a repository to run on a Direct macOS runner.
+These guides need [External Access](/team/access).
 
-## Sign and distribute
+- [Connect GitHub](/build/sources/github) or [connect GitLab](/build/sources/gitlab).
+- [See builds on pull requests](/build/run/pull-request-checks), with app size
+  and size budgets.
+- [Troubleshoot source webhooks](/build/sources/webhooks/troubleshoot).
 
-- [Add Android signing](/build/sign/android) for release APKs or App Bundles.
-- [Configure iOS signing](/build/sign/ios/manual) for registered-device builds.
-- [Download a build artifact](/build/distribute/download), or use the
-  device-specific [Android](/build/distribute/install/android) and
-  [iOS](/build/distribute/install/ios) install tasks.
+## Sign builds
+
+- [Add Android signing](/build/sign/android), and
+  [keep local Gradle signing separate](/build/sign/android/gradle).
+- [Configure App Store Connect signing](/build/sign/ios/app-store-connect),
+  the shortest path for iOS.
+- [Configure manual iOS signing](/build/sign/ios/manual) with
+  [certificates and profiles you export](/build/sign/ios/certificates).
+
+## Deliver builds
+
+| Goal                                       | Guide                                                                                                          |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Get a file from a build                    | [Download a build artifact](/build/distribute/download)                                                        |
+| Install an APK on a phone                  | [Install an Android build](/build/distribute/install/android)                                                  |
+| Install an iOS build on a test iPhone      | [Register an iOS test device](/build/distribute/ios-devices), then [install it](/build/distribute/install/ios) |
+| Send builds to Google Play                 | [Publish to Google Play](/build/distribute/google-play)                                                        |
+| Send builds to TestFlight or the App Store | [Publish to TestFlight and the App Store](/build/distribute/app-store)                                         |
+| Move a tested build to production          | [Promote builds between environments](/build/distribute/environments)                                          |
 
 ## Next step
 
-[Create a project](/build/projects/create) from the repository you want Oore
-to build.
+New to Oore? Start with [Choose your path](/start). Otherwise, pick the guide
+for your goal above.

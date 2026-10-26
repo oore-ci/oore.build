@@ -13,7 +13,17 @@ use utoipa::ToSchema;
 
 pub mod data_paths;
 pub mod install_root;
+pub mod pipeline_config;
+pub mod pipeline_export;
+pub mod pipeline_import;
+pub mod pipeline_migrate;
 pub mod runtime_update_preflight;
+
+pub use pipeline_config::{
+    EffectivePublish, PipelinePlan, PlanPublish, PlanRequest, PlanStep, RepositoryConfig,
+    StepPhase, TriggerEvent, TriggerSpec, is_valid_workflow_name, parse_repository_config,
+    plan_execution_config,
+};
 
 // ── Setup state machine ─────────────────────────────────────────
 
@@ -1377,6 +1387,128 @@ impl ApprovalPolicy {
     }
 }
 
+/// What a pipeline's commit check does when an artifact is over its size
+/// budget. The build itself never fails.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SizeBudgetMode {
+    /// The check keeps its conclusion and shows a warning.
+    #[default]
+    Warn,
+    /// The check concludes `failure`.
+    Fail,
+}
+
+/// Size limits for one kind of artifact. A rule needs at least one limit.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SizeBudgetRule {
+    /// The artifact kind: its lowercase file extension, such as `aab`,
+    /// `apk` or `ipa`.
+    pub kind: String,
+    /// Largest size allowed, in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<i64>,
+    /// Largest growth allowed compared with the baseline build, in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_increase_bytes: Option<i64>,
+    /// Largest growth allowed compared with the baseline build, in percent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_increase_percent: Option<f64>,
+}
+
+impl SizeBudgetRule {
+    pub fn has_limit(&self) -> bool {
+        self.max_bytes.is_some()
+            || self.max_increase_bytes.is_some()
+            || self.max_increase_percent.is_some()
+    }
+}
+
+/// Artifact size limits a pipeline's commit checks enforce. Increase limits
+/// compare with the same baseline as the build's size report; without a
+/// baseline only `max_bytes` applies. Empty `rules` turns the budget off.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SizeBudget {
+    #[serde(default)]
+    #[schema(required = true)]
+    pub mode: SizeBudgetMode,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub rules: Vec<SizeBudgetRule>,
+}
+
+impl SizeBudget {
+    pub const MAX_RULES: usize = 20;
+    pub const MAX_KIND_CHARS: usize = 16;
+
+    /// Problems that make the budget invalid, one message each.
+    pub fn validate(&self) -> Vec<String> {
+        self.validate_at("size_budget")
+    }
+
+    /// [`Self::validate`], naming the budget `field` in each message, such
+    /// as `targets.android.budgets` in a `.oore.yaml` file.
+    pub fn validate_at(&self, field: &str) -> Vec<String> {
+        let mut errors = Vec::new();
+        if self.rules.len() > Self::MAX_RULES {
+            errors.push(format!("{field} allows at most {} rules", Self::MAX_RULES));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for rule in &self.rules {
+            let kind = rule.kind.as_str();
+            let valid_kind = !kind.is_empty()
+                && kind.chars().count() <= Self::MAX_KIND_CHARS
+                && kind
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+            if !valid_kind {
+                errors.push(format!(
+                    "{field} kind '{kind}' must be a lowercase file extension such as aab, apk or ipa"
+                ));
+                continue;
+            }
+            if !seen.insert(kind) {
+                errors.push(format!("{field} lists kind '{kind}' more than once"));
+            }
+            if !rule.has_limit() {
+                errors.push(format!("{field} rule for '{kind}' needs a limit"));
+            }
+            if rule.max_bytes.is_some_and(|bytes| bytes <= 0) {
+                errors.push(format!(
+                    "{field} max_bytes for '{kind}' must be greater than 0"
+                ));
+            }
+            if rule.max_increase_bytes.is_some_and(|bytes| bytes < 0) {
+                errors.push(format!(
+                    "{field} max_increase_bytes for '{kind}' must be 0 or more"
+                ));
+            }
+            if rule
+                .max_increase_percent
+                .is_some_and(|percent| !percent.is_finite() || percent < 0.0)
+            {
+                errors.push(format!(
+                    "{field} max_increase_percent for '{kind}' must be 0 or more"
+                ));
+            }
+        }
+        errors
+    }
+}
+
+/// A size budget a repository's `.oore.yaml` version 2 file sets on one
+/// target, after workflow overrides. That platform's commit check enforces it
+/// on top of the pipeline's `size_budget`, which stays a floor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct TargetSizeBudget {
+    pub platform: BuildPlatform,
+    /// Where the budget came from, such as `targets.android.budgets`.
+    pub source: String,
+    pub budget: SizeBudget,
+}
+
 /// Build approval state. Pending builds stay `queued` but no runner claims them.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -1685,6 +1817,13 @@ pub struct ListBuildsResponse {
     pub total: i64,
 }
 
+/// Distinct `trigger_actor` values on builds the caller can see, most
+/// recently active first.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListBuildActorsResponse {
+    pub actors: Vec<String>,
+}
+
 /// Outcome counts for builds that finished in a window.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct BuildOutcomeTotals {
@@ -1816,6 +1955,10 @@ pub const PUBLISH_APP_STORE_STEP: &str = "publish-app-store";
 /// They only read artifacts the build already stored; every other step
 /// depends on workspace state that is gone once the build ends.
 pub const RETRYABLE_BUILD_STEPS: [&str; 2] = [PUBLISH_PLAY_STEP, PUBLISH_APP_STORE_STEP];
+/// Config snapshot key a retry build carries when a retried publish step
+/// took its destination from the repository's `.oore.yaml`, so the retry
+/// reads the file at the build's commit again.
+pub const RETRY_PUBLISH_FROM_FILE: &str = "retry_publish_from_file";
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct RetryBuildStepRequest {
@@ -2153,6 +2296,11 @@ pub struct UpdateJobStatusRequest {
     pub error_message: Option<String>,
     #[serde(default)]
     pub steps: Vec<StepResult>,
+    /// The size budgets the build's `.oore.yaml` version 2 file sets, sent
+    /// once the runner planned the build. An empty list means the file sets
+    /// none; leaving it out keeps what the build has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_budgets: Option<Vec<TargetSizeBudget>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -2164,6 +2312,84 @@ pub struct StepResult {
     pub started_at: i64,
     pub finished_at: i64,
     pub duration_ms: i64,
+    /// Publish steps only: where to upload came from the repository's
+    /// `.oore.yaml` `publish`, so a retry of the step reads the file at the
+    /// build's commit again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub publish_from_file: bool,
+}
+
+// ── Analyzer ────────────────────────────────────────────────────
+
+/// Severity of a `dart analyze` diagnostic.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyzerSeverity {
+    Error,
+    Warning,
+    Info,
+}
+
+/// One `dart analyze` diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AnalyzerDiagnostic {
+    pub severity: AnalyzerSeverity,
+    /// The diagnostic code, such as `unused_import`.
+    pub code: String,
+    pub message: String,
+    /// Path relative to the build workspace, such as `lib/main.dart`.
+    pub file: String,
+    pub line: i64,
+    pub column: i64,
+}
+
+/// Diagnostics counted by severity.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AnalyzerCounts {
+    pub errors: i64,
+    pub warnings: i64,
+    pub infos: i64,
+}
+
+/// The summary of `dart analyze --format=json` a runner reports after the
+/// build's steps.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct RunnerAnalyzerReport {
+    pub counts: AnalyzerCounts,
+    /// The most severe diagnostics, errors first. The daemon keeps at most
+    /// 50.
+    pub diagnostics: Vec<AnalyzerDiagnostic>,
+}
+
+/// A build's analyzer summary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct BuildAnalysis {
+    pub counts: AnalyzerCounts,
+    /// The most severe diagnostics, errors first, at most 50.
+    pub diagnostics: Vec<AnalyzerDiagnostic>,
+    pub recorded_at: i64,
+}
+
+/// The earlier build an analysis compares with: the latest successful build
+/// of the same pipeline on the base branch that reported one, as for sizes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct BuildAnalysisBaseline {
+    pub build_id: String,
+    pub build_number: i64,
+    pub branch: String,
+    pub counts: AnalyzerCounts,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct BuildAnalysisResponse {
+    /// `null` when the build reported no analysis.
+    pub analysis: Option<BuildAnalysis>,
+    /// The branch the build compares with: a pull request's target branch,
+    /// otherwise the default branch.
+    pub base_branch: Option<String>,
+    pub baseline: Option<BuildAnalysisBaseline>,
 }
 
 // ── Test results ────────────────────────────────────────────────
@@ -2242,6 +2468,104 @@ pub struct BuildTestResultsResponse {
     pub history_window: i64,
 }
 
+// ── Tester feedback ─────────────────────────────────────────────
+
+/// Largest accepted feedback message, in characters.
+pub const BUILD_FEEDBACK_MAX_MESSAGE_CHARS: usize = 4000;
+/// Largest accepted device, OS version or app version, in characters.
+pub const BUILD_FEEDBACK_MAX_FIELD_CHARS: usize = 120;
+/// Largest accepted screenshot after base64 decoding, in bytes.
+pub const BUILD_FEEDBACK_MAX_SCREENSHOT_BYTES: usize = 5 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateBuildFeedbackRequest {
+    /// What the tester saw. 1 to 4000 characters.
+    pub message: String,
+    /// Device model, such as `Pixel 8` or `iPhone`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    /// Operating system and version, such as `Android 15` or `iOS 18.1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub os_version: Option<String>,
+    /// App version the tester installed, such as `2.4.0+118`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_version: Option<String>,
+    /// The build's artifact the tester installed. Must belong to this build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
+    /// Optional PNG, JPEG or WebP screenshot, base64 encoded, at most 5 MiB
+    /// decoded. Requires artifact storage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screenshot_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildFeedback {
+    pub id: String,
+    pub build_id: String,
+    /// Email of the person who sent it.
+    pub author_email: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_name: Option<String>,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub os_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_id: Option<String>,
+    /// Fetch it from `GET /v1/builds/{build_id}/feedback/{feedback_id}/screenshot`.
+    pub has_screenshot: bool,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ListBuildFeedbackResponse {
+    /// Oldest first.
+    pub feedback: Vec<BuildFeedback>,
+}
+
+/// The earlier build a size report compares against.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildSizeBaseline {
+    pub build_id: String,
+    pub build_number: i64,
+    pub branch: String,
+}
+
+/// One artifact's size, and its change from the matching baseline artifact.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ArtifactSizeComparison {
+    pub artifact_id: String,
+    pub name: String,
+    #[schema(value_type = ArtifactType)]
+    pub artifact_type: String,
+    pub size_bytes: i64,
+    /// Name of the baseline artifact this one was matched with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_size_bytes: Option<i64>,
+    /// `size_bytes - baseline_size_bytes`; absent when nothing matched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta_bytes: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildSizeReport {
+    /// Branch the build is compared with: a pull request's target branch,
+    /// otherwise the project's default branch. Absent when neither is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_branch: Option<String>,
+    /// The latest earlier successful build of the same pipeline on
+    /// `base_branch` that recorded artifact sizes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<BuildSizeBaseline>,
+    pub artifacts: Vec<ArtifactSizeComparison>,
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListRunnersResponse {
     pub runners: Vec<Runner>,
@@ -2286,6 +2610,8 @@ pub enum ArtifactType {
     Apk,
     Ipa,
     App,
+    /// An Android App Bundle. Not installable on a device; Google Play takes it.
+    Aab,
     Generic,
 }
 
@@ -2959,7 +3285,7 @@ pub struct PlatformBuildCommands {
     pub macos: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PipelineEnvVar {
     pub key: String,
@@ -3004,6 +3330,12 @@ pub struct RepositoryWorkflowPreview {
     pub errors: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution: Option<RepositoryWorkflowExecutionPreview>,
+    /// Workflows a valid `version: 2` file defines, in file order, which a
+    /// pipeline can pick. Empty for version 1 files and files without
+    /// workflows.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub workflows: Vec<String>,
 }
 
 /// Pipeline behavior safe to show before import. Environment values are never returned.
@@ -3101,6 +3433,7 @@ struct RepositoryArtifacts {
     patterns: Vec<String>,
 }
 
+/// Parse a `version: 1` file. [`parse_repository_config`] accepts both versions.
 pub fn parse_repository_pipeline_yaml(raw: &str) -> Result<PipelineExecutionConfig, String> {
     let parsed: RepositoryPipelineConfig =
         serde_yaml::from_str(raw).map_err(|error| format!("YAML parse error: {error}"))?;
@@ -3417,9 +3750,29 @@ pub struct Pipeline {
     #[serde(default)]
     #[schema(required = true)]
     pub approval: ApprovalPolicy,
+    /// Artifact size limits the commit checks enforce.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub size_budget: SizeBudget,
+    /// The `.oore.yaml` version 2 workflow this pipeline builds. `null`
+    /// builds the file's only workflow, or its top level when it defines
+    /// none. That workflow's `on`, or the file's top-level `on`, replaces
+    /// `trigger_config` for webhook events.
+    #[serde(default)]
+    pub workflow: Option<String>,
     pub enabled: bool,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// Distinguishes a field sent as `null` (`Some(None)`) from one left out
+/// (`None`) in a partial update.
+fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3439,6 +3792,11 @@ pub struct CreatePipelineRequest {
     pub timeout_minutes: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval: Option<ApprovalPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_budget: Option<SizeBudget>,
+    /// A workflow the repository's `version: 2` file defines.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3459,6 +3817,17 @@ pub struct UpdatePipelineRequest {
     pub timeout_minutes: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval: Option<ApprovalPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_budget: Option<SizeBudget>,
+    /// A workflow the repository's `version: 2` file defines. `null` clears
+    /// it; leaving it out keeps the current one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present"
+    )]
+    #[schema(value_type = Option<String>, nullable)]
+    pub workflow: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
 }
@@ -3497,13 +3866,228 @@ pub struct ValidatePipelineRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval: Option<ApprovalPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_budget: Option<SizeBudget>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_yaml: Option<String>,
+    /// Checked against the workflows `repository_yaml` defines.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ValidatePipelineResponse {
     pub valid: bool,
     pub errors: Vec<String>,
+}
+
+/// Longest `repository_yaml` the plan endpoint reads, the same cap workflow
+/// discovery applies to files in a repository.
+pub const MAX_PLAN_REPOSITORY_YAML_BYTES: usize = 128 * 1024;
+
+/// What to plan: a repository file or the pipeline's form settings, never both.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct PlanPipelineRequest {
+    /// A `.oore.yaml` of either version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_yaml: Option<String>,
+    /// The pipeline's form settings, as `POST /v1/pipelines/validate` takes them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_config: Option<PipelineExecutionConfig>,
+    /// The version 2 workflow to plan. Defaults to the file's first workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
+    /// Plan only these platforms, as a run that selects them would.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platforms: Option<Vec<BuildPlatform>>,
+    /// Google Play upload is on, so the default Android build also produces an
+    /// App Bundle. Applies to form settings and version 1 files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_play_bundle: Option<bool>,
+}
+
+/// One command a build runs. Secret references stay as written.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelinePlanStep {
+    pub name: String,
+    pub phase: StepPhase,
+    pub run: String,
+    /// Where the command comes from in the configuration.
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<BuildPlatform>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flavor: Option<String>,
+    /// Test report the step writes, when it declares one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_report: Option<String>,
+}
+
+/// A resolved plan. Environment values are left out; only their keys are listed.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelinePlanPreview {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
+    pub platforms: Vec<BuildPlatform>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flutter_version: Option<String>,
+    pub steps: Vec<PipelinePlanStep>,
+    pub env_keys: Vec<String>,
+    pub artifact_patterns: Vec<String>,
+    pub build_number_offset: i64,
+    pub runs_on: Vec<String>,
+    pub isolation: BuildIsolation,
+}
+
+impl From<PipelinePlan> for PipelinePlanPreview {
+    fn from(plan: PipelinePlan) -> Self {
+        Self {
+            workflow: plan.workflow,
+            platforms: plan.platforms,
+            flutter_version: plan.flutter_version,
+            steps: plan
+                .steps
+                .into_iter()
+                .map(|step| PipelinePlanStep {
+                    name: step.name,
+                    phase: step.phase,
+                    run: step.run,
+                    source: step.source,
+                    platform: step.platform,
+                    flavor: step.flavor,
+                    test_report: step.test_report,
+                })
+                .collect(),
+            env_keys: plan.env.into_iter().map(|entry| entry.key).collect(),
+            artifact_patterns: plan.artifact_patterns,
+            build_number_offset: plan.build_number_offset,
+            runs_on: plan.runs_on,
+            isolation: plan.isolation,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct PlanPipelineResponse {
+    /// No errors: `plan` is set.
+    pub valid: bool,
+    /// The errors `oore pipeline validate` reports, one per entry.
+    pub errors: Vec<String>,
+    /// Settings the file declares that this release does not act on yet.
+    pub notices: Vec<String>,
+    /// `.oore.yaml` version, or none for form settings and unparseable files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
+    /// Workflows the file defines, in file order. Empty without workflows.
+    pub workflows: Vec<String>,
+    /// Platforms the planned workflow builds before any platform selection.
+    pub available_platforms: Vec<BuildPlatform>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PipelinePlanPreview>,
+}
+
+/// The pipeline settings to write out as a `version: 2` `.oore.yaml`.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ExportPipelineYamlRequest {
+    /// The pipeline's form settings, as `POST /v1/pipelines/validate` takes them.
+    pub execution_config: PipelineExecutionConfig,
+    /// The pipeline's trigger settings, for the file's `on`. Left out, the
+    /// file has no `on` and the trigger settings keep applying.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_config: Option<TriggerConfig>,
+    /// The pipeline's Google Play settings, for `publish.play`. Only the
+    /// track, rollout and draft setting reach the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google_play: Option<GooglePlayPublishConfig>,
+    /// The pipeline's App Store Connect settings, for `publish.testflight`.
+    /// Only the TestFlight group reaches the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_store: Option<AppStorePublishConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ExportPipelineYamlResponse {
+    /// No errors: `yaml` is set.
+    pub valid: bool,
+    /// Why the settings cannot be exported, one per entry.
+    pub errors: Vec<String>,
+    /// The generated file. Planned, it runs what the settings run. Secret
+    /// values never appear in it; secret references stay as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yaml: Option<String>,
+    /// Behaviour the file cannot reproduce exactly; each is also a
+    /// `WARNING:` comment in the file.
+    pub warnings: Vec<String>,
+    /// Settings that stay with the pipeline instead of moving to the file.
+    pub notes: Vec<String>,
+}
+
+/// A `version: 2` `.oore.yaml` to read back into the pipeline editor's form,
+/// with the settings the editor holds now.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ImportPipelineYamlRequest {
+    /// The file's text.
+    pub yaml: String,
+    /// The form settings the editor holds now. They decide between
+    /// equivalent ways of holding the file: the pipeline's Build commands
+    /// (which the file runs as steps after the targets), build arguments or
+    /// a build command override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_config: Option<PipelineExecutionConfig>,
+    /// The pipeline's trigger settings, whose schedules are kept. Left out
+    /// for repositories that only build manually, where the file's `on`
+    /// cannot be held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_config: Option<TriggerConfig>,
+    /// The pipeline's Google Play settings. The form does not edit them, so
+    /// the file's `publish.play` must match them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google_play: Option<GooglePlayPublishConfig>,
+    /// The pipeline's App Store Connect settings. The file's
+    /// `publish.testflight` must match them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_store: Option<AppStorePublishConfig>,
+}
+
+/// A file's `publish.play`, as written.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ImportedPlayPublish {
+    pub track: String,
+    /// The staged rollout as a percentage. Left out, the Publish settings
+    /// decide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_percent: Option<f64>,
+    /// Left out, the Publish settings decide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ImportPipelineYamlResponse {
+    /// The file parses and validates as `oore pipeline validate` checks it.
+    pub valid: bool,
+    /// Valid, and the form can hold all of it: `execution_config` is set.
+    pub representable: bool,
+    /// The file's validation errors, one per entry.
+    pub errors: Vec<String>,
+    /// What the form cannot hold, one per entry, such as workflows, vars,
+    /// flavors or an `on` the trigger settings cannot express.
+    pub unsupported: Vec<String>,
+    /// What the form drops without changing what runs, such as step names.
+    pub notes: Vec<String>,
+    /// The form settings. Exported again, they plan the same as the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_config: Option<PipelineExecutionConfig>,
+    /// The trigger settings the file's `on` maps to, with the pipeline's
+    /// schedules kept. Left out when the file has no `on`, so the pipeline's
+    /// trigger settings stay as they are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_config: Option<TriggerConfig>,
+    /// The file's `publish.play`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google_play: Option<ImportedPlayPublish>,
+    /// The file's `publish.testflight.group`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub testflight_group: Option<String>,
 }
 
 // ── Secret types ────────────────────────────────────────────────
@@ -3780,6 +4364,15 @@ fn default_release_notes_locale() -> String {
     "en-US".to_string()
 }
 
+/// `internal`, `closed`, `open`, `production` or a custom track name.
+pub(crate) fn is_valid_play_track(track: &str) -> bool {
+    !track.is_empty()
+        && track.len() <= 128
+        && track
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':'))
+}
+
 /// Validate Google Play publish settings, returning every problem found.
 pub fn validate_google_play_publish_config(config: &GooglePlayPublishConfig) -> Vec<String> {
     let mut errors = Vec::new();
@@ -3802,12 +4395,7 @@ pub fn validate_google_play_publish_config(config: &GooglePlayPublishConfig) -> 
         }
     }
     let track = config.track.trim();
-    if track.is_empty()
-        || track.len() > 128
-        || !track
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':'))
-    {
+    if !is_valid_play_track(track) {
         errors.push(
             "track must be internal, closed, open, production, or a custom track name".to_string(),
         );
@@ -3952,6 +4540,10 @@ pub struct RunnerPublishResult {
     pub rollout_fraction: Option<f64>,
     /// `completed`, `in_progress` or `draft`.
     pub status: String,
+    /// App Store uploads to TestFlight: the groups the build was uploaded
+    /// for, which the daemon records instead of reading the settings again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub testflight_groups: Option<Vec<String>>,
 }
 
 // ── Pipeline Android signing types ──────────────────────────────
@@ -4860,10 +5452,25 @@ pub struct NotificationChannel {
     /// reading one channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smtp_summary: Option<SmtpConfigSummary>,
+    /// Slack member IDs to mention, matched against the person behind each
+    /// event (Slack only). Checked before the bot token lookup. Absent from
+    /// daemons that predate it, which is the same as none.
+    #[serde(default)]
+    pub slack_mentions: Vec<SlackMention>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// Maps a person to the Slack member mentioned in their notifications.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SlackMention {
+    /// Oore sign-in email (manual and API builds, releases) or Git username
+    /// (push and merge request builds). Matched without regard to case.
+    pub identity: String,
+    /// Slack member ID, such as `U0123ABCD`.
+    pub member_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -4888,6 +5495,9 @@ pub struct CreateNotificationChannelRequest {
     /// SMTP configuration (required for email channel type).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub smtp_config: Option<SmtpConfig>,
+    /// Slack member IDs to mention (Slack only). Works without a bot token.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slack_mentions: Vec<SlackMention>,
 }
 
 fn default_true() -> bool {
@@ -4916,6 +5526,10 @@ pub struct UpdateNotificationChannelRequest {
     /// Partial SMTP configuration update (email only). Omit fields to keep existing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub smtp_config: Option<UpdateSmtpConfig>,
+    /// New Slack member mappings (Slack only). Omit to keep existing; pass an
+    /// empty list to clear.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slack_mentions: Option<Vec<SlackMention>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -5379,6 +5993,15 @@ pub struct Release {
     pub approved_by_email: Option<String>,
     /// Actions the caller may take now, from their project role and the state.
     pub allowed_actions: Vec<ReleaseAction>,
+    /// The project environment this release belongs to. Absent for projects
+    /// without environments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_name: Option<String>,
+    /// The release this one was promoted from, without a new build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub promoted_from_release_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -5471,6 +6094,262 @@ pub struct CreateReleaseRequest {
     pub reason: Option<String>,
 }
 
+// ── Project environments ────────────────────────────────────────
+
+/// A release environment on a project, such as `internal` or `production`,
+/// with its store target, rollout policy and approval rule.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProjectEnvironment {
+    pub id: String,
+    pub project_id: String,
+    /// Stable identifier, unique in the project: lowercase letters, digits
+    /// and dashes, starting with a letter.
+    pub key: String,
+    pub name: String,
+    /// Order on the promotion path, lowest first.
+    pub position: i64,
+    pub store: ReleaseStore,
+    /// Play track (`internal`, `closed`, `open`, `production` or a custom
+    /// track), or the App Store release track a store upload records.
+    pub track: String,
+    /// A promotion into this environment waits for an approval before
+    /// anything changes at the store. `approvers` says who may give it.
+    pub approval_required: bool,
+    /// Who may approve or reject promotions into this environment. With no
+    /// role and no users, any project maintainer may.
+    pub approvers: EnvironmentApprovers,
+    /// Staged rollout policy for releases promoted into this environment.
+    /// Its `approval` is always `none`; use `approval_required`. On the App
+    /// Store track, a policy with more than one step turns on Apple's phased
+    /// release, which follows Apple's own seven-day schedule.
+    pub rollout_policy: ReleasePolicy,
+    /// App Store track only: submit the App Store version for App Review
+    /// once a promotion attaches the build. Otherwise the version waits for
+    /// someone to submit it in App Store Connect.
+    #[serde(default)]
+    pub submit_for_review: bool,
+    /// The newest release in this environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_release: Option<Release>,
+    /// Whether builds can be promoted into this environment.
+    pub promotable: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// The lowest project role that may approve promotions into an environment.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ApproverRole {
+    /// Maintainers.
+    Maintainer,
+    /// Developers and maintainers.
+    Developer,
+}
+
+impl ApproverRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Maintainer => "maintainer",
+            Self::Developer => "developer",
+        }
+    }
+}
+
+impl FromStr for ApproverRole {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "maintainer" => Ok(Self::Maintainer),
+            "developer" => Ok(Self::Developer),
+            other => Err(format!("unknown approver role: {other}")),
+        }
+    }
+}
+
+/// Who may approve or reject promotions into an environment.
+///
+/// A member may decide when their project role is at least `role`, or when
+/// they are one of `users` (developers and maintainers only). With no role
+/// and no users, any project maintainer may decide, as before approvers
+/// existed. Instance owners and admins may always decide. API tokens never
+/// decide: approvals are interactive.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EnvironmentApprovers {
+    /// A developer role lets developers and maintainers approve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ApproverRole>,
+    /// Project members named as approvers. A user who leaves the project,
+    /// or becomes a viewer, stops counting.
+    pub users: Vec<EnvironmentApprover>,
+}
+
+/// A project member named as an approver.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EnvironmentApprover {
+    pub user_id: String,
+    pub email: String,
+}
+
+/// Approvers to set on an environment. Replaces the whole set; send an empty
+/// object to go back to "any maintainer".
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct EnvironmentApproversInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ApproverRole>,
+    /// User ids of project members who are developers or maintainers. At
+    /// most 20.
+    #[serde(default)]
+    pub user_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PromotionState {
+    /// Waiting for an approval; nothing changed at the store.
+    Pending,
+    /// The store change is in flight.
+    Promoting,
+    Completed,
+    Rejected,
+    Failed,
+}
+
+impl PromotionState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Promoting => "promoting",
+            Self::Completed => "completed",
+            Self::Rejected => "rejected",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl FromStr for PromotionState {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "promoting" => Ok(Self::Promoting),
+            "completed" => Ok(Self::Completed),
+            "rejected" => Ok(Self::Rejected),
+            "failed" => Ok(Self::Failed),
+            other => Err(format!("unknown promotion state: {other}")),
+        }
+    }
+}
+
+/// A request to put an existing build into an environment.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EnvironmentPromotion {
+    pub id: String,
+    pub project_id: String,
+    pub build_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_number: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_code: Option<i64>,
+    pub environment_id: String,
+    pub environment_name: String,
+    /// The release the build is promoted from.
+    pub source_release_id: String,
+    /// Where the source release was, when it belongs to an environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_environment_name: Option<String>,
+    pub source_track: String,
+    /// The release the promotion created, once completed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_id: Option<String>,
+    pub state: PromotionState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_reason: Option<String>,
+    /// Why the promotion failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_by_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_by_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_at: Option<i64>,
+    /// Whether the caller may approve or reject this promotion now.
+    pub can_decide: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListProjectEnvironmentsResponse {
+    /// Environments in promotion order.
+    pub environments: Vec<ProjectEnvironment>,
+    /// Pending promotions and the most recent decided ones, newest first.
+    pub promotions: Vec<EnvironmentPromotion>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreateProjectEnvironmentRequest {
+    pub key: String,
+    pub name: String,
+    pub store: ReleaseStore,
+    pub track: String,
+    #[serde(default)]
+    pub approval_required: bool,
+    /// Defaults to the standard schedule with no crash-rate halt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_policy: Option<ReleasePolicy>,
+    /// App Store track only: submit the version for App Review after a
+    /// promotion attaches the build.
+    #[serde(default)]
+    pub submit_for_review: bool,
+    /// Who may approve promotions. Defaults to any project maintainer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approvers: Option<EnvironmentApproversInput>,
+}
+
+/// Changes to an environment. The key and store are fixed once created.
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct UpdateProjectEnvironmentRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_policy: Option<ReleasePolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submit_for_review: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<i64>,
+    /// Replaces who may approve promotions; leave out (or send null) to keep
+    /// them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approvers: Option<EnvironmentApproversInput>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreatePromotionRequest {
+    pub build_id: String,
+    /// The environment to promote into.
+    pub environment_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct PromotionDecisionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 // ── API Tokens ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -5522,7 +6401,22 @@ pub struct RevokeApiTokenResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApprovalPolicy, TriggerConfig};
+    use super::{ApprovalPolicy, SizeBudget, SizeBudgetMode, TriggerConfig, UpdatePipelineRequest};
+
+    #[test]
+    fn a_pipeline_update_tells_a_cleared_workflow_from_an_absent_one() {
+        let parse = |json: &str| {
+            serde_json::from_str::<UpdatePipelineRequest>(json)
+                .unwrap()
+                .workflow
+        };
+        assert_eq!(parse("{}"), None);
+        assert_eq!(parse(r#"{"workflow":null}"#), Some(None));
+        assert_eq!(
+            parse(r#"{"workflow":"release"}"#),
+            Some(Some("release".to_string()))
+        );
+    }
 
     fn triggers(json: &str) -> TriggerConfig {
         serde_json::from_str(json).unwrap()
@@ -5577,6 +6471,34 @@ mod tests {
         let all: ApprovalPolicy = serde_json::from_str(r#"{"required":true}"#).unwrap();
         assert!(all.applies_to("manual"));
         assert!(!ApprovalPolicy::default().applies_to("tag_push"));
+    }
+
+    #[test]
+    fn size_budget_defaults_to_warn_and_rejects_bad_rules() {
+        let empty: SizeBudget = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty.mode, SizeBudgetMode::Warn);
+        assert!(empty.rules.is_empty());
+        assert!(empty.validate().is_empty());
+
+        let valid: SizeBudget = serde_json::from_str(
+            r#"{"mode":"fail","rules":[{"kind":"aab","max_increase_bytes":0},{"kind":"ipa","max_bytes":1,"max_increase_percent":2.5}]}"#,
+        )
+        .unwrap();
+        assert!(valid.validate().is_empty(), "{:?}", valid.validate());
+
+        let invalid: SizeBudget = serde_json::from_str(
+            r#"{"rules":[{"kind":"AAB","max_bytes":1},{"kind":"apk"},{"kind":"ipa","max_bytes":0,"max_increase_bytes":-1,"max_increase_percent":-1},{"kind":"ipa","max_bytes":5}]}"#,
+        )
+        .unwrap();
+        let errors = invalid.validate();
+        assert_eq!(errors.len(), 6, "{errors:?}");
+        assert!(errors[0].contains("'AAB'"), "{errors:?}");
+        assert!(errors[1].contains("'apk' needs a limit"), "{errors:?}");
+        assert!(
+            errors.iter().any(|e| e.contains("more than once")),
+            "{errors:?}"
+        );
+        assert!(serde_json::from_str::<SizeBudget>(r#"{"limit":1}"#).is_err());
     }
 
     #[test]

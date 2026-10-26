@@ -18,6 +18,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Row } from '@/components/layout/row'
 
 /**
  * The one not-found layout: a missing route, build or project all land here so
@@ -94,7 +95,7 @@ export function RootErrorBoundary({ error, reset }: ErrorComponentProps) {
             </AlertDescription>
           </Alert>
         ) : null}
-        <div className="flex items-center gap-3">
+        <Row gap={3}>
           <Button
             variant="outline"
             onClick={() => {
@@ -109,7 +110,7 @@ export function RootErrorBoundary({ error, reset }: ErrorComponentProps) {
             <HugeiconsIcon icon={ArrowLeft02Icon} />
             Go back
           </Button>
-        </div>
+        </Row>
       </EmptyContent>
     </Empty>
   )

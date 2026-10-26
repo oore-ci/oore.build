@@ -3,22 +3,39 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ArrowDown01Icon,
+  CommandLineIcon,
+  Copy01Icon,
   Download04Icon,
   InformationCircleIcon,
   Notification03Icon,
   Refresh01Icon,
+  StopCircleIcon,
 } from '@hugeicons/core-free-icons'
+import { detectPlatform } from '@tanstack/react-hotkeys'
 import { toast } from '@/lib/toast'
 
 import { ArtifactsPanel } from './artifacts-panel'
 import { BuildStateAlert } from './build-state-alert'
 import { buildStateSummary } from '@/lib/build-state-description'
-import { artifactInstallReadiness } from '@/lib/artifact-install'
+import {
+  artifactInstallReadiness,
+  latestAppPerPlatform,
+} from '@/lib/artifact-install'
+import { SHORTCUTS, shortcutHint } from '@/lib/keyboard-shortcuts'
+import { useAppShortcut } from '@/hooks/use-app-shortcut'
+import { useCopyInstallLink } from '@/hooks/use-copy-install-link'
+import { useRerunAndOpen } from '@/hooks/use-rerun-and-open'
+import { usePageCommands, type PageCommand } from '@/stores/command-store'
 import { retryStepLabel } from '@/lib/build-steps'
 import { BuildSummary, buildSourceRef } from './build-summary'
 import { EventTimeline } from './event-timeline'
+import { AnalyzerPanel } from './analyzer-panel'
 import { TestsPanel } from './tests-panel'
-import type { BuildLogChunk, StepResult } from '@oore/client/models'
+import type {
+  BuildFeedback,
+  BuildLogChunk,
+  StepResult,
+} from '@oore/client/models'
 import {
   useBuildNotification,
   useNotificationPermission,
@@ -27,14 +44,17 @@ import {
   isTerminalStatus,
   useArtifacts,
   useBuild,
+  useBuilds,
   useBuildApprovalDecision,
   useBuildLogs,
+  useBuildSizeReport,
+  useBuildAnalysis,
   useBuildTests,
   useCancelBuild,
-  useRerunBuild,
   useRetryBuildStep,
 } from '@/hooks/use-builds'
 import { useLogStream } from '@/hooks/use-log-stream'
+import { useBuildFeedback } from '@/hooks/use-build-feedback'
 import { useReleases } from '@/hooks/use-releases'
 import { ReleasePanel } from '@/components/releases/release-panel'
 import {
@@ -43,6 +63,7 @@ import {
 } from '@/hooks/use-permissions'
 import { useProject } from '@/hooks/use-projects'
 import { mergeBuildLogSnapshots } from '@/lib/log-stream-utils'
+import { stepMedians } from '@/lib/step-timings'
 import { isOoreApiError } from '@oore/client/client'
 import { PageMeta } from '@/lib/seo'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
@@ -80,6 +101,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTime } from '@/hooks/use-time'
 import { LIVE_FALLBACK_POLL_MS } from '@/lib/live-events'
 import { useLiveEventsStore } from '@/stores/live-events-store'
+import { Row } from '@/components/layout/row'
+import { SplitRow } from '@/components/layout/split-row'
+import { Text } from '@/components/layout/text'
+import { splitRowVariants, textVariants } from '@/lib/recipes'
+import { analyzerTabCount } from '@/lib/analyzer-format'
+import { cn } from '@/lib/utils'
 
 const loadCancelBuildDialog = () => import('./cancel-build-dialog')
 const CancelBuildDialog = lazy(loadCancelBuildDialog)
@@ -87,6 +114,7 @@ const loadRejectBuildDialog = () => import('./reject-build-dialog')
 const RejectBuildDialog = lazy(loadRejectBuildDialog)
 
 const NO_STEP_RESULTS: Array<StepResult> = []
+const NO_FEEDBACK: Array<BuildFeedback> = []
 
 function missingTabMessage(
   tab: string | number,
@@ -95,9 +123,11 @@ function missingTabMessage(
   const reason =
     tab === 'tests'
       ? 'This build has no test results'
-      : tab === 'release'
-        ? 'This build has not been sent to a store'
-        : `This build has no “${tab}” view`
+      : tab === 'analyzer'
+        ? 'This build has no analyzer results'
+        : tab === 'release'
+          ? 'This build has not been sent to a store'
+          : `This build has no “${tab}” view`
   return `${reason}, so ${shownTab === 'tests' ? 'Tests' : 'Logs'} is shown instead.`
 }
 
@@ -122,7 +152,8 @@ export function BuildDetailPage({
     'artifacts:write',
     'instance_settings:write',
   ])
-  const rerunMutation = useRerunBuild()
+  const rerunAndOpen = useRerunAndOpen()
+  const copyInstallLink = useCopyInstallLink()
   const retryStepMutation = useRetryBuildStep()
   const liveEvents = useLiveEventsStore((s) => s.connected)
   const buildQuery = useBuild(buildId, {
@@ -163,9 +194,22 @@ export function BuildDetailPage({
   const [rejectOpen, setRejectOpen] = useState(false)
   const [chosenTab, setActiveTab] = useState<string | number | null>(null)
   const [logFocus, setLogFocus] = useState<LogFocusRequest | null>(null)
+  const feedbackQuery = useBuildFeedback(buildId)
+  const feedback = feedbackQuery.data?.feedback ?? NO_FEEDBACK
+  const sizesQuery = useBuildSizeReport(buildId, {
+    refetchInterval: isTerminal ? false : 5000,
+  })
   const testsQuery = useBuildTests(buildId, {
     refetchInterval: isTerminal ? false : 5000,
   })
+  const analysisQuery = useBuildAnalysis(buildId, {
+    refetchInterval: isTerminal ? false : 5000,
+  })
+  const analysisCounts = analysisQuery.data?.analysis?.counts
+  const hasAnalyzerTab =
+    !!analysisCounts ||
+    analysisQuery.isError ||
+    (initialTab === 'analyzer' && analysisQuery.isLoading)
   const testSummary = testsQuery.data?.summary
   const hasTestsTab =
     !!testSummary ||
@@ -188,6 +232,7 @@ export function BuildDetailPage({
     'artifacts',
   ])
   if (hasTestsTab) availableTabs.add('tests')
+  if (hasAnalyzerTab) availableTabs.add('analyzer')
   if (hasReleaseTab) availableTabs.add('release')
   const requestedTab = chosenTab ?? initialTab ?? null
   // A finished build with failing tests opens on Tests until the user picks a tab.
@@ -241,6 +286,21 @@ export function BuildDetailPage({
     return mergeBuildLogSnapshots(streamLogs, fullLogsData?.logs ?? [])
   }, [streamLogs, fullLogsData?.logs])
   const stepResults = data?.build.step_results
+  // Recent successful runs of this pipeline give each step a typical time.
+  const pipelineHistoryQuery = useBuilds(
+    {
+      pipeline_id: data?.build.pipeline_id,
+      status: 'succeeded',
+      sort: 'created_at',
+      direction: 'desc',
+      limit: 20,
+    },
+    { enabled: !!data?.build.step_results?.length },
+  )
+  const medians = useMemo(
+    () => stepMedians(pipelineHistoryQuery.data?.builds ?? [], buildId),
+    [pipelineHistoryQuery.data?.builds, buildId],
+  )
   const failureLine = useMemo(() => {
     if (buildStatus !== 'failed' && buildStatus !== 'timed_out') return null
     const { stepGroups, allVisibleLogs } = groupLogs(
@@ -289,6 +349,100 @@ export function BuildDetailPage({
     })
   }
 
+  // Worked out before the loading states return, so the shortcuts and
+  // Quick open actions below register on every render.
+  const loadedBuild = data?.build
+  const canDecideApproval =
+    loadedBuild?.approval?.state === 'pending' && canApproveBuild
+  const canRerun = !!loadedBuild && isTerminal && canTriggerBuild
+  // A maintainer rejects rather than cancels a build waiting for approval.
+  const canCancel =
+    !!loadedBuild && !isTerminal && canCancelBuild && !canDecideApproval
+  // A build no runner has started has no log yet; skip the empty workbench.
+  const showLogWorkbench = !!loadedBuild?.started_at || mergedLogs.length > 0
+  const installApps =
+    loadedBuild && isTerminal ? latestAppPerPlatform(artifacts) : []
+  const platform = detectPlatform()
+
+  function rerun() {
+    if (loadedBuild && canRerun) rerunAndOpen.rerun(loadedBuild.id)
+  }
+
+  function requestCancel() {
+    if (canCancel && !cancelMutation.isPending) setCancelOpen(true)
+  }
+
+  function focusLogs() {
+    setActiveTab('logs')
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(
+          '[data-build-log-output] [data-slot="scroll-area-viewport"]',
+        )
+        ?.focus()
+    })
+  }
+
+  useAppShortcut(SHORTCUTS.rerun, rerun, canRerun)
+  useAppShortcut(SHORTCUTS.cancel, requestCancel, canCancel)
+  useAppShortcut(SHORTCUTS.focusLogs, focusLogs, showLogWorkbench)
+
+  const buildNumberLabel = loadedBuild ? `#${loadedBuild.build_number}` : ''
+  const pageCommands: Array<PageCommand> = [
+    ...(canRerun && loadedBuild
+      ? [
+          {
+            id: `rerun-${loadedBuild.id}`,
+            label: `Re-run build ${buildNumberLabel}`,
+            icon: Refresh01Icon,
+            hint: shortcutHint(SHORTCUTS.rerun, platform),
+            keywords: ['rerun retry again'],
+            run: rerun,
+          },
+        ]
+      : []),
+    ...(canCancel && loadedBuild
+      ? [
+          {
+            id: `cancel-${loadedBuild.id}`,
+            label: `Stop build ${buildNumberLabel}…`,
+            icon: StopCircleIcon,
+            hint: shortcutHint(SHORTCUTS.cancel, platform),
+            keywords: ['cancel stop abort'],
+            run: requestCancel,
+          },
+        ]
+      : []),
+    ...installApps.map(({ artifact, label }) => ({
+      id: `install-${artifact.id}`,
+      label:
+        installApps.length === 1
+          ? 'Copy install link'
+          : `Copy ${label} install link`,
+      icon: Copy01Icon,
+      keywords: ['share install link url'],
+      run: () => {
+        if (loadedBuild) copyInstallLink(loadedBuild.id, artifact, label)
+      },
+    })),
+    ...(showLogWorkbench
+      ? [
+          {
+            id: 'focus-logs',
+            label: 'Focus logs',
+            icon: CommandLineIcon,
+            hint: shortcutHint(SHORTCUTS.focusLogs, platform),
+            keywords: ['log output scroll'],
+            run: focusLogs,
+          },
+        ]
+      : []),
+  ]
+  usePageCommands(
+    loadedBuild ? `Build ${buildNumberLabel}` : 'Build',
+    pageCommands,
+  )
+
   if (isLoading) {
     return (
       <PageLayout width="full">
@@ -320,7 +474,7 @@ export function BuildDetailPage({
         <PageMeta title={label} noindex />
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <AlertDescription className={splitRowVariants()}>
             <span>Failed to load build: {error.message}</span>
             <span className="flex gap-2">
               <Button
@@ -353,9 +507,6 @@ export function BuildDetailPage({
     ? retryStepLabel(retryableSteps[0])
     : null
   const awaitingApproval = build.approval?.state === 'pending'
-  const canDecideApproval = awaitingApproval && canApproveBuild
-  // A maintainer rejects rather than cancels a build waiting for approval.
-  const canCancel = !isTerminal && canCancelBuild && !canDecideApproval
   const duration = build.started_at
     ? (build.finished_at ?? nowSeconds) - build.started_at
     : null
@@ -398,8 +549,6 @@ export function BuildDetailPage({
         },
       ]
     : undefined
-  // A build no runner has started has no log yet; skip the empty workbench.
-  const showLogWorkbench = !!build.started_at || mergedLogs.length > 0
   const installableApps =
     build.status === 'succeeded'
       ? artifacts.filter((artifact) => artifactInstallReadiness(artifact).ready)
@@ -417,7 +566,10 @@ export function BuildDetailPage({
           <Button
             variant="link"
             size="xs"
-            className="h-auto px-0 align-baseline text-sm text-muted-foreground underline"
+            className={cn(
+              textVariants({ variant: 'muted' }),
+              'h-auto px-0 align-baseline underline',
+            )}
             onClick={showTests}
           >
             Open Tests
@@ -475,7 +627,7 @@ export function BuildDetailPage({
           </>
         }
         actions={
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <Row gap={2} className="flex-wrap justify-end">
             {!isTerminal && notifications.permission === 'default' ? (
               <Button variant="ghost" size="sm" onClick={notifications.request}>
                 <HugeiconsIcon icon={Notification03Icon} size={14} />
@@ -565,30 +717,15 @@ export function BuildDetailPage({
                   : `Retry ${retryStepLabel(step)}`}
               </Button>
             ))}
-            {isTerminal && canTriggerBuild ? (
+            {canRerun ? (
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => {
-                  rerunMutation.mutate(build.id, {
-                    onSuccess: (result) => {
-                      toast.success(
-                        `Re-run queued as build #${result.build.build_number}`,
-                      )
-                      void navigate({
-                        to: '/builds/$buildId',
-                        params: { buildId: result.build.id },
-                      })
-                    },
-                    onError: (err) => {
-                      toast.error(`Failed to re-run: ${err.message}`)
-                    },
-                  })
-                }}
-                disabled={rerunMutation.isPending}
+                onClick={rerun}
+                disabled={rerunAndOpen.isPending}
               >
                 <HugeiconsIcon icon={Refresh01Icon} size={14} />
-                {rerunMutation.isPending ? 'Re-running...' : 'Re-run'}
+                {rerunAndOpen.isPending ? 'Re-running...' : 'Re-run'}
               </Button>
             ) : null}
             {canDecideApproval ? (
@@ -624,7 +761,7 @@ export function BuildDetailPage({
                 {cancelMutation.isPending ? 'Stopping...' : 'Stop build'}
               </Button>
             ) : null}
-          </div>
+          </Row>
         }
       />
 
@@ -634,7 +771,7 @@ export function BuildDetailPage({
           <AlertDescription>
             {build.runner_policy_block_reason === 'instance_paused' ? (
               canWriteInstanceSettings ? (
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <SplitRow>
                   <span>
                     This build is waiting because runners are paused on{' '}
                     <Link
@@ -646,7 +783,7 @@ export function BuildDetailPage({
                     .
                   </span>
                   <ResumeRunnersButton />
-                </div>
+                </SplitRow>
               ) : (
                 <>
                   This build is waiting because runners are paused. Ask an owner
@@ -707,6 +844,14 @@ export function BuildDetailPage({
                   : ''}
             </TabsTrigger>
           ) : null}
+          {hasAnalyzerTab ? (
+            <TabsTrigger value="analyzer">
+              Analyzer
+              {analysisCounts && analyzerTabCount(analysisCounts)
+                ? ` (${analyzerTabCount(analysisCounts)})`
+                : ''}
+            </TabsTrigger>
+          ) : null}
           <TabsTrigger value="artifacts">
             Artifacts{artifacts.length ? ` (${artifacts.length})` : ''}
           </TabsTrigger>
@@ -716,19 +861,23 @@ export function BuildDetailPage({
             </TabsTrigger>
           ) : null}
           <TabsTrigger value="timeline">
-            Timeline{events.length > 0 ? ` (${events.length})` : ''}
+            Timeline
+            {events.length + feedback.length > 0
+              ? ` (${events.length + feedback.length})`
+              : ''}
           </TabsTrigger>
         </TabsList>
         {missingTab ? (
-          <p className="text-sm text-muted-foreground" role="status">
+          <Text variant="muted" role="status">
             {missingTabMessage(missingTab, activeTab)}
-          </p>
+          </Text>
         ) : null}
         <TabsContent value="logs" keepMounted className="flex min-h-0 flex-col">
           {showLogWorkbench ? (
             <TerminalLogViewer
               logs={mergedLogs}
               stepResults={build.step_results ?? NO_STEP_RESULTS}
+              stepMedians={medians}
               isStreaming={isStreaming && !isTerminal}
               fillAvailableHeight
               isLoading={isTerminal && fullLogsQuery.isLoading}
@@ -769,11 +918,22 @@ export function BuildDetailPage({
             />
           </TabsContent>
         ) : null}
+        {hasAnalyzerTab ? (
+          <TabsContent value="analyzer">
+            <AnalyzerPanel
+              data={analysisQuery.data}
+              error={analysisQuery.error}
+              isLoading={analysisQuery.isLoading}
+              onRetry={() => void analysisQuery.refetch()}
+            />
+          </TabsContent>
+        ) : null}
         <TabsContent value="artifacts">
           <ArtifactsPanel
             artifacts={artifacts}
             error={artifactsQuery.error}
             isLoading={artifactsQuery.isLoading}
+            sizes={sizesQuery.data}
             onRetry={() => void refetchArtifacts()}
             buildStatus={build.status}
             canManageShareLinks={canManageShareLinks}
@@ -791,7 +951,7 @@ export function BuildDetailPage({
           </TabsContent>
         ) : null}
         <TabsContent value="timeline">
-          <EventTimeline events={events} />
+          <EventTimeline events={events} feedback={feedback} />
         </TabsContent>
       </Tabs>
 

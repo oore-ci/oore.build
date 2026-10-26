@@ -14,8 +14,8 @@ policy.
 - Project maintainer, instance admin, or instance owner access.
 - A build that shows **Awaiting approval**.
 
-Notification channels that subscribe to `build_approval_needed` announce each
-build that starts waiting.
+Notification channels on **All events**, or with **Build approval needed**
+ticked, announce each build that starts waiting.
 
 ## 1. Open the build
 
@@ -46,3 +46,8 @@ Only maintainers can decide. Developers can still cancel the build.
 **Oore says the build is not waiting for approval**
 
 Someone else already decided, or the build was canceled.
+
+## Next step
+
+[Cancel a build](/build/run/cancel) that should not run, or change which
+builds need approval in [Triggers, timeouts and approvals](/build/pipelines/triggers#approval).

@@ -8,6 +8,7 @@ import { ThemeProvider, useTheme } from 'next-themes'
 import { routeTree } from './routeTree.gen'
 
 import { Toaster } from '@/components/ui/sonner'
+import { SHORTCUTS, shortcutOptions } from '@/lib/keyboard-shortcuts'
 
 import './fonts.css'
 import './styles.css'
@@ -15,9 +16,11 @@ import './styles.css'
 function ThemeHotkey() {
   const { resolvedTheme, setTheme } = useTheme()
 
-  useHotkey('D', () => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark'), {
-    ignoreInputs: true,
-  })
+  useHotkey(
+    SHORTCUTS.toggleTheme.hotkey,
+    () => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark'),
+    shortcutOptions(SHORTCUTS.toggleTheme),
+  )
 
   return null
 }

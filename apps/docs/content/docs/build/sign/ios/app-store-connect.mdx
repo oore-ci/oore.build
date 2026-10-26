@@ -32,7 +32,7 @@ well.
 When several apps belong to the same Apple team, store the key once instead
 of uploading it to every pipeline. This needs instance admin or owner access.
 
-1. Open **Settings → Store credentials**.
+1. Open **Settings > Store credentials**.
 2. Under **App Store Connect API keys**, select **Add key**.
 3. Enter a **Name**, the **Key ID** and the **Issuer ID**, and choose the
    `.p8` file.
@@ -49,7 +49,7 @@ a few distribution certificates per team.
 
 ## 3. Add the API credentials
 
-1. Open the project, edit the pipeline, and expand **iOS Signing**.
+1. Open the pipeline, select **Edit**, and find **Signing > iOS**.
 2. Turn on **Enable iOS signing**.
 3. For **Signing mode**, select
    **API (App Store Connect automation)**.
@@ -57,7 +57,7 @@ a few distribution certificates per team.
 5. For **App Store Connect API key**, choose a shared key. To use a key only
    for this pipeline, choose **This pipeline's own key**, enter **API key ID**
    and **API issuer ID (UUID)**, and upload **App Store Connect key (.p8)**.
-6. Select **Save**.
+6. Select **Save changes**.
 
 A pipeline's own key overrides the shared keys. Oore keeps it stored when you
 switch the pipeline to a shared key, so you can switch back.
@@ -67,8 +67,8 @@ manually uploaded certificate together with API-synchronized profiles.
 
 ## 4. Synchronize profiles
 
-Open the pipeline for editing and select **Sync Profiles** under
-**Registered iOS Devices**. Oore synchronizes signing assets for the configured
+Open the pipeline's **Edit** page and select **Sync profiles** beside the
+**iOS** heading under **Signing**. Oore synchronizes signing assets for the configured
 bundle identifiers and reports warnings separately from updated profiles.
 
 ## Verify the result

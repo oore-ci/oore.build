@@ -1,0 +1,76 @@
+---
+title: 'How External Access works'
+status: implemented
+description: 'What changes when Oore leaves Local Only, how OIDC and Trusted Proxy decide who someone is, and what Oore still enforces itself.'
+---
+
+Local Only and External Access answer one question: who can reach this Oore
+instance, and how does Oore know who they are? Local Only answers "one
+operator, on the backend Mac". External Access answers "anyone your identity
+provider or access proxy vouches for, over HTTPS".
+
+## What External Access changes
+
+External Access moves the network and identity boundary. It does not move
+anything else. The backend, the runners, the repositories, the signing
+material, and the artifacts stay on your infrastructure, and the hosted UI at
+`ci.oore.build` stays a static web app that calls your backend from the
+browser.
+
+What does change:
+
+- Oore needs a non-loopback HTTPS **Public URL** that browsers can reach, and
+  every browser client origin under **Allowed frontend origins**.
+- Sign-in goes through an identity provider or an access proxy, never through
+  the passwordless loopback login. After an instance uses External Access, a
+  request that reaches loopback gets no bypass. Host-authorized
+  `oore recovery` is a separate break-glass path.
+- Turning External Access on or off revokes every current session.
+
+Oore does not set up the path to it. DNS, the TLS certificate, the reverse
+proxy, a VPN, a tunnel, a mesh, and the firewall are yours to run and protect.
+
+## Two ways to establish identity
+
+| Mode                                                          | Who checks the person                    | Support   |
+| ------------------------------------------------------------- | ---------------------------------------- | --------- |
+| [External Access (OIDC)](/team/access/oidc)                   | An OpenID Connect provider, through Oore | Supported |
+| [External Access (Trusted Proxy)](/team/access/trusted-proxy) | An authentication proxy in front of Oore | Advanced  |
+
+With **OIDC**, the provider authenticates the person through discovery, the
+authorization code flow, and PKCE. The browser client receives the callback,
+and Oore creates its own session from it. The provider never sees Oore's roles.
+
+With **Trusted Proxy**, Oore accepts an identity only when three things hold
+at once: the request comes from an allowed immediate peer, it carries the
+configured identity header, and it supplies the configured shared proof. A
+forwarded email header on its own is not authentication, because anyone who
+can reach Oore could send one.
+
+Our view: use OIDC unless an identity-aware proxy is already part of your
+deployment and you operate its trust boundary. OIDC keeps the identity check
+inside a flow Oore verifies end to end. Trusted Proxy moves that check into a
+component Oore can only trust by its network position and a shared secret.
+
+## Oore still decides what people can do
+
+In both modes, Oore enforces instance roles and project access. The provider
+or proxy only says who someone is. Provider groups and proxy groups do not
+become Oore roles, and a person whose email Oore does not know is rejected
+even after a successful provider sign-in. That is why the next step after
+turning External Access on is to [invite your team](/team/invite) by the exact
+email the provider returns.
+
+## The hosted UI needs the same path
+
+`ci.oore.build` serves only the browser client. The browser still calls your
+backend directly, so the backend must be reachable over HTTPS, allow
+`https://ci.oore.build` as an origin, and, for OIDC, have
+`https://ci.oore.build/auth/callback` registered at the provider. See
+[Connect the hosted UI](/operate/access/hosted-ui).
+
+## Next step
+
+[Configure External Access](/team/access) when a second person needs Oore, or
+read [Oore's security model](/concepts/security) for how sign-in, roles,
+repository trust, and secrets fit together.
