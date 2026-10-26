@@ -94,27 +94,114 @@ fn altool_result(stdout: &str) -> Option<Value> {
 /// Apple's product errors from altool's result. altool sometimes reports them
 /// with exit status 0, so an upload is only a success without any.
 fn altool_product_errors(result: Option<&Value>) -> Vec<String> {
-    result
+    product_errors(result)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect()
+}
+
+/// Each product error's bare message and its text with Apple's reasons.
+/// App Store Connect's validation errors (409) often carry only "Validation
+/// failed" at the top level and put the reason in `detail` or inside
+/// `NSUnderlyingError`.
+fn product_errors(result: Option<&Value>) -> Vec<(String, String)> {
+    let Some(errors) = result
         .and_then(|value| value.get("product-errors"))
         .and_then(Value::as_array)
-        .map(|errors| {
-            errors
-                .iter()
-                .filter_map(|error| {
-                    let message = error.get("message").and_then(Value::as_str)?;
-                    let reason = error
-                        .get("userInfo")
-                        .and_then(|info| info.get("NSLocalizedFailureReason"))
-                        .and_then(Value::as_str)
-                        .filter(|reason| !message.contains(reason));
-                    Some(match reason {
-                        Some(reason) => format!("{message} {reason}"),
-                        None => message.to_string(),
-                    })
-                })
-                .collect()
+    else {
+        return Vec::new();
+    };
+    errors
+        .iter()
+        .filter_map(|error| {
+            let message = error.get("message").and_then(Value::as_str)?.trim();
+            let mut details = Vec::new();
+            if let Some(info) = error.get("userInfo") {
+                collect_error_details(info, &mut details);
+            }
+            let mut text = message.to_string();
+            for detail in details {
+                if text.contains(&detail) {
+                    continue;
+                }
+                if text == message && detail.contains(message) {
+                    text = detail;
+                } else {
+                    text = format!("{text} {detail}");
+                }
+            }
+            Some((message.to_string(), text))
         })
-        .unwrap_or_default()
+        .collect()
+}
+
+/// The keys under which altool and App Store Connect put human-readable
+/// reasons, in the order they read best.
+const ERROR_DETAIL_KEYS: [&str; 4] = [
+    "NSLocalizedFailureReason",
+    "detail",
+    "NSLocalizedRecoverySuggestion",
+    "NSLocalizedDescription",
+];
+
+fn collect_error_details(info: &Value, details: &mut Vec<String>) {
+    for key in ERROR_DETAIL_KEYS {
+        if let Some(text) = info.get(key).and_then(Value::as_str) {
+            push_detail(details, text);
+        }
+    }
+    match info.get("NSUnderlyingError") {
+        Some(Value::String(text)) => {
+            for key in ERROR_DETAIL_KEYS {
+                if let Some(text) = described_error_value(text, key) {
+                    push_detail(details, &text);
+                }
+            }
+        }
+        Some(underlying @ Value::Object(_)) => {
+            collect_error_details(underlying.get("userInfo").unwrap_or(underlying), details);
+        }
+        _ => {}
+    }
+}
+
+fn push_detail(details: &mut Vec<String>, text: &str) {
+    let text = text.trim();
+    if !text.is_empty() && !details.iter().any(|known| known.contains(text)) {
+        details.retain(|known| !text.contains(known.as_str()));
+        details.push(text.to_string());
+    }
+}
+
+/// A value from an NSError description such as
+/// `Error Domain=IrisAPI Code=-19241 "Validation failed" UserInfo={status=409, detail=Invalid Bundle. ..., NSLocalizedDescription=Validation failed}`.
+/// Values are unquoted, so each runs to the next `, name=` or the closing brace.
+fn described_error_value(description: &str, key: &str) -> Option<String> {
+    let start = description.find("UserInfo={")? + "UserInfo={".len();
+    let user_info = &description[start..];
+    let user_info = &user_info[..user_info.rfind('}').unwrap_or(user_info.len())];
+    let starts_entry = |text: &str| {
+        text.split_once('=').is_some_and(|(name, _)| {
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || "-_".contains(character))
+        })
+    };
+    let mut entries = Vec::new();
+    let mut entry_start = 0;
+    for (index, _) in user_info.match_indices(", ") {
+        if index >= entry_start && starts_entry(&user_info[index + 2..]) {
+            entries.push(&user_info[entry_start..index]);
+            entry_start = index + 2;
+        }
+    }
+    entries.push(&user_info[entry_start..]);
+    entries.into_iter().find_map(|entry| {
+        let (name, value) = entry.split_once('=')?;
+        let value = value.trim().trim_matches('"').trim();
+        (name.trim() == key && !value.is_empty()).then(|| value.to_string())
+    })
 }
 
 /// Some Xcode versions make altool print every environment variable as
@@ -210,9 +297,25 @@ async fn run_altool(
 /// Pulls Apple's error messages out of `altool --output-format json` output,
 /// falling back to the raw text when the output is not JSON.
 fn summarize_altool_failure(stdout: &str, stderr: &str) -> String {
-    let messages = altool_product_errors(altool_result(stdout).as_ref());
-    if !messages.is_empty() {
-        return messages.join("; ");
+    let result = altool_result(stdout);
+    let errors = product_errors(result.as_ref());
+    if !errors.is_empty() {
+        let summary = errors
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        if errors.iter().any(|(message, text)| message != text) {
+            return summary;
+        }
+        // A bare "Validation failed" says nothing; show everything altool
+        // returned so Apple's reason is in the log wherever it put it.
+        let mut raw = result.map(|value| value.to_string()).unwrap_or_default();
+        if !stderr.trim().is_empty() {
+            raw = format!("{raw} {}", stderr.trim());
+        }
+        let raw: String = hide_environment_values(&raw).chars().take(4000).collect();
+        return format!("{summary}. altool returned: {raw}");
     }
     let fallback = if stderr.trim().is_empty() {
         stdout.trim()
@@ -446,6 +549,57 @@ mod tests {
         let ok = altool_result("note: uploading\n{\"success-message\": \"No errors uploading\"}");
         assert!(altool_product_errors(ok.as_ref()).is_empty());
         assert_eq!(ok.unwrap()["success-message"], "No errors uploading");
+    }
+
+    #[test]
+    fn validation_reasons_inside_the_underlying_error_are_shown() {
+        let stdout = r#"{"tool-version":"8.0","product-errors":[{"code":-19241,"message":"Validation failed","userInfo":{"NSLocalizedDescription":"Validation failed","NSLocalizedFailureReason":"Validation failed","NSUnderlyingError":"Error Domain=IrisAPI Code=-19241 \"Validation failed\" UserInfo={status=409, detail=Invalid Bundle. The bundle Runner.app does not support the minimum OS Version specified in the Info.plist, id=8a1c, code=STATE_ERROR.VALIDATION_ERROR, title=Validation failed, NSLocalizedFailureReason=Invalid Bundle. The bundle Runner.app does not support the minimum OS Version specified in the Info.plist, NSLocalizedDescription=Validation failed}","iris-code":"STATE_ERROR.VALIDATION_ERROR"}}]}"#;
+        assert_eq!(
+            summarize_altool_failure(stdout, ""),
+            "Validation failed Invalid Bundle. The bundle Runner.app does not support the minimum OS Version specified in the Info.plist"
+        );
+    }
+
+    #[test]
+    fn validation_detail_in_user_info_is_shown() {
+        let stdout = r#"{"product-errors":[{"message":"Validation failed","userInfo":{"detail":"The provided entity includes an attribute with a value that has already been used.","status":"409"}}]}"#;
+        assert_eq!(
+            summarize_altool_failure(stdout, ""),
+            "Validation failed The provided entity includes an attribute with a value that has already been used."
+        );
+    }
+
+    #[test]
+    fn a_bare_validation_failure_shows_what_altool_returned() {
+        let stdout = r#"{"product-errors":[{"message":"Validation failed","userInfo":{"status":"409","iris-code":"STATE_ERROR.VALIDATION_ERROR"}}]}"#;
+        let summary = summarize_altool_failure(stdout, "*** Error: Validation failed (409)");
+        assert!(
+            summary.starts_with("Validation failed. altool returned: {"),
+            "{summary}"
+        );
+        assert!(
+            summary.contains("STATE_ERROR.VALIDATION_ERROR"),
+            "{summary}"
+        );
+        assert!(
+            summary.ends_with("*** Error: Validation failed (409)"),
+            "{summary}"
+        );
+    }
+
+    #[test]
+    fn reads_values_from_error_descriptions() {
+        let description = "Error Domain=IrisAPI Code=-19241 \"Validation failed\" UserInfo={status=409, detail=Invalid Bundle, a, b=c. Fix it., NSLocalizedDescription=Validation failed}";
+        assert_eq!(
+            described_error_value(description, "detail").as_deref(),
+            Some("Invalid Bundle, a")
+        );
+        assert_eq!(
+            described_error_value(description, "NSLocalizedDescription").as_deref(),
+            Some("Validation failed")
+        );
+        assert_eq!(described_error_value(description, "missing"), None);
+        assert_eq!(described_error_value("no user info", "detail"), None);
     }
 
     #[test]
