@@ -217,6 +217,25 @@ export const projectHandlers = [
         { status: 400 },
       )
     }
+    if (user.role === 'owner' || user.role === 'admin') {
+      return HttpResponse.json(
+        {
+          error:
+            'Owner and admin users already have full access to all projects',
+          code: 'invalid_user',
+        },
+        { status: 400 },
+      )
+    }
+    if (demoState.projectRoles[projectId]?.[user.id]) {
+      return HttpResponse.json(
+        {
+          error: 'User is already a member of this project',
+          code: 'already_member',
+        },
+        { status: 409 },
+      )
+    }
     demoState.projectRoles[projectId] ??= {}
     demoState.projectRoles[projectId][user.id] = body.role
     return HttpResponse.json(

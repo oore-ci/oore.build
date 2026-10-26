@@ -35,21 +35,36 @@ Only the Owner can promote someone to Admin or change an existing Admin. You can
 
 ## 2. Grant project access
 
+You can add many people at once, either to one project or across several projects.
+
+### Add people to one project
+
 1. Open the project and select its **Settings** tab.
-2. In the **Access** section, select **Add project member**.
-3. Choose the **User**.
-4. Choose a **Project role**:
+2. In the **Access** section, select **Add members**.
+3. Pick people from the list, select **Select all eligible**, or paste a list of emails. Emails can be one per line, separated by commas or semicolons, or copied from a mail client (`Name <name@example.com>`). Typing an email and pressing Enter works too.
+4. Choose one **Project role** for everyone:
    - **Maintainer** manages the project's settings and members as well as its build work.
    - **Developer** manages pipelines, triggers or cancels builds, and reads or writes artifacts, but cannot manage project settings or membership.
    - **Viewer** reads the project, builds, logs, and artifacts.
-5. Select **Add**.
+5. Select **Add N people**.
+
+A pasted email that has no Oore account yet is shown as **new**. When you are the Owner or an Admin, Oore invites it as a Developer and adds it in the same step. Emails that already belong to the project are listed and skipped. If some additions fail, the dialog stays open with only the failed people selected, so you can retry.
+
+### Give people access to several projects
+
+1. Open **Settings > Users**.
+2. Select the people in the table, then select **Give project access**. For one person, open their **Actions** menu and choose **Give project access**.
+3. Pick the projects, or select **Select all**.
+4. Choose the **Project role** and select **Add to N projects**.
+
+People who are already members of a project keep their current role there. Owners and Admins are skipped because they already see every project, and disabled users are skipped.
 
 To change an existing membership, open its **Actions** menu and choose another project role. To remove it, select **Remove access** and confirm.
 
 ## Verify the result
 
 - An instance-role change shows `Role updated for <email>`.
-- A new project member appears in the **Access** section with both their instance and project roles.
+- New project members appear in the **Access** section with both their instance and project roles, and a toast says how many were added.
 - A project-role change shows `Access updated for <email>`.
 - Removing access shows `<email> removed from this project`, and the user no longer sees that project's builds, logs, or artifacts.
 
