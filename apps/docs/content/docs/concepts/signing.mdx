@@ -5,8 +5,9 @@ description: 'Understand how Oore separates repository-controlled builds from ru
 ---
 
 Oore treats repository execution and signing as different authorities.
-Repository commands produce the mobile output; fixed logic owned by the Direct
-macOS runner signs and verifies supported artifacts afterward.
+Android is signed by Gradle during the build command, with the keystore the
+runner hands it for that command. iOS output is signed afterward by fixed logic
+owned by the Direct macOS runner, and the runner verifies both.
 
 ## The signing boundary
 
@@ -16,27 +17,34 @@ the daemon data root, so the database and its matching root key belong to the
 same recovery set.
 
 For an active assigned job, the trusted runner parent can retrieve signing
-material with a separate job-scoped capability. It keeps that material out of
-the repository checkout and scrubs managed signing values from repository
-child processes. The repository does not receive signing files, passwords, or
-the signing capability as build inputs.
+material with a separate job-scoped capability, and scrubs managed signing
+values from the environment of repository child processes. iOS signing files,
+passwords, and the signing capability are never repository build inputs. The
+Android keystore and its passwords are readable by the Flutter Android build
+command while it runs, as Gradle needs them to sign.
 
 The runner may hold signing material in its trusted parent while repository
 stages run. The supported boundary is what repository child processes receive,
 not a promise that the parent waits until every repository command has
 finished before retrieving material.
 
-## Android signs the completed output
+## Android signs in Gradle
 
-An Android signing profile contains a keystore, alias, and passwords. The
-repository builds an APK or App Bundle without depending on Oore-managed
-signing variables. The runner then selects the configured variant, signs the
-completed output in a private signer workspace, verifies it, and cleans up the
-temporary signing files.
+An Android signing profile contains a keystore, alias, and passwords. For each
+`flutter build apk` or `flutter build appbundle` command, the runner writes the
+keystore to a private folder outside the checkout and adds the Android Gradle
+plugin's `android.injected.signing.*` properties to the workspace's
+`android/gradle.properties`, the same mechanism Android Studio and fastlane
+use. Gradle signs every variant it builds with them, over the app's own
+signing config. When the command ends, the runner restores the file and
+deletes the keystore copy.
 
-This keeps local developer signing independent. A repository can use its own
-local `key.properties` path outside CI while leaving the Oore signing profile
-to the runner.
+The `android-sign` step then checks each artifact. One signed with the
+profile's key is kept; anything else is signed again in a private signer
+workspace and verified. Local developer signing stays independent: a
+repository can keep its own `key.properties` for developer machines without
+committing it. See
+[Keep local Gradle signing alongside Oore](/build/sign/android/gradle).
 
 ## iOS adds Apple identity and device rules
 
@@ -53,7 +61,9 @@ to run as that macOS account.
 ## What this means for you
 
 - Do not pass Oore-managed signing credentials through repository environment
-  variables or Gradle source.
+  variables or Gradle source. Gradle gets the Android keystore without either.
+- Treat Android build commands as able to read the Android keystore while they
+  run, and only build repositories you trust with it.
 - Keep an independent backup of signing keys and passwords.
 - Treat the Direct runner account as sensitive and preferably dedicated and
   non-admin.

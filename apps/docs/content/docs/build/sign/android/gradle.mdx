@@ -1,24 +1,47 @@
 ---
-title: 'Configure Gradle for Android signing'
+title: 'Keep local Gradle signing alongside Oore'
 status: implemented
-description: 'Keep local Gradle signing separate from Oore runner-owned post-build signing.'
+description: 'How Oore hands the pipeline keystore to Gradle, and what a local key.properties setup needs to keep working.'
 ---
 
-Configure Gradle to use local signing credentials only outside CI. Oore
-defaults `CI` to `true` for repository commands and signs supported Android
-output with its runner-owned signer. A pipeline environment value can override
-that default, so leave `CI` unset or set it to `true`.
+Oore signs Android builds in Gradle itself, so most apps need no Gradle change.
+This page explains how, and what to check when the repository also signs
+release builds on developer machines.
 
 ## What you need
 
 - [Android signing configured](/build/sign/android) for the pipeline.
-- A Flutter Android project with a local Gradle signing block.
-- A local `key.properties` file that is not committed to the repository.
+- A Flutter Android project in the repository's `android` folder.
 
-## 1. Gate local signing on `CI`
+## How Oore signs the build
 
-In `android/app/build.gradle`, load the developer's local properties and
-assign the Gradle signing configuration only when `CI` is false:
+For each `flutter build apk` or `flutter build appbundle` command, the runner:
+
+1. Writes the pipeline's keystore to a private folder outside the checkout.
+2. Adds the Android Gradle plugin's injected signing properties,
+   `android.injected.signing.store.file`, `store.password`, `key.alias` and
+   `key.password`, to the workspace's `android/gradle.properties`.
+3. Runs the command. The Android Gradle plugin signs every variant it builds
+   with those values, in place of the app's own `signingConfig`.
+4. Restores `android/gradle.properties` and deletes the keystore copy as soon
+   as the command ends.
+
+These are the properties Android Studio uses for **Generate Signed Bundle /
+APK**, and the ones fastlane's `gradle` action passes. After the build, the
+`android-sign` step checks every APK or App Bundle under `build/app/outputs`.
+An artifact Gradle signed with the pipeline key is left as it is. Anything
+else is signed again with the pipeline key, so the result is the same either
+way.
+
+The build command can read the keystore and its passwords while Gradle runs.
+Oore does not put them in the step's environment, its arguments, or the build
+log.
+
+## 1. Keep local signing from failing in CI
+
+A local setup that loads `key.properties` keeps working on developer machines.
+In CI the file usually does not exist, so Gradle must still configure without
+it. Guard the file read, and do not call `file()` on a missing path:
 
 ```groovy
 def keystoreProperties = new Properties()
@@ -26,45 +49,33 @@ def keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
-def isCi = System.getenv("CI")?.toBoolean() ?: false
 
 android {
     signingConfigs {
         release {
-            if (!isCi) {
-                storeFile file(keystoreProperties["storeFile"])
-                storePassword keystoreProperties["storePassword"]
-                keyAlias keystoreProperties["keyAlias"]
-                keyPassword keystoreProperties["keyPassword"]
-            }
+            keyAlias keystoreProperties["keyAlias"]
+            keyPassword keystoreProperties["keyPassword"]
+            storeFile keystoreProperties["storeFile"] ? file(keystoreProperties["storeFile"]) : null
+            storePassword keystoreProperties["storePassword"]
         }
     }
 
     buildTypes {
         release {
-            if (!isCi) {
-                signingConfig signingConfigs.release
-            }
+            signingConfig signingConfigs.release
         }
     }
 }
 ```
 
-Adapt the surrounding Gradle syntax to the repository's existing Groovy or
-Kotlin build file. Keep the boundary the same: local credentials remain local,
-and the Oore build produces output for the runner-owned signer.
-
-Check the pipeline's **Environment Variables** before relying on this gate.
-Remove an unnecessary `CI` override or set it to `true`; a false override would
-activate the local signing branch on the runner.
+With this setup the repository does not need to commit `key.properties` or
+the keystore. Adapt the syntax to a Kotlin `build.gradle.kts` file as needed.
 
 ## 2. Keep secrets out of repository configuration
 
 Do not add keystore content or passwords to `.oore.yaml`, UI environment
-variables, Gradle source, or committed `key.properties`.
-
-Do not read runner-managed signing variables from Gradle. They are not a
-supported repository contract.
+variables, or Gradle source. Do not read `OORE_ANDROID_*` variables from
+Gradle: the runner removes them from build commands.
 
 ## 3. Run one Android variant
 
@@ -73,24 +84,28 @@ pipeline, then trigger a build.
 
 ## Verify the result
 
-The repository build commands observe `CI=true`, the `android-sign` step
-succeeds, and the final downloaded artifact passes `apksigner verify` or
-`jarsigner -verify`.
-
-Also run the release build locally with `CI` unset and confirm the existing
-developer signing path still works with the local `key.properties`.
+The build log shows
+`[oore-signing] Gradle signs this build with the managed keystore` before the
+build command, and
+`[oore-signing] Gradle signed 1 Android artifact(s) with the managed key; verified`
+in the `android-sign` step. The downloaded artifact passes
+`apksigner verify --print-certs` or `keytool -printcert -jarfile`, with your
+key's certificate.
 
 ## Troubleshooting
 
-**Gradle still asks for Oore signing variables**
+**Gradle fails because `key.properties` is missing**
 
-Remove the Oore-specific environment lookup and gate the repository's existing
-local signing configuration on `CI` instead.
+The Gradle file reads the file or calls `file()` on its `storeFile` without
+checking that it exists. Guard both as in step 1.
 
-**The local signing branch runs in Oore**
+**The log says Gradle did not sign with the managed key**
 
-Inspect the pipeline's **Environment Variables**. Remove a false `CI` override
-or set `CI` to `true`, then trigger a new build.
+The build still succeeds, because the `android-sign` step signed the output
+with the pipeline key. The build does not apply the injected properties, for
+example because the repository has no `android/gradle.properties` project at
+its root, the file is a symbolic link, or the Gradle build sets signing in a
+way that ignores them.
 
 **No Android artifact is found for signing**
 

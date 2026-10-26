@@ -1,11 +1,11 @@
 ---
 title: 'Add Android signing'
 status: implemented
-description: 'Upload an Android keystore and produce a runner-signed APK or App Bundle.'
+description: 'Upload an Android keystore so Gradle signs the APK or App Bundle with it.'
 ---
 
-Add a keystore to one pipeline so the Direct macOS runner can sign and verify
-the APKs or App Bundles produced by that pipeline.
+Add a keystore to one pipeline so Gradle signs the APKs or App Bundles that
+pipeline builds, and the runner verifies them.
 
 ## What you need
 
@@ -50,15 +50,17 @@ operation.
 
 ## 3. Run a signed build
 
-Trigger the pipeline with one Android variant. Repository child processes do
-not receive signing files, passwords, or Oore signing capability tokens. For a
-supported Flutter Android build command, the runner-owned signer signs and
-verifies the produced artifacts outside the repository checkout.
+Trigger the pipeline with one Android variant. For a supported Flutter Android
+build command, the runner hands the keystore to Gradle for that command only,
+and Gradle signs the output. The `android-sign` step then checks each
+artifact, and signs again any that Gradle did not sign with this key. See
+[Keep local Gradle signing alongside Oore](/build/sign/android/gradle) for how
+it works and what a local `key.properties` setup needs.
 
 ### Flavored apps
 
 Signing works the same with `--flavor`. After each `flutter build apk` or
-`flutter build appbundle` command, the runner signs every `.apk` or `.aab`
+`flutter build appbundle` command, the runner checks every `.apk` or `.aab`
 under `build/app/outputs`, including flavored output. Two things change:
 
 - Gradle writes a flavored App Bundle to a folder named after the flavor, such
@@ -68,14 +70,15 @@ under `build/app/outputs`, including flavored output. Two things change:
   `build/app/outputs/bundle/release/*.aab`.
 - Every flavor in one run must use the same variant, such as release. To build
   several flavors, run one `flutter build` command per flavor, such as
-  `flutter build appbundle --release --flavor prod`. Each command signs all the
-  output of that kind under `build/app/outputs`, so every flavor is signed.
+  `flutter build appbundle --release --flavor prod`. Each command checks all
+  the output of that kind under `build/app/outputs`, so every flavor is
+  signed.
 
 ## Verify the result
 
 The build reaches `succeeded`, and its log includes an `android-sign` step
-followed by a signed-and-verified artifact count. Download an APK and inspect
-its certificate:
+that says Gradle signed the artifacts with the managed key. Download an APK and
+inspect its certificate:
 
 ```bash
 apksigner verify --print-certs my-app-release.apk
@@ -105,10 +108,11 @@ release Flutter build commands in the same run.
 
 **Repository Gradle code expects managed signing variables**
 
-Remove that dependency. Managed signing values are not repository build inputs
-and are scrubbed from repository child processes.
+Remove that dependency. The runner removes `OORE_ANDROID_*` variables from
+build commands. Gradle gets the keystore through its injected signing
+properties instead, with no Gradle code needed.
 
 ## Next step
 
-[Configure the Gradle boundary](/build/sign/android/gradle) when the repository
-also signs release builds on developer machines.
+[Keep local Gradle signing alongside Oore](/build/sign/android/gradle) when the
+repository also signs release builds on developer machines.

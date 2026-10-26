@@ -1,5 +1,9 @@
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Cancel01Icon, UserCheck01Icon } from '@hugeicons/core-free-icons'
+import {
+  Cancel01Icon,
+  FolderAddIcon,
+  UserCheck01Icon,
+} from '@hugeicons/core-free-icons'
 
 import type { User, UserRole } from '@oore/client/models'
 import { DataTableRowActionsTrigger } from '@/components/data-table'
@@ -21,12 +25,14 @@ import { ROLE_LABELS } from './-user-role-labels'
 export function UserActions({
   authUserId,
   onDisable,
+  onGrantAccess,
   onReEnable,
   onRoleChange,
   user,
 }: {
   authUserId: string | undefined
   onDisable: (userId: string, email: string) => void
+  onGrantAccess: (user: User) => void
   onReEnable: (userId: string, email: string) => void
   onRoleChange: (userId: string, email: string, newRole: UserRole) => void
   user: User
@@ -40,13 +46,19 @@ export function UserActions({
   return (
     <DropdownMenu>
       <DataTableRowActionsTrigger label={`Actions for ${user.email}`} />
-      <DropdownMenuContent align="end" className="w-44">
+      <DropdownMenuContent align="end" className="w-52">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Actions</DropdownMenuLabel>
         </DropdownMenuGroup>
         {!isDisabled ? (
           <>
             <DropdownMenuGroup>
+              {user.role !== 'admin' ? (
+                <DropdownMenuItem onClick={() => onGrantAccess(user)}>
+                  <HugeiconsIcon icon={FolderAddIcon} />
+                  Give project access
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>Change role</DropdownMenuSubTrigger>
                 <DropdownMenuSubContent>

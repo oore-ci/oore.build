@@ -80,24 +80,26 @@ export function PipelineAndroidSigningSection({
         <SetupHint
           title="Android project setup"
           items={[
-            <span key="post-build">
-              No Gradle changes needed. After each{' '}
-              <code>flutter build apk</code> or{' '}
-              <code>flutter build appbundle</code>, Oore re-signs its APKs or
-              App Bundle with your keystore in a separate{' '}
-              <code>android-sign</code> step. Output from other commands, such
-              as <code>./gradlew</code>, is not signed.
+            <span key="gradle">
+              No Gradle changes needed. For each <code>flutter build apk</code>{' '}
+              or <code>flutter build appbundle</code>, Oore gives Gradle your
+              keystore, and it takes precedence over the app&apos;s own signing
+              config. Output from other commands, such as <code>./gradlew</code>
+              , is not covered.
+            </span>,
+            <span key="check">
+              The <code>android-sign</code> step then checks each APK or App
+              Bundle and re-signs any that Gradle did not sign with your key.
             </span>,
             <span key="variant">
               Commands with <code>--debug</code> use the debug keystore, and all
               others use the release keystore. A variant with signing turned off
               keeps the Gradle signature. Build one variant per run.
             </span>,
-            'Build commands never see the keystore or its passwords, so Gradle cannot read them.',
+            'The build step can read the keystore and its passwords while Gradle runs. Oore removes them when the step ends.',
             <span key="local-signing">
-              If Gradle loads a local <code>key.properties</code>, skip it when{' '}
-              <code>CI</code> is true. Oore sets <code>CI=true</code> for build
-              commands.{' '}
+              A local <code>key.properties</code> setup can stay, as long as
+              Gradle still configures when the file is missing in CI.{' '}
               <a
                 href={ANDROID_GRADLE_DOCS_URL}
                 target="_blank"
