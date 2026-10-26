@@ -86,16 +86,16 @@ can tighten the pipeline's budget but never loosen it.
 
 ## See analyzer warnings [#analyzer]
 
-You do not need to set anything up. After a build's steps run, and also when a
-build or post-build step fails, the runner runs `dart analyze --format=json`
+Analysis is off by default for now. To turn it on for a pipeline, add the env
+var `OORE_ANALYZE` with the value `true` to the pipeline or its `.oore.yaml`.
+
+When it is on, after a build's steps run, and also when a build or post-build
+step fails, the runner runs `dart analyze --format=json`
 in the repository root as a step named `analyze`. It does not run after a
 checkout or pre-build failure, such as `flutter pub get`. The check shows the error, warning
 and info counts and how they changed since the baseline build, and the build
 page shows them on its **Analyzer** tab. The analyzer never changes the build's
 or the check's result.
-
-To turn it off for a pipeline, add the env var `OORE_ANALYZE` with the value
-`false` to the pipeline or its `.oore.yaml`.
 
 ## Verify the result
 
@@ -152,6 +152,10 @@ so.
 
 Oore could not load the artifact sizes. The check keeps the build's result.
 Re-run the build.
+
+### The build has no analyze step
+
+Analysis is off unless the pipeline sets the env var `OORE_ANALYZE` to `true`.
 
 ### The analyze step is skipped
 

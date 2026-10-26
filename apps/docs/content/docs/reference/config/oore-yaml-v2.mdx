@@ -138,8 +138,8 @@ after the step, including when the step fails, and shows the results on the
 build's Tests tab. Plain `flutter test` and `dart test` commands are still
 detected without it.
 
-After the steps, the runner adds an `analyze` step that runs
-`dart analyze --format=json`, as for
+When the env var `OORE_ANALYZE` is `true`, the runner adds an `analyze` step
+after the steps that runs `dart analyze --format=json`, as for
 [version 1](/reference/config/oore-yaml#analyzer).
 
 ## Environment and references

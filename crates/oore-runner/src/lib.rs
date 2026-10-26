@@ -7366,20 +7366,7 @@ async fn run_analyzer_step(
     inputs: AnalyzeInputs<'_>,
     steps: &mut Vec<StepResult>,
 ) -> anyhow::Result<()> {
-    if analyzer::analysis_disabled(inputs.env) {
-        let _ = append_runner_log_line(
-            client,
-            daemon_url,
-            config,
-            build_id,
-            log_seq,
-            "stdout",
-            &format!(
-                "[oore-analyze] {} turns analysis off for this pipeline",
-                analyzer::ANALYZE_ENV
-            ),
-        )
-        .await;
+    if !analyzer::analysis_enabled(inputs.env) {
         return Ok(());
     }
     let started = now_unix();

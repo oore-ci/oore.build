@@ -45,15 +45,16 @@ pub(crate) fn analyze_script() -> String {
     )
 }
 
-/// Whether the pipeline's env turned analysis off.
-pub(crate) fn analysis_disabled(env: &[(String, String)]) -> bool {
+/// Whether the pipeline's env turned analysis on. Analysis is opt-in until it
+/// has been tried on macOS runners and in VMs.
+pub(crate) fn analysis_enabled(env: &[(String, String)]) -> bool {
     env.iter()
         .rev()
         .find(|(key, _)| key == ANALYZE_ENV)
         .is_some_and(|(_, value)| {
             matches!(
                 value.trim().to_ascii_lowercase().as_str(),
-                "false" | "0" | "no" | "off"
+                "true" | "1" | "yes" | "on"
             )
         })
 }
@@ -371,12 +372,13 @@ mod tests {
     }
 
     #[test]
-    fn analysis_is_on_unless_the_pipeline_turns_it_off() {
+    fn analysis_is_off_unless_the_pipeline_turns_it_on() {
         let env = |value: &str| vec![(ANALYZE_ENV.to_string(), value.to_string())];
-        assert!(!analysis_disabled(&[]));
-        assert!(!analysis_disabled(&env("true")));
-        for off in ["false", "0", "No", " off "] {
-            assert!(analysis_disabled(&env(off)), "{off}");
+        assert!(!analysis_enabled(&[]));
+        assert!(!analysis_enabled(&env("false")));
+        assert!(!analysis_enabled(&env("")));
+        for on in ["true", "1", "Yes", " on "] {
+            assert!(analysis_enabled(&env(on)), "{on}");
         }
     }
 
