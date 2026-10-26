@@ -88,6 +88,8 @@ jobs:
           echo 'The release tag has too many nested tag objects.' >&2
           exit 1
 
+  # Runs beside the Rust builds instead of before them. Nothing is signed or
+  # published until it passes, because the release job needs it.
   acceptance:
     name: Hermetic release acceptance
     needs: source
@@ -102,29 +104,51 @@ jobs:
       - name: Validate release version
         run: bash tools/validate-release-tag.sh "$RELEASE_TAG"
 
+      # Alpha only moves through a pull request that passed "Required
+      # validation", which already ran these Rust checks on the same tree.
+      # An alpha tag on alpha skips the repeat. Stable, beta, and an alpha
+      # tag anywhere else run it.
+      - name: Decide whether the Rust checks already ran
+        env:
+          RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
+        run: |
+          set -euo pipefail
+          skip=false
+          if [[ "$RELEASE_TAG" == *-alpha.* ]] && git merge-base --is-ancestor "$RELEASE_COMMIT" origin/alpha; then
+            skip=true
+            echo 'Alpha release: Required validation on the alpha pull request covered the Rust checks.'
+          fi
+          echo "SKIP_RUST_ACCEPTANCE=$skip" >> "$GITHUB_ENV"
+
       # Tags cut before rust-toolchain.toml existed build with the image's rustc.
       - name: Install pinned Rust toolchain
+        if: env.SKIP_RUST_ACCEPTANCE != 'true'
         run: |
           if [[ -f rust-toolchain.toml ]]; then
             rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
           fi
 
       - name: Setup Bun
+        if: env.SKIP_RUST_ACCEPTANCE != 'true'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.4
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        if: env.SKIP_RUST_ACCEPTANCE != 'true'
         with:
           cache-bin: false
           cache-on-failure: true
 
       - name: Run hermetic release acceptance
+        if: env.SKIP_RUST_ACCEPTANCE != 'true'
         run: make release-smoke
 
+  # Starts once the GitHub Release is published, beside the release index
+  # and installer jobs rather than after them.
   deploy:
     name: Deploy Pages
-    needs: [source, acceptance, release, deploy-installer, deploy-release-index]
+    needs: [source, acceptance, release, publish-release]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
     timeout-minutes: 30
     steps:
@@ -259,7 +283,7 @@ jobs:
 
   rust:
     name: Build Rust (${{ matrix.arch }})
-    needs: [source, acceptance]
+    needs: source
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
     timeout-minutes: 45
     strategy:
@@ -307,7 +331,7 @@ jobs:
 
   release:
     name: Build release assets
-    needs: [source, rust]
+    needs: [source, acceptance, rust]
     runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
     timeout-minutes: 45
     permissions:
