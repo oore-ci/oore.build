@@ -23,6 +23,7 @@ export interface UserColumnOptions {
   authUserId: string | undefined
   onRoleChange: (userId: string, email: string, newRole: UserRole) => void
   onDisable: (userId: string, email: string) => void
+  onGrantAccess: (user: User) => void
   onReEnable: (userId: string, email: string) => void
 }
 

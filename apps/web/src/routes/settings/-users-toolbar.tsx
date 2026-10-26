@@ -6,10 +6,15 @@ import { textVariants } from '@/lib/recipes'
 
 interface UsersToolbarProps {
   onBulkDisable: (userIds: Array<string>) => void
+  onGrantAccess: (users: Array<User>) => void
   table: DataTableInstance<User>
 }
 
-export function UsersToolbar({ onBulkDisable, table }: UsersToolbarProps) {
+export function UsersToolbar({
+  onBulkDisable,
+  onGrantAccess,
+  table,
+}: UsersToolbarProps) {
   const selectedRows = table.getFilteredSelectedRowModel().rows
   if (selectedRows.length === 0) return null
 
@@ -18,6 +23,13 @@ export function UsersToolbar({ onBulkDisable, table }: UsersToolbarProps) {
       <span className={textVariants({ variant: 'muted' })} aria-live="polite">
         {selectedRows.length} selected
       </span>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => onGrantAccess(selectedRows.map((row) => row.original))}
+      >
+        Give project access
+      </Button>
       <Button
         variant="destructive"
         size="sm"
