@@ -114,19 +114,27 @@ function summaries(
   projectId: string,
   file: RepositoryWorkflowPreview,
 ): Array<PipelineWorkflowSummary> {
-  const details: DemoWorkflowFile['workflows'] =
+  const entry: Partial<DemoWorkflowFile> =
     DEMO_WORKFLOW_FILES.find(
-      (entry) => entry.projectId === projectId && entry.path === file.path,
-    )?.workflows ?? {}
-  return file.workflows.map((name) => ({
-    name,
-    platforms: file.execution?.platforms ?? [],
-    triggers: [],
-    uses_pipeline_triggers: true,
-    publishes: [],
-    errors: [],
-    ...details[name],
-  }))
+      (candidate) =>
+        candidate.projectId === projectId && candidate.path === file.path,
+    ) ?? {}
+  const details = entry.workflows ?? {}
+  return file.workflows.map((name) => {
+    const summary: PipelineWorkflowSummary = {
+      name,
+      platforms: file.execution?.platforms ?? [],
+      triggers: [],
+      uses_pipeline_triggers: true,
+      publishes: [],
+      errors: [],
+      ...details[name],
+    }
+    // Like the daemon: the file's `signing`, then the workflow's.
+    const signing = { ...entry.signing, ...entry.workflowSigning?.[name] }
+    if (signing.android || signing.ios) summary.signing = signing
+    return summary
+  })
 }
 
 /** `GET /v1/pipelines/{id}/workflows` for a demo pipeline. */

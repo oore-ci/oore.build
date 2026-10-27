@@ -206,9 +206,10 @@ test('the file status says whether the Workflow field can offer anything', () =>
     kind: 'missing',
     path: 'ci/missing.yaml',
   })
-  expect(
-    repositoryFileStatus(files, { config_path: '.oore.yaml' }),
-  ).toEqual({ kind: 'missing', path: '.oore.yaml' })
+  expect(repositoryFileStatus(files, { config_path: '.oore.yaml' })).toEqual({
+    kind: 'missing',
+    path: '.oore.yaml',
+  })
   expect(repositoryFileStatus(files, explicit('ci/bad.yaml'))).toEqual({
     kind: 'invalid',
     path: 'ci/bad.yaml',

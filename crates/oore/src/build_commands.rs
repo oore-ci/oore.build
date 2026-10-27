@@ -407,6 +407,7 @@ mod tests {
             triggers: Vec::new(),
             uses_pipeline_triggers: true,
             publishes: Vec::new(),
+            signing: Default::default(),
             errors: Vec::new(),
         }
     }

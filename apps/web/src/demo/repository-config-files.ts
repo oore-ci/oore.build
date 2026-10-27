@@ -80,18 +80,18 @@ export function demoRepositoryConfigFiles(
   const files: Array<RepositoryConfigFile> = discovered
     .filter((file) => DISCOVERED_PATH.test(file.path))
     .map((file) => ({
-    path: file.path,
-    valid: file.valid,
-    errors: file.errors,
-    workflows: file.workflows,
-    suggested_name: demoSuggestedName(file.path),
-    pipelines: pipelines
-      .filter(
-        (pipeline) => resolve(discovered, pipeline.config_path) === file.path,
-      )
-      .map((pipeline) => ({ id: pipeline.id, name: pipeline.name })),
-    seen_at: ago(86400 * 2),
-  }))
+      path: file.path,
+      valid: file.valid,
+      errors: file.errors,
+      workflows: file.workflows,
+      suggested_name: demoSuggestedName(file.path),
+      pipelines: pipelines
+        .filter(
+          (pipeline) => resolve(discovered, pipeline.config_path) === file.path,
+        )
+        .map((pipeline) => ({ id: pipeline.id, name: pipeline.name })),
+      seen_at: ago(86400 * 2),
+    }))
   return {
     project_id: projectId,
     branch,

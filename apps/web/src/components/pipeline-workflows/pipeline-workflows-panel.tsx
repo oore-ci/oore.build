@@ -13,6 +13,7 @@ import {
 } from '@/hooks/use-signing-identities'
 import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
 import {
+  fileSigningName,
   signingPlatforms,
   workflowRows,
   type WorkflowRow,
@@ -47,15 +48,23 @@ const WORKFLOWS_DOCS_URL =
 
 function IdentityValue({
   id,
+  fileName,
   identities,
 }: {
   id?: string | null
+  /** The identity the file names, used when the settings pick none. */
+  fileName?: string
   identities: Map<string, SigningIdentity>
 }) {
   if (!id)
     return (
       <Text variant="muted" render={<span />}>
         From the file
+        {fileName ? (
+          <>
+            : <Mono>{fileName}</Mono>
+          </>
+        ) : null}
       </Text>
     )
   const identity = identities.get(id)
@@ -227,6 +236,7 @@ export function PipelineWorkflowsPanel({
                       ? row.original.settings?.android_identity_id
                       : row.original.settings?.ios_identity_id
                   }
+                  fileName={fileSigningName(row.original, platform)}
                   identities={identities}
                 />
               </div>

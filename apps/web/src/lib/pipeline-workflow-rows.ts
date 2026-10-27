@@ -44,3 +44,15 @@ export function signingPlatforms(row: WorkflowRow): Array<BuildPlatform> {
   )
   return built.length > 0 ? built : ['android', 'ios']
 }
+
+/**
+ * The signing identity the file names for the workflow on `platform`,
+ * which applies when the pipeline's workflow settings pick none.
+ */
+export function fileSigningName(
+  row: WorkflowRow,
+  platform: BuildPlatform,
+): string | undefined {
+  if (platform !== 'android' && platform !== 'ios') return undefined
+  return row.summary?.signing?.[platform]?.trim() || undefined
+}

@@ -50,6 +50,7 @@ import { Switch } from '@/components/ui/switch'
 import { Mono } from '@/components/layout/mono'
 import { Text } from '@/components/layout/text'
 import {
+  fileSigningName,
   signingPlatforms,
   type WorkflowRow,
 } from '@/lib/pipeline-workflow-rows'
@@ -107,12 +108,15 @@ function FileSummary({ row }: { row: WorkflowRow }) {
 
 function IdentityField({
   disabled,
+  fileName,
   form,
   identities,
   platform,
   projectId,
 }: {
   disabled: boolean
+  /** The identity the file names for this workflow, if any. */
+  fileName?: string
   form: ReturnType<typeof useForm<WorkflowSettingsFormValues>>
   identities: Array<SigningIdentity>
   platform: BuildPlatform
@@ -132,7 +136,12 @@ function IdentityField({
           field.value !== FOLLOW_FILE &&
           !choices.some((identity) => identity.id === field.value)
         const entries: Array<[string, string]> = [
-          [FOLLOW_FILE, 'From the file, or the pipeline’s signing'],
+          [
+            FOLLOW_FILE,
+            fileName
+              ? `From the file: ${fileName}`
+              : 'From the file, or the pipeline’s signing',
+          ],
           ...choices.map((identity): [string, string] => [
             identity.id,
             identityLabel(identity),
@@ -320,6 +329,7 @@ export function WorkflowSettingsDrawer({
                     <IdentityField
                       key={platform}
                       disabled={disabled}
+                      fileName={fileSigningName(shown, platform)}
                       form={form}
                       identities={identities}
                       platform={platform}

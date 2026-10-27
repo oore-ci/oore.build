@@ -40,7 +40,6 @@ import type {
   UpdatePipelineRequest,
 } from '@oore/client/models'
 
-
 const stringListSchema = z.array(z.string())
 const executionConfigSchema = z.object({
   platforms: z.array(z.enum(['android', 'ios', 'macos'])),

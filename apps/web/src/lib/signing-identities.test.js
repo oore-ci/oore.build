@@ -9,7 +9,11 @@ import {
   workflowSettingsFormValues,
   workflowSettingsRequest,
 } from '@/lib/signing-identities'
-import { signingPlatforms, workflowRows } from '@/lib/pipeline-workflow-rows'
+import {
+  fileSigningName,
+  signingPlatforms,
+  workflowRows,
+} from '@/lib/pipeline-workflow-rows'
 
 const ios = {
   id: 'sid-1',
@@ -115,4 +119,17 @@ test('rows keep settings for workflows the file dropped', () => {
   ])
   expect(signingPlatforms(rows[0])).toEqual(['ios'])
   expect(signingPlatforms(rows[1])).toEqual(['android', 'ios'])
+})
+
+test('a row names the identity its file signs with', () => {
+  const row = {
+    name: 'adhoc',
+    isDefault: false,
+    summary: { name: 'adhoc', signing: { ios: 'coin-adhoc' } },
+  }
+  expect(fileSigningName(row, 'ios')).toBe('coin-adhoc')
+  expect(fileSigningName(row, 'android')).toBeUndefined()
+  expect(
+    fileSigningName({ name: 'x', isDefault: false }, 'ios'),
+  ).toBeUndefined()
 })

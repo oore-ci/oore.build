@@ -70,7 +70,8 @@ test('the health banner treats a missing file as information', () => {
 test('a missing file fails a pipeline that names a default workflow', () => {
   const health = {
     state: 'file_missing',
-    message: 'ci/gone.yaml is not on main, so builds use the settings saved in Oore',
+    message:
+      'ci/gone.yaml is not on main, so builds use the settings saved in Oore',
     branch: 'main',
     commit_sha: 'abc',
     checked_at: 0,
