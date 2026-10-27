@@ -125,6 +125,7 @@ export default function TerminalLogViewer({
     const group = stepGroupsByName.get(selectedStep)
     if (!group) return null
     return {
+      label: group.label,
       command: group.command,
     }
   }, [selectedStep, stepGroupsByName])
@@ -185,9 +186,9 @@ export default function TerminalLogViewer({
     void navigator.clipboard.writeText(rawLogs).then(
       () =>
         toast.success(
-          selectedStep === 'all'
-            ? 'Build log copied'
-            : `Copied ${selectedStep}`,
+          selectedStepMeta
+            ? `Copied ${selectedStepMeta.label}`
+            : 'Build log copied',
         ),
       () => toast.error('Could not copy the log'),
     )
