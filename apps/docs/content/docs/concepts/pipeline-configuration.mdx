@@ -46,6 +46,13 @@ VM build the version selects the image.
 - You can start with the **Android test app** template in the UI and move to `.oore.yaml`
   after the first successful build.
 
+## What the file can and cannot decide
+
+The file decides what a build runs. It names signing identities and store
+destinations, but the credentials, gates and per-workflow overrides stay in
+Oore. See [Files, pipelines and workflows](/concepts/files-pipelines-workflows)
+for the split and the order in which each is resolved.
+
 ## The repository can add pipelines
 
 Oore also reads the config files on the default branch ahead of any build, to

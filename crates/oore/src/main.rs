@@ -40,6 +40,7 @@ mod install_lock;
 mod install_manifest;
 mod installer;
 mod managed_services;
+mod pipeline_credentials;
 mod setup_journey;
 mod uninstaller;
 mod update_supervisor;
@@ -885,6 +886,15 @@ struct PipelineValidateArgs {
     /// Repository pipeline file to validate.
     #[arg(default_value = ".oore.yaml")]
     path: PathBuf,
+    /// Also check the signing identities and secrets the file names against
+    /// this project, with the stored session.
+    #[arg(long, value_name = "PROJECT_ID")]
+    project: Option<String>,
+    /// With --project, also look for secrets in this pipeline's scope.
+    #[arg(long, value_name = "PIPELINE_ID", requires = "project")]
+    pipeline: Option<String>,
+    #[command(flatten)]
+    connection: build_commands::ApiConnectionArgs,
 }
 
 #[derive(Debug, Args)]
@@ -930,8 +940,18 @@ fn handle_pipeline_validate(args: PipelineValidateArgs) -> anyhow::Result<()> {
     for notice in config.notices() {
         eprintln!("note: {notice}");
     }
-    println!("{} is valid", args.path.display());
-    Ok(())
+    let Some(project) = args.project.as_deref() else {
+        println!("{} is valid", args.path.display());
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+    runtime.block_on(pipeline_credentials::validate_against_project(
+        &args.path.display().to_string(),
+        &config,
+        project,
+        args.pipeline.as_deref(),
+        &args.connection,
+    ))
 }
 
 fn handle_pipeline_plan(args: PipelinePlanArgs) -> anyhow::Result<()> {
@@ -973,6 +993,17 @@ fn handle_pipeline_plan(args: PipelinePlanArgs) -> anyhow::Result<()> {
         println!("{} (version {})", args.path.display(), config.version());
         for plan in &plans {
             print!("\n{}", render_pipeline_plan(plan));
+            if config.version() >= 2 {
+                print!(
+                    "{}",
+                    pipeline_credentials::render_credentials(&config, plan)
+                );
+            }
+        }
+        if config.version() >= 2 {
+            println!(
+                "\nSigning and store credentials are what the file names. A pipeline's Workflows settings can pick other identities or turn publishing off."
+            );
         }
     }
     for notice in config.notices() {
