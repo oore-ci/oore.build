@@ -87,11 +87,19 @@ in the project that reads that path builds from the file, and its form
 settings for the build stop applying. The pipeline editor names those
 pipelines before you copy the file.
 
-If the file defines several `workflows`, open each pipeline's **Edit** page
-and pick one under **Workflow**. A file with several workflows fails builds of
-a pipeline that has not picked one, and the pipeline's page says so.
+If the file defines several `workflows`, each build runs one of them.
+**Run build** lists the workflows in the file at the branch you build and
+shows what each builds, when it starts and where it publishes. To start every
+manual run on the same one, open the pipeline's **Edit** page and pick it
+under **Default workflow**.
 
-The **Workflow** field lists the workflows in the file on the project's
+Pushes, pull requests and tags start the default workflow. With **Default
+workflow** left at **Not set**, they start one build for each workflow whose
+`on` matches, so one push can build `adhoc` and `release` side by side. The
+build page and build lists show which workflow each build ran, and the
+pipeline page filters its builds by workflow.
+
+The **Default workflow** field lists the workflows in the file on the project's
 default branch. The line under it names that branch, such as
 `Workflows read from main`. When the file is only on another branch so far,
 select **Change branch** and enter that branch. When the file is missing,
@@ -113,9 +121,10 @@ pipeline its own file:
 3. Set up each pipeline's **Publishing** settings for its store.
 
 Each pipeline's editor generates its own file, and a change to one file
-cannot change the other pipeline. This is the supported setup for now. A
-single file with several workflows works too, but every pipeline that reads
-it changes when it changes.
+cannot change the other pipeline. One pipeline can also run both from a
+single file with several `workflows`: the workflows then share the pipeline's
+**Publishing** credentials, and **Run build** or the triggers pick which one
+runs.
 
 ## Create a pipeline from an existing file
 
@@ -130,7 +139,8 @@ named `.oore.<name>.yaml` in the repository root, such as
 2. Under **Start from**, Oore shows **Repository workflow found** and a
    summary of the platforms, Flutter version, commands, and artifacts. If it
    found several files, select the one to use.
-3. If the file defines several workflows, pick one under **Workflow**.
+3. If the file defines several workflows, pick a **Default workflow**, or
+   leave it at **Not set** to choose one on each run.
 4. Enter a **Pipeline name** and select **Create pipeline**.
 
 For a file anywhere else, such as `ci/oore.yaml`, select **Set up manually**,

@@ -183,13 +183,29 @@ workflow target that sets its own `build` publishes only if it also sets
 the workflow target sets its own, even with a new `build`.
 Workflow names use letters, digits, `-` and `_`.
 
-A pipeline builds one workflow, picked under **Workflow** in its settings (the
-API's `workflow` field). Without a pick, a file with one workflow builds it,
-and a file with none builds the top level; a file with several fails the build
-with `choose one for the pipeline`.
+Each build runs one workflow, chosen when the build starts:
 
-The selector lists the workflows in the pipeline's file on the project's
-default branch, and names that branch beneath it. Select **Change branch** to
+- **Run build** lists the workflows in the file at the branch or commit being
+  built and starts with the pipeline's **Default workflow** selected.
+  `oore build run --workflow NAME` and the build API's `workflow` field name
+  one the same way.
+- A build that names none uses the pipeline's default workflow, then the
+  file's only workflow. A file with no workflows builds the top level. A file
+  with several workflows and no default refuses the build with
+  `invalid_workflow` until one is named.
+- Pushes, pull requests and tags start the default workflow only. A pipeline
+  without a default starts one build for every workflow whose `on` matches
+  the event (see [Triggers](#triggers)).
+
+The build page and build lists show each build's workflow, and the pipeline
+page filters its builds by workflow. `oore pipeline workflows` and
+`GET /v1/pipelines/{pipeline_id}/workflows?ref=` list the workflows a build
+can name, with their platforms, triggers and store uploads.
+
+The **Default workflow** selector in the pipeline's settings (the API's
+`workflow` field) lists the workflows in the pipeline's file on the project's
+default branch, and names that branch beneath it. **Not set** leaves the
+choice to each run. Select **Change branch** to
 read the file from another branch, for example while the file is only on
 `develop`. The repository discovery API takes the same choice as its `ref`
 query parameter. A build always reads the file at the commit it builds.
@@ -333,9 +349,12 @@ budget only changes the check; the build itself never fails because of it.
 | `paths`        | string[]                     | `[lib/**, pubspec.*]`             |
 
 When a webhook arrives, Oore reads the pipeline's file at the pushed commit.
-If the pipeline's workflow sets `on`, or the file sets a top-level `on`, that
-decides whether the event starts a build, in place of the pipeline's trigger
-settings:
+If the pipeline's default workflow sets `on`, or the file sets a top-level
+`on`, that decides whether the event starts a build, in place of the
+pipeline's trigger settings. A pipeline without a default workflow matches
+each workflow on its own `on` (or the top-level `on`) and starts one build
+per workflow that matches; a workflow with neither follows the pipeline's
+trigger settings.
 
 - `push` matches pushes to a branch, `true` for any branch or `branches` for
   the listed globs.
@@ -353,8 +372,8 @@ manual builds still come from the pipeline. Version 1 files, files without
 `on`, and a missing or invalid file keep the pipeline's trigger settings.
 
 If Oore cannot read the file from GitHub or GitLab, for example during an
-outage, a pipeline without a workflow keeps its trigger settings. A pipeline
-with a workflow is skipped and the webhook delivery is retried (up to five
+outage, a pipeline without a default workflow keeps its trigger settings. A
+pipeline with a default workflow is skipped and the webhook delivery is retried (up to five
 times), so it never builds from trigger settings its `on` would not allow.
 Other pipelines still build on the first attempt.
 
