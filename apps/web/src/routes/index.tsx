@@ -7,15 +7,17 @@ import type { BuildStatus, RuntimeMode } from '@oore/client/models'
 import type {
   ListBuildsResponse,
   ListIntegrationsResponse,
+  ListReleasesResponse,
   ListRunnersResponse,
 } from '@oore/client/models'
 import { useIndexAuthGuard } from '@/hooks/use-index-auth-guard'
 import { useMountEffect } from '@/hooks/use-mount-effect'
 import AddInstanceDialog from '@/components/AddInstanceDialog'
 import {
-  DashboardBuildActivity,
-  DashboardGettingStarted,
-} from '@/components/dashboard-sections'
+  DashboardBuildsInProgress,
+  DashboardFinishedBuilds,
+} from '@/components/dashboard-builds'
+import { DashboardGettingStarted } from '@/components/dashboard-sections'
 import DashboardBuildIncident from '@/components/dashboard-build-incident'
 import { DashboardBuildHealth } from '@/components/dashboard-build-health'
 import { DashboardProjectHealth } from '@/components/dashboard-project-health'
@@ -40,12 +42,15 @@ import {
   useHasPermissions,
 } from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
+import { useReleaseEvents, useReleases } from '@/hooks/use-releases'
 import { useRunners } from '@/hooks/use-runners'
+import { LIVE_RELEASE_STATES } from '@/lib/releases'
 import { useSetupStatus } from '@/hooks/use-setup'
 import { getSetupStatus } from '@oore/client/operations'
 import { isLoopbackHostname } from '@/lib/connectivity'
 import { PageMeta } from '@/lib/seo'
 import { isManagedFrontend } from '@/lib/managed-frontend'
+import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 import { useActiveInstance, useInstanceStore } from '@/stores/instance-store'
 import { createWebOoreClient } from '@/lib/api-client/client'
@@ -102,7 +107,7 @@ function selectDashboardBuilds({ builds }: ListBuildsResponse) {
   return {
     builds,
     active: builds.filter((build) => ACTIVE_BUILD_STATUSES.has(build.status)),
-    recentCompleted: completed.slice(0, 6),
+    recentCompleted: completed.slice(0, 5),
   }
 }
 
@@ -110,6 +115,44 @@ function selectHasActiveIntegration({
   active_total,
 }: ListIntegrationsResponse): boolean {
   return active_total > 0
+}
+
+const LIVE_RELEASE_QUERY = LIVE_RELEASE_STATES.join(',')
+
+function selectLiveReleaseCount({ releases }: ListReleasesResponse) {
+  return releases.length
+}
+
+/** One line of instance state for the header: what is moving and who can run it. */
+function statusSummary({
+  online,
+  running,
+  total,
+  waiting,
+}: {
+  online?: number
+  running: number
+  total?: number
+  waiting: number
+}): string {
+  const builds =
+    running === 0 && waiting === 0
+      ? 'No builds running'
+      : [
+          running > 0 ? `${running} running` : null,
+          waiting > 0 ? `${waiting} waiting` : null,
+        ]
+          .filter(Boolean)
+          .join(', ')
+  const runners =
+    online == null || total == null
+      ? null
+      : total === 0
+        ? 'No runners'
+        : online === 0
+          ? `No runner online of ${total}`
+          : `${online} of ${total} runners online`
+  return [builds, runners].filter(Boolean).join(' · ')
 }
 
 function selectRunnerSummary({ online_total, total }: ListRunnersResponse) {
@@ -380,6 +423,14 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
   const activeBuilds = recentBuildsQuery.data?.active ?? []
   const recentCompletedBuilds = recentBuildsQuery.data?.recentCompleted ?? []
   const hasProjects = projects.length > 0
+  const liveReleasesQuery = useReleases(
+    { state: LIVE_RELEASE_QUERY, limit: 50 },
+    { enabled: hasProjects, select: selectLiveReleaseCount },
+  )
+  const releaseEventsQuery = useReleaseEvents(
+    { limit: 5 },
+    { enabled: hasProjects },
+  )
   const integrationsResolved =
     !integrationsQuery.isLoading && !integrationsQuery.error
   const noConnectedSources =
@@ -388,9 +439,21 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
     integrationsQuery.data === false
   const noOnlineRunners = !!runnersQuery.data && runnersQuery.data.online === 0
   const canShowRunBuild = hasProjects && canWriteBuilds
-  const blockedBuilds = activeBuilds.filter(
-    (build) => build.runner_policy_block_reason,
+  const blockedBuildIds = new Set(
+    activeBuilds
+      .filter((build) => build.runner_policy_block_reason)
+      .map((build) => build.id),
   )
+  // Blocked builds are listed under Needs attention with their cause.
+  const inProgressBuilds = activeBuilds.filter(
+    (build) => !blockedBuildIds.has(build.id),
+  )
+  // Apps that never ship to a store get the full width for builds. While the
+  // release queries load, keep the column so the page does not jump.
+  const showReleases =
+    hasProjects &&
+    ((liveReleasesQuery.data ?? 1) > 0 ||
+      (releaseEventsQuery.data?.events.length ?? 1) > 0)
 
   if (
     projectsQuery.isLoading ||
@@ -417,9 +480,23 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
 
   return (
     <PageLayout width="wide">
-      <Stack gap={8}>
+      <Stack gap={10}>
         <PageHeader
           title="Home"
+          meta={
+            hasProjects
+              ? statusSummary({
+                  running: activeBuilds.filter(
+                    (build) => build.status === 'running',
+                  ).length,
+                  waiting: activeBuilds.filter(
+                    (build) => build.status !== 'running',
+                  ).length,
+                  online: runnersQuery.data?.online,
+                  total: runnersQuery.data?.total,
+                })
+              : undefined
+          }
           actions={
             !canShowRunBuild ? undefined : noOnlineRunners ? (
               <Tooltip>
@@ -485,6 +562,7 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
           </Alert>
         ) : null}
 
+        {/* 1. What needs someone, before anything else. */}
         <DashboardBuildIncident
           items={
             hasProjects
@@ -494,24 +572,45 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
           }
         />
 
+        {/* 2. What is moving now and what happened since: builds on the left, releases on the right. */}
         {hasProjects || projectsQuery.error ? (
-          <DashboardBuildActivity
-            activeBuilds={activeBuilds}
-            blockedBuilds={blockedBuilds}
-            error={recentBuildsQuery.error}
-            isLoading={recentBuildsQuery.isLoading}
-            onRetry={() => void recentBuildsQuery.refetch()}
-            recentBuilds={recentCompletedBuilds}
-          />
+          <div
+            className={cn(
+              'grid grid-cols-1 gap-x-8 gap-y-10',
+              showReleases &&
+                '@5xl/main:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]',
+            )}
+          >
+            <Stack gap={10} className="min-w-0">
+              <DashboardBuildsInProgress
+                builds={inProgressBuilds}
+                error={recentBuildsQuery.error}
+                isLoading={recentBuildsQuery.isLoading}
+                onRetry={() => void recentBuildsQuery.refetch()}
+              />
+              <DashboardFinishedBuilds
+                builds={recentCompletedBuilds}
+                error={recentBuildsQuery.error}
+                isLoading={recentBuildsQuery.isLoading}
+                onRetry={() => void recentBuildsQuery.refetch()}
+              />
+            </Stack>
+            {showReleases ? (
+              <Stack gap={10} className="min-w-0">
+                <Suspense fallback={<Skeleton className="h-32 w-full" />}>
+                  <ReleaseBoard layout="stacked" title="Live releases" />
+                  <ReleaseActivity
+                    limit={5}
+                    showProject
+                    title="Release changes"
+                  />
+                </Suspense>
+              </Stack>
+            ) : null}
+          </div>
         ) : null}
 
-        {hasProjects ? (
-          <Suspense fallback={null}>
-            <ReleaseBoard />
-            <ReleaseActivity limit={3} showProject />
-          </Suspense>
-        ) : null}
-
+        {/* 3. How things are going over the period, for the slower look. */}
         {hasProjects ? (
           <DashboardBuildHealth
             canApprove={canApprove}
@@ -521,9 +620,9 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
           />
         ) : null}
 
-        {hasProjects ? <DashboardStoreHealth /> : null}
-
         {hasProjects ? <DashboardProjectHealth days={insightsDays} /> : null}
+
+        {hasProjects ? <DashboardStoreHealth /> : null}
       </Stack>
     </PageLayout>
   )
