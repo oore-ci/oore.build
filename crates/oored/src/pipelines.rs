@@ -231,14 +231,10 @@ fn validate_execution_config(cfg: &PipelineExecutionConfig) -> Vec<String> {
     errors
 }
 
-fn validate_config_path(path: &str, explicit: bool) -> Vec<String> {
+fn validate_config_path(path: &str) -> Vec<String> {
     let mut errors = Vec::new();
     if path.trim().is_empty() {
-        if explicit {
-            errors.push("config_path is required when config_path_explicit is true".to_string());
-        } else {
-            errors.push("config_path must not be empty".to_string());
-        }
+        errors.push("config_path must not be empty".to_string());
     } else if let Err(error) = validate_repository_config_path(path) {
         errors.push(format!("config_path {error}"));
     }
@@ -447,7 +443,6 @@ pub(crate) async fn check_build_workflow(
     state: &AppState,
     project_id: &str,
     config_path: &str,
-    config_path_explicit: bool,
     reference: &str,
     workflow: Option<&str>,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
@@ -457,7 +452,6 @@ pub(crate) async fn check_build_workflow(
         &state.encryption_key,
         project_id,
         config_path,
-        config_path_explicit,
         Some(reference),
     )
     .await
@@ -512,7 +506,6 @@ async fn check_workflow_in_repository(
     state: &AppState,
     project_id: &str,
     config_path: &str,
-    config_path_explicit: bool,
     workflow: &str,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
     use crate::repository_workflows::{PipelineFile, load_pipeline_file};
@@ -521,7 +514,6 @@ async fn check_workflow_in_repository(
         &state.encryption_key,
         project_id,
         config_path,
-        config_path_explicit,
         None,
     )
     .await
@@ -549,6 +541,53 @@ async fn check_workflow_in_repository(
     }
 }
 
+/// Add a pipeline that builds from a repository config file, with default
+/// settings: the file's `on` decides when webhooks start it.
+pub(crate) async fn insert_pipeline_for_file(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    name: &str,
+    config_path: &str,
+) -> Result<String, sqlx::Error> {
+    let now = now_unix();
+    let pipeline_id = Uuid::new_v4().to_string();
+    let json = |value: serde_json::Result<String>| value.unwrap_or_else(|_| "{}".to_string());
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, name, config_path, config_path_explicit, execution_config, trigger_config, concurrency, timeout_minutes, approval_policy, size_budget, enabled, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11, ?11)",
+    )
+    .bind(&pipeline_id)
+    .bind(project_id)
+    .bind(name)
+    .bind(config_path)
+    .bind(json(serde_json::to_string(&PipelineExecutionConfig::default())))
+    .bind(json(serde_json::to_string(&TriggerConfig::default())))
+    .bind(json(serde_json::to_string(&ConcurrencyPolicy::default())))
+    .bind(DEFAULT_BUILD_TIMEOUT_MINUTES)
+    .bind(json(serde_json::to_string(&ApprovalPolicy::default())))
+    .bind(json(serde_json::to_string(&SizeBudget::default())))
+    .bind(now)
+    .execute(pool)
+    .await?;
+    let details = serde_json::json!({
+        "project_id": project_id,
+        "pipeline_name": name,
+        "config_path": config_path,
+        "created_by": "repository",
+    })
+    .to_string();
+    let _ = write_audit_log(
+        pool,
+        None,
+        "pipeline_created",
+        "pipeline",
+        Some(&pipeline_id),
+        Some(&details),
+    )
+    .await;
+    Ok(pipeline_id)
+}
+
 // ── Row conversion ──────────────────────────────────────────────
 
 fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
@@ -566,7 +605,6 @@ fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
         serde_json::from_str(&execution_config_str).unwrap_or_default();
 
     let enabled_int: i32 = row.get("enabled");
-    let config_path_explicit: i32 = row.try_get("config_path_explicit").unwrap_or(0);
     let timeout_minutes = row
         .try_get::<i64, _>("timeout_minutes")
         .ok()
@@ -588,7 +626,7 @@ fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
         project_id: row.get("project_id"),
         name: row.get("name"),
         config_path: row.get("config_path"),
-        config_path_explicit: config_path_explicit != 0,
+        config_path_explicit: true,
         execution_config,
         trigger_config,
         concurrency,
@@ -599,6 +637,7 @@ fn row_to_pipeline(row: &sqlx::sqlite::SqliteRow) -> Pipeline {
         enabled: enabled_int != 0,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
+        health: None,
     }
 }
 
@@ -730,13 +769,13 @@ pub async fn create_pipeline(
         ));
     }
 
-    let config_path_explicit = req.config_path_explicit.unwrap_or(false);
+    // `config_path_explicit` is deprecated and ignored: the path is the file.
     let config_path = req
         .config_path
         .unwrap_or_else(|| ".oore.yaml".to_string())
         .trim()
         .to_string();
-    let config_path_errors = validate_config_path(&config_path, config_path_explicit);
+    let config_path_errors = validate_config_path(&config_path);
     if !config_path_errors.is_empty() {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
@@ -777,14 +816,7 @@ pub async fn create_pipeline(
     let workflow = match req.workflow.as_deref() {
         Some(name) => {
             let name = normalize_workflow_name(name)?;
-            check_workflow_in_repository(
-                &state,
-                &project_id,
-                &config_path,
-                config_path_explicit,
-                &name,
-            )
-            .await?;
+            check_workflow_in_repository(&state, &project_id, &config_path, &name).await?;
             Some(name)
         }
         None => None,
@@ -805,7 +837,7 @@ pub async fn create_pipeline(
     .bind(&project_id)
     .bind(name)
     .bind(&config_path)
-    .bind(if config_path_explicit { 1 } else { 0 })
+    .bind(1)
     .bind(&execution_config_json)
     .bind(&trigger_config_json)
     .bind(&concurrency_json)
@@ -839,12 +871,12 @@ pub async fn create_pipeline(
 
     info!(pipeline_id = %pipeline_id, project_id = %project_id, name = %name, "pipeline created");
 
-    let pipeline = Pipeline {
+    let mut pipeline = Pipeline {
         id: pipeline_id,
         project_id,
         name: name.to_string(),
         config_path,
-        config_path_explicit,
+        config_path_explicit: true,
         execution_config,
         trigger_config,
         concurrency,
@@ -855,7 +887,14 @@ pub async fn create_pipeline(
         enabled: true,
         created_at: now,
         updated_at: now,
+        health: None,
     };
+    crate::repository_config_files::attach_health(
+        &pool,
+        &pipeline.project_id.clone(),
+        std::slice::from_mut(&mut pipeline),
+    )
+    .await;
 
     Ok((
         StatusCode::CREATED,
@@ -963,10 +1002,11 @@ pub async fn list_pipelines(
         (total, rows)
     };
 
-    let pipelines = rows
+    let mut pipelines: Vec<Pipeline> = rows
         .iter()
         .map(|row| shape_pipeline_response(row_to_pipeline(row), can_manage))
         .collect();
+    crate::repository_config_files::attach_health(pool, &project_id, &mut pipelines).await;
 
     Ok(Json(ListPipelinesResponse { pipelines, total }))
 }
@@ -1002,10 +1042,16 @@ pub async fn get_pipeline(
     )
     .await?;
     require_project_permission(&effective, ProjectPermission::Read)?;
-    let pipeline = shape_pipeline_response(
+    let mut pipeline = shape_pipeline_response(
         row_to_pipeline(&pipeline_row),
         check_project_permission(&effective, ProjectPermission::ManagePipelines),
     );
+    crate::repository_config_files::attach_health(
+        pool,
+        &project_id,
+        std::slice::from_mut(&mut pipeline),
+    )
+    .await;
 
     let build_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM builds WHERE pipeline_id = ?1")
         .bind(&pipeline_id)
@@ -1068,21 +1114,19 @@ pub async fn list_pipeline_workflows(
         PipelineFile, load_pipeline_file, project_default_reference,
     };
     let pool = &state.db;
-    let row = sqlx::query(
-        "SELECT project_id, config_path, config_path_explicit, workflow FROM pipelines WHERE id = ?1",
-    )
-    .bind(&pipeline_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to fetch pipeline");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to fetch pipeline",
-        )
-    })?
-    .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Pipeline not found"))?;
+    let row = sqlx::query("SELECT project_id, config_path, workflow FROM pipelines WHERE id = ?1")
+        .bind(&pipeline_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to fetch pipeline");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch pipeline",
+            )
+        })?
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Pipeline not found"))?;
     let project_id: String = row.get("project_id");
     let effective = resolve_effective_project_role(
         pool,
@@ -1094,7 +1138,6 @@ pub async fn list_pipeline_workflows(
     .await?;
     require_project_permission(&effective, ProjectPermission::Read)?;
     let config_path: String = row.get("config_path");
-    let config_path_explicit = row.try_get::<i32, _>("config_path_explicit").unwrap_or(0) != 0;
     let default_workflow: Option<String> = row.try_get("workflow").ok().flatten();
 
     let reference = match query.reference.map(|value| value.trim().to_string()) {
@@ -1118,7 +1161,6 @@ pub async fn list_pipeline_workflows(
         &state.encryption_key,
         &project_id,
         &config_path,
-        config_path_explicit,
         Some(&reference),
     )
     .await
@@ -1179,7 +1221,6 @@ pub async fn update_pipeline(
 
     if req.name.is_none()
         && req.config_path.is_none()
-        && req.config_path_explicit.is_none()
         && req.execution_config.is_none()
         && req.trigger_config.is_none()
         && req.concurrency.is_none()
@@ -1208,28 +1249,12 @@ pub async fn update_pipeline(
         pipeline.name = trimmed.to_string();
     }
 
+    // `config_path_explicit` is deprecated and ignored: the path is the file.
     if let Some(config_path) = req.config_path {
-        let trimmed = config_path.trim().to_string();
-        let path_errors = validate_config_path(
-            &trimmed,
-            req.config_path_explicit
-                .unwrap_or(pipeline.config_path_explicit),
-        );
-        if !path_errors.is_empty() {
-            return Err(api_err(
-                StatusCode::BAD_REQUEST,
-                "invalid_config_path",
-                path_errors.join("; "),
-            ));
-        }
-        pipeline.config_path = trimmed;
+        pipeline.config_path = config_path.trim().to_string();
     }
 
-    if let Some(config_path_explicit) = req.config_path_explicit {
-        pipeline.config_path_explicit = config_path_explicit;
-    }
-
-    let path_errors = validate_config_path(&pipeline.config_path, pipeline.config_path_explicit);
+    let path_errors = validate_config_path(&pipeline.config_path);
     if !path_errors.is_empty() {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
@@ -1334,7 +1359,6 @@ pub async fn update_pipeline(
                         &state,
                         &pipeline.project_id,
                         &pipeline.config_path,
-                        pipeline.config_path_explicit,
                         &name,
                     )
                     .await?;
@@ -1358,7 +1382,7 @@ pub async fn update_pipeline(
     )
     .bind(&pipeline.name)
     .bind(&pipeline.config_path)
-    .bind(if pipeline.config_path_explicit { 1 } else { 0 })
+    .bind(1)
     .bind(serde_json::to_string(&pipeline.execution_config).unwrap_or_default())
     .bind(serde_json::to_string(&pipeline.trigger_config).unwrap_or_default())
     .bind(serde_json::to_string(&pipeline.concurrency).unwrap_or_default())
@@ -1409,9 +1433,14 @@ pub async fn update_pipeline(
             )
         })?;
 
-    Ok(Json(CreatePipelineResponse {
-        pipeline: row_to_pipeline(&row),
-    }))
+    let mut pipeline = row_to_pipeline(&row);
+    crate::repository_config_files::attach_health(
+        pool,
+        &pipeline.project_id.clone(),
+        std::slice::from_mut(&mut pipeline),
+    )
+    .await;
+    Ok(Json(CreatePipelineResponse { pipeline }))
 }
 
 /// `DELETE /v1/pipelines/{pipeline_id}` — delete a pipeline.
@@ -1665,7 +1694,6 @@ pub async fn validate_pipeline(
 
 fn validate_request(req: &ValidatePipelineRequest) -> ValidatePipelineResponse {
     let mut errors = Vec::new();
-    let config_path_explicit = req.config_path_explicit.unwrap_or(false);
 
     if let Some(ref tc) = req.trigger_config {
         errors.extend(validate_trigger_config(tc));
@@ -1688,9 +1716,7 @@ fn validate_request(req: &ValidatePipelineRequest) -> ValidatePipelineResponse {
     }
 
     if let Some(ref path) = req.config_path {
-        errors.extend(validate_config_path(path, config_path_explicit));
-    } else if config_path_explicit {
-        errors.push("config_path is required when config_path_explicit is true".to_string());
+        errors.extend(validate_config_path(path));
     }
 
     if let Some(ref cfg) = req.execution_config {

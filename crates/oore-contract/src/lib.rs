@@ -3109,6 +3109,11 @@ pub struct Project {
     pub created_at: i64,
     pub updated_at: i64,
     pub current_user_role: ProjectRole,
+    /// Add a pipeline for each new config file that appears on the default
+    /// branch and no pipeline uses.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub auto_add_pipelines: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3122,6 +3127,10 @@ pub struct CreateProjectRequest {
     pub local_repository_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_branch: Option<String>,
+    /// Add pipelines for config files found on the default branch.
+    /// Defaults to true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_add_pipelines: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3137,6 +3146,8 @@ pub struct UpdateProjectRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     pub settings: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_add_pipelines: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3441,6 +3452,90 @@ pub struct PipelineWorkflowsResponse {
     /// Workflows in file order. Empty for v1 files and files without
     /// workflows, which build as one implicit workflow.
     pub workflows: Vec<PipelineWorkflowSummary>,
+}
+
+/// Whether a pipeline's repository file is usable on the project's default
+/// branch, from the last time Oore read the repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineHealthState {
+    /// The file exists and parses, and the pipeline's workflow is in it.
+    Ok,
+    /// No file at the pipeline's config path, so builds use the settings
+    /// saved in Oore.
+    FileMissing,
+    /// The file exists but does not parse or validate; builds fail.
+    FileInvalid,
+    /// The file no longer defines the pipeline's default workflow.
+    WorkflowMissing,
+}
+
+/// A pipeline's health on the project's default branch. Read from the
+/// repository files Oore last saw there, never from the provider while
+/// listing.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelineHealth {
+    pub state: PipelineHealthState,
+    /// What is wrong, in one line. Absent when `state` is `ok`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// The file that was read, which differs from `config_path` when a
+    /// legacy `.oore.yml` stands in for `.oore.yaml`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// The branch and commit the repository was read at.
+    pub branch: String,
+    pub commit_sha: String,
+    /// When Oore last read the branch, in Unix seconds.
+    pub checked_at: i64,
+}
+
+/// A pipeline that builds from a repository config file.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RepositoryConfigFilePipeline {
+    pub id: String,
+    pub name: String,
+}
+
+/// A config file Oore found in the repository on the project's default
+/// branch.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RepositoryConfigFile {
+    pub path: String,
+    pub valid: bool,
+    /// Why the file is invalid, one line each.
+    pub errors: Vec<String>,
+    /// Workflows a valid `version: 2` file defines, in file order.
+    pub workflows: Vec<String>,
+    /// The name a pipeline added from this file gets, such as `Release`
+    /// for `.oore.release.yaml`.
+    pub suggested_name: String,
+    /// Pipelines that build from this file. Empty when no pipeline uses it.
+    pub pipelines: Vec<RepositoryConfigFilePipeline>,
+    /// When Oore first saw the file on this branch, in Unix seconds.
+    pub seen_at: i64,
+}
+
+/// `GET /v1/projects/{project_id}/repository-config-files`: config files on
+/// the project's default branch, as Oore last read them.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RepositoryConfigFilesResponse {
+    pub project_id: String,
+    /// The default branch read. Absent when the project has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// The commit the files were read at. Absent before the first read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_sha: Option<String>,
+    /// When Oore last read the branch. Absent before the first read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scanned_at: Option<i64>,
+    /// Why the last read failed. The files from the read before it remain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// True when the repository had more config files than Oore reads.
+    pub truncated: bool,
+    pub files: Vec<RepositoryConfigFile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -3821,9 +3916,12 @@ pub struct Pipeline {
     pub id: String,
     pub project_id: String,
     pub name: String,
+    /// The repository file this pipeline builds from. When it is
+    /// `.oore.yaml` and missing, a legacy `.oore.yml` is read instead.
     pub config_path: String,
-    #[serde(default)]
-    #[schema(required = true)]
+    /// Deprecated: always true. `config_path` always names the file.
+    #[serde(default = "default_config_path_explicit")]
+    #[schema(required = true, deprecated)]
     pub config_path_explicit: bool,
     #[serde(default)]
     #[schema(required = true)]
@@ -3850,6 +3948,14 @@ pub struct Pipeline {
     pub enabled: bool,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Whether the pipeline's file is usable on the default branch. Absent
+    /// until Oore has read the repository.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<PipelineHealth>,
+}
+
+fn default_config_path_explicit() -> bool {
+    true
 }
 
 /// Distinguishes a field sent as `null` (`Some(None)`) from one left out
@@ -3867,7 +3973,9 @@ pub struct CreatePipelineRequest {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_path: Option<String>,
+    /// Deprecated and ignored: `config_path` always names the file.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(deprecated)]
     pub config_path_explicit: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_config: Option<PipelineExecutionConfig>,
@@ -3892,7 +4000,9 @@ pub struct UpdatePipelineRequest {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_path: Option<String>,
+    /// Deprecated and ignored: `config_path` always names the file.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(deprecated)]
     pub config_path_explicit: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_config: Option<PipelineExecutionConfig>,
@@ -3940,7 +4050,9 @@ pub struct ListPipelinesResponse {
 pub struct ValidatePipelineRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_path: Option<String>,
+    /// Deprecated and ignored: `config_path` always names the file.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(deprecated)]
     pub config_path_explicit: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_config: Option<PipelineExecutionConfig>,

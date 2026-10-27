@@ -7468,6 +7468,122 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/repository-config-files": {
+      "get": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "List config files found in the repository",
+        "description": "Config files on the project's default branch as Oore last read them,\nwith the pipelines that use each. Served from a cache that pushes\nrefresh; it never calls the source provider. The first request for a\nproject that was never read starts a read in the background.",
+        "operationId": "list_repository_config_files",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cached repository config files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryConfigFilesResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Read permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/repository-config-files/refresh": {
+      "post": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "Read the repository's config files now",
+        "description": "Reads the default branch through the source provider, rewrites the\ncache, and adds pipelines for new files when the project's\n`auto_add_pipelines` is on. A failed read is reported in `error`\nbeside the files from the read before it.",
+        "operationId": "refresh_repository_config_files",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Refreshed repository config files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryConfigFilesResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Manage Pipelines permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or project source not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects/{project_id}/repository-workflows": {
       "get": {
         "tags": [
@@ -15819,7 +15935,9 @@
             "type": [
               "boolean",
               "null"
-            ]
+            ],
+            "description": "Deprecated and ignored: `config_path` always names the file.",
+            "deprecated": true
           },
           "execution_config": {
             "oneOf": [
@@ -15940,6 +16058,13 @@
           "name"
         ],
         "properties": {
+          "auto_add_pipelines": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Add pipelines for config files found on the default branch.\nDefaults to true."
+          },
           "default_branch": {
             "type": [
               "string",
@@ -18674,10 +18799,13 @@
             "$ref": "#/components/schemas/ConcurrencyPolicy"
           },
           "config_path": {
-            "type": "string"
+            "type": "string",
+            "description": "The repository file this pipeline builds from. When it is\n`.oore.yaml` and missing, a legacy `.oore.yml` is read instead."
           },
           "config_path_explicit": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Deprecated: always true. `config_path` always names the file.",
+            "deprecated": true
           },
           "created_at": {
             "type": "integer",
@@ -18688,6 +18816,17 @@
           },
           "execution_config": {
             "$ref": "#/components/schemas/PipelineExecutionConfig"
+          },
+          "health": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PipelineHealth",
+                "description": "Whether the pipeline's file is usable on the default branch. Absent\nuntil Oore has read the repository."
+              }
+            ]
           },
           "id": {
             "type": "string"
@@ -18948,6 +19087,57 @@
             "format": "int64"
           }
         }
+      },
+      "PipelineHealth": {
+        "type": "object",
+        "description": "A pipeline's health on the project's default branch. Read from the\nrepository files Oore last saw there, never from the provider while\nlisting.",
+        "required": [
+          "state",
+          "branch",
+          "commit_sha",
+          "checked_at"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string",
+            "description": "The branch and commit the repository was read at."
+          },
+          "checked_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When Oore last read the branch, in Unix seconds."
+          },
+          "commit_sha": {
+            "type": "string"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What is wrong, in one line. Absent when `state` is `ok`."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file that was read, which differs from `config_path` when a\nlegacy `.oore.yml` stands in for `.oore.yaml`."
+          },
+          "state": {
+            "$ref": "#/components/schemas/PipelineHealthState"
+          }
+        }
+      },
+      "PipelineHealthState": {
+        "type": "string",
+        "description": "Whether a pipeline's repository file is usable on the project's default\nbranch, from the last time Oore read the repository.",
+        "enum": [
+          "ok",
+          "file_missing",
+          "file_invalid",
+          "workflow_missing"
+        ]
       },
       "PipelineIosSigningResponse": {
         "type": "object",
@@ -19439,9 +19629,14 @@
           "created_by",
           "created_at",
           "updated_at",
-          "current_user_role"
+          "current_user_role",
+          "auto_add_pipelines"
         ],
         "properties": {
+          "auto_add_pipelines": {
+            "type": "boolean",
+            "description": "Add a pipeline for each new config file that appears on the default\nbranch and no pipeline uses."
+          },
           "created_at": {
             "type": "integer",
             "format": "int64"
@@ -20488,6 +20683,126 @@
         "properties": {
           "access_token": {
             "type": "string"
+          }
+        }
+      },
+      "RepositoryConfigFile": {
+        "type": "object",
+        "description": "A config file Oore found in the repository on the project's default\nbranch.",
+        "required": [
+          "path",
+          "valid",
+          "errors",
+          "workflows",
+          "suggested_name",
+          "pipelines",
+          "seen_at"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why the file is invalid, one line each."
+          },
+          "path": {
+            "type": "string"
+          },
+          "pipelines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepositoryConfigFilePipeline"
+            },
+            "description": "Pipelines that build from this file. Empty when no pipeline uses it."
+          },
+          "seen_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When Oore first saw the file on this branch, in Unix seconds."
+          },
+          "suggested_name": {
+            "type": "string",
+            "description": "The name a pipeline added from this file gets, such as `Release`\nfor `.oore.release.yaml`."
+          },
+          "valid": {
+            "type": "boolean"
+          },
+          "workflows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Workflows a valid `version: 2` file defines, in file order."
+          }
+        }
+      },
+      "RepositoryConfigFilePipeline": {
+        "type": "object",
+        "description": "A pipeline that builds from a repository config file.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "RepositoryConfigFilesResponse": {
+        "type": "object",
+        "description": "`GET /v1/projects/{project_id}/repository-config-files`: config files on\nthe project's default branch, as Oore last read them.",
+        "required": [
+          "project_id",
+          "truncated",
+          "files"
+        ],
+        "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The default branch read. Absent when the project has none."
+          },
+          "commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The commit the files were read at. Absent before the first read."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last read failed. The files from the read before it remain."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepositoryConfigFile"
+            }
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "scanned_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When Oore last read the branch. Absent before the first read."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when the repository had more config files than Oore reads."
           }
         }
       },
@@ -23098,7 +23413,9 @@
             "type": [
               "boolean",
               "null"
-            ]
+            ],
+            "description": "Deprecated and ignored: `config_path` always names the file.",
+            "deprecated": true
           },
           "enabled": {
             "type": [
@@ -23242,6 +23559,12 @@
       "UpdateProjectRequest": {
         "type": "object",
         "properties": {
+          "auto_add_pipelines": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "default_branch": {
             "type": [
               "string",
@@ -23642,7 +23965,9 @@
             "type": [
               "boolean",
               "null"
-            ]
+            ],
+            "description": "Deprecated and ignored: `config_path` always names the file.",
+            "deprecated": true
           },
           "execution_config": {
             "oneOf": [

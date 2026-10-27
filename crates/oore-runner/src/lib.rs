@@ -4668,7 +4668,11 @@ fn resolve_execution_plan(
         .trim()
         .to_string();
 
-    let candidate_paths: Vec<String> = if config_path_explicit {
+    // `.oore.yaml` still reads a legacy `.oore.yml` when it is missing,
+    // whichever way the snapshot marks the path.
+    let candidate_paths: Vec<String> = if config_path_explicit
+        && snapshot_config_path != AUTO_CONFIG_PATHS[0]
+    {
         validate_repository_config_path(&snapshot_config_path)
             .map_err(|error| anyhow::anyhow!("Invalid explicit repository config path: {error}"))?;
         vec![snapshot_config_path]
@@ -9030,6 +9034,31 @@ mod tests {
             .filter(|step| step.phase == phase)
             .map(|step| step.run.clone())
             .collect()
+    }
+
+    #[test]
+    fn an_explicit_oore_yaml_still_reads_a_legacy_oore_yml() {
+        let workspace = TempDir::new("oore-legacy-yml-test");
+        std::fs::write(
+            workspace.path().join(".oore.yml"),
+            "version: 2\ntargets:\n  android:\n    build: flutter build apk --flavor legacy\n",
+        )
+        .unwrap();
+        let snapshot = json!({ "config_path": ".oore.yaml", "config_path_explicit": true });
+        let plan = resolve_execution_plan(workspace.path(), &snapshot, false).unwrap();
+        assert!(
+            plan.steps
+                .iter()
+                .any(|step| step.run == "flutter build apk --flavor legacy")
+        );
+
+        let other = json!({ "config_path": ".oore/release.yaml", "config_path_explicit": true });
+        let plan = resolve_execution_plan(workspace.path(), &other, false).unwrap();
+        assert!(
+            plan.steps
+                .iter()
+                .all(|step| step.run != "flutter build apk --flavor legacy")
+        );
     }
 
     #[test]

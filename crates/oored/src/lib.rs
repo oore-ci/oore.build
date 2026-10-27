@@ -42,6 +42,7 @@ pub mod projects;
 pub mod rbac;
 pub mod release_store;
 pub mod releases;
+pub mod repository_config_files;
 pub mod repository_workflows;
 pub mod retention;
 pub mod runners;
@@ -2734,6 +2735,14 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/projects/{project_id}/repository-workflows",
             get(repository_workflows::discover_repository_workflows),
+        )
+        .route(
+            "/v1/projects/{project_id}/repository-config-files",
+            get(repository_config_files::list_repository_config_files),
+        )
+        .route(
+            "/v1/projects/{project_id}/repository-config-files/refresh",
+            post(repository_config_files::refresh_repository_config_files),
         )
         // Project member endpoints
         .route(

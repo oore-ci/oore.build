@@ -117,6 +117,8 @@ use utoipa::{
         operations::update_project,
         operations::delete_project,
         operations::discover_repository_workflows,
+        operations::list_repository_config_files,
+        operations::refresh_repository_config_files,
         // ── Project Members ──
         operations::list_project_members,
         operations::list_project_member_candidates,
@@ -374,6 +376,11 @@ use utoipa::{
         oore_contract::PipelineFileState,
         oore_contract::PipelineWorkflowSummary,
         oore_contract::PipelineWorkflowsResponse,
+        oore_contract::PipelineHealthState,
+        oore_contract::PipelineHealth,
+        oore_contract::RepositoryConfigFilePipeline,
+        oore_contract::RepositoryConfigFile,
+        oore_contract::RepositoryConfigFilesResponse,
         // Project Members
         oore_contract::ProjectRole,
         oore_contract::ProjectMember,
@@ -1886,6 +1893,40 @@ mod operations {
         )
     )]
     pub(super) fn discover_repository_workflows() {}
+
+    /// List config files found in the repository
+    ///
+    /// Config files on the project's default branch as Oore last read them,
+    /// with the pipelines that use each. Served from a cache that pushes
+    /// refresh; it never calls the source provider. The first request for a
+    /// project that was never read starts a read in the background.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/repository-config-files", tag = "Pipelines",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Cached repository config files", body = RepositoryConfigFilesResponse),
+            (status = 403, description = "Read permission required", body = ApiError),
+            (status = 404, description = "Project not found", body = ApiError),
+        )
+    )]
+    pub(super) fn list_repository_config_files() {}
+
+    /// Read the repository's config files now
+    ///
+    /// Reads the default branch through the source provider, rewrites the
+    /// cache, and adds pipelines for new files when the project's
+    /// `auto_add_pipelines` is on. A failed read is reported in `error`
+    /// beside the files from the read before it.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/repository-config-files/refresh", tag = "Pipelines",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Refreshed repository config files", body = RepositoryConfigFilesResponse),
+            (status = 403, description = "Manage Pipelines permission required", body = ApiError),
+            (status = 404, description = "Project or project source not found", body = ApiError),
+        )
+    )]
+    pub(super) fn refresh_repository_config_files() {}
 
     // ── Pipelines ──
 
