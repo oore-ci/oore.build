@@ -415,7 +415,11 @@ fn normalize_workflow_name(name: &str) -> Result<String, (StatusCode, Json<ApiEr
 }
 
 /// Why `workflow` cannot be planned from `config`, if it cannot.
-fn workflow_error(path: &str, config: &RepositoryConfig, workflow: &str) -> Option<String> {
+pub(crate) fn workflow_error(
+    path: &str,
+    config: &RepositoryConfig,
+    workflow: &str,
+) -> Option<String> {
     let names = config.workflow_names();
     if names.contains(&workflow) {
         return None;
@@ -432,6 +436,72 @@ fn workflow_error(path: &str, config: &RepositoryConfig, workflow: &str) -> Opti
             names.join(", ")
         ),
     })
+}
+
+/// Check the workflow a build would plan against the pipeline file at the
+/// build's commit, so a stale pick is refused before the build is queued
+/// instead of failing on the runner. A file that is missing, invalid or
+/// unreachable is left for the runner to report.
+pub(crate) async fn check_build_workflow(
+    state: &AppState,
+    project_id: &str,
+    config_path: &str,
+    config_path_explicit: bool,
+    reference: &str,
+    workflow: Option<&str>,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    use crate::repository_workflows::{PipelineFile, load_pipeline_file};
+    let file = match load_pipeline_file(
+        &state.db,
+        &state.encryption_key,
+        project_id,
+        config_path,
+        config_path_explicit,
+        Some(reference),
+    )
+    .await
+    {
+        Ok(Some(PipelineFile::Parsed { path, config })) => (path, config),
+        Ok(_) => return Ok(()),
+        Err((status, body)) => {
+            warn!(
+                project_id,
+                status = %status,
+                error = %body.0.error,
+                "could not read the repository file to check the build workflow"
+            );
+            return Ok(());
+        }
+    };
+    let (path, config) = file;
+    let message = match workflow {
+        Some(workflow) => workflow_error(&path, &config, workflow),
+        None => {
+            let names = config.workflow_names();
+            (names.len() > 1).then(|| {
+                format!(
+                    "{path} defines workflows [{}]; pick one in the pipeline's Workflow setting",
+                    names.join(", ")
+                )
+            })
+        }
+    };
+    match message {
+        Some(message) => Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_workflow",
+            format!("{message} (read at {})", short_reference(reference)),
+        )),
+        None => Ok(()),
+    }
+}
+
+fn short_reference(reference: &str) -> &str {
+    if reference.len() == 40 && reference.chars().all(|c| c.is_ascii_hexdigit()) {
+        &reference[..12]
+    } else {
+        reference
+    }
 }
 
 /// Check `workflow` against the pipeline file on the project's default

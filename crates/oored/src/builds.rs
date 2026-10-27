@@ -1437,6 +1437,17 @@ pub async fn create_build(
         );
     }
 
+    let pipeline_workflow: Option<String> = pipeline_row.try_get("workflow").ok().flatten();
+    crate::pipelines::check_build_workflow(
+        &state,
+        &project_id,
+        &config_path,
+        config_path_explicit != 0,
+        commit_sha.as_deref().expect("commit resolved"),
+        pipeline_workflow.as_deref(),
+    )
+    .await?;
+
     let now = now_unix();
     let build_id = Uuid::new_v4().to_string();
 
