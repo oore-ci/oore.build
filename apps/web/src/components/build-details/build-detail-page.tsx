@@ -26,7 +26,7 @@ import { useAppShortcut } from '@/hooks/use-app-shortcut'
 import { useCopyInstallLink } from '@/hooks/use-copy-install-link'
 import { useRerunAndOpen } from '@/hooks/use-rerun-and-open'
 import { usePageCommands, type PageCommand } from '@/stores/command-store'
-import { retryStepLabel } from '@/lib/build-steps'
+import { buildStepLabel, retryStepLabel } from '@/lib/build-steps'
 import { BuildSummary, buildSourceRef } from './build-summary'
 import { EventTimeline } from './event-timeline'
 import { AnalyzerPanel } from './analyzer-panel'
@@ -309,10 +309,15 @@ export function BuildDetailPage({
     )
     return findFailureLine(stepGroups, allVisibleLogs)
   }, [buildStatus, mergedLogs, stepResults])
-  const runningStep = useMemo(
-    () => (buildStatus === 'running' ? currentStepName(mergedLogs) : null),
-    [buildStatus, mergedLogs],
-  )
+  const runningStep = useMemo(() => {
+    const name = buildStatus === 'running' ? currentStepName(mergedLogs) : null
+    return name
+      ? buildStepLabel(
+          name,
+          (stepResults ?? []).map((step) => step.name),
+        )
+      : null
+  }, [buildStatus, mergedLogs, stepResults])
 
   function handleApprove() {
     approveMutation.mutate(
