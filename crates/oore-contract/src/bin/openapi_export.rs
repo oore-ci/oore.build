@@ -127,6 +127,7 @@ use utoipa::{
         operations::create_pipeline,
         operations::list_pipelines,
         operations::get_pipeline,
+        operations::list_pipeline_workflows,
         operations::update_pipeline,
         operations::delete_pipeline,
         operations::validate_pipeline,
@@ -370,6 +371,9 @@ use utoipa::{
         oore_contract::RepositoryWorkflowExecutionPreview,
         oore_contract::RepositoryWorkflowPreview,
         oore_contract::DiscoverRepositoryWorkflowsResponse,
+        oore_contract::PipelineFileState,
+        oore_contract::PipelineWorkflowSummary,
+        oore_contract::PipelineWorkflowsResponse,
         // Project Members
         oore_contract::ProjectRole,
         oore_contract::ProjectMember,
@@ -1926,6 +1930,26 @@ mod operations {
     )]
     pub(super) fn get_pipeline() {}
 
+    /// List a pipeline's workflows
+    ///
+    /// Reads the pipeline's repository file at `ref` and lists the version 2
+    /// workflows a build can name, with the platforms, triggers and store
+    /// uploads of each. A missing, invalid or unreachable file is reported in
+    /// `state`, not as an error.
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/workflows", tag = "Pipelines",
+        params(
+            ("pipeline_id" = String, Path, description = "Pipeline ID"),
+            ("ref" = Option<String>, Query, description = "Branch, tag, or commit; defaults to the project default branch"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Workflows in the pipeline file", body = PipelineWorkflowsResponse),
+            (status = 400, description = "Invalid ref", body = ApiError),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn list_pipeline_workflows() {}
+
     /// Update pipeline
     #[utoipa::path(patch, path = "/v1/pipelines/{pipeline_id}", tag = "Pipelines",
         params(("pipeline_id" = String, Path, description = "Pipeline ID")),
@@ -2425,7 +2449,7 @@ mod operations {
         security(("bearer_auth" = [])),
         responses(
             (status = 201, description = "Build queued", body = CreateBuildResponse),
-            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 400, description = "Invalid input, or a workflow the pipeline file at the build commit does not define (`invalid_workflow`)", body = ApiError),
             (status = 404, description = "Project or pipeline not found", body = ApiError),
             (status = 409, description = "Project source is not configured or resolvable, or the Google Play service account secret is missing", body = ApiError),
         )
@@ -2460,6 +2484,7 @@ mod operations {
             ("pipeline_id" = Option<String>, Query, description = "Filter by pipeline"),
             ("status" = Option<String>, Query, description = "Filter by one status or up to 9 comma-separated statuses"),
             ("branch" = Option<String>, Query, description = "Filter by exact branch name"),
+            ("workflow" = Option<String>, Query, description = "Filter by exact .oore.yaml version 2 workflow name"),
             ("trigger" = Option<String>, Query, description = "Filter by one or more comma-separated trigger kinds: manual, api, schedule, push, pull_request, or tag_push. The last three are webhook events."),
             ("actor" = Option<String>, Query, description = "Filter by exact trigger actor (the user email for manual builds, the SCM login for webhook builds). At most 320 characters."),
             ("created_after" = Option<i64>, Query, description = "Only builds created at or after this Unix time in seconds"),

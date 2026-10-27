@@ -1716,6 +1716,10 @@ pub struct Build {
     /// Present when the pipeline's approval policy gated this build.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval: Option<BuildApproval>,
+    /// The `.oore.yaml` version 2 workflow this build plans. Absent for
+    /// files without workflows and for pipelines configured in the UI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
     #[schema(value_type = Object)]
     pub config_snapshot: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1786,6 +1790,11 @@ pub struct CreateBuildRequest {
     pub trigger_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changelog: Option<String>,
+    /// The `.oore.yaml` version 2 workflow to build. Omitted uses the
+    /// pipeline's default workflow, then the file's only workflow. A file
+    /// with several workflows and no default needs one named here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3375,6 +3384,63 @@ pub struct RepositoryWorkflowExecutionPreview {
     #[serde(default)]
     pub runs_on: Vec<String>,
     pub isolation: BuildIsolation,
+}
+
+/// What Oore found at a pipeline's config path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineFileState {
+    /// No file, so the pipeline's UI configuration applies.
+    Missing,
+    /// The file exists but does not parse or validate.
+    Invalid,
+    /// The file parses.
+    Valid,
+    /// The source provider could not be read.
+    Unavailable,
+}
+
+/// One workflow a pipeline's file defines, as a build of it would run.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelineWorkflowSummary {
+    pub name: String,
+    /// Platforms the workflow builds. Empty when it cannot be planned.
+    pub platforms: Vec<BuildPlatform>,
+    /// When webhooks start it, one line per trigger, such as
+    /// `push to main`. Empty with `uses_pipeline_triggers`.
+    pub triggers: Vec<String>,
+    /// True when neither the workflow nor the file sets `on`, so the
+    /// pipeline's trigger settings decide.
+    pub uses_pipeline_triggers: bool,
+    /// Store uploads the file asks for, one line each.
+    pub publishes: Vec<String>,
+    /// Why the workflow cannot be planned, one line each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
+}
+
+/// `GET /v1/pipelines/{pipeline_id}/workflows`: the workflows a build of
+/// this pipeline can name at a ref.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelineWorkflowsResponse {
+    pub pipeline_id: String,
+    /// Branch, tag, or commit the file was read at. Absent when the project
+    /// has no default branch and none was asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    pub state: PipelineFileState,
+    /// The file that was read. Absent when it is missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Why the file is invalid or could not be read, one line each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
+    /// The pipeline's default workflow, if it sets one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_workflow: Option<String>,
+    /// Workflows in file order. Empty for v1 files and files without
+    /// workflows, which build as one implicit workflow.
+    pub workflows: Vec<PipelineWorkflowSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

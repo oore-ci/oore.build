@@ -2760,6 +2760,10 @@ pub async fn build_router_with_recovery(
                 .patch(pipelines::update_pipeline)
                 .delete(pipelines::delete_pipeline),
         )
+        .route(
+            "/v1/pipelines/{pipeline_id}/workflows",
+            get(pipelines::list_pipeline_workflows),
+        )
         .route("/v1/pipelines/validate", post(pipelines::validate_pipeline))
         .route("/v1/pipelines/plan", post(pipelines::plan_pipeline))
         .route(

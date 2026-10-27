@@ -1019,6 +1019,36 @@ pub struct TriggerSpec {
     pub paths: Vec<String>,
 }
 
+impl TriggerSpec {
+    /// One line per event this `on` starts builds for, such as
+    /// `push to main, develop` or `tag v*`.
+    pub fn describe(&self) -> Vec<String> {
+        fn branches(trigger: &Option<BranchTrigger>, all: &str, some: &str) -> Option<String> {
+            match trigger {
+                None | Some(BranchTrigger::Off) => None,
+                Some(BranchTrigger::AllBranches) => Some(all.to_string()),
+                Some(BranchTrigger::Branches(names)) => {
+                    Some(format!("{some} {}", names.join(", ")))
+                }
+            }
+        }
+        let mut lines = Vec::new();
+        lines.extend(branches(&self.push, "push to any branch", "push to"));
+        lines.extend(branches(
+            &self.pull_request,
+            "pull requests",
+            "pull requests into",
+        ));
+        if !self.tag.is_empty() {
+            lines.push(format!("tag {}", self.tag.join(", ")));
+        }
+        if !self.paths.is_empty() && !lines.is_empty() {
+            lines.push(format!("only when {} change", self.paths.join(", ")));
+        }
+        lines
+    }
+}
+
 /// `true`, `false`, or `{ branches: [...] }`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BranchTrigger {
