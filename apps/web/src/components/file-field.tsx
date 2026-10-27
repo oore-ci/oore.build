@@ -25,6 +25,7 @@ export function FileField({
   label,
   labelClassName,
   onFileChange,
+  pendingNote = 'saves with the pipeline',
   storedName,
 }: {
   accept: string
@@ -37,6 +38,8 @@ export function FileField({
   label: React.ReactNode
   labelClassName?: string
   onFileChange: (file: File | null) => void
+  /** What happens to a chosen file, shown after its name. */
+  pendingNote?: string
   /** Name of the file already stored, or `true` when its name is unknown. */
   storedName?: string | true | null
 }) {
@@ -75,10 +78,7 @@ export function FileField({
           {file ? (
             <>
               <span className="font-mono">{file.name}</span>
-              <span className="text-muted-foreground">
-                {' '}
-                · saves with the pipeline
-              </span>
+              <span className="text-muted-foreground"> · {pendingNote}</span>
             </>
           ) : hasStored ? (
             <>

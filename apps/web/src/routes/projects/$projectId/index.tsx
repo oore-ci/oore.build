@@ -84,6 +84,11 @@ const ProjectSecretsPanel = lazy(() =>
     default: module.SecretsPanel,
   })),
 )
+const SigningIdentitiesPanel = lazy(() =>
+  import('@/components/signing/signing-identities-panel').then((module) => ({
+    default: module.SigningIdentitiesPanel,
+  })),
+)
 const loadProjectAccessCard = () => import('./-project-access-card')
 const ProjectAccessCard = lazy(() =>
   loadProjectAccessCard().then((module) => ({
@@ -711,6 +716,10 @@ function ProjectDetailPage() {
                   }
                   target={{ scope: 'project', projectId }}
                   title="Project secrets"
+                />
+                <SigningIdentitiesPanel
+                  canWrite={canWritePipelines}
+                  projectId={projectId}
                 />
               </Suspense>
             ) : null}

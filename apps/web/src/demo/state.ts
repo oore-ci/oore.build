@@ -14,6 +14,7 @@ import type {
   IntegrationRepository,
   NotificationDelivery,
   Pipeline,
+  PipelineWorkflowSettings,
   ProjectRetentionOverride,
   RetentionCleanupSummary,
   RetentionPolicy,
@@ -21,6 +22,7 @@ import type {
   RepositoryWorkflowPreview,
   Runner,
   SetupStatus,
+  SigningIdentity,
   TrustedProxySettingsPublic,
   User,
   UserRole,
@@ -51,6 +53,10 @@ import {
   type DemoPromotion,
 } from './data/environments'
 import { demoPipelines } from './data/pipelines'
+import {
+  demoSigningIdentities,
+  demoWorkflowSettings,
+} from './data/signing-identities'
 import {
   demoReleaseHistory,
   demoReleases,
@@ -150,6 +156,10 @@ interface DemoState {
   androidSigning: Partial<Record<string, JsonObject>>
   iosSigning: Partial<Record<string, JsonObject>>
   iosDevices: Partial<Record<string, Array<JsonObject>>>
+  /** Project signing libraries; `used_by` is derived when listed. */
+  signingIdentities: Array<SigningIdentity>
+  /** Per-workflow settings by pipeline id. */
+  workflowSettings: Partial<Record<string, Array<PipelineWorkflowSettings>>>
 }
 
 export const EXTRA_PROJECT_IDS = {
@@ -204,7 +214,8 @@ const BASE_PERSONAS: Array<DemoPersona> = [
     projectRoles: {
       [PROJECT_IDS.flutterShop]: 'maintainer',
       [EXTRA_PROJECT_IDS.developerTools]: 'developer',
-      [PROJECT_IDS.nativePayments]: 'viewer',
+      // Can change workflow settings but not which builds wait for approval.
+      [PROJECT_IDS.nativePayments]: 'developer',
     },
   },
   {
@@ -769,7 +780,7 @@ export function createDemoState(
           path: '.oore/release.yaml',
           valid: true,
           errors: [],
-          workflows: ['adhoc', 'release'],
+          workflows: ['adhoc', 'release', 'nightly'],
           execution: {
             platforms: ['android'],
             flutter_version: '3.24.3',
@@ -867,6 +878,8 @@ export function createDemoState(
     androidSigning: {},
     iosSigning: {},
     iosDevices: {},
+    signingIdentities: clone(demoSigningIdentities),
+    workflowSettings: clone(demoWorkflowSettings),
   }
 
   if (scenario === 'blocked') {
@@ -923,6 +936,8 @@ export function createDemoState(
     state.notificationChannels = []
     state.notificationDeliveries = []
     state.auditLogs = []
+    state.signingIdentities = []
+    state.workflowSettings = {}
   }
 
   if (scenario === 'setup') {

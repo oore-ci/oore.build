@@ -18,9 +18,11 @@ import {
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
 import {
+  canChangeApprovalPolicy,
   hasProjectPermission,
   useHasPermissions,
 } from '@/hooks/use-permissions'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   useDeletePipeline,
   usePipeline,
@@ -266,7 +268,13 @@ const SecretsPanel = lazy(() =>
   })),
 )
 
-const TAB_VALUES = ['overview', 'publishing', 'secrets'] as const
+const PipelineWorkflowsPanel = lazy(() =>
+  import('@/components/pipeline-workflows/pipeline-workflows-panel').then(
+    (module) => ({ default: module.PipelineWorkflowsPanel }),
+  ),
+)
+
+const TAB_VALUES = ['overview', 'workflows', 'publishing', 'secrets'] as const
 type TabValue = (typeof TAB_VALUES)[number]
 
 interface PipelineDetailSearch {
@@ -380,6 +388,7 @@ function PipelineDetailPage() {
     ])
   const { data: projectData } = useProject(projectId)
   const projectRole = projectData?.project.current_user_role
+  const instanceRole = useAuthStore((state) => state.user?.role)
   const canWrite =
     canWriteGlobally && hasProjectPermission(projectRole, 'pipelines:write')
   const canDelete = hasProjectPermission(projectRole, 'pipelines:delete')
@@ -698,6 +707,7 @@ function PipelineDetailPage() {
       >
         <TabsList variant="line">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="workflows">Workflows</TabsTrigger>
           <TabsTrigger value="publishing">Publishing</TabsTrigger>
           <TabsTrigger value="secrets">Secrets</TabsTrigger>
         </TabsList>
@@ -823,6 +833,22 @@ function PipelineDetailPage() {
                 </Button>
               }
             />
+          ) : null}
+        </TabsContent>
+
+        <TabsContent value="workflows" className="pt-2">
+          {tab === 'workflows' ? (
+            <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+              <PipelineWorkflowsPanel
+                canChangeApproval={canChangeApprovalPolicy(
+                  instanceRole,
+                  projectRole,
+                )}
+                canWrite={canWrite}
+                pipelineId={pipeline.id}
+                projectId={projectId}
+              />
+            </Suspense>
           ) : null}
         </TabsContent>
 

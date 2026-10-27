@@ -5,7 +5,7 @@ import { ago } from '../seed'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { requireDemoProjectPermission } from '../authorization'
 import { demoState } from '../state'
-import { demoBuildWorkflow } from '../pipeline-workflows'
+import { demoBuildWorkflow, demoSigningError } from '../pipeline-workflows'
 import { demoBuildInsights } from '../data/build-insights'
 import { demoBuildAnalyses } from '../data/build-analyses'
 import { demoSizeBaselines } from '../data/build-sizes'
@@ -421,6 +421,17 @@ export const buildHandlers = [
     if (planned.error) {
       return HttpResponse.json(
         { error: planned.error, code: 'invalid_workflow' },
+        { status: 400 },
+      )
+    }
+    const signingError = demoSigningError(
+      pipeline,
+      body.commit_sha ?? branch,
+      planned.workflow,
+    )
+    if (signingError) {
+      return HttpResponse.json(
+        { error: signingError, code: 'invalid_signing' },
         { status: 400 },
       )
     }

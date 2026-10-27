@@ -367,6 +367,8 @@ export default function TriggerBuildDrawer({
     instanceRole === 'owner' || instanceRole === 'admin'
   const [projectSearch, setProjectSearch] = useState('')
   const [resolvingHead, setResolvingHead] = useState(false)
+  // A signing refusal for a build with no workflow field to show it on.
+  const [signingError, setSigningError] = useState<string>()
   const [pipelineSearch, setPipelineSearch] = useState('')
   const updateProjectSearch = useDebouncedCallback(
     (value: string) => setProjectSearch(value.trim()),
@@ -559,6 +561,7 @@ export default function TriggerBuildDrawer({
   )
 
   async function onSubmit(data: TriggerBuildForm) {
+    setSigningError(undefined)
     const resolvedProjectId = fixedProjectId ?? data.project_id?.trim() ?? ''
     if (!resolvedProjectId) {
       form.setError('project_id', { message: 'Project is required' })
@@ -636,6 +639,16 @@ export default function TriggerBuildDrawer({
             }
             return
           }
+          if (isOoreApiError(error) && error.code === 'invalid_signing') {
+            // The workflow names a signing identity the project's library
+            // cannot satisfy: show why where the workflow is chosen.
+            if (workflowChoices.length > 0) {
+              form.setError('workflow', { message: error.message })
+            } else {
+              setSigningError(error.message)
+            }
+            return
+          }
           toast.error(`Failed to trigger build: ${error.message}`)
         },
       },
@@ -661,6 +674,7 @@ export default function TriggerBuildDrawer({
         if (nextOpen) {
           setProjectSearch('')
           setPipelineSearch('')
+          setSigningError(undefined)
         }
         setOpen(nextOpen)
       }}
@@ -989,6 +1003,11 @@ export default function TriggerBuildDrawer({
             </div>
             {/* Outside the scroll area so the footer never covers them. */}
             <Stack gap={2} className="shrink-0 px-4 pb-4">
+              {signingError ? (
+                <Alert variant="destructive" role="alert">
+                  <AlertDescription>{signingError}</AlertDescription>
+                </Alert>
+              ) : null}
               <TriggerBuildBlockingAlerts
                 projectId={projectId}
                 canConfigure={
