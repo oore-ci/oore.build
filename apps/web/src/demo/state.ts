@@ -112,7 +112,12 @@ interface DemoState {
   projects: Array<DemoProject>
   projectRoles: Partial<Record<string, Record<string, ProjectRole>>>
   pipelines: Array<Pipeline>
+  /** Files on each project's default branch. */
   repositoryWorkflows: Partial<Record<string, Array<RepositoryWorkflowPreview>>>
+  /** Files only on other branches; a branch missing here does not exist. */
+  repositoryWorkflowBranches: Partial<
+    Record<string, Record<string, Array<RepositoryWorkflowPreview>>>
+  >
   builds: Array<Build>
   buildEvents: Partial<Record<string, Array<BuildEvent>>>
   buildLogs: Partial<Record<string, Array<BuildLogChunk>>>
@@ -687,6 +692,78 @@ export function createDemoState(
           workflows: [],
         },
       ],
+      // A root `.oore.<name>.yaml` beside a version 1 file in `.oore/`.
+      [PROJECT_IDS.flutterShop]: [
+        {
+          path: '.oore.release.yaml',
+          valid: true,
+          errors: [],
+          workflows: ['beta', 'production'],
+          execution: {
+            platforms: ['android', 'ios'],
+            flutter_version: '3.24.3',
+            commands: {
+              pre_build: ['flutter pub get'],
+              build: [],
+              post_build: [],
+            },
+            isolation: 'vm',
+            platform_build_args: { android: [], ios: [], macos: [] },
+            platform_commands: {
+              android: 'flutter build appbundle --release',
+              ios: 'flutter build ipa --release',
+            },
+            env_keys: ['SENTRY_DSN'],
+            artifact_patterns: [
+              'build/app/outputs/bundle/release/*.aab',
+              'build/ios/ipa/*.ipa',
+            ],
+          },
+        },
+        {
+          path: '.oore/android-release.yaml',
+          valid: true,
+          errors: [],
+          workflows: [],
+          execution: {
+            platforms: ['android'],
+            flutter_version: '3.24.3',
+            commands: {
+              pre_build: ['flutter pub get'],
+              build: [],
+              post_build: [],
+            },
+            isolation: 'host',
+            platform_build_args: { android: [], ios: [], macos: [] },
+            platform_commands: {},
+            env_keys: [],
+            artifact_patterns: ['build/app/outputs/flutter-apk/*.apk'],
+          },
+        },
+      ],
+      // Only found when its path is typed: discovery lists `.oore*` files.
+      [PROJECT_IDS.internalAdmin]: [
+        {
+          path: 'ci/oore.yaml',
+          valid: true,
+          errors: [],
+          workflows: ['debug', 'staging'],
+          execution: {
+            platforms: ['android'],
+            flutter_version: null,
+            commands: {
+              pre_build: ['flutter pub get'],
+              build: [],
+              post_build: [],
+            },
+            isolation: 'host',
+            platform_build_args: { android: [], ios: [], macos: [] },
+            platform_commands: { android: 'flutter build apk --debug' },
+            env_keys: [],
+            artifact_patterns: ['build/app/outputs/flutter-apk/*.apk'],
+          },
+        },
+      ],
       [PROJECT_IDS.nativePayments]: [
         {
           path: '.oore/release.yaml',
@@ -709,6 +786,33 @@ export function createDemoState(
           },
         },
       ],
+    },
+    repositoryWorkflowBranches: {
+      // The iOS file was committed to develop and not merged yet.
+      [PROJECT_IDS.flutterShop]: {
+        develop: [
+          {
+            path: '.oore/ios-release.yaml',
+            valid: true,
+            errors: [],
+            workflows: ['testflight', 'app-store'],
+            execution: {
+              platforms: ['ios'],
+              flutter_version: '3.24.3',
+              commands: {
+                pre_build: ['flutter pub get'],
+                build: [],
+                post_build: [],
+              },
+              isolation: 'vm',
+              platform_build_args: { android: [], ios: [], macos: [] },
+              platform_commands: { ios: 'flutter build ipa --release' },
+              env_keys: [],
+              artifact_patterns: ['build/ios/ipa/*.ipa'],
+            },
+          },
+        ],
+      },
     },
     builds,
     buildEvents: clone(demoBuildEvents),
@@ -801,6 +905,7 @@ export function createDemoState(
     state.projectRoles = {}
     state.pipelines = []
     state.repositoryWorkflows = {}
+    state.repositoryWorkflowBranches = {}
     state.builds = []
     state.buildEvents = {}
     state.buildLogs = {}

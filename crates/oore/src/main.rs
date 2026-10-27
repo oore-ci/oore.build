@@ -35,6 +35,7 @@ use sqlx::{Row, SqlitePool};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixStream};
 
+mod build_commands;
 mod install_lock;
 mod install_manifest;
 mod installer;
@@ -141,8 +142,10 @@ enum Commands {
     Config(ConfigArgs),
     /// Check the host and selected build-platform toolchains
     Doctor(DoctorArgs),
-    /// Validate repository pipeline configuration
+    /// Validate repository pipeline files and list a pipeline's workflows
     Pipeline(PipelineArgs),
+    /// Start a build of a pipeline
+    Build(BuildArgs),
     /// Print the installed oore version
     Version,
     /// Update oore and oored to the latest release
@@ -861,6 +864,20 @@ enum PipelineSubcommand {
     Plan(PipelinePlanArgs),
     /// Rewrite a version 1 pipeline file as version 2.
     Migrate(PipelineMigrateArgs),
+    /// List the workflows a build of a pipeline can name, read from its file.
+    Workflows(build_commands::PipelineWorkflowsArgs),
+}
+
+#[derive(Debug, Args)]
+struct BuildArgs {
+    #[command(subcommand)]
+    command: BuildSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum BuildSubcommand {
+    /// Queue a build of a pipeline, optionally naming its workflow.
+    Run(build_commands::BuildRunArgs),
 }
 
 #[derive(Debug, Args)]
@@ -13277,6 +13294,18 @@ fn main() -> anyhow::Result<()> {
             PipelineSubcommand::Validate(args) => handle_pipeline_validate(args)?,
             PipelineSubcommand::Plan(args) => handle_pipeline_plan(args)?,
             PipelineSubcommand::Migrate(args) => handle_pipeline_migrate(args)?,
+            PipelineSubcommand::Workflows(args) => {
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+                runtime.block_on(build_commands::handle_pipeline_workflows(args))?;
+            }
+        },
+        Commands::Build(build) => match build.command {
+            BuildSubcommand::Run(args) => {
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+                runtime.block_on(build_commands::handle_build_run(args))?;
+            }
         },
         Commands::Version => {
             let install_root = resolve_install_root()?;

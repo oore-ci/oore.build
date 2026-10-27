@@ -4,6 +4,8 @@ import type {
   Pipeline,
   PipelineExecutionConfig,
   RepositoryWorkflowExecutionPreview,
+  PipelineWorkflowSummary,
+  PipelineWorkflowsResponse,
   RepositoryWorkflowPreview,
   SizeBudget,
   TriggerConfig,
@@ -337,6 +339,72 @@ export function pipelineRepositoryFile(
   return undefined
 }
 
+/** The path a pipeline's file is looked up at, for messages. */
+export function pipelineRepositoryPath(pipeline: {
+  config_path: string
+  config_path_explicit: boolean
+}): string {
+  return pipeline.config_path_explicit
+    ? pipeline.config_path.trim()
+    : '.oore.yaml'
+}
+
+/**
+ * What the Workflow field can offer for a pipeline's file on one branch:
+ * no file there, a file with errors, or the workflows the file defines
+ * (none for a version 1 file).
+ */
+export type RepositoryFileStatus =
+  | { kind: 'missing'; path: string }
+  | { kind: 'invalid'; path: string; errors: Array<string> }
+  | { kind: 'ready'; path: string; file: RepositoryWorkflowPreview }
+
+export function repositoryFileStatus(
+  files: Array<RepositoryWorkflowPreview>,
+  pipeline: { config_path: string; config_path_explicit: boolean },
+): RepositoryFileStatus {
+  const file = pipelineRepositoryFile(files, pipeline)
+  if (!file) return { kind: 'missing', path: pipelineRepositoryPath(pipeline) }
+  if (!file.valid) {
+    return { kind: 'invalid', path: file.path, errors: file.errors }
+  }
+  return { kind: 'ready', path: file.path, file }
+}
+
+/**
+ * Why a pipeline's builds will fail or be refused, judged against its file
+ * on one branch. Undefined when nothing is wrong, including a pipeline with
+ * no file and no workflow, which builds from its own settings.
+ */
+export type PipelineWorkflowProblem =
+  | { kind: 'missing-file'; path: string; workflow: string }
+  | { kind: 'invalid-file'; path: string; errors: Array<string> }
+  | { kind: 'unknown-workflow'; path: string; workflow: string }
+
+export function pipelineWorkflowProblem(
+  files: Array<RepositoryWorkflowPreview>,
+  pipeline: {
+    config_path: string
+    config_path_explicit: boolean
+    workflow?: string | null
+  },
+): PipelineWorkflowProblem | undefined {
+  const workflow = pipeline.workflow?.trim()
+  const status = repositoryFileStatus(files, pipeline)
+  if (status.kind === 'missing') {
+    return workflow
+      ? { kind: 'missing-file', path: status.path, workflow }
+      : undefined
+  }
+  if (status.kind === 'invalid') {
+    return { kind: 'invalid-file', path: status.path, errors: status.errors }
+  }
+  // Several workflows and no default is fine: each run picks one and
+  // webhooks start every workflow whose `on` matches.
+  if (!workflow || status.file.workflows.includes(workflow)) return undefined
+  return { kind: 'unknown-workflow', path: status.path, workflow }
+}
+
 export function trimToUndefined(value?: string | null): string | undefined {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
@@ -401,4 +469,25 @@ export function hasCustomFallback(pipeline: Pipeline): boolean {
   const expected = [...defaults].sort()
 
   return JSON.stringify(current) !== JSON.stringify(expected)
+}
+
+/** The workflows a build can pick from, or none when the file offers none. */
+export function choosableWorkflows(
+  data: PipelineWorkflowsResponse | undefined,
+): Array<PipelineWorkflowSummary> {
+  return data?.state === 'valid' ? data.workflows : []
+}
+
+/**
+ * The workflow a build runs when the user picks nothing: the pipeline's
+ * default when the file defines it, else the file's only workflow.
+ */
+export function defaultWorkflowChoice(
+  data: PipelineWorkflowsResponse | undefined,
+): string {
+  const names = choosableWorkflows(data).map((workflow) => workflow.name)
+  if (data?.default_workflow && names.includes(data.default_workflow)) {
+    return data.default_workflow
+  }
+  return names.length === 1 ? names[0] : ''
 }

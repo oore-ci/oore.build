@@ -5,6 +5,7 @@ import { ago } from '../seed'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { requireDemoProjectPermission } from '../authorization'
 import { demoState } from '../state'
+import { demoBuildWorkflow } from '../pipeline-workflows'
 import { demoBuildInsights } from '../data/build-insights'
 import { demoBuildAnalyses } from '../data/build-analyses'
 import { demoSizeBaselines } from '../data/build-sizes'
@@ -26,6 +27,7 @@ const createBuildRequestSchema = z.toZod<CreateBuildRequest>()(
     changelog: z.string().nullish(),
     platforms: z.array(z.enum(['android', 'ios', 'macos'])).nullish(),
     trigger_ref: z.string().nullish(),
+    workflow: z.string().nullish(),
   }),
 )
 const DEMO_TRIGGER_TYPES = new Set(['manual', 'api', 'schedule'])
@@ -187,6 +189,8 @@ export const buildHandlers = [
 
     const pipelineId = url.searchParams.get('pipeline_id')
     if (pipelineId) builds = builds.filter((b) => b.pipeline_id === pipelineId)
+    const workflow = url.searchParams.get('workflow')?.trim()
+    if (workflow) builds = builds.filter((b) => b.workflow === workflow)
 
     if (url.searchParams.has('status')) {
       const statuses = [
@@ -408,6 +412,18 @@ export const buildHandlers = [
         { status: 404 },
       )
     }
+    const branch = body.branch ?? 'main'
+    const planned = demoBuildWorkflow(
+      pipeline,
+      body.commit_sha ?? branch,
+      body.workflow,
+    )
+    if (planned.error) {
+      return HttpResponse.json(
+        { error: planned.error, code: 'invalid_workflow' },
+        { status: 400 },
+      )
+    }
     const build: (typeof demoState.builds)[number] = {
       id: `build-demo-new-${crypto.randomUUID().slice(0, 8)}`,
       project_id: projectId,
@@ -422,9 +438,10 @@ export const buildHandlers = [
       status: 'queued',
       trigger_type: 'manual',
       trigger_actor: persona.email,
-      branch: body.branch ?? 'main',
+      branch,
       commit_sha: body.commit_sha,
       changelog: body.changelog,
+      workflow: planned.workflow,
       config_snapshot: {},
       queued_at: ago(0),
       created_at: ago(0),
