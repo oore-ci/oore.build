@@ -408,6 +408,7 @@ export const projectHandlers = [
     }
     delete demoState.projectRoles[projectId]
     delete demoState.repositoryWorkflows[projectId]
+    delete demoState.repositoryWorkflowBranches[projectId]
     return HttpResponse.json({ ok: true })
   }),
 ]

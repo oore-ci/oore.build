@@ -4,7 +4,6 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   AlertCircleIcon,
-  CheckmarkCircle02Icon,
   File02Icon,
   RefreshIcon,
 } from '@hugeicons/core-free-icons'
@@ -42,6 +41,7 @@ import {
 import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import PipelineForm from '@/components/pipeline-form'
+import { RepositoryWorkflowSummary } from '@/components/repository-workflow-summary'
 import { PipelineFormSection } from '@/components/pipeline-form-section'
 import { PageMeta } from '@/lib/seo'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -57,7 +57,6 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Spinner } from '@/components/ui/spinner'
 import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
-import { Text } from '@/components/layout/text'
 import { textVariants } from '@/lib/recipes'
 
 export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
@@ -210,21 +209,19 @@ function workflowDefaults(
   workflow: RepositoryWorkflowPreview,
 ): PipelineFormValues {
   const execution = workflow.execution
-  const workflowName =
-    workflow.path
-      .split('/')
-      .at(-1)
-      ?.replace(/^\.oore\.?/, '')
-      .replace(/\.ya?ml$/, '')
-      .replaceAll('-', ' ')
-      .trim() || 'Repository workflow'
+  // `.oore.release.yaml` and `.oore/release.yaml` name a "Release"
+  // pipeline; `.oore.yaml` and `ci/oore.yaml` say nothing about it.
+  const workflowName = (workflow.path.split('/').at(-1) ?? '')
+    .replace(/\.ya?ml$/, '')
+    .replace(/^\.?oore(\.|$)/, '')
+    .replaceAll('-', ' ')
+    .trim()
 
   return {
     ...emptyDefaults,
-    name:
-      workflow.path === '.oore.yaml' || workflow.path === '.oore.yml'
-        ? 'Repository workflow'
-        : workflowName.replace(/\b\w/g, (letter) => letter.toUpperCase()),
+    name: workflowName
+      ? workflowName.replace(/\b\w/g, (letter) => letter.toUpperCase())
+      : 'Repository workflow',
     config_mode: 'explicit',
     config_path: workflow.path,
     platform_android: execution?.platforms.includes('android') ?? false,
@@ -248,63 +245,6 @@ function workflowDefaults(
     // A file with several workflows needs one picked, or builds fail.
     workflow: workflow.workflows.length > 1 ? workflow.workflows[0] : '',
   }
-}
-
-function RepositoryWorkflowSummary({
-  workflow,
-  reference,
-}: {
-  workflow: RepositoryWorkflowPreview
-  reference: string
-}) {
-  const execution = workflow.execution
-  if (!execution) return null
-  const commandCount =
-    execution.commands.pre_build.length +
-    execution.commands.build.length +
-    execution.commands.post_build.length +
-    Object.values(execution.platform_commands).filter(Boolean).length
-
-  return (
-    <div className="space-y-4">
-      <Alert>
-        <HugeiconsIcon icon={CheckmarkCircle02Icon} size={16} />
-        <AlertDescription>
-          Oore will read <code>{workflow.path}</code> from the exact commit
-          being built. This preview is from <code>{reference}</code>.
-        </AlertDescription>
-      </Alert>
-      <div className="grid gap-3 text-sm sm:grid-cols-2">
-        <div>
-          <Text variant="caption">Platforms</Text>
-          <p>{execution.platforms.join(', ')}</p>
-        </div>
-        <div>
-          <Text variant="caption">Flutter</Text>
-          <p>{execution.flutter_version ?? 'From .fvmrc, or stable'}</p>
-        </div>
-        <div>
-          <Text variant="caption">Commands</Text>
-          <p>
-            {commandCount > 0
-              ? `${commandCount} configured`
-              : 'Platform defaults'}
-          </p>
-        </div>
-        <div>
-          <Text variant="caption">Artifacts</Text>
-          <p className="font-mono text-xs">
-            {execution.artifact_patterns.join(', ') || 'Platform defaults'}
-          </p>
-        </div>
-      </div>
-      {execution.env_keys.length > 0 ? (
-        <Text variant="caption">
-          Environment keys: {execution.env_keys.join(', ')}. Values stay hidden.
-        </Text>
-      ) : null}
-    </div>
-  )
 }
 
 function NewPipelinePage() {
@@ -334,12 +274,26 @@ function NewPipelinePage() {
     string | null
   >(null)
   const [manualSetup, setManualSetup] = useState(false)
-  const workflows = workflowsQuery.data?.workflows ?? []
+  // A file found by typing its path in the Config path field.
+  const [typedFile, setTypedFile] = useState<{
+    file: RepositoryWorkflowPreview
+    reference: string
+  } | null>(null)
+  const discovered = workflowsQuery.data?.workflows ?? []
+  const workflows =
+    typedFile &&
+    !discovered.some((workflow) => workflow.path === typedFile.file.path)
+      ? [...discovered, typedFile.file]
+      : discovered
   const validWorkflows = workflows.filter((workflow) => workflow.valid)
   const invalidWorkflows = workflows.filter((workflow) => !workflow.valid)
   const selectedWorkflow: RepositoryWorkflowPreview | undefined =
     validWorkflows.find((workflow) => workflow.path === selectedWorkflowPath) ??
     validWorkflows.at(0)
+  const previewReference =
+    typedFile && typedFile.file.path === selectedWorkflow?.path
+      ? typedFile.reference
+      : workflowsQuery.data?.reference
   const activeTemplate =
     !manualSetup && selectedWorkflow !== undefined
       ? {
@@ -516,9 +470,7 @@ function NewPipelinePage() {
                   <ItemDescription>
                     Oore reads the workflow from the commit being built. This
                     preview is from{' '}
-                    <Badge variant="secondary">
-                      {workflowsQuery.data?.reference}
-                    </Badge>
+                    <Badge variant="secondary">{previewReference}</Badge>
                   </ItemDescription>
                 </ItemContent>
               </Item>
@@ -635,12 +587,25 @@ function NewPipelinePage() {
             repositoryWorkflow={
               !manualSetup &&
               selectedWorkflow !== undefined &&
-              workflowsQuery.data !== undefined ? (
+              previewReference !== undefined ? (
                 <RepositoryWorkflowSummary
                   workflow={selectedWorkflow}
-                  reference={workflowsQuery.data.reference}
+                  reference={previewReference}
                 />
               ) : undefined
+            }
+            workflowLookup={
+              projectData?.project.repository_id
+                ? {
+                    projectId,
+                    defaultBranch: projectData.project.default_branch,
+                    onUseFile: (file, reference) => {
+                      setTypedFile({ file, reference })
+                      setSelectedWorkflowPath(file.path)
+                      setManualSetup(false)
+                    },
+                  }
+                : undefined
             }
             workflowSource={
               !manualSetup && selectedWorkflow !== undefined

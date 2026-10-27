@@ -33,6 +33,9 @@ import type {
   UpdatePipelineRequest,
 } from '@oore/client/models'
 
+/** `.oore.yaml`, `.oore.yml`, root `.oore.<name>.yaml` and `.oore/*.yaml`. */
+const DISCOVERED_PATH = /^(\.oore(\.[^/]+)?\.ya?ml|\.oore\/[^/]+\.ya?ml)$/
+
 const stringListSchema = z.array(z.string())
 const executionConfigSchema = z.object({
   platforms: z.array(z.enum(['android', 'ios', 'macos'])),
@@ -440,10 +443,34 @@ export const pipelineHandlers = [
     }
 
     const url = new URL(request.url)
-    const requestedPath = url.searchParams.get('path')
-    const discovered = demoState.repositoryWorkflows[projectId]
-    const workflows = (discovered ?? []).filter(
-      (workflow) => !requestedPath || workflow.path === requestedPath,
+    const requestedPath = url.searchParams.get('path')?.trim()
+    const defaultBranch = project.default_branch ?? 'main'
+    const reference = url.searchParams.get('ref')?.trim() || defaultBranch
+    const onDefault = demoState.repositoryWorkflows[projectId] ?? []
+    const onBranch =
+      reference === defaultBranch
+        ? []
+        : demoState.repositoryWorkflowBranches[projectId]?.[reference]
+    if (!onBranch) {
+      return HttpResponse.json(
+        {
+          error: `Branch or commit '${reference}' was not found`,
+          code: 'not_found',
+        },
+        { status: 404 },
+      )
+    }
+    const files = [
+      ...onDefault.filter(
+        (file) => !onBranch.some((other) => other.path === file.path),
+      ),
+      ...onBranch,
+    ]
+    // Like the daemon, list only `.oore*` files unless a path is asked for.
+    const workflows = files.filter((workflow) =>
+      requestedPath
+        ? workflow.path === requestedPath
+        : DISCOVERED_PATH.test(workflow.path),
     )
     const integrationId = Object.entries(demoState.repositories).find(
       ([, repositories]) =>
@@ -458,8 +485,7 @@ export const pipelineHandlers = [
     return HttpResponse.json({
       project_id: projectId,
       provider: provider === 'gitlab' ? 'gitlab' : 'github',
-      reference:
-        url.searchParams.get('ref') ?? project.default_branch ?? 'main',
+      reference,
       workflows,
       truncated: false,
     })
