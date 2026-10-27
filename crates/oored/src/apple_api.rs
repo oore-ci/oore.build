@@ -201,7 +201,8 @@ pub(crate) fn parse_apple_error(body: &str) -> String {
                 if associated.is_empty() {
                     format!("{code}: {detail}")
                 } else {
-                    format!("{code}: {detail} {}", associated.join(" "))
+                    // One line per reason, so the release page lists them.
+                    format!("{code}: {detail}\n- {}", associated.join("\n- "))
                 }
             } else {
                 "Apple API request failed".to_string()
@@ -786,7 +787,10 @@ mod apple_error_tests {
             ),
             "{message}"
         );
-        assert!(message.contains("'whatsNew'"), "{message}");
+        assert!(
+            message.contains("\n- You must provide a value for the attribute 'whatsNew'"),
+            "{message}"
+        );
         assert_eq!(
             message.matches("6.9-inch iPhone displays").count(),
             1,

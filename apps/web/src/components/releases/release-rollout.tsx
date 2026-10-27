@@ -3,11 +3,13 @@ import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import {
   formatRolloutPercent,
-  getReleaseStateVariant,
   isWaitingOnStore,
-  RELEASE_STATE_LABEL,
   releaseStageIndex,
   releaseStages,
+  releaseStateBadgeVariant,
+  releaseStateLabel,
+  releaseStoreError,
+  releaseStoreStatus,
 } from '@/lib/releases'
 import { cn } from '@/lib/utils'
 import { Row } from '@/components/layout/row'
@@ -58,6 +60,11 @@ function ReleaseStages({
   const stages = releaseStages(release)
   const current = releaseStageIndex(release)
   const next = stages[current + 1]
+  const blocked = releaseStoreError(release) !== null
+  // "Waiting for review" and "In review" are different waits; say which.
+  const status = releaseStoreStatus(release)
+  const now =
+    release.state === 'in_review' && status ? status.label : stages[current]
 
   return (
     <div className={cn(stackVariants({ gap: 1.5 }), 'min-w-36', className)}>
@@ -78,19 +85,27 @@ function ReleaseStages({
             className={cn(
               'h-2 flex-1 rounded-2xl bg-muted',
               index < current && 'bg-primary',
-              index === current && 'bg-info motion-safe:animate-pulse',
+              index === current &&
+                (blocked ? 'bg-warning' : 'bg-info motion-safe:animate-pulse'),
             )}
           >
             <span className="sr-only">
               {stage}
-              {index < current ? ', done' : index === current ? ', now' : ''}
+              {index < current
+                ? ', done'
+                : index === current
+                  ? blocked
+                    ? ', blocked'
+                    : ', now'
+                  : ''}
             </span>
           </li>
         ))}
       </ol>
       <span className={textVariants({ variant: 'caption' })}>
-        {stages[current]}
-        {next ? ` · then ${next}` : ''}
+        {blocked
+          ? `Blocked before ${next ?? 'the next step'}`
+          : `${now}${next ? ` · then ${next}` : ''}`}
       </span>
     </div>
   )
@@ -102,10 +117,8 @@ export function ReleaseStateBadge({
   release: Pick<Release, 'awaiting_approval' | 'state'>
 }) {
   return (
-    <Badge variant={getReleaseStateVariant(release.state)}>
-      {release.awaiting_approval
-        ? 'Awaiting approval'
-        : RELEASE_STATE_LABEL[release.state]}
+    <Badge variant={releaseStateBadgeVariant(release)}>
+      {releaseStateLabel(release)}
     </Badge>
   )
 }
