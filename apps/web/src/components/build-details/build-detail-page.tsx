@@ -1,4 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
+import { WorkflowBadge } from '@/components/workflow-badge'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -617,6 +618,7 @@ export function BuildDetailPage({
               {build.approval ? (
                 <StatusBadge kind="approval" value={build.approval.state} />
               ) : null}
+              <WorkflowBadge workflow={build.workflow} className="h-6 px-2.5" />
               <StoreWaitBadges
                 releases={releases}
                 onOpenRelease={() => setActiveTab('release')}

@@ -139,7 +139,9 @@ export const demoPipelines: Array<Pipeline> = [
     timeout_minutes: 60,
     approval: { required: false, events: [] },
     size_budget: { mode: 'warn', rules: [] },
-    workflow: 'release',
+    // .oore/release.yaml defines adhoc and release and no default is set:
+    // each run picks one, and webhooks start every workflow whose `on`
+    // matches.
     enabled: true,
     created_at: ago(86400 * 18),
     updated_at: ago(86400 * 2),

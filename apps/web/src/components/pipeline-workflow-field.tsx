@@ -77,7 +77,11 @@ export function WorkflowField({
       : workflows
   const items = {
     [DEFAULT_WORKFLOW]:
-      workflows.length === 1 ? `File default (${workflows[0]})` : 'Not set',
+      workflows.length === 1
+        ? `File default (${workflows[0]})`
+        : workflows.length > 1
+          ? 'Not set (choose when running; triggers start every matching workflow)'
+          : 'Not set',
     ...Object.fromEntries(names.map((name) => [name, name])),
   }
   return (
@@ -86,7 +90,7 @@ export function WorkflowField({
       name="workflow"
       render={({ field }) => (
         <FormItem>
-          <FormLabel>Workflow</FormLabel>
+          <FormLabel>Default workflow</FormLabel>
           <Select
             value={field.value || DEFAULT_WORKFLOW}
             onValueChange={(value) =>
@@ -96,7 +100,7 @@ export function WorkflowField({
             disabled={!!unavailable && !current}
           >
             <FormControl>
-              <SelectTrigger className="w-full" aria-label="Workflow">
+              <SelectTrigger className="w-full" aria-label="Default workflow">
                 <SelectValue />
               </SelectTrigger>
             </FormControl>
@@ -117,8 +121,10 @@ export function WorkflowField({
               <>
                 {workflows.length > 1 ? (
                   <>
-                    <Mono>{source.path}</Mono> defines several workflows; this
-                    pipeline builds the one picked here.
+                    <Mono>{source.path}</Mono> defines several workflows.
+                    Triggers start only the default; without one, they start
+                    every workflow that matches and Run build asks which to
+                    build.
                   </>
                 ) : (
                   <>
@@ -126,15 +132,15 @@ export function WorkflowField({
                     <Mono>{source.path}</Mono>.
                   </>
                 )}{' '}
-                When that workflow sets <Mono>on</Mono>, it replaces the
-                triggers below for pushes, pull requests and tags.
+                A workflow that sets <Mono>on</Mono> replaces the triggers below
+                for pushes, pull requests and tags.
               </>
             )}
           </FormDescription>
           {!unavailable && current && !workflows.includes(current) ? (
             <Text variant="caption" className="text-destructive">
-              {source.path} no longer defines {current}; builds will fail until
-              you pick another.
+              {source.path} no longer defines {current}; builds that do not name
+              a workflow will fail until you pick another default.
             </Text>
           ) : null}
           {footer}

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -26,6 +26,7 @@ import {
   usePipeline,
   usePipelineAndroidSigning,
   usePipelineIosSigning,
+  usePipelineWorkflows,
   useRepositoryWorkflows,
   useUpdatePipeline,
 } from '@/hooks/use-pipelines'
@@ -71,10 +72,19 @@ import {
 } from '@/components/ui/empty'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
-import { BuildSourceValue } from '@/components/table-values'
+import { BuildSourceValue, EmptyValue } from '@/components/table-values'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { WorkflowBadge } from '@/components/workflow-badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { searchChoice } from '@/lib/search-input'
+import { searchChoice, searchString } from '@/lib/search-input'
 import type { SearchInput } from '@/lib/search-input'
 import {
   PipelineConfigurationCard,
@@ -159,9 +169,79 @@ function describePipeline(pipeline: Pipeline, manualOnlyTriggers: boolean) {
   return `${subject} ${when}${where}.`
 }
 
+const workflowColumn: DataTableColumnDef<Build> = {
+  accessorKey: 'workflow',
+  header: 'Workflow',
+  cell: ({ row }) =>
+    row.original.workflow ? (
+      <WorkflowBadge workflow={row.original.workflow} />
+    ) : (
+      <EmptyValue />
+    ),
+  enableSorting: false,
+}
+
+// Base UI selects treat an empty value as unselected.
+const ALL_WORKFLOWS = '__all__'
+
+/** Filters Recent builds to one workflow of the pipeline's file. */
+function WorkflowFilter({
+  workflows,
+  value,
+  onChange,
+}: {
+  workflows: Array<string>
+  value?: string
+  onChange: (workflow?: string) => void
+}) {
+  // Keep a filter from the URL visible even when the file dropped it.
+  const names =
+    value && !workflows.includes(value) ? [...workflows, value] : workflows
+  // The trigger shows "Workflow: release"; the list shows plain names.
+  const items = {
+    [ALL_WORKFLOWS]: 'All workflows',
+    ...Object.fromEntries(names.map((name) => [name, `Workflow: ${name}`])),
+  }
+  return (
+    <Select
+      value={value ?? ALL_WORKFLOWS}
+      onValueChange={(next) =>
+        onChange(next && next !== ALL_WORKFLOWS ? next : undefined)
+      }
+      items={items}
+    >
+      <SelectTrigger size="sm" aria-label="Filter by workflow">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent align="end">
+        <SelectGroup>
+          <SelectItem value={ALL_WORKFLOWS}>All workflows</SelectItem>
+          {names.map((name) => (
+            <SelectItem key={name} value={name}>
+              {name}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  )
+}
+
 function RecentBuildsTable({ builds }: { builds: Array<Build> }) {
+  // A pipeline whose builds never named a workflow has no column for it.
+  const columns = useMemo(
+    () =>
+      builds.some((build) => build.workflow)
+        ? [
+            ...recentBuildColumns.slice(0, 2),
+            workflowColumn,
+            ...recentBuildColumns.slice(2),
+          ]
+        : recentBuildColumns,
+    [builds],
+  )
   const table = useDataTable({
-    columns: recentBuildColumns,
+    columns,
     data: builds,
     getRowId: (build) => build.id,
   })
@@ -191,11 +271,17 @@ type TabValue = (typeof TAB_VALUES)[number]
 
 interface PipelineDetailSearch {
   tab?: TabValue
+  /** Show only builds of this workflow in Recent builds. */
+  workflow?: string
 }
 
 function validatePipelineSearch(search: SearchInput): PipelineDetailSearch {
   const tab = searchChoice(search, 'tab', TAB_VALUES)
-  return { tab: tab === 'overview' ? undefined : tab }
+  const workflow = searchString(search, 'workflow')?.trim()
+  return {
+    tab: tab === 'overview' ? undefined : tab,
+    workflow: workflow || undefined,
+  }
 }
 
 export const Route = createFileRoute(
@@ -232,8 +318,8 @@ function PipelineWorkflowAlert({
       title = <>No workflow file on {on}</>
       description = (
         <>
-          This pipeline builds the {problem.workflow} workflow from {path},
-          which is not on {on}. Builds of {on} will fail.
+          The default workflow {problem.workflow} comes from {path}, which is
+          not on {on}. Builds of {on} will fail.
         </>
       )
       break
@@ -247,21 +333,11 @@ function PipelineWorkflowAlert({
       )
       break
     case 'unknown-workflow':
-      title = <>Workflow {problem.workflow} not found</>
+      title = <>Default workflow {problem.workflow} not found</>
       description = (
         <>
-          {path} on {on} no longer defines {problem.workflow}. Builds will fail
-          until you pick another workflow.
-        </>
-      )
-      break
-    case 'needs-workflow':
-      title = <>No workflow picked</>
-      description = (
-        <>
-          {path} defines {problem.workflows.length} workflows (
-          {problem.workflows.join(', ')}) and this pipeline has none picked, so
-          Oore refuses its builds.
+          {path} on {on} no longer defines {problem.workflow}. Builds that do
+          not name a workflow will fail until you change the default.
         </>
       )
       break
@@ -294,7 +370,7 @@ function PipelineWorkflowAlert({
 function PipelineDetailPage() {
   const { projectId, pipelineId } = Route.useParams()
   const navigate = useNavigate()
-  const { tab = 'overview' } = Route.useSearch()
+  const { tab = 'overview', workflow: workflowFilter } = Route.useSearch()
   const { data, isLoading, error } = usePipeline(pipelineId)
   const [canWriteGlobally, canTriggerBuildGlobally, canReadInstanceSettings] =
     useHasPermissions([
@@ -317,8 +393,22 @@ function PipelineDetailPage() {
   })
   const buildsQuery = useBuilds({
     pipeline_id: pipelineId,
+    workflow: workflowFilter,
     limit: RECENT_BUILD_LIMIT,
   })
+  const pipelineWorkflowsQuery = usePipelineWorkflows(pipelineId)
+  const fileWorkflows =
+    pipelineWorkflowsQuery.data?.state === 'valid'
+      ? pipelineWorkflowsQuery.data.workflows.map((workflow) => workflow.name)
+      : []
+  function setWorkflowFilter(workflow?: string) {
+    void navigate({
+      to: '/projects/$projectId/pipelines/$pipelineId',
+      params: { projectId, pipelineId },
+      search: { tab: tab === 'overview' ? undefined : tab, workflow },
+      replace: true,
+    })
+  }
   const buildsAndroidForQueries =
     data?.pipeline.execution_config.platforms.includes('android') ?? false
   const buildsIosForQueries =
@@ -623,7 +713,16 @@ function PipelineDetailPage() {
           {/* Recent builds */}
           <Card>
             <CardContent>
-              <h3 className="pb-3 text-sm font-medium">Recent builds</h3>
+              <Row gap={3} className="justify-between pb-3">
+                <h3 className="text-sm font-medium">Recent builds</h3>
+                {fileWorkflows.length > 1 || workflowFilter ? (
+                  <WorkflowFilter
+                    workflows={fileWorkflows}
+                    value={workflowFilter}
+                    onChange={setWorkflowFilter}
+                  />
+                ) : null}
+              </Row>
               {buildsQuery.error ? (
                 <CollectionError
                   title="Failed to load recent builds"
@@ -632,6 +731,25 @@ function PipelineDetailPage() {
                 />
               ) : buildsQuery.isLoading ? (
                 <Skeleton className="h-40 w-full" />
+              ) : builds.length === 0 && workflowFilter ? (
+                <Empty className="p-8">
+                  <EmptyHeader>
+                    <EmptyTitle>No {workflowFilter} builds</EmptyTitle>
+                    <EmptyDescription>
+                      This pipeline has not built the {workflowFilter} workflow
+                      yet.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                  <EmptyContent>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setWorkflowFilter(undefined)}
+                    >
+                      Show all workflows
+                    </Button>
+                  </EmptyContent>
+                </Empty>
               ) : builds.length === 0 ? (
                 <Empty className="p-8">
                   <EmptyHeader>

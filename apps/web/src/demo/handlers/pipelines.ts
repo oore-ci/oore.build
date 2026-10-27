@@ -11,6 +11,7 @@ import { demoState } from '../state'
 import { demoExportYaml } from '../pipeline-yaml'
 import { demoImportYaml } from '../pipeline-yaml-import'
 import { parseDemoJsonObject } from '../request'
+import { demoFilesAt, demoPipelineWorkflows } from '../pipeline-workflows'
 import {
   DEMO_SHARED_KEY_ID,
   demoSharedKeySummary,
@@ -446,12 +447,8 @@ export const pipelineHandlers = [
     const requestedPath = url.searchParams.get('path')?.trim()
     const defaultBranch = project.default_branch ?? 'main'
     const reference = url.searchParams.get('ref')?.trim() || defaultBranch
-    const onDefault = demoState.repositoryWorkflows[projectId] ?? []
-    const onBranch =
-      reference === defaultBranch
-        ? []
-        : demoState.repositoryWorkflowBranches[projectId]?.[reference]
-    if (!onBranch) {
+    const files = demoFilesAt(projectId, reference)
+    if (!files) {
       return HttpResponse.json(
         {
           error: `Branch or commit '${reference}' was not found`,
@@ -460,12 +457,6 @@ export const pipelineHandlers = [
         { status: 404 },
       )
     }
-    const files = [
-      ...onDefault.filter(
-        (file) => !onBranch.some((other) => other.path === file.path),
-      ),
-      ...onBranch,
-    ]
     // Like the daemon, list only `.oore*` files unless a path is asked for.
     const workflows = files.filter((workflow) =>
       requestedPath
@@ -489,6 +480,24 @@ export const pipelineHandlers = [
       workflows,
       truncated: false,
     })
+  }),
+
+  demoApi.listPipelineWorkflows(async ({ params, request }) => {
+    await delay(200)
+    const persona = getDemoPersonaFromRequest(request)
+    const pipeline = demoState.pipelines.find(
+      (p) => p.id === params.pipeline_id,
+    )
+    if (!pipeline || !getDemoProjectRole(persona, pipeline.project_id)) {
+      return HttpResponse.json(
+        { error: 'Pipeline not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    const url = new URL(request.url)
+    return HttpResponse.json(
+      demoPipelineWorkflows(pipeline, url.searchParams.get('ref')),
+    )
   }),
 
   demoApi.getPipeline(async ({ params, request }) => {

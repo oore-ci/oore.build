@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test'
 import { pipelineFormSchema } from '@/lib/pipeline-schema'
 import {
+  choosableWorkflows,
+  defaultWorkflowChoice,
   parseRunnerLabels,
   pipelineRepositoryFile,
   pipelineWorkflowProblem,
@@ -265,13 +267,10 @@ test('a pipeline has a workflow problem only when builds would fail', () => {
     path: '.oore/release.yaml',
     workflow: 'release',
   })
+  // Several workflows without a default: runs pick one, webhooks fan out.
   expect(
     pipelineWorkflowProblem([file(['adhoc', 'release'])], pipeline('')),
-  ).toEqual({
-    kind: 'needs-workflow',
-    path: '.oore/release.yaml',
-    workflows: ['adhoc', 'release'],
-  })
+  ).toBeUndefined()
 })
 
 test('the size budget converts MB to bytes and back', () => {
@@ -361,4 +360,39 @@ test('schema rejects sizes that round to no bytes or exceed the cap', () => {
   expect(parse('2000000')).toBe(false)
   expect(parse('0.000001')).toBe(true)
   expect(parse('30')).toBe(true)
+})
+
+test('Run build starts on the default workflow, or the only one', () => {
+  const summary = (name) => ({
+    name,
+    platforms: ['android'],
+    triggers: [],
+    uses_pipeline_triggers: true,
+    publishes: [],
+  })
+  const listing = (workflows, extra = {}) => ({
+    pipeline_id: 'p',
+    state: 'valid',
+    workflows: workflows.map(summary),
+    ...extra,
+  })
+
+  expect(defaultWorkflowChoice(listing(['adhoc', 'release']))).toBe('')
+  expect(
+    defaultWorkflowChoice(
+      listing(['adhoc', 'release'], { default_workflow: 'release' }),
+    ),
+  ).toBe('release')
+  // A default the file no longer defines is not offered.
+  expect(
+    defaultWorkflowChoice(listing(['adhoc'], { default_workflow: 'release' })),
+  ).toBe('adhoc')
+  expect(defaultWorkflowChoice(listing([]))).toBe('')
+  expect(
+    choosableWorkflows({
+      pipeline_id: 'p',
+      state: 'invalid',
+      workflows: [summary('release')],
+    }),
+  ).toEqual([])
 })

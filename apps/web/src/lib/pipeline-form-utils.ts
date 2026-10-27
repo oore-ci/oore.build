@@ -4,6 +4,8 @@ import type {
   Pipeline,
   PipelineExecutionConfig,
   RepositoryWorkflowExecutionPreview,
+  PipelineWorkflowSummary,
+  PipelineWorkflowsResponse,
   RepositoryWorkflowPreview,
   SizeBudget,
   TriggerConfig,
@@ -378,7 +380,6 @@ export type PipelineWorkflowProblem =
   | { kind: 'missing-file'; path: string; workflow: string }
   | { kind: 'invalid-file'; path: string; errors: Array<string> }
   | { kind: 'unknown-workflow'; path: string; workflow: string }
-  | { kind: 'needs-workflow'; path: string; workflows: Array<string> }
 
 export function pipelineWorkflowProblem(
   files: Array<RepositoryWorkflowPreview>,
@@ -398,15 +399,10 @@ export function pipelineWorkflowProblem(
   if (status.kind === 'invalid') {
     return { kind: 'invalid-file', path: status.path, errors: status.errors }
   }
-  const { workflows } = status.file
-  if (workflow) {
-    return workflows.includes(workflow)
-      ? undefined
-      : { kind: 'unknown-workflow', path: status.path, workflow }
-  }
-  return workflows.length > 1
-    ? { kind: 'needs-workflow', path: status.path, workflows }
-    : undefined
+  // Several workflows and no default is fine: each run picks one and
+  // webhooks start every workflow whose `on` matches.
+  if (!workflow || status.file.workflows.includes(workflow)) return undefined
+  return { kind: 'unknown-workflow', path: status.path, workflow }
 }
 
 export function trimToUndefined(value?: string | null): string | undefined {
@@ -473,4 +469,25 @@ export function hasCustomFallback(pipeline: Pipeline): boolean {
   const expected = [...defaults].sort()
 
   return JSON.stringify(current) !== JSON.stringify(expected)
+}
+
+/** The workflows a build can pick from, or none when the file offers none. */
+export function choosableWorkflows(
+  data: PipelineWorkflowsResponse | undefined,
+): Array<PipelineWorkflowSummary> {
+  return data?.state === 'valid' ? data.workflows : []
+}
+
+/**
+ * The workflow a build runs when the user picks nothing: the pipeline's
+ * default when the file defines it, else the file's only workflow.
+ */
+export function defaultWorkflowChoice(
+  data: PipelineWorkflowsResponse | undefined,
+): string {
+  const names = choosableWorkflows(data).map((workflow) => workflow.name)
+  if (data?.default_workflow && names.includes(data.default_workflow)) {
+    return data.default_workflow
+  }
+  return names.length === 1 ? names[0] : ''
 }
