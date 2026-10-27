@@ -90,7 +90,7 @@ function StepItem({
   medianMs?: number
 }) {
   const durationMs = group?.durationMs
-  const label = group?.name ?? name ?? ''
+  const label = group?.label ?? name ?? ''
   const count = group?.logs.length ?? lineCount ?? 0
 
   return (

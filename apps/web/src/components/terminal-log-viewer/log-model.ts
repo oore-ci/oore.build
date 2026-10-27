@@ -2,6 +2,7 @@ import * as z from 'zod'
 import type { BuildLogChunk, StepResult } from '@oore/client/models'
 
 import type { StepGroup } from './types'
+import { buildStepLabel } from '@/lib/build-steps'
 
 interface StepMarker {
   event: 'start' | 'end'
@@ -63,7 +64,12 @@ export function groupLogs(
   const ensureGroup = (name: string): StepGroup => {
     const existing = groups.get(name)
     if (existing) return existing
-    const created: StepGroup = { name, status: 'pending', logs: [] }
+    const created: StepGroup = {
+      name,
+      label: name,
+      status: 'pending',
+      logs: [],
+    }
     groups.set(name, created)
     return created
   }
@@ -94,6 +100,9 @@ export function groupLogs(
   }
 
   const stepGroups = [...groups.values()]
+  for (const group of stepGroups) {
+    group.label = buildStepLabel(group.name, groups.keys())
+  }
 
   return {
     stepGroups,

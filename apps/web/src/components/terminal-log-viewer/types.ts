@@ -34,6 +34,8 @@ export interface LogFocusRequest {
 
 export interface StepGroup {
   name: string
+  /** What the step list shows, from `buildStepLabel`. */
+  label: string
   status: string
   command?: string
   durationMs?: number
@@ -41,5 +43,6 @@ export interface StepGroup {
 }
 
 export interface SelectedStepMeta {
+  label: string
   command?: string
 }

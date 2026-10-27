@@ -19953,6 +19953,28 @@
           "store": {
             "$ref": "#/components/schemas/ReleaseStore"
           },
+          "store_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The store's last error while Oore moves this release forward, such as\nApp Store Connect refusing a review submission. Oore keeps retrying;\nthe next successful step clears it. App Store releases only."
+          },
+          "store_error_since": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the store started failing for this release."
+          },
+          "store_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The store's own status for the release, such as App Store Connect's\n`WAITING_FOR_REVIEW` or `IN_REVIEW`, which the release state groups\ntogether. App Store releases only."
+          },
           "track": {
             "type": "string",
             "description": "Play track, or TestFlight group / `app_store`."

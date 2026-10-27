@@ -37,6 +37,7 @@ import {
   qaProjectVersionBase,
 } from '@/lib/qa-releases'
 import { releaseAudienceLabel } from '@/lib/releases'
+import { buildStepLabel } from '@/lib/build-steps'
 import { PageMeta } from '@/lib/seo'
 import PageLayout from '@/components/page-layout'
 import QaBuildStatusBadge from '@/components/qa-build-status-badge'
@@ -478,7 +479,12 @@ function BuildChecks({ build }: { build: Build }) {
                 />
               </ItemMedia>
               <ItemContent>
-                <ItemTitle>{step.name}</ItemTitle>
+                <ItemTitle>
+                  {buildStepLabel(
+                    step.name,
+                    steps.map((other) => other.name),
+                  )}
+                </ItemTitle>
               </ItemContent>
               <ItemActions className={textVariants({ variant: 'caption' })}>
                 {step.duration_ms != null

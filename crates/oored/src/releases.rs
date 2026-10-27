@@ -417,8 +417,10 @@ pub(crate) fn allowed_actions(
 }
 
 pub(crate) const RELEASE_SELECT: &str = "SELECT r.*, p.name AS project_name, b.build_number AS build_number, \
-     au.email AS approved_by_email, env.name AS environment_name \
+     au.email AS approved_by_email, env.name AS environment_name, \
+     asl.last_error AS store_error, asl.failing_since AS store_error_since, asl.store_status \
      FROM releases r \
+     LEFT JOIN app_store_release_links asl ON asl.release_id = r.id \
      LEFT JOIN projects p ON p.id = r.project_id \
      LEFT JOIN builds b ON b.id = r.build_id \
      LEFT JOIN users au ON au.id = r.approved_by \
@@ -460,6 +462,10 @@ pub(crate) fn row_to_release(row: &SqliteRow) -> Result<Release, ReleaseError> {
         environment_id: row.get("environment_id"),
         environment_name: row.get("environment_name"),
         promoted_from_release_id: row.get("promoted_from_release_id"),
+        // Only queries that join the App Store link select these.
+        store_error: row.try_get("store_error").ok().flatten(),
+        store_error_since: row.try_get("store_error_since").ok().flatten(),
+        store_status: row.try_get("store_status").ok().flatten(),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     };
@@ -1387,7 +1393,9 @@ pub async fn list_releases(
 
     let mut list = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT r.*, p.name AS project_name, b.build_number AS build_number, \
-         au.email AS approved_by_email, env.name AS environment_name, pm.role AS member_role {from} \
+         au.email AS approved_by_email, env.name AS environment_name, pm.role AS member_role, \
+         asl.last_error AS store_error, asl.failing_since AS store_error_since, asl.store_status {from} \
+         LEFT JOIN app_store_release_links asl ON asl.release_id = r.id \
          LEFT JOIN projects p ON p.id = r.project_id \
          LEFT JOIN builds b ON b.id = r.build_id \
          LEFT JOIN users au ON au.id = r.approved_by \
@@ -2623,6 +2631,9 @@ pub(crate) mod tests {
             environment_id: None,
             environment_name: None,
             promoted_from_release_id: None,
+            store_error: None,
+            store_error_since: None,
+            store_status: None,
             created_at: 0,
             updated_at: 0,
         };
