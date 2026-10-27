@@ -674,6 +674,7 @@ function ProjectDetailPage() {
                       name: project.name,
                       description: project.description ?? undefined,
                       default_branch: project.default_branch ?? undefined,
+                      auto_add_pipelines: project.auto_add_pipelines,
                       repository_id: project.repository_id ?? undefined,
                       repository_full_name:
                         project.repository_full_name ?? undefined,

@@ -22,6 +22,7 @@ import {
   exportPipelineYaml,
   importPipelineYaml,
   planPipeline,
+  refreshRepositoryConfigFiles,
   updatePipeline,
   validatePipeline,
   registerPipelineIosDevice,
@@ -43,6 +44,8 @@ import {
   listPipelinesInfiniteOptions,
   listPipelinesOptions,
   listPipelinesQueryKey,
+  listRepositoryConfigFilesOptions,
+  listRepositoryConfigFilesQueryKey,
 } from '@oore/client/react-query'
 import { useApiContext } from '@/hooks/use-api-context'
 import {
@@ -137,6 +140,72 @@ export function useRepositoryWorkflows(
   })
 }
 
+/** Config files Oore found on the project's default branch, from its cache. */
+export function useRepositoryConfigFiles(
+  projectId: string,
+  options?: { enabled?: boolean },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const enabled = options?.enabled ?? true
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    listRepositoryConfigFilesOptions({
+      client,
+      path: { project_id: projectId },
+    }),
+  )
+
+  return useQuery({
+    ...query,
+    enabled: enabled && !!baseUrl && !!token && !!projectId,
+    // The first request starts a read of the repository; poll until it lands.
+    refetchInterval: (state) =>
+      state.state.data &&
+      state.state.data.branch &&
+      !state.state.data.scanned_at
+        ? 3_000
+        : false,
+  })
+}
+
+export function useRefreshRepositoryConfigFiles() {
+  const queryClient = useQueryClient()
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useMutation({
+    mutationFn: ({ projectId }: { projectId: string }) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return refreshRepositoryConfigFiles({
+        client,
+        path: { project_id: projectId },
+      })
+    },
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData(
+        scopeOoreQueryKey(
+          instanceId,
+          listRepositoryConfigFilesQueryKey({
+            client,
+            path: { project_id: variables.projectId },
+          }),
+        ),
+        data,
+      )
+      // A refresh can add pipelines and change their health.
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(
+          instanceId,
+          listPipelinesQueryKey({
+            client,
+            path: { project_id: variables.projectId },
+          }),
+        ),
+      })
+    },
+  })
+}
+
 export function usePipeline(pipelineId: string) {
   const { baseUrl, client, instanceId, token } = useApiContext()
   const query = scopeOoreQueryOptions(
@@ -189,6 +258,15 @@ export function useCreatePipeline() {
           }),
         ),
       })
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(
+          instanceId,
+          listRepositoryConfigFilesQueryKey({
+            client,
+            path: { project_id: variables.projectId },
+          }),
+        ),
+      })
     },
   })
 }
@@ -218,6 +296,15 @@ export function useUpdatePipeline() {
         queryKey: scopeOoreQueryKey(
           instanceId,
           listPipelinesQueryKey({
+            client,
+            path: { project_id: data.pipeline.project_id },
+          }),
+        ),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(
+          instanceId,
+          listRepositoryConfigFilesQueryKey({
             client,
             path: { project_id: data.pipeline.project_id },
           }),
@@ -260,6 +347,15 @@ export function useDeletePipeline() {
         queryKey: scopeOoreQueryKey(
           instanceId,
           listPipelinesQueryKey({
+            client,
+            path: { project_id: variables.projectId },
+          }),
+        ),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(
+          instanceId,
+          listRepositoryConfigFilesQueryKey({
             client,
             path: { project_id: variables.projectId },
           }),

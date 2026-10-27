@@ -45,7 +45,6 @@ test('builds remote and local pipeline requests', () => {
   expect(remote).toMatchObject({
     name: 'Release',
     config_path: 'ci/oore.yaml',
-    config_path_explicit: true,
     execution_config: {
       platforms: ['android'],
       artifact_patterns: ['build/app/outputs/flutter-apk/*.apk'],

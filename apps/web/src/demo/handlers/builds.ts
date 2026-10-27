@@ -26,6 +26,7 @@ const createBuildRequestSchema = z.toZod<CreateBuildRequest>()(
     changelog: z.string().nullish(),
     platforms: z.array(z.enum(['android', 'ios', 'macos'])).nullish(),
     trigger_ref: z.string().nullish(),
+    workflow: z.string().nullish(),
   }),
 )
 const DEMO_TRIGGER_TYPES = new Set(['manual', 'api', 'schedule'])

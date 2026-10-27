@@ -32,6 +32,7 @@ const createProjectRequestSchema = z.toZod<CreateProjectRequest>()(
     repository_id: z.string().nullish(),
     local_repository_path: z.string().nullish(),
     default_branch: z.string().nullish(),
+    auto_add_pipelines: z.boolean().nullish(),
   }),
 )
 
@@ -335,6 +336,7 @@ export const projectHandlers = [
       repository_id: body.repository_id,
       default_branch: body.default_branch ?? 'main',
       settings: {},
+      auto_add_pipelines: body.auto_add_pipelines ?? true,
       created_by: persona.userId,
       created_at: ago(0),
       updated_at: ago(0),

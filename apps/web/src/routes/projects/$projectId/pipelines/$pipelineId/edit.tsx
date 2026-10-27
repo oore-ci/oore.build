@@ -145,7 +145,7 @@ function EditPipelinePage() {
   // file, or the source is unreachable) it stays hidden.
   const repositoryFilesQuery = useRepositoryWorkflows(
     projectId,
-    data?.pipeline.config_path_explicit
+    data && data.pipeline.config_path.trim() !== '.oore.yaml'
       ? { path: data.pipeline.config_path }
       : undefined,
     { enabled: !!data && !!projectData?.project.repository_id },
@@ -226,7 +226,8 @@ function EditPipelinePage() {
 
   const formInitialValues: PipelineFormValues = {
     name: pipeline.name,
-    config_mode: pipeline.config_path_explicit ? 'explicit' : 'auto',
+    config_mode:
+      pipeline.config_path.trim() === '.oore.yaml' ? 'auto' : 'explicit',
     config_path: pipeline.config_path,
     workflow: pipeline.workflow ?? '',
     platform_android: platformSet.has('android'),

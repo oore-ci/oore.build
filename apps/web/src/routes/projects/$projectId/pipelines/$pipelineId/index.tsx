@@ -45,7 +45,8 @@ import {
   useDataTable,
   type DataTableColumnDef,
 } from '@/components/data-table'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { pipelineHealthBanner } from '@/lib/repository-config-files'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -73,6 +74,30 @@ import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
 import { textVariants } from '@/lib/recipes'
 import { cn } from '@/lib/utils'
+
+/** Whether the pipeline's file is usable on the default branch, from Oore's
+ * last read of the repository. */
+function PipelineHealthAlert({ pipeline }: { pipeline: Pipeline }) {
+  const banner = pipelineHealthBanner(pipeline.health)
+  if (!banner || !pipeline.health) return null
+  return (
+    <Alert
+      variant={banner.variant}
+      role={banner.variant === 'destructive' ? 'alert' : 'status'}
+    >
+      <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+      <AlertTitle>{banner.title}</AlertTitle>
+      <AlertDescription>
+        {banner.description} Checked{' '}
+        <RelativeTime at={pipeline.health.checked_at} /> at{' '}
+        <span className="font-mono">
+          {pipeline.health.commit_sha.slice(0, 7)}
+        </span>
+        .
+      </AlertDescription>
+    </Alert>
+  )
+}
 
 const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
@@ -469,6 +494,7 @@ function PipelineDetailPage() {
           </AlertDescription>
         </Alert>
       ) : null}
+      <PipelineHealthAlert pipeline={pipeline} />
       {projectMissingSource ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />

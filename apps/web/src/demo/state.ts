@@ -239,6 +239,30 @@ function makeGeneratedRepositories(): Array<IntegrationRepository> {
   })
 }
 
+/** A valid discovered config file for demo repositories. */
+function demoWorkflowFile(
+  path: string,
+  platforms: Array<'android' | 'ios'>,
+  workflows: Array<string> = [],
+): RepositoryWorkflowPreview {
+  return {
+    path,
+    valid: true,
+    errors: [],
+    workflows,
+    execution: {
+      platforms,
+      flutter_version: '3.24.3',
+      commands: { pre_build: ['flutter pub get'], build: [], post_build: [] },
+      isolation: 'host',
+      platform_build_args: { android: [], ios: [], macos: [] },
+      platform_commands: {},
+      env_keys: [],
+      artifact_patterns: ['build/app/outputs/flutter-apk/*.apk'],
+    },
+  }
+}
+
 function makeGeneratedProjects(): Array<DemoProject> {
   return Array.from({ length: 19 }, (_, index) => {
     const number = index + 6
@@ -256,6 +280,7 @@ function makeGeneratedProjects(): Array<DemoProject> {
         number % 2 === 0 ? GITHUB_DEMO_AVATAR_URL : GITLAB_DEMO_AVATAR_URL,
       default_branch: number % 3 === 0 ? 'develop' : 'main',
       settings: {},
+      auto_add_pipelines: false,
       created_by: USER_IDS.owner,
       created_at: ago(86400 * number),
       updated_at: ago(3600 * number),
@@ -275,6 +300,7 @@ function makeExtraProjects(): Array<DemoProject> {
       repository_avatar_url: GITHUB_DEMO_AVATAR_URL,
       default_branch: 'main',
       settings: {},
+      auto_add_pipelines: false,
       created_by: USER_IDS.developer,
       created_at: ago(86400 * 12),
       updated_at: ago(3600 * 6),
@@ -288,6 +314,7 @@ function makeExtraProjects(): Array<DemoProject> {
       repository_avatar_url: GITLAB_DEMO_AVATAR_URL,
       default_branch: 'main',
       settings: {},
+      auto_add_pipelines: true,
       created_by: USER_IDS.owner,
       created_at: ago(86400 * 8),
       updated_at: ago(3600 * 2),
@@ -656,6 +683,19 @@ export function createDemoState(
     projectRoles: makeProjectRoles(personas),
     pipelines,
     repositoryWorkflows: {
+      [PROJECT_IDS.flutterShop]: [
+        demoWorkflowFile('.oore/android-release.yaml', ['android']),
+        {
+          path: '.oore/ios-release.yaml',
+          valid: false,
+          errors: [
+            'targets.ios.build refers to vars.SCHEME, which is not defined',
+          ],
+          workflows: [],
+        },
+        demoWorkflowFile('.oore.nightly.yaml', ['android', 'ios']),
+        demoWorkflowFile('.oore/qa/smoke.yml', ['android'], ['smoke', 'full']),
+      ],
       [EXTRA_PROJECT_IDS.workflowOnly]: [
         {
           path: '.oore/release.yaml',

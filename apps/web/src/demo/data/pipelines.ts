@@ -82,7 +82,7 @@ export const demoPipelines: Array<Pipeline> = [
     project_id: PROJECT_IDS.internalAdmin,
     name: 'Debug Build',
     config_path: '.oore/debug.yaml',
-    config_path_explicit: false,
+    config_path_explicit: true,
     execution_config: {
       platforms: ['android'],
       flutter_version: '3.24.3',
