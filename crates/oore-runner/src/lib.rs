@@ -4272,6 +4272,9 @@ struct ResolvedExecutionPlan {
     publish: PlanPublish,
     /// The v2 file's size budgets, reported with the build's result.
     size_budgets: Vec<TargetSizeBudget>,
+    /// The platforms this run builds, after any per-run selection. A store
+    /// upload for a platform not in this list is skipped.
+    platforms: Vec<BuildPlatform>,
 }
 
 fn secret_env_var(name: &str) -> String {
@@ -4722,6 +4725,7 @@ fn resolve_execution_plan(
 
         return Ok(ResolvedExecutionPlan {
             needs_xcode: needs_xcode(&plan.platforms),
+            platforms: plan.platforms,
             steps: plan.steps,
             artifact_patterns: plan.artifact_patterns,
             env: plan.env,
@@ -4746,6 +4750,7 @@ fn resolve_execution_plan(
     let plan = plan_execution_config(&fallback, true, build_play_bundle);
     Ok(ResolvedExecutionPlan {
         needs_xcode: needs_xcode(&plan.platforms),
+        platforms: plan.platforms,
         steps: plan.steps,
         artifact_patterns: plan.artifact_patterns,
         env: plan.env,
@@ -5383,6 +5388,7 @@ async fn execute_step_retry(
             only: Some(retry_steps),
             authority,
             file_publish: &file_publish,
+            built_platforms: None,
         },
         steps,
     )
@@ -6742,6 +6748,7 @@ Install the required tooling on the runner, set isolation: vm, or override build
             only: None,
             authority: &authority,
             file_publish: &execution_plan.publish,
+            built_platforms: Some(&execution_plan.platforms),
         },
         &mut steps,
     )
@@ -6782,6 +6789,9 @@ struct PublishInputs<'a> {
     authority: &'a Arc<BuildAuthorityState>,
     /// The v2 file's uploads, which replace the Publish settings' targets.
     file_publish: &'a PlanPublish,
+    /// The platforms the build ran. An upload for a platform it did not
+    /// build is skipped, not failed. `None` (a step retry) skips nothing.
+    built_platforms: Option<&'a [BuildPlatform]>,
 }
 
 /// Records `step_name` as a failed upload that never started, with `error`
@@ -6846,8 +6856,11 @@ async fn run_publish_steps(
         only,
         authority,
         file_publish,
+        built_platforms,
     } = inputs;
     let runs = |step: &str| only.is_none_or(|only| only.iter().any(|name| name == step));
+    let built =
+        |platform: BuildPlatform| built_platforms.is_none_or(|built| built.contains(&platform));
     let settings = match fetch_job_publish_plan(
         client,
         daemon_url,
@@ -6877,9 +6890,40 @@ async fn run_publish_steps(
     }
     const PLAY_TITLE: &str = "Upload the App Bundle to Google Play";
     const APP_STORE_TITLE: &str = "Upload the IPA to App Store Connect";
+    // A run that leaves out a platform, such as an Android-only run of a
+    // pipeline that also publishes to the App Store, skips that store.
+    for (turned_on, platform, store, platform_name) in [
+        (
+            !matches!(publish_plan.google_play, Ok(None)),
+            BuildPlatform::Android,
+            "Google Play",
+            "Android",
+        ),
+        (
+            !matches!(publish_plan.app_store, Ok(None)),
+            BuildPlatform::Ios,
+            "App Store Connect",
+            "iOS",
+        ),
+    ] {
+        if turned_on && !built(platform) {
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &format!(
+                    "[oore-publish] Skipping the {store} upload: this build did not build {platform_name}."
+                ),
+            )
+            .await;
+        }
+    }
     let google_play = match publish_plan.google_play {
-        Ok(play) => play.filter(|_| runs(PUBLISH_PLAY_STEP)),
-        Err(error) if runs(PUBLISH_PLAY_STEP) => {
+        Ok(play) => play.filter(|_| runs(PUBLISH_PLAY_STEP) && built(BuildPlatform::Android)),
+        Err(error) if runs(PUBLISH_PLAY_STEP) && built(BuildPlatform::Android) => {
             return Err(fail_publish_step(
                 job,
                 client,
@@ -7030,8 +7074,10 @@ async fn run_publish_steps(
     }
 
     let app_store = match publish_plan.app_store {
-        Ok(app_store) => app_store.filter(|_| runs(PUBLISH_APP_STORE_STEP)),
-        Err(error) if runs(PUBLISH_APP_STORE_STEP) => {
+        Ok(app_store) => {
+            app_store.filter(|_| runs(PUBLISH_APP_STORE_STEP) && built(BuildPlatform::Ios))
+        }
+        Err(error) if runs(PUBLISH_APP_STORE_STEP) && built(BuildPlatform::Ios) => {
             return Err(fail_publish_step(
                 job,
                 client,
@@ -9429,6 +9475,7 @@ mod secret_tests {
             source: "test".to_string(),
             publish: PlanPublish::default(),
             size_budgets: Vec::new(),
+            platforms: Vec::new(),
         }
     }
 
@@ -10316,6 +10363,7 @@ mod file_publish_tests {
                 only: None,
                 authority: &authority,
                 file_publish: &plan.publish,
+                built_platforms: Some(&plan.platforms),
             },
             &mut steps,
         )
@@ -10343,6 +10391,78 @@ mod file_publish_tests {
             seen[1..]
                 .iter()
                 .all(|line| line.starts_with("POST /v1/runners/r1/jobs/b1/logs ")),
+            "{seen:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn publish_skips_a_store_whose_platform_the_run_did_not_build() {
+        let dir = workspace(
+            "skipped",
+            Some(
+                "version: 2\ntargets:\n  android:\n    build: flutter build appbundle --release\n  ios:\n    build: flutter build ipa --release\n",
+            ),
+        );
+        // An Android-only run of a pipeline whose settings publish to the App
+        // Store.
+        let snapshot = json!({ "selected_platforms": ["android"] });
+        let plan = resolve_execution_plan(&dir, &snapshot, false).unwrap();
+        assert_eq!(plan.platforms, [BuildPlatform::Android]);
+        // The publish plan, then the skip note.
+        let (url, server) = daemon(
+            r#"{"app_store":{"config":{"enabled":true},"credentials":{"key_id":"K","issuer_id":"I","private_key_pem":"P"}}}"#,
+            2,
+        )
+        .await;
+        let config = RunnerConfig {
+            runner_id: "r1".to_string(),
+            runner_token: "token".to_string(),
+            daemon_url: url.clone(),
+            name: "test".to_string(),
+        };
+        let job = ClaimedJob {
+            build_id: "b1".to_string(),
+            project_id: "p1".to_string(),
+            pipeline_id: "pl1".to_string(),
+            build_number: 1,
+            config_snapshot: json!({}),
+            commit_sha: None,
+            branch: None,
+            lease_expires_at: 0,
+            signing_token: "signing".to_string(),
+            retry_steps: None,
+        };
+        let authority = Arc::new(BuildAuthorityState::with_grace(Duration::from_secs(60)));
+        let mut steps = Vec::new();
+        // There is no IPA to upload, but the run built no iOS, so the upload
+        // is skipped and the build does not fail.
+        run_publish_steps(
+            &job,
+            &reqwest::Client::new(),
+            &url,
+            &config,
+            &mut BuildLogCursor::default(),
+            PublishInputs {
+                workspace: &dir,
+                signing_workspace: &dir,
+                secrets: &Default::default(),
+                signed_ipa_path: None,
+                ios_artifact_metadata: None,
+                only: None,
+                authority: &authority,
+                file_publish: &plan.publish,
+                built_platforms: Some(&plan.platforms),
+            },
+            &mut steps,
+        )
+        .await
+        .unwrap();
+        assert!(steps.is_empty(), "{steps:?}");
+        let seen = server.await.unwrap();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert!(
+            seen[1].starts_with("POST /v1/runners/r1/jobs/b1/logs "),
             "{seen:?}"
         );
         std::fs::remove_dir_all(&dir).ok();
