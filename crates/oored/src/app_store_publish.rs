@@ -851,6 +851,9 @@ struct Step {
     asc_app_id: Option<String>,
     asc_build_id: Option<String>,
     asc_version_id: Option<String>,
+    /// App Store Connect's state for the version or build, such as
+    /// `WAITING_FOR_REVIEW`. Kept until a later poll reads another.
+    store_status: Option<String>,
 }
 
 impl Step {
@@ -961,9 +964,9 @@ async fn advance(asc: &AppStoreConnect<'_>, link: &LinkRow) -> Result<Step, AscE
                 .clone()
                 .ok_or_else(|| AscError("App Store build ID was not recorded".to_string()))?;
             step.next_poll_in = POLL_REVIEW_SECS;
-            if let Some((state, reason)) =
-                beta_review_outcome(asc.beta_detail(&build_id).await?.external.as_deref())
-            {
+            let external = asc.beta_detail(&build_id).await?.external;
+            step.store_status = external.clone();
+            if let Some((state, reason)) = beta_review_outcome(external.as_deref()) {
                 let fraction = (state == ReleaseState::Complete).then_some(1.0);
                 step.stage = Some(Stage::Done);
                 step.transition = Some((state, fraction, reason.to_string()));
@@ -977,6 +980,7 @@ async fn advance(asc: &AppStoreConnect<'_>, link: &LinkRow) -> Result<Step, AscE
                 .ok_or_else(|| AscError("App Store version ID was not recorded".to_string()))?;
             step.next_poll_in = POLL_REVIEW_SECS;
             let version_state = asc.version_state(&version_id).await?;
+            step.store_status = Some(version_state.clone());
             match review_outcome(&version_state) {
                 Some((state, reason)) => {
                     if matches!(state, ReleaseState::Failed | ReleaseState::Halted) {
@@ -1262,6 +1266,7 @@ async fn apply_step(deps: ReleaseDeps<'_>, link: &LinkRow, step: Step) -> anyhow
              asc_app_id = COALESCE(?2, asc_app_id),
              asc_build_id = COALESCE(?3, asc_build_id),
              asc_version_id = COALESCE(?4, asc_version_id),
+             store_status = COALESCE(?8, store_status),
              last_error = NULL,
              failing_since = NULL,
              next_poll_at = ?5,
@@ -1275,6 +1280,7 @@ async fn apply_step(deps: ReleaseDeps<'_>, link: &LinkRow, step: Step) -> anyhow
     .bind(now + next_poll_in)
     .bind(now)
     .bind(&link.release_id)
+    .bind(step.store_status)
     .execute(deps.pool)
     .await?;
     Ok(())
@@ -1987,6 +1993,43 @@ mod tests {
             rollout_fraction: fraction,
         };
         (release, link)
+    }
+
+    #[tokio::test]
+    async fn release_shows_apple_status_until_apple_reports_another() {
+        let pool = releases::tests::pool().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let store = releases::tests::FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (release, link) = app_store_release(deps, ReleaseState::InReview, 0.0).await;
+        let status = |store_status: Option<&str>| Step {
+            transition: Some((ReleaseState::InReview, None, "In review".into())),
+            next_poll_in: POLL_REVIEW_SECS,
+            store_status: store_status.map(str::to_string),
+            ..Step::default()
+        };
+
+        apply_step(deps, &link, status(Some("WAITING_FOR_REVIEW")))
+            .await
+            .unwrap();
+        let waiting = releases::load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(waiting.store_status.as_deref(), Some("WAITING_FOR_REVIEW"));
+
+        // A step that read nothing new from Apple keeps the last status.
+        apply_step(deps, &link, status(None)).await.unwrap();
+        let kept = releases::load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(kept.store_status.as_deref(), Some("WAITING_FOR_REVIEW"));
+
+        apply_step(deps, &link, status(Some("IN_REVIEW")))
+            .await
+            .unwrap();
+        let reviewing = releases::load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(reviewing.store_status.as_deref(), Some("IN_REVIEW"));
+        assert_eq!(reviewing.state, ReleaseState::InReview);
     }
 
     #[tokio::test]
