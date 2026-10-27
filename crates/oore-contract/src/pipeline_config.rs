@@ -1793,7 +1793,7 @@ impl ConfigV2 {
         let mut notices = Vec::new();
         if self.workflows.0.len() > 1 {
             notices.push(format!(
-                "this file defines workflows [{}]; set the Workflow in each pipeline's settings, or its builds fail with `choose one for the pipeline`",
+                "this file defines workflows [{}]; each build runs one, named when it starts or the pipeline's Default workflow, and a pipeline without a default starts every workflow whose `on` matches a push, pull request or tag",
                 self.workflow_names().join(", ")
             ));
         }
@@ -1827,7 +1827,7 @@ impl ConfigV2 {
             });
         if declares_publish {
             notices.push(
-                "`publish` replaces the pipeline's Publish settings for the stores it names: the file sets the Google Play track, rollout and draft, and the TestFlight group; turn the store on in the pipeline's Publish settings for its credentials and release notes, or the publish step fails"
+                "`publish` replaces the pipeline's Publish settings for the stores it names: the file sets the Google Play track, rollout, draft and service account, and the App Store Connect destination and groups; a Google Play upload without `service_account`, and every App Store Connect upload, still needs the store turned on in the pipeline's Publish settings, or the publish step fails"
                     .to_string(),
             );
             notices.extend(self.publish_notices());

@@ -6,6 +6,8 @@ description: 'Validate repository pipeline YAML with the same schema used by the
 
 ```text
 oore pipeline validate [PATH]
+oore pipeline validate [PATH] --project <PROJECT_ID> [--pipeline <PIPELINE_ID>]
+                       [--daemon-url <URL>] [--token <TOKEN>]
 ```
 
 `PATH` defaults to `.oore.yaml`. The command reads the selected file and
@@ -35,9 +37,65 @@ trigger settings, `publish` replacing the Publish settings, or a workflow that
 publishes to Google Play without an Android build that makes an App Bundle. It
 still exits successfully.
 
-The command validates only the selected file. It does not contact the backend,
-create a pipeline, or verify whether every command-line tool used by the
-pipeline is installed.
+Without `--project`, the command validates only the selected file. It does
+not contact the backend, create a pipeline, or verify whether every
+command-line tool used by the pipeline is installed.
+
+## Check against a project
+
+With `--project`, the command also checks the credentials a version 2 file
+names against that project, through the API, after the file itself is valid:
+
+| Option                   | Effect                                                                                                            |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `--project PROJECT_ID`   | The project whose signing library and secrets to check against.                                                   |
+| `--pipeline PIPELINE_ID` | Also count this pipeline's secrets. The pipeline must belong to the project.                                      |
+| `--daemon-url`           | Backend URL; otherwise uses environment, CLI config, then loopback.                                               |
+| `--token`                | Session token; otherwise `OORE_SESSION_TOKEN` or the session stored by [`oore login`](/reference/cli/oore-login). |
+
+The session needs read access to the project. For every workflow, with every
+target it builds, the command checks:
+
+- each name under `signing`, at the top level or in the workflow, against
+  `GET /v1/projects/{project_id}/signing-identities`: the identity exists,
+  `signing.android` names an Android keystore and `signing.ios` an iOS
+  distribution identity;
+- that a workflow which uploads to App Store Connect does not name an iOS
+  identity with ad hoc profiles;
+- each `publish.play.service_account` against the secrets the build could
+  see: the project's (`GET /v1/projects/{project_id}/secrets`), the
+  pipeline's with `--pipeline`, and the instance's when the session may list
+  them.
+
+Each name that fails is an `error:` line on standard error, and the command
+exits non-zero:
+
+```bash
+oore pipeline validate .oore.yaml --project proj_123
+```
+
+```text
+error: workflows.adhoc.signing.ios names signing identity 'coin-adhoc', which project proj_123 does not have; add it under Project settings > Signing
+error: workflow release uploads to App Store Connect, but workflows.release.signing.ios names 'coin-app-store', which holds ad hoc profiles; use an identity with App Store profiles
+Error: .oore.yaml has 2 credential errors against project proj_123
+```
+
+When every name exists it prints:
+
+```text
+.oore.yaml is valid; checked 3 signing identities and 1 secret against project proj_123
+```
+
+A session that may not list instance secrets, such as a project developer's,
+cannot tell whether a secret missing from the project is an instance secret.
+That case is a `note:` line, not an error. Version 1 files name no
+credentials, so there is nothing to check.
+
+The check covers what the file names. A pipeline's
+[workflow settings](/reference/config/pipeline-settings#workflow-settings)
+can pick other identities when a build is created; the build checks those
+itself. `${{ secrets.NAME }}` references in commands and env values are not
+checked.
 
 See [`.oore.yaml`](/reference/config/oore-yaml) and
 [`.oore.yaml` version 2](/reference/config/oore-yaml-v2) for the schemas, and

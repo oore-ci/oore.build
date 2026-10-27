@@ -4,9 +4,11 @@ status: implemented
 description: 'Upload a signed App Bundle to a Google Play track with a staged rollout and release notes.'
 ---
 
-Turn on Google Play publishing for a pipeline so a successful Android build
-uploads its signed App Bundle to the track you choose. The runner that built
-the app uploads it from its own host, so the bundle never passes through the
+Upload a successful Android build's signed App Bundle to the Google Play
+track you choose. Set it up once in the pipeline's **Publishing** tab, as
+below, or give each `.oore.yaml` workflow its own track and service account;
+see [Publish per workflow](#publish-per-workflow). The runner that built the
+app uploads it from its own host, so the bundle never passes through the
 daemon.
 
 ## What you need
@@ -18,7 +20,9 @@ daemon.
   release. [Deliver to testers on Google Play](/start/android/google-play)
   walks through that first upload.
 - A pipeline that builds a release App Bundle and signs it with your upload
-  key. See [Add Android signing](/build/sign/android).
+  key, from the pipeline's signing settings
+  ([Add Android signing](/build/sign/android)) or an Android keystore in the
+  [project's signing library](/build/sign/project-library).
 - A Google Cloud service account with a JSON key, invited in Play Console
   under **Users and permissions** with release permissions for the app.
 - Outbound HTTPS from the runner host to `oauth2.googleapis.com` and
@@ -165,6 +169,44 @@ building again.
   and rollout.
 - Play Console shows the version on the chosen track at the chosen rollout.
 - The audit log has a `store_upload_completed` entry for the build.
+
+## Publish per workflow
+
+With a `.oore.yaml` version 2 file, each workflow can publish differently
+from the same pipeline, such as `beta` to the internal track and `release` to
+production:
+
+```yaml
+signing:
+  android: upload-key # an Android keystore in the project's signing library
+
+workflows:
+  release:
+    targets:
+      android:
+        build: flutter build appbundle --release
+        publish:
+          play:
+            track: production
+            rollout: 0.05
+            service_account: PLAY_SERVICE_ACCOUNT
+```
+
+- `service_account` names the secret with the JSON key. With it, the upload
+  needs no Google Play settings in the pipeline. Without it, turn the
+  pipeline's Google Play upload on as in [step 2](#2-configure-publishing).
+- `signing.android` names the keystore that signs the bundle, from the
+  [project's signing library](/build/sign/project-library). Without it, the
+  pipeline's Android signing applies.
+- To stop one workflow's uploads without a commit, open the pipeline's
+  **Workflows** tab, select **Settings** on the workflow, and turn
+  **Publishing** off.
+
+`oore pipeline validate --project "$PROJECT_ID"` checks that the keystore and
+the secret exist in the project before you push, and `oore pipeline plan`
+prints the track, identity and secret each workflow uses. Every field is in
+[Publish](/reference/config/oore-yaml-v2#publish), and the per-workflow
+switches in [Workflow settings](/reference/config/pipeline-settings#workflow-settings).
 
 ## Store health on Home
 

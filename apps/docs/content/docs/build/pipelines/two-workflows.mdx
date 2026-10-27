@@ -1,0 +1,173 @@
+---
+title: 'Run two workflows from one file'
+status: preview
+description: 'Build an ad hoc test build and a store release from one .oore.yaml, each with its own signing, triggers and publishing.'
+---
+
+Keep one `.oore.yaml` with two workflows: `adhoc` builds every pull request
+for testers, and `release` builds `main` and `v*` tags for the stores. Each
+workflow signs with its own identity from the project's signing library, and
+one pipeline runs both.
+
+## What you need
+
+- A project connected to GitHub or GitLab, with a pipeline that reads
+  `.oore.yaml`. See [Move a pipeline into `.oore.yaml`](/build/pipelines/oore-yaml).
+- Project developer, maintainer, instance admin, or instance owner access.
+- The signing identities each workflow needs in the project's signing library,
+  such as an Android upload keystore, an iOS identity with ad hoc profiles and
+  one with App Store profiles. See
+  [Move credentials into the project library](/build/sign/project-library).
+- For Google Play, the service account key stored as a secret, such as
+  `PLAY_SERVICE_ACCOUNT`. See [Publish to Google Play](/build/distribute/google-play).
+- For App Store Connect, the pipeline's App Store Connect publishing set up.
+  See [Publish to TestFlight and the App Store](/build/distribute/app-store).
+- The `oore` CLI, signed in with [`oore login`](/reference/cli/oore-login).
+
+## 1. Write the workflows
+
+```yaml
+version: 2
+
+targets:
+  android:
+    build: flutter build apk --release
+  ios:
+    build: flutter build ipa --release
+
+steps:
+  - name: Get packages
+    run: flutter pub get
+  - build
+
+signing:
+  android: upload-key # both workflows sign Android with it
+
+workflows:
+  adhoc:
+    on:
+      pull_request: true
+    signing: { ios: coin-adhoc } # ad hoc profiles: installs on test devices
+
+  release:
+    on:
+      push: { branches: [main] }
+      tag: v*
+    signing: { ios: coin-app-store } # App Store profiles
+    targets:
+      android:
+        build: flutter build appbundle --release
+        publish:
+          play: { track: internal, service_account: PLAY_SERVICE_ACCOUNT }
+      ios:
+        build: flutter build ipa --release
+        publish:
+          app_store: { destination: testflight, groups: [Internal QA] }
+```
+
+Each workflow takes everything it does not set from the top level. `adhoc`
+builds both targets as written there and publishes nowhere. `release`
+replaces both build commands and adds `publish`. The
+[inheritance table](/reference/config/oore-yaml-v2#workflows) lists every
+field.
+
+Do not add `--export-method` to the iOS build. The export follows the
+identity's profiles, so `coin-adhoc` exports ad hoc IPAs and
+`coin-app-store` App Store IPAs.
+
+## 2. Check the file against the project
+
+```bash
+oore pipeline validate .oore.yaml --project "$PROJECT_ID"
+oore pipeline plan .oore.yaml
+```
+
+`validate --project` checks that `upload-key`, `coin-adhoc` and
+`coin-app-store` exist in the project's library with the right kind, that
+`coin-app-store` is not ad hoc, and that `PLAY_SERVICE_ACCOUNT` is a secret
+the project can see. Fix any `error:` it prints before you commit.
+
+`plan` prints, for each workflow, the steps, the identities it signs with,
+where it publishes and which credentials the upload uses.
+
+## 3. Set the stores up in the pipeline
+
+The file names where to publish. Some credentials still come from the
+pipeline:
+
+- **Google Play**: with `service_account` in the file, the upload needs no
+  Google Play settings: it uses the build changelog as release notes and
+  uploads `mapping.txt`. Turn Google Play publishing on in the pipeline's
+  **Publishing** tab only to set an expected package, other release notes or
+  an in-app update priority.
+- **App Store Connect**: turn on App Store Connect publishing in the
+  **Publishing** tab, and keep the pipeline's iOS signing on with
+  **Distribution** set to **App Store** and an App Store Connect API key. The
+  upload uses that key. The certificate and profiles come from
+  `coin-app-store`.
+
+## 4. Choose what starts each workflow
+
+Commit the file, then open the pipeline's **Edit** page and look at
+**Default workflow**:
+
+- **Not set**: a pull request starts `adhoc` and a push to `main` starts
+  `release`, each matching its own `on`. Use this for the file above.
+- **A workflow**: every push, pull request and tag starts that workflow only,
+  if its `on` matches, and manual builds start it unless they name another.
+
+## 5. Change a workflow without a commit
+
+Open the pipeline's **Workflows** tab. Each row shows what the workflow
+builds, signs with and publishes, and its approval. Select **Settings** on a
+row to:
+
+- pick another **Android signing** or **iOS signing** identity, in place of the
+  file's;
+- turn **Publishing** off, so the workflow uploads nowhere whatever the file
+  says;
+- make every build of the workflow wait for **Approval**, or none.
+
+See [Workflow settings](/reference/config/pipeline-settings#workflow-settings)
+for the fields and API.
+
+## 6. Run a workflow by hand
+
+Select **Run build** and pick the workflow, or run:
+
+```bash
+oore build run --pipeline "$PIPELINE_ID" --workflow release --branch main
+```
+
+## Verify the result
+
+- A pull request starts a build labeled `adhoc`, and its iOS artifact can be
+  installed on a registered device.
+- A push to `main` starts a build labeled `release`, with `publish-play` and
+  `publish-app-store` steps.
+- The pipeline page's workflow filter shows each workflow's builds.
+
+## Troubleshooting
+
+**A manual build is refused with `invalid_workflow`**
+
+The file has several workflows and the pipeline has no default. Name one with
+**Run build** or `--workflow`, or set **Default workflow**.
+
+**A build is refused with `invalid_signing`**
+
+The workflow names an identity the library does not hold, or of the wrong
+kind, or it uploads to App Store Connect with ad hoc profiles. The message
+names the field. A build started by a webhook fails at its signing step with
+the same message. `oore pipeline validate --project` finds these before you
+push.
+
+**`publish-app-store` fails because App Store Connect is not set up**
+
+Turn on App Store Connect publishing in the pipeline's **Publishing** tab, and
+set the pipeline's iOS signing to App Store with an API key.
+
+## Next step
+
+Read [Files, pipelines and workflows](/concepts/files-pipelines-workflows) for
+the order in which the pipeline, the file and the workflow settings decide.

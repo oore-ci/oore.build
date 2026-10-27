@@ -109,22 +109,9 @@ the file at the commit they build.
 
 ## Run two workflows with different publishing
 
-For two builds that publish to different places, such as a beta build to
-Google Play's internal track and a release build to production, give each
-pipeline its own file:
-
-1. Commit two files in the repository root, such as `.oore.beta.yaml` and
-   `.oore.release.yaml`, each with the targets, `on` and `publish` for its
-   build.
-2. Create a pipeline for each file. Under **Config source**, select
-   **Choose a config file** and enter its path.
-3. Set up each pipeline's **Publishing** settings for its store.
-
-Each pipeline's editor generates its own file, and a change to one file
-cannot change the other pipeline. One pipeline can also run both from a
-single file with several `workflows`: the workflows then share the pipeline's
-**Publishing** credentials, and **Run build** or the triggers pick which one
-runs.
+One file can hold a test build and a store release side by side, each with
+its own triggers, signing identity and store destination, run by one
+pipeline. See [Run two workflows from one file](/build/pipelines/two-workflows).
 
 ## Create a pipeline from an existing file
 

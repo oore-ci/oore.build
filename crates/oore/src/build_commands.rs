@@ -74,14 +74,14 @@ pub(crate) struct PipelineWorkflowsArgs {
 }
 
 /// An authenticated client for the daemon.
-struct Api {
-    client: reqwest::Client,
-    daemon_url: String,
+pub(crate) struct Api {
+    pub(crate) client: reqwest::Client,
+    pub(crate) daemon_url: String,
     token: String,
 }
 
 impl Api {
-    fn connect(args: &ApiConnectionArgs) -> anyhow::Result<Self> {
+    pub(crate) fn connect(args: &ApiConnectionArgs) -> anyhow::Result<Self> {
         let daemon_url = resolve_daemon_url(args.daemon_url.as_deref())?;
         let token = resolve_session_token(args.token.as_deref(), &daemon_url)?
             .context("not signed in: run `oore login`, or pass --token or OORE_SESSION_TOKEN")?;
@@ -95,7 +95,7 @@ impl Api {
         })
     }
 
-    async fn send<T: serde::de::DeserializeOwned>(
+    pub(crate) async fn send<T: serde::de::DeserializeOwned>(
         &self,
         request: reqwest::RequestBuilder,
         what: &str,
@@ -110,6 +110,32 @@ impl Api {
             return response
                 .json()
                 .await
+                .with_context(|| format!("failed to parse the {what} response"));
+        }
+        let message = extract_error_message(response).await;
+        anyhow::bail!("{what} failed (HTTP {}): {message}", status.as_u16())
+    }
+
+    /// Like `send`, but `None` when the session's role may not read it.
+    pub(crate) async fn send_unless_forbidden<T: serde::de::DeserializeOwned>(
+        &self,
+        request: reqwest::RequestBuilder,
+        what: &str,
+    ) -> anyhow::Result<Option<T>> {
+        let response = request
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .with_context(|| format!("failed to reach daemon at {}", self.daemon_url))?;
+        let status = response.status();
+        if status == reqwest::StatusCode::FORBIDDEN {
+            return Ok(None);
+        }
+        if status.is_success() {
+            return response
+                .json()
+                .await
+                .map(Some)
                 .with_context(|| format!("failed to parse the {what} response"));
         }
         let message = extract_error_message(response).await;
