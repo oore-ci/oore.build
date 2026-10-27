@@ -1,4 +1,5 @@
 import type { Build, BuildEvent } from '@oore/client/models'
+import { buildStepLabel } from './build-steps'
 
 export interface BuildStateSummary {
   /** Red only for failures the user has to fix; cancels and expiry are neutral. */
@@ -43,6 +44,12 @@ export function buildStateSummary(
   const failedStep = build.step_results?.find(
     (step) => step.status === 'failed' || step.status === 'timed_out',
   )
+  const failedStepLabel =
+    failedStep &&
+    buildStepLabel(
+      failedStep.name,
+      (build.step_results ?? []).map((step) => step.name),
+    )
 
   switch (build.status) {
     case 'queued':
@@ -68,7 +75,7 @@ export function buildStateSummary(
     case 'failed':
       return {
         tone: 'destructive',
-        title: failedStep ? `Failed at ${failedStep.name}` : 'Build failed',
+        title: failedStep ? `Failed at ${failedStepLabel}` : 'Build failed',
         description:
           reasonSentence ??
           (build.exit_code != null
@@ -79,7 +86,7 @@ export function buildStateSummary(
       return {
         tone: 'destructive',
         title: failedStep
-          ? `Timed out during ${failedStep.name}`
+          ? `Timed out during ${failedStepLabel}`
           : 'Build timed out',
         description: 'It ran past the pipeline time limit.',
       }

@@ -30,6 +30,7 @@ import {
   relativeTime,
 } from '@/lib/format-utils'
 import { qaBuildVersion, qaProjectVersionBase } from '@/lib/qa-releases'
+import { buildStepLabel } from '@/lib/build-steps'
 import { PageMeta } from '@/lib/seo'
 import { cn } from '@/lib/utils'
 import type { Project } from '@oore/client/models'
@@ -398,7 +399,12 @@ function QaReleaseDetail({
                         />
                       </ItemMedia>
                       <ItemContent>
-                        <ItemTitle>{step.name}</ItemTitle>
+                        <ItemTitle>
+                          {buildStepLabel(
+                            step.name,
+                            steps.map((other) => other.name),
+                          )}
+                        </ItemTitle>
                       </ItemContent>
                       <ItemActions
                         className={textVariants({ variant: 'caption' })}
