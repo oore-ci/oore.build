@@ -1915,12 +1915,15 @@ struct IosSigningLock {
 
 impl IosSigningLock {
     fn acquire() -> anyhow::Result<Self> {
-        let path = prepare_runner_workspace_root()?.join(IOS_SIGNING_LOCK);
+        Self::acquire_at(&prepare_runner_workspace_root()?.join(IOS_SIGNING_LOCK))
+    }
+
+    fn acquire_at(path: &Path) -> anyhow::Result<Self> {
         let file = fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
-            .open(&path)
+            .open(path)
             .with_context(|| format!("failed to open iOS signing lock {}", path.display()))?;
         file.lock()
             .with_context(|| format!("failed to lock {}", path.display()))?;
@@ -9006,10 +9009,14 @@ async fn run_and_stream(
 mod ios_signing_lock_tests {
     #[test]
     fn ios_signing_waits_for_the_signing_build_before_it() {
-        let held = super::IosSigningLock::acquire().unwrap();
-        let path = super::prepare_runner_workspace_root()
-            .unwrap()
-            .join(super::IOS_SIGNING_LOCK);
+        // A lock file of its own: the shared one in the runner workspace can be
+        // held by another build or test run on the same machine.
+        let path = std::env::temp_dir().join(format!(
+            "oore-ios-signing-lock-test-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        let held = super::IosSigningLock::acquire_at(&path).unwrap();
         let other = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         assert!(matches!(
             other.try_lock(),
@@ -9017,6 +9024,7 @@ mod ios_signing_lock_tests {
         ));
         drop(held);
         other.try_lock().unwrap();
+        let _ = std::fs::remove_file(&path);
     }
 }
 
