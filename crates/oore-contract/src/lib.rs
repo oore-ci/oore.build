@@ -3414,6 +3414,10 @@ pub struct PipelineWorkflowSummary {
     pub uses_pipeline_triggers: bool,
     /// Store uploads the file asks for, one line each.
     pub publishes: Vec<String>,
+    /// Signing identities the file names for this workflow, before the
+    /// pipeline's workflow settings apply.
+    #[serde(default, skip_serializing_if = "SigningSpec::is_empty")]
+    pub signing: SigningSpec,
     /// Why the workflow cannot be planned, one line each.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,

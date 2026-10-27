@@ -19735,6 +19735,10 @@
             },
             "description": "Store uploads the file asks for, one line each."
           },
+          "signing": {
+            "$ref": "#/components/schemas/SigningSpec",
+            "description": "Signing identities the file names for this workflow, before the\npipeline's workflow settings apply."
+          },
           "triggers": {
             "type": "array",
             "items": {
@@ -22689,6 +22693,27 @@
             "description": "The workflow whose settings pick the identity."
           }
         }
+      },
+      "SigningSpec": {
+        "type": "object",
+        "description": "`signing`: names of identities in the project's credential library.",
+        "properties": {
+          "android": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An Android keystore. It signs release builds."
+          },
+          "ios": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An iOS distribution certificate with its provisioning profiles."
+          }
+        },
+        "additionalProperties": false
       },
       "SizeBudget": {
         "type": "object",

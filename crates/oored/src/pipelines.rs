@@ -12,7 +12,7 @@ use oore_contract::{
     MAX_PLAN_REPOSITORY_YAML_BYTES, OkResponse, Pipeline, PipelineDetailResponse,
     PipelineExecutionConfig, PipelineFileState, PipelinePlanPreview, PipelineWorkflowSummary,
     PipelineWorkflowsResponse, PlanPipelineRequest, PlanPipelineResponse, PlanRequest,
-    RepositoryConfig, SizeBudget, TriggerConfig, TriggerSpec, UpdatePipelineRequest,
+    RepositoryConfig, SigningSpec, SizeBudget, TriggerConfig, TriggerSpec, UpdatePipelineRequest,
     ValidatePipelineRequest, ValidatePipelineResponse, is_valid_pipeline_env_key,
     is_valid_workflow_name, normalize_runner_labels, parse_repository_config,
     pipeline_config::select_v1_platforms,
@@ -1031,14 +1031,20 @@ fn workflow_summaries(config: &RepositoryConfig) -> Vec<PipelineWorkflowSummary>
         .workflow_names()
         .into_iter()
         .map(|name| {
-            let (platforms, publishes, errors) = match config.plan(PlanRequest {
+            let (platforms, publishes, signing, errors) = match config.plan(PlanRequest {
                 workflow: Some(name),
                 ..PlanRequest::default()
             }) {
-                Ok(plan) => (plan.platforms, plan.publish.describe(), Vec::new()),
+                Ok(plan) => (
+                    plan.platforms,
+                    plan.publish.describe(),
+                    plan.signing,
+                    Vec::new(),
+                ),
                 Err(error) => (
                     Vec::new(),
                     Vec::new(),
+                    SigningSpec::default(),
                     error.lines().map(str::to_string).collect(),
                 ),
             };
@@ -1049,6 +1055,7 @@ fn workflow_summaries(config: &RepositoryConfig) -> Vec<PipelineWorkflowSummary>
                 triggers: on.map(TriggerSpec::describe).unwrap_or_default(),
                 uses_pipeline_triggers: on.is_none(),
                 publishes,
+                signing,
                 errors,
             }
         })

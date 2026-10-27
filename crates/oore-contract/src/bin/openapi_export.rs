@@ -379,6 +379,7 @@ use utoipa::{
         oore_contract::DiscoverRepositoryWorkflowsResponse,
         oore_contract::PipelineFileState,
         oore_contract::PipelineWorkflowSummary,
+        oore_contract::SigningSpec,
         oore_contract::PipelineWorkflowsResponse,
         oore_contract::SigningIdentityKind,
         oore_contract::SigningIdentityUse,
