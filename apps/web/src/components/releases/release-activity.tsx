@@ -33,10 +33,12 @@ export function ReleaseActivity({
   limit = 5,
   projectId,
   showProject = false,
+  title = 'Release activity',
 }: {
   limit?: number
   projectId?: string
   showProject?: boolean
+  title?: string
 }) {
   const eventsQuery = useReleaseEvents({ project_id: projectId, limit })
   const events = eventsQuery.data?.events ?? []
@@ -45,7 +47,7 @@ export function ReleaseActivity({
   if (eventsQuery.isSuccess && events.length === 0) return null
 
   return (
-    <DashboardSection title="Release activity">
+    <DashboardSection title={title}>
       {eventsQuery.error ? (
         <DashboardSectionError
           label="Release activity"
