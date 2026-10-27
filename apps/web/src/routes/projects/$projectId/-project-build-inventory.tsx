@@ -1,4 +1,6 @@
 import { useMemo, type ReactNode } from 'react'
+import { WorkflowBadge } from '@/components/workflow-badge'
+import { Row } from '@/components/layout/row'
 import { Link } from '@tanstack/react-router'
 
 import type { Build } from '@oore/client/models'
@@ -56,8 +58,14 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Pipeline" />
     ),
-    cell: ({ row }) =>
-      row.original.context?.pipeline_name ?? 'Unknown pipeline',
+    cell: ({ row }) => (
+      <Row gap={1.5} className="min-w-0">
+        <span className="truncate">
+          {row.original.context?.pipeline_name ?? 'Unknown pipeline'}
+        </span>
+        <WorkflowBadge workflow={row.original.workflow} />
+      </Row>
+    ),
   },
   {
     accessorKey: 'status',

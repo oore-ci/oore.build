@@ -21,7 +21,6 @@ import {
   usePipelineIosDevices,
   usePipelineIosSigning,
   useRegisterPipelineIosDevice,
-  useRepositoryWorkflows,
   useSyncPipelineIosSigning,
   useUpdatePipeline,
   useUpdatePipelineAndroidSigning,
@@ -36,7 +35,6 @@ import {
   buildNumberOffsetField,
   runsOnField,
   hasCustomFallback,
-  pipelineRepositoryFile,
   pipelineUpdateFromForm,
   selectedPlatforms,
   sizeBudgetFormFields,
@@ -141,15 +139,6 @@ function EditPipelinePage() {
   const otherPipelines = (projectPipelinesQuery.data?.pipelines ?? []).filter(
     (pipeline) => pipeline.id !== pipelineId,
   )
-  // The Workflow selector needs the file's workflows; without them (no
-  // file, or the source is unreachable) it stays hidden.
-  const repositoryFilesQuery = useRepositoryWorkflows(
-    projectId,
-    data && data.pipeline.config_path.trim() !== '.oore.yaml'
-      ? { path: data.pipeline.config_path }
-      : undefined,
-    { enabled: !!data && !!projectData?.project.repository_id },
-  )
   const signingQuery = usePipelineAndroidSigning(pipelineId)
   const iosSigningQuery = usePipelineIosSigning(pipelineId)
   const iosDevicesQuery = usePipelineIosDevices(pipelineId)
@@ -216,12 +205,10 @@ function EditPipelinePage() {
   const platformSet = new Set(pipeline.execution_config.platforms)
   const custom = hasCustomFallback(pipeline)
 
-  const repositoryFile = pipelineRepositoryFile(
-    repositoryFilesQuery.data?.workflows ?? [],
-    pipeline,
-  )
-  const workflowSource = repositoryFile
-    ? { path: repositoryFile.path, workflows: repositoryFile.workflows }
+  // The Workflow selector reads the config path as typed, from the default
+  // branch or one picked beside it.
+  const workflowLookup = projectData?.project.repository_id
+    ? { projectId, defaultBranch: projectData.project.default_branch }
     : undefined
 
   const formInitialValues: PipelineFormValues = {
@@ -517,7 +504,7 @@ function EditPipelinePage() {
           googlePlay: googlePlayPublishQuery.data?.config ?? undefined,
           appStore: appStorePublishQuery.data?.config,
         }}
-        workflowSource={workflowSource}
+        workflowLookup={workflowLookup}
       >
         {iosProfileSyncAvailable &&
           storedIosSigning.export_method === 'ad_hoc' && (

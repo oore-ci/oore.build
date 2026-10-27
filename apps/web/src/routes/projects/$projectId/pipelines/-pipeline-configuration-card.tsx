@@ -152,6 +152,11 @@ export function PipelineConfigurationCard({
               </span>
             ) : null}
           </KV>
+          {pipeline.workflow ? (
+            <KV label="Default workflow">
+              <span className="font-mono">{pipeline.workflow}</span>
+            </KV>
+          ) : null}
           <KV label="Flutter version">
             <span className="font-mono">
               {pipeline.execution_config.flutter_version || (

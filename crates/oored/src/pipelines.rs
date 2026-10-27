@@ -445,7 +445,7 @@ pub(crate) async fn check_build_workflow(
     config_path: &str,
     reference: &str,
     workflow: Option<&str>,
-) -> Result<(), (StatusCode, Json<ApiError>)> {
+) -> Result<Option<Box<RepositoryConfig>>, (StatusCode, Json<ApiError>)> {
     use crate::repository_workflows::{PipelineFile, load_pipeline_file};
     let file = match load_pipeline_file(
         &state.db,
@@ -457,7 +457,7 @@ pub(crate) async fn check_build_workflow(
     .await
     {
         Ok(Some(PipelineFile::Parsed { path, config })) => (path, config),
-        Ok(_) => return Ok(()),
+        Ok(_) => return Ok(None),
         Err((status, body)) => {
             warn!(
                 project_id,
@@ -465,7 +465,7 @@ pub(crate) async fn check_build_workflow(
                 error = %body.0.error,
                 "could not read the repository file to check the build workflow"
             );
-            return Ok(());
+            return Ok(None);
         }
     };
     let (path, config) = file;
@@ -487,7 +487,7 @@ pub(crate) async fn check_build_workflow(
             "invalid_workflow",
             format!("{message} (read at {})", short_reference(reference)),
         )),
-        None => Ok(()),
+        None => Ok(Some(config)),
     }
 }
 

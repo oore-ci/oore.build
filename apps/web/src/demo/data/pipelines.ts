@@ -48,6 +48,8 @@ export const demoPipelines: Array<Pipeline> = [
     name: 'iOS Release',
     config_path: '.oore/ios-release.yaml',
     config_path_explicit: true,
+    // The file is only on develop so far; see `repositoryWorkflowBranches`.
+    workflow: 'testflight',
     execution_config: {
       platforms: ['ios'],
       flutter_version: '3.24.3',
@@ -137,7 +139,9 @@ export const demoPipelines: Array<Pipeline> = [
     timeout_minutes: 60,
     approval: { required: false, events: [] },
     size_budget: { mode: 'warn', rules: [] },
-    workflow: 'release',
+    // .oore/release.yaml defines adhoc and release and no default is set:
+    // each run picks one, and webhooks start every workflow whose `on`
+    // matches.
     enabled: true,
     created_at: ago(86400 * 18),
     updated_at: ago(86400 * 2),

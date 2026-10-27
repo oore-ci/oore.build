@@ -3,6 +3,7 @@ import {
   addableConfigFiles,
   describeConfigFile,
   pipelineHealthBanner,
+  pipelineProblemBanner,
   unusedConfigFiles,
 } from '@/lib/repository-config-files'
 
@@ -64,4 +65,44 @@ test('the health banner treats a missing file as information', () => {
   expect(pipelineHealthBanner(health('workflow_missing')).description).toBe(
     'why',
   )
+})
+
+test('a missing file fails a pipeline that names a default workflow', () => {
+  const health = {
+    state: 'file_missing',
+    message: 'ci/gone.yaml is not on main, so builds use the settings saved in Oore',
+    branch: 'main',
+    commit_sha: 'abc',
+    checked_at: 0,
+  }
+  const banner = pipelineHealthBanner(health, {
+    config_path: 'ci/gone.yaml',
+    workflow: 'release',
+  })
+  expect(banner.variant).toBe('destructive')
+  expect(banner.title).toBe('No workflow file on main')
+  expect(banner.description).toContain('ci/gone.yaml')
+  expect(
+    pipelineHealthBanner(health, { config_path: 'ci/gone.yaml', workflow: '' })
+      .variant,
+  ).toBe('default')
+})
+
+test('a live read of the repository gives the same banner shape', () => {
+  expect(
+    pipelineProblemBanner(
+      { kind: 'invalid-file', path: '.oore.yaml', errors: ['a', 'b'] },
+      'main',
+    ),
+  ).toEqual({
+    title: 'Config file is invalid',
+    description: '.oore.yaml on main has errors, so builds from it fail: a; b',
+    variant: 'destructive',
+  })
+  expect(
+    pipelineProblemBanner(
+      { kind: 'unknown-workflow', path: '.oore.yaml', workflow: 'beta' },
+      'main',
+    ).title,
+  ).toBe('Workflow is missing')
 })

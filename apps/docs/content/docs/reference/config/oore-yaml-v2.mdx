@@ -71,6 +71,7 @@ workflow runs.
 | Field                 | Type     | Required | Default                    |
 | --------------------- | -------- | -------- | -------------------------- |
 | `version`             | integer  | Yes      | Must be `2`                |
+| `name`                | string   | No       | The file's path            |
 | `app`                 | object   | No       | No Flutter pin, no flavors |
 | `targets`             | object   | Yes¹     | No default                 |
 | `steps`               | list     | No       | `[build]`                  |
@@ -78,6 +79,7 @@ workflow runs.
 | `vars`                | map      | No       | `{}`                       |
 | `on`                  | object   | No       | Pipeline trigger settings  |
 | `workflows`           | map      | No       | One implicit workflow      |
+| `signing`             | object   | No       | Pipeline signing settings  |
 | `build_number_offset` | integer  | No       | `0`                        |
 | `runs_on`             | string[] | No       | `[macos]`                  |
 | `isolation`           | string   | No       | `host`                     |
@@ -173,6 +175,7 @@ other vars, is rejected with the cycle it forms, such as
 | `steps`   | list        | Replaces the top-level steps. Entries can name top-level steps.                                               |
 | `env`     | map         | Adds to or replaces top-level env values by name.                                                             |
 | `vars`    | map         | Adds to or replaces top-level vars by name, also where other vars use them.                                   |
+| `signing` | object      | Replaces the top-level `signing` per platform. See [Signing](#signing).                                       |
 
 A workflow target that has no top-level target of the same platform must set
 `build`. Where a workflow target leaves out `build` or `artifacts`, the
@@ -183,22 +186,59 @@ workflow target that sets its own `build` publishes only if it also sets
 the workflow target sets its own, even with a new `build`.
 Workflow names use letters, digits, `-` and `_`.
 
-A pipeline builds one workflow, picked under **Workflow** in its settings (the
-API's `workflow` field). The selector appears when the pipeline's file defines
-workflows. Without a pick, a file with one workflow builds it, and a file with
-none builds the top level; a file with several fails the build with
-`choose one for the pipeline`.
+Each build runs one workflow, chosen when the build starts:
+
+- **Run build** lists the workflows in the file at the branch or commit being
+  built and starts with the pipeline's **Default workflow** selected.
+  `oore build run --workflow NAME` and the build API's `workflow` field name
+  one the same way.
+- A build that names none uses the pipeline's default workflow, then the
+  file's only workflow. A file with no workflows builds the top level. A file
+  with several workflows and no default refuses the build with
+  `invalid_workflow` until one is named.
+- Pushes, pull requests and tags start the default workflow only. A pipeline
+  without a default starts one build for every workflow whose `on` matches
+  the event (see [Triggers](#triggers)).
+
+The build page and build lists show each build's workflow, and the pipeline
+page filters its builds by workflow. `oore pipeline workflows` and
+`GET /v1/pipelines/{pipeline_id}/workflows?ref=` list the workflows a build
+can name, with their platforms, triggers and store uploads.
+
+The **Default workflow** selector in the pipeline's settings (the API's
+`workflow` field) lists the workflows in the pipeline's file on the project's
+default branch, and names that branch beneath it. **Not set** leaves the
+choice to each run. Select **Change branch** to
+read the file from another branch, for example while the file is only on
+`develop`. The repository discovery API takes the same choice as its `ref`
+query parameter. A build always reads the file at the commit it builds.
+
+A file is shared by every pipeline that reads it. To publish two
+workflows to different places from two pipelines, put each in its own file,
+such as `.oore.beta.yaml` and `.oore.release.yaml` in the repository root,
+and point each pipeline's config path at one. Oore finds root
+`.oore.<name>.yaml` files when you create a pipeline. See
+[Run two workflows with different publishing](/build/pipelines/oore-yaml#run-two-workflows-with-different-publishing).
 
 ## Publish
 
 `publish` on a target says where a build is uploaded after it succeeds:
 
-| Field              | Target    | Description                                                                                                                  |
-| ------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `play.track`       | `android` | `internal`, `closed`, `open`, `production`, or a custom track name.                                                          |
-| `play.rollout`     | `android` | Staged rollout as a fraction greater than 0 and at most 1, such as `0.05` for 5%. Left out, the Google Play settings decide. |
-| `play.draft`       | `android` | `true` creates a draft release in Play Console instead of rolling out. Left out, the Google Play settings decide.            |
-| `testflight.group` | `ios`     | The TestFlight group to add the build to: one name, without commas, at most 128 characters, and not `app_store`.             |
+| Field                         | Target    | Description                                                                                                                  |
+| ----------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `play.track`                  | `android` | `internal`, `closed`, `open`, `production`, or a custom track name.                                                          |
+| `play.rollout`                | `android` | Staged rollout as a fraction greater than 0 and at most 1, such as `0.05` for 5%. Left out, the Google Play settings decide. |
+| `play.draft`                  | `android` | `true` creates a draft release in Play Console instead of rolling out. Left out, the Google Play settings decide.            |
+| `play.service_account`        | `android` | Name of the secret holding the Google service account JSON key. Set, the upload needs no pipeline Google Play settings.      |
+| `testflight.group`            | `ios`     | The TestFlight group to add the build to: one name, without commas, at most 128 characters, and not `app_store`.             |
+| `app_store.destination`       | `ios`     | `app_store` (default) attaches the build to the App Store version; `testflight` adds it to TestFlight groups.                |
+| `app_store.groups`            | `ios`     | TestFlight groups, for `destination: testflight`. Left out, the App Store settings' groups apply.                            |
+| `app_store.submit_for_review` | `ios`     | Submit the version for App Review, for `destination: app_store`. Left out, the settings decide.                              |
+| `app_store.phased_release`    | `ios`     | Release with Apple's seven-day phased release, for `destination: app_store`. Left out, the settings decide.                  |
+
+`testflight: { group: QA }` is the same as
+`app_store: { destination: testflight, groups: [QA] }`; a target sets one of
+the two.
 
 `track` and `group` can use `${{ vars.NAME }}`, so a workflow can change them
 by overriding a var. Secrets and `${{ flavor }}` are not available there.
@@ -267,6 +307,48 @@ bundle.
 workflow publishes, and the pipeline editor's **What will run** section lists
 it with the plan's notes.
 
+## Signing
+
+`signing` names identities from the project's signing library (**Project
+settings > Signing**), so each workflow can sign with its own keys:
+
+```yaml
+signing:
+  android: coin-upload # every workflow signs Android release builds with it
+
+workflows:
+  adhoc:
+    signing: { ios: coin-adhoc } # ad hoc certificate and profiles
+  release:
+    signing: { ios: coin-app-store } # App Store certificate and profiles
+    targets:
+      ios:
+        build: flutter build ipa --release
+        publish:
+          app_store: { destination: app_store }
+```
+
+| Field     | Description                                                   |
+| --------- | ------------------------------------------------------------- |
+| `android` | An Android keystore identity. It signs release builds.        |
+| `ios`     | An iOS distribution identity: a certificate and its profiles. |
+
+The names carry no secrets; the key material stays in Oore. A workflow without
+`signing` uses the pipeline's signing settings, as before. The pipeline's
+**Workflows** settings can pick a different identity for a workflow, or turn
+its publishing off, without changing the file.
+
+Oore checks the names when a build is created. A name the library does not
+hold, or an identity of the wrong kind, refuses a manual build with
+`invalid_signing`; a build started by a webhook fails at its signing step
+with the same message.
+
+The iOS export follows the identity: an identity with App Store profiles
+exports App Store IPAs, one with ad hoc profiles exports ad hoc IPAs. A
+workflow that uploads to App Store Connect with an ad hoc identity is
+refused. A build command's own `--export-method` is dropped when it agrees
+with the identity and fails the build when it does not.
+
 ## Budgets
 
 `budgets` on a target holds its artifacts to a size budget on the pull request
@@ -321,9 +403,12 @@ budget only changes the check; the build itself never fails because of it.
 | `paths`        | string[]                     | `[lib/**, pubspec.*]`             |
 
 When a webhook arrives, Oore reads the pipeline's file at the pushed commit.
-If the pipeline's workflow sets `on`, or the file sets a top-level `on`, that
-decides whether the event starts a build, in place of the pipeline's trigger
-settings:
+If the pipeline's default workflow sets `on`, or the file sets a top-level
+`on`, that decides whether the event starts a build, in place of the
+pipeline's trigger settings. A pipeline without a default workflow matches
+each workflow on its own `on` (or the top-level `on`) and starts one build
+per workflow that matches; a workflow with neither follows the pipeline's
+trigger settings.
 
 - `push` matches pushes to a branch, `true` for any branch or `branches` for
   the listed globs.
@@ -341,8 +426,8 @@ manual builds still come from the pipeline. Version 1 files, files without
 `on`, and a missing or invalid file keep the pipeline's trigger settings.
 
 If Oore cannot read the file from GitHub or GitLab, for example during an
-outage, a pipeline without a workflow keeps its trigger settings. A pipeline
-with a workflow is skipped and the webhook delivery is retried (up to five
+outage, a pipeline without a default workflow keeps its trigger settings. A
+pipeline with a default workflow is skipped and the webhook delivery is retried (up to five
 times), so it never builds from trigger settings its `on` would not allow.
 Other pipelines still build on the first attempt.
 

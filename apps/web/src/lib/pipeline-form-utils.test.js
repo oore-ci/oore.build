@@ -1,8 +1,12 @@
 import { expect, test } from 'bun:test'
 import { pipelineFormSchema } from '@/lib/pipeline-schema'
 import {
+  choosableWorkflows,
+  defaultWorkflowChoice,
   parseRunnerLabels,
   pipelineRepositoryFile,
+  pipelineWorkflowProblem,
+  repositoryFileStatus,
   pipelineRequestFromForm,
   pipelineUpdateFromForm,
   sizeBudgetFormFields,
@@ -176,20 +180,87 @@ test('the repository file is the explicit path or the first auto path', () => {
   expect(
     pipelineRepositoryFile(files, {
       config_path: '.oore.yaml',
-      config_path_explicit: false,
     })?.path,
   ).toBe('.oore.yml')
   expect(
     pipelineRepositoryFile(files, {
       config_path: '.oore/release.yaml',
-      config_path_explicit: true,
     })?.path,
   ).toBe('.oore/release.yaml')
   expect(
     pipelineRepositoryFile(files, {
       config_path: 'ci/missing.yaml',
-      config_path_explicit: true,
     }),
+  ).toBeUndefined()
+})
+
+test('the file status says whether the Workflow field can offer anything', () => {
+  const explicit = (config_path) => ({
+    config_path,
+  })
+  const files = [
+    { path: '.oore.release.yaml', valid: true, errors: [], workflows: ['a'] },
+    { path: 'ci/bad.yaml', valid: false, errors: ['bad'], workflows: [] },
+  ]
+  expect(repositoryFileStatus(files, explicit('ci/missing.yaml'))).toEqual({
+    kind: 'missing',
+    path: 'ci/missing.yaml',
+  })
+  expect(
+    repositoryFileStatus(files, { config_path: '.oore.yaml' }),
+  ).toEqual({ kind: 'missing', path: '.oore.yaml' })
+  expect(repositoryFileStatus(files, explicit('ci/bad.yaml'))).toEqual({
+    kind: 'invalid',
+    path: 'ci/bad.yaml',
+    errors: ['bad'],
+  })
+  const ready = repositoryFileStatus(files, explicit(' .oore.release.yaml '))
+  expect(ready.kind).toBe('ready')
+  expect(ready.file.workflows).toEqual(['a'])
+})
+
+test('a pipeline has a workflow problem only when builds would fail', () => {
+  const file = (workflows, valid = true) => ({
+    path: '.oore/release.yaml',
+    valid,
+    errors: valid ? [] : ['workflows.release: unknown key'],
+    workflows,
+  })
+  const pipeline = (workflow) => ({
+    config_path: '.oore/release.yaml',
+    workflow,
+  })
+
+  // Nothing saved and nothing to pick: the pipeline builds as before.
+  expect(pipelineWorkflowProblem([], pipeline(null))).toBeUndefined()
+  expect(pipelineWorkflowProblem([file([])], pipeline(null))).toBeUndefined()
+  expect(
+    pipelineWorkflowProblem([file(['release'])], pipeline(null)),
+  ).toBeUndefined()
+  expect(
+    pipelineWorkflowProblem([file(['adhoc', 'release'])], pipeline('release')),
+  ).toBeUndefined()
+
+  expect(pipelineWorkflowProblem([], pipeline('release'))).toEqual({
+    kind: 'missing-file',
+    path: '.oore/release.yaml',
+    workflow: 'release',
+  })
+  expect(pipelineWorkflowProblem([file([], false)], pipeline(null))).toEqual({
+    kind: 'invalid-file',
+    path: '.oore/release.yaml',
+    errors: ['workflows.release: unknown key'],
+  })
+  expect(
+    pipelineWorkflowProblem([file(['adhoc', 'beta'])], pipeline('release')),
+  ).toEqual({
+    kind: 'unknown-workflow',
+    path: '.oore/release.yaml',
+    workflow: 'release',
+  })
+  // Several workflows without a default: runs pick one, webhooks fan out.
+  expect(
+    pipelineWorkflowProblem([file(['adhoc', 'release'])], pipeline('')),
   ).toBeUndefined()
 })
 
@@ -280,4 +351,39 @@ test('schema rejects sizes that round to no bytes or exceed the cap', () => {
   expect(parse('2000000')).toBe(false)
   expect(parse('0.000001')).toBe(true)
   expect(parse('30')).toBe(true)
+})
+
+test('Run build starts on the default workflow, or the only one', () => {
+  const summary = (name) => ({
+    name,
+    platforms: ['android'],
+    triggers: [],
+    uses_pipeline_triggers: true,
+    publishes: [],
+  })
+  const listing = (workflows, extra = {}) => ({
+    pipeline_id: 'p',
+    state: 'valid',
+    workflows: workflows.map(summary),
+    ...extra,
+  })
+
+  expect(defaultWorkflowChoice(listing(['adhoc', 'release']))).toBe('')
+  expect(
+    defaultWorkflowChoice(
+      listing(['adhoc', 'release'], { default_workflow: 'release' }),
+    ),
+  ).toBe('release')
+  // A default the file no longer defines is not offered.
+  expect(
+    defaultWorkflowChoice(listing(['adhoc'], { default_workflow: 'release' })),
+  ).toBe('adhoc')
+  expect(defaultWorkflowChoice(listing([]))).toBe('')
+  expect(
+    choosableWorkflows({
+      pipeline_id: 'p',
+      state: 'invalid',
+      workflows: [summary('release')],
+    }),
+  ).toEqual([])
 })

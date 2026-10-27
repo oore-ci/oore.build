@@ -7,6 +7,14 @@ import type {
 import { ago } from './seed'
 import { demoState } from './state'
 
+/**
+ * What discovery lists: `.oore.yaml`, `.oore.yml`, root `.oore.<name>.yaml`,
+ * and `.oore/*.yaml` one directory deep. Other files are read only when
+ * their path is asked for.
+ */
+export const DISCOVERED_PATH =
+  /^(\.oore(\.[^/]+)?\.ya?ml|\.oore\/([^/]+\/)?[^/]+\.ya?ml)$/
+
 const DEMO_COMMIT = '4f9c2ab7d1e35c08b6a2f417e9d0c3b5a8e61f22'
 const scannedAt = new Map<string, number>()
 
@@ -69,7 +77,9 @@ export function demoRepositoryConfigFiles(
   const pipelines = demoState.pipelines.filter(
     (pipeline) => pipeline.project_id === projectId,
   )
-  const files: Array<RepositoryConfigFile> = discovered.map((file) => ({
+  const files: Array<RepositoryConfigFile> = discovered
+    .filter((file) => DISCOVERED_PATH.test(file.path))
+    .map((file) => ({
     path: file.path,
     valid: file.valid,
     errors: file.errors,
