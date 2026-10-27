@@ -71,6 +71,7 @@ workflow runs.
 | Field                 | Type     | Required | Default                    |
 | --------------------- | -------- | -------- | -------------------------- |
 | `version`             | integer  | Yes      | Must be `2`                |
+| `name`                | string   | No       | The file's path            |
 | `app`                 | object   | No       | No Flutter pin, no flavors |
 | `targets`             | object   | Yes¹     | No default                 |
 | `steps`               | list     | No       | `[build]`                  |
@@ -78,6 +79,7 @@ workflow runs.
 | `vars`                | map      | No       | `{}`                       |
 | `on`                  | object   | No       | Pipeline trigger settings  |
 | `workflows`           | map      | No       | One implicit workflow      |
+| `signing`             | object   | No       | Pipeline signing settings  |
 | `build_number_offset` | integer  | No       | `0`                        |
 | `runs_on`             | string[] | No       | `[macos]`                  |
 | `isolation`           | string   | No       | `host`                     |
@@ -173,6 +175,7 @@ other vars, is rejected with the cycle it forms, such as
 | `steps`   | list        | Replaces the top-level steps. Entries can name top-level steps.                                               |
 | `env`     | map         | Adds to or replaces top-level env values by name.                                                             |
 | `vars`    | map         | Adds to or replaces top-level vars by name, also where other vars use them.                                   |
+| `signing` | object      | Replaces the top-level `signing` per platform. See [Signing](#signing).                                       |
 
 A workflow target that has no top-level target of the same platform must set
 `build`. Where a workflow target leaves out `build` or `artifacts`, the
@@ -193,12 +196,21 @@ none builds the top level; a file with several fails the build with
 
 `publish` on a target says where a build is uploaded after it succeeds:
 
-| Field              | Target    | Description                                                                                                                  |
-| ------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `play.track`       | `android` | `internal`, `closed`, `open`, `production`, or a custom track name.                                                          |
-| `play.rollout`     | `android` | Staged rollout as a fraction greater than 0 and at most 1, such as `0.05` for 5%. Left out, the Google Play settings decide. |
-| `play.draft`       | `android` | `true` creates a draft release in Play Console instead of rolling out. Left out, the Google Play settings decide.            |
-| `testflight.group` | `ios`     | The TestFlight group to add the build to: one name, without commas, at most 128 characters, and not `app_store`.             |
+| Field                         | Target    | Description                                                                                                                  |
+| ----------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `play.track`                  | `android` | `internal`, `closed`, `open`, `production`, or a custom track name.                                                          |
+| `play.rollout`                | `android` | Staged rollout as a fraction greater than 0 and at most 1, such as `0.05` for 5%. Left out, the Google Play settings decide. |
+| `play.draft`                  | `android` | `true` creates a draft release in Play Console instead of rolling out. Left out, the Google Play settings decide.            |
+| `play.service_account`        | `android` | Name of the secret holding the Google service account JSON key. Set, the upload needs no pipeline Google Play settings.      |
+| `testflight.group`            | `ios`     | The TestFlight group to add the build to: one name, without commas, at most 128 characters, and not `app_store`.             |
+| `app_store.destination`       | `ios`     | `app_store` (default) attaches the build to the App Store version; `testflight` adds it to TestFlight groups.                |
+| `app_store.groups`            | `ios`     | TestFlight groups, for `destination: testflight`. Left out, the App Store settings' groups apply.                            |
+| `app_store.submit_for_review` | `ios`     | Submit the version for App Review, for `destination: app_store`. Left out, the settings decide.                              |
+| `app_store.phased_release`    | `ios`     | Release with Apple's seven-day phased release, for `destination: app_store`. Left out, the settings decide.                  |
+
+`testflight: { group: QA }` is the same as
+`app_store: { destination: testflight, groups: [QA] }`; a target sets one of
+the two.
 
 `track` and `group` can use `${{ vars.NAME }}`, so a workflow can change them
 by overriding a var. Secrets and `${{ flavor }}` are not available there.
@@ -266,6 +278,48 @@ bundle.
 [`oore pipeline plan`](/reference/cli/oore-pipeline-plan) prints where each
 workflow publishes, and the pipeline editor's **What will run** section lists
 it with the plan's notes.
+
+## Signing
+
+`signing` names identities from the project's signing library (**Project
+settings > Signing**), so each workflow can sign with its own keys:
+
+```yaml
+signing:
+  android: coin-upload # every workflow signs Android release builds with it
+
+workflows:
+  adhoc:
+    signing: { ios: coin-adhoc } # ad hoc certificate and profiles
+  release:
+    signing: { ios: coin-app-store } # App Store certificate and profiles
+    targets:
+      ios:
+        build: flutter build ipa --release
+        publish:
+          app_store: { destination: app_store }
+```
+
+| Field     | Description                                                   |
+| --------- | ------------------------------------------------------------- |
+| `android` | An Android keystore identity. It signs release builds.        |
+| `ios`     | An iOS distribution identity: a certificate and its profiles. |
+
+The names carry no secrets; the key material stays in Oore. A workflow without
+`signing` uses the pipeline's signing settings, as before. The pipeline's
+**Workflows** settings can pick a different identity for a workflow, or turn
+its publishing off, without changing the file.
+
+Oore checks the names when a build is created. A name the library does not
+hold, or an identity of the wrong kind, refuses a manual build with
+`invalid_signing`; a build started by a webhook fails at its signing step
+with the same message.
+
+The iOS export follows the identity: an identity with App Store profiles
+exports App Store IPAs, one with ad hoc profiles exports ad hoc IPAs. A
+workflow that uploads to App Store Connect with an ad hoc identity is
+refused. A build command's own `--export-method` is dropped when it agrees
+with the identity and fails the build when it does not.
 
 ## Budgets
 

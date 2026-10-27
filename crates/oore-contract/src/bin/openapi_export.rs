@@ -128,6 +128,12 @@ use utoipa::{
         operations::list_pipelines,
         operations::get_pipeline,
         operations::list_pipeline_workflows,
+        operations::list_pipeline_workflow_settings,
+        operations::update_pipeline_workflow_settings,
+        operations::list_signing_identities,
+        operations::create_signing_identity,
+        operations::update_signing_identity,
+        operations::delete_signing_identity,
         operations::update_pipeline,
         operations::delete_pipeline,
         operations::validate_pipeline,
@@ -374,6 +380,20 @@ use utoipa::{
         oore_contract::PipelineFileState,
         oore_contract::PipelineWorkflowSummary,
         oore_contract::PipelineWorkflowsResponse,
+        oore_contract::SigningIdentityKind,
+        oore_contract::SigningIdentityUse,
+        oore_contract::SigningIdentityProfile,
+        oore_contract::SigningIdentity,
+        oore_contract::ListSigningIdentitiesResponse,
+        oore_contract::AndroidKeystoreInput,
+        oore_contract::IosProfileInput,
+        oore_contract::IosDistributionInput,
+        oore_contract::CreateSigningIdentityRequest,
+        oore_contract::UpdateSigningIdentityRequest,
+        oore_contract::SigningIdentityResponse,
+        oore_contract::PipelineWorkflowSettings,
+        oore_contract::ListPipelineWorkflowSettingsResponse,
+        oore_contract::UpdatePipelineWorkflowSettingsRequest,
         // Project Members
         oore_contract::ProjectRole,
         oore_contract::ProjectMember,
@@ -1949,6 +1969,98 @@ mod operations {
         )
     )]
     pub(super) fn list_pipeline_workflows() {}
+
+    /// List a pipeline's workflow settings
+    ///
+    /// Per-workflow overrides of the pipeline's v2 file: signing identities,
+    /// publishing on or off, and the approval gate.
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/workflow-settings", tag = "Pipelines",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Workflow settings", body = ListPipelineWorkflowSettingsResponse),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn list_pipeline_workflow_settings() {}
+
+    /// Replace one workflow's settings
+    ///
+    /// Omitted fields are cleared, so the workflow follows its file again.
+    /// Changing `approval_required` needs the Approve builds permission.
+    #[utoipa::path(put, path = "/v1/pipelines/{pipeline_id}/workflow-settings/{workflow}", tag = "Pipelines",
+        params(
+            ("pipeline_id" = String, Path, description = "Pipeline ID"),
+            ("workflow" = String, Path, description = "Workflow name in the pipeline's file"),
+        ),
+        request_body = UpdatePipelineWorkflowSettingsRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Saved settings", body = PipelineWorkflowSettings),
+            (status = 400, description = "Unknown identity or wrong kind", body = ApiError),
+            (status = 403, description = "Permission required", body = ApiError),
+        )
+    )]
+    pub(super) fn update_pipeline_workflow_settings() {}
+
+    /// List a project's signing identities
+    ///
+    /// The project credential library. Key material is never returned.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/signing-identities", tag = "Projects",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Signing identities", body = ListSigningIdentitiesResponse),
+        )
+    )]
+    pub(super) fn list_signing_identities() {}
+
+    /// Add a signing identity
+    ///
+    /// An Android keystore, or an iOS distribution certificate with its
+    /// provisioning profiles. A v2 file names it under `signing`.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/signing-identities", tag = "Projects",
+        params(("project_id" = String, Path, description = "Project ID")),
+        request_body = CreateSigningIdentityRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Identity added", body = SigningIdentityResponse),
+            (status = 400, description = "Invalid material", body = ApiError),
+            (status = 409, description = "Name taken", body = ApiError),
+        )
+    )]
+    pub(super) fn create_signing_identity() {}
+
+    /// Rename a signing identity or replace its material
+    #[utoipa::path(patch, path = "/v1/projects/{project_id}/signing-identities/{identity_id}", tag = "Projects",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("identity_id" = String, Path, description = "Identity ID"),
+        ),
+        request_body = UpdateSigningIdentityRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Identity saved", body = SigningIdentityResponse),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn update_signing_identity() {}
+
+    /// Delete a signing identity
+    ///
+    /// Refused while a pipeline's workflow settings pick it.
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/signing-identities/{identity_id}", tag = "Projects",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("identity_id" = String, Path, description = "Identity ID"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Deleted", body = OkResponse),
+            (status = 409, description = "In use", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_signing_identity() {}
 
     /// Update pipeline
     #[utoipa::path(patch, path = "/v1/pipelines/{pipeline_id}", tag = "Pipelines",

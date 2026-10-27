@@ -49,6 +49,7 @@ pub mod runtime_updates;
 pub mod scheduler;
 pub mod secrets;
 pub mod session;
+pub mod signing_identities;
 pub mod step_retry;
 pub mod storage;
 pub mod store;
@@ -65,7 +66,7 @@ use std::sync::Arc;
 use axum::extract::{ConnectInfo, DefaultBodyLimit, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware as axum_mw;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post, put};
 use axum::{Json, Router};
 use metrics_exporter_prometheus::PrometheusHandle;
 use oore_contract::{
@@ -2763,6 +2764,24 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/pipelines/{pipeline_id}/workflows",
             get(pipelines::list_pipeline_workflows),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/workflow-settings",
+            get(signing_identities::list_pipeline_workflow_settings),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/workflow-settings/{workflow}",
+            put(signing_identities::update_pipeline_workflow_settings),
+        )
+        .route(
+            "/v1/projects/{project_id}/signing-identities",
+            get(signing_identities::list_signing_identities)
+                .post(signing_identities::create_signing_identity),
+        )
+        .route(
+            "/v1/projects/{project_id}/signing-identities/{identity_id}",
+            patch(signing_identities::update_signing_identity)
+                .delete(signing_identities::delete_signing_identity),
         )
         .route("/v1/pipelines/validate", post(pipelines::validate_pipeline))
         .route("/v1/pipelines/plan", post(pipelines::plan_pipeline))

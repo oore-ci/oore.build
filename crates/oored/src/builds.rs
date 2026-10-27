@@ -1329,6 +1329,38 @@ async fn require_google_play_secret(
     ))
 }
 
+/// What a build of `workflow` signs and publishes with, from the pipeline's
+/// workflow settings and the file's `signing`. `Err` explains a reference
+/// the project's credential library cannot satisfy.
+async fn workflow_binding(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    pipeline_id: &str,
+    file: Option<&RepositoryConfig>,
+    workflow: Option<&str>,
+) -> Result<crate::signing_identities::WorkflowBinding, String> {
+    let plan = file.and_then(|config| {
+        config
+            .plan(oore_contract::PlanRequest {
+                workflow,
+                ..oore_contract::PlanRequest::default()
+            })
+            .ok()
+    });
+    let (signing, app_store) = plan
+        .map(|plan| (plan.signing, plan.publish.needs_app_store_export()))
+        .unwrap_or_default();
+    crate::signing_identities::resolve_workflow_binding(
+        pool,
+        project_id,
+        pipeline_id,
+        workflow,
+        &signing,
+        app_store,
+    )
+    .await
+}
+
 /// `POST /v1/projects/{project_id}/builds` — create a new build (manual/API trigger).
 pub async fn create_build(
     State(state): State<Arc<AppState>>,
@@ -1469,7 +1501,7 @@ pub async fn create_build(
         Some(name) => Some(crate::pipelines::normalize_workflow_name(&name)?),
         None => pipeline_row.try_get("workflow").ok().flatten(),
     };
-    crate::pipelines::check_build_workflow(
+    let file = crate::pipelines::check_build_workflow(
         &state,
         &project_id,
         &config_path,
@@ -1478,6 +1510,16 @@ pub async fn create_build(
         workflow.as_deref(),
     )
     .await?;
+    let binding = workflow_binding(
+        &pool,
+        &project_id,
+        &req.pipeline_id,
+        file.as_deref(),
+        workflow.as_deref(),
+    )
+    .await
+    .map_err(|message| api_err(StatusCode::BAD_REQUEST, "invalid_signing", message))?;
+    let approval_required = binding.approval_required.unwrap_or(approval_required);
 
     let now = now_unix();
     let build_id = Uuid::new_v4().to_string();
@@ -1516,6 +1558,7 @@ pub async fn create_build(
         config_snapshot["selected_platforms"] = serde_json::json!(selected_platforms);
     }
     set_snapshot_workflow_name(&mut config_snapshot, workflow.as_deref());
+    binding.write_to(&mut config_snapshot);
 
     let snapshot_str = config_snapshot.to_string();
     let inserted = insert_build_with_retry(
@@ -2868,7 +2911,33 @@ pub async fn trigger_build_from_webhook(
                 }
 
                 let build_id = Uuid::new_v4().to_string();
-                let approval_required = approval_policy.applies_to(&canonical_event);
+                let file = sha.and_then(|_| {
+                    let key = (
+                        project_id.clone(),
+                        (config_path_explicit != 0).then(|| config_path.trim().to_string()),
+                    );
+                    pipeline_files
+                        .get(&key)
+                        .and_then(|config| config.as_ref().ok())
+                        .and_then(Option::as_ref)
+                });
+                // A reference the library cannot satisfy still queues the build, which
+                // then fails with the reason when it asks for signing.
+                let (binding, binding_error) = match workflow_binding(
+                    pool,
+                    &project_id,
+                    &pipeline_id,
+                    file,
+                    workflow.as_deref(),
+                )
+                .await
+                {
+                    Ok(binding) => (binding, None),
+                    Err(message) => (Default::default(), Some(message)),
+                };
+                let approval_required = binding
+                    .approval_required
+                    .unwrap_or_else(|| approval_policy.applies_to(&canonical_event));
 
                 let mut config_snapshot = create_config_snapshot(
                     &config_path,
@@ -2881,6 +2950,10 @@ pub async fn trigger_build_from_webhook(
                     (&repository_id, &repo_url),
                 );
                 set_snapshot_workflow_name(&mut config_snapshot, workflow.as_deref());
+                binding.write_to(&mut config_snapshot);
+                if let Some(message) = &binding_error {
+                    config_snapshot["signing_error"] = serde_json::json!(message);
+                }
 
                 let snapshot_str = config_snapshot.to_string();
                 let inserted = insert_build_with_retry(
