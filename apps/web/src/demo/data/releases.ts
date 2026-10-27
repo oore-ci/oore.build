@@ -10,6 +10,7 @@ export const RELEASE_IDS = {
   shopBeta: 'rel-demo-005',
   shopInternalNext: 'rel-demo-006',
   shopTestflight: 'rel-demo-007',
+  shopAppStore: 'rel-demo-008',
 } as const
 
 const DEFAULT_POLICY = {
@@ -23,6 +24,30 @@ const DEFAULT_POLICY = {
 export type DemoRelease = Omit<Release, 'allowed_actions' | 'project_name'>
 
 export const demoReleases: Array<DemoRelease> = [
+  {
+    id: RELEASE_IDS.shopAppStore,
+    project_id: PROJECT_IDS.flutterShop,
+    build_id: BUILD_IDS.succeeded8,
+    build_number: 146,
+    artifact_id: null,
+    platform: 'ios',
+    store: 'app_store',
+    track: 'app_store',
+    package_name: 'build.oore.demo.shop',
+    version_name: '2.5.1',
+    version_code: 146,
+    state: 'processing',
+    rollout_fraction: 0,
+    next_fraction: null,
+    next_step_at: null,
+    health: 'unknown',
+    crash_rate: null,
+    crash_rate_threshold: null,
+    policy: DEFAULT_POLICY,
+    awaiting_approval: false,
+    created_at: ago(250),
+    updated_at: ago(250),
+  },
   {
     id: RELEASE_IDS.shopTestflight,
     project_id: PROJECT_IDS.flutterShop,
@@ -206,6 +231,15 @@ export const demoReleases: Array<DemoRelease> = [
 ]
 
 export const demoReleaseHistory = {
+  [RELEASE_IDS.shopAppStore]: [
+    {
+      id: 'relh-demo-009',
+      at: ago(250),
+      to_state: 'processing',
+      reason:
+        'Uploaded to App Store Connect; waiting for Apple to process the build',
+    },
+  ],
   [RELEASE_IDS.shopProduction]: [
     {
       id: 'relh-demo-004',

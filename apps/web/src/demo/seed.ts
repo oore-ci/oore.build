@@ -57,6 +57,7 @@ export const BUILD_IDS = {
   awaitingApproval1: 'build-demo-014',
   failedPublish1: 'build-demo-015',
   succeeded7: 'build-demo-016',
+  succeeded8: 'build-demo-017',
 } as const
 
 // ── Runner IDs ────────────────────────────────────────────────────

@@ -133,6 +133,26 @@ export const demoBuilds: Array<Build> = [
 
   // ── Succeeded builds ──────────────────────────────────────────
   {
+    id: BUILD_IDS.succeeded8,
+    project_id: PROJECT_IDS.flutterShop,
+    pipeline_id: PIPELINE_IDS.shopIos,
+    build_number: 146,
+    status: 'succeeded',
+    trigger_type: 'webhook',
+    trigger_event: 'tag_push',
+    trigger_ref: 'v2.5.1',
+    commit_sha: 'f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5',
+    changelog: 'Fixes the checkout total on iPad.',
+    config_snapshot: {},
+    runner_id: RUNNER_IDS.macStudio,
+    exit_code: 0,
+    queued_at: ago(1260),
+    started_at: ago(1200),
+    finished_at: ago(240),
+    created_at: ago(1260),
+    updated_at: ago(240),
+  },
+  {
     id: BUILD_IDS.succeeded7,
     project_id: PROJECT_IDS.flutterShop,
     pipeline_id: PIPELINE_IDS.shopAndroid,
