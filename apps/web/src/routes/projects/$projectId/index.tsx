@@ -84,6 +84,11 @@ const ProjectSecretsPanel = lazy(() =>
     default: module.SecretsPanel,
   })),
 )
+const SigningIdentitiesPanel = lazy(() =>
+  import('@/components/signing/signing-identities-panel').then((module) => ({
+    default: module.SigningIdentitiesPanel,
+  })),
+)
 const loadProjectAccessCard = () => import('./-project-access-card')
 const ProjectAccessCard = lazy(() =>
   loadProjectAccessCard().then((module) => ({
@@ -674,6 +679,7 @@ function ProjectDetailPage() {
                       name: project.name,
                       description: project.description ?? undefined,
                       default_branch: project.default_branch ?? undefined,
+                      auto_add_pipelines: project.auto_add_pipelines,
                       repository_id: project.repository_id ?? undefined,
                       repository_full_name:
                         project.repository_full_name ?? undefined,
@@ -711,6 +717,10 @@ function ProjectDetailPage() {
                   }
                   target={{ scope: 'project', projectId }}
                   title="Project secrets"
+                />
+                <SigningIdentitiesPanel
+                  canWrite={canWritePipelines}
+                  projectId={projectId}
                 />
               </Suspense>
             ) : null}

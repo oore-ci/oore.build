@@ -12,9 +12,9 @@ build definition with the commit.
 For each build, the Direct macOS runner reads configuration from the pinned
 repository checkout:
 
-1. If the pipeline has an explicit config path, Oore checks only that path.
-2. Without an explicit path, Oore checks `.oore.yaml`, then `.oore.yml`.
-3. Oore uses the pipeline configuration saved in the UI only when the selected
+1. Oore checks the pipeline's config path. A pipeline with `.oore.yaml` also
+   checks the legacy `.oore.yml` when `.oore.yaml` does not exist.
+2. Oore uses the pipeline configuration saved in the UI only when the selected
    repository file does not exist.
 
 The selected file wins when it exists. If it is invalid, the build fails
@@ -45,6 +45,19 @@ VM build the version selects the image.
   runner.
 - You can start with the **Android test app** template in the UI and move to `.oore.yaml`
   after the first successful build.
+
+## What the file can and cannot decide
+
+The file decides what a build runs. It names signing identities and store
+destinations, but the credentials, gates and per-workflow overrides stay in
+Oore. See [Files, pipelines and workflows](/concepts/files-pipelines-workflows)
+for the split and the order in which each is resolved.
+
+## The repository can add pipelines
+
+Oore also reads the config files on the default branch ahead of any build, to
+offer each unused file as a pipeline and to show each pipeline's health. See
+[Add pipelines from the repository](/build/pipelines/from-the-repository).
 
 ## Next step
 

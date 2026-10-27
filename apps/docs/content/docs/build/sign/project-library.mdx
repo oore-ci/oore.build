@@ -1,0 +1,133 @@
+---
+title: 'Move credentials into the project library'
+status: preview
+description: 'Store keystores and iOS certificates once per project, then let each workflow sign with its own by name.'
+---
+
+A pipeline's own signing settings hold one Android keystore and one iOS
+setup, shared by every build of the pipeline. The project's signing library
+holds named identities instead. A `.oore.yaml` version 2 workflow picks one by
+name, so an ad hoc test build and an App Store release can sign differently
+from the same pipeline.
+
+## What you need
+
+- Project developer, maintainer, instance admin, or instance owner access.
+- The signing files: an Android keystore (`.jks`) with its alias and
+  passwords, or an iOS distribution certificate (`.p12`) with its password
+  and one ad hoc or App Store provisioning profile per bundle ID. See
+  [Export iOS certificates and profiles](/build/sign/ios/certificates).
+- A pipeline that builds from a version 2 file, to name identities in it.
+
+## 1. Add identities to the library
+
+1. Open the project's **Settings** tab and find **Signing**.
+2. Select **Add identity**.
+3. Choose the **Kind**:
+   - **Android keystore**: choose the **Keystore (.jks)** and enter the
+     **Key alias**, **Keystore password** and **Key password**.
+   - **iOS distribution**: choose the **Distribution certificate (.p12)**,
+     enter the **Certificate password**, and add the **Provisioning
+     profiles**.
+4. Enter a **Name**, such as `upload-key` or `coin-app-store`. Names start
+   with a letter or digit and use letters, digits, `-` and `_`, up to 64
+   characters. Files refer to identities by this name.
+5. Select **Add identity**.
+
+Oore checks that the certificate opens with the password and reads each
+profile. One iOS identity exports one way, so its profiles must be all ad hoc
+or all App Store, from one Apple team, with one profile per bundle ID. Add
+one identity for ad hoc builds and another for App Store builds.
+
+The library shows each identity's details and certificate expiry. Key
+material is never shown again.
+
+For automation, use `POST /v1/projects/{project_id}/signing-identities` with
+`name`, `kind` (`android_keystore` or `ios_distribution`) and the matching
+`android` or `ios` object, with files as base64.
+
+## 2. Name the identities in the file
+
+```yaml
+signing:
+  android: upload-key # every workflow, unless it names its own
+
+workflows:
+  adhoc:
+    signing: { ios: coin-adhoc }
+  release:
+    signing: { ios: coin-app-store }
+```
+
+A workflow's `signing` replaces the top-level one per platform. The iOS export
+follows the identity: App Store profiles export App Store IPAs, ad hoc
+profiles export ad hoc IPAs. A build command's `--export-method` is dropped
+when it agrees and fails the build when it does not.
+
+Check the names before you commit:
+
+```bash
+oore pipeline validate .oore.yaml --project "$PROJECT_ID"
+```
+
+The command reports every name the library does not hold, an identity of the
+wrong kind, and an ad hoc identity in a workflow that uploads to App Store
+Connect.
+
+## 3. Or pick identities per workflow in Oore
+
+Without changing the file, open the pipeline's **Workflows** tab, select
+**Settings** on a workflow, and choose its **Android signing** or **iOS
+signing** identity. That choice replaces what the file names for this
+pipeline's builds of the workflow. Leave it at the **From the file** choice to
+follow the file, or the pipeline's signing when the file names none.
+
+## 4. Move the Google Play key too
+
+Store the Google Play service account key as a project secret, such as
+`PLAY_SERVICE_ACCOUNT`, on the project's **Settings** tab, then name it in
+the workflow that publishes:
+
+```yaml
+publish:
+  play: { track: internal, service_account: PLAY_SERVICE_ACCOUNT }
+```
+
+`oore pipeline validate --project` also checks that this secret exists.
+
+## What stays in the pipeline
+
+- **The pipeline's signing settings** still sign builds of workflows that name
+  no identity, and of version 1 files. Keep them until every workflow names
+  one.
+- **The App Store Connect API key** for uploads comes from the pipeline's iOS
+  signing settings, which must export App Store IPAs, with App Store Connect
+  publishing turned on in the **Publishing** tab.
+- **Release notes, the expected Google Play package and export compliance**
+  stay in the **Publishing** tab.
+
+## Verify the result
+
+- `oore pipeline plan` lists each workflow's identities under `signing:`.
+- The pipeline's **Workflows** tab shows what each workflow signs with.
+- A build of each workflow passes its signing step.
+
+## Troubleshooting
+
+**A build is refused with `invalid_signing`**
+
+The message names the workflow and field. Add the identity under **Project
+settings > Signing**, fix the name in the file, or pick an identity of the
+right kind. An App Store Connect upload needs an identity with App Store
+profiles.
+
+**An identity cannot be deleted**
+
+A pipeline's workflow settings still pick it. Pick another identity there
+first. Deleting an identity that files name succeeds, and their builds are
+refused until the file names another.
+
+## Next step
+
+[Run two workflows from one file](/build/pipelines/two-workflows), each signed
+with its own identity.

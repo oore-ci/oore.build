@@ -889,7 +889,16 @@ async fn fetch_job_android_signing(
         .await?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("Android signing lookup failed: {}", resp.status());
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        // A workflow whose signing names an identity the project lacks.
+        let message = serde_json::from_str::<oore_contract::ApiError>(&body)
+            .map(|error| error.error)
+            .unwrap_or(body);
+        if message.trim().is_empty() {
+            anyhow::bail!("Android signing lookup failed: {status}");
+        }
+        anyhow::bail!("Android signing lookup failed: {status} {message}");
     }
 
     let payload: RunnerAndroidSigningResponse = resp.json().await?;
@@ -1906,12 +1915,15 @@ struct IosSigningLock {
 
 impl IosSigningLock {
     fn acquire() -> anyhow::Result<Self> {
-        let path = prepare_runner_workspace_root()?.join(IOS_SIGNING_LOCK);
+        Self::acquire_at(&prepare_runner_workspace_root()?.join(IOS_SIGNING_LOCK))
+    }
+
+    fn acquire_at(path: &Path) -> anyhow::Result<Self> {
         let file = fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
-            .open(&path)
+            .open(path)
             .with_context(|| format!("failed to open iOS signing lock {}", path.display()))?;
         file.lock()
             .with_context(|| format!("failed to lock {}", path.display()))?;
@@ -2998,9 +3010,26 @@ fn rewrite_flutter_ios_target_to_ipa(args: &mut [String]) -> bool {
     rewritten
 }
 
+/// The export method an `--export-method` value asks for, in Flutter's old
+/// and new names.
+fn requested_export_method(value: &str) -> Option<IosExportMethod> {
+    match value.trim_matches(['"', '\'']) {
+        "ad-hoc" | "ad_hoc" | "release-testing" => Some(IosExportMethod::AdHoc),
+        "app-store" | "app_store" | "app-store-connect" => Some(IosExportMethod::AppStore),
+        _ => None,
+    }
+}
+
+fn export_method_name(method: IosExportMethod) -> &'static str {
+    match method {
+        IosExportMethod::AdHoc => "ad hoc",
+        IosExportMethod::AppStore => "App Store",
+    }
+}
+
 fn adapt_ios_command_for_signing(
     command: &str,
-    _export_options_plist: &Path,
+    export_method: IosExportMethod,
 ) -> anyhow::Result<String> {
     if !is_ios_flutter_build_command(command) {
         return Ok(command.to_string());
@@ -3018,6 +3047,28 @@ fn adapt_ios_command_for_signing(
         anyhow::bail!(
             "iOS signing is enabled, but command uses --simulator which cannot produce installable ad-hoc IPA"
         );
+    }
+
+    // Oore exports with the signing identity's profiles, so the command's
+    // own export flags are dropped. One that asks for the other kind of
+    // export would silently build the wrong IPA, so it fails instead.
+    let contradicts = |value: &str| {
+        requested_export_method(value).is_some_and(|requested| requested != export_method)
+    };
+    for (index, arg) in args.iter().enumerate() {
+        let value = arg.strip_prefix("--export-method=").or_else(|| {
+            (arg == "--export-method")
+                .then(|| args.get(index + 1).map(String::as_str))
+                .flatten()
+        });
+        if let Some(value) = value
+            && contradicts(value)
+        {
+            anyhow::bail!(
+                "The build command asks for --export-method {value}, but its iOS signing exports {} IPAs. Remove --export-method; the signing identity's profiles decide the export",
+                export_method_name(export_method)
+            );
+        }
     }
 
     let mut filtered_args = Vec::with_capacity(args.len());
@@ -3075,7 +3126,7 @@ fn normalize_stage_command_for_execution(
     stage_name: &str,
     command: &str,
     dart_define_file: Option<&str>,
-    ios_export_options_plist: Option<&Path>,
+    ios_export_method: Option<IosExportMethod>,
 ) -> anyhow::Result<(String, bool)> {
     let mut normalized_command = normalize_legacy_env_syntax(command);
 
@@ -3088,10 +3139,10 @@ fn normalize_stage_command_for_execution(
 
     let mut ios_signing_command_applied = false;
     if stage_name == "build"
-        && let Some(export_plist) = ios_export_options_plist
+        && let Some(export_method) = ios_export_method
         && is_ios_flutter_build_command(&normalized_command)
     {
-        normalized_command = adapt_ios_command_for_signing(&normalized_command, export_plist)?;
+        normalized_command = adapt_ios_command_for_signing(&normalized_command, export_method)?;
         ios_signing_command_applied = true;
     }
 
@@ -4272,6 +4323,9 @@ struct ResolvedExecutionPlan {
     publish: PlanPublish,
     /// The v2 file's size budgets, reported with the build's result.
     size_budgets: Vec<TargetSizeBudget>,
+    /// The platforms this run builds, after any per-run selection. A store
+    /// upload for a platform not in this list is skipped.
+    platforms: Vec<BuildPlatform>,
 }
 
 fn secret_env_var(name: &str) -> String {
@@ -4668,7 +4722,11 @@ fn resolve_execution_plan(
         .trim()
         .to_string();
 
-    let candidate_paths: Vec<String> = if config_path_explicit {
+    // `.oore.yaml` still reads a legacy `.oore.yml` when it is missing,
+    // whichever way the snapshot marks the path.
+    let candidate_paths: Vec<String> = if config_path_explicit
+        && snapshot_config_path != AUTO_CONFIG_PATHS[0]
+    {
         validate_repository_config_path(&snapshot_config_path)
             .map_err(|error| anyhow::anyhow!("Invalid explicit repository config path: {error}"))?;
         vec![snapshot_config_path]
@@ -4722,6 +4780,7 @@ fn resolve_execution_plan(
 
         return Ok(ResolvedExecutionPlan {
             needs_xcode: needs_xcode(&plan.platforms),
+            platforms: plan.platforms,
             steps: plan.steps,
             artifact_patterns: plan.artifact_patterns,
             env: plan.env,
@@ -4746,6 +4805,7 @@ fn resolve_execution_plan(
     let plan = plan_execution_config(&fallback, true, build_play_bundle);
     Ok(ResolvedExecutionPlan {
         needs_xcode: needs_xcode(&plan.platforms),
+        platforms: plan.platforms,
         steps: plan.steps,
         artifact_patterns: plan.artifact_patterns,
         env: plan.env,
@@ -5383,6 +5443,7 @@ async fn execute_step_retry(
             only: Some(retry_steps),
             authority,
             file_publish: &file_publish,
+            built_platforms: None,
         },
         steps,
     )
@@ -6112,7 +6173,9 @@ async fn execute_build_steps(
                 stage_name,
                 command,
                 dart_define_file.as_deref(),
-                ios_signing_bundle.as_ref().map(|_| Path::new("")),
+                ios_signing_bundle
+                    .as_ref()
+                    .map(|bundle| bundle.export_method),
             ) {
                 Ok(value) => value,
                 Err(e) => return (steps, Err(e)),
@@ -6742,6 +6805,7 @@ Install the required tooling on the runner, set isolation: vm, or override build
             only: None,
             authority: &authority,
             file_publish: &execution_plan.publish,
+            built_platforms: Some(&execution_plan.platforms),
         },
         &mut steps,
     )
@@ -6782,6 +6846,9 @@ struct PublishInputs<'a> {
     authority: &'a Arc<BuildAuthorityState>,
     /// The v2 file's uploads, which replace the Publish settings' targets.
     file_publish: &'a PlanPublish,
+    /// The platforms the build ran. An upload for a platform it did not
+    /// build is skipped, not failed. `None` (a step retry) skips nothing.
+    built_platforms: Option<&'a [BuildPlatform]>,
 }
 
 /// Records `step_name` as a failed upload that never started, with `error`
@@ -6846,8 +6913,11 @@ async fn run_publish_steps(
         only,
         authority,
         file_publish,
+        built_platforms,
     } = inputs;
     let runs = |step: &str| only.is_none_or(|only| only.iter().any(|name| name == step));
+    let built =
+        |platform: BuildPlatform| built_platforms.is_none_or(|built| built.contains(&platform));
     let settings = match fetch_job_publish_plan(
         client,
         daemon_url,
@@ -6877,9 +6947,40 @@ async fn run_publish_steps(
     }
     const PLAY_TITLE: &str = "Upload the App Bundle to Google Play";
     const APP_STORE_TITLE: &str = "Upload the IPA to App Store Connect";
+    // A run that leaves out a platform, such as an Android-only run of a
+    // pipeline that also publishes to the App Store, skips that store.
+    for (turned_on, platform, store, platform_name) in [
+        (
+            !matches!(publish_plan.google_play, Ok(None)),
+            BuildPlatform::Android,
+            "Google Play",
+            "Android",
+        ),
+        (
+            !matches!(publish_plan.app_store, Ok(None)),
+            BuildPlatform::Ios,
+            "App Store Connect",
+            "iOS",
+        ),
+    ] {
+        if turned_on && !built(platform) {
+            let _ = append_runner_log_line(
+                client,
+                daemon_url,
+                config,
+                &job.build_id,
+                log_seq,
+                "stdout",
+                &format!(
+                    "[oore-publish] Skipping the {store} upload: this build did not build {platform_name}."
+                ),
+            )
+            .await;
+        }
+    }
     let google_play = match publish_plan.google_play {
-        Ok(play) => play.filter(|_| runs(PUBLISH_PLAY_STEP)),
-        Err(error) if runs(PUBLISH_PLAY_STEP) => {
+        Ok(play) => play.filter(|_| runs(PUBLISH_PLAY_STEP) && built(BuildPlatform::Android)),
+        Err(error) if runs(PUBLISH_PLAY_STEP) && built(BuildPlatform::Android) => {
             return Err(fail_publish_step(
                 job,
                 client,
@@ -7030,8 +7131,10 @@ async fn run_publish_steps(
     }
 
     let app_store = match publish_plan.app_store {
-        Ok(app_store) => app_store.filter(|_| runs(PUBLISH_APP_STORE_STEP)),
-        Err(error) if runs(PUBLISH_APP_STORE_STEP) => {
+        Ok(app_store) => {
+            app_store.filter(|_| runs(PUBLISH_APP_STORE_STEP) && built(BuildPlatform::Ios))
+        }
+        Err(error) if runs(PUBLISH_APP_STORE_STEP) && built(BuildPlatform::Ios) => {
             return Err(fail_publish_step(
                 job,
                 client,
@@ -8906,10 +9009,14 @@ async fn run_and_stream(
 mod ios_signing_lock_tests {
     #[test]
     fn ios_signing_waits_for_the_signing_build_before_it() {
-        let held = super::IosSigningLock::acquire().unwrap();
-        let path = super::prepare_runner_workspace_root()
-            .unwrap()
-            .join(super::IOS_SIGNING_LOCK);
+        // A lock file of its own: the shared one in the runner workspace can be
+        // held by another build or test run on the same machine.
+        let path = std::env::temp_dir().join(format!(
+            "oore-ios-signing-lock-test-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        let held = super::IosSigningLock::acquire_at(&path).unwrap();
         let other = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         assert!(matches!(
             other.try_lock(),
@@ -8917,6 +9024,7 @@ mod ios_signing_lock_tests {
         ));
         drop(held);
         other.try_lock().unwrap();
+        let _ = std::fs::remove_file(&path);
     }
 }
 
@@ -9030,6 +9138,31 @@ mod tests {
             .filter(|step| step.phase == phase)
             .map(|step| step.run.clone())
             .collect()
+    }
+
+    #[test]
+    fn an_explicit_oore_yaml_still_reads_a_legacy_oore_yml() {
+        let workspace = TempDir::new("oore-legacy-yml-test");
+        std::fs::write(
+            workspace.path().join(".oore.yml"),
+            "version: 2\ntargets:\n  android:\n    build: flutter build apk --flavor legacy\n",
+        )
+        .unwrap();
+        let snapshot = json!({ "config_path": ".oore.yaml", "config_path_explicit": true });
+        let plan = resolve_execution_plan(workspace.path(), &snapshot, false).unwrap();
+        assert!(
+            plan.steps
+                .iter()
+                .any(|step| step.run == "flutter build apk --flavor legacy")
+        );
+
+        let other = json!({ "config_path": ".oore/release.yaml", "config_path_explicit": true });
+        let plan = resolve_execution_plan(workspace.path(), &other, false).unwrap();
+        assert!(
+            plan.steps
+                .iter()
+                .all(|step| step.run != "flutter build apk --flavor legacy")
+        );
     }
 
     #[test]
@@ -9306,6 +9439,23 @@ mod tests {
     }
 
     #[test]
+    fn a_contradicting_export_method_fails_instead_of_being_dropped() {
+        let adapted = super::adapt_ios_command_for_signing(
+            "flutter build ipa --release --export-method app-store",
+            IosExportMethod::AppStore,
+        )
+        .unwrap();
+        assert!(!adapted.contains("--export-method"), "{adapted}");
+        let error = super::adapt_ios_command_for_signing(
+            "flutter build ipa --release --export-method=ad-hoc",
+            IosExportMethod::AppStore,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("exports App Store IPAs"), "{error}");
+    }
+
+    #[test]
     fn export_method_follows_pipeline_and_xcode_naming() {
         let current = "-exportArchive ... release-testing, app-store-connect, debugging";
         assert_eq!(
@@ -9429,6 +9579,7 @@ mod secret_tests {
             source: "test".to_string(),
             publish: PlanPublish::default(),
             size_budgets: Vec::new(),
+            platforms: Vec::new(),
         }
     }
 
@@ -10199,6 +10350,7 @@ mod file_publish_tests {
             changelog: Some("Fixes".to_string()),
             google_play: Some(play_settings("production", None)),
             app_store: Some(app_store_settings(testflight(&["Internal", "QA"]))),
+            disabled: false,
         };
         let from_file = plan.publish.apply(settings);
         // What the runner gets when the settings themselves say it.
@@ -10206,6 +10358,7 @@ mod file_publish_tests {
             changelog: Some("Fixes".to_string()),
             google_play: Some(play_settings("closed", Some(20.0))),
             app_store: Some(app_store_settings(testflight(&["Beta"]))),
+            disabled: false,
         };
         assert_eq!(from_file.changelog, equivalent.changelog);
         assert_eq!(from_file.google_play.unwrap(), equivalent.google_play);
@@ -10234,6 +10387,7 @@ mod file_publish_tests {
                 changelog: None,
                 google_play: Some(play_settings("internal", None)),
                 app_store: None,
+                disabled: false,
             });
             assert_eq!(
                 effective.google_play.unwrap(),
@@ -10316,6 +10470,7 @@ mod file_publish_tests {
                 only: None,
                 authority: &authority,
                 file_publish: &plan.publish,
+                built_platforms: Some(&plan.platforms),
             },
             &mut steps,
         )
@@ -10343,6 +10498,78 @@ mod file_publish_tests {
             seen[1..]
                 .iter()
                 .all(|line| line.starts_with("POST /v1/runners/r1/jobs/b1/logs ")),
+            "{seen:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn publish_skips_a_store_whose_platform_the_run_did_not_build() {
+        let dir = workspace(
+            "skipped",
+            Some(
+                "version: 2\ntargets:\n  android:\n    build: flutter build appbundle --release\n  ios:\n    build: flutter build ipa --release\n",
+            ),
+        );
+        // An Android-only run of a pipeline whose settings publish to the App
+        // Store.
+        let snapshot = json!({ "selected_platforms": ["android"] });
+        let plan = resolve_execution_plan(&dir, &snapshot, false).unwrap();
+        assert_eq!(plan.platforms, [BuildPlatform::Android]);
+        // The publish plan, then the skip note.
+        let (url, server) = daemon(
+            r#"{"app_store":{"config":{"enabled":true},"credentials":{"key_id":"K","issuer_id":"I","private_key_pem":"P"}}}"#,
+            2,
+        )
+        .await;
+        let config = RunnerConfig {
+            runner_id: "r1".to_string(),
+            runner_token: "token".to_string(),
+            daemon_url: url.clone(),
+            name: "test".to_string(),
+        };
+        let job = ClaimedJob {
+            build_id: "b1".to_string(),
+            project_id: "p1".to_string(),
+            pipeline_id: "pl1".to_string(),
+            build_number: 1,
+            config_snapshot: json!({}),
+            commit_sha: None,
+            branch: None,
+            lease_expires_at: 0,
+            signing_token: "signing".to_string(),
+            retry_steps: None,
+        };
+        let authority = Arc::new(BuildAuthorityState::with_grace(Duration::from_secs(60)));
+        let mut steps = Vec::new();
+        // There is no IPA to upload, but the run built no iOS, so the upload
+        // is skipped and the build does not fail.
+        run_publish_steps(
+            &job,
+            &reqwest::Client::new(),
+            &url,
+            &config,
+            &mut BuildLogCursor::default(),
+            PublishInputs {
+                workspace: &dir,
+                signing_workspace: &dir,
+                secrets: &Default::default(),
+                signed_ipa_path: None,
+                ios_artifact_metadata: None,
+                only: None,
+                authority: &authority,
+                file_publish: &plan.publish,
+                built_platforms: Some(&plan.platforms),
+            },
+            &mut steps,
+        )
+        .await
+        .unwrap();
+        assert!(steps.is_empty(), "{steps:?}");
+        let seen = server.await.unwrap();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert!(
+            seen[1].starts_with("POST /v1/runners/r1/jobs/b1/logs "),
             "{seen:?}"
         );
         std::fs::remove_dir_all(&dir).ok();

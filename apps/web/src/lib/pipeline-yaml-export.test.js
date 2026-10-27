@@ -103,6 +103,8 @@ test('warns about the other pipelines that read the same file', () => {
   expect(pipelinesReadingPath('.oore.yaml', others)).toEqual(['Nightly'])
   expect(pipelinesReadingPath('ci/ios.yaml', others)).toEqual(['iOS'])
   expect(pipelinesReadingPath('ci/other.yaml', others)).toEqual([])
+  // `.oore.yaml` still reads a legacy `.oore.yml`.
+  expect(pipelinesReadingPath('.oore.yml', others)).toEqual(['Nightly'])
 })
 
 test('the pane shows errors, never a stale or missing file', () => {

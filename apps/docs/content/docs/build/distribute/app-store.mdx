@@ -4,9 +4,11 @@ status: implemented
 description: 'Upload signed iOS builds to App Store Connect and follow them through TestFlight, review and phased release.'
 ---
 
-A pipeline can upload its signed IPA to App Store Connect at the end of a
-build. Oore then sends the build to TestFlight groups or attaches it to an App
-Store version, and records each step as a release.
+A build can upload its signed IPA to App Store Connect when it ends. Oore
+then sends the build to TestFlight groups or attaches it to an App Store
+version, and records each step as a release. Set it up in the pipeline, as
+below, and with a `.oore.yaml` version 2 file choose the destination and the
+signing identity per workflow; see [Publish per workflow](#publish-per-workflow).
 
 All App Store Connect calls leave from the Direct macOS runner and the daemon
 host. Allow outbound HTTPS to `api.appstoreconnect.apple.com` and Apple's
@@ -95,6 +97,47 @@ Apple sets the percentages, so raising a step is not available.
   **In review** for external groups and App Store submissions.
 - App Store Connect shows the build in the TestFlight groups, or attached to
   the App Store version.
+
+## Publish per workflow
+
+With a `.oore.yaml` version 2 file, an ad hoc test workflow and an App Store
+release workflow can run from one pipeline:
+
+```yaml
+workflows:
+  adhoc:
+    signing: { ios: coin-adhoc } # ad hoc profiles; publishes nowhere
+  release:
+    signing: { ios: coin-app-store } # App Store profiles
+    targets:
+      ios:
+        build: flutter build ipa --release
+        publish:
+          app_store: { destination: testflight, groups: [Internal QA] }
+```
+
+- `signing.ios` names an iOS distribution identity in the
+  [project's signing library](/build/sign/project-library). Its certificate
+  and profiles replace the pipeline's for that workflow, and the export
+  follows its profiles. A workflow that uploads to App Store Connect needs an
+  identity with App Store profiles; an ad hoc one refuses the build with
+  `invalid_signing`.
+- `publish.app_store` sets the destination, groups, `submit_for_review` and
+  `phased_release`, in place of the **Publishing** tab's.
+- The upload still uses the pipeline's App Store Connect API key, so keep the
+  pipeline's iOS signing on with **Distribution** set to **App Store**, and
+  App Store Connect publishing turned on as in
+  [step 2](#2-turn-on-publishing). Release notes and the export compliance
+  answer also come from the **Publishing** tab.
+- To stop one workflow's uploads without a commit, open the pipeline's
+  **Workflows** tab, select **Settings** on the workflow, and turn
+  **Publishing** off. **iOS signing** there can pick another identity.
+
+`oore pipeline validate --project "$PROJECT_ID"` checks the identity names
+before you push, and `oore pipeline plan` prints each workflow's identity,
+destination and export. Every field is in
+[Publish](/reference/config/oore-yaml-v2#publish) and
+[Signing](/reference/config/oore-yaml-v2#signing).
 
 ## Store health on Home
 

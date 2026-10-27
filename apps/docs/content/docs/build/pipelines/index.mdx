@@ -1,0 +1,41 @@
+---
+title: 'Configure pipelines'
+status: implemented
+description: 'Set up what a pipeline builds, from the UI or from .oore.yaml, and which parts stay in Oore.'
+---
+
+A pipeline tells Oore what to build for a project, with which credentials and
+under which rules. What it builds can come from settings saved in Oore or
+from a `.oore.yaml` file in the repository. Credentials, approvals and
+per-workflow overrides always stay in Oore. Read
+[Files, pipelines and workflows](/concepts/files-pipelines-workflows) for
+which part lives where.
+
+## Set up a pipeline
+
+- [Configure a pipeline in the UI](/build/pipelines/use-the-ui) from a
+  template, without a file.
+- [Move a pipeline into `.oore.yaml`](/build/pipelines/oore-yaml) so it changes
+  with the code.
+- [Add pipelines from the repository](/build/pipelines/from-the-repository):
+  let Oore turn the config files it finds into pipelines, and check each
+  pipeline's health.
+
+## Work with workflows
+
+- [Run two workflows from one file](/build/pipelines/two-workflows), such as an
+  ad hoc build for testers and a store release, each with its own signing and
+  publishing.
+- [Move credentials into the project library](/build/sign/project-library) so
+  each workflow signs with its own keys.
+
+## Inputs and rules
+
+- [Use secrets in a pipeline](/build/pipelines/secrets) for tokens and keys.
+- [Set triggers, timeouts, and approvals](/build/pipelines/triggers).
+
+## Reference
+
+- [`.oore.yaml` version 2](/reference/config/oore-yaml-v2)
+- [Pipeline settings](/reference/config/pipeline-settings), including the
+  default workflow, per-workflow settings and health

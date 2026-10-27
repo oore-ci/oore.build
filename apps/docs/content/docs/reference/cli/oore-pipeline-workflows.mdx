@@ -1,0 +1,46 @@
+---
+title: '`oore pipeline workflows`'
+status: implemented
+description: "List the workflows a build of a pipeline can run, read from the pipeline's file."
+---
+
+```text
+oore pipeline workflows <PIPELINE_ID> [--ref REF] [--daemon-url <URL>] [--token <TOKEN>] [--json]
+```
+
+The command reads the pipeline's file from its repository with
+`GET /v1/pipelines/{pipeline_id}/workflows` and prints each workflow with the
+platforms it builds and the events that start it. It needs a signed-in
+session with read access to the project.
+
+| Option         | Effect                                                                     |
+| -------------- | -------------------------------------------------------------------------- |
+| `--ref REF`    | Branch, tag or commit to read the file at. Defaults to the default branch. |
+| `--daemon-url` | Backend URL; otherwise uses environment, CLI config, then loopback.        |
+| `--token`      | Session token; otherwise `OORE_SESSION_TOKEN` or the stored session.       |
+| `--json`       | Print the response: `state`, `path`, `default_workflow` and `workflows`.   |
+
+```bash
+oore pipeline workflows pipe_123
+oore pipeline workflows pipe_123 --ref develop --json
+```
+
+```text
+.oore/release.yaml on main
+
+WORKFLOW  PLATFORMS     STARTS ON
+adhoc     android       pull requests into main
+release   android, ios  push to main; tag v*
+
+release: android publishes to the Google Play internal track (workflows.release.targets.android.publish.play)
+
+No default workflow: name one with `oore build run --workflow`; triggers start every workflow that matches.
+```
+
+The default workflow is marked `(default)`. **STARTS ON** shows
+`pipeline trigger settings` for a workflow without `on`, which follows the
+pipeline's trigger settings, and `manual only` when its `on` starts nothing.
+When the file is missing, invalid, unreadable or has no named workflows, the
+command says so instead of printing a table. See
+[Workflows](/reference/config/oore-yaml-v2#workflows) for which workflow a
+build runs.

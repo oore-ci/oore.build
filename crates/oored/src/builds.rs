@@ -96,6 +96,7 @@ pub(crate) fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         source_build_id: row.get("source_build_id"),
         retry_steps: crate::step_retry::retry_steps_from_snapshot(&config_snapshot),
         approval,
+        workflow: snapshot_workflow(&config_snapshot),
         config_snapshot,
         runner_id: row.get("runner_id"),
         context,
@@ -369,7 +370,6 @@ pub(crate) async fn transition_build_with_results(
 #[allow(clippy::too_many_arguments)]
 fn create_config_snapshot(
     pipeline_config_path: &str,
-    config_path_explicit: bool,
     ui_execution_config: &PipelineExecutionConfig,
     timeout_minutes: u32,
     trigger_type: &str,
@@ -384,7 +384,9 @@ fn create_config_snapshot(
         "snapshot_version": 2,
         "config_resolution_policy": "file_first_ui_fallback",
         "config_path": pipeline_config_path,
-        "config_path_explicit": config_path_explicit,
+        // Runners before the config path was always explicit try
+        // `.oore.yaml` then `.oore.yml` only when this is false.
+        "config_path_explicit": pipeline_config_path.trim() != ".oore.yaml",
         "ui_execution_config": ui_execution_config_json,
         "artifact_patterns": ui_execution_config.artifact_patterns,
         "runs_on": scheduling_labels(&ui_execution_config.runs_on),
@@ -401,13 +403,28 @@ fn create_config_snapshot(
 /// Record the pipeline's v2 workflow, which the runner plans. Pipelines
 /// without one keep the snapshot they always had.
 fn set_snapshot_workflow(snapshot: &mut serde_json::Value, pipeline_row: &sqlx::sqlite::SqliteRow) {
-    if let Some(workflow) = pipeline_row
-        .try_get::<Option<String>, _>("workflow")
-        .ok()
-        .flatten()
-    {
+    set_snapshot_workflow_name(
+        snapshot,
+        pipeline_row
+            .try_get::<Option<String>, _>("workflow")
+            .ok()
+            .flatten()
+            .as_deref(),
+    );
+}
+
+fn set_snapshot_workflow_name(snapshot: &mut serde_json::Value, workflow: Option<&str>) {
+    if let Some(workflow) = workflow {
         snapshot["workflow"] = serde_json::json!(workflow);
     }
+}
+
+/// The workflow a build plans, as its snapshot records it.
+fn snapshot_workflow(snapshot: &serde_json::Value) -> Option<String> {
+    snapshot
+        .get("workflow")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
 }
 
 fn validate_selected_platforms(
@@ -708,12 +725,14 @@ async fn execute_build_insert(
 
     if let Some(webhook_id) = b.webhook_id {
         let claim = sqlx::query(
-            "INSERT INTO webhook_build_claims (webhook_id, pipeline_id, build_id) \
-             VALUES (?1, ?2, ?3) ON CONFLICT(webhook_id, pipeline_id) DO NOTHING",
+            "INSERT INTO webhook_build_claims (webhook_id, pipeline_id, workflow, build_id) \
+             VALUES (?1, ?2, COALESCE(json_extract(?4, '$.workflow'), ''), ?3) \
+             ON CONFLICT(webhook_id, pipeline_id, workflow) DO NOTHING",
         )
         .bind(webhook_id)
         .bind(b.pipeline_id)
         .bind(b.build_id)
+        .bind(b.config_snapshot)
         .execute(&mut *tx)
         .await?;
         if claim.rows_affected() != 1 {
@@ -782,6 +801,8 @@ pub struct ListBuildsQuery {
     pub pipeline_id: Option<String>,
     pub status: Option<String>,
     pub branch: Option<String>,
+    /// Exact `.oore.yaml` version 2 workflow name.
+    pub workflow: Option<String>,
     /// Comma-separated trigger kinds: `manual`, `api`, `schedule`, or a
     /// webhook event (`push`, `pull_request`, `tag_push`).
     pub trigger: Option<String>,
@@ -939,6 +960,13 @@ fn build_list_conditions(
     if let Some(ref branch) = params.branch {
         bind_values.push(branch.clone());
         conditions.push(format!("builds.branch = ?{}", bind_values.len()));
+    }
+    if let Some(ref workflow) = params.workflow {
+        bind_values.push(workflow.clone());
+        conditions.push(format!(
+            "json_extract(builds.config_snapshot, '$.workflow') = ?{}",
+            bind_values.len()
+        ));
     }
     if let Some(ref trigger) = params.trigger {
         let values = split_filter_values(trigger);
@@ -1302,6 +1330,38 @@ async fn require_google_play_secret(
     ))
 }
 
+/// What a build of `workflow` signs and publishes with, from the pipeline's
+/// workflow settings and the file's `signing`. `Err` explains a reference
+/// the project's credential library cannot satisfy.
+async fn workflow_binding(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    pipeline_id: &str,
+    file: Option<&RepositoryConfig>,
+    workflow: Option<&str>,
+) -> Result<crate::signing_identities::WorkflowBinding, String> {
+    let plan = file.and_then(|config| {
+        config
+            .plan(oore_contract::PlanRequest {
+                workflow,
+                ..oore_contract::PlanRequest::default()
+            })
+            .ok()
+    });
+    let (signing, app_store) = plan
+        .map(|plan| (plan.signing, plan.publish.needs_app_store_export()))
+        .unwrap_or_default();
+    crate::signing_identities::resolve_workflow_binding(
+        pool,
+        project_id,
+        pipeline_id,
+        workflow,
+        &signing,
+        app_store,
+    )
+    .await
+}
+
 /// `POST /v1/projects/{project_id}/builds` — create a new build (manual/API trigger).
 pub async fn create_build(
     State(state): State<Arc<AppState>>,
@@ -1377,7 +1437,7 @@ pub async fn create_build(
 
     // Verify pipeline exists and belongs to this project
     let pipeline_row = sqlx::query(
-        "SELECT id, config_path, config_path_explicit, execution_config, concurrency, \
+        "SELECT id, config_path, execution_config, concurrency, \
                 timeout_minutes, approval_policy, workflow \
          FROM pipelines WHERE id = ?1 AND project_id = ?2",
     )
@@ -1402,7 +1462,6 @@ pub async fn create_build(
     })?;
 
     let config_path: String = pipeline_row.get("config_path");
-    let config_path_explicit: i32 = pipeline_row.try_get("config_path_explicit").unwrap_or(0);
     let execution_config_json: String = pipeline_row
         .try_get("execution_config")
         .unwrap_or_else(|_| "{}".to_string());
@@ -1437,6 +1496,30 @@ pub async fn create_build(
         );
     }
 
+    // The request's workflow, else the pipeline's default.
+    let workflow = match normalize_optional(req.workflow) {
+        Some(name) => Some(crate::pipelines::normalize_workflow_name(&name)?),
+        None => pipeline_row.try_get("workflow").ok().flatten(),
+    };
+    let file = crate::pipelines::check_build_workflow(
+        &state,
+        &project_id,
+        &config_path,
+        commit_sha.as_deref().expect("commit resolved"),
+        workflow.as_deref(),
+    )
+    .await?;
+    let binding = workflow_binding(
+        &pool,
+        &project_id,
+        &req.pipeline_id,
+        file.as_deref(),
+        workflow.as_deref(),
+    )
+    .await
+    .map_err(|message| api_err(StatusCode::BAD_REQUEST, "invalid_signing", message))?;
+    let approval_required = binding.approval_required.unwrap_or(approval_required);
+
     let now = now_unix();
     let build_id = Uuid::new_v4().to_string();
 
@@ -1457,7 +1540,6 @@ pub async fn create_build(
 
     let mut config_snapshot = create_config_snapshot(
         &config_path,
-        config_path_explicit != 0,
         &execution_config,
         timeout_minutes,
         "manual",
@@ -1473,7 +1555,8 @@ pub async fn create_build(
     if let Some(selected_platforms) = selected_platforms {
         config_snapshot["selected_platforms"] = serde_json::json!(selected_platforms);
     }
-    set_snapshot_workflow(&mut config_snapshot, &pipeline_row);
+    set_snapshot_workflow_name(&mut config_snapshot, workflow.as_deref());
+    binding.write_to(&mut config_snapshot);
 
     let snapshot_str = config_snapshot.to_string();
     let inserted = insert_build_with_retry(
@@ -1579,6 +1662,7 @@ pub async fn create_build(
         source_build_id: None,
         retry_steps: None,
         approval: pending_approval(approval_required, now),
+        workflow: snapshot_workflow(&config_snapshot),
         config_snapshot,
         runner_id: None,
         context: None,
@@ -2452,6 +2536,7 @@ pub(crate) async fn queue_rerun(
         source_build_id: Some(build_id),
         retry_steps,
         approval: pending_approval(approval_required, now),
+        workflow: snapshot_workflow(&config_snapshot),
         config_snapshot,
         runner_id: None,
         context: None,
@@ -2504,7 +2589,6 @@ async fn pipeline_file_at(
     encryption_key: &[u8],
     project_id: &str,
     config_path: &str,
-    config_path_explicit: bool,
     commit_sha: &str,
 ) -> Result<Option<RepositoryConfig>, String> {
     use crate::repository_workflows::{PipelineFile, load_pipeline_file};
@@ -2513,7 +2597,6 @@ async fn pipeline_file_at(
         encryption_key,
         project_id,
         config_path,
-        config_path_explicit,
         Some(commit_sha),
     )
     .await
@@ -2598,10 +2681,8 @@ pub async fn trigger_build_from_webhook(
     // Fetched at most once, and only when a pipeline filters on paths.
     let mut compared_files: Option<Option<Vec<String>>> = None;
     // Pipeline files at this revision, read once per project and path.
-    let mut pipeline_files: HashMap<
-        (String, Option<String>),
-        Result<Option<RepositoryConfig>, String>,
-    > = HashMap::new();
+    let mut pipeline_files: HashMap<(String, String), Result<Option<RepositoryConfig>, String>> =
+        HashMap::new();
     // The first pipeline that could not be matched for want of its file;
     // returned after every other pipeline had its chance to build.
     let mut deferred: Option<(StatusCode, Json<ApiError>)> = None;
@@ -2634,7 +2715,7 @@ pub async fn trigger_build_from_webhook(
         // ponytail: one pipeline query per linked project; batch when repositories commonly map to many projects.
         // Find enabled pipelines for this project
         let pipeline_rows = sqlx::query(
-            "SELECT id, config_path, config_path_explicit, execution_config, trigger_config, concurrency, \
+            "SELECT id, config_path, execution_config, trigger_config, concurrency, \
                     timeout_minutes, approval_policy, workflow \
              FROM pipelines WHERE project_id = ?1 AND enabled = 1",
         )
@@ -2643,14 +2724,16 @@ pub async fn trigger_build_from_webhook(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch pipelines");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch pipelines")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch pipelines",
+            )
         })?;
 
         for pipeline_row in &pipeline_rows {
             let pipeline_id: String = pipeline_row.get("id");
             let config_path: String = pipeline_row.get("config_path");
-            let config_path_explicit: i32 =
-                pipeline_row.try_get("config_path_explicit").unwrap_or(0);
             let execution_config_json: String = pipeline_row
                 .try_get("execution_config")
                 .unwrap_or_else(|_| "{}".to_string());
@@ -2685,29 +2768,36 @@ pub async fn trigger_build_from_webhook(
                 );
                 continue;
             }
-            let file_on: Option<TriggerSpec> = match sha.filter(|_| file_event.is_some()) {
+            // Each (workflow, `on`) this event may start. A pipeline without a
+            // default workflow fans out to every workflow in its file.
+            let candidates: Vec<(Option<String>, Option<TriggerSpec>)> = match sha
+                .filter(|_| file_event.is_some())
+            {
                 Some(sha) => {
-                    let key = (
-                        project_id.clone(),
-                        (config_path_explicit != 0).then(|| config_path.trim().to_string()),
-                    );
+                    let key = (project_id.clone(), config_path.trim().to_string());
                     if !pipeline_files.contains_key(&key) {
-                        let config = pipeline_file_at(
-                            pool,
-                            encryption_key,
-                            &project_id,
-                            &config_path,
-                            config_path_explicit != 0,
-                            sha,
-                        )
-                        .await;
+                        let config =
+                            pipeline_file_at(pool, encryption_key, &project_id, &config_path, sha)
+                                .await;
                         pipeline_files.insert(key.clone(), config);
                     }
                     match &pipeline_files[&key] {
-                        Ok(config) => config
-                            .as_ref()
-                            .and_then(|config| config.triggers(workflow.as_deref()))
-                            .cloned(),
+                        Ok(Some(config)) => match &workflow {
+                            Some(name) => {
+                                vec![(Some(name.clone()), config.triggers(Some(name)).cloned())]
+                            }
+                            // No default workflow: every workflow is a
+                            // candidate, matched on its own `on`.
+                            None if config.workflow_names().len() > 1 => config
+                                .workflow_names()
+                                .into_iter()
+                                .map(|name| {
+                                    (Some(name.to_string()), config.triggers(Some(name)).cloned())
+                                })
+                                .collect(),
+                            None => vec![(None, config.triggers(None).cloned())],
+                        },
+                        Ok(None) => vec![(workflow.clone(), None)],
                         // A pipeline that picks a workflow builds from a v2
                         // file, whose `on` may be far narrower than its
                         // trigger settings. Skip it and fail the delivery
@@ -2736,127 +2826,154 @@ pub async fn trigger_build_from_webhook(
                                 error = %error,
                                 "could not read the pipeline file; its trigger settings apply"
                             );
-                            None
+                            vec![(None, None)]
                         }
                     }
                 }
-                None => None,
+                None => vec![(workflow.clone(), None)],
             };
 
-            let ref_matches = match &file_on {
-                Some(on) => file_event.is_some_and(|event| on.matches_ref(event)),
-                None => trigger_config.should_trigger(event_type, branch, tag),
-            };
-            if !ref_matches {
-                info!(
-                    pipeline_id = %pipeline_id,
-                    event_type = %event_type,
-                    branch = ?branch,
-                    tag = ?tag,
-                    from_file = file_on.is_some(),
-                    "webhook event filtered by the pipeline triggers, skipping pipeline"
-                );
-                continue;
-            }
-            // A build without a commit cannot check out anything, for example
-            // a deleted branch.
-            if commit_sha.is_none_or(str::is_empty) {
-                warn!(
-                    pipeline_id = %pipeline_id,
-                    event_type = %event_type,
-                    "webhook payload has no commit_sha; skipping build creation"
-                );
-                continue;
-            }
-            let has_path_filters = match &file_on {
-                Some(on) => on.has_path_filters(),
-                None => trigger_config.has_path_filters(),
-            };
-            if tag.is_none() && has_path_filters {
-                let changed_files = match &trigger.changes {
-                    ChangeSet::Unknown => None,
-                    ChangeSet::Files(files) => Some(*files),
-                    ChangeSet::Compare { base, head } => {
-                        if compared_files.is_none() {
-                            compared_files = Some(
-                                crate::integrations::changed_files(
-                                    pool,
-                                    encryption_key,
-                                    &repository_id,
-                                    base,
-                                    head,
-                                )
-                                .await,
-                            );
-                        }
-                        compared_files.as_ref().and_then(Option::as_deref)
-                    }
+            for (workflow, file_on) in candidates {
+                let ref_matches = match &file_on {
+                    Some(on) => file_event.is_some_and(|event| on.matches_ref(event)),
+                    None => trigger_config.should_trigger(event_type, branch, tag),
                 };
-                let paths_match = match &file_on {
-                    Some(on) => on.paths_match(changed_files),
-                    None => trigger_config.paths_match(changed_files),
-                };
-                if !paths_match {
+                if !ref_matches {
                     info!(
                         pipeline_id = %pipeline_id,
                         event_type = %event_type,
-                        "no changed file matches the pipeline path filters, skipping pipeline"
+                        branch = ?branch,
+                        tag = ?tag,
+                        from_file = file_on.is_some(),
+                        "webhook event filtered by the pipeline triggers, skipping pipeline"
                     );
                     continue;
                 }
-            }
+                // A build without a commit cannot check out anything, for example
+                // a deleted branch.
+                if commit_sha.is_none_or(str::is_empty) {
+                    warn!(
+                        pipeline_id = %pipeline_id,
+                        event_type = %event_type,
+                        "webhook payload has no commit_sha; skipping build creation"
+                    );
+                    continue;
+                }
+                let has_path_filters = match &file_on {
+                    Some(on) => on.has_path_filters(),
+                    None => trigger_config.has_path_filters(),
+                };
+                if tag.is_none() && has_path_filters {
+                    let changed_files = match &trigger.changes {
+                        ChangeSet::Unknown => None,
+                        ChangeSet::Files(files) => Some(*files),
+                        ChangeSet::Compare { base, head } => {
+                            if compared_files.is_none() {
+                                compared_files = Some(
+                                    crate::integrations::changed_files(
+                                        pool,
+                                        encryption_key,
+                                        &repository_id,
+                                        base,
+                                        head,
+                                    )
+                                    .await,
+                                );
+                            }
+                            compared_files.as_ref().and_then(Option::as_deref)
+                        }
+                    };
+                    let paths_match = match &file_on {
+                        Some(on) => on.paths_match(changed_files),
+                        None => trigger_config.paths_match(changed_files),
+                    };
+                    if !paths_match {
+                        info!(
+                            pipeline_id = %pipeline_id,
+                            event_type = %event_type,
+                            "no changed file matches the pipeline path filters, skipping pipeline"
+                        );
+                        continue;
+                    }
+                }
 
-            let build_id = Uuid::new_v4().to_string();
-            let approval_required = approval_policy.applies_to(&canonical_event);
+                let build_id = Uuid::new_v4().to_string();
+                let file = sha.and_then(|_| {
+                    let key = (project_id.clone(), config_path.trim().to_string());
+                    pipeline_files
+                        .get(&key)
+                        .and_then(|config| config.as_ref().ok())
+                        .and_then(Option::as_ref)
+                });
+                // A reference the library cannot satisfy still queues the build, which
+                // then fails with the reason when it asks for signing.
+                let (binding, binding_error) = match workflow_binding(
+                    pool,
+                    &project_id,
+                    &pipeline_id,
+                    file,
+                    workflow.as_deref(),
+                )
+                .await
+                {
+                    Ok(binding) => (binding, None),
+                    Err(message) => (Default::default(), Some(message)),
+                };
+                let approval_required = binding
+                    .approval_required
+                    .unwrap_or_else(|| approval_policy.applies_to(&canonical_event));
 
-            let mut config_snapshot = create_config_snapshot(
-                &config_path,
-                config_path_explicit != 0,
-                &execution_config,
-                timeout_minutes,
-                "webhook",
-                commit_sha,
-                branch,
-                (&repository_id, &repo_url),
-            );
-            set_snapshot_workflow(&mut config_snapshot, pipeline_row);
-
-            let snapshot_str = config_snapshot.to_string();
-            let inserted = insert_build_with_retry(
-                pool,
-                &BuildInsertBinds {
-                    build_id: &build_id,
-                    project_id: &project_id,
-                    pipeline_id: &pipeline_id,
-                    actor,
-                    event_type: Some(event_type),
-                    trigger_ref,
+                let mut config_snapshot = create_config_snapshot(
+                    &config_path,
+                    &execution_config,
+                    timeout_minutes,
+                    "webhook",
                     commit_sha,
                     branch,
-                    changelog: None,
-                    config_snapshot: &snapshot_str,
-                    webhook_id: Some(webhook_id),
-                    now,
-                    trigger_type: "webhook",
-                    source_build_id: None,
-                    cancel_previous: concurrency.cancel_previous,
-                    approval_required,
-                },
-            )
-            .await?;
-            if !inserted {
-                warn!(
-                    project_id = %project_id,
-                    pipeline_id = %pipeline_id,
-                    "skipping webhook build because it already exists or the project source changed"
+                    (&repository_id, &repo_url),
                 );
-                continue;
-            }
+                set_snapshot_workflow_name(&mut config_snapshot, workflow.as_deref());
+                binding.write_to(&mut config_snapshot);
+                if let Some(message) = &binding_error {
+                    config_snapshot["signing_error"] = serde_json::json!(message);
+                }
 
-            let build_number = fetch_build_number(pool, &build_id).await?;
+                let snapshot_str = config_snapshot.to_string();
+                let inserted = insert_build_with_retry(
+                    pool,
+                    &BuildInsertBinds {
+                        build_id: &build_id,
+                        project_id: &project_id,
+                        pipeline_id: &pipeline_id,
+                        actor,
+                        event_type: Some(event_type),
+                        trigger_ref,
+                        commit_sha,
+                        branch,
+                        changelog: None,
+                        config_snapshot: &snapshot_str,
+                        webhook_id: Some(webhook_id),
+                        now,
+                        trigger_type: "webhook",
+                        source_build_id: None,
+                        cancel_previous: concurrency.cancel_previous,
+                        approval_required,
+                    },
+                )
+                .await?;
+                if !inserted {
+                    warn!(
+                        project_id = %project_id,
+                        pipeline_id = %pipeline_id,
+                        "skipping webhook build because it already exists or the project source changed"
+                    );
+                    continue;
+                }
 
-            // Insert initial build event
-            sqlx::query(
+                let build_number = fetch_build_number(pool, &build_id).await?;
+
+                // Insert initial build event
+                sqlx::query(
                 "INSERT INTO build_events (id, build_id, from_status, to_status, actor, reason, created_at) \
                  VALUES (?1, ?2, NULL, 'queued', ?3, ?4, ?5)",
             )
@@ -2872,47 +2989,49 @@ pub async fn trigger_build_from_webhook(
                 api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to record build event")
             })?;
 
-            if approval_required {
-                announce_pending_approval(pool, encryption_key, &build_id, None).await;
+                if approval_required {
+                    announce_pending_approval(pool, encryption_key, &build_id, None).await;
+                }
+
+                info!(
+                    build_id = %build_id,
+                    build_number = build_number,
+                    project_id = %project_id,
+                    pipeline_id = %pipeline_id,
+                    approval_required,
+                    "webhook-triggered build created"
+                );
+
+                created_builds.push(Build {
+                    id: build_id,
+                    project_id: project_id.clone(),
+                    pipeline_id: pipeline_id.clone(),
+                    build_number,
+                    status: "queued".to_string(),
+                    runner_policy_block_reason,
+                    trigger_type: "webhook".to_string(),
+                    trigger_actor: actor.map(String::from),
+                    trigger_event: Some(event_type.to_string()),
+                    trigger_ref: trigger_ref.map(String::from),
+                    commit_sha: commit_sha.map(String::from),
+                    branch: branch.map(String::from),
+                    changelog: None,
+                    source_build_id: None,
+                    retry_steps: None,
+                    approval: pending_approval(approval_required, now),
+                    workflow: snapshot_workflow(&config_snapshot),
+                    config_snapshot,
+                    runner_id: None,
+                    context: None,
+                    step_results: None,
+                    exit_code: None,
+                    queued_at: now,
+                    started_at: None,
+                    finished_at: None,
+                    created_at: now,
+                    updated_at: now,
+                });
             }
-
-            info!(
-                build_id = %build_id,
-                build_number = build_number,
-                project_id = %project_id,
-                pipeline_id = %pipeline_id,
-                approval_required,
-                "webhook-triggered build created"
-            );
-
-            created_builds.push(Build {
-                id: build_id,
-                project_id: project_id.clone(),
-                pipeline_id,
-                build_number,
-                status: "queued".to_string(),
-                runner_policy_block_reason,
-                trigger_type: "webhook".to_string(),
-                trigger_actor: actor.map(String::from),
-                trigger_event: Some(event_type.to_string()),
-                trigger_ref: trigger_ref.map(String::from),
-                commit_sha: commit_sha.map(String::from),
-                branch: branch.map(String::from),
-                changelog: None,
-                source_build_id: None,
-                retry_steps: None,
-                approval: pending_approval(approval_required, now),
-                config_snapshot,
-                runner_id: None,
-                context: None,
-                step_results: None,
-                exit_code: None,
-                queued_at: now,
-                started_at: None,
-                finished_at: None,
-                created_at: now,
-                updated_at: now,
-            });
         }
     }
 
@@ -2930,7 +3049,7 @@ pub async fn create_scheduled_build(
     schedule: &ScheduleTrigger,
 ) -> Result<String, (StatusCode, Json<ApiError>)> {
     let row = sqlx::query(
-        "SELECT pl.project_id, pl.config_path, pl.config_path_explicit, pl.execution_config, \
+        "SELECT pl.project_id, pl.config_path, pl.execution_config, \
                 pl.concurrency, pl.timeout_minutes, pl.approval_policy, pl.workflow, \
                 p.repository_id, p.default_branch \
          FROM pipelines pl JOIN projects p ON p.id = pl.project_id \
@@ -2997,7 +3116,6 @@ pub async fn create_scheduled_build(
     let approval_required = approval_policy.applies_to("schedule");
     let mut config_snapshot = create_config_snapshot(
         &row.get::<String, _>("config_path"),
-        row.try_get::<i32, _>("config_path_explicit").unwrap_or(0) != 0,
         &execution_config,
         timeout_minutes,
         "schedule",
@@ -3675,6 +3793,7 @@ mod tests {
             pipeline_id: None,
             status: None,
             branch: None,
+            workflow: None,
             trigger: None,
             actor: None,
             created_after: None,
@@ -4078,8 +4197,8 @@ mod tests {
         trigger_config: &str,
     ) {
         sqlx::query(
-            "INSERT INTO pipelines (id, project_id, name, trigger_config, workflow, created_at, updated_at) \
-             VALUES (?1, 'p1', ?1, ?2, ?3, 0, 0)",
+            "INSERT INTO pipelines (id, project_id, name, config_path, trigger_config, workflow, created_at, updated_at) \
+             VALUES (?1, 'p1', ?1, '.oore.yaml', ?2, ?3, 0, 0)",
         )
         .bind(id)
         .bind(trigger_config)
@@ -4156,8 +4275,8 @@ mod tests {
         // decides for pipelines that pick a workflow.
         add_pipeline(&pool, "adhoc", Some("adhoc"), PUSH_TO_MAIN).await;
         add_pipeline(&pool, "release", Some("release"), PUSH_TO_MAIN).await;
-        // Several workflows, none picked, no top-level `on`: the UI applies.
-        add_pipeline(&pool, "settings", None, PUSH_TO_MAIN).await;
+        // No default workflow: every workflow whose `on` matches builds.
+        add_pipeline(&pool, "fanout", None, PUSH_TO_MAIN).await;
 
         let pull_request = |target_branch| Revision {
             event_type: "pull_request",
@@ -4168,7 +4287,7 @@ mod tests {
         };
         assert_eq!(
             built(&pool, &commit, pull_request(Some("main"))).await,
-            ["adhoc:adhoc"]
+            ["adhoc:adhoc", "fanout:adhoc"]
         );
         assert!(
             built(&pool, &commit, pull_request(Some("develop")))
@@ -4185,7 +4304,7 @@ mod tests {
         };
         assert_eq!(
             built(&pool, &commit, tag("v1.2.0")).await,
-            ["release:release"]
+            ["fanout:release", "release:release"]
         );
         assert!(built(&pool, &commit, tag("nightly")).await.is_empty());
 
@@ -4202,18 +4321,45 @@ mod tests {
         let docs = ["README.md".to_string()];
         assert_eq!(
             built(&pool, &commit, push("main", &lib)).await,
-            ["release:release", "settings"]
+            ["fanout:release", "release:release"]
         );
-        // `on.paths` filters the release workflow; the UI pipeline has none.
-        assert_eq!(
-            built(&pool, &commit, push("main", &docs)).await,
-            ["settings"]
-        );
+        // `on.paths` filters the release workflow.
+        assert!(built(&pool, &commit, push("main", &docs)).await.is_empty());
         assert!(
             built(&pool, &commit, push("feature/x", &lib))
                 .await
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn fan_out_workflows_without_on_follow_the_trigger_settings() {
+        let repo = tempfile::tempdir().unwrap();
+        let commit = commit_files(
+            repo.path(),
+            &[(
+                ".oore.yaml",
+                "version: 2\ntargets:\n  android:\n    build: flutter build apk\nworkflows:\n  adhoc: {}\n  release:\n    on:\n      tag: v*\n",
+            )],
+        );
+        let pool = local_pool(repo.path()).await;
+        add_pipeline(&pool, "pl1", None, PUSH_TO_MAIN).await;
+        let push = Revision {
+            event_type: "push",
+            branch: Some("main"),
+            tag: None,
+            target_branch: None,
+            changes: ChangeSet::Unknown,
+        };
+        assert_eq!(built(&pool, &commit, push).await, ["pl1:adhoc"]);
+        let tag = Revision {
+            event_type: "push",
+            branch: None,
+            tag: Some("v2.0.0"),
+            target_branch: None,
+            changes: ChangeSet::Unknown,
+        };
+        assert_eq!(built(&pool, &commit, tag).await, ["pl1:release"]);
     }
 
     #[tokio::test]
@@ -4269,12 +4415,10 @@ mod tests {
         );
         let pool = local_pool(repo.path()).await;
         add_pipeline(&pool, "pl1", None, PUSH_TO_MAIN).await;
-        sqlx::query(
-            "UPDATE pipelines SET config_path = '.oore/release.yaml', config_path_explicit = 1",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("UPDATE pipelines SET config_path = '.oore/release.yaml'")
+            .execute(&pool)
+            .await
+            .unwrap();
         let push = Revision {
             event_type: "push",
             branch: Some("main"),

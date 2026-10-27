@@ -117,6 +117,8 @@ use utoipa::{
         operations::update_project,
         operations::delete_project,
         operations::discover_repository_workflows,
+        operations::list_repository_config_files,
+        operations::refresh_repository_config_files,
         // ── Project Members ──
         operations::list_project_members,
         operations::list_project_member_candidates,
@@ -127,6 +129,13 @@ use utoipa::{
         operations::create_pipeline,
         operations::list_pipelines,
         operations::get_pipeline,
+        operations::list_pipeline_workflows,
+        operations::list_pipeline_workflow_settings,
+        operations::update_pipeline_workflow_settings,
+        operations::list_signing_identities,
+        operations::create_signing_identity,
+        operations::update_signing_identity,
+        operations::delete_signing_identity,
         operations::update_pipeline,
         operations::delete_pipeline,
         operations::validate_pipeline,
@@ -370,6 +379,29 @@ use utoipa::{
         oore_contract::RepositoryWorkflowExecutionPreview,
         oore_contract::RepositoryWorkflowPreview,
         oore_contract::DiscoverRepositoryWorkflowsResponse,
+        oore_contract::PipelineFileState,
+        oore_contract::PipelineWorkflowSummary,
+        oore_contract::SigningSpec,
+        oore_contract::PipelineWorkflowsResponse,
+        oore_contract::PipelineHealthState,
+        oore_contract::PipelineHealth,
+        oore_contract::RepositoryConfigFilePipeline,
+        oore_contract::RepositoryConfigFile,
+        oore_contract::RepositoryConfigFilesResponse,
+        oore_contract::SigningIdentityKind,
+        oore_contract::SigningIdentityUse,
+        oore_contract::SigningIdentityProfile,
+        oore_contract::SigningIdentity,
+        oore_contract::ListSigningIdentitiesResponse,
+        oore_contract::AndroidKeystoreInput,
+        oore_contract::IosProfileInput,
+        oore_contract::IosDistributionInput,
+        oore_contract::CreateSigningIdentityRequest,
+        oore_contract::UpdateSigningIdentityRequest,
+        oore_contract::SigningIdentityResponse,
+        oore_contract::PipelineWorkflowSettings,
+        oore_contract::ListPipelineWorkflowSettingsResponse,
+        oore_contract::UpdatePipelineWorkflowSettingsRequest,
         // Project Members
         oore_contract::ProjectRole,
         oore_contract::ProjectMember,
@@ -1883,6 +1915,40 @@ mod operations {
     )]
     pub(super) fn discover_repository_workflows() {}
 
+    /// List config files found in the repository
+    ///
+    /// Config files on the project's default branch as Oore last read them,
+    /// with the pipelines that use each. Served from a cache that pushes
+    /// refresh; it never calls the source provider. The first request for a
+    /// project that was never read starts a read in the background.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/repository-config-files", tag = "Pipelines",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Cached repository config files", body = RepositoryConfigFilesResponse),
+            (status = 403, description = "Read permission required", body = ApiError),
+            (status = 404, description = "Project not found", body = ApiError),
+        )
+    )]
+    pub(super) fn list_repository_config_files() {}
+
+    /// Read the repository's config files now
+    ///
+    /// Reads the default branch through the source provider, rewrites the
+    /// cache, and adds pipelines for new files when the project's
+    /// `auto_add_pipelines` is on. A failed read is reported in `error`
+    /// beside the files from the read before it.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/repository-config-files/refresh", tag = "Pipelines",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Refreshed repository config files", body = RepositoryConfigFilesResponse),
+            (status = 403, description = "Manage Pipelines permission required", body = ApiError),
+            (status = 404, description = "Project or project source not found", body = ApiError),
+        )
+    )]
+    pub(super) fn refresh_repository_config_files() {}
+
     // ── Pipelines ──
 
     /// Create pipeline
@@ -1925,6 +1991,118 @@ mod operations {
         )
     )]
     pub(super) fn get_pipeline() {}
+
+    /// List a pipeline's workflows
+    ///
+    /// Reads the pipeline's repository file at `ref` and lists the version 2
+    /// workflows a build can name, with the platforms, triggers and store
+    /// uploads of each. A missing, invalid or unreachable file is reported in
+    /// `state`, not as an error.
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/workflows", tag = "Pipelines",
+        params(
+            ("pipeline_id" = String, Path, description = "Pipeline ID"),
+            ("ref" = Option<String>, Query, description = "Branch, tag, or commit; defaults to the project default branch"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Workflows in the pipeline file", body = PipelineWorkflowsResponse),
+            (status = 400, description = "Invalid ref", body = ApiError),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn list_pipeline_workflows() {}
+
+    /// List a pipeline's workflow settings
+    ///
+    /// Per-workflow overrides of the pipeline's v2 file: signing identities,
+    /// publishing on or off, and the approval gate.
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/workflow-settings", tag = "Pipelines",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Workflow settings", body = ListPipelineWorkflowSettingsResponse),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn list_pipeline_workflow_settings() {}
+
+    /// Replace one workflow's settings
+    ///
+    /// Omitted fields are cleared, so the workflow follows its file again.
+    /// Changing `approval_required` needs the Approve builds permission.
+    #[utoipa::path(put, path = "/v1/pipelines/{pipeline_id}/workflow-settings/{workflow}", tag = "Pipelines",
+        params(
+            ("pipeline_id" = String, Path, description = "Pipeline ID"),
+            ("workflow" = String, Path, description = "Workflow name in the pipeline's file"),
+        ),
+        request_body = UpdatePipelineWorkflowSettingsRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Saved settings", body = PipelineWorkflowSettings),
+            (status = 400, description = "Unknown identity or wrong kind", body = ApiError),
+            (status = 403, description = "Permission required", body = ApiError),
+        )
+    )]
+    pub(super) fn update_pipeline_workflow_settings() {}
+
+    /// List a project's signing identities
+    ///
+    /// The project credential library. Key material is never returned.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/signing-identities", tag = "Projects",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Signing identities", body = ListSigningIdentitiesResponse),
+        )
+    )]
+    pub(super) fn list_signing_identities() {}
+
+    /// Add a signing identity
+    ///
+    /// An Android keystore, or an iOS distribution certificate with its
+    /// provisioning profiles. A v2 file names it under `signing`.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/signing-identities", tag = "Projects",
+        params(("project_id" = String, Path, description = "Project ID")),
+        request_body = CreateSigningIdentityRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Identity added", body = SigningIdentityResponse),
+            (status = 400, description = "Invalid material", body = ApiError),
+            (status = 409, description = "Name taken", body = ApiError),
+        )
+    )]
+    pub(super) fn create_signing_identity() {}
+
+    /// Rename a signing identity or replace its material
+    #[utoipa::path(patch, path = "/v1/projects/{project_id}/signing-identities/{identity_id}", tag = "Projects",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("identity_id" = String, Path, description = "Identity ID"),
+        ),
+        request_body = UpdateSigningIdentityRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Identity saved", body = SigningIdentityResponse),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn update_signing_identity() {}
+
+    /// Delete a signing identity
+    ///
+    /// Refused while a pipeline's workflow settings pick it.
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/signing-identities/{identity_id}", tag = "Projects",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("identity_id" = String, Path, description = "Identity ID"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Deleted", body = OkResponse),
+            (status = 409, description = "In use", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_signing_identity() {}
 
     /// Update pipeline
     #[utoipa::path(patch, path = "/v1/pipelines/{pipeline_id}", tag = "Pipelines",
@@ -2425,7 +2603,7 @@ mod operations {
         security(("bearer_auth" = [])),
         responses(
             (status = 201, description = "Build queued", body = CreateBuildResponse),
-            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 400, description = "Invalid input, or a workflow the pipeline file at the build commit does not define (`invalid_workflow`)", body = ApiError),
             (status = 404, description = "Project or pipeline not found", body = ApiError),
             (status = 409, description = "Project source is not configured or resolvable, or the Google Play service account secret is missing", body = ApiError),
         )
@@ -2460,6 +2638,7 @@ mod operations {
             ("pipeline_id" = Option<String>, Query, description = "Filter by pipeline"),
             ("status" = Option<String>, Query, description = "Filter by one status or up to 9 comma-separated statuses"),
             ("branch" = Option<String>, Query, description = "Filter by exact branch name"),
+            ("workflow" = Option<String>, Query, description = "Filter by exact .oore.yaml version 2 workflow name"),
             ("trigger" = Option<String>, Query, description = "Filter by one or more comma-separated trigger kinds: manual, api, schedule, push, pull_request, or tag_push. The last three are webhook events."),
             ("actor" = Option<String>, Query, description = "Filter by exact trigger actor (the user email for manual builds, the SCM login for webhook builds). At most 320 characters."),
             ("created_after" = Option<i64>, Query, description = "Only builds created at or after this Unix time in seconds"),

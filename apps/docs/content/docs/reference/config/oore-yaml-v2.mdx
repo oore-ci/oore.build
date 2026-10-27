@@ -71,6 +71,7 @@ workflow runs.
 | Field                 | Type     | Required | Default                    |
 | --------------------- | -------- | -------- | -------------------------- |
 | `version`             | integer  | Yes      | Must be `2`                |
+| `name`                | string   | No       | The file's path            |
 | `app`                 | object   | No       | No Flutter pin, no flavors |
 | `targets`             | object   | Yes¹     | No default                 |
 | `steps`               | list     | No       | `[build]`                  |
@@ -78,6 +79,7 @@ workflow runs.
 | `vars`                | map      | No       | `{}`                       |
 | `on`                  | object   | No       | Pipeline trigger settings  |
 | `workflows`           | map      | No       | One implicit workflow      |
+| `signing`             | object   | No       | Pipeline signing settings  |
 | `build_number_offset` | integer  | No       | `0`                        |
 | `runs_on`             | string[] | No       | `[macos]`                  |
 | `isolation`           | string   | No       | `host`                     |
@@ -163,42 +165,100 @@ other vars, is rejected with the cycle it forms, such as
 
 ## Workflows
 
-`workflows` maps a name to overrides of the top level:
-
-| Field     | Type        | Effect                                                                                                        |
-| --------- | ----------- | ------------------------------------------------------------------------------------------------------------- |
-| `on`      | object      | When the workflow runs. Replaces the top-level `on`.                                                          |
-| `targets` | list or map | `[android]` picks top-level targets; a map overrides `build`, `artifacts`, `publish` or `budgets` per target. |
-| `flavors` | string[]    | A subset of `app.flavors`.                                                                                    |
-| `steps`   | list        | Replaces the top-level steps. Entries can name top-level steps.                                               |
-| `env`     | map         | Adds to or replaces top-level env values by name.                                                             |
-| `vars`    | map         | Adds to or replaces top-level vars by name, also where other vars use them.                                   |
-
-A workflow target that has no top-level target of the same platform must set
-`build`. Where a workflow target leaves out `build` or `artifacts`, the
-top-level target's applies. `publish` works the same way, except that a
-workflow target that sets its own `build` publishes only if it also sets
-`publish`: the top-level `publish` uploads what the top-level build makes.
-`publish: false` drops it without replacing `build`. `budgets` applies until
-the workflow target sets its own, even with a new `build`.
+`workflows` maps a name to a variant of the top level. Each build runs one
+workflow, and a workflow takes everything it does not set from the top level.
 Workflow names use letters, digits, `-` and `_`.
 
-A pipeline builds one workflow, picked under **Workflow** in its settings (the
-API's `workflow` field). The selector appears when the pipeline's file defines
-workflows. Without a pick, a file with one workflow builds it, and a file with
-none builds the top level; a file with several fails the build with
-`choose one for the pipeline`.
+```yaml
+workflows:
+  adhoc:
+    on: { pull_request: true }
+    signing: { ios: coin-adhoc }
+  release:
+    on: { push: { branches: [main] } }
+    signing: { ios: coin-app-store }
+    targets:
+      ios:
+        build: flutter build ipa --release
+        publish:
+          app_store: { destination: testflight, groups: [QA] }
+```
+
+### What a workflow inherits
+
+| Field                                                                | Left out of the workflow                                      | Set in the workflow                                                                           |
+| -------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `on`                                                                 | The top-level `on`, else the pipeline's trigger settings      | Replaces the top-level `on`                                                                   |
+| `targets`                                                            | Every top-level target, as written                            | `[android]` picks top-level targets; a map overrides them per field (see below)               |
+| `flavors`                                                            | `app.flavors`                                                 | A subset of `app.flavors`                                                                     |
+| `steps`                                                              | The top-level steps                                           | Replaces them. Entries can name top-level steps                                               |
+| `env`                                                                | The top-level env                                             | Adds to or replaces top-level values by name                                                  |
+| `vars`                                                               | The top-level vars                                            | Adds to or replaces top-level vars by name, also where other vars use them                    |
+| `signing`                                                            | The top-level `signing`, else the pipeline's signing settings | Replaces the top-level `signing` per platform; a platform it leaves out keeps the top level's |
+| `name`, `app.flutter`, `build_number_offset`, `runs_on`, `isolation` | Always the top level's                                        | Not available in a workflow                                                                   |
+
+A `targets` map entry overrides one top-level target field by field:
+
+| Target field | Left out                                                                                                              | Set                                                    |
+| ------------ | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `build`      | The top-level target's. Required when there is no top-level target of the same platform                               | Replaces it                                            |
+| `artifacts`  | The top-level target's                                                                                                | Replaces it                                            |
+| `publish`    | The top-level target's, unless this entry sets its own `build`: that `publish` uploads what the top-level build makes | Replaces it. `false` uploads nothing and keeps `build` |
+| `budgets`    | The top-level target's, even with a new `build`                                                                       | Replaces it                                            |
+
+The pipeline can still change a workflow without a commit. Its **Workflows**
+tab can pick other signing identities, turn the workflow's publishing off, or
+change its approval. See
+[Workflow settings](/reference/config/pipeline-settings#workflow-settings).
+
+### Which workflow a build runs
+
+Each build runs one workflow, chosen when the build starts:
+
+- **Run build** lists the workflows in the file at the branch or commit being
+  built and starts with the pipeline's **Default workflow** selected.
+  `oore build run --workflow NAME` and the build API's `workflow` field name
+  one the same way.
+- A build that names none uses the pipeline's default workflow, then the
+  file's only workflow. A file with no workflows builds the top level. A file
+  with several workflows and no default refuses the build with
+  `invalid_workflow` until one is named.
+- Pushes, pull requests and tags start the default workflow only. A pipeline
+  without a default starts one build for every workflow whose `on` matches
+  the event (see [Triggers](#triggers)).
+
+The build page and build lists show each build's workflow, and the pipeline
+page filters its builds by workflow. `oore pipeline workflows` and
+`GET /v1/pipelines/{pipeline_id}/workflows?ref=` list the workflows a build
+can name, with their platforms, triggers and store uploads. A build always
+reads the file at the commit it builds. The
+[Default workflow](/reference/config/pipeline-settings#default-workflow)
+setting describes how the pipeline picks its default.
+
+Several pipelines can read one file. Each keeps its own default workflow and
+workflow settings, so two pipelines can run different workflows of the same
+file with different gates or identities. See
+[Run two workflows from one file](/build/pipelines/two-workflows).
 
 ## Publish
 
 `publish` on a target says where a build is uploaded after it succeeds:
 
-| Field              | Target    | Description                                                                                                                  |
-| ------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `play.track`       | `android` | `internal`, `closed`, `open`, `production`, or a custom track name.                                                          |
-| `play.rollout`     | `android` | Staged rollout as a fraction greater than 0 and at most 1, such as `0.05` for 5%. Left out, the Google Play settings decide. |
-| `play.draft`       | `android` | `true` creates a draft release in Play Console instead of rolling out. Left out, the Google Play settings decide.            |
-| `testflight.group` | `ios`     | The TestFlight group to add the build to: one name, without commas, at most 128 characters, and not `app_store`.             |
+| Field                         | Target    | Description                                                                                                                  |
+| ----------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `play.track`                  | `android` | `internal`, `closed`, `open`, `production`, or a custom track name.                                                          |
+| `play.rollout`                | `android` | Staged rollout as a fraction greater than 0 and at most 1, such as `0.05` for 5%. Left out, the Google Play settings decide. |
+| `play.draft`                  | `android` | `true` creates a draft release in Play Console instead of rolling out. Left out, the Google Play settings decide.            |
+| `play.service_account`        | `android` | Name of the secret holding the Google service account JSON key. Set, the upload needs no pipeline Google Play settings.      |
+| `testflight.group`            | `ios`     | The TestFlight group to add the build to: one name, without commas, at most 128 characters, and not `app_store`.             |
+| `app_store.destination`       | `ios`     | `app_store` (default) attaches the build to the App Store version; `testflight` adds it to TestFlight groups.                |
+| `app_store.groups`            | `ios`     | TestFlight groups, for `destination: testflight`. Left out, the App Store settings' groups apply.                            |
+| `app_store.submit_for_review` | `ios`     | Submit the version for App Review, for `destination: app_store`. Left out, the settings decide.                              |
+| `app_store.phased_release`    | `ios`     | Release with Apple's seven-day phased release, for `destination: app_store`. Left out, the settings decide.                  |
+
+`testflight: { group: QA }` is the same as
+`app_store: { destination: testflight, groups: [QA] }`; a target sets one of
+the two.
 
 `track` and `group` can use `${{ vars.NAME }}`, so a workflow can change them
 by overriding a var. Secrets and `${{ flavor }}` are not available there.
@@ -215,30 +275,39 @@ workflows:
         publish: false # builds the release bundle, uploads nothing
 ```
 
-The file says where; credentials stay in the pipeline. When the planned
-workflow publishes to a store, the file replaces the pipeline's Publish
-settings for that store:
+The file says where to upload, and can name the Google Play key. When the
+planned workflow publishes to a store, the file replaces the pipeline's
+Publish settings for that store:
 
-- **Google Play**: the file's track replaces the settings' track, and its
-  `rollout` and `draft` replace the settings' own where the file sets them.
-  The service account secret, expected package, release notes, mapping
-  upload, in-app update priority and rollout policy still come from the
-  pipeline's Google Play settings, and **Upload after each build** must be on.
-- **TestFlight**: the file's group replaces the settings' destination and
-  groups. The App Store Connect API key comes from the pipeline's iOS signing
+- **Google Play**: the file's `track` replaces the settings' track, and its
+  `rollout`, `draft` and `service_account` replace the settings' own where the
+  file sets them. With `service_account`, the upload needs no Google Play
+  settings; without them it uses the build changelog as release notes,
+  uploads `mapping.txt` and checks no expected package. Without
+  `service_account`, the pipeline's Google Play settings must have
+  **Upload after each build** on. When they are on, the expected package,
+  release notes, mapping upload, in-app update priority and rollout policy
+  come from them.
+- **App Store Connect** (`app_store` or `testflight`): the file's destination,
+  groups, `submit_for_review` and `phased_release` replace the settings' own.
+  The App Store Connect API key comes from the pipeline's iOS signing
   settings, which must export App Store IPAs, and App Store Connect publishing
   must be on. Release notes and the export compliance answer still come from
   the settings.
 
 Stores the file does not name, version 1 files and files without `publish`
-keep the pipeline's Publish settings exactly.
+keep the pipeline's Publish settings exactly. Turning a workflow's
+**Publishing** off in the pipeline's
+[workflow settings](/reference/config/pipeline-settings#workflow-settings)
+stops every upload of that workflow, whatever the file says.
 
 Problems with `publish` never stop the build: it runs and keeps its
 artifacts, and only its `publish-play` or `publish-app-store` step fails, with
 a message saying what to fix. That happens when:
 
-- the store is not set up in the pipeline (the message names the settings to
-  turn on);
+- the store is not set up in the pipeline, for App Store Connect or for a
+  Google Play upload without `service_account` (the message names the
+  settings to turn on);
 - the target builds more than one flavor, since a store takes one build
   (narrow it with `flavors: [<one flavor>]` on the workflow);
 - `track` or `group`, once vars are resolved, is not a valid name, or refers
@@ -266,6 +335,51 @@ bundle.
 [`oore pipeline plan`](/reference/cli/oore-pipeline-plan) prints where each
 workflow publishes, and the pipeline editor's **What will run** section lists
 it with the plan's notes.
+
+## Signing
+
+`signing` names identities from the project's signing library (**Project
+settings > Signing**), so each workflow can sign with its own keys:
+
+```yaml
+signing:
+  android: coin-upload # every workflow signs Android release builds with it
+
+workflows:
+  adhoc:
+    signing: { ios: coin-adhoc } # ad hoc certificate and profiles
+  release:
+    signing: { ios: coin-app-store } # App Store certificate and profiles
+    targets:
+      ios:
+        build: flutter build ipa --release
+        publish:
+          app_store: { destination: app_store }
+```
+
+| Field     | Description                                                   |
+| --------- | ------------------------------------------------------------- |
+| `android` | An Android keystore identity. It signs release builds.        |
+| `ios`     | An iOS distribution identity: a certificate and its profiles. |
+
+The names carry no secrets; the key material stays in Oore. A workflow without
+`signing` uses the pipeline's signing settings, as before. The pipeline's
+**Workflows** settings can pick a different identity for a workflow, or turn
+its publishing off, without changing the file. See
+[Move credentials into the project library](/build/sign/project-library).
+
+Oore checks the names when a build is created. A name the library does not
+hold, or an identity of the wrong kind, refuses a manual build with
+`invalid_signing`; a build started by a webhook fails at its signing step
+with the same message. `oore pipeline validate --project` runs the same checks
+before you push, and `oore pipeline plan` prints the identities each workflow
+names.
+
+The iOS export follows the identity: an identity with App Store profiles
+exports App Store IPAs, one with ad hoc profiles exports ad hoc IPAs. A
+workflow that uploads to App Store Connect with an ad hoc identity is
+refused. A build command's own `--export-method` is dropped when it agrees
+with the identity and fails the build when it does not.
 
 ## Budgets
 
@@ -321,9 +435,12 @@ budget only changes the check; the build itself never fails because of it.
 | `paths`        | string[]                     | `[lib/**, pubspec.*]`             |
 
 When a webhook arrives, Oore reads the pipeline's file at the pushed commit.
-If the pipeline's workflow sets `on`, or the file sets a top-level `on`, that
-decides whether the event starts a build, in place of the pipeline's trigger
-settings:
+If the pipeline's default workflow sets `on`, or the file sets a top-level
+`on`, that decides whether the event starts a build, in place of the
+pipeline's trigger settings. A pipeline without a default workflow matches
+each workflow on its own `on` (or the top-level `on`) and starts one build
+per workflow that matches; a workflow with neither follows the pipeline's
+trigger settings.
 
 - `push` matches pushes to a branch, `true` for any branch or `branches` for
   the listed globs.
@@ -341,8 +458,8 @@ manual builds still come from the pipeline. Version 1 files, files without
 `on`, and a missing or invalid file keep the pipeline's trigger settings.
 
 If Oore cannot read the file from GitHub or GitLab, for example during an
-outage, a pipeline without a workflow keeps its trigger settings. A pipeline
-with a workflow is skipped and the webhook delivery is retried (up to five
+outage, a pipeline without a default workflow keeps its trigger settings. A
+pipeline with a default workflow is skipped and the webhook delivery is retried (up to five
 times), so it never builds from trigger settings its `on` would not allow.
 Other pipelines still build on the first attempt.
 

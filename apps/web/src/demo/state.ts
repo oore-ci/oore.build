@@ -14,6 +14,7 @@ import type {
   IntegrationRepository,
   NotificationDelivery,
   Pipeline,
+  PipelineWorkflowSettings,
   ProjectRetentionOverride,
   RetentionCleanupSummary,
   RetentionPolicy,
@@ -21,6 +22,7 @@ import type {
   RepositoryWorkflowPreview,
   Runner,
   SetupStatus,
+  SigningIdentity,
   TrustedProxySettingsPublic,
   User,
   UserRole,
@@ -51,6 +53,10 @@ import {
   type DemoPromotion,
 } from './data/environments'
 import { demoPipelines } from './data/pipelines'
+import {
+  demoSigningIdentities,
+  demoWorkflowSettings,
+} from './data/signing-identities'
 import {
   demoReleaseHistory,
   demoReleases,
@@ -112,7 +118,12 @@ interface DemoState {
   projects: Array<DemoProject>
   projectRoles: Partial<Record<string, Record<string, ProjectRole>>>
   pipelines: Array<Pipeline>
+  /** Files on each project's default branch. */
   repositoryWorkflows: Partial<Record<string, Array<RepositoryWorkflowPreview>>>
+  /** Files only on other branches; a branch missing here does not exist. */
+  repositoryWorkflowBranches: Partial<
+    Record<string, Record<string, Array<RepositoryWorkflowPreview>>>
+  >
   builds: Array<Build>
   buildEvents: Partial<Record<string, Array<BuildEvent>>>
   buildLogs: Partial<Record<string, Array<BuildLogChunk>>>
@@ -145,6 +156,10 @@ interface DemoState {
   androidSigning: Partial<Record<string, JsonObject>>
   iosSigning: Partial<Record<string, JsonObject>>
   iosDevices: Partial<Record<string, Array<JsonObject>>>
+  /** Project signing libraries; `used_by` is derived when listed. */
+  signingIdentities: Array<SigningIdentity>
+  /** Per-workflow settings by pipeline id. */
+  workflowSettings: Partial<Record<string, Array<PipelineWorkflowSettings>>>
 }
 
 export const EXTRA_PROJECT_IDS = {
@@ -199,7 +214,8 @@ const BASE_PERSONAS: Array<DemoPersona> = [
     projectRoles: {
       [PROJECT_IDS.flutterShop]: 'maintainer',
       [EXTRA_PROJECT_IDS.developerTools]: 'developer',
-      [PROJECT_IDS.nativePayments]: 'viewer',
+      // Can change workflow settings but not which builds wait for approval.
+      [PROJECT_IDS.nativePayments]: 'developer',
     },
   },
   {
@@ -239,6 +255,30 @@ function makeGeneratedRepositories(): Array<IntegrationRepository> {
   })
 }
 
+/** A valid discovered config file for demo repositories. */
+function demoWorkflowFile(
+  path: string,
+  platforms: Array<'android' | 'ios'>,
+  workflows: Array<string> = [],
+): RepositoryWorkflowPreview {
+  return {
+    path,
+    valid: true,
+    errors: [],
+    workflows,
+    execution: {
+      platforms,
+      flutter_version: '3.24.3',
+      commands: { pre_build: ['flutter pub get'], build: [], post_build: [] },
+      isolation: 'host',
+      platform_build_args: { android: [], ios: [], macos: [] },
+      platform_commands: {},
+      env_keys: [],
+      artifact_patterns: ['build/app/outputs/flutter-apk/*.apk'],
+    },
+  }
+}
+
 function makeGeneratedProjects(): Array<DemoProject> {
   return Array.from({ length: 19 }, (_, index) => {
     const number = index + 6
@@ -256,6 +296,7 @@ function makeGeneratedProjects(): Array<DemoProject> {
         number % 2 === 0 ? GITHUB_DEMO_AVATAR_URL : GITLAB_DEMO_AVATAR_URL,
       default_branch: number % 3 === 0 ? 'develop' : 'main',
       settings: {},
+      auto_add_pipelines: false,
       created_by: USER_IDS.owner,
       created_at: ago(86400 * number),
       updated_at: ago(3600 * number),
@@ -275,6 +316,7 @@ function makeExtraProjects(): Array<DemoProject> {
       repository_avatar_url: GITHUB_DEMO_AVATAR_URL,
       default_branch: 'main',
       settings: {},
+      auto_add_pipelines: false,
       created_by: USER_IDS.developer,
       created_at: ago(86400 * 12),
       updated_at: ago(3600 * 6),
@@ -288,6 +330,7 @@ function makeExtraProjects(): Array<DemoProject> {
       repository_avatar_url: GITLAB_DEMO_AVATAR_URL,
       default_branch: 'main',
       settings: {},
+      auto_add_pipelines: true,
       created_by: USER_IDS.owner,
       created_at: ago(86400 * 8),
       updated_at: ago(3600 * 2),
@@ -687,12 +730,87 @@ export function createDemoState(
           workflows: [],
         },
       ],
+      // A root `.oore.<name>.yaml` beside a version 1 file in `.oore/`.
+      [PROJECT_IDS.flutterShop]: [
+        {
+          path: '.oore.release.yaml',
+          valid: true,
+          errors: [],
+          workflows: ['beta', 'production'],
+          execution: {
+            platforms: ['android', 'ios'],
+            flutter_version: '3.24.3',
+            commands: {
+              pre_build: ['flutter pub get'],
+              build: [],
+              post_build: [],
+            },
+            isolation: 'vm',
+            platform_build_args: { android: [], ios: [], macos: [] },
+            platform_commands: {
+              android: 'flutter build appbundle --release',
+              ios: 'flutter build ipa --release',
+            },
+            env_keys: ['SENTRY_DSN'],
+            artifact_patterns: [
+              'build/app/outputs/bundle/release/*.aab',
+              'build/ios/ipa/*.ipa',
+            ],
+          },
+        },
+        {
+          path: '.oore/android-release.yaml',
+          valid: true,
+          errors: [],
+          workflows: [],
+          execution: {
+            platforms: ['android'],
+            flutter_version: '3.24.3',
+            commands: {
+              pre_build: ['flutter pub get'],
+              build: [],
+              post_build: [],
+            },
+            isolation: 'host',
+            platform_build_args: { android: [], ios: [], macos: [] },
+            platform_commands: {},
+            env_keys: [],
+            artifact_patterns: ['build/app/outputs/flutter-apk/*.apk'],
+          },
+        },
+        // No pipeline builds from these yet: Found in repository lists them.
+        demoWorkflowFile('.oore.nightly.yaml', ['android', 'ios']),
+        demoWorkflowFile('.oore/qa/smoke.yml', ['android'], ['smoke', 'full']),
+      ],
+      // Only found when its path is typed: discovery lists `.oore*` files.
+      [PROJECT_IDS.internalAdmin]: [
+        {
+          path: 'ci/oore.yaml',
+          valid: true,
+          errors: [],
+          workflows: ['debug', 'staging'],
+          execution: {
+            platforms: ['android'],
+            flutter_version: null,
+            commands: {
+              pre_build: ['flutter pub get'],
+              build: [],
+              post_build: [],
+            },
+            isolation: 'host',
+            platform_build_args: { android: [], ios: [], macos: [] },
+            platform_commands: { android: 'flutter build apk --debug' },
+            env_keys: [],
+            artifact_patterns: ['build/app/outputs/flutter-apk/*.apk'],
+          },
+        },
+      ],
       [PROJECT_IDS.nativePayments]: [
         {
           path: '.oore/release.yaml',
           valid: true,
           errors: [],
-          workflows: ['adhoc', 'release'],
+          workflows: ['adhoc', 'release', 'nightly'],
           execution: {
             platforms: ['android'],
             flutter_version: '3.24.3',
@@ -709,6 +827,33 @@ export function createDemoState(
           },
         },
       ],
+    },
+    repositoryWorkflowBranches: {
+      // The iOS file was committed to develop and not merged yet.
+      [PROJECT_IDS.flutterShop]: {
+        develop: [
+          {
+            path: '.oore/ios-release.yaml',
+            valid: true,
+            errors: [],
+            workflows: ['testflight', 'app-store'],
+            execution: {
+              platforms: ['ios'],
+              flutter_version: '3.24.3',
+              commands: {
+                pre_build: ['flutter pub get'],
+                build: [],
+                post_build: [],
+              },
+              isolation: 'vm',
+              platform_build_args: { android: [], ios: [], macos: [] },
+              platform_commands: { ios: 'flutter build ipa --release' },
+              env_keys: [],
+              artifact_patterns: ['build/ios/ipa/*.ipa'],
+            },
+          },
+        ],
+      },
     },
     builds,
     buildEvents: clone(demoBuildEvents),
@@ -763,6 +908,8 @@ export function createDemoState(
     androidSigning: {},
     iosSigning: {},
     iosDevices: {},
+    signingIdentities: clone(demoSigningIdentities),
+    workflowSettings: clone(demoWorkflowSettings),
   }
 
   if (scenario === 'blocked') {
@@ -801,6 +948,7 @@ export function createDemoState(
     state.projectRoles = {}
     state.pipelines = []
     state.repositoryWorkflows = {}
+    state.repositoryWorkflowBranches = {}
     state.builds = []
     state.buildEvents = {}
     state.buildLogs = {}
@@ -818,6 +966,8 @@ export function createDemoState(
     state.notificationChannels = []
     state.notificationDeliveries = []
     state.auditLogs = []
+    state.signingIdentities = []
+    state.workflowSettings = {}
   }
 
   if (scenario === 'setup') {

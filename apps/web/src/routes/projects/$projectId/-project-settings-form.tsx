@@ -34,6 +34,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import { Switch } from '@/components/ui/switch'
 import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
@@ -44,6 +45,7 @@ const editProjectSchema = z.object({
   description: z.string().optional(),
   default_branch: z.string().optional(),
   repository_id: z.string().optional(),
+  auto_add_pipelines: z.boolean(),
 })
 
 type EditProjectForm = z.infer<typeof editProjectSchema>
@@ -55,7 +57,10 @@ export function ProjectSettingsForm({
 }: {
   canChangeSource: boolean
   projectId: string
-  currentValues: EditProjectForm & { repository_full_name?: string }
+  currentValues: Omit<EditProjectForm, 'auto_add_pipelines'> & {
+    auto_add_pipelines?: boolean
+    repository_full_name?: string
+  }
 }) {
   const updateMutation = useUpdateProject()
   const repositoriesQuery = useSourceRepositories(canChangeSource)
@@ -71,6 +76,7 @@ export function ProjectSettingsForm({
       description: currentValues.description ?? '',
       default_branch: currentValues.default_branch ?? '',
       repository_id: currentValues.repository_id ?? '',
+      auto_add_pipelines: currentValues.auto_add_pipelines ?? false,
     },
     mode: 'onBlur',
   })
@@ -89,6 +95,9 @@ export function ProjectSettingsForm({
             canChangeSource && form.getFieldState('repository_id').isDirty
               ? data.repository_id?.trim() || undefined
               : undefined,
+          auto_add_pipelines: form.getFieldState('auto_add_pipelines').isDirty
+            ? data.auto_add_pipelines
+            : undefined,
         },
       },
       {
@@ -148,6 +157,29 @@ export function ProjectSettingsForm({
                     checked-in workflows.
                   </FormDescription>
                   <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="auto_add_pipelines"
+              render={({ field }) => (
+                <FormItem className="flex items-center justify-between gap-4 space-y-0">
+                  <Stack gap={0.5}>
+                    <FormLabel>
+                      Add pipelines from the repository automatically
+                    </FormLabel>
+                    <FormDescription>
+                      A new config file on the default branch that no pipeline
+                      uses becomes a pipeline.
+                    </FormDescription>
+                  </Stack>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
                 </FormItem>
               )}
             />

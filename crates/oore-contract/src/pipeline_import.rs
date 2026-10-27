@@ -578,6 +578,7 @@ fn expected_play(
                     .filter(|percent| *percent < 100.0)
                     .map_or(1.0, |percent| (percent * 10_000.0).round() / 1_000_000.0),
             ),
+            service_account: None,
             draft: Some(play.draft),
         })
 }

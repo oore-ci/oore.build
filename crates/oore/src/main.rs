@@ -35,10 +35,12 @@ use sqlx::{Row, SqlitePool};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixStream};
 
+mod build_commands;
 mod install_lock;
 mod install_manifest;
 mod installer;
 mod managed_services;
+mod pipeline_credentials;
 mod setup_journey;
 mod uninstaller;
 mod update_supervisor;
@@ -141,8 +143,10 @@ enum Commands {
     Config(ConfigArgs),
     /// Check the host and selected build-platform toolchains
     Doctor(DoctorArgs),
-    /// Validate repository pipeline configuration
+    /// Validate repository pipeline files and list a pipeline's workflows
     Pipeline(PipelineArgs),
+    /// Start a build of a pipeline
+    Build(BuildArgs),
     /// Print the installed oore version
     Version,
     /// Update oore and oored to the latest release
@@ -861,6 +865,20 @@ enum PipelineSubcommand {
     Plan(PipelinePlanArgs),
     /// Rewrite a version 1 pipeline file as version 2.
     Migrate(PipelineMigrateArgs),
+    /// List the workflows a build of a pipeline can name, read from its file.
+    Workflows(build_commands::PipelineWorkflowsArgs),
+}
+
+#[derive(Debug, Args)]
+struct BuildArgs {
+    #[command(subcommand)]
+    command: BuildSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum BuildSubcommand {
+    /// Queue a build of a pipeline, optionally naming its workflow.
+    Run(build_commands::BuildRunArgs),
 }
 
 #[derive(Debug, Args)]
@@ -868,6 +886,15 @@ struct PipelineValidateArgs {
     /// Repository pipeline file to validate.
     #[arg(default_value = ".oore.yaml")]
     path: PathBuf,
+    /// Also check the signing identities and secrets the file names against
+    /// this project, with the stored session.
+    #[arg(long, value_name = "PROJECT_ID")]
+    project: Option<String>,
+    /// With --project, also look for secrets in this pipeline's scope.
+    #[arg(long, value_name = "PIPELINE_ID", requires = "project")]
+    pipeline: Option<String>,
+    #[command(flatten)]
+    connection: build_commands::ApiConnectionArgs,
 }
 
 #[derive(Debug, Args)]
@@ -913,8 +940,18 @@ fn handle_pipeline_validate(args: PipelineValidateArgs) -> anyhow::Result<()> {
     for notice in config.notices() {
         eprintln!("note: {notice}");
     }
-    println!("{} is valid", args.path.display());
-    Ok(())
+    let Some(project) = args.project.as_deref() else {
+        println!("{} is valid", args.path.display());
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+    runtime.block_on(pipeline_credentials::validate_against_project(
+        &args.path.display().to_string(),
+        &config,
+        project,
+        args.pipeline.as_deref(),
+        &args.connection,
+    ))
 }
 
 fn handle_pipeline_plan(args: PipelinePlanArgs) -> anyhow::Result<()> {
@@ -956,6 +993,17 @@ fn handle_pipeline_plan(args: PipelinePlanArgs) -> anyhow::Result<()> {
         println!("{} (version {})", args.path.display(), config.version());
         for plan in &plans {
             print!("\n{}", render_pipeline_plan(plan));
+            if config.version() >= 2 {
+                print!(
+                    "{}",
+                    pipeline_credentials::render_credentials(&config, plan)
+                );
+            }
+        }
+        if config.version() >= 2 {
+            println!(
+                "\nSigning and store credentials are what the file names. A pipeline's Workflows settings can pick other identities or turn publishing off."
+            );
         }
     }
     for notice in config.notices() {
@@ -13277,6 +13325,18 @@ fn main() -> anyhow::Result<()> {
             PipelineSubcommand::Validate(args) => handle_pipeline_validate(args)?,
             PipelineSubcommand::Plan(args) => handle_pipeline_plan(args)?,
             PipelineSubcommand::Migrate(args) => handle_pipeline_migrate(args)?,
+            PipelineSubcommand::Workflows(args) => {
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+                runtime.block_on(build_commands::handle_pipeline_workflows(args))?;
+            }
+        },
+        Commands::Build(build) => match build.command {
+            BuildSubcommand::Run(args) => {
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+                runtime.block_on(build_commands::handle_build_run(args))?;
+            }
         },
         Commands::Version => {
             let install_root = resolve_install_root()?;
