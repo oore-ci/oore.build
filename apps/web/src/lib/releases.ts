@@ -103,28 +103,18 @@ export function isWaitingOnStore(
   )
 }
 
-/** Fields newer than the published client's `Release` type. */
-interface StoreFields {
-  store_error?: string | null
-  store_error_since?: number | null
-  store_status?: string | null
-}
-
 /**
  * The store's last refusal while Oore moves a live release forward, such as
  * App Store Connect blocking a review submission. Oore retries until it
  * clears or a day passes.
  */
 export function releaseStoreError(
-  release: Pick<Release, 'state'>,
+  release: Pick<Release, 'state' | 'store_error' | 'store_error_since'>,
 ): { message: string; since: number | null } | null {
-  // SAFETY: the daemon sends these optional fields on every release; the
-  // published client's type predates them, and each is checked before use.
-  const fields = release as StoreFields
-  if (!fields.store_error || !isLiveRelease(release)) return null
+  if (!release.store_error || !isLiveRelease(release)) return null
   return {
-    message: fields.store_error,
-    since: fields.store_error_since ?? null,
+    message: release.store_error,
+    since: release.store_error_since ?? null,
   }
 }
 
@@ -135,10 +125,9 @@ export function releaseStoreError(
  * each.
  */
 export function releaseStoreStatus(
-  release: Pick<Release, 'state'>,
+  release: Pick<Release, 'state' | 'store_status'>,
 ): { code: string; label: string } | null {
-  // SAFETY: as in releaseStoreError; store_status is optional and checked.
-  const code = (release as StoreFields).store_status
+  const code = release.store_status
   if (!code || !isLiveRelease(release)) return null
   const words = code.toLowerCase().split('_').filter(Boolean)
   if (!words.length) return null

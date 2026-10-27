@@ -21,13 +21,7 @@ const DEFAULT_POLICY = {
 }
 
 /** Stored releases; the handlers add project_name and allowed_actions. */
-export type DemoRelease = Omit<Release, 'allowed_actions' | 'project_name'> &
-  // Newer than the published client's Release type.
-  {
-    store_error?: string
-    store_error_since?: number
-    store_status?: string
-  }
+export type DemoRelease = Omit<Release, 'allowed_actions' | 'project_name'>
 
 export const demoReleases: Array<DemoRelease> = [
   {
