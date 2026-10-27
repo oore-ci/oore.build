@@ -659,7 +659,7 @@ pub(crate) async fn claim_eligible_direct_runner_build(
     })?;
 
     let assigned = sqlx::query(
-        "UPDATE builds SET status = 'assigned', runner_id = ?1, signing_token_hash = ?2, updated_at = ?3 \
+        "UPDATE builds SET status = 'assigned', runner_id = ?1, ran_on_runner_id = ?1, signing_token_hash = ?2, updated_at = ?3 \
          WHERE id = ?4 AND status = 'scheduled' AND runner_id IS NULL",
     )
     .bind(runner_id)

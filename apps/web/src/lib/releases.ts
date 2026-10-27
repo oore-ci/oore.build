@@ -122,8 +122,33 @@ export function releaseHealthDetail(
 }
 
 export function formatRolloutPercent(fraction: number): string {
-  const percent = Math.round(fraction * 1000) / 10
-  return `${percent}%`
+  return `${fractionToPercent(fraction)}%`
+}
+
+/** A rollout fraction as a percentage, to two decimals. */
+export function fractionToPercent(fraction: number): number {
+  return Math.round(fraction * 10_000) / 100
+}
+
+/**
+ * Checks a typed rollout percentage against the current rollout. Play only
+ * moves a staged rollout up, so the target must be above where it is now.
+ */
+export function rolloutPercentError(
+  value: string,
+  currentFraction: number,
+): string | null {
+  const trimmed = value.trim()
+  if (trimmed === '') return 'Enter a percentage.'
+  const percent = Number(trimmed)
+  if (!Number.isFinite(percent)) return 'Enter a number.'
+  const current = fractionToPercent(currentFraction)
+  if (percent <= current)
+    return `Enter more than the current ${current}%. To stop new installs, halt the rollout.`
+  if (percent > 100) return 'Enter 100% or less.'
+  if (!/^\d*(\.\d{0,2})?$/.test(trimmed))
+    return 'Use at most two decimal places.'
+  return null
 }
 
 export function releaseVersionLabel(
@@ -216,14 +241,12 @@ export const RELEASE_ACTION_COPY = {
     confirmLabel: 'Approve',
   },
   raise: {
-    done: 'Rollout increased',
-    label: 'Increase rollout',
-    title: 'Increase rollout?',
+    done: 'Rollout updated',
+    label: 'Update rollout',
+    title: 'Update rollout?',
     description: (release) =>
-      release.next_fraction == null
-        ? `${releaseVersionLabel(release)} moves to the next rollout step now.`
-        : `${releaseVersionLabel(release)} goes from ${formatRolloutPercent(release.rollout_fraction)} to ${formatRolloutPercent(release.next_fraction)} of users now.`,
-    confirmLabel: 'Increase',
+      `${releaseVersionLabel(release)} is live for ${formatRolloutPercent(release.rollout_fraction)} of ${release.track} users. Choose the share that gets it now.`,
+    confirmLabel: 'Update rollout',
   },
   resume: {
     done: 'Rollout resumed',

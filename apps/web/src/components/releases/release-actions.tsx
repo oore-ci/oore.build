@@ -23,6 +23,12 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  InputGroupText,
+} from '@/components/ui/input-group'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
@@ -31,8 +37,10 @@ import {
   RELEASE_ACTION_COPY,
   RELEASE_ACTION_ORDER,
   RELEASE_STORE_LABEL,
+  fractionToPercent,
   releaseAppName,
   releaseVersionLabel,
+  rolloutPercentError,
 } from '@/lib/releases'
 import { toast } from '@/lib/toast'
 import { Row } from '@/components/layout/row'
@@ -125,21 +133,41 @@ function ReleaseActionDialog({
   release: Release
 }) {
   const [reason, setReason] = useState('')
+  // Raise takes an exact target; start from the next policy step.
+  const [percent, setPercent] = useState(() =>
+    String(fractionToPercent(release.next_fraction ?? 1)),
+  )
+  const [showPercentError, setShowPercentError] = useState(false)
   const mutation = useReleaseAction()
   const copy = RELEASE_ACTION_COPY[action]
   const reasonId = `release-${release.id}-${action}-reason`
+  const percentId = `release-${release.id}-percent`
+  const percentError =
+    action === 'raise'
+      ? rolloutPercentError(percent, release.rollout_fraction)
+      : null
 
   function confirm() {
+    if (percentError) {
+      setShowPercentError(true)
+      return
+    }
+    const fraction =
+      action === 'raise' ? Math.round(Number(percent) * 100) / 10_000 : null
     // The promise settles even if the dialog is gone, unlike mutate callbacks.
     mutation
       .mutateAsync({
         action,
         releaseId: release.id,
-        body: { reason: reason.trim() || null },
+        body: { reason: reason.trim() || null, fraction },
       })
       .then(
-        () => {
-          toast.success(`${copy.done}: ${releaseVersionLabel(release)}`)
+        (updated) => {
+          toast.success(
+            action === 'raise'
+              ? `${releaseVersionLabel(release)} rollout set to ${fractionToPercent(updated.rollout_fraction)}%`
+              : `${copy.done}: ${releaseVersionLabel(release)}`,
+          )
           onOpenChange(false)
         },
         (error: Error) => {
@@ -167,6 +195,49 @@ function ReleaseActionDialog({
             {copy.description(release)}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {action === 'raise' ? (
+          <Stack gap={2}>
+            <Label htmlFor={percentId}>New rollout</Label>
+            <InputGroup className="max-w-40">
+              <InputGroupInput
+                id={percentId}
+                type="number"
+                inputMode="decimal"
+                step="any"
+                min={0}
+                max={100}
+                value={percent}
+                onChange={(event) => setPercent(event.target.value)}
+                onBlur={() => setShowPercentError(true)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') confirm()
+                }}
+                aria-invalid={
+                  showPercentError && percentError ? true : undefined
+                }
+                aria-describedby={`${percentId}-hint`}
+                autoFocus
+              />
+              <InputGroupAddon align="inline-end">
+                <InputGroupText>%</InputGroupText>
+              </InputGroupAddon>
+            </InputGroup>
+            {showPercentError && percentError ? (
+              <p id={`${percentId}-hint`} className="text-sm text-destructive">
+                {percentError}
+              </p>
+            ) : (
+              <p
+                id={`${percentId}-hint`}
+                className="text-sm text-muted-foreground"
+              >
+                {Number(percent) >= 100
+                  ? 'At 100% the release is complete.'
+                  : 'Later schedule steps above this still apply.'}
+              </p>
+            )}
+          </Stack>
+        ) : null}
         <Stack gap={2}>
           <Label htmlFor={reasonId}>Reason (optional)</Label>
           <Textarea
@@ -189,7 +260,7 @@ function ReleaseActionDialog({
             variant={'destructive' in copy ? 'destructive' : 'default'}
             onClick={confirm}
             disabled={mutation.isPending}
-            autoFocus
+            autoFocus={action !== 'raise'}
           >
             {mutation.isPending ? (
               <span className="flex items-center gap-1.5" role="status">

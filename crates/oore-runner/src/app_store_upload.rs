@@ -102,8 +102,8 @@ fn altool_product_errors(result: Option<&Value>) -> Vec<String> {
 
 /// Each product error's bare message and its text with Apple's reasons.
 /// App Store Connect's validation errors (409) often carry only "Validation
-/// failed" at the top level and put the reason in `detail` or inside
-/// `NSUnderlyingError`.
+/// failed" at the top level and put the reason in `detail`, inside
+/// `NSUnderlyingError`, or in altool 26's nested `underlying-errors`.
 fn product_errors(result: Option<&Value>) -> Vec<(String, String)> {
     let Some(errors) = result
         .and_then(|value| value.get("product-errors"))
@@ -116,9 +116,7 @@ fn product_errors(result: Option<&Value>) -> Vec<(String, String)> {
         .filter_map(|error| {
             let message = error.get("message").and_then(Value::as_str)?.trim();
             let mut details = Vec::new();
-            if let Some(info) = error.get("userInfo") {
-                collect_error_details(info, &mut details);
-            }
+            collect_product_error_details(error, &mut details);
             let mut text = message.to_string();
             for detail in details {
                 if text.contains(&detail) {
@@ -144,6 +142,26 @@ const ERROR_DETAIL_KEYS: [&str; 4] = [
     "NSLocalizedDescription",
 ];
 
+/// altool 8 calls an error's info `userInfo`; altool 26 calls it `user-info`
+/// and lists the errors behind it under `underlying-errors`.
+fn user_info(error: &Value) -> Option<&Value> {
+    error.get("userInfo").or_else(|| error.get("user-info"))
+}
+
+fn collect_product_error_details(error: &Value, details: &mut Vec<String>) {
+    if let Some(info) = user_info(error) {
+        collect_error_details(info, details);
+    }
+    for underlying in error
+        .get("underlying-errors")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        collect_product_error_details(underlying, details);
+    }
+}
+
 fn collect_error_details(info: &Value, details: &mut Vec<String>) {
     for key in ERROR_DETAIL_KEYS {
         if let Some(text) = info.get(key).and_then(Value::as_str) {
@@ -159,7 +177,7 @@ fn collect_error_details(info: &Value, details: &mut Vec<String>) {
             }
         }
         Some(underlying @ Value::Object(_)) => {
-            collect_error_details(underlying.get("userInfo").unwrap_or(underlying), details);
+            collect_error_details(user_info(underlying).unwrap_or(underlying), details);
         }
         _ => {}
     }
@@ -557,6 +575,21 @@ mod tests {
         assert_eq!(
             summarize_altool_failure(stdout, ""),
             "Validation failed Invalid Bundle. The bundle Runner.app does not support the minimum OS Version specified in the Info.plist"
+        );
+    }
+
+    #[test]
+    fn altool_26_user_info_and_underlying_errors_are_read() {
+        // Trimmed from a real altool 26.10.1 rejection of pulse.
+        let stdout = r#"{"os-version":"Version 26.0.1 (Build 25A362)","product-errors":[{"code":409,"message":"Validation failed","underlying-errors":[{"code":-19241,"message":"Validation failed","underlying-errors":[],"user-info":{"NSLocalizedDescription":"Validation failed","NSLocalizedFailureReason":"Invalid large app icon. The large app icon in the asset catalog in “Runner.app” can’t be transparent or contain an alpha channel.","code":"STATE_ERROR.VALIDATION_ERROR","detail":"Invalid large app icon. The large app icon in the asset catalog in “Runner.app” can’t be transparent or contain an alpha channel.","status":"409","title":"Validation failed"}}],"user-info":{"NSLocalizedDescription":"Validation failed","NSLocalizedFailureReason":"Invalid large app icon. The large app icon in the asset catalog in “Runner.app” can’t be transparent or contain an alpha channel. (ID: 5d13c193)","iris-code":"STATE_ERROR.VALIDATION_ERROR"}}],"tool-version":"26.10.1 (171001)"}"#;
+        assert_eq!(
+            summarize_altool_failure(stdout, "UPLOAD FAILED with 1 error"),
+            "Validation failed Invalid large app icon. The large app icon in the asset catalog in “Runner.app” can’t be transparent or contain an alpha channel. (ID: 5d13c193)"
+        );
+        let nested_only = r#"{"product-errors":[{"message":"Validation failed","underlying-errors":[{"message":"Validation failed","user-info":{"detail":"Missing icon."}}]}]}"#;
+        assert_eq!(
+            summarize_altool_failure(nested_only, ""),
+            "Validation failed Missing icon."
         );
     }
 
