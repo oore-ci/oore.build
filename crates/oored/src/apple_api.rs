@@ -197,13 +197,55 @@ pub(crate) fn parse_apple_error(body: &str) -> String {
                     .as_deref()
                     .or(first.title.as_deref())
                     .unwrap_or("Apple API request failed");
-                format!("{code}: {detail}")
+                let associated = associated_error_details(body);
+                if associated.is_empty() {
+                    format!("{code}: {detail}")
+                } else {
+                    format!("{code}: {detail} {}", associated.join(" "))
+                }
             } else {
                 "Apple API request failed".to_string()
             }
         }
         Err(_) => "Apple API request failed".to_string(),
     }
+}
+
+/// The reasons behind an App Store Connect 409, such as each missing field
+/// that stops a review submission. Apple puts them under
+/// `errors[].meta.associatedErrors`, keyed by the resource each one is about.
+fn associated_error_details(body: &str) -> Vec<String> {
+    const MAX_DETAILS: usize = 10;
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let mut details: Vec<String> = Vec::new();
+    for error in payload["errors"].as_array().into_iter().flatten() {
+        let Some(groups) = error
+            .pointer("/meta/associatedErrors")
+            .and_then(|v| v.as_object())
+        else {
+            continue;
+        };
+        for associated in groups.values().filter_map(|v| v.as_array()).flatten() {
+            let text = associated["detail"]
+                .as_str()
+                .or_else(|| associated["title"].as_str())
+                .map(str::trim)
+                .filter(|text| !text.is_empty());
+            if let Some(text) = text
+                && !details.iter().any(|known| known == text)
+            {
+                details.push(text.to_string());
+            }
+        }
+    }
+    let extra = details.len().saturating_sub(MAX_DETAILS);
+    details.truncate(MAX_DETAILS);
+    if extra > 0 {
+        details.push(format!("(and {extra} more)"));
+    }
+    details
 }
 
 fn should_retry_profile_create_after_conflict(body: &str) -> bool {
@@ -728,4 +770,36 @@ pub async fn create_profile(
     })?;
 
     Ok(to_profile_record(payload.data))
+}
+
+#[cfg(test)]
+mod apple_error_tests {
+    use super::parse_apple_error;
+
+    #[test]
+    fn review_submission_conflicts_list_what_is_missing() {
+        let body = r#"{"errors":[{"status":"409","code":"STATE_ERROR.ENTITY_STATE_INVALID","title":"appStoreVersions with id '123' cannot be submitted for review","detail":"This resource cannot be reviewed, please check associated errors to see why.","meta":{"associatedErrors":{"/v1/appStoreVersions/123":[{"code":"ENTITY_ERROR.ATTRIBUTE.REQUIRED","detail":"You must provide a value for the attribute 'whatsNew' with this request"}],"/v1/appScreenshotSets/9":[{"code":"ENTITY_ERROR.RELATIONSHIP.REQUIRED","detail":"You must upload screenshots for 6.9-inch iPhone displays."},{"code":"ENTITY_ERROR.RELATIONSHIP.REQUIRED","detail":"You must upload screenshots for 6.9-inch iPhone displays."}]}}}]}"#;
+        let message = parse_apple_error(body);
+        assert!(
+            message.starts_with(
+                "STATE_ERROR.ENTITY_STATE_INVALID: This resource cannot be reviewed, please check associated errors to see why."
+            ),
+            "{message}"
+        );
+        assert!(message.contains("'whatsNew'"), "{message}");
+        assert_eq!(
+            message.matches("6.9-inch iPhone displays").count(),
+            1,
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn plain_errors_are_unchanged() {
+        let body = r#"{"errors":[{"code":"NOT_AUTHORIZED","detail":"Provide a properly configured and signed bearer token"}]}"#;
+        assert_eq!(
+            parse_apple_error(body),
+            "NOT_AUTHORIZED: Provide a properly configured and signed bearer token"
+        );
+    }
 }

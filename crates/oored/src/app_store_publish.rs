@@ -2089,13 +2089,11 @@ mod tests {
         .unwrap();
         assert_eq!(last_error.as_deref(), Some("401 NOT_AUTHORIZED"));
         assert_eq!(next_poll_at, start + POLL_ERROR_SECS);
-        assert_eq!(
-            releases::load_release(&pool, &release.id)
-                .await
-                .unwrap()
-                .state,
-            ReleaseState::InReview
-        );
+        // The error reaches the release, so the UI can say why it is stuck.
+        let waiting = releases::load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(waiting.state, ReleaseState::InReview);
+        assert_eq!(waiting.store_error.as_deref(), Some("401 NOT_AUTHORIZED"));
+        assert_eq!(waiting.store_error_since, Some(start));
 
         try_record_poll_error(
             deps,
