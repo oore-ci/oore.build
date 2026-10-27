@@ -1008,7 +1008,7 @@ fn default_app_store_destination() -> AppStoreDestination {
 }
 
 /// `signing`: names of identities in the project's credential library.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SigningSpec {
     /// An Android keystore. It signs release builds.
