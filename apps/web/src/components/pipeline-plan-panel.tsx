@@ -26,6 +26,7 @@ import {
 } from '@/lib/pipeline-yaml-export'
 import { ALL_PLATFORMS, effectivePlanSelection } from '@/lib/pipeline-plan'
 import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
+import { buildStepLabel } from '@/lib/build-steps'
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import { textVariants } from '@/lib/recipes'
 import { PipelineFormSection } from '@/components/pipeline-form-section'
@@ -349,7 +350,14 @@ function PlanResult({
                 </Row>
                 <ol className="flex flex-col gap-2">
                   {steps.map((step, index) => (
-                    <PlanStepRow key={`${step.source}-${index}`} step={step} />
+                    <PlanStepRow
+                      key={`${step.source}-${index}`}
+                      step={step}
+                      label={buildStepLabel(
+                        step.name,
+                        plan.steps.map((other) => other.name),
+                      )}
+                    />
                   ))}
                 </ol>
               </Stack>
@@ -365,11 +373,17 @@ function PlanResult({
   )
 }
 
-function PlanStepRow({ step }: { step: PipelinePlanStep }) {
+function PlanStepRow({
+  step,
+  label,
+}: {
+  step: PipelinePlanStep
+  label: string
+}) {
   return (
     <Stack render={<li />} gap={1.5} className="rounded-xl border px-3 py-2.5">
       <Row gap={2} className="flex-wrap">
-        <span className="text-sm font-medium">{step.name}</span>
+        <span className="text-sm font-medium">{label}</span>
         {step.platform ? (
           <Badge variant="secondary">
             {BUILD_PLATFORM_LABELS[step.platform]}

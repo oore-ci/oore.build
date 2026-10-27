@@ -180,7 +180,7 @@ function BuildMetrics({
     .join(' · ')
 
   return (
-    <div className="grid grid-cols-1 gap-3 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 @5xl/main:grid-cols-4">
       <MetricCard
         title="Success rate"
         value={formatRate(totals.success_rate)}
@@ -203,7 +203,7 @@ function BuildMetrics({
         label={`Success rate ${formatRate(totals.success_rate)} over ${window}. Open failed builds`}
       />
       <MetricCard
-        title="Builds finished"
+        title="Finished"
         value={String(totals.finished)}
         badge={
           <Delta
@@ -244,7 +244,7 @@ function BuildMetrics({
         label={`Median build time ${formatSeconds(insights.duration.p50_seconds)}. Open succeeded builds`}
       />
       <MetricCard
-        title="Waiting now"
+        title="Waiting"
         value={String(queue.waiting)}
         badge={
           canApprove && queue.awaiting_approval > 0 ? (
@@ -460,7 +460,7 @@ function FailingPipelines({
     <Card size="sm" className="h-full">
       <CardHeader>
         <CardTitle>
-          <h3>Pipelines with failures</h3>
+          <h3>Failures by pipeline</h3>
         </CardTitle>
       </CardHeader>
       <CardContent className="flex-1">
@@ -539,7 +539,7 @@ export function DashboardBuildHealth({
   return (
     <DashboardSection
       title="Build health"
-      scope={`Last ${days} days, changes vs the ${days} before`}
+      scope={`Last ${days} days`}
       action={
         <ToggleGroup
           aria-label="Period"
@@ -580,7 +580,7 @@ export function DashboardBuildHealth({
         </Alert>
       ) : !insights ? (
         <Stack gap={3} role="status" aria-label="Loading build health">
-          <div className="grid grid-cols-1 gap-3 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 @5xl/main:grid-cols-4">
             {Array.from({ length: 4 }, (_, index) => (
               <Skeleton key={index} className="h-28 w-full" />
             ))}

@@ -96,11 +96,10 @@ function applyAction(
   switch (action) {
     case 'approve':
       return { state: release.state, fraction: release.rollout_fraction }
-    case 'raise':
-      return {
-        state: 'rolling',
-        fraction: fraction ?? nextFraction(release) ?? 1,
-      }
+    case 'raise': {
+      const target = fraction ?? nextFraction(release) ?? 1
+      return { state: target >= 1 ? 'complete' : 'rolling', fraction: target }
+    }
     case 'pause':
       return { state: 'paused', fraction: release.rollout_fraction }
     case 'resume':

@@ -206,21 +206,36 @@ const succeededBuildLogsWithSteps = withStepMarkers([
   },
 ])
 
+// Named like a real v1 build: the runner's own steps, then `<stage>-<n>`.
 const runningBuildLogsWithSteps = withStepMarkers([
   {
-    name: 'flutter pub get',
+    name: 'checkout',
+    command: 'git checkout a1b2c3d',
+    status: 'succeeded',
+    logs: [
+      { sequence: 0, content: 'HEAD is now at a1b2c3d', stream: 'stdout' },
+    ],
+  },
+  {
+    name: 'vm-start',
+    command: 'Start a clean Tart VM for this build',
+    status: 'succeeded',
+    logs: [{ sequence: 0, content: 'VM is ready', stream: 'stdout' }],
+  },
+  {
+    name: 'pre_build-1',
     command: 'flutter pub get',
     status: 'succeeded',
     logs: flutterBuildLogs.slice(0, 9),
   },
   {
-    name: 'flutter analyze',
+    name: 'pre_build-2',
     command: 'flutter analyze --no-fatal-infos',
     status: 'succeeded',
     logs: flutterBuildLogs.slice(9, 16),
   },
   {
-    name: 'flutter build apk --release',
+    name: 'build-1',
     command: 'flutter build apk --release --split-per-abi',
     status: 'running',
     logs: flutterBuildLogs.slice(16, 20),

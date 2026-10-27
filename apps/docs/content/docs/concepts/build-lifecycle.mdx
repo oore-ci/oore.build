@@ -36,10 +36,11 @@ repository stages and makes the build fail. Cancellation can also win while
 work is queued, scheduled, assigned, or running; a claimed runner observes the
 canceled state and stops.
 
-After a supported build command produces an Android or iOS output, runner-owned
-signing may sign and verify that output before later repository stages such as
-`post_build` run. Signing remains outside the repository child process, but it
-is not guaranteed to wait until every repository command has finished.
+A supported Flutter Android build command runs with the pipeline keystore
+handed to Gradle, which signs the output. After a supported build command
+produces an Android or iOS output, runner-owned signing may sign or verify that
+output before later repository stages such as `post_build` run. It is not
+guaranteed to wait until every repository command has finished.
 
 ## Outputs become artifacts
 

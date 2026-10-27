@@ -15190,6 +15190,13 @@
           "protocol_version"
         ],
         "properties": {
+          "active_build_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The builds the runner is still running. The backend releases any\nother build it holds, since the runner lost it."
+          },
           "protocol_version": {
             "type": "integer",
             "format": "int32",
@@ -19946,6 +19953,28 @@
           "store": {
             "$ref": "#/components/schemas/ReleaseStore"
           },
+          "store_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The store's last error while Oore moves this release forward, such as\nApp Store Connect refusing a review submission. Oore keeps retrying;\nthe next successful step clears it. App Store releases only."
+          },
+          "store_error_since": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the store started failing for this release."
+          },
+          "store_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The store's own status for the release, such as App Store Connect's\n`WAITING_FOR_REVIEW` or `IN_REVIEW`, which the release state groups\ntogether. App Store releases only."
+          },
           "track": {
             "type": "string",
             "description": "Play track, or TestFlight group / `app_store`."
@@ -20612,6 +20641,12 @@
             ],
             "format": "int64"
           },
+          "max_concurrent_builds": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many builds the runner runs at the same time.",
+            "minimum": 0
+          },
           "metrics": {
             "oneOf": [
               {
@@ -20823,6 +20858,15 @@
               "null"
             ],
             "format": "int64"
+          },
+          "max_concurrent_builds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many builds the runner may run at the same time. Older backends\nleave it out, which means one.",
+            "minimum": 0
           }
         }
       },
@@ -23156,6 +23200,15 @@
               "type": "string"
             },
             "description": "Replaces the runner's operator labels. Detected labels are kept."
+          },
+          "max_concurrent_builds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many builds the runner runs at the same time, from 1 to 8.",
+            "minimum": 0
           },
           "name": {
             "type": [

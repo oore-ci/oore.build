@@ -73,10 +73,9 @@ selected.
 
 Check the **Branch**, then select **Run build**.
 
-Your repository's commands never see the keystore or its passwords. After
-Flutter builds the bundle, the runner signs it with your upload key in a
-separate step named `android-sign`, outside the repository checkout. Any
-signature the Gradle build added is replaced.
+While `flutter build appbundle` runs, the runner gives Gradle your upload key,
+and Gradle signs the bundle with it in place of any signing the app sets up
+itself. A step named `android-sign` then checks the signature.
 
 ## Check the result
 
@@ -113,9 +112,9 @@ artifact pattern to use.
 **Gradle fails because it cannot find a local `key.properties`**
 
 The repository's Gradle file loads signing details that exist only on
-developer machines. Make it skip local signing when `CI` is true, as in
-[Configure Gradle for Android signing](/build/sign/android/gradle). Oore sets
-`CI=true` for repository commands.
+developer machines and fails without them. Guard the file read, as in
+[Keep local Gradle signing alongside Oore](/build/sign/android/gradle). Oore's
+key replaces the local one in CI, so the file is not needed there.
 
 ## Next step
 

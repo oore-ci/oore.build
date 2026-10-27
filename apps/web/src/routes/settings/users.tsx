@@ -8,7 +8,7 @@ import { toast } from '@/lib/toast'
 
 import { getColumns } from './-users-columns'
 import { UsersToolbar } from './-users-toolbar'
-import type { UserRole } from '@oore/client/models'
+import type { User, UserRole } from '@oore/client/models'
 import {
   resolveDataTableSorting,
   type SortDirection,
@@ -33,6 +33,7 @@ import PageLayout from '@/components/page-layout'
 import PageHeader from '@/components/page-header'
 import { useDataTable } from '@/components/data-table'
 import { PageMeta } from '@/lib/seo'
+import { GrantProjectAccessDialog } from './-grant-project-access-dialog'
 import { InviteUserAction } from './-invite-user-action'
 import { UserCsvActions } from './-user-csv-actions'
 import { UsersEmptyState } from './-users-empty-state'
@@ -98,6 +99,7 @@ function UsersSettingsPage() {
   const navigate = Route.useNavigate()
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
+  const [grantUsers, setGrantUsers] = useState<Array<User>>([])
 
   const page = search.page ?? 1
   const pageSize = search.pageSize ?? 20
@@ -154,6 +156,7 @@ function UsersSettingsPage() {
             userId,
             userEmail: email,
           }),
+        onGrantAccess: (user) => setGrantUsers([user]),
         onReEnable: handleReEnable,
       }),
     [authUser?.user_id, handleReEnable],
@@ -280,6 +283,7 @@ function UsersSettingsPage() {
         toolbar={
           <UsersToolbar
             table={table}
+            onGrantAccess={setGrantUsers}
             onBulkDisable={(userIds) =>
               setConfirmAction({
                 type: 'bulk_disable',
@@ -315,6 +319,15 @@ function UsersSettingsPage() {
         query={search.q ?? ''}
         table={table}
         total={filteredTotal}
+      />
+
+      <GrantProjectAccessDialog
+        open={grantUsers.length > 0}
+        users={grantUsers}
+        onOpenChange={(open) => {
+          if (!open) setGrantUsers([])
+        }}
+        onDone={() => setRowSelection({})}
       />
 
       <ConfirmDialog

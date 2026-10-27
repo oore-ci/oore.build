@@ -1,10 +1,7 @@
-import { zodResolver } from '@hookform/resolvers/zod'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { Add01Icon, Delete02Icon } from '@hugeicons/core-free-icons'
-import { useMemo, useState } from 'react'
-import { useForm, useWatch } from 'react-hook-form'
+import { Delete02Icon } from '@hugeicons/core-free-icons'
+import { useState } from 'react'
 import { toast } from '@/lib/toast'
-import * as z from 'zod'
 
 import { DataTableRowActionsTrigger } from '@/components/data-table'
 import type {
@@ -13,8 +10,6 @@ import type {
   ProjectRole,
 } from '@oore/client/models'
 import {
-  useAddProjectMember,
-  useProjectMemberCandidates,
   useProjectMembers,
   useRemoveProjectMember,
   useUpdateProjectMember,
@@ -42,28 +37,10 @@ import {
   ItemSeparator,
   ItemTitle,
 } from '@/components/ui/item'
-import { Button } from '@/components/ui/button'
 import {
   SettingsSection,
   SettingsSurface,
 } from '@/components/settings/settings-section'
-import {
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-} from '@/components/ui/combobox'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -77,49 +54,18 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Spinner } from '@/components/ui/spinner'
 import { Text } from '@/components/layout/text'
-import { textVariants } from '@/lib/recipes'
-
-const accessSchema = z.object({
-  user_id: z.string().min(1, 'Select a user.'),
-  role: z.enum(['maintainer', 'developer', 'viewer']),
-})
-
-type AccessForm = z.infer<typeof accessSchema>
+import {
+  PROJECT_ROLE_LABELS,
+  PROJECT_ROLE_OPTIONS,
+  hasImplicitProjectAccess,
+} from '@/lib/project-access'
+import { AddProjectMembersDialog } from './-add-project-members-dialog'
 
 interface RoleLabelMap {
   [role: string]: string
 }
-
-const PROJECT_ROLE_LABELS = {
-  maintainer: 'Maintainer',
-  developer: 'Developer',
-  viewer: 'Viewer',
-} satisfies Record<ProjectRole, string>
-
-const PROJECT_ROLE_OPTIONS: Array<ProjectRole> = [
-  'maintainer',
-  'developer',
-  'viewer',
-]
 
 const INSTANCE_ROLE_LABELS: RoleLabelMap = {
   owner: 'Owner',
@@ -160,10 +106,6 @@ function MemberAvatar({ member }: { member: ProjectMember }) {
   )
 }
 
-function hasImplicitAccess(instanceRole: string | undefined) {
-  return instanceRole === 'owner' || instanceRole === 'admin'
-}
-
 function MemberActions({
   instanceRole,
   member,
@@ -178,7 +120,7 @@ function MemberActions({
   pending: boolean
 }) {
   const isQaViewer = instanceRole === 'qa_viewer'
-  if (hasImplicitAccess(instanceRole)) return null
+  if (hasImplicitProjectAccess(instanceRole)) return null
   const name = member.user_display_name ?? member.user_email
 
   return (
@@ -223,194 +165,6 @@ function MemberActions({
   )
 }
 
-function AddProjectMemberDialog({ projectId }: { projectId: string }) {
-  const candidatesQuery = useProjectMemberCandidates(projectId)
-  const addMutation = useAddProjectMember(projectId)
-  const [open, setOpen] = useState(false)
-  const form = useForm<AccessForm>({
-    resolver: zodResolver(accessSchema),
-    defaultValues: { user_id: '', role: 'viewer' },
-  })
-  const candidates = candidatesQuery.data?.candidates ?? []
-  const candidatesById = useMemo(
-    () =>
-      new Map(
-        (candidatesQuery.data?.candidates ?? []).map((candidate) => [
-          candidate.id,
-          candidate,
-        ]),
-      ),
-    [candidatesQuery.data?.candidates],
-  )
-  const selectedUser = useWatch({
-    control: form.control,
-    name: 'user_id',
-    compute: (value) => candidatesById.get(value),
-  })
-  const availableRoles: Array<ProjectRole> =
-    selectedUser?.role === 'qa_viewer' ? ['viewer'] : PROJECT_ROLE_OPTIONS
-
-  function setDialogOpen(nextOpen: boolean) {
-    setOpen(nextOpen)
-    if (!nextOpen) form.reset({ user_id: '', role: 'viewer' })
-  }
-
-  function addMember(values: AccessForm) {
-    const user = candidatesById.get(values.user_id)
-    addMutation.mutate(
-      {
-        user_id: values.user_id,
-        role: user?.role === 'qa_viewer' ? 'viewer' : values.role,
-      },
-      {
-        onSuccess: () => {
-          toast.success(`${user?.email ?? 'User'} added to this project`)
-          setDialogOpen(false)
-        },
-        onError: (error) => toast.error(error.message),
-      },
-    )
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setDialogOpen}>
-      <DialogTrigger render={<Button />}>
-        <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" />
-        Add member
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Add project member</DialogTitle>
-          <DialogDescription>
-            Choose an eligible user and their project role.
-          </DialogDescription>
-        </DialogHeader>
-        <Form {...form}>
-          <form className="space-y-4" onSubmit={form.handleSubmit(addMember)}>
-            <FormField
-              control={form.control}
-              name="user_id"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>User</FormLabel>
-                  <Combobox
-                    items={candidates}
-                    value={candidatesById.get(field.value) ?? null}
-                    onValueChange={(user) => {
-                      field.onChange(user?.id ?? '')
-                      if (user?.role === 'qa_viewer') {
-                        form.setValue('role', 'viewer')
-                      }
-                    }}
-                    itemToStringLabel={(user) =>
-                      user.display_name
-                        ? `${user.display_name} (${user.email})`
-                        : user.email
-                    }
-                  >
-                    <FormControl>
-                      <ComboboxInput
-                        className="w-full"
-                        placeholder="Search eligible users..."
-                      />
-                    </FormControl>
-                    <ComboboxContent>
-                      <ComboboxEmpty>No eligible users found.</ComboboxEmpty>
-                      <ComboboxList>
-                        {(user) => (
-                          <ComboboxItem key={user.id} value={user}>
-                            <span className="min-w-0 flex-1 truncate">
-                              {user.email}
-                            </span>
-                            <span
-                              className={textVariants({ variant: 'caption' })}
-                            >
-                              {INSTANCE_ROLE_LABELS[user.role]}
-                              {user.status === 'invited' ? ' · Invited' : ''}
-                            </span>
-                          </ComboboxItem>
-                        )}
-                      </ComboboxList>
-                    </ComboboxContent>
-                  </Combobox>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="role"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Project role</FormLabel>
-                  <Select
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    items={Object.fromEntries(
-                      availableRoles.map((role) => [
-                        role,
-                        PROJECT_ROLE_LABELS[role],
-                      ]),
-                    )}
-                  >
-                    <FormControl>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {availableRoles.map((role) => (
-                        <SelectItem key={role} value={role}>
-                          {PROJECT_ROLE_LABELS[role]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {selectedUser?.role === 'qa_viewer' ? (
-                    <FormDescription>
-                      QA viewers always receive read-only Viewer access.
-                    </FormDescription>
-                  ) : null}
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            {candidatesQuery.error ? (
-              <Alert variant="destructive">
-                <AlertDescription>
-                  Failed to load eligible users: {candidatesQuery.error.message}
-                </AlertDescription>
-              </Alert>
-            ) : null}
-            <DialogFooter className="static">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setDialogOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={addMutation.isPending || candidatesQuery.isLoading}
-              >
-                {addMutation.isPending ? (
-                  <>
-                    <Spinner className="size-4" />
-                    Adding...
-                  </>
-                ) : (
-                  'Add'
-                )}
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 export function ProjectAccessCard({ projectId }: { projectId: string }) {
   const membersQuery = useProjectMembers(projectId)
   const updateMutation = useUpdateProjectMember(projectId)
@@ -450,7 +204,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
     <>
       <SettingsSection
         title="Access"
-        actions={<AddProjectMemberDialog projectId={projectId} />}
+        actions={<AddProjectMembersDialog projectId={projectId} />}
       >
         <SettingsSurface inset={false}>
           {isLoading ? (
@@ -472,7 +226,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
           ) : (
             <ItemGroup className="gap-0" role="list">
               {members.flatMap((member, index) => {
-                const implicit = hasImplicitAccess(member.user_role)
+                const implicit = hasImplicitProjectAccess(member.user_role)
                 const projectRole =
                   PROJECT_ROLE_LABELS[
                     member.user_role === 'qa_viewer' ? 'viewer' : member.role

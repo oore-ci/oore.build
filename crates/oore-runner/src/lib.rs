@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicU32, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -59,10 +59,14 @@ const MANAGED_ANDROID_SIGNING_ENV_KEYS: [&str; 6] = [
 ];
 const ANDROID_SIGNER_STORE_PASSWORD_ENV: &str = "OORE_SIGNER_STORE_PASSWORD";
 const ANDROID_SIGNER_KEY_PASSWORD_ENV: &str = "OORE_SIGNER_KEY_PASSWORD";
+/// Copying the workspace back from a VM after a step is logged once it takes
+/// at least this long.
+const VM_SYNC_NOTE_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
 const IOS_SIGNING_DIR: &str = ".oore/ios-signing";
 const IOS_CLEANUP_JOURNAL: &str = ".oore/ios-signing/cleanup-journal.json";
 const BUILD_WORKSPACE_PREFIX: &str = "oore-build";
 const RUNNER_WORKSPACE_ROOT_NAME: &str = "oore-runner-workspaces";
+const IOS_SIGNING_LOCK: &str = "ios-signing.lock";
 const LEGACY_RECONCILIATION_MARKER: &str = ".legacy-workspaces-reconciled-v1";
 const LEGACY_BUILD_WORKSPACE_ROOT: &str = "/tmp/oore-builds.noindex";
 const SPOTLIGHT_NO_INDEX_SENTINEL: &str = ".metadata_never_index";
@@ -802,7 +806,7 @@ fn android_signing_prepared_marker(source: &str, variant: AndroidSigningBuildTyp
                 AndroidSigningBuildType::Debug => "debug",
                 AndroidSigningBuildType::Release => "release",
             },
-            "delivery": "runner_owned_post_build_signer",
+            "delivery": "gradle_injected_signing",
         })
     )
 }
@@ -928,6 +932,7 @@ fn android_artifact_extension(command: &str) -> Option<&'static str> {
 struct AndroidSigningToolchain {
     apksigner: PathBuf,
     jarsigner: PathBuf,
+    keytool: PathBuf,
     zip: PathBuf,
     java_home: Option<PathBuf>,
 }
@@ -1037,9 +1042,15 @@ impl AndroidSigningToolchain {
                 fixed_system_executable("jarsigner").unwrap_or_else(|| PathBuf::from("jarsigner")),
             )
         };
+        let keytool = java_home
+            .as_ref()
+            .and_then(|home| canonical_file(&home.join("bin/keytool")))
+            .or_else(|| fixed_system_executable("keytool"))
+            .unwrap_or_else(|| PathBuf::from("keytool"));
         Self {
             apksigner,
             jarsigner,
+            keytool,
             zip: fixed_system_executable("zip").unwrap_or_else(|| PathBuf::from("zip")),
             java_home,
         }
@@ -1192,13 +1203,124 @@ fn android_artifacts_for_signing(
     Ok(artifacts)
 }
 
+/// What the `android-sign` step did: Gradle normally signs with the managed
+/// key (see [`GradleSigningInjection`]), so artifacts are only checked; the
+/// rest are re-signed after the build.
+#[derive(Debug, PartialEq, Eq)]
+struct AndroidSigningReport {
+    artifacts: Vec<PathBuf>,
+    resigned: usize,
+}
+
+impl AndroidSigningReport {
+    fn log_line(&self) -> String {
+        let verified = self.artifacts.len() - self.resigned;
+        match (verified, self.resigned) {
+            (_, 0) => format!(
+                "[oore-signing] Gradle signed {verified} Android artifact(s) with the managed key; verified"
+            ),
+            (0, resigned) => format!(
+                "[oore-signing] Gradle did not sign with the managed key; re-signed and verified {resigned} Android artifact(s)"
+            ),
+            (verified, resigned) => format!(
+                "[oore-signing] Gradle signed {verified} Android artifact(s) with the managed key; re-signed and verified {resigned} it did not"
+            ),
+        }
+    }
+}
+
+/// The SHA-256 digest of the first certificate in `keytool -list -v` or
+/// `keytool -printcert` output, as lowercase hex without separators.
+fn parse_keytool_sha256(stdout: &str) -> Option<String> {
+    stdout.lines().find_map(|line| {
+        let digest = line.trim().strip_prefix("SHA256:")?;
+        let digest = digest.trim().replace(':', "").to_ascii_lowercase();
+        (!digest.is_empty()).then_some(digest)
+    })
+}
+
+/// Every signer certificate digest in `apksigner verify --print-certs` output.
+fn parse_apksigner_sha256s(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let (_, digest) = line.split_once("certificate SHA-256 digest:")?;
+            Some(digest.trim().to_ascii_lowercase())
+        })
+        .collect()
+}
+
+fn managed_certificate_sha256(
+    toolchain: &AndroidSigningToolchain,
+    keystore_path: &Path,
+    inputs: &AndroidSigningInputs,
+) -> Option<String> {
+    let stdout = run_android_signer_command(
+        toolchain,
+        &toolchain.keytool,
+        &[
+            "-list".to_string(),
+            "-v".to_string(),
+            "-keystore".to_string(),
+            keystore_path.display().to_string(),
+            "-alias".to_string(),
+            inputs.key_alias.clone(),
+            "-storepass:env".to_string(),
+            ANDROID_SIGNER_STORE_PASSWORD_ENV.to_string(),
+        ],
+        inputs,
+        "read the managed signing certificate",
+    )
+    .ok()?;
+    parse_keytool_sha256(&stdout)
+}
+
+/// Whether `artifact` carries a valid signature from exactly the managed
+/// certificate. Any failure to tell counts as no, so the artifact is re-signed.
+fn signed_with_managed_key(
+    toolchain: &AndroidSigningToolchain,
+    artifact: &Path,
+    extension: &str,
+    managed_sha256: &str,
+    inputs: &AndroidSigningInputs,
+) -> bool {
+    let artifact = artifact.display().to_string();
+    if extension == "apk" {
+        run_android_signer_command(
+            toolchain,
+            &toolchain.apksigner,
+            &["verify".to_string(), "--print-certs".to_string(), artifact],
+            inputs,
+            "verify Android APK signature",
+        )
+        .is_ok_and(|stdout| parse_apksigner_sha256s(&stdout) == [managed_sha256])
+    } else {
+        run_android_signer_command(
+            toolchain,
+            &toolchain.jarsigner,
+            &["-verify".to_string(), artifact.clone()],
+            inputs,
+            "verify Android App Bundle signature",
+        )
+        .is_ok_and(|stdout| check_android_bundle_verification(&stdout).is_ok())
+            && run_android_signer_command(
+                toolchain,
+                &toolchain.keytool,
+                &["-printcert".to_string(), "-jarfile".to_string(), artifact],
+                inputs,
+                "read the Android App Bundle certificate",
+            )
+            .is_ok_and(|stdout| parse_keytool_sha256(&stdout).as_deref() == Some(managed_sha256))
+    }
+}
+
 fn sign_android_artifacts(
     workspace: &Path,
     signing_workspace: &Path,
     command: &str,
     inputs: &AndroidSigningInputs,
     toolchain: &AndroidSigningToolchain,
-) -> anyhow::Result<Vec<PathBuf>> {
+) -> anyhow::Result<AndroidSigningReport> {
     let extension = android_artifact_extension(command)
         .ok_or_else(|| anyhow::anyhow!("unsupported Android signing command"))?;
     let artifacts = android_artifacts_for_signing(workspace, extension)?;
@@ -1208,7 +1330,15 @@ fn sign_android_artifacts(
     };
     let keystore_path = signing_dir.join("managed-keystore.jks");
     write_private_file(&keystore_path, &inputs.keystore_bytes)?;
+    let managed_sha256 = managed_certificate_sha256(toolchain, &keystore_path, inputs);
+    let mut resigned = 0;
     for (index, artifact) in artifacts.iter().enumerate() {
+        if managed_sha256.as_deref().is_some_and(|digest| {
+            signed_with_managed_key(toolchain, artifact, extension, digest, inputs)
+        }) {
+            continue;
+        }
+        resigned += 1;
         let signed_artifact = signing_dir.join(format!("signed-{index}.{extension}"));
         if extension == "apk" {
             run_android_signer_command(
@@ -1279,7 +1409,10 @@ fn sign_android_artifacts(
             )
         })?;
     }
-    Ok(artifacts)
+    Ok(AndroidSigningReport {
+        artifacts,
+        resigned,
+    })
 }
 
 /// Asks the host's `flutter`, found through the same PATH and env the
@@ -1351,10 +1484,11 @@ fn check_host_flutter(requested: &str, found: Result<String, String>) -> Result<
 }
 
 /// The guest-side equivalent of [`sign_android_artifacts`]: the same
-/// apksigner and jarsigner steps, run with the VM image's Android SDK and JDK
-/// so the host needs neither. The script travels over the guest agent's
-/// channel and writes the keystore only to a private directory on the VM's
-/// own disk, never to the shared workspace.
+/// checks and apksigner and jarsigner steps, run with the VM image's Android
+/// SDK and JDK so the host needs neither. The script travels over the guest
+/// agent's channel and writes the keystore only to a private directory on the
+/// VM's own disk, never to the shared workspace. Its last line of stdout is
+/// `oore-resigned=<count>`.
 fn android_vm_signing_script(
     guest_artifacts: &[String],
     extension: &str,
@@ -1362,6 +1496,7 @@ fn android_vm_signing_script(
 ) -> String {
     use tart::shell_quote as q;
     let keystore = base64::engine::general_purpose::STANDARD.encode(&inputs.keystore_bytes);
+    let alias = q(&inputs.key_alias);
     let mut script = format!(
         r#"set -e
 umask 077
@@ -1371,19 +1506,39 @@ printf %s {keystore} | base64 --decode > "$dir/keystore.jks"
 export {ANDROID_SIGNER_STORE_PASSWORD_ENV}={store}
 export {ANDROID_SIGNER_KEY_PASSWORD_ENV}={key}
 apksigner="$(ls -1 "${{ANDROID_HOME:-$HOME/android-sdk}}"/build-tools/*/apksigner 2>/dev/null | sort | tail -n 1)"
+managed="$(keytool -list -v -keystore "$dir/keystore.jks" -alias {alias} -storepass:env {ANDROID_SIGNER_STORE_PASSWORD_ENV} 2>/dev/null | awk '/^[[:space:]]*SHA256:/ {{ print $2; exit }}' | tr -d ':' | tr 'A-F' 'a-f')" || managed=""
+resigned=0
 "#,
         keystore = q(&keystore),
         store = q(&inputs.keystore_password),
         key = q(&inputs.key_password),
     );
-    let alias = q(&inputs.key_alias);
     for (index, artifact) in guest_artifacts.iter().enumerate() {
         let artifact = q(artifact);
         let signed = format!("\"$dir/signed-{index}.{extension}\"");
+        // Gradle normally signed with the managed key already; anything else
+        // is re-signed below.
         if extension == "apk" {
             script.push_str(&format!(
                 r#"[ -n "$apksigner" ] || {{ echo "apksigner is missing from the VM image's Android SDK" >&2; exit 1; }}
-"$apksigner" sign --ks "$dir/keystore.jks" --ks-key-alias {alias} --ks-pass env:{ANDROID_SIGNER_STORE_PASSWORD_ENV} --key-pass env:{ANDROID_SIGNER_KEY_PASSWORD_ENV} --out {signed} {artifact}
+signers="$("$apksigner" verify --print-certs {artifact} 2>/dev/null | awk -F': ' '/certificate SHA-256 digest/ {{ print $2 }}' | tr 'A-F' 'a-f')" || signers=""
+"#
+            ));
+        } else {
+            script.push_str(&format!(
+                r#"signers=""
+if verified="$(jarsigner -verify {artifact} 2>/dev/null)" && printf '%s\n' "$verified" | grep -q '^ *jar verified' && ! printf '%s\n' "$verified" | grep -q 'unsigned entries'; then
+  signers="$(keytool -printcert -jarfile {artifact} 2>/dev/null | awk '/^[[:space:]]*SHA256:/ {{ print $2; exit }}' | tr -d ':' | tr 'A-F' 'a-f')" || signers=""
+fi
+"#
+            ));
+        }
+        script.push_str(
+            "if [ -z \"$managed\" ] || [ \"$signers\" != \"$managed\" ]; then\nresigned=$((resigned + 1))\n",
+        );
+        if extension == "apk" {
+            script.push_str(&format!(
+                r#""$apksigner" sign --ks "$dir/keystore.jks" --ks-key-alias {alias} --ks-pass env:{ANDROID_SIGNER_STORE_PASSWORD_ENV} --key-pass env:{ANDROID_SIGNER_KEY_PASSWORD_ENV} --out {signed} {artifact}
 "$apksigner" verify --verbose --print-certs {signed} >&2
 "#
             ));
@@ -1400,9 +1555,232 @@ fi
 "#
             ));
         }
-        script.push_str(&format!("cp {signed} {artifact}\n"));
+        script.push_str(&format!("cp {signed} {artifact}\nfi\n"));
     }
+    script.push_str("printf 'oore-resigned=%s\\n' \"$resigned\"\n");
     script
+}
+
+fn parse_vm_resigned_count(stdout: &str) -> Option<usize> {
+    stdout
+        .lines()
+        .rev()
+        .find_map(|line| line.trim().strip_prefix("oore-resigned="))
+        .and_then(|count| count.parse().ok())
+}
+
+/// Gradle signs with the managed keystore through AGP's injected signing
+/// properties, the ones fastlane passes as `-P` flags and Android Studio uses
+/// for "Generate signed bundle". They override the app's own signingConfig,
+/// so no Gradle change is needed and no keys have to be committed. They go in
+/// the workspace's `android/gradle.properties` for the build step only: a
+/// project `gradle.properties` reaches every module without argv or env,
+/// whereas `ORG_GRADLE_PROJECT_android.injected...` would not, since `gradlew`
+/// runs under `/bin/sh`, which drops variable names that contain dots.
+fn gradle_injected_signing_properties(
+    keystore_path: &str,
+    inputs: &AndroidSigningInputs,
+) -> String {
+    let mut block =
+        String::from("\n# Added by Oore for this build step: managed Android signing\n");
+    for (key, value) in [
+        ("store.file", keystore_path),
+        ("store.password", inputs.keystore_password.as_str()),
+        ("key.alias", inputs.key_alias.as_str()),
+        ("key.password", inputs.key_password.as_str()),
+    ] {
+        block.push_str(&format!(
+            "android.injected.signing.{key}={}\n",
+            escape_properties_value(value)
+        ));
+    }
+    block
+}
+
+/// Escapes a value for a Java `.properties` file, which treats `\` as an
+/// escape, ends a value at a line break, and trims leading whitespace.
+fn escape_properties_value(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for (index, character) in value.chars().enumerate() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\u{c}' => escaped.push_str("\\f"),
+            ' ' if index == 0 => escaped.push_str("\\ "),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
+}
+
+/// The Gradle project of a Flutter app, if the workspace has a real one.
+/// A symlinked `android` folder or `gradle.properties` is skipped, so the
+/// runner never writes credentials through a link out of the workspace;
+/// the `android-sign` step then signs after the build instead.
+fn gradle_properties_for_injection(workspace: &Path) -> Option<PathBuf> {
+    let android = workspace.join("android");
+    if !fs::symlink_metadata(&android).is_ok_and(|meta| meta.is_dir()) {
+        return None;
+    }
+    let properties = android.join("gradle.properties");
+    match fs::symlink_metadata(&properties) {
+        Ok(meta) if meta.is_file() => Some(properties),
+        Ok(_) => None,
+        Err(error) if error.kind() == ErrorKind::NotFound => Some(properties),
+        Err(_) => None,
+    }
+}
+
+/// Host side of the Gradle signing hand-off: the keystore sits in a private
+/// directory outside the workspace, and `android/gradle.properties` gets its
+/// original content back when this is dropped, right after the build step.
+struct GradleSigningInjection {
+    properties_path: PathBuf,
+    original: Option<Vec<u8>>,
+    _keystore_dir: PrivateSigningDirectory,
+}
+
+impl GradleSigningInjection {
+    fn apply(
+        workspace: &Path,
+        signing_workspace: &Path,
+        inputs: &AndroidSigningInputs,
+    ) -> anyhow::Result<Option<Self>> {
+        let Some(properties_path) = gradle_properties_for_injection(workspace) else {
+            return Ok(None);
+        };
+        let dir = create_private_workspace_in(signing_workspace, "android-gradle-signer")?;
+        let keystore_dir = PrivateSigningDirectory { path: dir.clone() };
+        let keystore_path = dir.join("managed-keystore.jks");
+        write_private_file(&keystore_path, &inputs.keystore_bytes)?;
+        let original = match fs::read(&properties_path) {
+            Ok(content) => Some(content),
+            Err(error) if error.kind() == ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(anyhow::Error::from(error)
+                    .context(format!("failed to read {}", properties_path.display())));
+            }
+        };
+        let injection = Self {
+            properties_path,
+            original,
+            _keystore_dir: keystore_dir,
+        };
+        let mut content = injection.original.clone().unwrap_or_default();
+        let mut block =
+            gradle_injected_signing_properties(&keystore_path.display().to_string(), inputs);
+        content.extend_from_slice(block.as_bytes());
+        block.zeroize();
+        let written = fs::write(&injection.properties_path, &content);
+        content.zeroize();
+        written
+            .with_context(|| format!("failed to write {}", injection.properties_path.display()))?;
+        Ok(Some(injection))
+    }
+}
+
+impl Drop for GradleSigningInjection {
+    fn drop(&mut self) {
+        let restored = match &self.original {
+            Some(content) => fs::write(&self.properties_path, content),
+            None => fs::remove_file(&self.properties_path),
+        };
+        if let Err(error) = restored {
+            eprintln!(
+                "Warning: could not restore {} after the Android build: {error}",
+                self.properties_path.display()
+            );
+        }
+    }
+}
+
+/// The VM side of [`GradleSigningInjection`]: writes the keystore to a
+/// private directory on the guest's own disk, keeps a copy of the guest's
+/// `android/gradle.properties` there, and appends the injected properties.
+/// Prints the directory, or nothing when the workspace has no plain Gradle
+/// project to inject into.
+fn vm_gradle_signing_apply_script(guest_workspace: &str, inputs: &AndroidSigningInputs) -> String {
+    use tart::shell_quote as q;
+    let keystore = base64::engine::general_purpose::STANDARD.encode(&inputs.keystore_bytes);
+    let android = format!("{guest_workspace}/android");
+    let block = gradle_injected_signing_properties("@KEYSTORE@", inputs);
+    let (before, after) = block
+        .split_once("@KEYSTORE@")
+        .expect("the keystore placeholder is in the block");
+    format!(
+        r#"set -e
+umask 077
+android={android}
+props="$android/gradle.properties"
+if [ -L "$android" ] || [ ! -d "$android" ] || [ -L "$props" ] || {{ [ -e "$props" ] && [ ! -f "$props" ]; }}; then
+  exit 0
+fi
+dir="$(mktemp -d)"
+printf %s {keystore} | base64 --decode > "$dir/keystore.jks"
+if [ -f "$props" ]; then cp -p "$props" "$dir/gradle.properties.orig"; fi
+{{ printf %s {before}; printf %s "$dir/keystore.jks"; printf %s {after}; }} >> "$props"
+printf '%s\n' "$dir"
+"#,
+        android = q(&android),
+        keystore = q(&keystore),
+        before = q(before),
+        after = q(after),
+    )
+}
+
+fn vm_gradle_signing_restore_script(guest_workspace: &str, dir: &str) -> String {
+    use tart::shell_quote as q;
+    format!(
+        r#"props={props}
+dir={dir}
+if [ -f "$dir/gradle.properties.orig" ]; then cp -p "$dir/gradle.properties.orig" "$props"; else rm -f "$props"; fi
+rm -rf "$dir"
+"#,
+        props = q(&format!("{guest_workspace}/android/gradle.properties")),
+        dir = q(dir),
+    )
+}
+
+/// Hands the managed keystore to Gradle in the VM; `Ok(None)` means the
+/// workspace had nothing to inject into.
+async fn apply_vm_gradle_signing(
+    vm: &tart::TartVm,
+    inputs: &AndroidSigningInputs,
+) -> anyhow::Result<Option<String>> {
+    let mut script = vm_gradle_signing_apply_script(vm.guest_workspace(), inputs);
+    let output = vm.run_script(&script).await;
+    script.zeroize();
+    let output = output?;
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to hand the Android keystore to Gradle in the VM ({}): {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    let dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if dir.is_empty() {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        dir.starts_with('/') && !dir.contains('\n'),
+        "unexpected private directory from the VM: {dir}"
+    );
+    Ok(Some(dir))
+}
+
+async fn restore_vm_gradle_signing(vm: &tart::TartVm, dir: &str) -> anyhow::Result<()> {
+    let output = vm
+        .run_script(&vm_gradle_signing_restore_script(vm.guest_workspace(), dir))
+        .await?;
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to restore android/gradle.properties in the VM ({}): {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(())
 }
 
 async fn sign_android_artifacts_in_vm(
@@ -1410,7 +1788,7 @@ async fn sign_android_artifacts_in_vm(
     workspace: &Path,
     command: &str,
     inputs: &AndroidSigningInputs,
-) -> anyhow::Result<Vec<PathBuf>> {
+) -> anyhow::Result<AndroidSigningReport> {
     let extension = android_artifact_extension(command)
         .ok_or_else(|| anyhow::anyhow!("unsupported Android signing command"))?;
     let artifacts = android_artifacts_for_signing(workspace, extension)?;
@@ -1427,14 +1805,19 @@ async fn sign_android_artifacts_in_vm(
     let output = vm.run_script(&script).await;
     script.zeroize();
     let output = output?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
     anyhow::ensure!(
         output.status.success(),
         "failed to sign Android artifacts in the VM ({}): {}",
         output.status,
-        android_signer_failure_detail(&String::from_utf8_lossy(&output.stdout), &output.stderr)
+        android_signer_failure_detail(&stdout, &output.stderr)
     );
+    let resigned = parse_vm_resigned_count(&stdout).unwrap_or(artifacts.len());
     vm.sync_workspace_out().await?;
-    Ok(artifacts)
+    Ok(AndroidSigningReport {
+        artifacts,
+        resigned,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -1476,6 +1859,8 @@ struct IosCleanupJournal {
 struct IosSigningCleanup {
     journal_path: Option<PathBuf>,
     journal: IosCleanupJournal,
+    /// Held until the user keychain settings are restored.
+    lock: Option<IosSigningLock>,
 }
 
 impl IosSigningCleanup {
@@ -1484,6 +1869,7 @@ impl IosSigningCleanup {
             return Ok(());
         }
         cleanup_ios_signing_state(&self.journal)?;
+        self.lock = None;
         let journal_path = self
             .journal_path
             .take()
@@ -1507,6 +1893,29 @@ impl Drop for IosSigningCleanup {
         if let Err(error) = self.cleanup() {
             eprintln!("Warning: failed to clean up iOS signing state: {error:#}");
         }
+    }
+}
+
+/// Signing switches the account's default keychain and keychain search list,
+/// which every build of the account shares. Builds that run at the same time,
+/// in this runner or another runner process of the account, take turns
+/// through this lock from keychain setup to cleanup.
+struct IosSigningLock {
+    _file: fs::File,
+}
+
+impl IosSigningLock {
+    fn acquire() -> anyhow::Result<Self> {
+        let path = prepare_runner_workspace_root()?.join(IOS_SIGNING_LOCK);
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("failed to open iOS signing lock {}", path.display()))?;
+        file.lock()
+            .with_context(|| format!("failed to lock {}", path.display()))?;
+        Ok(Self { _file: file })
     }
 }
 
@@ -1984,6 +2393,7 @@ fn install_ios_signing_bundle_with_session_check(
         prepared_profiles.push((profile.bundle_id.clone(), profile_ref, work_path));
     }
 
+    let lock = IosSigningLock::acquire()?;
     let mut journal = IosCleanupJournal {
         keychain_path: keychain_path.clone(),
         original_default_keychain: None,
@@ -2157,6 +2567,7 @@ fn install_ios_signing_bundle_with_session_check(
             IosSigningCleanup {
                 journal_path: Some(journal_path),
                 journal,
+                lock: Some(lock),
             },
         )),
         Err(err) => {
@@ -3140,6 +3551,7 @@ async fn send_runner_heartbeat(
     config: &RunnerConfig,
     capabilities: &serde_json::Value,
     cache_report: &SharedCacheReport,
+    build_slots: &AtomicU32,
 ) -> anyhow::Result<()> {
     let capabilities = heartbeat_capabilities(capabilities, cache_report);
     let cache_bytes = cache_report
@@ -3164,15 +3576,19 @@ async fn send_runner_heartbeat(
         .context("runner heartbeat could not reach the backend")?;
     let status = response.status();
     if status.is_success() {
-        // Older backends answer 204 with no body; that means no purge request.
-        let purge_requested_at = response
+        // Older backends answer 204 with no body; that means no purge
+        // request and one build at a time.
+        let body = response
             .json::<RunnerHeartbeatResponse>()
             .await
-            .ok()
-            .and_then(|body| body.cache_purge_requested_at);
+            .unwrap_or_default();
         if let Ok(mut report) = cache_report.lock() {
-            report.purge_requested_at = purge_requested_at;
+            report.purge_requested_at = body.cache_purge_requested_at;
         }
+        build_slots.store(
+            body.max_concurrent_builds.unwrap_or(1).max(1),
+            Ordering::Relaxed,
+        );
         return Ok(());
     }
     if runner_response_is_terminal(status) {
@@ -3190,6 +3606,7 @@ async fn establish_runner_heartbeat(
     config: &RunnerConfig,
     capabilities: &serde_json::Value,
     cache_report: &SharedCacheReport,
+    build_slots: &AtomicU32,
 ) -> anyhow::Result<()> {
     let delays = [
         Duration::ZERO,
@@ -3201,7 +3618,16 @@ async fn establish_runner_heartbeat(
         if !delay.is_zero() {
             tokio::time::sleep(delay).await;
         }
-        match send_runner_heartbeat(client, daemon_url, config, capabilities, cache_report).await {
+        match send_runner_heartbeat(
+            client,
+            daemon_url,
+            config,
+            capabilities,
+            cache_report,
+            build_slots,
+        )
+        .await
+        {
             Ok(()) => return Ok(()),
             Err(error) if terminal_runner_error(&error) => return Err(error),
             Err(error) => last_error = Some(error),
@@ -3291,7 +3717,17 @@ pub async fn run_runner_forever(
 
     // Do not enter the claim loop or advertise service readiness until the
     // backend has authenticated this exact runner/config/release.
-    establish_runner_heartbeat(&client, &daemon_url, &config, &capabilities, &cache_report).await?;
+    // How many builds run at once. The backend sets it in each heartbeat.
+    let build_slots = Arc::new(AtomicU32::new(1));
+    establish_runner_heartbeat(
+        &client,
+        &daemon_url,
+        &config,
+        &capabilities,
+        &cache_report,
+        &build_slots,
+    )
+    .await?;
     if let (Some(path), Some(template)) =
         (service_ack_path.as_deref(), service_ack_template.as_ref())
     {
@@ -3303,6 +3739,7 @@ pub async fn run_runner_forever(
     let hb_config = config.clone();
     let hb_capabilities = capabilities.clone();
     let hb_cache_report = cache_report.clone();
+    let hb_build_slots = build_slots.clone();
     let hb_ack_path = service_ack_path;
     let hb_ack_template = service_ack_template;
     let (fatal_tx, mut fatal_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -3315,6 +3752,7 @@ pub async fn run_runner_forever(
                 &hb_config,
                 &hb_capabilities,
                 &hb_cache_report,
+                &hb_build_slots,
             )
             .await
             {
@@ -3352,9 +3790,13 @@ pub async fn run_runner_forever(
     });
 
     if let Some(caches) = &caches {
-        run_cache_maintenance(caches.clone(), cache_report.clone(), None).await;
+        run_cache_maintenance(caches.clone(), cache_report.clone()).await;
     }
 
+    let mut builds = tokio::task::JoinSet::new();
+    let mut active_build_ids: Vec<String> = Vec::new();
+    // Eviction waits until no build uses the caches.
+    let mut caches_need_maintenance = false;
     loop {
         tokio::select! {
             fatal = fatal_rx.recv() => {
@@ -3363,44 +3805,75 @@ pub async fn run_runner_forever(
                     None => anyhow::bail!("runner heartbeat monitor stopped unexpectedly"),
                 }
             }
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {}
-        }
-        if runner_should_retire(&mut release_watch) {
-            println!(
-                "A committed runner update is ready; no build is active, exiting for a clean restart"
-            );
-            return Ok(());
-        }
-        if let Err(error) = reconcile_stale_runner_mutations() {
-            eprintln!("Refusing to claim work until stale runner state is cleaned: {error:#}");
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            continue;
-        }
-        if let Some(caches) = &caches {
-            purge_caches_if_requested(caches, &cache_report).await;
-        }
-        if let Some(upkeep) = vm_upkeep.as_mut() {
-            upkeep.run(&config.runner_id, &cache_report).await;
-        }
-        match claim_and_execute(
-            &client,
-            &daemon_url,
-            &config,
-            caches.as_ref(),
-            &cache_report,
-        )
-        .await
-        {
-            Ok(executed) => {
-                // A build whose VM could not be deleted leaves it behind.
-                if executed && let Some(upkeep) = vm_upkeep.as_mut() {
+            Some(joined) = builds.join_next(), if !builds.is_empty() => {
+                let finished: FinishedBuild = match joined {
+                    Ok(finished) => finished,
+                    Err(error) => anyhow::bail!("a build task stopped unexpectedly: {error}"),
+                };
+                active_build_ids.retain(|id| id != &finished.build_id);
+                if let Some(upkeep) = vm_upkeep.as_mut() {
+                    // A build whose VM could not be deleted leaves it behind.
                     upkeep.sweep_now();
                 }
+                if let (Some(caches), Some(observation)) = (&caches, finished.cache_observation) {
+                    record_cache_use(caches.clone(), observation).await;
+                    caches_need_maintenance = true;
+                }
+                match finished.result {
+                    Ok(()) => {}
+                    Err(error) if terminal_runner_error(&error) => return Err(error),
+                    Err(error) => eprintln!("Error during build {}: {error:#}", finished.build_id),
+                }
             }
-            Err(error) if terminal_runner_error(&error) => return Err(error),
-            Err(e) => {
-                eprintln!("Error during claim/execute: {}", e);
+            _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+        }
+
+        // Crash recovery, eviction, purges, VM sweeps and updates touch state
+        // that running builds use, so they wait until every slot is free.
+        if builds.is_empty() {
+            if runner_should_retire(&mut release_watch) {
+                println!(
+                    "A committed runner update is ready; no build is active, exiting for a clean restart"
+                );
+                return Ok(());
+            }
+            if let Err(error) = reconcile_stale_runner_mutations() {
+                eprintln!("Refusing to claim work until stale runner state is cleaned: {error:#}");
                 tokio::time::sleep(Duration::from_secs(10)).await;
+                continue;
+            }
+            if let Some(caches) = &caches {
+                if std::mem::take(&mut caches_need_maintenance) {
+                    run_cache_maintenance(caches.clone(), cache_report.clone()).await;
+                }
+                purge_caches_if_requested(caches, &cache_report).await;
+            }
+            if let Some(upkeep) = vm_upkeep.as_mut() {
+                upkeep.run(&config.runner_id, &cache_report).await;
+            }
+        }
+
+        while builds.len() < build_slots.load(Ordering::Relaxed).max(1) as usize {
+            match claim_job(&client, &daemon_url, &config, &active_build_ids).await {
+                Ok(Some(job)) => {
+                    active_build_ids.push(job.build_id.clone());
+                    builds.spawn(run_claimed_job(
+                        job,
+                        client.clone(),
+                        daemon_url.clone(),
+                        config.clone(),
+                        caches.clone(),
+                    ));
+                }
+                Ok(None) => break,
+                Err(error) if terminal_runner_error(&error) => return Err(error),
+                Err(error) => {
+                    eprintln!("Error during claim: {error:#}");
+                    if builds.is_empty() {
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                    }
+                    break;
+                }
             }
         }
     }
@@ -3482,18 +3955,24 @@ impl VmUpkeep {
     }
 }
 
-/// Records the finished build's lockfile keys, then measures the caches and
-/// evicts above the cap. It finishes before the next claim, because eviction
-/// must never delete from a cache a build is using.
-async fn run_cache_maintenance(
+/// Records a finished build's lockfile keys.
+async fn record_cache_use(
     caches: Arc<RunnerCaches>,
-    cache_report: SharedCacheReport,
-    finished_build: Option<(CacheObservation, bool)>,
+    (observation, succeeded): (CacheObservation, bool),
 ) {
+    let record = tokio::task::spawn_blocking(move || {
+        caches.record(&observation, succeeded, now_unix());
+    });
+    if let Err(error) = record.await {
+        eprintln!("Warning: dependency cache bookkeeping stopped: {error}");
+    }
+}
+
+/// Measures the caches and evicts above the cap. It runs only while no build
+/// is active, because eviction must never delete from a cache a build is
+/// using.
+async fn run_cache_maintenance(caches: Arc<RunnerCaches>, cache_report: SharedCacheReport) {
     let maintenance = tokio::task::spawn_blocking(move || {
-        if let Some((observation, succeeded)) = finished_build {
-            caches.record(&observation, succeeded, now_unix());
-        }
         let stats = caches.maintain(now_unix());
         if stats.evicted_bytes > 0 {
             println!(
@@ -3538,13 +4017,21 @@ async fn purge_caches_if_requested(caches: &Arc<RunnerCaches>, cache_report: &Sh
     }
 }
 
-async fn claim_and_execute(
+/// A build a slot finished, whatever its outcome.
+struct FinishedBuild {
+    build_id: String,
+    cache_observation: Option<(CacheObservation, bool)>,
+    result: anyhow::Result<()>,
+}
+
+/// Claims the next build. `active_build_ids` are the builds the other slots
+/// are still running, which the backend must not release.
+async fn claim_job(
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
-    caches: Option<&Arc<RunnerCaches>>,
-    cache_report: &SharedCacheReport,
-) -> anyhow::Result<bool> {
+    active_build_ids: &[String],
+) -> anyhow::Result<Option<ClaimedJob>> {
     let resp = client
         .post(format!(
             "{}/v1/runners/{}/claim",
@@ -3553,6 +4040,7 @@ async fn claim_and_execute(
         .bearer_auth(&config.runner_token)
         .json(&ClaimJobRequest {
             protocol_version: RUNNER_PROTOCOL_VERSION,
+            active_build_ids: active_build_ids.to_vec(),
         })
         .timeout(CONTROL_REQUEST_TIMEOUT)
         .send()
@@ -3570,16 +4058,48 @@ async fn claim_and_execute(
     }
 
     let claim: ClaimJobResponse = resp.json().await?;
-    let job = match claim.job {
-        Some(j) => j,
-        None => return Ok(false),
-    };
+    if let Some(job) = &claim.job {
+        println!(
+            "Claimed build {} (#{}) for project {}",
+            job.build_id, job.build_number, job.project_id
+        );
+    }
+    Ok(claim.job)
+}
 
-    println!(
-        "Claimed build {} (#{}) for project {}",
-        job.build_id, job.build_number, job.project_id
-    );
+/// Runs a claimed build in its own slot and reports its result.
+async fn run_claimed_job(
+    job: ClaimedJob,
+    client: reqwest::Client,
+    daemon_url: String,
+    config: RunnerConfig,
+    caches: Option<Arc<RunnerCaches>>,
+) -> FinishedBuild {
+    let mut cache_observation = None;
+    let result = execute_claimed_job(
+        &job,
+        &client,
+        &daemon_url,
+        &config,
+        caches.as_deref(),
+        &mut cache_observation,
+    )
+    .await;
+    FinishedBuild {
+        build_id: job.build_id,
+        cache_observation,
+        result,
+    }
+}
 
+async fn execute_claimed_job(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    caches: Option<&RunnerCaches>,
+    finished_build: &mut Option<(CacheObservation, bool)>,
+) -> anyhow::Result<()> {
     report_status_with_retry(
         client,
         daemon_url,
@@ -3599,16 +4119,16 @@ async fn claim_and_execute(
     let mut cache_observation = None;
     let mut file_size_budgets = None;
     let (steps, result) = execute_build(
-        &job,
+        job,
         client,
         daemon_url,
         config,
-        caches.map(Arc::as_ref),
+        caches,
         &mut cache_observation,
         &mut file_size_budgets,
     )
     .await;
-    let finished_build = cache_observation.map(|observation| (observation, result.is_ok()));
+    *finished_build = cache_observation.map(|observation| (observation, result.is_ok()));
 
     let final_report = match &result {
         Ok(()) => Some(StatusReport {
@@ -3673,14 +4193,7 @@ async fn claim_and_execute(
         _ => {}
     }
 
-    // After the status report, so measuring the caches never delays it, and
-    // whatever its outcome.
-    if let Some(caches) = caches {
-        run_cache_maintenance(caches.clone(), cache_report.clone(), finished_build).await;
-    }
-    reported?;
-
-    Ok(true)
+    reported
 }
 
 struct WorkspaceCleanup {
@@ -3725,8 +4238,9 @@ impl std::fmt::Display for BuildTerminated {
 
 impl std::error::Error for BuildTerminated {}
 
+/// FVM's `.fvmrc`. Only `flutter` matters here; FVM's other keys, such as
+/// `flavors` and `updateVscodeSettings`, are ignored.
 #[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 struct FvmRcConfig {
     flutter: String,
 }
@@ -4346,6 +4860,7 @@ async fn check_build_active(
         .bearer_auth(&config.runner_token)
         .json(&ClaimJobRequest {
             protocol_version: RUNNER_PROTOCOL_VERSION,
+            active_build_ids: Vec::new(),
         })
         .timeout(CONTROL_REQUEST_TIMEOUT)
         .send()
@@ -5236,7 +5751,7 @@ async fn execute_build_steps(
                                 signing_inputs = Some(inputs);
                                 signing_source = Some("pipeline_profile");
                                 println!(
-                                    "Reserved Android signing profile for runner-owned post-build signing ({variant:?})"
+                                    "Reserved Android signing profile for Gradle-injected signing ({variant:?})"
                                 );
                             }
                             Err(e) => return (steps, Err(e)),
@@ -5389,6 +5904,22 @@ async fn execute_build_steps(
 
     let vm = match execution_plan.isolation {
         BuildIsolation::Host => {
+            // A VM build reports its DerivedData once the VM restored it.
+            if let Some(line) = cache_observation
+                .as_ref()
+                .and_then(|observation| observation.derived_data_line.clone())
+            {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    &line,
+                )
+                .await;
+            }
             let started = now_unix();
             let found = host_flutter_version(&workspace, &step_env).await;
             let check = check_host_flutter(&execution_plan.flutter_version, found);
@@ -5624,6 +6155,46 @@ async fn execute_build_steps(
             )
             .await;
 
+            // Gradle signs the Android build with the managed keystore; the
+            // android-sign step after it only checks, or signs as a fallback.
+            let mut host_gradle_signing = None;
+            let mut vm_gradle_signing = None;
+            if stage_name == "build"
+                && android_artifact_extension(command).is_some()
+                && let Some(inputs) = signing_inputs.as_ref()
+            {
+                let applied = match &vm {
+                    Some(vm) => apply_vm_gradle_signing(&vm.vm, inputs).await.map(|dir| {
+                        vm_gradle_signing = dir;
+                        vm_gradle_signing.is_some()
+                    }),
+                    None => GradleSigningInjection::apply(&workspace, &signing_workspace, inputs)
+                        .map(|injection| {
+                            host_gradle_signing = injection;
+                            host_gradle_signing.is_some()
+                        }),
+                };
+                let line = match applied {
+                    Ok(true) => {
+                        "[oore-signing] Gradle signs this build with the managed keystore (injected through android/gradle.properties for this step)"
+                    }
+                    Ok(false) => {
+                        "[oore-signing] No android/ Gradle project at the workspace root; the android-sign step signs after the build"
+                    }
+                    Err(error) => return (steps, Err(error)),
+                };
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    &job.build_id,
+                    log_seq,
+                    "stdout",
+                    line,
+                )
+                .await;
+            }
+
             let spawned = match &vm {
                 Some(vm) => vm.vm.spawn_step(&normalized_command, &step_env).await,
                 None => {
@@ -5654,6 +6225,14 @@ async fn execute_build_steps(
                 poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()),
             )
             .await;
+            // Put android/gradle.properties back before anything copies or
+            // reads the workspace.
+            drop(host_gradle_signing);
+            if let (Some(vm), Some(dir)) = (vm, vm_gradle_signing.as_deref())
+                && let Err(error) = restore_vm_gradle_signing(&vm.vm, dir).await
+            {
+                return (steps, Err(error));
+            }
 
             let finished = now_unix();
             match step_status {
@@ -5685,7 +6264,27 @@ async fn execute_build_steps(
                     // from its workspace, so bring the guest's changes over
                     // before anything reads it.
                     let sync_error = match &vm {
-                        Some(vm) => vm.vm.sync_workspace_out().await.err(),
+                        Some(vm) => match vm.vm.sync_workspace_out().await {
+                            Ok(took) => {
+                                if took >= VM_SYNC_NOTE_AFTER {
+                                    let _ = append_runner_log_line(
+                                        client,
+                                        daemon_url,
+                                        config,
+                                        &job.build_id,
+                                        log_seq,
+                                        "stdout",
+                                        &format!(
+                                            "[oore-vm] copied the workspace back from the VM in {}",
+                                            tart::format_seconds(took)
+                                        ),
+                                    )
+                                    .await;
+                                }
+                                None
+                            }
+                            Err(error) => Some(error),
+                        },
                         None => None,
                     };
                     if let Some(report) = plan_step.test_report.as_deref()
@@ -5834,7 +6433,7 @@ Install the required tooling on the runner, set isolation: vm, or override build
                             "stdout",
                             &step_start_marker(
                                 signing_step_name,
-                                "Sign Android artifact with managed credentials",
+                                "Check the Android artifact's managed signature",
                             ),
                         )
                         .await;
@@ -5868,7 +6467,7 @@ Install the required tooling on the runner, set isolation: vm, or override build
                             publish_from_file: false,
                         });
                         match signing_result {
-                            Ok(artifacts) => {
+                            Ok(report) => {
                                 let _ = append_runner_log_line(
                                     client,
                                     daemon_url,
@@ -5876,10 +6475,7 @@ Install the required tooling on the runner, set isolation: vm, or override build
                                     &job.build_id,
                                     log_seq,
                                     "stdout",
-                                    &format!(
-                                        "[oore-signing] Signed and verified {} Android artifact(s)",
-                                        artifacts.len()
-                                    ),
+                                    &report.log_line(),
                                 )
                                 .await;
                             }
@@ -6806,6 +7402,17 @@ async fn start_build_vm(
             vm.name(),
             vm.guest_workspace()
         ),
+    )
+    .await;
+    let setup_note = vm.setup_note();
+    let _ = append_runner_log_line(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        log_seq,
+        "stdout",
+        &setup_note,
     )
     .await;
     for line in vm.cache_notes() {
@@ -8296,6 +8903,24 @@ async fn run_and_stream(
 }
 
 #[cfg(test)]
+mod ios_signing_lock_tests {
+    #[test]
+    fn ios_signing_waits_for_the_signing_build_before_it() {
+        let held = super::IosSigningLock::acquire().unwrap();
+        let path = super::prepare_runner_workspace_root()
+            .unwrap()
+            .join(super::IOS_SIGNING_LOCK);
+        let other = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        assert!(matches!(
+            other.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        drop(held);
+        other.try_lock().unwrap();
+    }
+}
+
+#[cfg(test)]
 mod step_retry_tests {
     use super::{artifact_type_for_extension, retry_artifact_path};
 
@@ -8641,7 +9266,11 @@ mod tests {
         let workspace =
             std::env::temp_dir().join(format!("oore-vm-plan-test-{}", std::process::id()));
         std::fs::create_dir_all(&workspace).unwrap();
-        std::fs::write(workspace.join(".fvmrc"), r#"{"flutter": "3.47.7"}"#).unwrap();
+        std::fs::write(
+            workspace.join(".fvmrc"),
+            r#"{"flutter": "3.47.7", "flavors": {"prod": "3.44.9"}, "updateVscodeSettings": true}"#,
+        )
+        .unwrap();
         std::fs::write(
             workspace.join(".oore.yaml"),
             "version: 1\nplatforms: [android]\nisolation: vm\n",
@@ -8960,7 +9589,7 @@ mod secret_tests {
             key_alias: "upload".into(),
             key_password: "store-secret".into(),
         };
-        let signed = sign_android_artifacts(
+        let report = sign_android_artifacts(
             &root.join("workspace"),
             &root,
             "flutter build appbundle --release",
@@ -8968,7 +9597,45 @@ mod secret_tests {
             &toolchain,
         )
         .unwrap();
-        assert_eq!(signed, vec![bundle.clone()]);
+        assert_eq!(
+            report,
+            AndroidSigningReport {
+                artifacts: vec![bundle.clone()],
+                resigned: 1,
+            }
+        );
+        let signed_once = fs::read(&bundle).unwrap();
+
+        // Signed with the managed key already, as Gradle does with the
+        // injected properties: checked, not signed again.
+        let report = sign_android_artifacts(
+            &root.join("workspace"),
+            &root,
+            "flutter build appbundle --release",
+            &inputs,
+            &toolchain,
+        )
+        .unwrap();
+        assert_eq!(report.resigned, 0);
+        assert_eq!(fs::read(&bundle).unwrap(), signed_once);
+
+        // The VM script makes the same check with the guest's tools.
+        #[cfg(unix)]
+        {
+            let script = android_vm_signing_script(&[bundle.display().to_string()], "aab", &inputs);
+            let output = Command::new("/bin/sh")
+                .arg("-c")
+                .arg(&script)
+                .env("PATH", toolchain.signer_path().unwrap())
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            assert_eq!(
+                parse_vm_resigned_count(&String::from_utf8_lossy(&output.stdout)),
+                Some(0)
+            );
+            assert_eq!(fs::read(&bundle).unwrap(), signed_once);
+        }
 
         let output = Command::new(&toolchain.jarsigner)
             .arg("-verify")
@@ -9807,5 +10474,217 @@ mod file_publish_tests {
                 .is_none()
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod gradle_signing_tests {
+    use super::*;
+
+    fn gradle_signing_inputs() -> AndroidSigningInputs {
+        AndroidSigningInputs {
+            keystore_bytes: b"keystore".to_vec(),
+            keystore_password: "p'ss\\ word".to_string(),
+            key_alias: " upload".to_string(),
+            key_password: "k$y\nnext=1".to_string(),
+        }
+    }
+
+    fn temp_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "oore-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn injected_signing_properties_escape_values() {
+        let block = gradle_injected_signing_properties("/tmp/k s.jks", &gradle_signing_inputs());
+        assert_eq!(
+            block,
+            "\n# Added by Oore for this build step: managed Android signing\n\
+             android.injected.signing.store.file=/tmp/k s.jks\n\
+             android.injected.signing.store.password=p'ss\\\\ word\n\
+             android.injected.signing.key.alias=\\ upload\n\
+             android.injected.signing.key.password=k$y\\nnext=1\n"
+        );
+    }
+
+    #[test]
+    fn gradle_signing_injection_restores_gradle_properties() {
+        let root = temp_root("gradle-injection");
+        let workspace = root.join("workspace");
+        let signing = root.join("signing");
+        fs::create_dir_all(workspace.join("android")).unwrap();
+        fs::create_dir_all(&signing).unwrap();
+        let properties = workspace.join("android/gradle.properties");
+        fs::write(&properties, "org.gradle.jvmargs=-Xmx4G").unwrap();
+
+        let injection =
+            GradleSigningInjection::apply(&workspace, &signing, &gradle_signing_inputs())
+                .unwrap()
+                .expect("the workspace has an android project");
+        let during = fs::read_to_string(&properties).unwrap();
+        assert!(during.starts_with("org.gradle.jvmargs=-Xmx4G\n# Added by Oore"));
+        let keystore = during
+            .lines()
+            .find_map(|line| line.strip_prefix("android.injected.signing.store.file="))
+            .map(PathBuf::from)
+            .unwrap();
+        assert!(keystore.starts_with(&signing), "{}", keystore.display());
+        assert_eq!(fs::read(&keystore).unwrap(), b"keystore");
+        drop(injection);
+        assert_eq!(
+            fs::read_to_string(&properties).unwrap(),
+            "org.gradle.jvmargs=-Xmx4G"
+        );
+        assert!(!keystore.exists());
+
+        // A file the repository does not have is removed again.
+        fs::remove_file(&properties).unwrap();
+        let injection =
+            GradleSigningInjection::apply(&workspace, &signing, &gradle_signing_inputs())
+                .unwrap()
+                .unwrap();
+        assert!(properties.is_file());
+        drop(injection);
+        assert!(!properties.exists());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gradle_signing_injection_skips_links_and_missing_projects() {
+        let root = temp_root("gradle-injection-links");
+        let workspace = root.join("workspace");
+        let signing = root.join("signing");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::create_dir_all(&signing).unwrap();
+        let inputs = gradle_signing_inputs();
+        assert!(
+            GradleSigningInjection::apply(&workspace, &signing, &inputs)
+                .unwrap()
+                .is_none()
+        );
+
+        let outside = root.join("outside.properties");
+        fs::write(&outside, "kept").unwrap();
+        fs::create_dir_all(workspace.join("android")).unwrap();
+        std::os::unix::fs::symlink(&outside, workspace.join("android/gradle.properties")).unwrap();
+        assert!(
+            GradleSigningInjection::apply(&workspace, &signing, &inputs)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "kept");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vm_gradle_signing_scripts_inject_and_restore() {
+        let root = temp_root("vm-gradle-injection");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(workspace.join("android")).unwrap();
+        let properties = workspace.join("android/gradle.properties");
+        fs::write(&properties, "android.useAndroidX=true\n").unwrap();
+        let guest = workspace.display().to_string();
+        let inputs = gradle_signing_inputs();
+
+        let apply = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(vm_gradle_signing_apply_script(&guest, &inputs))
+            .output()
+            .unwrap();
+        assert!(apply.status.success(), "{apply:?}");
+        let dir = String::from_utf8(apply.stdout).unwrap().trim().to_string();
+        assert!(!dir.starts_with(&guest), "{dir}");
+        assert_eq!(
+            fs::read(format!("{dir}/keystore.jks")).unwrap(),
+            b"keystore"
+        );
+        let during = fs::read_to_string(&properties).unwrap();
+        assert!(
+            during.contains(&format!(
+                "android.injected.signing.store.file={dir}/keystore.jks\n"
+            )),
+            "{during}"
+        );
+        assert!(during.contains("android.injected.signing.key.password=k$y\\nnext=1\n"));
+
+        let restore = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(vm_gradle_signing_restore_script(&guest, &dir))
+            .output()
+            .unwrap();
+        assert!(restore.status.success(), "{restore:?}");
+        assert_eq!(
+            fs::read_to_string(&properties).unwrap(),
+            "android.useAndroidX=true\n"
+        );
+        assert!(!Path::new(&dir).exists());
+
+        // No android project: nothing is written and no directory is printed.
+        let empty = root.join("empty");
+        fs::create_dir_all(&empty).unwrap();
+        let skipped = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(vm_gradle_signing_apply_script(
+                &empty.display().to_string(),
+                &inputs,
+            ))
+            .output()
+            .unwrap();
+        assert!(
+            skipped.status.success() && skipped.stdout.is_empty(),
+            "{skipped:?}"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn signer_digests_parse_from_keytool_and_apksigner() {
+        assert_eq!(
+            parse_keytool_sha256(
+                "Owner: CN=Upload\n\t SHA1: AA:BB\n\t SHA256: 29:29:3F:1A\nSignature algorithm"
+            )
+            .as_deref(),
+            Some("29293f1a")
+        );
+        assert_eq!(parse_keytool_sha256("no certificate"), None);
+        assert_eq!(
+            parse_apksigner_sha256s(
+                "Signer #1 certificate DN: CN=Upload\nSigner #1 certificate SHA-256 digest: 29293F1A\nSigner #1 certificate SHA-1 digest: da87"
+            ),
+            vec!["29293f1a".to_string()]
+        );
+        assert_eq!(
+            parse_vm_resigned_count("verify output\noore-resigned=2\n"),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn android_signing_report_says_what_it_did() {
+        let report = |artifacts: usize, resigned| AndroidSigningReport {
+            artifacts: vec![PathBuf::from("app.apk"); artifacts],
+            resigned,
+        };
+        assert_eq!(
+            report(1, 0).log_line(),
+            "[oore-signing] Gradle signed 1 Android artifact(s) with the managed key; verified"
+        );
+        assert!(report(1, 1).log_line().contains("Gradle did not sign"));
+        assert!(
+            report(3, 1)
+                .log_line()
+                .contains("re-signed and verified 1 it did not")
+        );
     }
 }

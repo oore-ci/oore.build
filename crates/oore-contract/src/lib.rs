@@ -2029,8 +2029,18 @@ pub struct Runner {
     /// Set while a dependency cache purge waits for the runner to pick it up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_purge_requested_at: Option<i64>,
+    /// How many builds the runner runs at the same time.
+    #[serde(default = "default_runner_max_concurrent_builds")]
+    pub max_concurrent_builds: u32,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// The most builds one runner may run at the same time.
+pub const MAX_RUNNER_CONCURRENT_BUILDS: u32 = 8;
+
+fn default_runner_max_concurrent_builds() -> u32 {
+    1
 }
 
 /// Host utilisation a runner reports with each heartbeat.
@@ -2236,6 +2246,10 @@ pub struct RunnerHeartbeatRequest {
 pub struct RunnerHeartbeatResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_purge_requested_at: Option<i64>,
+    /// How many builds the runner may run at the same time. Older backends
+    /// leave it out, which means one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_builds: Option<u32>,
 }
 
 pub const RUNNER_PROTOCOL_VERSION: u32 = 6;
@@ -2243,6 +2257,10 @@ pub const RUNNER_PROTOCOL_VERSION: u32 = 6;
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ClaimJobRequest {
     pub protocol_version: u32,
+    /// The builds the runner is still running. The backend releases any
+    /// other build it holds, since the runner lost it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub active_build_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -2252,6 +2270,9 @@ pub struct UpdateRunnerRequest {
     /// Replaces the runner's operator labels. Detected labels are kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_labels: Option<Vec<String>>,
+    /// How many builds the runner runs at the same time, from 1 to 8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_builds: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -6002,6 +6023,19 @@ pub struct Release {
     /// The release this one was promoted from, without a new build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub promoted_from_release_id: Option<String>,
+    /// The store's last error while Oore moves this release forward, such as
+    /// App Store Connect refusing a review submission. Oore keeps retrying;
+    /// the next successful step clears it. App Store releases only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_error: Option<String>,
+    /// When the store started failing for this release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_error_since: Option<i64>,
+    /// The store's own status for the release, such as App Store Connect's
+    /// `WAITING_FOR_REVIEW` or `IN_REVIEW`, which the release state groups
+    /// together. App Store releases only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_status: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }

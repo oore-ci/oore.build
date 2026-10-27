@@ -70,7 +70,7 @@ export function LogOutput({
           <span
             className={cn(textVariants({ variant: 'caption' }), 'font-medium')}
           >
-            {selectedStep}
+            {selectedStepMeta.label}
           </span>
           {selectedStepMeta.command ? (
             <code className="min-w-0 truncate font-mono text-[11px] text-foreground">

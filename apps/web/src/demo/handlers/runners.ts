@@ -66,6 +66,7 @@ export const runnerHandlers = [
       .object({
         name: z.string().optional(),
         custom_labels: z.array(z.string()).optional(),
+        max_concurrent_builds: z.number().int().min(1).max(8).optional(),
       })
       .parse(await request.json())
     const runner = demoState.runners.find((r) => r.id === params.runner_id)

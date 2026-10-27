@@ -43,7 +43,7 @@ export function StepSelect({
       (group) =>
         [
           group.name,
-          `${group.name} · ${stepTimingSummary(
+          `${group.label} · ${stepTimingSummary(
             group.durationMs,
             medians?.get(group.name),
             group.logs.length,
@@ -100,7 +100,7 @@ function StepOption({
     <SelectItem value={group.name} className="items-start">
       <StepStatusIcon status={group.status} />
       <Stack className="min-w-0 flex-1">
-        <span className="truncate">{group.name}</span>
+        <span className="truncate">{group.label}</span>
         <Text variant="mono" render={<span />} className="text-[10px]">
           {formatLineCount(group.logs.length)}
         </Text>

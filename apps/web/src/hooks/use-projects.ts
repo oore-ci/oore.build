@@ -6,9 +6,9 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import type {
-  AddProjectMemberRequest,
   CreateProjectRequest,
   ListProjectsData,
+  ProjectRole,
   UpdateProjectMemberRequest,
   UpdateProjectRequest,
 } from '@oore/client/models'
@@ -31,8 +31,10 @@ import {
   listProjectsOptions,
   listProjectsQueryKey,
 } from '@oore/client/react-query'
+import { isOoreApiError } from '@oore/client/client'
 
 import { useApiContext } from '@/hooks/use-api-context'
+import { mapWithLimit } from '@/lib/project-access'
 import {
   scopeOoreInfiniteQueryOptions,
   scopeOoreQueryKey,
@@ -222,40 +224,73 @@ export function useProjectMemberCandidates(projectId: string) {
   })
 }
 
-export function useAddProjectMember(projectId: string) {
+export interface ProjectAccessGrant {
+  projectId: string
+  role: ProjectRole
+  userId: string
+}
+
+export type ProjectAccessGrantOutcome =
+  | { grant: ProjectAccessGrant; status: 'added' | 'already_member' }
+  | { grant: ProjectAccessGrant; status: 'failed'; message: string }
+
+/**
+ * Adds many user/project pairs through the per-member endpoint, a few at a
+ * time, and reports each outcome. Existing members keep their current role.
+ */
+export function useGrantProjectAccess() {
   const queryClient = useQueryClient()
   const { baseUrl, client, instanceId, token } = useApiContext()
 
   return useMutation({
-    mutationFn: (data: AddProjectMemberRequest) => {
-      if (!baseUrl || !token)
-        return Promise.reject(new Error('Not authenticated'))
-      return addProjectMember({
-        body: data,
-        client,
-        path: { project_id: projectId },
-        throwOnError: true,
+    mutationFn: async (
+      grants: Array<ProjectAccessGrant>,
+    ): Promise<Array<ProjectAccessGrantOutcome>> => {
+      if (!baseUrl || !token) throw new Error('Not authenticated')
+      const results = await mapWithLimit(grants, 4, (grant) =>
+        addProjectMember({
+          body: { user_id: grant.userId, role: grant.role },
+          client,
+          path: { project_id: grant.projectId },
+          throwOnError: true,
+        }),
+      )
+      return results.map((result, index): ProjectAccessGrantOutcome => {
+        const grant = grants[index]
+        if (result.status === 'fulfilled') return { grant, status: 'added' }
+        const error: unknown = result.reason
+        if (isOoreApiError(error) && error.code === 'already_member') {
+          return { grant, status: 'already_member' }
+        }
+        return {
+          grant,
+          status: 'failed',
+          message:
+            error instanceof Error ? error.message : 'Could not add access',
+        }
       })
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: scopeOoreQueryKey(
-          instanceId,
-          listProjectMembersQueryKey({
-            client,
-            path: { project_id: projectId },
-          }),
-        ),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: scopeOoreQueryKey(
-          instanceId,
-          listProjectMemberCandidatesQueryKey({
-            client,
-            path: { project_id: projectId },
-          }),
-        ),
-      })
+    onSettled: (_data, _error, grants) => {
+      for (const projectId of new Set(grants.map((grant) => grant.projectId))) {
+        void queryClient.invalidateQueries({
+          queryKey: scopeOoreQueryKey(
+            instanceId,
+            listProjectMembersQueryKey({
+              client,
+              path: { project_id: projectId },
+            }),
+          ),
+        })
+        void queryClient.invalidateQueries({
+          queryKey: scopeOoreQueryKey(
+            instanceId,
+            listProjectMemberCandidatesQueryKey({
+              client,
+              path: { project_id: projectId },
+            }),
+          ),
+        })
+      }
     },
   })
 }

@@ -1,4 +1,4 @@
 {
   "title": "Runners",
-  "pages": ["direct", "labels", "caches", "vm-isolation"]
+  "pages": ["direct", "concurrent-builds", "labels", "caches", "vm-isolation"]
 }
