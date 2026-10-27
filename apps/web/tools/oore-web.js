@@ -3121,6 +3121,15 @@ function serveSpa(distDir, pathname, acceptHeader, acceptEncoding) {
     return spaFileResponse(assetPath, pathname, acceptEncoding)
   }
 
+  // A missing hashed asset must not get index.html: the browser would try to
+  // run the page as a script and the app would never start.
+  if (pathname.startsWith('/assets/')) {
+    return new Response('Not found', {
+      status: 404,
+      headers: { 'Cache-Control': 'no-store' },
+    })
+  }
+
   const wantsHtml =
     acceptHeader.includes('text/html') || acceptHeader.includes('*/*')
   if (wantsHtml) {
