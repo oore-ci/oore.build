@@ -68,6 +68,64 @@
         // The system color-scheme media query below remains the fallback.
       }
     </script>
+    <script>
+      // A page opened before a deploy can ask for script and style files the
+      // deploy removed. The host answers those with this page, so the app never
+      // starts and the loader would stay up. Reload once to pick up the new
+      // files, and say what happened if that does not help.
+      window.ooreRecoverFromLoadFailure = function (error) {
+        console.error('Oore could not load', error)
+        var key = 'oore_load_failure_reload_at'
+        var now = Date.now()
+        var last = 0
+        try {
+          last = Number(sessionStorage.getItem(key)) || 0
+          if (now - last > 10000) {
+            sessionStorage.setItem(key, String(now))
+            window.location.reload()
+            return true
+          }
+        } catch {
+          // Without session storage a reload could loop, so show the message.
+        }
+        var loading = document.getElementById('app-loading')
+        if (loading && !loading.querySelector('.app-loading__failure')) {
+          loading.classList.add('app-loading--failed')
+          var failure = document.createElement('div')
+          failure.className = 'app-loading__failure'
+          failure.setAttribute('role', 'alert')
+          var message = document.createElement('p')
+          message.textContent =
+            'Oore could not load. Reload the page to try again.'
+          var button = document.createElement('button')
+          button.type = 'button'
+          button.textContent = 'Reload'
+          button.addEventListener('click', function () {
+            window.location.reload()
+          })
+          failure.append(message, button)
+          loading.removeAttribute('aria-hidden')
+          loading.append(failure)
+        }
+        return false
+      }
+      window.addEventListener(
+        'error',
+        function (event) {
+          var target = event.target
+          if (
+            target instanceof HTMLScriptElement ||
+            (target instanceof HTMLLinkElement &&
+              /(^|\s)(stylesheet|modulepreload)(\s|$)/.test(target.rel))
+          ) {
+            window.ooreRecoverFromLoadFailure(
+              new Error('Failed to load ' + (target.src || target.href)),
+            )
+          }
+        },
+        true,
+      )
+    </script>
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -309,6 +367,33 @@
         to {
           opacity: 0;
         }
+      }
+      .app-loading--failed .app-loading__stage {
+        display: none;
+      }
+      .app-loading__failure {
+        display: grid;
+        justify-items: center;
+        gap: 12px;
+        padding: 16px;
+        color: CanvasText;
+        text-align: center;
+        pointer-events: auto;
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+      }
+      .app-loading__failure p {
+        margin: 0;
+      }
+      .app-loading__failure button {
+        font: inherit;
+        padding: 6px 14px;
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
       }
       @media (prefers-reduced-motion: reduce) {
         .app-loading__halo,
