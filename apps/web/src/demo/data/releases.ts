@@ -47,6 +47,9 @@ export const demoReleases: Array<DemoRelease> = [
     awaiting_approval: false,
     created_at: ago(250),
     updated_at: ago(250),
+    store_error:
+      "Adding version to review submission failed (409 Conflict): STATE_ERROR.ENTITY_STATE_INVALID: This resource cannot be reviewed, please check associated errors to see why.\n- An age rating declaration update is required before this version can be submitted.\n- You must provide a value for the attribute 'whatsNew' with this request.",
+    store_error_since: ago(200),
   },
   {
     id: RELEASE_IDS.shopTestflight,

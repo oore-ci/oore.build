@@ -23,7 +23,11 @@ import {
 } from '@/lib/status-variants'
 import type { Build, Release } from '@oore/client/models'
 import { useReleases } from '@/hooks/use-releases'
-import { isWaitingOnStore, releaseStatusPhrase } from '@/lib/releases'
+import {
+  isWaitingOnStore,
+  releaseStatusPhrase,
+  releaseStoreError,
+} from '@/lib/releases'
 import { useTableDensity } from '@/stores/table-density-store'
 import BuildActionsMenu from './-build-actions-menu'
 import {
@@ -57,8 +61,9 @@ function selectStoreWaits({ releases }: { releases: Array<Release> }) {
 function BuildStoreWait({ build }: { build: Build }) {
   const waits = use(StoreWaitContext).get(build.id)
   if (build.status !== 'succeeded' || !waits?.length) return null
+  const blocked = waits.some((release) => releaseStoreError(release) !== null)
   return (
-    <span className="text-xs text-info">
+    <span className={cn('text-xs', blocked ? 'text-warning' : 'text-info')}>
       {waits.map(releaseStatusPhrase).join(', ')}
     </span>
   )

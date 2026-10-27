@@ -96,7 +96,61 @@ const STORE_WAIT_STATES = new Set<ReleaseState>([
 export function isWaitingOnStore(
   release: Pick<Release, 'awaiting_approval' | 'state'>,
 ): boolean {
-  return release.awaiting_approval || STORE_WAIT_STATES.has(release.state)
+  return (
+    release.awaiting_approval ||
+    STORE_WAIT_STATES.has(release.state) ||
+    releaseStoreError(release) !== null
+  )
+}
+
+/**
+ * The store's last refusal while Oore moves a live release forward, such as
+ * App Store Connect blocking a review submission. Oore retries until it
+ * clears or a day passes.
+ */
+export function releaseStoreError(
+  release: Pick<Release, 'state' | 'store_error' | 'store_error_since'>,
+): { message: string; since: number | null } | null {
+  if (!release.store_error || !isLiveRelease(release)) return null
+  return {
+    message: release.store_error,
+    since: release.store_error_since ?? null,
+  }
+}
+
+/**
+ * The store's own word for where a live release is, in App Store Connect's
+ * casing: `WAITING_FOR_REVIEW` reads "Waiting for review". Oore's in_review
+ * covers both waiting and being reviewed, and people wait differently for
+ * each.
+ */
+export function releaseStoreStatus(
+  release: Pick<Release, 'state' | 'store_status'>,
+): { code: string; label: string } | null {
+  const code = release.store_status
+  if (!code || !isLiveRelease(release)) return null
+  const words = code.toLowerCase().split('_').filter(Boolean)
+  if (!words.length) return null
+  const label = words.join(' ')
+  return { code, label: label[0].toUpperCase() + label.slice(1) }
+}
+
+/** The status a badge shows: the store's own while it reviews. */
+export function releaseStateLabel(
+  release: Pick<Release, 'awaiting_approval' | 'state'>,
+): string {
+  if (releaseStoreError(release)) return 'Needs attention'
+  if (release.awaiting_approval) return 'Awaiting approval'
+  const status = releaseStoreStatus(release)
+  if (release.state === 'in_review' && status) return status.label
+  return RELEASE_STATE_LABEL[release.state]
+}
+
+export function releaseStateBadgeVariant(
+  release: Pick<Release, 'awaiting_approval' | 'state'>,
+): BadgeVariant {
+  if (releaseStoreError(release) || release.awaiting_approval) return 'warning'
+  return RELEASE_STATE_VARIANT[release.state]
 }
 
 function isTestFlight(release: Pick<Release, 'store' | 'track'>) {
@@ -120,10 +174,7 @@ export function releaseStatusPhrase(
   const where = isTestFlight(release)
     ? 'TestFlight'
     : RELEASE_STORE_LABEL[release.store]
-  const what = release.awaiting_approval
-    ? 'awaiting approval'
-    : RELEASE_STATE_LABEL[release.state].toLowerCase()
-  return `${where} ${what}`
+  return `${where} ${releaseStateLabel(release).toLowerCase()}`
 }
 
 /** The steps a release passes through before people can install it. */
@@ -152,6 +203,13 @@ export function releaseStageIndex(
   }
 }
 
+export interface ReleaseWaitSummary {
+  title: string
+  description: string
+  /** The store refused a step and someone has to fix it there. */
+  blocked?: boolean
+}
+
 /**
  * What a release is waiting for and what happens next, for a build that
  * succeeded but whose app is not out yet. Store times are typical, not
@@ -159,9 +217,19 @@ export function releaseStageIndex(
  */
 export function releaseWaitSummary(
   release: Release,
-): { title: string; description: string } | null {
+): ReleaseWaitSummary | null {
   const version = releaseVersionLabel(release)
   const destination = releaseDestinationLabel(release)
+  const storeError = releaseStoreError(release)
+  if (storeError) {
+    const store =
+      release.store === 'app_store' ? 'App Store Connect' : 'The store'
+    return {
+      title: `${store} refused the next step for ${version}`,
+      description: `Fix what it asks for there; Oore retries every 5 minutes${storeError.since ? `, and has been retrying since ${relativeTime(storeError.since)}` : ''}. After a day of failures Oore marks the release failed.`,
+      blocked: true,
+    }
+  }
   if (release.awaiting_approval) {
     return {
       title: 'This release is waiting for approval',
@@ -187,14 +255,8 @@ export function releaseWaitSummary(
       }
       case 'in_review':
         return isTestFlight(release)
-          ? {
-              title: 'Waiting for TestFlight beta review',
-              description: `Apple reviews a version's first build before external testers get it, usually within a day. Submitted ${since}.`,
-            }
-          : {
-              title: 'Waiting for App Store review',
-              description: `Apple reviews most apps within a day or two. Submitted ${since}; Apple's decision shows here.`,
-            }
+          ? appleBetaReviewSummary(release, since)
+          : appleReviewSummary(release, since)
       default:
         return null
     }
@@ -213,6 +275,51 @@ export function releaseWaitSummary(
       }
     default:
       return null
+  }
+}
+
+function appleReviewSummary(
+  release: Release,
+  since: string,
+): ReleaseWaitSummary {
+  switch (releaseStoreStatus(release)?.code) {
+    case 'IN_REVIEW':
+      return {
+        title: 'Apple is reviewing the app',
+        description: `Review has started; most finish within a day. Apple's decision shows here.`,
+      }
+    case 'PENDING_DEVELOPER_RELEASE':
+      return {
+        title: 'Approved by Apple',
+        description: `${releaseVersionLabel(release)} passed review. Release it in App Store Connect to put it on the App Store.`,
+      }
+    case 'READY_FOR_REVIEW':
+    case 'PREPARE_FOR_SUBMISSION':
+      return {
+        title: 'Not submitted for review yet',
+        description: `The build is attached to the version, but Apple has no review request. Submit it in App Store Connect.`,
+      }
+    default:
+      return {
+        title: 'Waiting for App Store review',
+        description: `Submitted ${since}. Apple hasn't started reviewing yet; most apps are reviewed within a day or two. Apple's decision shows here.`,
+      }
+  }
+}
+
+function appleBetaReviewSummary(
+  release: Release,
+  since: string,
+): ReleaseWaitSummary {
+  if (releaseStoreStatus(release)?.code === 'IN_BETA_REVIEW') {
+    return {
+      title: 'Apple is reviewing the TestFlight build',
+      description: `Review has started; external testers get it once Apple approves it.`,
+    }
+  }
+  return {
+    title: 'Waiting for TestFlight beta review',
+    description: `Apple reviews a version's first build before external testers get it, usually within a day. Submitted ${since}.`,
   }
 }
 
@@ -302,6 +409,11 @@ export function releaseAppName(release: { project_name?: string | null }) {
 
 /** One line telling the reader what happens next without opening the release. */
 export function releaseNextStep(release: Release, nowSeconds: number): string {
+  if (releaseStoreError(release)) {
+    return release.store === 'app_store'
+      ? 'Fix the issue in App Store Connect'
+      : 'Fix the issue in the store'
+  }
   if (release.awaiting_approval) return 'Waiting for approval'
   switch (release.state) {
     case 'uploading':
@@ -311,9 +423,19 @@ export function releaseNextStep(release: Release, nowSeconds: number): string {
         ? 'Apple is processing the build'
         : 'Store is processing'
     case 'in_review':
-      return release.store === 'app_store'
-        ? 'Waiting for Apple review'
-        : 'Waiting for store review'
+      if (release.store !== 'app_store') return 'Waiting for store review'
+      switch (releaseStoreStatus(release)?.code) {
+        case 'IN_REVIEW':
+        case 'IN_BETA_REVIEW':
+          return 'Apple is reviewing it'
+        case 'PENDING_DEVELOPER_RELEASE':
+          return 'Release it in App Store Connect'
+        case 'READY_FOR_REVIEW':
+        case 'PREPARE_FOR_SUBMISSION':
+          return 'Submit it for review in App Store Connect'
+        default:
+          return "In Apple's queue; review hasn't started"
+      }
     case 'paused':
       return `Held at ${formatRolloutPercent(release.rollout_fraction)} until resumed`
     case 'halted':

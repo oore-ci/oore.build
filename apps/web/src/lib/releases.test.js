@@ -4,7 +4,10 @@ import {
   isWaitingOnStore,
   releaseDestinationLabel,
   releaseStageIndex,
+  releaseNextStep,
   releaseStages,
+  releaseStateBadgeVariant,
+  releaseStateLabel,
   releaseStatusPhrase,
   releaseWaitSummary,
 } from './releases'
@@ -73,5 +76,61 @@ describe('store wait', () => {
       releaseWaitSummary({ ...appStore, track: 'QA' }).description,
     ).toContain('available to QA in TestFlight')
     expect(releaseWaitSummary({ ...appStore, state: 'rolling' })).toBeNull()
+  })
+
+  test('says what Apple says while it reviews', () => {
+    const waiting = {
+      ...appStore,
+      state: 'in_review',
+      store_status: 'WAITING_FOR_REVIEW',
+    }
+    expect(releaseStateLabel(waiting)).toBe('Waiting for review')
+    expect(releaseStatusPhrase(waiting)).toBe('App Store waiting for review')
+    expect(releaseNextStep(waiting, 0)).toBe(
+      "In Apple's queue; review hasn't started",
+    )
+    expect(releaseWaitSummary(waiting).title).toBe(
+      'Waiting for App Store review',
+    )
+
+    const reviewing = { ...waiting, store_status: 'IN_REVIEW' }
+    expect(releaseStateLabel(reviewing)).toBe('In review')
+    expect(releaseWaitSummary(reviewing).title).toBe(
+      'Apple is reviewing the app',
+    )
+
+    // Without Apple's status, fall back to Oore's own state.
+    expect(releaseStateLabel({ ...appStore, state: 'in_review' })).toBe(
+      'In review',
+    )
+    // A finished release no longer shows a stale store status.
+    expect(releaseStateLabel({ ...reviewing, state: 'complete' })).toBe(
+      'Complete',
+    )
+  })
+
+  test('a store refusal needs attention, not more waiting', () => {
+    const blocked = {
+      ...appStore,
+      store_error:
+        'STATE_ERROR.ENTITY_STATE_INVALID: This resource cannot be reviewed\n- An age rating declaration update is required',
+      store_error_since: Math.floor(Date.now() / 1000) - 600,
+    }
+    expect(isWaitingOnStore({ ...blocked, state: 'rolling' })).toBe(true)
+    expect(releaseStateLabel(blocked)).toBe('Needs attention')
+    expect(releaseStateBadgeVariant(blocked)).toBe('warning')
+    expect(releaseStatusPhrase(blocked)).toBe('App Store needs attention')
+    expect(releaseNextStep(blocked, 0)).toBe(
+      'Fix the issue in App Store Connect',
+    )
+    const summary = releaseWaitSummary(blocked)
+    expect(summary.blocked).toBe(true)
+    expect(summary.title).toBe(
+      'App Store Connect refused the next step for 1.3.3 (33)',
+    )
+    expect(summary.description).toContain('retries every 5 minutes')
+    expect(summary.description).toContain('10m ago')
+    // A failed release's last error is history, not a call to act.
+    expect(releaseStateLabel({ ...blocked, state: 'failed' })).toBe('Failed')
   })
 })

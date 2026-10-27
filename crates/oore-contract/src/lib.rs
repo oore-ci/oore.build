@@ -6023,6 +6023,19 @@ pub struct Release {
     /// The release this one was promoted from, without a new build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub promoted_from_release_id: Option<String>,
+    /// The store's last error while Oore moves this release forward, such as
+    /// App Store Connect refusing a review submission. Oore keeps retrying;
+    /// the next successful step clears it. App Store releases only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_error: Option<String>,
+    /// When the store started failing for this release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_error_since: Option<i64>,
+    /// The store's own status for the release, such as App Store Connect's
+    /// `WAITING_FOR_REVIEW` or `IN_REVIEW`, which the release state groups
+    /// together. App Store releases only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_status: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
