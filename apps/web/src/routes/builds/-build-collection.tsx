@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { createContext, use, useMemo, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 
 import { CollectionError, CollectionFrame } from '@/components/collection'
@@ -21,7 +21,9 @@ import {
   getRunnerPolicyBlockLabel,
   TRIGGER_TYPE_LABELS,
 } from '@/lib/status-variants'
-import type { Build } from '@oore/client/models'
+import type { Build, Release } from '@oore/client/models'
+import { useReleases } from '@/hooks/use-releases'
+import { isWaitingOnStore, releaseStatusPhrase } from '@/lib/releases'
 import { useTableDensity } from '@/stores/table-density-store'
 import BuildActionsMenu from './-build-actions-menu'
 import {
@@ -33,6 +35,34 @@ import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
 import { Stack } from '@/components/layout/stack'
 import { textVariants } from '@/lib/recipes'
 import { cn } from '@/lib/utils'
+
+/** Releases still with a store, by build, for the status column. */
+const StoreWaitContext = createContext<ReadonlyMap<string, Array<Release>>>(
+  new Map(),
+)
+const STORE_WAIT_QUERY = 'uploading,processing,in_review'
+
+function selectStoreWaits({ releases }: { releases: Array<Release> }) {
+  const byBuild = new Map<string, Array<Release>>()
+  for (const release of releases.filter(isWaitingOnStore)) {
+    byBuild.set(release.build_id, [
+      ...(byBuild.get(release.build_id) ?? []),
+      release,
+    ])
+  }
+  return byBuild
+}
+
+/** A succeeded build whose app the store still holds says so under its badge. */
+function BuildStoreWait({ build }: { build: Build }) {
+  const waits = use(StoreWaitContext).get(build.id)
+  if (build.status !== 'succeeded' || !waits?.length) return null
+  return (
+    <span className="text-xs text-info">
+      {waits.map(releaseStatusPhrase).join(', ')}
+    </span>
+  )
+}
 
 const BUILD_TABLE_SORTS = [
   'project_name',
@@ -124,6 +154,7 @@ const columns: Array<DataTableColumnDef<Build>> = [
             {getRunnerPolicyBlockLabel(row.original.runner_policy_block_reason)}
           </span>
         ) : null}
+        <BuildStoreWait build={row.original} />
       </Stack>
     ),
   },
@@ -218,6 +249,10 @@ export function BuildCollection({
   total: number
 }) {
   const [density, setDensity] = useTableDensity('builds')
+  const storeWaits = useReleases(
+    { state: STORE_WAIT_QUERY, limit: 100 },
+    { select: selectStoreWaits },
+  ).data
   const sorting = useMemo(
     () => dataTableSortingState(sort, direction),
     [direction, sort],
@@ -234,45 +269,47 @@ export function BuildCollection({
   })
 
   return (
-    <CollectionFrame
-      ariaLabel="Build queue and history"
-      isBusy={isLoading || isRefreshing}
-    >
-      {error ? (
-        <CollectionError
-          title="Builds could not be loaded"
-          description={error.message}
-          onRetry={onRetry}
-        />
-      ) : null}
+    <StoreWaitContext value={storeWaits ?? new Map()}>
+      <CollectionFrame
+        ariaLabel="Build queue and history"
+        isBusy={isLoading || isRefreshing}
+      >
+        {error ? (
+          <CollectionError
+            title="Builds could not be loaded"
+            description={error.message}
+            onRetry={onRetry}
+          />
+        ) : null}
 
-      {!isLoading && total === 0 && !error && !isFiltered ? (
-        emptyState
-      ) : (
-        <DataTable
-          table={table}
-          filters={filters}
-          collapseFilters
-          density={density}
-          onDensityChange={setDensity}
-          activeFilterCount={activeFilterCount}
-          onClearFilters={isFiltered ? onClearFilters : undefined}
-          search={{
-            value: query,
-            onChange: onSearch,
-            placeholder: 'Search builds',
-          }}
-          pagination={{ onPageChange, page, pageSize, total }}
-          isLoading={isLoading}
-          emptyMessage={
-            isLoading
-              ? 'Loading builds…'
-              : query
-                ? `No builds match “${query}”.`
-                : 'No builds match these filters.'
-          }
-        />
-      )}
-    </CollectionFrame>
+        {!isLoading && total === 0 && !error && !isFiltered ? (
+          emptyState
+        ) : (
+          <DataTable
+            table={table}
+            filters={filters}
+            collapseFilters
+            density={density}
+            onDensityChange={setDensity}
+            activeFilterCount={activeFilterCount}
+            onClearFilters={isFiltered ? onClearFilters : undefined}
+            search={{
+              value: query,
+              onChange: onSearch,
+              placeholder: 'Search builds',
+            }}
+            pagination={{ onPageChange, page, pageSize, total }}
+            isLoading={isLoading}
+            emptyMessage={
+              isLoading
+                ? 'Loading builds…'
+                : query
+                  ? `No builds match “${query}”.`
+                  : 'No builds match these filters.'
+            }
+          />
+        )}
+      </CollectionFrame>
+    </StoreWaitContext>
   )
 }

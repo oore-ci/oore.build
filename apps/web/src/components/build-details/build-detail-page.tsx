@@ -16,6 +16,7 @@ import { toast } from '@/lib/toast'
 
 import { ArtifactsPanel } from './artifacts-panel'
 import { BuildStateAlert } from './build-state-alert'
+import { StoreWaitAlert, StoreWaitBadges } from './store-wait-alert'
 import { buildStateSummary } from '@/lib/build-state-description'
 import {
   artifactInstallReadiness,
@@ -611,6 +612,10 @@ export function BuildDetailPage({
               {build.approval ? (
                 <StatusBadge kind="approval" value={build.approval.state} />
               ) : null}
+              <StoreWaitBadges
+                releases={releases}
+                onOpenRelease={() => setActiveTab('release')}
+              />
               {runningStep ? (
                 <span className="min-w-0 truncate text-sm text-foreground">
                   {runningStep}
@@ -824,6 +829,15 @@ export function BuildDetailPage({
               key: Date.now(),
             })
           }}
+        />
+      ) : null}
+
+      {build.status === 'succeeded' ? (
+        <StoreWaitAlert
+          releases={releases}
+          onOpenRelease={
+            activeTab === 'release' ? undefined : () => setActiveTab('release')
+          }
         />
       ) : null}
 

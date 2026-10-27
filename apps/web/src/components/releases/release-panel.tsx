@@ -24,7 +24,7 @@ import {
   formatRolloutPercent,
   getReleaseHealthVariant,
   RELEASE_HEALTH_LABEL,
-  RELEASE_STORE_LABEL,
+  releaseDestinationLabel,
   releaseNextStep,
   releaseTransitionLabel,
   releaseVersionLabel,
@@ -132,9 +132,7 @@ function ReleaseCard({
     >
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
         <Stack gap={1} className="min-w-0">
-          <CardTitle>
-            {RELEASE_STORE_LABEL[current.store]} · {current.track}
-          </CardTitle>
+          <CardTitle>{releaseDestinationLabel(current)}</CardTitle>
           <Text variant="mono" className="tabular-nums">
             {releaseVersionLabel(current)}
             {current.package_name ? ` · ${current.package_name}` : ''}
@@ -175,16 +173,26 @@ function ReleaseCard({
             ) : null}
           </Stack>
         </div>
-        <Text variant="caption">
-          Schedule:{' '}
-          {(current.policy.steps ?? []).map(formatRolloutPercent).join(' → ')}
-          {current.policy.interval_hours != null
-            ? `, every ${current.policy.interval_hours}h`
-            : ''}
-          {current.approved_by_email
-            ? ` · Approved by ${current.approved_by_email}`
-            : ''}
-        </Text>
+        {/* Apple runs App Store and TestFlight releases on its own
+            schedule; Oore's rollout steps only drive Google Play. */}
+        {current.store === 'google_play' || current.approved_by_email ? (
+          <Text variant="caption">
+            {current.store === 'google_play' ? (
+              <>
+                Schedule:{' '}
+                {(current.policy.steps ?? [])
+                  .map(formatRolloutPercent)
+                  .join(' → ')}
+                {current.policy.interval_hours != null
+                  ? `, every ${current.policy.interval_hours}h`
+                  : ''}
+              </>
+            ) : null}
+            {current.approved_by_email
+              ? `${current.store === 'google_play' ? ' · ' : ''}Approved by ${current.approved_by_email}`
+              : ''}
+          </Text>
+        ) : null}
         <Separator />
         <section aria-label="Release history" className="flex flex-col gap-2">
           <h3
