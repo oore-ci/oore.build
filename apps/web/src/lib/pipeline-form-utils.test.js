@@ -3,6 +3,8 @@ import { pipelineFormSchema } from '@/lib/pipeline-schema'
 import {
   parseRunnerLabels,
   pipelineRepositoryFile,
+  pipelineWorkflowProblem,
+  repositoryFileStatus,
   pipelineRequestFromForm,
   pipelineUpdateFromForm,
   sizeBudgetFormFields,
@@ -192,6 +194,84 @@ test('the repository file is the explicit path or the first auto path', () => {
       config_path_explicit: true,
     }),
   ).toBeUndefined()
+})
+
+test('the file status says whether the Workflow field can offer anything', () => {
+  const explicit = (config_path) => ({
+    config_path,
+    config_path_explicit: true,
+  })
+  const files = [
+    { path: '.oore.release.yaml', valid: true, errors: [], workflows: ['a'] },
+    { path: 'ci/bad.yaml', valid: false, errors: ['bad'], workflows: [] },
+  ]
+  expect(repositoryFileStatus(files, explicit('ci/missing.yaml'))).toEqual({
+    kind: 'missing',
+    path: 'ci/missing.yaml',
+  })
+  expect(
+    repositoryFileStatus(files, {
+      ...explicit(''),
+      config_path_explicit: false,
+    }),
+  ).toEqual({ kind: 'missing', path: '.oore.yaml' })
+  expect(repositoryFileStatus(files, explicit('ci/bad.yaml'))).toEqual({
+    kind: 'invalid',
+    path: 'ci/bad.yaml',
+    errors: ['bad'],
+  })
+  const ready = repositoryFileStatus(files, explicit(' .oore.release.yaml '))
+  expect(ready.kind).toBe('ready')
+  expect(ready.file.workflows).toEqual(['a'])
+})
+
+test('a pipeline has a workflow problem only when builds would fail', () => {
+  const file = (workflows, valid = true) => ({
+    path: '.oore/release.yaml',
+    valid,
+    errors: valid ? [] : ['workflows.release: unknown key'],
+    workflows,
+  })
+  const pipeline = (workflow) => ({
+    config_path: '.oore/release.yaml',
+    config_path_explicit: true,
+    workflow,
+  })
+
+  // Nothing saved and nothing to pick: the pipeline builds as before.
+  expect(pipelineWorkflowProblem([], pipeline(null))).toBeUndefined()
+  expect(pipelineWorkflowProblem([file([])], pipeline(null))).toBeUndefined()
+  expect(
+    pipelineWorkflowProblem([file(['release'])], pipeline(null)),
+  ).toBeUndefined()
+  expect(
+    pipelineWorkflowProblem([file(['adhoc', 'release'])], pipeline('release')),
+  ).toBeUndefined()
+
+  expect(pipelineWorkflowProblem([], pipeline('release'))).toEqual({
+    kind: 'missing-file',
+    path: '.oore/release.yaml',
+    workflow: 'release',
+  })
+  expect(pipelineWorkflowProblem([file([], false)], pipeline(null))).toEqual({
+    kind: 'invalid-file',
+    path: '.oore/release.yaml',
+    errors: ['workflows.release: unknown key'],
+  })
+  expect(
+    pipelineWorkflowProblem([file(['adhoc', 'beta'])], pipeline('release')),
+  ).toEqual({
+    kind: 'unknown-workflow',
+    path: '.oore/release.yaml',
+    workflow: 'release',
+  })
+  expect(
+    pipelineWorkflowProblem([file(['adhoc', 'release'])], pipeline('')),
+  ).toEqual({
+    kind: 'needs-workflow',
+    path: '.oore/release.yaml',
+    workflows: ['adhoc', 'release'],
+  })
 })
 
 test('the size budget converts MB to bytes and back', () => {

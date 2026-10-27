@@ -1,8 +1,9 @@
 import { lazy, Suspense, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  Alert02Icon,
   Delete02Icon,
   Edit02Icon,
   InformationCircleIcon,
@@ -25,8 +26,13 @@ import {
   usePipeline,
   usePipelineAndroidSigning,
   usePipelineIosSigning,
+  useRepositoryWorkflows,
   useUpdatePipeline,
 } from '@/hooks/use-pipelines'
+import {
+  pipelineWorkflowProblem,
+  type PipelineWorkflowProblem,
+} from '@/lib/pipeline-form-utils'
 import { useProject } from '@/hooks/use-projects'
 import {
   usePipelineAppStorePublish,
@@ -45,7 +51,12 @@ import {
   useDataTable,
   type DataTableColumnDef,
 } from '@/components/data-table'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from '@/components/ui/alert'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -69,6 +80,7 @@ import {
   PipelineConfigurationCard,
   SettingUnavailable,
 } from '../-pipeline-configuration-card'
+import { Mono } from '@/components/layout/mono'
 import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
 import { textVariants } from '@/lib/recipes'
@@ -201,6 +213,80 @@ export const Route = createFileRoute(
   component: PipelineDetailPage,
 })
 
+/** Why this pipeline's builds will fail, judged against its file. */
+function PipelineWorkflowAlert({
+  problem,
+  branch,
+  editLink,
+}: {
+  problem: PipelineWorkflowProblem
+  branch: string
+  editLink: ReactElement
+}) {
+  const path = <Mono>{problem.path}</Mono>
+  const on = <Mono>{branch}</Mono>
+  let title: ReactNode
+  let description: ReactNode
+  switch (problem.kind) {
+    case 'missing-file':
+      title = <>No workflow file on {on}</>
+      description = (
+        <>
+          This pipeline builds the {problem.workflow} workflow from {path},
+          which is not on {on}. Builds of {on} will fail.
+        </>
+      )
+      break
+    case 'invalid-file':
+      title = <>Workflow file has errors</>
+      description = (
+        <>
+          {path} on {on} has errors, so builds from it fail:{' '}
+          {problem.errors.join('; ')}
+        </>
+      )
+      break
+    case 'unknown-workflow':
+      title = <>Workflow {problem.workflow} not found</>
+      description = (
+        <>
+          {path} on {on} no longer defines {problem.workflow}. Builds will fail
+          until you pick another workflow.
+        </>
+      )
+      break
+    case 'needs-workflow':
+      title = <>No workflow picked</>
+      description = (
+        <>
+          {path} defines {problem.workflows.length} workflows (
+          {problem.workflows.join(', ')}) and this pipeline has none picked, so
+          Oore refuses its builds.
+        </>
+      )
+      break
+  }
+  return (
+    <Alert
+      variant={problem.kind === 'missing-file' ? 'default' : 'destructive'}
+    >
+      <HugeiconsIcon icon={Alert02Icon} size={16} />
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription>{description}</AlertDescription>
+      <AlertAction>
+        <Button
+          variant="outline"
+          size="sm"
+          render={editLink}
+          nativeButton={false}
+        >
+          Edit
+        </Button>
+      </AlertAction>
+    </Alert>
+  )
+}
+
 /* ------------------------------------------------------------------ */
 /*  Main page                                                          */
 /* ------------------------------------------------------------------ */
@@ -243,6 +329,16 @@ function PipelineDetailPage() {
   const appStoreQuery = usePipelineAppStorePublish(pipelineId, {
     enabled: buildsIosForQueries,
   })
+  // Discovery needs pipeline write access, which Edit needs too.
+  const repositoryFileQuery = useRepositoryWorkflows(
+    projectId,
+    data?.pipeline.config_path_explicit
+      ? { path: data.pipeline.config_path }
+      : undefined,
+    {
+      enabled: canWrite && !!data && !!projectData?.project.repository_id,
+    },
+  )
   const updateMutation = useUpdatePipeline()
   const deleteMutation = useDeletePipeline()
 
@@ -290,6 +386,10 @@ function PipelineDetailPage() {
   const projectHasSource = !!projectData?.project.repository_id
   const manualOnlyTriggers =
     projectData?.project.repository_provider === 'local_git'
+
+  const workflowProblem = repositoryFileQuery.data
+    ? pipelineWorkflowProblem(repositoryFileQuery.data.workflows, pipeline)
+    : undefined
 
   const publishingSummary: Array<{ label: string; value: ReactNode }> = []
   if (buildsAndroid) {
@@ -477,6 +577,20 @@ function PipelineDetailPage() {
             before triggering builds.
           </AlertDescription>
         </Alert>
+      ) : null}
+      {workflowProblem && repositoryFileQuery.data ? (
+        <PipelineWorkflowAlert
+          problem={workflowProblem}
+          branch={repositoryFileQuery.data.reference}
+          editLink={
+            <Link
+              to="/projects/$projectId/pipelines/$pipelineId/edit"
+              params={{ projectId, pipelineId }}
+              search={{}}
+              hash="basics"
+            />
+          }
+        />
       ) : null}
 
       <Tabs

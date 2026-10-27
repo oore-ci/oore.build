@@ -184,10 +184,22 @@ the workflow target sets its own, even with a new `build`.
 Workflow names use letters, digits, `-` and `_`.
 
 A pipeline builds one workflow, picked under **Workflow** in its settings (the
-API's `workflow` field). The selector appears when the pipeline's file defines
-workflows. Without a pick, a file with one workflow builds it, and a file with
-none builds the top level; a file with several fails the build with
-`choose one for the pipeline`.
+API's `workflow` field). Without a pick, a file with one workflow builds it,
+and a file with none builds the top level; a file with several fails the build
+with `choose one for the pipeline`.
+
+The selector lists the workflows in the pipeline's file on the project's
+default branch, and names that branch beneath it. Select **Change branch** to
+read the file from another branch, for example while the file is only on
+`develop`. The repository discovery API takes the same choice as its `ref`
+query parameter. A build always reads the file at the commit it builds.
+
+A file is shared by every pipeline that reads it. To publish two
+workflows to different places from two pipelines, put each in its own file,
+such as `.oore.beta.yaml` and `.oore.release.yaml` in the repository root,
+and point each pipeline's config path at one. Oore finds root
+`.oore.<name>.yaml` files when you create a pipeline. See
+[Run two workflows with different publishing](/build/pipelines/oore-yaml#run-two-workflows-with-different-publishing).
 
 ## Publish
 

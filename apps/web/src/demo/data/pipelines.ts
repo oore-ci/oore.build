@@ -48,6 +48,8 @@ export const demoPipelines: Array<Pipeline> = [
     name: 'iOS Release',
     config_path: '.oore/ios-release.yaml',
     config_path_explicit: true,
+    // The file is only on develop so far; see `repositoryWorkflowBranches`.
+    workflow: 'testflight',
     execution_config: {
       platforms: ['ios'],
       flutter_version: '3.24.3',
