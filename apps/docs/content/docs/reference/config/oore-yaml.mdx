@@ -202,9 +202,10 @@ in the workspace.
 
 ## Resolution
 
-When a pipeline pins an explicit repository config path, Oore checks only that
-path. Otherwise it checks `.oore.yaml` and then `.oore.yml`. If no candidate
-file exists, Oore uses the UI execution configuration. If a candidate exists
+Oore checks the pipeline's config path. A pipeline with `.oore.yaml` also
+checks `.oore.yml` when `.oore.yaml` does not exist, for repositories that
+still use that name. If no candidate file exists, Oore uses the UI execution
+configuration. If a candidate exists
 but cannot be read or validated, the build fails instead of falling back.
 
 The runner reads the file from the pinned checkout used for the build. A

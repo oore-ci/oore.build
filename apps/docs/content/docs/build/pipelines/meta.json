@@ -1,4 +1,10 @@
 {
   "title": "Configure pipelines",
-  "pages": ["use-the-ui", "oore-yaml", "secrets", "triggers"]
+  "pages": [
+    "use-the-ui",
+    "oore-yaml",
+    "from-the-repository",
+    "secrets",
+    "triggers"
+  ]
 }
