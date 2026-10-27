@@ -15,7 +15,6 @@ import {
   DashboardSection,
   DashboardSectionError,
 } from '@/components/dashboard-section'
-import { Badge, type BadgeVariant } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Collapsible,
@@ -32,7 +31,6 @@ import {
 import { useRefreshStoreVitals, useStoreVitals } from '@/hooks/use-releases'
 import { relativeTime } from '@/lib/format-utils'
 import {
-  getReleaseHealthVariant,
   healthFromThreshold,
   RELEASE_HEALTH_LABEL,
   RELEASE_STORE_LABEL,
@@ -105,43 +103,34 @@ const LEVEL_ORDER = {
 } satisfies Record<AppLevel, number>
 
 const LEVEL_STATUS = {
-  breached: { label: RELEASE_HEALTH_LABEL.breached, variant: 'destructive' },
-  unreadable: { label: 'Not readable', variant: 'destructive' },
-  warning: {
-    label: RELEASE_HEALTH_LABEL.warning,
-    variant: getReleaseHealthVariant('warning'),
-  },
-  unknown: {
-    label: RELEASE_HEALTH_LABEL.unknown,
-    variant: getReleaseHealthVariant('unknown'),
-  },
-  healthy: {
-    label: RELEASE_HEALTH_LABEL.healthy,
-    variant: getReleaseHealthVariant('healthy'),
-  },
-} satisfies Record<AppLevel, { label: string; variant: BadgeVariant }>
-
-const LEVEL_CARD = {
-  breached: 'border-destructive/40',
-  unreadable: 'border-destructive/40',
-  warning: 'border-warning/40',
-  unknown: '',
-  healthy: '',
+  breached: RELEASE_HEALTH_LABEL.breached,
+  unreadable: 'Not readable',
+  warning: RELEASE_HEALTH_LABEL.warning,
+  unknown: RELEASE_HEALTH_LABEL.unknown,
+  healthy: RELEASE_HEALTH_LABEL.healthy,
 } satisfies Record<AppLevel, string>
 
-/** Only numbers that need someone get colour; healthy ones stay quiet. */
+const LEVEL_DOT = {
+  breached: 'bg-destructive',
+  unreadable: 'bg-destructive',
+  warning: 'bg-warning',
+  unknown: 'bg-muted-foreground/40',
+  healthy: 'bg-success',
+} satisfies Record<AppLevel, string>
+
+/** Colour stays small: a caption and a meter fill, never the whole card. */
 const LEVEL_TEXT = {
-  healthy: 'text-foreground',
+  healthy: 'text-muted-foreground',
   warning: 'text-warning',
   breached: 'text-destructive',
-  unknown: 'text-foreground',
+  unknown: 'text-muted-foreground',
 } satisfies Record<ReleaseHealth, string>
 
 const LEVEL_FILL = {
-  healthy: 'bg-foreground/35',
-  warning: 'bg-warning',
-  breached: 'bg-destructive',
-  unknown: 'bg-muted-foreground/40',
+  healthy: 'bg-foreground/25',
+  warning: 'bg-warning/80',
+  breached: 'bg-destructive/80',
+  unknown: 'bg-muted-foreground/30',
 } satisfies Record<ReleaseHealth, string>
 
 /** A small line of the vital's history with the threshold drawn dashed. */
@@ -207,13 +196,13 @@ function ThresholdMeter({
   const scale = Math.max(threshold * 1.4, value)
   const percent = (part: number) => `${Math.min(100, (part / scale) * 100)}%`
   return (
-    <div className="relative h-1.5 rounded-full bg-muted" aria-hidden>
+    <div className="relative h-1 rounded-full bg-muted" aria-hidden>
       <div
         className={cn('h-full rounded-full', LEVEL_FILL[level])}
         style={{ width: percent(value) }}
       />
       <div
-        className="absolute -inset-y-1 w-0.5 rounded-full bg-foreground/60"
+        className="absolute -inset-y-0.5 w-px bg-foreground/40"
         style={{ left: percent(threshold) }}
       />
     </div>
@@ -281,19 +270,15 @@ function VitalTile({
         <div className="flex items-end justify-between gap-2">
           <span
             className={cn(
-              'text-2xl leading-none font-semibold tracking-tight tabular-nums',
-              LEVEL_TEXT[level],
+              'text-xl leading-none font-medium tracking-tight tabular-nums',
             )}
           >
             {parts.number}
             {parts.unit ? (
               <span
                 className={cn(
-                  'text-sm font-medium',
+                  'text-xs font-normal text-muted-foreground',
                   parts.unit === '%' ? 'ms-0.5' : 'ms-1',
-                  level === 'healthy' || level === 'unknown'
-                    ? 'text-muted-foreground'
-                    : undefined,
                 )}
               >
                 {parts.unit}
@@ -309,7 +294,13 @@ function VitalTile({
             value={vital.value}
           />
         )}
-        <span className={cn(textVariants({ variant: 'caption' }), 'truncate')}>
+        <span
+          className={cn(
+            textVariants({ variant: 'caption' }),
+            'truncate',
+            LEVEL_TEXT[level],
+          )}
+        >
           {context}
         </span>
       </TooltipTrigger>
@@ -384,16 +375,13 @@ function AppCard({ app, anchor }: { app: StoreAppVitals; anchor?: string }) {
         <Stack
           id={anchor}
           gap={4}
-          className={cn(
-            'min-w-0 scroll-mt-20 rounded-xl border bg-card p-4',
-            LEVEL_CARD[level],
-          )}
+          className="min-w-0 scroll-mt-20 rounded-xl border bg-card p-4"
         />
       }
     >
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col">
-          <span className="truncate text-sm font-semibold">
+          <span className="truncate text-sm font-medium">
             {app.project_name}
           </span>
           <span
@@ -403,9 +391,18 @@ function AppCard({ app, anchor }: { app: StoreAppVitals; anchor?: string }) {
             {storeLabel} · {app.app_identifier}
           </span>
         </div>
-        <Badge variant={status.variant} className="shrink-0">
-          {status.label}
-        </Badge>
+        <span
+          className={cn(
+            textVariants({ variant: 'caption' }),
+            'flex shrink-0 items-center gap-1.5',
+          )}
+        >
+          <span
+            className={cn('size-1.5 rounded-full', LEVEL_DOT[level])}
+            aria-hidden
+          />
+          {status}
+        </span>
       </div>
 
       {app.vitals.length > 0 ? (
@@ -422,13 +419,11 @@ function AppCard({ app, anchor }: { app: StoreAppVitals; anchor?: string }) {
 
       {app.error ? (
         <Stack gap={3}>
-          <Text variant="muted" className="text-destructive">
-            {app.error}
-          </Text>
+          <Text variant="muted">{app.error}</Text>
           <Row gap={2}>
             <Button
               variant="outline"
-              size="sm"
+              size="xs"
               nativeButton={false}
               render={<Link to="/settings/store-credentials" />}
             >
@@ -436,7 +431,7 @@ function AppCard({ app, anchor }: { app: StoreAppVitals; anchor?: string }) {
             </Button>
             <Button
               variant="ghost"
-              size="sm"
+              size="xs"
               nativeButton={false}
               render={
                 <a
