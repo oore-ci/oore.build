@@ -82,37 +82,64 @@ function RolloutHealth({
 }
 
 function ReleaseRow({
+  layout,
   nowSeconds,
   release,
   storeAnchor,
 }: {
+  layout: ReleaseBoardLayout
   nowSeconds: number
   release: Release
   storeAnchor?: string
 }) {
+  const identity = (
+    <div className="flex min-w-0 flex-1 basis-56 flex-col">
+      <Link
+        to="/releases/$releaseId"
+        params={{ releaseId: release.id }}
+        className="truncate text-sm font-medium underline-offset-4 hover:underline"
+      >
+        {releaseAppName(release)}
+      </Link>
+      <span className={cn(textVariants({ variant: 'caption' }), 'truncate')}>
+        {RELEASE_STORE_LABEL[release.store]} {release.track} ·{' '}
+        <span className="tabular-nums">{releaseVersionLabel(release)}</span>
+      </span>
+    </div>
+  )
+  const nextStep = (
+    <span className={cn(textVariants({ variant: 'caption' }), 'truncate')}>
+      {releaseNextStep(release, nowSeconds)}
+    </span>
+  )
+
+  if (layout === 'stacked') {
+    // Narrow columns: identity and health on one line, the rollout under it,
+    // then what happens next beside the controls.
+    return (
+      <Stack role="listitem" gap={2} className="px-4 py-3">
+        <Row gap={3} className="justify-between">
+          {identity}
+          <RolloutHealth release={release} storeAnchor={storeAnchor} />
+        </Row>
+        <ReleaseRollout release={release} />
+        <Row gap={3} className="min-w-0 justify-between">
+          {nextStep}
+          <ReleaseActions release={release} size="sm" />
+        </Row>
+      </Stack>
+    )
+  }
+
   return (
     <div
       role="listitem"
       className="flex flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3"
     >
-      <div className="flex min-w-0 flex-1 basis-56 flex-col">
-        <Link
-          to="/releases/$releaseId"
-          params={{ releaseId: release.id }}
-          className="truncate text-sm font-medium underline-offset-4 hover:underline"
-        >
-          {releaseAppName(release)}
-        </Link>
-        <span className={cn(textVariants({ variant: 'caption' }), 'truncate')}>
-          {RELEASE_STORE_LABEL[release.store]} {release.track} ·{' '}
-          <span className="tabular-nums">{releaseVersionLabel(release)}</span>
-        </span>
-      </div>
+      {identity}
       <Stack gap={1} className="w-full sm:w-48">
         <ReleaseRollout release={release} />
-        <span className={cn(textVariants({ variant: 'caption' }), 'truncate')}>
-          {releaseNextStep(release, nowSeconds)}
-        </span>
+        {nextStep}
       </Stack>
       <Row gap={3} className="w-full justify-between sm:w-auto sm:min-w-56">
         <Row gap={2}>
@@ -129,11 +156,22 @@ function ReleaseRow({
   )
 }
 
+/** `row` spreads a release across a wide surface; `stacked` fits a narrow column. */
+export type ReleaseBoardLayout = 'row' | 'stacked'
+
 /**
  * Every release that is still moving or waiting on someone: instance-wide on
  * Home, or one project's on its overview.
  */
-export function ReleaseBoard({ projectId }: { projectId?: string } = {}) {
+export function ReleaseBoard({
+  layout = 'row',
+  projectId,
+  title = 'Releases',
+}: {
+  layout?: ReleaseBoardLayout
+  projectId?: string
+  title?: string
+} = {}) {
   const nowSeconds = useTime((time) => Math.floor(time / 60_000) * 60)
   const releasesQuery = useReleases(
     { project_id: projectId, state: LIVE_STATE_QUERY, limit: 50 },
@@ -151,7 +189,7 @@ export function ReleaseBoard({ projectId }: { projectId?: string } = {}) {
 
   return (
     <DashboardSection
-      title="Releases"
+      title={title}
       count={releasesQuery.isSuccess ? releases.length : undefined}
     >
       {releasesQuery.error ? (
@@ -177,6 +215,7 @@ export function ReleaseBoard({ projectId }: { projectId?: string } = {}) {
               key: release.id,
               node: (
                 <ReleaseRow
+                  layout={layout}
                   nowSeconds={nowSeconds}
                   release={release}
                   storeAnchor={storeAnchors.has(anchor) ? anchor : undefined}

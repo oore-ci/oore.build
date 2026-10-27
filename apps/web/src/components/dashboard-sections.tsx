@@ -1,18 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  CheckmarkCircle02Icon as CheckCircleIcon,
-  Link04Icon,
-  Add01Icon,
-} from '@hugeicons/core-free-icons'
+import { Link04Icon, Add01Icon } from '@hugeicons/core-free-icons'
 
-import { BuildItem } from '@/components/build-item'
-import {
-  DashboardList,
-  DashboardSection,
-  DashboardViewAll,
-} from '@/components/dashboard-section'
-import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -22,17 +11,8 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty'
-import { Skeleton } from '@/components/ui/skeleton'
 import type { RuntimeMode } from '@oore/client/models'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
-import type { Build } from '@oore/client/models'
 import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
 
@@ -179,84 +159,5 @@ export function DashboardGettingStarted({
         </Stack>
       </CardContent>
     </Card>
-  )
-}
-
-const ACTIVITY_STATUS_PRIORITY = {
-  running: 0,
-  assigned: 1,
-  scheduled: 2,
-  queued: 3,
-  failed: 4,
-  timed_out: 5,
-  canceled: 6,
-  expired: 7,
-  succeeded: 8,
-} satisfies Record<Build['status'], number>
-
-export function DashboardBuildActivity({
-  activeBuilds,
-  blockedBuilds,
-  error,
-  isLoading,
-  onRetry,
-  recentBuilds,
-}: {
-  activeBuilds: Array<Build>
-  blockedBuilds: Array<Build>
-  error?: Error | null
-  isLoading: boolean
-  onRetry: () => void
-  recentBuilds: Array<Build>
-}) {
-  const blockedBuildIds = new Set(blockedBuilds.map((build) => build.id))
-  const activityBuilds = [
-    ...activeBuilds
-      .filter((build) => !blockedBuildIds.has(build.id))
-      .sort(
-        (left, right) =>
-          ACTIVITY_STATUS_PRIORITY[left.status] -
-            ACTIVITY_STATUS_PRIORITY[right.status] ||
-          right.updated_at - left.updated_at,
-      ),
-    ...recentBuilds,
-  ].slice(0, 6)
-  return (
-    <DashboardSection
-      title="Build activity"
-      action={<DashboardViewAll to="/builds" />}
-    >
-      {error ? (
-        <Alert variant="destructive">
-          <AlertDescription className="flex items-center justify-between gap-3">
-            <span>Build activity could not be loaded.</span>
-            <Button variant="outline" size="sm" onClick={onRetry}>
-              Retry
-            </Button>
-          </AlertDescription>
-        </Alert>
-      ) : isLoading ? (
-        <Skeleton className="h-48 w-full" />
-      ) : activityBuilds.length === 0 ? (
-        <Empty className="border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <HugeiconsIcon icon={CheckCircleIcon} />
-            </EmptyMedia>
-            <EmptyTitle>No build activity</EmptyTitle>
-            <EmptyDescription>
-              Run a build to see its status here.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <DashboardList>
-          {activityBuilds.map((build) => ({
-            key: build.id,
-            node: <BuildItem build={build} inList />,
-          }))}
-        </DashboardList>
-      )}
-    </DashboardSection>
   )
 }
