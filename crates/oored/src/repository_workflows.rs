@@ -996,6 +996,16 @@ pub(crate) async fn load_pipeline_file(
     Ok(Some(PipelineFile::Missing))
 }
 
+/// The ref [`load_pipeline_file`] reads when none is asked for.
+pub(crate) async fn project_default_reference(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+) -> Result<Option<String>, (StatusCode, Json<ApiError>)> {
+    Ok(load_project_source(pool, project_id)
+        .await?
+        .default_reference)
+}
+
 /// `GET /v1/projects/{project_id}/repository-workflows` — discover repository-owned configs.
 pub async fn discover_repository_workflows(
     State(state): State<Arc<AppState>>,

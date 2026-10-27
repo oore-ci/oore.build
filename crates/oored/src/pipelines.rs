@@ -10,8 +10,9 @@ use oore_contract::{
     ExportPipelineYamlResponse, ImportPipelineYamlRequest, ImportPipelineYamlResponse,
     ImportedPlayPublish, ListPipelinesResponse, MAX_BUILD_TIMEOUT_MINUTES,
     MAX_PLAN_REPOSITORY_YAML_BYTES, OkResponse, Pipeline, PipelineDetailResponse,
-    PipelineExecutionConfig, PipelinePlanPreview, PlanPipelineRequest, PlanPipelineResponse,
-    PlanRequest, RepositoryConfig, SizeBudget, TriggerConfig, UpdatePipelineRequest,
+    PipelineExecutionConfig, PipelineFileState, PipelinePlanPreview, PipelineWorkflowSummary,
+    PipelineWorkflowsResponse, PlanPipelineRequest, PlanPipelineResponse, PlanRequest,
+    RepositoryConfig, SizeBudget, TriggerConfig, TriggerSpec, UpdatePipelineRequest,
     ValidatePipelineRequest, ValidatePipelineResponse, is_valid_pipeline_env_key,
     is_valid_workflow_name, normalize_runner_labels, parse_repository_config,
     pipeline_config::select_v1_platforms,
@@ -402,7 +403,7 @@ fn validate_concurrency(cp: &ConcurrencyPolicy) -> Vec<String> {
 
 // ── Workflow selection ──────────────────────────────────────────
 
-fn normalize_workflow_name(name: &str) -> Result<String, (StatusCode, Json<ApiError>)> {
+pub(crate) fn normalize_workflow_name(name: &str) -> Result<String, (StatusCode, Json<ApiError>)> {
     let name = name.trim();
     if !is_valid_workflow_name(name) {
         return Err(api_err(
@@ -480,7 +481,7 @@ pub(crate) async fn check_build_workflow(
             let names = config.workflow_names();
             (names.len() > 1).then(|| {
                 format!(
-                    "{path} defines workflows [{}]; pick one in the pipeline's Workflow setting",
+                    "{path} defines workflows [{}]; name one when starting the build, or set a default workflow on the pipeline",
                     names.join(", ")
                 )
             })
@@ -1016,6 +1017,132 @@ pub async fn get_pipeline(
         pipeline,
         build_count,
     }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PipelineWorkflowsQuery {
+    #[serde(rename = "ref")]
+    reference: Option<String>,
+}
+
+/// The workflows `config` defines, as builds of them would run.
+fn workflow_summaries(config: &RepositoryConfig) -> Vec<PipelineWorkflowSummary> {
+    config
+        .workflow_names()
+        .into_iter()
+        .map(|name| {
+            let (platforms, publishes, errors) = match config.plan(PlanRequest {
+                workflow: Some(name),
+                ..PlanRequest::default()
+            }) {
+                Ok(plan) => (plan.platforms, plan.publish.describe(), Vec::new()),
+                Err(error) => (
+                    Vec::new(),
+                    Vec::new(),
+                    error.lines().map(str::to_string).collect(),
+                ),
+            };
+            let on = config.triggers(Some(name));
+            PipelineWorkflowSummary {
+                name: name.to_string(),
+                platforms,
+                triggers: on.map(TriggerSpec::describe).unwrap_or_default(),
+                uses_pipeline_triggers: on.is_none(),
+                publishes,
+                errors,
+            }
+        })
+        .collect()
+}
+
+/// `GET /v1/pipelines/{pipeline_id}/workflows` — the workflows a build of
+/// this pipeline can name, read from its file at `ref` (default: the
+/// project's default branch).
+pub async fn list_pipeline_workflows(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(pipeline_id): Path<String>,
+    Query(query): Query<PipelineWorkflowsQuery>,
+) -> ApiResult<PipelineWorkflowsResponse> {
+    use crate::repository_workflows::{
+        PipelineFile, load_pipeline_file, project_default_reference,
+    };
+    let pool = &state.db;
+    let row = sqlx::query(
+        "SELECT project_id, config_path, config_path_explicit, workflow FROM pipelines WHERE id = ?1",
+    )
+    .bind(&pipeline_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+        error!(error = %e, "failed to fetch pipeline");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to fetch pipeline",
+        )
+    })?
+    .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Pipeline not found"))?;
+    let project_id: String = row.get("project_id");
+    let effective = resolve_effective_project_role(
+        pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::Read)?;
+    let config_path: String = row.get("config_path");
+    let config_path_explicit = row.try_get::<i32, _>("config_path_explicit").unwrap_or(0) != 0;
+    let default_workflow: Option<String> = row.try_get("workflow").ok().flatten();
+
+    let reference = match query.reference.map(|value| value.trim().to_string()) {
+        Some(value) if !value.is_empty() => Some(value),
+        _ => project_default_reference(pool, &project_id).await?,
+    };
+    let mut response = PipelineWorkflowsResponse {
+        pipeline_id,
+        reference: reference.clone(),
+        state: PipelineFileState::Missing,
+        path: None,
+        errors: Vec::new(),
+        default_workflow,
+        workflows: Vec::new(),
+    };
+    let Some(reference) = reference else {
+        return Ok(Json(response));
+    };
+    match load_pipeline_file(
+        pool,
+        &state.encryption_key,
+        &project_id,
+        &config_path,
+        config_path_explicit,
+        Some(&reference),
+    )
+    .await
+    {
+        Ok(Some(PipelineFile::Parsed { path, config })) => {
+            response.state = PipelineFileState::Valid;
+            response.path = Some(path);
+            response.workflows = workflow_summaries(&config);
+        }
+        Ok(Some(PipelineFile::Invalid { path, error })) => {
+            response.state = PipelineFileState::Invalid;
+            response.path = Some(path);
+            response.errors = error.lines().map(str::to_string).collect();
+        }
+        Ok(_) => {}
+        Err((status, body)) if status == StatusCode::BAD_REQUEST => {
+            return Err((status, body));
+        }
+        Err((_, body)) => {
+            response.state = PipelineFileState::Unavailable;
+            response.errors = vec![body.0.error];
+        }
+    }
+    Ok(Json(response))
 }
 
 /// `PATCH /v1/pipelines/{pipeline_id}` — partial update.

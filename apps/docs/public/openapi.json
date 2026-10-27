@@ -1904,6 +1904,15 @@
             }
           },
           {
+            "name": "workflow",
+            "in": "query",
+            "description": "Filter by exact .oore.yaml version 2 workflow name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "trigger",
             "in": "query",
             "description": "Filter by one or more comma-separated trigger kinds: manual, api, schedule, push, pull_request, or tag_push. The last three are webhook events.",
@@ -5838,6 +5847,73 @@
         ]
       }
     },
+    "/v1/pipelines/{pipeline_id}/workflows": {
+      "get": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "List a pipeline's workflows",
+        "description": "Reads the pipeline's repository file at `ref` and lists the version 2\nworkflows a build can name, with the platforms, triggers and store\nuploads of each. A missing, invalid or unreachable file is reported in\n`state`, not as an error.",
+        "operationId": "list_pipeline_workflows",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ref",
+            "in": "query",
+            "description": "Branch, tag, or commit; defaults to the project default branch",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workflows in the pipeline file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineWorkflowsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid ref",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects": {
       "get": {
         "tags": [
@@ -6231,7 +6307,7 @@
             }
           },
           "400": {
-            "description": "Invalid input",
+            "description": "Invalid input, or a workflow the pipeline file at the build commit does not define (`invalid_workflow`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -14348,6 +14424,13 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `.oore.yaml` version 2 workflow this build plans. Absent for\nfiles without workflows and for pipelines configured in the UI."
           }
         }
       },
@@ -15583,6 +15666,13 @@
               "string",
               "null"
             ]
+          },
+          "workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `.oore.yaml` version 2 workflow to build. Omitted uses the\npipeline's default workflow, then the file's only workflow. A file\nwith several workflows and no default needs one named here."
           }
         }
       },
@@ -18804,6 +18894,16 @@
           }
         }
       },
+      "PipelineFileState": {
+        "type": "string",
+        "description": "What Oore found at a pipeline's config path.",
+        "enum": [
+          "missing",
+          "invalid",
+          "valid",
+          "unavailable"
+        ]
+      },
       "PipelineGooglePlayPublishResponse": {
         "type": "object",
         "required": [
@@ -19063,6 +19163,106 @@
               "null"
             ],
             "description": "Test report the step writes, when it declares one."
+          }
+        }
+      },
+      "PipelineWorkflowSummary": {
+        "type": "object",
+        "description": "One workflow a pipeline's file defines, as a build of it would run.",
+        "required": [
+          "name",
+          "platforms",
+          "triggers",
+          "uses_pipeline_triggers",
+          "publishes"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why the workflow cannot be planned, one line each."
+          },
+          "name": {
+            "type": "string"
+          },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            },
+            "description": "Platforms the workflow builds. Empty when it cannot be planned."
+          },
+          "publishes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Store uploads the file asks for, one line each."
+          },
+          "triggers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "When webhooks start it, one line per trigger, such as\n`push to main`. Empty with `uses_pipeline_triggers`."
+          },
+          "uses_pipeline_triggers": {
+            "type": "boolean",
+            "description": "True when neither the workflow nor the file sets `on`, so the\npipeline's trigger settings decide."
+          }
+        }
+      },
+      "PipelineWorkflowsResponse": {
+        "type": "object",
+        "description": "`GET /v1/pipelines/{pipeline_id}/workflows`: the workflows a build of\nthis pipeline can name at a ref.",
+        "required": [
+          "pipeline_id",
+          "state",
+          "workflows"
+        ],
+        "properties": {
+          "default_workflow": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pipeline's default workflow, if it sets one."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why the file is invalid or could not be read, one line each."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file that was read. Absent when it is missing."
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Branch, tag, or commit the file was read at. Absent when the project\nhas no default branch and none was asked for."
+          },
+          "state": {
+            "$ref": "#/components/schemas/PipelineFileState"
+          },
+          "workflows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PipelineWorkflowSummary"
+            },
+            "description": "Workflows in file order. Empty for v1 files and files without\nworkflows, which build as one implicit workflow."
           }
         }
       },
