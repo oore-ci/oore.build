@@ -18,9 +18,11 @@ import {
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
 import {
+  canChangeApprovalPolicy,
   hasProjectPermission,
   useHasPermissions,
 } from '@/hooks/use-permissions'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   useDeletePipeline,
   usePipeline,
@@ -30,10 +32,7 @@ import {
   useRepositoryWorkflows,
   useUpdatePipeline,
 } from '@/hooks/use-pipelines'
-import {
-  pipelineWorkflowProblem,
-  type PipelineWorkflowProblem,
-} from '@/lib/pipeline-form-utils'
+import { pipelineWorkflowProblem } from '@/lib/pipeline-form-utils'
 import { useProject } from '@/hooks/use-projects'
 import {
   usePipelineAppStorePublish,
@@ -58,6 +57,11 @@ import {
   AlertDescription,
   AlertTitle,
 } from '@/components/ui/alert'
+import {
+  pipelineHealthBanner,
+  pipelineProblemBanner,
+  type PipelineBanner,
+} from '@/lib/repository-config-files'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -266,7 +270,13 @@ const SecretsPanel = lazy(() =>
   })),
 )
 
-const TAB_VALUES = ['overview', 'publishing', 'secrets'] as const
+const PipelineWorkflowsPanel = lazy(() =>
+  import('@/components/pipeline-workflows/pipeline-workflows-panel').then(
+    (module) => ({ default: module.PipelineWorkflowsPanel }),
+  ),
+)
+
+const TAB_VALUES = ['overview', 'workflows', 'publishing', 'secrets'] as const
 type TabValue = (typeof TAB_VALUES)[number]
 
 interface PipelineDetailSearch {
@@ -299,66 +309,55 @@ export const Route = createFileRoute(
   component: PipelineDetailPage,
 })
 
-/** Why this pipeline's builds will fail, judged against its file. */
-function PipelineWorkflowAlert({
-  problem,
-  branch,
+/**
+ * The pipeline's one banner about its config file: the daemon's health from
+ * its last read of the default branch, or, before that read, a live look
+ * at the file. Absent when the file is fine.
+ */
+function PipelineConfigAlert({
+  banner,
+  checked,
   editLink,
 }: {
-  problem: PipelineWorkflowProblem
-  branch: string
-  editLink: ReactElement
+  banner: PipelineBanner
+  checked?: { at: number; commit: string }
+  editLink?: ReactElement
 }) {
-  const path = <Mono>{problem.path}</Mono>
-  const on = <Mono>{branch}</Mono>
-  let title: ReactNode
-  let description: ReactNode
-  switch (problem.kind) {
-    case 'missing-file':
-      title = <>No workflow file on {on}</>
-      description = (
-        <>
-          The default workflow {problem.workflow} comes from {path}, which is
-          not on {on}. Builds of {on} will fail.
-        </>
-      )
-      break
-    case 'invalid-file':
-      title = <>Workflow file has errors</>
-      description = (
-        <>
-          {path} on {on} has errors, so builds from it fail:{' '}
-          {problem.errors.join('; ')}
-        </>
-      )
-      break
-    case 'unknown-workflow':
-      title = <>Default workflow {problem.workflow} not found</>
-      description = (
-        <>
-          {path} on {on} no longer defines {problem.workflow}. Builds that do
-          not name a workflow will fail until you change the default.
-        </>
-      )
-      break
-  }
   return (
     <Alert
-      variant={problem.kind === 'missing-file' ? 'default' : 'destructive'}
+      variant={banner.variant}
+      role={banner.variant === 'destructive' ? 'alert' : 'status'}
     >
-      <HugeiconsIcon icon={Alert02Icon} size={16} />
-      <AlertTitle>{title}</AlertTitle>
-      <AlertDescription>{description}</AlertDescription>
-      <AlertAction>
-        <Button
-          variant="outline"
-          size="sm"
-          render={editLink}
-          nativeButton={false}
-        >
-          Edit
-        </Button>
-      </AlertAction>
+      <HugeiconsIcon
+        icon={
+          banner.variant === 'destructive' ? Alert02Icon : InformationCircleIcon
+        }
+        size={16}
+      />
+      <AlertTitle>{banner.title}</AlertTitle>
+      <AlertDescription>
+        {checked ? (
+          <>
+            {banner.description.replace(/\.?$/, '. ')}Checked{' '}
+            <RelativeTime at={checked.at} /> at{' '}
+            <Mono>{checked.commit.slice(0, 7)}</Mono>.
+          </>
+        ) : (
+          banner.description
+        )}
+      </AlertDescription>
+      {editLink ? (
+        <AlertAction>
+          <Button
+            variant="outline"
+            size="sm"
+            render={editLink}
+            nativeButton={false}
+          >
+            Edit
+          </Button>
+        </AlertAction>
+      ) : null}
     </Alert>
   )
 }
@@ -380,6 +379,7 @@ function PipelineDetailPage() {
     ])
   const { data: projectData } = useProject(projectId)
   const projectRole = projectData?.project.current_user_role
+  const instanceRole = useAuthStore((state) => state.user?.role)
   const canWrite =
     canWriteGlobally && hasProjectPermission(projectRole, 'pipelines:write')
   const canDelete = hasProjectPermission(projectRole, 'pipelines:delete')
@@ -419,14 +419,20 @@ function PipelineDetailPage() {
   const appStoreQuery = usePipelineAppStorePublish(pipelineId, {
     enabled: buildsIosForQueries,
   })
-  // Discovery needs pipeline write access, which Edit needs too.
+  // The daemon's health covers the pipeline's file once it has read the
+  // default branch. Until then, look at the file live; discovery needs
+  // pipeline write access, which Edit needs too.
   const repositoryFileQuery = useRepositoryWorkflows(
     projectId,
-    data?.pipeline.config_path_explicit
+    data && data.pipeline.config_path.trim() !== '.oore.yaml'
       ? { path: data.pipeline.config_path }
       : undefined,
     {
-      enabled: canWrite && !!data && !!projectData?.project.repository_id,
+      enabled:
+        canWrite &&
+        !!data &&
+        !data.pipeline.health &&
+        !!projectData?.project.repository_id,
     },
   )
   const updateMutation = useUpdatePipeline()
@@ -477,9 +483,18 @@ function PipelineDetailPage() {
   const manualOnlyTriggers =
     projectData?.project.repository_provider === 'local_git'
 
-  const workflowProblem = repositoryFileQuery.data
-    ? pipelineWorkflowProblem(repositoryFileQuery.data.workflows, pipeline)
-    : undefined
+  const workflowProblem =
+    !pipeline.health && repositoryFileQuery.data
+      ? pipelineWorkflowProblem(repositoryFileQuery.data.workflows, pipeline)
+      : undefined
+  const configBanner = pipeline.health
+    ? pipelineHealthBanner(pipeline.health, pipeline)
+    : workflowProblem && repositoryFileQuery.data
+      ? pipelineProblemBanner(
+          workflowProblem,
+          repositoryFileQuery.data.reference,
+        )
+      : null
 
   const publishingSummary: Array<{ label: string; value: ReactNode }> = []
   if (buildsAndroid) {
@@ -659,6 +674,29 @@ function PipelineDetailPage() {
           </AlertDescription>
         </Alert>
       ) : null}
+      {configBanner ? (
+        <PipelineConfigAlert
+          banner={configBanner}
+          checked={
+            pipeline.health
+              ? {
+                  at: pipeline.health.checked_at,
+                  commit: pipeline.health.commit_sha,
+                }
+              : undefined
+          }
+          editLink={
+            canWrite ? (
+              <Link
+                to="/projects/$projectId/pipelines/$pipelineId/edit"
+                params={{ projectId, pipelineId }}
+                search={{}}
+                hash="basics"
+              />
+            ) : undefined
+          }
+        />
+      ) : null}
       {projectMissingSource ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
@@ -667,20 +705,6 @@ function PipelineDetailPage() {
             before triggering builds.
           </AlertDescription>
         </Alert>
-      ) : null}
-      {workflowProblem && repositoryFileQuery.data ? (
-        <PipelineWorkflowAlert
-          problem={workflowProblem}
-          branch={repositoryFileQuery.data.reference}
-          editLink={
-            <Link
-              to="/projects/$projectId/pipelines/$pipelineId/edit"
-              params={{ projectId, pipelineId }}
-              search={{}}
-              hash="basics"
-            />
-          }
-        />
       ) : null}
 
       <Tabs
@@ -698,6 +722,7 @@ function PipelineDetailPage() {
       >
         <TabsList variant="line">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="workflows">Workflows</TabsTrigger>
           <TabsTrigger value="publishing">Publishing</TabsTrigger>
           <TabsTrigger value="secrets">Secrets</TabsTrigger>
         </TabsList>
@@ -823,6 +848,22 @@ function PipelineDetailPage() {
                 </Button>
               }
             />
+          ) : null}
+        </TabsContent>
+
+        <TabsContent value="workflows" className="pt-2">
+          {tab === 'workflows' ? (
+            <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+              <PipelineWorkflowsPanel
+                canChangeApproval={canChangeApprovalPolicy(
+                  instanceRole,
+                  projectRole,
+                )}
+                canWrite={canWrite}
+                pipelineId={pipeline.id}
+                projectId={projectId}
+              />
+            </Suspense>
           ) : null}
         </TabsContent>
 

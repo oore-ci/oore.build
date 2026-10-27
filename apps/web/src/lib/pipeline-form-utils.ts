@@ -284,7 +284,6 @@ export function pipelineRequestFromForm(
     name: data.name.trim(),
     config_path:
       data.config_mode === 'explicit' ? data.config_path?.trim() : '.oore.yaml',
-    config_path_explicit: data.config_mode === 'explicit',
     execution_config: executionConfigFromForm(data),
     trigger_config: triggerConfigFromForm(data, manualOnlyTriggers),
     concurrency: {
@@ -321,17 +320,22 @@ export function pipelineUpdateFromForm(
 }
 
 /**
- * The discovered file a pipeline builds from: its explicit config path, or
- * the first of `.oore.yaml` and `.oore.yml` that exists, as the runner
- * picks it.
+ * The paths the runner tries for a config path: the path, then a legacy
+ * `.oore.yml` when it is `.oore.yaml`.
+ */
+export function configPathCandidates(configPath: string): Array<string> {
+  const path = configPath.trim()
+  return path === '.oore.yaml' ? [path, '.oore.yml'] : [path]
+}
+
+/**
+ * The discovered file a pipeline builds from, as the runner picks it.
  */
 export function pipelineRepositoryFile(
   files: Array<RepositoryWorkflowPreview>,
-  pipeline: { config_path: string; config_path_explicit: boolean },
+  pipeline: { config_path: string },
 ): RepositoryWorkflowPreview | undefined {
-  const candidates = pipeline.config_path_explicit
-    ? [pipeline.config_path.trim()]
-    : ['.oore.yaml', '.oore.yml']
+  const candidates = configPathCandidates(pipeline.config_path)
   for (const path of candidates) {
     const file = files.find((candidate) => candidate.path === path)
     if (file) return file
@@ -342,11 +346,8 @@ export function pipelineRepositoryFile(
 /** The path a pipeline's file is looked up at, for messages. */
 export function pipelineRepositoryPath(pipeline: {
   config_path: string
-  config_path_explicit: boolean
 }): string {
-  return pipeline.config_path_explicit
-    ? pipeline.config_path.trim()
-    : '.oore.yaml'
+  return pipeline.config_path.trim() || '.oore.yaml'
 }
 
 /**
@@ -361,7 +362,7 @@ export type RepositoryFileStatus =
 
 export function repositoryFileStatus(
   files: Array<RepositoryWorkflowPreview>,
-  pipeline: { config_path: string; config_path_explicit: boolean },
+  pipeline: { config_path: string },
 ): RepositoryFileStatus {
   const file = pipelineRepositoryFile(files, pipeline)
   if (!file) return { kind: 'missing', path: pipelineRepositoryPath(pipeline) }
@@ -385,7 +386,6 @@ export function pipelineWorkflowProblem(
   files: Array<RepositoryWorkflowPreview>,
   pipeline: {
     config_path: string
-    config_path_explicit: boolean
     workflow?: string | null
   },
 ): PipelineWorkflowProblem | undefined {

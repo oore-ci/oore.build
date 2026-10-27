@@ -889,7 +889,16 @@ async fn fetch_job_android_signing(
         .await?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("Android signing lookup failed: {}", resp.status());
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        // A workflow whose signing names an identity the project lacks.
+        let message = serde_json::from_str::<oore_contract::ApiError>(&body)
+            .map(|error| error.error)
+            .unwrap_or(body);
+        if message.trim().is_empty() {
+            anyhow::bail!("Android signing lookup failed: {status}");
+        }
+        anyhow::bail!("Android signing lookup failed: {status} {message}");
     }
 
     let payload: RunnerAndroidSigningResponse = resp.json().await?;
@@ -2998,9 +3007,26 @@ fn rewrite_flutter_ios_target_to_ipa(args: &mut [String]) -> bool {
     rewritten
 }
 
+/// The export method an `--export-method` value asks for, in Flutter's old
+/// and new names.
+fn requested_export_method(value: &str) -> Option<IosExportMethod> {
+    match value.trim_matches(['"', '\'']) {
+        "ad-hoc" | "ad_hoc" | "release-testing" => Some(IosExportMethod::AdHoc),
+        "app-store" | "app_store" | "app-store-connect" => Some(IosExportMethod::AppStore),
+        _ => None,
+    }
+}
+
+fn export_method_name(method: IosExportMethod) -> &'static str {
+    match method {
+        IosExportMethod::AdHoc => "ad hoc",
+        IosExportMethod::AppStore => "App Store",
+    }
+}
+
 fn adapt_ios_command_for_signing(
     command: &str,
-    _export_options_plist: &Path,
+    export_method: IosExportMethod,
 ) -> anyhow::Result<String> {
     if !is_ios_flutter_build_command(command) {
         return Ok(command.to_string());
@@ -3018,6 +3044,28 @@ fn adapt_ios_command_for_signing(
         anyhow::bail!(
             "iOS signing is enabled, but command uses --simulator which cannot produce installable ad-hoc IPA"
         );
+    }
+
+    // Oore exports with the signing identity's profiles, so the command's
+    // own export flags are dropped. One that asks for the other kind of
+    // export would silently build the wrong IPA, so it fails instead.
+    let contradicts = |value: &str| {
+        requested_export_method(value).is_some_and(|requested| requested != export_method)
+    };
+    for (index, arg) in args.iter().enumerate() {
+        let value = arg.strip_prefix("--export-method=").or_else(|| {
+            (arg == "--export-method")
+                .then(|| args.get(index + 1).map(String::as_str))
+                .flatten()
+        });
+        if let Some(value) = value
+            && contradicts(value)
+        {
+            anyhow::bail!(
+                "The build command asks for --export-method {value}, but its iOS signing exports {} IPAs. Remove --export-method; the signing identity's profiles decide the export",
+                export_method_name(export_method)
+            );
+        }
     }
 
     let mut filtered_args = Vec::with_capacity(args.len());
@@ -3075,7 +3123,7 @@ fn normalize_stage_command_for_execution(
     stage_name: &str,
     command: &str,
     dart_define_file: Option<&str>,
-    ios_export_options_plist: Option<&Path>,
+    ios_export_method: Option<IosExportMethod>,
 ) -> anyhow::Result<(String, bool)> {
     let mut normalized_command = normalize_legacy_env_syntax(command);
 
@@ -3088,10 +3136,10 @@ fn normalize_stage_command_for_execution(
 
     let mut ios_signing_command_applied = false;
     if stage_name == "build"
-        && let Some(export_plist) = ios_export_options_plist
+        && let Some(export_method) = ios_export_method
         && is_ios_flutter_build_command(&normalized_command)
     {
-        normalized_command = adapt_ios_command_for_signing(&normalized_command, export_plist)?;
+        normalized_command = adapt_ios_command_for_signing(&normalized_command, export_method)?;
         ios_signing_command_applied = true;
     }
 
@@ -4671,7 +4719,11 @@ fn resolve_execution_plan(
         .trim()
         .to_string();
 
-    let candidate_paths: Vec<String> = if config_path_explicit {
+    // `.oore.yaml` still reads a legacy `.oore.yml` when it is missing,
+    // whichever way the snapshot marks the path.
+    let candidate_paths: Vec<String> = if config_path_explicit
+        && snapshot_config_path != AUTO_CONFIG_PATHS[0]
+    {
         validate_repository_config_path(&snapshot_config_path)
             .map_err(|error| anyhow::anyhow!("Invalid explicit repository config path: {error}"))?;
         vec![snapshot_config_path]
@@ -6118,7 +6170,9 @@ async fn execute_build_steps(
                 stage_name,
                 command,
                 dart_define_file.as_deref(),
-                ios_signing_bundle.as_ref().map(|_| Path::new("")),
+                ios_signing_bundle
+                    .as_ref()
+                    .map(|bundle| bundle.export_method),
             ) {
                 Ok(value) => value,
                 Err(e) => return (steps, Err(e)),
@@ -9079,6 +9133,31 @@ mod tests {
     }
 
     #[test]
+    fn an_explicit_oore_yaml_still_reads_a_legacy_oore_yml() {
+        let workspace = TempDir::new("oore-legacy-yml-test");
+        std::fs::write(
+            workspace.path().join(".oore.yml"),
+            "version: 2\ntargets:\n  android:\n    build: flutter build apk --flavor legacy\n",
+        )
+        .unwrap();
+        let snapshot = json!({ "config_path": ".oore.yaml", "config_path_explicit": true });
+        let plan = resolve_execution_plan(workspace.path(), &snapshot, false).unwrap();
+        assert!(
+            plan.steps
+                .iter()
+                .any(|step| step.run == "flutter build apk --flavor legacy")
+        );
+
+        let other = json!({ "config_path": ".oore/release.yaml", "config_path_explicit": true });
+        let plan = resolve_execution_plan(workspace.path(), &other, false).unwrap();
+        assert!(
+            plan.steps
+                .iter()
+                .all(|step| step.run != "flutter build apk --flavor legacy")
+        );
+    }
+
+    #[test]
     fn v2_files_run_named_steps_through_the_same_plan() {
         let workspace = TempDir::new("oore-v2-plan-test");
         std::fs::write(
@@ -9349,6 +9428,23 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[test]
+    fn a_contradicting_export_method_fails_instead_of_being_dropped() {
+        let adapted = super::adapt_ios_command_for_signing(
+            "flutter build ipa --release --export-method app-store",
+            IosExportMethod::AppStore,
+        )
+        .unwrap();
+        assert!(!adapted.contains("--export-method"), "{adapted}");
+        let error = super::adapt_ios_command_for_signing(
+            "flutter build ipa --release --export-method=ad-hoc",
+            IosExportMethod::AppStore,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("exports App Store IPAs"), "{error}");
     }
 
     #[test]
@@ -10246,6 +10342,7 @@ mod file_publish_tests {
             changelog: Some("Fixes".to_string()),
             google_play: Some(play_settings("production", None)),
             app_store: Some(app_store_settings(testflight(&["Internal", "QA"]))),
+            disabled: false,
         };
         let from_file = plan.publish.apply(settings);
         // What the runner gets when the settings themselves say it.
@@ -10253,6 +10350,7 @@ mod file_publish_tests {
             changelog: Some("Fixes".to_string()),
             google_play: Some(play_settings("closed", Some(20.0))),
             app_store: Some(app_store_settings(testflight(&["Beta"]))),
+            disabled: false,
         };
         assert_eq!(from_file.changelog, equivalent.changelog);
         assert_eq!(from_file.google_play.unwrap(), equivalent.google_play);
@@ -10281,6 +10379,7 @@ mod file_publish_tests {
                 changelog: None,
                 google_play: Some(play_settings("internal", None)),
                 app_store: None,
+                disabled: false,
             });
             assert_eq!(
                 effective.google_play.unwrap(),

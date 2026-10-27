@@ -20,9 +20,9 @@ pub mod pipeline_migrate;
 pub mod runtime_update_preflight;
 
 pub use pipeline_config::{
-    EffectivePublish, PipelinePlan, PlanPublish, PlanRequest, PlanStep, RepositoryConfig,
-    StepPhase, TriggerEvent, TriggerSpec, is_valid_workflow_name, parse_repository_config,
-    plan_execution_config,
+    AppStorePublishSpec, EffectivePublish, PipelinePlan, PlanPublish, PlanRequest, PlanStep,
+    RepositoryConfig, SigningSpec, StepPhase, TriggerEvent, TriggerSpec, is_valid_workflow_name,
+    parse_repository_config, plan_execution_config,
 };
 
 // ── Setup state machine ─────────────────────────────────────────
@@ -3109,6 +3109,11 @@ pub struct Project {
     pub created_at: i64,
     pub updated_at: i64,
     pub current_user_role: ProjectRole,
+    /// Add a pipeline for each new config file that appears on the default
+    /// branch and no pipeline uses.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub auto_add_pipelines: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3122,6 +3127,10 @@ pub struct CreateProjectRequest {
     pub local_repository_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_branch: Option<String>,
+    /// Add pipelines for config files found on the default branch.
+    /// Defaults to true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_add_pipelines: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3137,6 +3146,8 @@ pub struct UpdateProjectRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     pub settings: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_add_pipelines: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3414,6 +3425,10 @@ pub struct PipelineWorkflowSummary {
     pub uses_pipeline_triggers: bool,
     /// Store uploads the file asks for, one line each.
     pub publishes: Vec<String>,
+    /// Signing identities the file names for this workflow, before the
+    /// pipeline's workflow settings apply.
+    #[serde(default, skip_serializing_if = "SigningSpec::is_empty")]
+    pub signing: SigningSpec,
     /// Why the workflow cannot be planned, one line each.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
@@ -3441,6 +3456,90 @@ pub struct PipelineWorkflowsResponse {
     /// Workflows in file order. Empty for v1 files and files without
     /// workflows, which build as one implicit workflow.
     pub workflows: Vec<PipelineWorkflowSummary>,
+}
+
+/// Whether a pipeline's repository file is usable on the project's default
+/// branch, from the last time Oore read the repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineHealthState {
+    /// The file exists and parses, and the pipeline's workflow is in it.
+    Ok,
+    /// No file at the pipeline's config path, so builds use the settings
+    /// saved in Oore.
+    FileMissing,
+    /// The file exists but does not parse or validate; builds fail.
+    FileInvalid,
+    /// The file no longer defines the pipeline's default workflow.
+    WorkflowMissing,
+}
+
+/// A pipeline's health on the project's default branch. Read from the
+/// repository files Oore last saw there, never from the provider while
+/// listing.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelineHealth {
+    pub state: PipelineHealthState,
+    /// What is wrong, in one line. Absent when `state` is `ok`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// The file that was read, which differs from `config_path` when a
+    /// legacy `.oore.yml` stands in for `.oore.yaml`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// The branch and commit the repository was read at.
+    pub branch: String,
+    pub commit_sha: String,
+    /// When Oore last read the branch, in Unix seconds.
+    pub checked_at: i64,
+}
+
+/// A pipeline that builds from a repository config file.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RepositoryConfigFilePipeline {
+    pub id: String,
+    pub name: String,
+}
+
+/// A config file Oore found in the repository on the project's default
+/// branch.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RepositoryConfigFile {
+    pub path: String,
+    pub valid: bool,
+    /// Why the file is invalid, one line each.
+    pub errors: Vec<String>,
+    /// Workflows a valid `version: 2` file defines, in file order.
+    pub workflows: Vec<String>,
+    /// The name a pipeline added from this file gets, such as `Release`
+    /// for `.oore.release.yaml`.
+    pub suggested_name: String,
+    /// Pipelines that build from this file. Empty when no pipeline uses it.
+    pub pipelines: Vec<RepositoryConfigFilePipeline>,
+    /// When Oore first saw the file on this branch, in Unix seconds.
+    pub seen_at: i64,
+}
+
+/// `GET /v1/projects/{project_id}/repository-config-files`: config files on
+/// the project's default branch, as Oore last read them.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RepositoryConfigFilesResponse {
+    pub project_id: String,
+    /// The default branch read. Absent when the project has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// The commit the files were read at. Absent before the first read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_sha: Option<String>,
+    /// When Oore last read the branch. Absent before the first read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scanned_at: Option<i64>,
+    /// Why the last read failed. The files from the read before it remain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// True when the repository had more config files than Oore reads.
+    pub truncated: bool,
+    pub files: Vec<RepositoryConfigFile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -3821,9 +3920,12 @@ pub struct Pipeline {
     pub id: String,
     pub project_id: String,
     pub name: String,
+    /// The repository file this pipeline builds from. When it is
+    /// `.oore.yaml` and missing, a legacy `.oore.yml` is read instead.
     pub config_path: String,
-    #[serde(default)]
-    #[schema(required = true)]
+    /// Deprecated: always true. `config_path` always names the file.
+    #[serde(default = "default_config_path_explicit")]
+    #[schema(required = true, deprecated)]
     pub config_path_explicit: bool,
     #[serde(default)]
     #[schema(required = true)]
@@ -3850,6 +3952,14 @@ pub struct Pipeline {
     pub enabled: bool,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Whether the pipeline's file is usable on the default branch. Absent
+    /// until Oore has read the repository.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<PipelineHealth>,
+}
+
+fn default_config_path_explicit() -> bool {
+    true
 }
 
 /// Distinguishes a field sent as `null` (`Some(None)`) from one left out
@@ -3867,7 +3977,9 @@ pub struct CreatePipelineRequest {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_path: Option<String>,
+    /// Deprecated and ignored: `config_path` always names the file.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(deprecated)]
     pub config_path_explicit: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_config: Option<PipelineExecutionConfig>,
@@ -3892,7 +4004,9 @@ pub struct UpdatePipelineRequest {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_path: Option<String>,
+    /// Deprecated and ignored: `config_path` always names the file.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(deprecated)]
     pub config_path_explicit: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_config: Option<PipelineExecutionConfig>,
@@ -3940,7 +4054,9 @@ pub struct ListPipelinesResponse {
 pub struct ValidatePipelineRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_path: Option<String>,
+    /// Deprecated and ignored: `config_path` always names the file.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(deprecated)]
     pub config_path_explicit: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_config: Option<PipelineExecutionConfig>,
@@ -4451,6 +4567,28 @@ fn default_release_notes_locale() -> String {
     "en-US".to_string()
 }
 
+impl GooglePlayPublishConfig {
+    /// Settings for an upload a v2 file sets up on its own, with
+    /// `publish.play.service_account`: the Publish settings form's defaults,
+    /// release notes from the changelog.
+    pub fn from_file_defaults() -> Self {
+        GooglePlayPublishConfig {
+            enabled: true,
+            service_account_secret: String::new(),
+            package_name: None,
+            track: "internal".to_string(),
+            rollout_percent: None,
+            draft: false,
+            release_notes: GooglePlayReleaseNotesSource::Changelog,
+            release_notes_locale: default_release_notes_locale(),
+            release_notes_dir: None,
+            upload_mapping: true,
+            in_app_update_priority: None,
+            rollout_policy: None,
+        }
+    }
+}
+
 /// `internal`, `closed`, `open`, `production` or a custom track name.
 pub(crate) fn is_valid_play_track(track: &str) -> bool {
     !track.is_empty()
@@ -4584,6 +4722,10 @@ pub struct RunnerPublishPlan {
     /// Present only when App Store publishing is enabled for an App Store export.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app_store: Option<RunnerAppStorePublishPlan>,
+    /// The build's workflow has publishing turned off in the pipeline's
+    /// workflow settings, so nothing uploads, whatever the file says.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -4707,6 +4849,170 @@ pub struct RunnerAndroidSigningResponse {
     pub debug: Option<RunnerAndroidSigningProfile>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub release: Option<RunnerAndroidSigningProfile>,
+}
+
+// ── Project credential library ──────────────────────────────────
+
+/// What a signing identity in a project's credential library signs with.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SigningIdentityKind {
+    /// An Android keystore and key, for release builds.
+    AndroidKeystore,
+    /// An iOS distribution certificate (.p12) with provisioning profiles.
+    IosDistribution,
+}
+
+/// Where a signing identity is used.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SigningIdentityUse {
+    pub pipeline_id: String,
+    pub pipeline_name: String,
+    /// The workflow whose settings pick the identity.
+    pub workflow: String,
+}
+
+/// A provisioning profile in an iOS signing identity, without its contents.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SigningIdentityProfile {
+    pub bundle_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_uuid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+}
+
+/// A named signing identity. Key material is never returned.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SigningIdentity {
+    pub id: String,
+    pub project_id: String,
+    /// Unique in the project. A v2 file names it under `signing`.
+    pub name: String,
+    pub kind: SigningIdentityKind,
+    /// Android: the keystore's file name. iOS: the certificate's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    /// Android: the key alias.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_alias: Option<String>,
+    /// iOS: the Apple team.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    /// iOS: how IPAs signed with it are exported, from its profiles.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub export_method: Option<IosExportMethod>,
+    /// iOS: certificate expiry, Unix seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<SigningIdentityProfile>,
+    /// Pipeline workflows whose settings pick it. Files that name it are
+    /// not listed.
+    #[serde(default)]
+    pub used_by: Vec<SigningIdentityUse>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListSigningIdentitiesResponse {
+    pub identities: Vec<SigningIdentity>,
+}
+
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct AndroidKeystoreInput {
+    pub keystore_filename: String,
+    pub keystore_base64: String,
+    pub store_password: String,
+    pub key_alias: String,
+    pub key_password: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct IosProfileInput {
+    pub profile_filename: String,
+    pub profile_base64: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct IosDistributionInput {
+    pub p12_filename: String,
+    pub p12_base64: String,
+    pub p12_password: String,
+    /// One provisioning profile per bundle id, all of the same distribution.
+    pub profiles: Vec<IosProfileInput>,
+}
+
+/// Create a signing identity. Set the input matching `kind`.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateSigningIdentityRequest {
+    pub name: String,
+    pub kind: SigningIdentityKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub android: Option<AndroidKeystoreInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ios: Option<IosDistributionInput>,
+}
+
+/// Rename an identity, or replace its material (the whole input for its
+/// kind).
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateSigningIdentityRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub android: Option<AndroidKeystoreInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ios: Option<IosDistributionInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SigningIdentityResponse {
+    pub identity: SigningIdentity,
+}
+
+/// Settings a pipeline keeps for one workflow of its file. Unset fields
+/// follow the file, then the pipeline.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct PipelineWorkflowSettings {
+    pub workflow: String,
+    /// Replaces the file's `signing.android`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub android_identity_id: Option<String>,
+    /// Replaces the file's `signing.ios`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ios_identity_id: Option<String>,
+    /// `false` stops every store upload for the workflow. Unset follows
+    /// the file and the pipeline's Publish settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publish_enabled: Option<bool>,
+    /// Replaces the pipeline's approval policy for the workflow's builds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListPipelineWorkflowSettingsResponse {
+    pub pipeline_id: String,
+    pub settings: Vec<PipelineWorkflowSettings>,
+}
+
+/// Replace one workflow's settings. Omitted fields are cleared.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct UpdatePipelineWorkflowSettingsRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub android_identity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ios_identity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publish_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_required: Option<bool>,
 }
 
 // ── Pipeline iOS signing types ──────────────────────────────────

@@ -22,6 +22,7 @@ import {
 import { requireProjectPermissionOrRedirect } from '@/lib/project-route-guard'
 import {
   useCreatePipeline,
+  useRepositoryConfigFiles,
   useRepositoryWorkflows,
   useUpdatePipelineAndroidSigning,
   useUpdatePipelineIosSigning,
@@ -207,6 +208,7 @@ const PIPELINE_TEMPLATES = [
 
 function workflowDefaults(
   workflow: RepositoryWorkflowPreview,
+  suggestedName: string | undefined,
 ): PipelineFormValues {
   const execution = workflow.execution
   // `.oore.release.yaml` and `.oore/release.yaml` name a "Release"
@@ -219,9 +221,11 @@ function workflowDefaults(
 
   return {
     ...emptyDefaults,
-    name: workflowName
-      ? workflowName.replace(/\b\w/g, (letter) => letter.toUpperCase())
-      : 'Repository workflow',
+    name:
+      suggestedName ??
+      (workflowName
+        ? workflowName.replace(/\b\w/g, (letter) => letter.toUpperCase())
+        : 'Repository workflow'),
     config_mode: 'explicit',
     config_path: workflow.path,
     platform_android: execution?.platforms.includes('android') ?? false,
@@ -279,13 +283,25 @@ function NewPipelinePage() {
     file: RepositoryWorkflowPreview
     reference: string
   } | null>(null)
+  // Which discovered files pipelines already build from, from the cache.
+  const configFilesQuery = useRepositoryConfigFiles(projectId, {
+    enabled: !!projectData?.project.repository_id,
+  })
+  const configFiles = new Map(
+    (configFilesQuery.data?.files ?? []).map((file) => [file.path, file]),
+  )
+  const inUse = (path: string) =>
+    (configFiles.get(path)?.pipelines.length ?? 0) > 0
   const discovered = workflowsQuery.data?.workflows ?? []
   const workflows =
     typedFile &&
     !discovered.some((workflow) => workflow.path === typedFile.file.path)
       ? [...discovered, typedFile.file]
       : discovered
-  const validWorkflows = workflows.filter((workflow) => workflow.valid)
+  // Files no pipeline uses come first, so the default pick is a new one.
+  const validWorkflows = workflows
+    .filter((workflow) => workflow.valid)
+    .sort((a, b) => Number(inUse(a.path)) - Number(inUse(b.path)))
   const invalidWorkflows = workflows.filter((workflow) => !workflow.valid)
   const selectedWorkflow: RepositoryWorkflowPreview | undefined =
     validWorkflows.find((workflow) => workflow.path === selectedWorkflowPath) ??
@@ -300,7 +316,10 @@ function NewPipelinePage() {
           key: `repository:${selectedWorkflow.path}`,
           label: selectedWorkflow.path,
           description: 'Repository-owned workflow',
-          values: workflowDefaults(selectedWorkflow),
+          values: workflowDefaults(
+            selectedWorkflow,
+            configFiles.get(selectedWorkflow.path)?.suggested_name,
+          ),
           events: ['push'],
         }
       : (PIPELINE_TEMPLATES.find((t) => t.key === selectedTemplate) ??
@@ -490,7 +509,12 @@ function NewPipelinePage() {
                       onClick={() => setSelectedWorkflowPath(workflow.path)}
                     >
                       <HugeiconsIcon icon={File02Icon} />
-                      {workflow.path}
+                      <span className="truncate">{workflow.path}</span>
+                      {inUse(workflow.path) ? (
+                        <Badge variant="outline" className="ms-auto font-sans">
+                          In use
+                        </Badge>
+                      ) : null}
                     </Button>
                   ))}
                 </div>

@@ -8,6 +8,11 @@ import { pipelineRepositoryFile } from '@/lib/pipeline-form-utils'
 import { PROJECT_IDS } from './seed'
 import { demoState } from './state'
 
+interface DemoSigningNames {
+  android?: string
+  ios?: string
+}
+
 /** Overrides for one file's workflows, by workflow name. */
 interface DemoWorkflowFile {
   projectId: string
@@ -16,6 +21,9 @@ interface DemoWorkflowFile {
     string,
     Partial<Omit<PipelineWorkflowSummary, 'name'>> | undefined
   >
+  /** The file's top-level `signing`, and each workflow's replacement. */
+  signing?: DemoSigningNames
+  workflowSigning?: Record<string, DemoSigningNames | undefined>
 }
 
 /** The workflow a demo build plans, or the daemon's refusal. */
@@ -35,7 +43,7 @@ const DEMO_WORKFLOW_FILES = [
     path: '.oore/release.yaml',
     workflows: {
       adhoc: {
-        platforms: ['android'],
+        platforms: ['android', 'ios'],
         triggers: ['pull requests into main'],
         uses_pipeline_triggers: false,
       },
@@ -48,6 +56,14 @@ const DEMO_WORKFLOW_FILES = [
           'ios publishes to the TestFlight group Internal (workflows.release.targets.ios.publish.testflight)',
         ],
       },
+      nightly: { platforms: ['ios'] },
+    },
+    signing: { android: 'coin-upload' },
+    workflowSigning: {
+      adhoc: { ios: 'coin-adhoc' },
+      release: { ios: 'coin-app-store' },
+      // Not in the library: a manual build is refused with invalid_signing.
+      nightly: { ios: 'coin-nightly' },
     },
   },
   {
@@ -98,19 +114,27 @@ function summaries(
   projectId: string,
   file: RepositoryWorkflowPreview,
 ): Array<PipelineWorkflowSummary> {
-  const details: DemoWorkflowFile['workflows'] =
+  const entry: Partial<DemoWorkflowFile> =
     DEMO_WORKFLOW_FILES.find(
-      (entry) => entry.projectId === projectId && entry.path === file.path,
-    )?.workflows ?? {}
-  return file.workflows.map((name) => ({
-    name,
-    platforms: file.execution?.platforms ?? [],
-    triggers: [],
-    uses_pipeline_triggers: true,
-    publishes: [],
-    errors: [],
-    ...details[name],
-  }))
+      (candidate) =>
+        candidate.projectId === projectId && candidate.path === file.path,
+    ) ?? {}
+  const details = entry.workflows ?? {}
+  return file.workflows.map((name) => {
+    const summary: PipelineWorkflowSummary = {
+      name,
+      platforms: file.execution?.platforms ?? [],
+      triggers: [],
+      uses_pipeline_triggers: true,
+      publishes: [],
+      errors: [],
+      ...details[name],
+    }
+    // Like the daemon: the file's `signing`, then the workflow's.
+    const signing = { ...entry.signing, ...entry.workflowSigning?.[name] }
+    if (signing.android || signing.ios) summary.signing = signing
+    return summary
+  })
 }
 
 /** `GET /v1/pipelines/{id}/workflows` for a demo pipeline. */
@@ -188,4 +212,72 @@ export function demoBuildWorkflow(
     }
   }
   return { workflow: names[0] }
+}
+
+const SIGNING_KINDS = {
+  android: 'android_keystore',
+  ios: 'ios_distribution',
+} as const
+
+/**
+ * Like the daemon's `resolve_workflow_binding`: the pipeline's workflow
+ * settings first, then the names the file gives under `signing`. Returns
+ * the 400 `invalid_signing` message, or undefined when the library can
+ * sign the build.
+ */
+export function demoSigningError(
+  pipeline: Pipeline,
+  reference: string,
+  workflow?: string,
+): string | undefined {
+  const listing = demoPipelineWorkflows(pipeline, reference)
+  const file = DEMO_WORKFLOW_FILES.find(
+    (entry) =>
+      entry.projectId === pipeline.project_id && entry.path === listing.path,
+  )
+  const settings = workflow
+    ? demoState.workflowSettings[pipeline.id]?.find(
+        (entry) => entry.workflow === workflow,
+      )
+    : undefined
+  const fileSigning: Partial<DemoWorkflowFile> = file ?? {}
+  const names: DemoSigningNames = {
+    ...fileSigning.signing,
+    ...(workflow ? fileSigning.workflowSigning?.[workflow] : undefined),
+  }
+  const scope = workflow ? `workflow ${workflow}` : 'this build'
+  const publishDisabled = settings?.publish_enabled === false
+  const uploadsToAppStore = (
+    listing.workflows.find((entry) => entry.name === workflow)?.publishes ?? []
+  ).some((line) => line.startsWith('ios'))
+  for (const platform of ['android', 'ios'] as const) {
+    const picked =
+      platform === 'android'
+        ? settings?.android_identity_id
+        : settings?.ios_identity_id
+    const named = names[platform]
+    if (!picked && !named) continue
+    const identity = demoState.signingIdentities.find(
+      (candidate) =>
+        candidate.project_id === pipeline.project_id &&
+        (picked ? candidate.id === picked : candidate.name === named),
+    )
+    if (!identity) {
+      return !picked && named
+        ? `${scope} signs ${platform} with '${named}', which is not in the project's signing identities; add it under Project settings > Signing, or fix signing.${platform}`
+        : `${scope}'s ${platform} signing identity was deleted; pick another in the pipeline's workflow settings`
+    }
+    if (identity.kind !== SIGNING_KINDS[platform]) {
+      return `${scope} signs ${platform} with '${named ?? 'the picked identity'}', which is an ${identity.kind} identity`
+    }
+    if (
+      platform === 'ios' &&
+      uploadsToAppStore &&
+      !publishDisabled &&
+      identity.export_method === 'ad_hoc'
+    ) {
+      return `${scope} uploads to App Store Connect, but its iOS signing identity holds ad hoc profiles; use an identity with App Store profiles`
+    }
+  }
+  return undefined
 }

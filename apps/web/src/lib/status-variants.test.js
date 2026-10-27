@@ -69,3 +69,16 @@ test('API token status is derived from revocation and expiry', () => {
   })
   expect(getStatusPresentation('token', 'expired').label).toBe('Expired')
 })
+
+test('a pipeline without a file is not shown as broken', () => {
+  expect(getStatusPresentation('pipeline_health', 'file_missing')).toEqual({
+    label: 'No file',
+    variant: 'outline',
+  })
+  expect(getStatusPresentation('pipeline_health', 'file_invalid').variant).toBe(
+    'destructive',
+  )
+  expect(
+    getStatusPresentation('pipeline_health', 'workflow_missing').variant,
+  ).toBe('warning')
+})

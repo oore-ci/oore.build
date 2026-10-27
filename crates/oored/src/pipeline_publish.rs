@@ -481,6 +481,7 @@ pub async fn get_job_publish_plan(
     require_runner(&runner_auth, &runner_id)?;
     let pipeline_id =
         require_active_job_signing_grant(&state.db, &job_id, &runner_id, &headers).await?;
+    let disabled = crate::signing_identities::job_publish_disabled(&state.db, &job_id).await?;
 
     let changelog: Option<String> =
         sqlx::query_scalar("SELECT changelog FROM builds WHERE id = ?1")
@@ -502,8 +503,9 @@ pub async fn get_job_publish_plan(
 
     Ok(Json(RunnerPublishPlan {
         changelog,
-        google_play,
-        app_store,
+        google_play: google_play.filter(|_| !disabled),
+        app_store: app_store.filter(|_| !disabled),
+        disabled,
     }))
 }
 

@@ -13,6 +13,12 @@ import { demoImportYaml } from '../pipeline-yaml-import'
 import { parseDemoJsonObject } from '../request'
 import { demoFilesAt, demoPipelineWorkflows } from '../pipeline-workflows'
 import {
+  DISCOVERED_PATH,
+  demoRepositoryConfigFiles,
+  refreshDemoRepositoryConfigFiles,
+  withDemoHealth,
+} from '../repository-config-files'
+import {
   DEMO_SHARED_KEY_ID,
   demoSharedKeySummary,
   setDemoSharedKeyUsage,
@@ -33,9 +39,6 @@ import type {
   UpdatePipelineAndroidSigningRequest,
   UpdatePipelineRequest,
 } from '@oore/client/models'
-
-/** `.oore.yaml`, `.oore.yml`, root `.oore.<name>.yaml` and `.oore/*.yaml`. */
-const DISCOVERED_PATH = /^(\.oore(\.[^/]+)?\.ya?ml|\.oore\/[^/]+\.ya?ml)$/
 
 const stringListSchema = z.array(z.string())
 const executionConfigSchema = z.object({
@@ -428,7 +431,35 @@ export const pipelineHandlers = [
     const page =
       limit < 0 ? sorted.slice(offset) : sorted.slice(offset, offset + limit)
 
-    return HttpResponse.json({ pipelines: page, total: filtered.length })
+    return HttpResponse.json({
+      pipelines: page.map(withDemoHealth),
+      total: filtered.length,
+    })
+  }),
+
+  demoApi.listRepositoryConfigFiles(async ({ params, request }) => {
+    await delay(150)
+    const projectId = String(params.project_id)
+    const persona = getDemoPersonaFromRequest(request)
+    if (!getDemoProjectRole(persona, projectId)) {
+      return HttpResponse.json(
+        { error: 'Project not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    return HttpResponse.json(demoRepositoryConfigFiles(projectId))
+  }),
+
+  demoApi.refreshRepositoryConfigFiles(async ({ params, request }) => {
+    await delay(400)
+    const projectId = String(params.project_id)
+    const forbidden = requireDemoProjectPermission(
+      request,
+      projectId,
+      'pipelines:write',
+    )
+    if (forbidden) return forbidden
+    return HttpResponse.json(refreshDemoRepositoryConfigFiles(projectId))
   }),
 
   demoApi.discoverRepositoryWorkflows(async ({ params, request }) => {
@@ -513,7 +544,7 @@ export const pipelineHandlers = [
       )
     }
     return HttpResponse.json({
-      pipeline,
+      pipeline: withDemoHealth(pipeline),
       build_count: demoState.builds.filter((b) => b.pipeline_id === pipeline.id)
         .length,
     })
@@ -532,8 +563,9 @@ export const pipelineHandlers = [
       id: `pipe-demo-new-${crypto.randomUUID().slice(0, 8)}`,
       project_id: String(params.project_id),
       name: body.name,
-      config_path: body.config_path ?? '.oore/pipeline.yaml',
-      config_path_explicit: body.config_path_explicit ?? false,
+      config_path: body.config_path ?? '.oore.yaml',
+      // Deprecated: the daemon ignores it on write and always returns true.
+      config_path_explicit: true,
       execution_config: body.execution_config ?? {
         platforms: ['android'],
         commands: { pre_build: [], build: [], post_build: [] },
@@ -553,7 +585,10 @@ export const pipelineHandlers = [
       updated_at: ago(0),
     }
     demoState.pipelines.unshift(pipeline)
-    return HttpResponse.json({ pipeline }, { status: 201 })
+    return HttpResponse.json(
+      { pipeline: withDemoHealth(pipeline) },
+      { status: 201 },
+    )
   }),
 
   demoApi.updatePipeline(async ({ params, request }) => {
@@ -574,8 +609,11 @@ export const pipelineHandlers = [
         { status: 404 },
       )
     }
-    Object.assign(pipeline, body, { updated_at: ago(0) })
-    return HttpResponse.json({ pipeline })
+    Object.assign(pipeline, body, {
+      config_path_explicit: true,
+      updated_at: ago(0),
+    })
+    return HttpResponse.json({ pipeline: withDemoHealth(pipeline) })
   }),
 
   demoApi.deletePipeline(async ({ params, request }) => {

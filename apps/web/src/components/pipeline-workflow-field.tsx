@@ -208,8 +208,8 @@ export function WorkflowFileLookup({
     )
   } else {
     const status = repositoryFileStatus(query.data.workflows, {
-      config_path: lookup.path,
-      config_path_explicit: explicit,
+      // Without a path the runner reads `.oore.yaml`, then `.oore.yml`.
+      config_path: explicit ? lookup.path : '.oore.yaml',
     })
     path = status.path
     if (status.kind === 'missing') {

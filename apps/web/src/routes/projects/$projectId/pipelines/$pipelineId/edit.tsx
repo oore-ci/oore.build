@@ -213,7 +213,8 @@ function EditPipelinePage() {
 
   const formInitialValues: PipelineFormValues = {
     name: pipeline.name,
-    config_mode: pipeline.config_path_explicit ? 'explicit' : 'auto',
+    config_mode:
+      pipeline.config_path.trim() === '.oore.yaml' ? 'auto' : 'explicit',
     config_path: pipeline.config_path,
     workflow: pipeline.workflow ?? '',
     platform_android: platformSet.has('android'),

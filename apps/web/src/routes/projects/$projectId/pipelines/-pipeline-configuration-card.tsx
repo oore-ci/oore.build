@@ -141,12 +141,16 @@ export function PipelineConfigurationCard({
         ) : null}
         <Section title="Configuration" defaultOpen>
           <KV label="Config path">
-            <span className="font-mono">{pipeline.config_path}</span>
-          </KV>
-          <KV label="Resolution">
-            {pipeline.config_path_explicit
-              ? 'Explicit path only'
-              : 'Auto-detect .oore.yaml / .oore.yml'}
+            <span className="font-mono">
+              {pipeline.health?.path ?? pipeline.config_path}
+            </span>
+            {pipeline.health?.path &&
+            pipeline.health.path !== pipeline.config_path ? (
+              <span className="text-muted-foreground">
+                {' '}
+                (legacy name for {pipeline.config_path})
+              </span>
+            ) : null}
           </KV>
           {pipeline.workflow ? (
             <KV label="Default workflow">

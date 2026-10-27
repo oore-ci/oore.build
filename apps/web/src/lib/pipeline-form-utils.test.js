@@ -49,7 +49,6 @@ test('builds remote and local pipeline requests', () => {
   expect(remote).toMatchObject({
     name: 'Release',
     config_path: 'ci/oore.yaml',
-    config_path_explicit: true,
     execution_config: {
       platforms: ['android'],
       artifact_patterns: ['build/app/outputs/flutter-apk/*.apk'],
@@ -181,19 +180,16 @@ test('the repository file is the explicit path or the first auto path', () => {
   expect(
     pipelineRepositoryFile(files, {
       config_path: '.oore.yaml',
-      config_path_explicit: false,
     })?.path,
   ).toBe('.oore.yml')
   expect(
     pipelineRepositoryFile(files, {
       config_path: '.oore/release.yaml',
-      config_path_explicit: true,
     })?.path,
   ).toBe('.oore/release.yaml')
   expect(
     pipelineRepositoryFile(files, {
       config_path: 'ci/missing.yaml',
-      config_path_explicit: true,
     }),
   ).toBeUndefined()
 })
@@ -201,7 +197,6 @@ test('the repository file is the explicit path or the first auto path', () => {
 test('the file status says whether the Workflow field can offer anything', () => {
   const explicit = (config_path) => ({
     config_path,
-    config_path_explicit: true,
   })
   const files = [
     { path: '.oore.release.yaml', valid: true, errors: [], workflows: ['a'] },
@@ -211,12 +206,10 @@ test('the file status says whether the Workflow field can offer anything', () =>
     kind: 'missing',
     path: 'ci/missing.yaml',
   })
-  expect(
-    repositoryFileStatus(files, {
-      ...explicit(''),
-      config_path_explicit: false,
-    }),
-  ).toEqual({ kind: 'missing', path: '.oore.yaml' })
+  expect(repositoryFileStatus(files, { config_path: '.oore.yaml' })).toEqual({
+    kind: 'missing',
+    path: '.oore.yaml',
+  })
   expect(repositoryFileStatus(files, explicit('ci/bad.yaml'))).toEqual({
     kind: 'invalid',
     path: 'ci/bad.yaml',
@@ -236,7 +229,6 @@ test('a pipeline has a workflow problem only when builds would fail', () => {
   })
   const pipeline = (workflow) => ({
     config_path: '.oore/release.yaml',
-    config_path_explicit: true,
     workflow,
   })
 

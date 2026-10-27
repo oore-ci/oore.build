@@ -43,6 +43,8 @@ import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
 import { StatusBadge } from '@/components/status-badge'
 import { toast } from '@/lib/toast'
 import type { LastPipelineBuild } from './-project-build-summary'
+import { RepositoryConfigFilesSection } from './-repository-config-files-section'
+import { Mono } from '@/components/layout/mono'
 import { splitRowVariants } from '@/lib/recipes'
 
 const PIPELINE_SORTS = ['created_at', 'name'] as const
@@ -199,6 +201,22 @@ export function ProjectPipelinesTab({
             value={enabledStatus(row.original.enabled)}
           />
         ),
+        enableSorting: false,
+      },
+      {
+        id: 'config_path',
+        header: 'File',
+        cell: ({ row }) => {
+          const { config_path: path, health } = row.original
+          return (
+            <span className="inline-flex items-center gap-2">
+              <Mono size="xs">{health?.path ?? path}</Mono>
+              {health ? (
+                <StatusBadge kind="pipeline_health" value={health.state} />
+              ) : null}
+            </span>
+          )
+        },
         enableSorting: false,
       },
       {
@@ -387,6 +405,12 @@ export function ProjectPipelinesTab({
             emptyMessage={isLoading ? 'Loading pipelines…' : undefined}
           />
         )}
+        {projectHasSource && !query ? (
+          <RepositoryConfigFilesSection
+            canWrite={canWritePipelines}
+            projectId={projectId}
+          />
+        ) : null}
       </div>
     </TabsContent>
   )

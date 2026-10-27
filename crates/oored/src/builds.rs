@@ -370,7 +370,6 @@ pub(crate) async fn transition_build_with_results(
 #[allow(clippy::too_many_arguments)]
 fn create_config_snapshot(
     pipeline_config_path: &str,
-    config_path_explicit: bool,
     ui_execution_config: &PipelineExecutionConfig,
     timeout_minutes: u32,
     trigger_type: &str,
@@ -385,7 +384,9 @@ fn create_config_snapshot(
         "snapshot_version": 2,
         "config_resolution_policy": "file_first_ui_fallback",
         "config_path": pipeline_config_path,
-        "config_path_explicit": config_path_explicit,
+        // Runners before the config path was always explicit try
+        // `.oore.yaml` then `.oore.yml` only when this is false.
+        "config_path_explicit": pipeline_config_path.trim() != ".oore.yaml",
         "ui_execution_config": ui_execution_config_json,
         "artifact_patterns": ui_execution_config.artifact_patterns,
         "runs_on": scheduling_labels(&ui_execution_config.runs_on),
@@ -1329,6 +1330,38 @@ async fn require_google_play_secret(
     ))
 }
 
+/// What a build of `workflow` signs and publishes with, from the pipeline's
+/// workflow settings and the file's `signing`. `Err` explains a reference
+/// the project's credential library cannot satisfy.
+async fn workflow_binding(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    pipeline_id: &str,
+    file: Option<&RepositoryConfig>,
+    workflow: Option<&str>,
+) -> Result<crate::signing_identities::WorkflowBinding, String> {
+    let plan = file.and_then(|config| {
+        config
+            .plan(oore_contract::PlanRequest {
+                workflow,
+                ..oore_contract::PlanRequest::default()
+            })
+            .ok()
+    });
+    let (signing, app_store) = plan
+        .map(|plan| (plan.signing, plan.publish.needs_app_store_export()))
+        .unwrap_or_default();
+    crate::signing_identities::resolve_workflow_binding(
+        pool,
+        project_id,
+        pipeline_id,
+        workflow,
+        &signing,
+        app_store,
+    )
+    .await
+}
+
 /// `POST /v1/projects/{project_id}/builds` — create a new build (manual/API trigger).
 pub async fn create_build(
     State(state): State<Arc<AppState>>,
@@ -1404,7 +1437,7 @@ pub async fn create_build(
 
     // Verify pipeline exists and belongs to this project
     let pipeline_row = sqlx::query(
-        "SELECT id, config_path, config_path_explicit, execution_config, concurrency, \
+        "SELECT id, config_path, execution_config, concurrency, \
                 timeout_minutes, approval_policy, workflow \
          FROM pipelines WHERE id = ?1 AND project_id = ?2",
     )
@@ -1429,7 +1462,6 @@ pub async fn create_build(
     })?;
 
     let config_path: String = pipeline_row.get("config_path");
-    let config_path_explicit: i32 = pipeline_row.try_get("config_path_explicit").unwrap_or(0);
     let execution_config_json: String = pipeline_row
         .try_get("execution_config")
         .unwrap_or_else(|_| "{}".to_string());
@@ -1469,15 +1501,24 @@ pub async fn create_build(
         Some(name) => Some(crate::pipelines::normalize_workflow_name(&name)?),
         None => pipeline_row.try_get("workflow").ok().flatten(),
     };
-    crate::pipelines::check_build_workflow(
+    let file = crate::pipelines::check_build_workflow(
         &state,
         &project_id,
         &config_path,
-        config_path_explicit != 0,
         commit_sha.as_deref().expect("commit resolved"),
         workflow.as_deref(),
     )
     .await?;
+    let binding = workflow_binding(
+        &pool,
+        &project_id,
+        &req.pipeline_id,
+        file.as_deref(),
+        workflow.as_deref(),
+    )
+    .await
+    .map_err(|message| api_err(StatusCode::BAD_REQUEST, "invalid_signing", message))?;
+    let approval_required = binding.approval_required.unwrap_or(approval_required);
 
     let now = now_unix();
     let build_id = Uuid::new_v4().to_string();
@@ -1499,7 +1540,6 @@ pub async fn create_build(
 
     let mut config_snapshot = create_config_snapshot(
         &config_path,
-        config_path_explicit != 0,
         &execution_config,
         timeout_minutes,
         "manual",
@@ -1516,6 +1556,7 @@ pub async fn create_build(
         config_snapshot["selected_platforms"] = serde_json::json!(selected_platforms);
     }
     set_snapshot_workflow_name(&mut config_snapshot, workflow.as_deref());
+    binding.write_to(&mut config_snapshot);
 
     let snapshot_str = config_snapshot.to_string();
     let inserted = insert_build_with_retry(
@@ -2548,7 +2589,6 @@ async fn pipeline_file_at(
     encryption_key: &[u8],
     project_id: &str,
     config_path: &str,
-    config_path_explicit: bool,
     commit_sha: &str,
 ) -> Result<Option<RepositoryConfig>, String> {
     use crate::repository_workflows::{PipelineFile, load_pipeline_file};
@@ -2557,7 +2597,6 @@ async fn pipeline_file_at(
         encryption_key,
         project_id,
         config_path,
-        config_path_explicit,
         Some(commit_sha),
     )
     .await
@@ -2642,10 +2681,8 @@ pub async fn trigger_build_from_webhook(
     // Fetched at most once, and only when a pipeline filters on paths.
     let mut compared_files: Option<Option<Vec<String>>> = None;
     // Pipeline files at this revision, read once per project and path.
-    let mut pipeline_files: HashMap<
-        (String, Option<String>),
-        Result<Option<RepositoryConfig>, String>,
-    > = HashMap::new();
+    let mut pipeline_files: HashMap<(String, String), Result<Option<RepositoryConfig>, String>> =
+        HashMap::new();
     // The first pipeline that could not be matched for want of its file;
     // returned after every other pipeline had its chance to build.
     let mut deferred: Option<(StatusCode, Json<ApiError>)> = None;
@@ -2678,7 +2715,7 @@ pub async fn trigger_build_from_webhook(
         // ponytail: one pipeline query per linked project; batch when repositories commonly map to many projects.
         // Find enabled pipelines for this project
         let pipeline_rows = sqlx::query(
-            "SELECT id, config_path, config_path_explicit, execution_config, trigger_config, concurrency, \
+            "SELECT id, config_path, execution_config, trigger_config, concurrency, \
                     timeout_minutes, approval_policy, workflow \
              FROM pipelines WHERE project_id = ?1 AND enabled = 1",
         )
@@ -2687,14 +2724,16 @@ pub async fn trigger_build_from_webhook(
         .await
         .map_err(|e| {
             error!(error = %e, "failed to fetch pipelines");
-            api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", "Failed to fetch pipelines")
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to fetch pipelines",
+            )
         })?;
 
         for pipeline_row in &pipeline_rows {
             let pipeline_id: String = pipeline_row.get("id");
             let config_path: String = pipeline_row.get("config_path");
-            let config_path_explicit: i32 =
-                pipeline_row.try_get("config_path_explicit").unwrap_or(0);
             let execution_config_json: String = pipeline_row
                 .try_get("execution_config")
                 .unwrap_or_else(|_| "{}".to_string());
@@ -2735,20 +2774,11 @@ pub async fn trigger_build_from_webhook(
                 .filter(|_| file_event.is_some())
             {
                 Some(sha) => {
-                    let key = (
-                        project_id.clone(),
-                        (config_path_explicit != 0).then(|| config_path.trim().to_string()),
-                    );
+                    let key = (project_id.clone(), config_path.trim().to_string());
                     if !pipeline_files.contains_key(&key) {
-                        let config = pipeline_file_at(
-                            pool,
-                            encryption_key,
-                            &project_id,
-                            &config_path,
-                            config_path_explicit != 0,
-                            sha,
-                        )
-                        .await;
+                        let config =
+                            pipeline_file_at(pool, encryption_key, &project_id, &config_path, sha)
+                                .await;
                         pipeline_files.insert(key.clone(), config);
                     }
                     match &pipeline_files[&key] {
@@ -2868,11 +2898,33 @@ pub async fn trigger_build_from_webhook(
                 }
 
                 let build_id = Uuid::new_v4().to_string();
-                let approval_required = approval_policy.applies_to(&canonical_event);
+                let file = sha.and_then(|_| {
+                    let key = (project_id.clone(), config_path.trim().to_string());
+                    pipeline_files
+                        .get(&key)
+                        .and_then(|config| config.as_ref().ok())
+                        .and_then(Option::as_ref)
+                });
+                // A reference the library cannot satisfy still queues the build, which
+                // then fails with the reason when it asks for signing.
+                let (binding, binding_error) = match workflow_binding(
+                    pool,
+                    &project_id,
+                    &pipeline_id,
+                    file,
+                    workflow.as_deref(),
+                )
+                .await
+                {
+                    Ok(binding) => (binding, None),
+                    Err(message) => (Default::default(), Some(message)),
+                };
+                let approval_required = binding
+                    .approval_required
+                    .unwrap_or_else(|| approval_policy.applies_to(&canonical_event));
 
                 let mut config_snapshot = create_config_snapshot(
                     &config_path,
-                    config_path_explicit != 0,
                     &execution_config,
                     timeout_minutes,
                     "webhook",
@@ -2881,6 +2933,10 @@ pub async fn trigger_build_from_webhook(
                     (&repository_id, &repo_url),
                 );
                 set_snapshot_workflow_name(&mut config_snapshot, workflow.as_deref());
+                binding.write_to(&mut config_snapshot);
+                if let Some(message) = &binding_error {
+                    config_snapshot["signing_error"] = serde_json::json!(message);
+                }
 
                 let snapshot_str = config_snapshot.to_string();
                 let inserted = insert_build_with_retry(
@@ -2993,7 +3049,7 @@ pub async fn create_scheduled_build(
     schedule: &ScheduleTrigger,
 ) -> Result<String, (StatusCode, Json<ApiError>)> {
     let row = sqlx::query(
-        "SELECT pl.project_id, pl.config_path, pl.config_path_explicit, pl.execution_config, \
+        "SELECT pl.project_id, pl.config_path, pl.execution_config, \
                 pl.concurrency, pl.timeout_minutes, pl.approval_policy, pl.workflow, \
                 p.repository_id, p.default_branch \
          FROM pipelines pl JOIN projects p ON p.id = pl.project_id \
@@ -3060,7 +3116,6 @@ pub async fn create_scheduled_build(
     let approval_required = approval_policy.applies_to("schedule");
     let mut config_snapshot = create_config_snapshot(
         &row.get::<String, _>("config_path"),
-        row.try_get::<i32, _>("config_path_explicit").unwrap_or(0) != 0,
         &execution_config,
         timeout_minutes,
         "schedule",
@@ -4142,8 +4197,8 @@ mod tests {
         trigger_config: &str,
     ) {
         sqlx::query(
-            "INSERT INTO pipelines (id, project_id, name, trigger_config, workflow, created_at, updated_at) \
-             VALUES (?1, 'p1', ?1, ?2, ?3, 0, 0)",
+            "INSERT INTO pipelines (id, project_id, name, config_path, trigger_config, workflow, created_at, updated_at) \
+             VALUES (?1, 'p1', ?1, '.oore.yaml', ?2, ?3, 0, 0)",
         )
         .bind(id)
         .bind(trigger_config)
@@ -4360,12 +4415,10 @@ mod tests {
         );
         let pool = local_pool(repo.path()).await;
         add_pipeline(&pool, "pl1", None, PUSH_TO_MAIN).await;
-        sqlx::query(
-            "UPDATE pipelines SET config_path = '.oore/release.yaml', config_path_explicit = 1",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("UPDATE pipelines SET config_path = '.oore/release.yaml'")
+            .execute(&pool)
+            .await
+            .unwrap();
         let push = Revision {
             event_type: "push",
             branch: Some("main"),
