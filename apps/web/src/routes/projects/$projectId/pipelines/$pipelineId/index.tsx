@@ -88,7 +88,7 @@ function PipelineHealthAlert({ pipeline }: { pipeline: Pipeline }) {
       <HugeiconsIcon icon={InformationCircleIcon} size={16} />
       <AlertTitle>{banner.title}</AlertTitle>
       <AlertDescription>
-        {banner.description} Checked{' '}
+        {banner.description.replace(/\.?$/, '. ')}Checked{' '}
         <RelativeTime at={pipeline.health.checked_at} /> at{' '}
         <span className="font-mono">
           {pipeline.health.commit_sha.slice(0, 7)}
