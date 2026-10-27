@@ -536,27 +536,57 @@ fn workspace_out_script(workspace: &str, share: &str) -> String {
 /// behind.
 const GRADLE_SHARE: &str = "gradle";
 const GUEST_GRADLE_HOME: &str = ".gradle";
-const GRADLE_SYNCED_DIRS: [&str; 9] = [
+
+/// Gradle directories whose files are each written whole and never change, so
+/// a copy merges into what the other side already has.
+const GRADLE_MERGED_DIRS: [&str; 3] = [
     "caches/modules-2",
-    "caches/transforms-*",
-    "caches/jars-*",
     "caches/build-cache-1",
     "caches/[0-9]*/generated-gradle-jars",
-    "caches/[0-9]*/kotlin-dsl",
-    "caches/[0-9]*/scripts",
-    "caches/[0-9]*/transforms",
-    "wrapper/dists",
 ];
 
+/// Gradle directories whose entries are immutable workspaces: Gradle creates
+/// each one in a temporary folder, moves it into place whole, and checks its
+/// files against the hashes in its `metadata.bin` on every use. Merging two
+/// builds' copies of an entry, or leaving a cut-off copy behind, fails every
+/// later build with "The contents of the immutable workspace ... have been
+/// modified". So an entry is copied only when the other side lacks it, into a
+/// hidden staging folder first and then moved into place.
+const GRADLE_WORKSPACE_DIRS: [&str; 6] = [
+    "caches/transforms-*",
+    "caches/jars-*",
+    "caches/[0-9]*/transforms",
+    "caches/[0-9]*/scripts",
+    "caches/[0-9]*/kotlin-dsl/*",
+    "wrapper/dists/*",
+];
+
+/// Prefix of the staging folders a Gradle copy fills before moving them into
+/// place. Copies skip them, so a save in progress or cut off is never read.
+const GRADLE_STAGING_PREFIX: &str = ".oore-incoming-";
+
 /// Copies the reusable parts of the Gradle home at `from` into `to`. The
-/// directory names are globs, as Gradle versions its cache directories.
+/// directory names are globs, as Gradle versions its cache directories. A
+/// workspace directory `to` lacks altogether, as in a fresh VM, is copied and
+/// moved into place as one.
 fn gradle_sync_script(from: &str, to: &str) -> String {
     let to = shell_quote(to);
+    let rsync = format!(
+        "/usr/bin/rsync -a --exclude '*.lock' --exclude '*.lck' --exclude '{GRADLE_STAGING_PREFIX}*'"
+    );
     format!(
-        "cd {} 2>/dev/null || exit 0; for dir in {}; do [ -d \"$dir\" ] || continue; \
-mkdir -p {to}/\"$dir\" && {{ /usr/bin/rsync -a --exclude '*.lock' --exclude '*.lck' \"$dir\"/ {to}/\"$dir\"/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }} || exit 1; done",
-        shell_quote(from),
-        GRADLE_SYNCED_DIRS.join(" "),
+        "cd {from} 2>/dev/null || exit 0; for dir in {merged}; do [ -d \"$dir\" ] || continue; \
+mkdir -p {to}/\"$dir\" && {{ {rsync} \"$dir\"/ {to}/\"$dir\"/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }} || exit 1; done; \
+for dir in {workspaces}; do [ -d \"$dir\" ] || continue; target={to}/\"$dir\"; \
+if [ ! -e \"$target\" ]; then mkdir -p \"${{target%/*}}\" && tmp=$(mktemp -d \"${{target%/*}}/{GRADLE_STAGING_PREFIX}XXXXXX\") || exit 1; \
+if {rsync} \"$dir\"/ \"$tmp\"/ && [ ! -e \"$target\" ]; then mv \"$tmp\" \"$target\"; fi; rm -rf \"$tmp\" \"$target/${{tmp##*/}}\"; continue; fi; \
+for entry in \"$dir\"/*; do [ -d \"$entry\" ] && [ ! -e {to}/\"$entry\" ] || continue; \
+tmp=$(mktemp -d \"$target/{GRADLE_STAGING_PREFIX}XXXXXX\") || exit 1; \
+if {rsync} \"$entry\"/ \"$tmp\"/ && [ ! -e {to}/\"$entry\" ]; then mv \"$tmp\" {to}/\"$entry\"; fi; \
+rm -rf \"$tmp\" {to}/\"$entry\"/\"${{tmp##*/}}\"; done; done",
+        from = shell_quote(from),
+        merged = GRADLE_MERGED_DIRS.join(" "),
+        workspaces = GRADLE_WORKSPACE_DIRS.join(" "),
     )
 }
 
@@ -1560,8 +1590,11 @@ mod tests {
     #[test]
     fn gradle_cache_syncs_complete_entries_only() {
         let script = gradle_sync_script("/s", "/l");
-        assert!(script.starts_with("cd '/s' 2>/dev/null || exit 0; for dir in caches/modules-2 caches/transforms-* caches/jars-* caches/build-cache-1 caches/[0-9]*/generated-gradle-jars caches/[0-9]*/kotlin-dsl caches/[0-9]*/scripts caches/[0-9]*/transforms wrapper/dists; do"));
-        assert!(script.contains("--exclude '*.lock' --exclude '*.lck'"));
+        assert!(script.starts_with("cd '/s' 2>/dev/null || exit 0; for dir in caches/modules-2 caches/build-cache-1 caches/[0-9]*/generated-gradle-jars; do"));
+        assert!(script.contains("; for dir in caches/transforms-* caches/jars-* caches/[0-9]*/transforms caches/[0-9]*/scripts caches/[0-9]*/kotlin-dsl/* wrapper/dists/*; do"));
+        assert!(
+            script.contains("--exclude '*.lock' --exclude '*.lck' --exclude '.oore-incoming-*'")
+        );
         assert!(!script.contains("caches/8."));
 
         let properties = gradle_properties_script("/s", "/l");
@@ -1664,6 +1697,82 @@ mod tests {
                 .is_file()
         );
         assert!(!root.join("gradle-share/caches/8.14/fileHashes").exists());
+
+        // Immutable workspaces are copied whole, never merged into an entry
+        // the other side already has, and staging folders are never read.
+        write("gradle-share/caches/9.3.1/transforms/w1/metadata.bin", "A");
+        write(
+            "gradle-share/caches/9.3.1/transforms/w1/transformed/out",
+            "A",
+        );
+        write("gradle-local/caches/9.3.1/transforms/w1/metadata.bin", "B");
+        write(
+            "gradle-local/caches/9.3.1/transforms/w1/transformed/out",
+            "B",
+        );
+        write(
+            "gradle-local/caches/9.3.1/transforms/w1/transformed/extra",
+            "B",
+        );
+        write("gradle-local/caches/9.3.1/transforms/w2/metadata.bin", "C");
+        write(
+            "gradle-local/caches/9.3.1/transforms/w2/transformed/out",
+            "C",
+        );
+        write(
+            "gradle-local/caches/9.3.1/transforms/.oore-incoming-cut/partial",
+            "",
+        );
+        assert!(
+            run_sh(&gradle_sync_script(
+                &path("gradle-local"),
+                &path("gradle-share")
+            ))
+            .status
+            .success()
+        );
+        let shared = root.join("gradle-share/caches/9.3.1/transforms");
+        assert_eq!(
+            fs::read_to_string(shared.join("w1/metadata.bin")).unwrap(),
+            "A"
+        );
+        assert!(!shared.join("w1/transformed/extra").exists());
+        assert_eq!(
+            fs::read_to_string(shared.join("w2/transformed/out")).unwrap(),
+            "C"
+        );
+        let names = |dir: &Path| -> Vec<String> {
+            let mut names: Vec<String> = fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        assert_eq!(names(&shared), ["w1", "w2"]);
+        assert_eq!(names(&shared.join("w2")), ["metadata.bin", "transformed"]);
+
+        // A fresh home takes a workspace directory whole, without staging
+        // folders a save left in the share.
+        write(
+            "gradle-share/caches/9.3.1/transforms/.oore-incoming-cut/partial",
+            "",
+        );
+        assert!(
+            run_sh(&gradle_sync_script(
+                &path("gradle-share"),
+                &path("gradle-fresh")
+            ))
+            .status
+            .success()
+        );
+        let fresh = root.join("gradle-fresh/caches/9.3.1");
+        assert_eq!(names(&fresh), ["transforms"]);
+        assert_eq!(names(&fresh.join("transforms")), ["w1", "w2"]);
+        assert_eq!(
+            fs::read_to_string(fresh.join("transforms/w1/transformed/out")).unwrap(),
+            "A"
+        );
 
         // A project that turns the build cache off keeps it off.
         write(
