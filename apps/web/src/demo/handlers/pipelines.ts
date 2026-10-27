@@ -11,6 +11,7 @@ import { demoState } from '../state'
 import { demoExportYaml } from '../pipeline-yaml'
 import { demoImportYaml } from '../pipeline-yaml-import'
 import { parseDemoJsonObject } from '../request'
+import { demoFilesAt, demoPipelineWorkflows } from '../pipeline-workflows'
 import {
   DEMO_SHARED_KEY_ID,
   demoSharedKeySummary,
@@ -32,6 +33,9 @@ import type {
   UpdatePipelineAndroidSigningRequest,
   UpdatePipelineRequest,
 } from '@oore/client/models'
+
+/** `.oore.yaml`, `.oore.yml`, root `.oore.<name>.yaml` and `.oore/*.yaml`. */
+const DISCOVERED_PATH = /^(\.oore(\.[^/]+)?\.ya?ml|\.oore\/[^/]+\.ya?ml)$/
 
 const stringListSchema = z.array(z.string())
 const executionConfigSchema = z.object({
@@ -440,10 +444,24 @@ export const pipelineHandlers = [
     }
 
     const url = new URL(request.url)
-    const requestedPath = url.searchParams.get('path')
-    const discovered = demoState.repositoryWorkflows[projectId]
-    const workflows = (discovered ?? []).filter(
-      (workflow) => !requestedPath || workflow.path === requestedPath,
+    const requestedPath = url.searchParams.get('path')?.trim()
+    const defaultBranch = project.default_branch ?? 'main'
+    const reference = url.searchParams.get('ref')?.trim() || defaultBranch
+    const files = demoFilesAt(projectId, reference)
+    if (!files) {
+      return HttpResponse.json(
+        {
+          error: `Branch or commit '${reference}' was not found`,
+          code: 'not_found',
+        },
+        { status: 404 },
+      )
+    }
+    // Like the daemon, list only `.oore*` files unless a path is asked for.
+    const workflows = files.filter((workflow) =>
+      requestedPath
+        ? workflow.path === requestedPath
+        : DISCOVERED_PATH.test(workflow.path),
     )
     const integrationId = Object.entries(demoState.repositories).find(
       ([, repositories]) =>
@@ -458,11 +476,28 @@ export const pipelineHandlers = [
     return HttpResponse.json({
       project_id: projectId,
       provider: provider === 'gitlab' ? 'gitlab' : 'github',
-      reference:
-        url.searchParams.get('ref') ?? project.default_branch ?? 'main',
+      reference,
       workflows,
       truncated: false,
     })
+  }),
+
+  demoApi.listPipelineWorkflows(async ({ params, request }) => {
+    await delay(200)
+    const persona = getDemoPersonaFromRequest(request)
+    const pipeline = demoState.pipelines.find(
+      (p) => p.id === params.pipeline_id,
+    )
+    if (!pipeline || !getDemoProjectRole(persona, pipeline.project_id)) {
+      return HttpResponse.json(
+        { error: 'Pipeline not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    const url = new URL(request.url)
+    return HttpResponse.json(
+      demoPipelineWorkflows(pipeline, url.searchParams.get('ref')),
+    )
   }),
 
   demoApi.getPipeline(async ({ params, request }) => {

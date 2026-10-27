@@ -40,6 +40,7 @@ import {
   getPipelineQueryKey,
   listPipelineIosDevicesOptions,
   listPipelineIosDevicesQueryKey,
+  listPipelineWorkflowsOptions,
   listPipelinesInfiniteOptions,
   listPipelinesOptions,
   listPipelinesQueryKey,
@@ -133,6 +134,32 @@ export function useRepositoryWorkflows(
   return useQuery({
     ...query,
     enabled: enabled && !!baseUrl && !!token && !!projectId,
+    staleTime: 30_000,
+  })
+}
+
+/**
+ * The workflows a build of the pipeline can name, read from its file at
+ * `ref` (the project's default branch when omitted).
+ */
+export function usePipelineWorkflows(
+  pipelineId: string,
+  params?: { ref?: string },
+  options?: { enabled?: boolean },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    listPipelineWorkflowsOptions({
+      client,
+      path: { pipeline_id: pipelineId },
+      query: params?.ref ? { ref: params.ref } : undefined,
+    }),
+  )
+
+  return useQuery({
+    ...query,
+    enabled: (options?.enabled ?? true) && !!baseUrl && !!token && !!pipelineId,
     staleTime: 30_000,
   })
 }

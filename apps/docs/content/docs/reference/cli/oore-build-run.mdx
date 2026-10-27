@@ -1,0 +1,43 @@
+---
+title: '`oore build run`'
+status: implemented
+description: 'Queue a build of a pipeline, optionally naming the workflow to run.'
+---
+
+```text
+oore build run --pipeline <ID> [--workflow NAME] [--branch BRANCH] [--commit SHA]
+               [--platform PLATFORM]... [--daemon-url <URL>] [--token <TOKEN>] [--json]
+```
+
+The command looks up the pipeline's project, then queues a build with
+`POST /v1/projects/{project_id}/builds`, as **Run build** in the web UI does.
+It needs a signed-in session (`oore login`, `--token`, or
+`OORE_SESSION_TOKEN`) with build access to the project.
+
+| Option                | Effect                                                                                                      |
+| --------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `--pipeline ID`       | The pipeline to build. Required.                                                                            |
+| `--workflow NAME`     | The `.oore.yaml` version 2 workflow to run. Defaults to the pipeline's default workflow, then the only one. |
+| `--branch BRANCH`     | The branch to build. Defaults to the project's default branch.                                              |
+| `--commit SHA`        | The exact commit to build, instead of the branch head.                                                      |
+| `--platform PLATFORM` | Build only `android`, `ios` or `macos`. Repeat for several. Defaults to every platform the build plans.     |
+| `--daemon-url`        | Backend URL; otherwise uses environment, CLI config, then loopback.                                         |
+| `--token`             | Session token; otherwise `OORE_SESSION_TOKEN` or the stored session.                                        |
+| `--json`              | Print the queued build as JSON.                                                                             |
+
+```bash
+oore build run --pipeline pipe_123 --workflow release --branch main
+oore build run --pipeline pipe_123 --workflow adhoc --platform android
+```
+
+```text
+Queued build #48 of Multi-platform Release, workflow release, on main
+Build id: build_456
+```
+
+When the pipeline's file defines several workflows and the pipeline has no
+default workflow, name one with `--workflow`. Otherwise the daemon refuses
+the build with `invalid_workflow` and lists the workflows the file defines.
+The daemon checks the name against the file at the commit it builds. Use
+[`oore pipeline workflows`](/reference/cli/oore-pipeline-workflows) to see
+the names first.

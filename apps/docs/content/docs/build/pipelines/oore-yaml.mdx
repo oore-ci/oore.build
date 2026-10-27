@@ -87,14 +87,51 @@ in the project that reads that path builds from the file, and its form
 settings for the build stop applying. The pipeline editor names those
 pipelines before you copy the file.
 
-If the file defines several `workflows`, open each pipeline's **Edit** page
-and pick one under **Workflow**. A file with several workflows fails builds of
-a pipeline that has not picked one.
+If the file defines several `workflows`, each build runs one of them.
+**Run build** lists the workflows in the file at the branch you build and
+shows what each builds, when it starts and where it publishes. To start every
+manual run on the same one, open the pipeline's **Edit** page and pick it
+under **Default workflow**.
+
+Pushes, pull requests and tags start the default workflow. With **Default
+workflow** left at **Not set**, they start one build for each workflow whose
+`on` matches, so one push can build `adhoc` and `release` side by side. The
+build page and build lists show which workflow each build ran, and the
+pipeline page filters its builds by workflow.
+
+The **Default workflow** field lists the workflows in the file on the project's
+default branch. The line under it names that branch, such as
+`Workflows read from main`. When the file is only on another branch so far,
+select **Change branch** and enter that branch. When the file is missing,
+invalid, or defines no workflows on the branch, the field stays visible and
+says which. The branch only changes what the editor shows; builds still read
+the file at the commit they build.
+
+## Run two workflows with different publishing
+
+For two builds that publish to different places, such as a beta build to
+Google Play's internal track and a release build to production, give each
+pipeline its own file:
+
+1. Commit two files in the repository root, such as `.oore.beta.yaml` and
+   `.oore.release.yaml`, each with the targets, `on` and `publish` for its
+   build.
+2. Create a pipeline for each file. Under **Config source**, select
+   **Choose a config file** and enter its path.
+3. Set up each pipeline's **Publishing** settings for its store.
+
+Each pipeline's editor generates its own file, and a change to one file
+cannot change the other pipeline. One pipeline can also run both from a
+single file with several `workflows`: the workflows then share the pipeline's
+**Publishing** credentials, and **Run build** or the triggers pick which one
+runs.
 
 ## Create a pipeline from an existing file
 
-When the repository already has `.oore.yaml` or `.oore.yml` on its default
-branch, create the pipeline from it:
+When the repository already has a pipeline file on its default branch,
+create the pipeline from it. Oore looks for `.oore.yaml`, `.oore.yml`, files
+named `.oore.<name>.yaml` in the repository root, such as
+`.oore.release.yaml`, and files in the `.oore/` directory.
 
 1. Open the project's **Pipelines** tab and select
    **Use repository workflow**. With other pipelines in the project, select
@@ -102,8 +139,14 @@ branch, create the pipeline from it:
 2. Under **Start from**, Oore shows **Repository workflow found** and a
    summary of the platforms, Flutter version, commands, and artifacts. If it
    found several files, select the one to use.
-3. If the file defines several workflows, pick one under **Workflow**.
+3. If the file defines several workflows, pick a **Default workflow**, or
+   leave it at **Not set** to choose one on each run.
 4. Enter a **Pipeline name** and select **Create pipeline**.
+
+For a file anywhere else, such as `ci/oore.yaml`, select **Set up manually**,
+choose **Choose a config file** under **Config source**, and enter its path.
+Oore reads the file from the default branch as you type, shows what it
+builds, and offers **Use this file's settings**.
 
 ## Check the result
 
