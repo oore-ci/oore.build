@@ -93,8 +93,11 @@ export function WorkflowField({
           <FormLabel>Default workflow</FormLabel>
           <Select
             value={field.value || DEFAULT_WORKFLOW}
+            // Base UI reports null once the saved workflow's item is gone.
             onValueChange={(value) =>
-              field.onChange(value === DEFAULT_WORKFLOW ? '' : value)
+              field.onChange(
+                value == null || value === DEFAULT_WORKFLOW ? '' : value,
+              )
             }
             items={items}
             disabled={!!unavailable && !current}
