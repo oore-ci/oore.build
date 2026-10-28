@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import type { Artifact } from '@oore/client/models'
+import { toast } from '@/lib/toast'
 
 const jsonObjectSchema = z.record(z.string(), z.json())
 type JsonObject = z.infer<typeof jsonObjectSchema>
@@ -11,11 +12,16 @@ export interface IosAppMetadata {
   buildNumber: string
 }
 
-export type InstallDevice =
-  | 'iphone-safari'
-  | 'iphone-other'
-  | 'android'
-  | 'other'
+/**
+ * Where the install page is being viewed.
+ *
+ * `iphone` covers Safari and full third-party browsers such as Chrome,
+ * Firefox and Edge: all of them hand `itms-services://` links to iOS, so
+ * registered devices can install from any of them. `iphone-webview` is a
+ * browser embedded in another app (Gmail, Facebook, the Google app), which
+ * may swallow the link; installs are still allowed there, with a hint.
+ */
+export type InstallDevice = 'iphone' | 'iphone-webview' | 'android' | 'other'
 
 export interface ArtifactInstallReadiness {
   ready: boolean
@@ -124,13 +130,26 @@ export function artifactInstallReadiness(
 
 export function detectInstallDevice(userAgent: string): InstallDevice {
   if (/iPhone|iPod/i.test(userAgent)) {
-    const isSafari =
-      /Version\/[\d.]+.*Mobile\/\S+.*Safari\//i.test(userAgent) &&
-      !/CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo|Ddg|GSA/i.test(userAgent)
-    return isSafari ? 'iphone-safari' : 'iphone-other'
+    // Safari, Chrome, Firefox, Edge and SFSafariViewController all carry a
+    // Safari/ token. A bare WKWebView drops it, and apps that embed one often
+    // append their own marker instead.
+    const embedded =
+      !/Safari\//i.test(userAgent) ||
+      /\b(?:FBAN|FBAV|FB_IAB|Instagram|GSA|Line|MicroMessenger|Snapchat)\b/i.test(
+        userAgent,
+      )
+    return embedded ? 'iphone-webview' : 'iphone'
   }
   if (/Android/i.test(userAgent)) return 'android'
   return 'other'
+}
+
+/** Copies the current install page URL, for opening it in another browser. */
+export function copyInstallPageLink() {
+  void navigator.clipboard.writeText(window.location.href).then(
+    () => toast.success('Install link copied'),
+    () => toast.error('Could not copy link. Try again.'),
+  )
 }
 
 const INSTALL_PLATFORMS = [

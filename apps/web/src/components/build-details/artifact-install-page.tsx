@@ -158,21 +158,20 @@ function QaReleaseDetail({
     artifact.expires_at <= Math.floor(time / 1000)
   const wrongPhone =
     (isIos && device === 'android') ||
-    (isAndroid && (device === 'iphone-safari' || device === 'iphone-other'))
-  const needsSafari = isIos && device === 'iphone-other'
+    (isAndroid && device.startsWith('iphone'))
+  const inAppBrowser = isIos && device === 'iphone-webview'
   const isDesktopIos = isIos && device === 'other'
   const canInstall =
     !!artifact &&
     readiness?.ready === true &&
     !expired &&
     !wrongPhone &&
-    !needsSafari &&
     !isDesktopIos
   const hasInstallGuidance =
     (readiness != null && !readiness.ready) ||
     expired ||
     wrongPhone ||
-    needsSafari ||
+    inAppBrowser ||
     isDesktopIos
   const appName = qaBuildVersion(
     build,
@@ -285,7 +284,7 @@ function QaReleaseDetail({
                 <p className="font-medium">Before you install</p>
                 <p className="text-muted-foreground">
                   {isIos
-                    ? 'Open this page in Safari on a registered iPhone, then confirm the iOS install prompt.'
+                    ? 'Open this page on a registered iPhone, then confirm the iOS install prompt.'
                     : 'Download the APK, allow installs from this browser if asked, then confirm installation.'}
                 </p>
               </div>
@@ -357,7 +356,7 @@ function QaReleaseDetail({
                 conditions={{
                   desktopIos: isDesktopIos,
                   expired,
-                  needsSafari,
+                  inAppBrowser,
                   wrongPhone,
                 }}
                 platform={isIos ? 'iOS' : 'Android'}

@@ -16,14 +16,14 @@ requests.
 - Complete bundle identifier, app name, version, and build-number metadata.
 - The iPhone's UDID included in the provisioning profile used by this build.
 - An HTTPS Artifact delivery URL or External Access public URL.
-- Safari on the iPhone.
+- A browser on the iPhone. Safari, Chrome, Firefox and Edge all work.
 
 ## 1. Open the install page
 
 1. Open the completed build.
 2. Under **Artifacts**, select **Install** for the IPA.
-3. Select **Copy install page link** and open that link in Safari on the
-   registered iPhone.
+3. Select **Copy install page link** and open that link on the registered
+   iPhone.
 
 The copied build-page URL requires Oore sign-in and project access. Selecting
 **Install** on that page creates the bearer capability for the manifest and
@@ -33,7 +33,7 @@ group.
 
 ## 2. Install on the iPhone
 
-1. In Safari, select **Install**.
+1. Select **Install**.
 2. Confirm the iOS installation prompt.
 3. Wait for the app icon to finish installing.
 4. Enable Developer Mode if iOS asks, then open the app.
@@ -47,10 +47,12 @@ the registered iPhone.
 
 ## Troubleshooting
 
-**The page says Open this page in Safari**
+**Nothing happens after Install in an in-app browser**
 
-Copy the same install-page URL into Safari on the iPhone. Oore disables the
-install action in unsupported iPhone browsers.
+Browsers embedded in other apps, such as Gmail or Facebook, can drop the
+`itms-services` link that starts the install. The page shows an in-app browser
+hint when it detects one. Copy the link and open it in Safari or Chrome on the
+same iPhone.
 
 **The artifact says Not install-ready**
 
