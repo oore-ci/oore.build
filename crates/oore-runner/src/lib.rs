@@ -5117,6 +5117,7 @@ async fn execute_build(
         shutdown_build_vm(
             vm,
             !terminated,
+            false,
             client,
             daemon_url,
             config,
@@ -6754,7 +6755,18 @@ Install the required tooling on the runner, set isolation: vm, or override build
 
     // Every step has run; free the VM slot before the upload.
     if let Some(vm) = build_vm.take() {
-        shutdown_build_vm(vm, true, client, daemon_url, config, &job.build_id, log_seq).await;
+        // Every step succeeded, so the VM's caches are worth keeping as they are.
+        shutdown_build_vm(
+            vm,
+            true,
+            true,
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+        )
+        .await;
     }
 
     if ios_signing_expected && !ios_signing_command_applied {
@@ -7289,14 +7301,28 @@ async fn run_publish_steps(
 /// it is deleted before the slot is released.
 struct BuildVm {
     vm: tart::TartVm,
+    /// Where a good build keeps its VM for the project's next build.
+    warm: Option<WarmImage>,
     _slot: tart::VmSlot,
 }
 
-/// Saves the VM's caches back to the host unless `save_caches` is false,
-/// deletes the VM, and only then frees its slot. Every step is bounded.
+/// A project's warm image: the name to keep the VM under, and when its line
+/// began, which a kept image carries on.
+struct WarmImage {
+    lock_dir: PathBuf,
+    name: String,
+    created: i64,
+}
+
+/// With `keep_warm`, keeps the VM as its project's warm image. Otherwise, or
+/// when it cannot be kept, saves the VM's caches back to the host unless
+/// `save_caches` is false and deletes the VM. Only then frees its slot. Every
+/// step is bounded.
+#[allow(clippy::too_many_arguments)]
 async fn shutdown_build_vm(
     build_vm: BuildVm,
     save_caches: bool,
+    keep_warm: bool,
     client: &reqwest::Client,
     daemon_url: &str,
     config: &RunnerConfig,
@@ -7305,8 +7331,63 @@ async fn shutdown_build_vm(
 ) {
     let BuildVm {
         mut vm,
+        warm,
         _slot: slot,
     } = build_vm;
+    if keep_warm && let Some(warm) = warm {
+        let started = Instant::now();
+        let ready = match vm.prepare_for_reuse().await {
+            Ok(()) => match tart::try_lock_image(&warm.lock_dir, &warm.name) {
+                Ok(Some(lock)) => Ok(lock),
+                Ok(None) => Err("another build is replacing it".to_string()),
+                Err(error) => Err(format!("{error:#}")),
+            },
+            Err(error) => Err(format!("{error:#}")),
+        };
+        match ready {
+            Ok(_lock) => {
+                let line = match vm.keep_as(&warm.name).await {
+                    Ok(()) => {
+                        let recorded =
+                            tart::write_warm_created(&warm.lock_dir, &warm.name, warm.created)
+                                .and_then(|()| {
+                                    tart::write_image_use(&warm.lock_dir, &warm.name, now_unix())
+                                });
+                        if let Err(error) = recorded {
+                            eprintln!("Warning: {error:#}");
+                        }
+                        format!(
+                            "Kept VM as this project's warm image {} in {}; the next build starts with its caches on disk",
+                            warm.name,
+                            tart::format_seconds(started.elapsed())
+                        )
+                    }
+                    Err(error) => format!(
+                        "Could not keep the VM as warm image {}: {error:#}; the VM was deleted",
+                        warm.name
+                    ),
+                };
+                let _ = append_runner_log_line(
+                    client, daemon_url, config, build_id, log_seq, "stdout", &line,
+                )
+                .await;
+                drop(slot);
+                return;
+            }
+            Err(reason) => {
+                let _ = append_runner_log_line(
+                    client,
+                    daemon_url,
+                    config,
+                    build_id,
+                    log_seq,
+                    "stdout",
+                    &format!("Not keeping a warm image this time: {reason}"),
+                )
+                .await;
+            }
+        }
+    }
     if save_caches && vm.has_cache_saves() {
         let _ = append_runner_log_line(
             client,
@@ -7472,6 +7553,30 @@ async fn start_build_vm(
         )
         .await?;
     }
+    // A fresh warm image of this project starts the build with its caches on
+    // the VM disk; a good build replaces it, or starts one.
+    let now = now_unix();
+    let mut warm = None;
+    let mut source = plan.name.clone();
+    if let Some(max_age) = tart::warm_image_max_age() {
+        let image = tart::warm_image_name(&plan.name, &job.project_id);
+        let created = tart::read_warm_created(&slot_dir, &image);
+        let fresh = tart::warm_image_fresh(created, max_age, now)
+            && tart::local_image_exists(&tart_bin, &image)
+                .await
+                .unwrap_or(false);
+        if fresh && let Err(error) = tart::record_image_use(&slot_dir, &image, now).await {
+            eprintln!("Warning: could not record the use of VM image {image}: {error:#}");
+        }
+        if fresh {
+            source = image.clone();
+        }
+        warm = Some(WarmImage {
+            lock_dir: slot_dir.clone(),
+            name: image,
+            created: if fresh { created.unwrap_or(now) } else { now },
+        });
+    }
     let _ = append_runner_log_line(
         client,
         daemon_url,
@@ -7480,19 +7585,86 @@ async fn start_build_vm(
         log_seq,
         "stdout",
         &format!(
-            "Cloning {} into {name} (VM slot {})",
-            plan.name,
+            "Cloning {source}{} into {name} (VM slot {})",
+            if source == plan.name {
+                String::new()
+            } else {
+                format!(", this project's warm image of {}", plan.name)
+            },
             slot.index + 1
         ),
     )
     .await;
-    // Dropping the start on cancel deletes the half-started VM.
-    let vm = tokio::select! {
-        vm = tart::TartVm::start(tart_bin, &plan.name, name, Some(workspace), shares) => vm?,
+    // Dropping the start on cancel deletes the half-started VM. A warm image
+    // that does not start is deleted, and the build starts from the plain one.
+    let started = async {
+        if source != plan.name {
+            match tart::TartVm::start(
+                tart_bin.clone(),
+                &source,
+                name.clone(),
+                Some(workspace),
+                shares,
+                true,
+            )
+            .await
+            {
+                Ok(vm) => return Ok((vm, None)),
+                Err(error) => {
+                    if let Err(delete_error) =
+                        tart::delete_warm_image(&tart_bin, &slot_dir, &source).await
+                    {
+                        eprintln!("Warning: {delete_error:#}");
+                    }
+                    let note = format!(
+                        "Warm image {source} did not start ({error:#}); deleted it and cloning {} instead",
+                        plan.name
+                    );
+                    return tart::TartVm::start(
+                        tart_bin.clone(),
+                        &plan.name,
+                        name.clone(),
+                        Some(workspace),
+                        shares,
+                        false,
+                    )
+                    .await
+                    .map(|vm| (vm, Some(note)));
+                }
+            }
+        }
+        tart::TartVm::start(
+            tart_bin.clone(),
+            &plan.name,
+            name.clone(),
+            Some(workspace),
+            shares,
+            false,
+        )
+        .await
+        .map(|vm| (vm, None))
+    };
+    let (vm, fallback) = tokio::select! {
+        started = started => started?,
         () = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
             return Err(authority.terminated());
         }
     };
+    if let Some(note) = fallback {
+        if let Some(warm) = warm.as_mut() {
+            warm.created = now;
+        }
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            "stdout",
+            &note,
+        )
+        .await;
+    }
     let _ = append_runner_log_line(
         client,
         daemon_url,
@@ -7530,7 +7702,11 @@ async fn start_build_vm(
         )
         .await;
     }
-    Ok(BuildVm { vm, _slot: slot })
+    Ok(BuildVm {
+        vm,
+        warm,
+        _slot: slot,
+    })
 }
 
 /// Downloads a registry image into Tart's cache unless it is already there,
@@ -7653,6 +7829,7 @@ async fn ensure_vm_image(
             format!("{vm_name}-image"),
             None,
             &[],
+            false,
         ) => builder.with_context(|| format!("failed to start base image {}", plan.base))?,
         () = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
             return Err(authority.terminated());

@@ -93,7 +93,10 @@ runner records a hash only after a successful build.
 
 The runner trims the caches only above the limit. Lower
 `OORE_RUNNER_CACHE_MAX_GB`, or purge the caches. VM builds also keep Xcode
-DerivedData and Android SDK packages in the cache directory.
+DerivedData and Android SDK packages in the cache directory. Each project that
+builds in a VM also keeps a warm image. It holds the same caches on the VM disk
+and starts again from the plain image every
+`OORE_TART_WARM_IMAGE_MAX_AGE_DAYS`.
 
 ### Disk space is low on the runner
 
