@@ -518,10 +518,28 @@ fn workspace_in_script(share: &str, workspace: &str) -> String {
     copy_tree_script(share, workspace, &[])
 }
 
-/// Copies everything the steps produced back to the share, where the host
-/// collects artifacts and test reports. The build does not change `.git`.
+/// What the copy back to the host leaves in the guest: `.git`, which the build
+/// does not change, and tool state and build intermediates the host never
+/// reads. Steps run in the guest, so only artifacts, archives, test reports and
+/// signing inputs need to reach the host, and these directories hold most of a
+/// build's files. The others are anchored at the workspace root.
+const WORKSPACE_OUT_EXCLUDES: [&str; 10] = [
+    ".git",
+    "/.dart_tool/",
+    "/android/.gradle/",
+    "/android/app/.cxx/",
+    "/ios/Pods/",
+    "/ios/.symlinks/",
+    "/build/*/intermediates/",
+    "/build/*/tmp/",
+    "/build/*/kotlin/",
+    "/build/ios/XCBuildData/",
+];
+
+/// Copies what the steps produced back to the share, where the host collects
+/// artifacts and test reports.
 fn workspace_out_script(workspace: &str, share: &str) -> String {
-    copy_tree_script(workspace, share, &[".git"])
+    copy_tree_script(workspace, share, &WORKSPACE_OUT_EXCLUDES)
 }
 
 /// Gradle reads its temp and binary store files back in ways virtiofs does not
@@ -744,6 +762,73 @@ pub(crate) fn image_max_age() -> Option<Duration> {
     (days > 0).then(|| Duration::from_secs(days * 24 * 60 * 60))
 }
 
+/// Days a project's warm image is reused before the next build starts from
+/// the plain image again, which bounds how far its caches grow. 0 turns warm
+/// images off.
+pub(crate) const WARM_IMAGE_MAX_AGE_ENV: &str = "OORE_TART_WARM_IMAGE_MAX_AGE_DAYS";
+const DEFAULT_WARM_IMAGE_MAX_AGE_DAYS: u64 = 7;
+
+/// How long a warm image is reused; `None` turns warm images off.
+pub(crate) fn warm_image_max_age() -> Option<Duration> {
+    let days = std::env::var(WARM_IMAGE_MAX_AGE_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_WARM_IMAGE_MAX_AGE_DAYS);
+    (days > 0).then(|| Duration::from_secs(days * 24 * 60 * 60))
+}
+
+/// The warm image for `project_id` built on `image`: the VM of the project's
+/// last good build, with its Gradle home, DerivedData and Android SDK packages
+/// left on the VM disk, so the next build clones them instead of copying them
+/// in over virtiofs. The name carries the built-image prefix, so unused warm
+/// images are pruned like any other.
+pub(crate) fn warm_image_name(image: &str, project_id: &str) -> String {
+    let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+    for part in [image, project_id] {
+        sha2::Digest::update(&mut hasher, part.as_bytes());
+        sha2::Digest::update(&mut hasher, [0]);
+    }
+    let digest = hex::encode(sha2::Digest::finalize(hasher));
+    format!("{BUILT_IMAGE_PREFIX}warm-{}", &digest[..16])
+}
+
+fn warm_created_path(dir: &Path, image: &str) -> PathBuf {
+    dir.join(format!("image-{}.created", name_component(image)))
+}
+
+/// When the warm image's line began: the build that started from the plain
+/// image. A warm image passed on from build to build keeps that time.
+pub(crate) fn read_warm_created(dir: &Path, image: &str) -> Option<i64> {
+    fs::read_to_string(warm_created_path(dir, image))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+pub(crate) fn write_warm_created(dir: &Path, image: &str, created: i64) -> anyhow::Result<()> {
+    fs::create_dir_all(dir)?;
+    let path = warm_created_path(dir, image);
+    fs::write(&path, created.to_string())
+        .with_context(|| format!("failed to write {}", path.display()))
+}
+
+/// Whether a build may start from the warm image: it exists, and its line is
+/// younger than `max_age`. A warm image with no record is not trusted.
+pub(crate) fn warm_image_fresh(created: Option<i64>, max_age: Duration, now: i64) -> bool {
+    created.is_some_and(|created| now.saturating_sub(created) <= max_age.as_secs() as i64)
+}
+
+/// Deletes the warm image `image` unless a build is replacing it right now.
+pub(crate) async fn delete_warm_image(tart: &Path, dir: &Path, image: &str) -> anyhow::Result<()> {
+    let Some(_lock) = try_lock_image(dir, image)? else {
+        return Ok(());
+    };
+    run_tart(tart, &["delete", image], TART_QUERY_TIMEOUT).await?;
+    let _ = fs::remove_file(warm_created_path(dir, image));
+    Ok(())
+}
+
 fn image_use_path(dir: &Path, image: &str) -> PathBuf {
     dir.join(format!("image-{}.used", name_component(image)))
 }
@@ -756,7 +841,7 @@ fn read_image_use(dir: &Path, image: &str) -> Option<i64> {
         .ok()
 }
 
-fn write_image_use(dir: &Path, image: &str, now: i64) -> anyhow::Result<()> {
+pub(crate) fn write_image_use(dir: &Path, image: &str, now: i64) -> anyhow::Result<()> {
     fs::create_dir_all(dir)?;
     let path = image_use_path(dir, image);
     fs::write(&path, now.to_string()).with_context(|| format!("failed to write {}", path.display()))
@@ -820,6 +905,7 @@ pub(crate) async fn prune_unused_images(
                 match run_tart(tart, &["delete", &image], TART_QUERY_TIMEOUT).await {
                     Ok(_) => {
                         let _ = fs::remove_file(image_use_path(dir, &image));
+                        let _ = fs::remove_file(warm_created_path(dir, &image));
                         prune.deleted.push(image.clone());
                     }
                     Err(error) => {
@@ -918,6 +1004,17 @@ pkill -KILL -f \"$p\"; sleep 1; if pgrep -f \"$p\" >/dev/null; then exit 1; fi; 
     )
 }
 
+/// Deletes what a build leaves in the guest besides caches: the workspace
+/// copy, Gradle's daemon logs and temp files, Xcode's build logs, and the temp
+/// folders. Mount points are left alone: under them are the host's own files.
+fn reuse_cleanup_script(guest_workspace: &str) -> String {
+    format!(
+        "case {ws} in /*/*) ;; *) exit 1;; esac; rm -rf {ws} \"$HOME/.gradle/daemon\" \"$HOME/.gradle/.tmp\" \"$HOME\"/{GUEST_DERIVED_DATA}/*/Logs || exit 1; \
+for t in /tmp \"$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null)\"; do [ -d \"$t\" ] && find \"$t\" -mindepth 1 -maxdepth 1 -user \"$(id -u)\" -exec rm -rf {{}} + 2>/dev/null; done; exit 0",
+        ws = shell_quote(guest_workspace),
+    )
+}
+
 pub(crate) struct TartVm {
     tart: PathBuf,
     name: String,
@@ -941,19 +1038,24 @@ pub(crate) struct TartVm {
     released: bool,
     /// Bounds each copy into or out of the guest.
     copy_timeout: Duration,
+    /// The VM was cloned from a warm image, whose disk already holds the
+    /// Gradle home, DerivedData and Android SDK packages, so none are copied in.
+    caches_on_disk: bool,
 }
 
 impl TartVm {
     /// Clones `image`, boots it headless with `workspace` shared, and waits
     /// until the guest agent answers and the workspace is mounted. The caller
     /// holds a [`VmSlot`] for as long as the VM lives, and ends the VM with
-    /// [`TartVm::delete`] or [`TartVm::keep_as`].
+    /// [`TartVm::delete`] or [`TartVm::keep_as`]. With `caches_on_disk`, the
+    /// image is a warm image and the caches are not copied in from the shares.
     pub(crate) async fn start(
         tart: PathBuf,
         image: &str,
         name: String,
         workspace: Option<&Path>,
         shares: &[HostShare],
+        caches_on_disk: bool,
     ) -> anyhow::Result<Self> {
         let mut dir_args = Vec::new();
         if let Some(workspace) = workspace {
@@ -1000,6 +1102,7 @@ impl TartVm {
             setup_times: vec![("clone", clone_started.elapsed())],
             released: false,
             copy_timeout: VM_COPY_TIMEOUT,
+            caches_on_disk,
         };
         match vm.boot(&dir_args, workspace.is_some(), shares).await {
             Ok(()) => Ok(vm),
@@ -1097,16 +1200,30 @@ impl TartVm {
         .await
         .context("failed to copy the workspace into the VM")?;
         self.setup_times.push(("workspace", phase.elapsed()));
+        if self.caches_on_disk {
+            self.cache_notes.push(
+                "  caches: Gradle, DerivedData and Android SDK packages are on the disk of this project's warm image"
+                    .to_string(),
+            );
+        }
         if let Some((shared, local)) = gradle_dirs {
             phase = Instant::now();
-            self.exec_capture(&gradle_sync_script(&shared, &local), self.copy_timeout)
-                .await
-                .context("failed to copy the Gradle cache into the VM")?;
+            if !self.caches_on_disk {
+                self.exec_capture(&gradle_sync_script(&shared, &local), self.copy_timeout)
+                    .await
+                    .context("failed to copy the Gradle cache into the VM")?;
+            }
             self.exec_capture(&gradle_properties_script(&shared, &local), VM_EXEC_TIMEOUT)
                 .await
                 .context("failed to write gradle.properties inside the VM")?;
-            self.gradle_sync = Some((shared, local));
-            self.setup_times.push(("gradle cache", phase.elapsed()));
+            if !self.caches_on_disk {
+                self.gradle_sync = Some((shared, local));
+                self.setup_times.push(("gradle cache", phase.elapsed()));
+            }
+        }
+        if self.caches_on_disk {
+            derived_data_share = None;
+            android_sdk_share = None;
         }
         if let Some(shared) = derived_data_share {
             phase = Instant::now();
@@ -1394,9 +1511,35 @@ impl TartVm {
         Ok(())
     }
 
-    /// Shuts the guest down cleanly and keeps its disk as the local image `image`.
+    /// Readies a finished build's VM to be kept as its project's warm image:
+    /// stops the Gradle daemons, so the Gradle home is not mid-write when the
+    /// guest shuts down, and deletes the build's own files. The workspace copy
+    /// holds the checkout and its `.env` files, and temp folders may hold a
+    /// keystore a step that died left behind. Caches stay; they are the point.
+    pub(crate) async fn prepare_for_reuse(&self) -> anyhow::Result<()> {
+        self.exec_capture(
+            &stop_processes_script(GRADLE_DAEMON_PATTERN),
+            VM_EXEC_TIMEOUT,
+        )
+        .await
+        .context("the build's Gradle daemons did not stop")?;
+        self.exec_capture(
+            &reuse_cleanup_script(&self.guest_workspace),
+            VM_EXEC_TIMEOUT,
+        )
+        .await
+        .context("failed to delete the build's files from the VM")?;
+        Ok(())
+    }
+
+    /// Shuts the guest down cleanly and keeps its disk as the local image
+    /// `image`, replacing an image of that name. The caller holds the image's
+    /// lock when one may exist.
     pub(crate) async fn keep_as(mut self, image: &str) -> anyhow::Result<()> {
         self.stop(120).await;
+        if local_image_exists(&self.tart, image).await? {
+            run_tart(&self.tart, &["delete", image], TART_QUERY_TIMEOUT).await?;
+        }
         run_tart(
             &self.tart,
             &["rename", &self.name, image],
@@ -1942,10 +2085,103 @@ mod tests {
             ),
             "mkdir -p '/Users/admin/oore-workspace' && { /usr/bin/rsync -a '/Users/admin/oore-workspace-share'/ '/Users/admin/oore-workspace'/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }"
         );
-        assert_eq!(
-            workspace_out_script("/w", "/s"),
-            "mkdir -p '/s' && { /usr/bin/rsync -a --exclude '.git' '/w'/ '/s'/; s=$?; [ $s -eq 0 ] || [ $s -eq 23 ] || [ $s -eq 24 ]; }"
+        assert!(workspace_out_script("/w", "/s").starts_with(
+            "mkdir -p '/s' && { /usr/bin/rsync -a --exclude '.git' --exclude '/.dart_tool/' "
+        ));
+    }
+
+    /// The copy back brings artifacts, archives and reports, and leaves the
+    /// intermediates in the guest.
+    #[test]
+    fn workspace_copy_back_skips_intermediates() {
+        if !Path::new("/usr/bin/rsync").is_file() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("oore-tart-out-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let kept = [
+            "build/app/outputs/bundle/release/app-release.aab",
+            "build/app/outputs/mapping/release/mapping.txt",
+            "build/ios/archive/Runner.xcarchive/Info.plist",
+            "build/ios/ipa/Runner.ipa",
+            ".oore/test-reports/report.xml",
+            "lib/main.dart",
+            "packages/ui/.dart_tool/keep",
+        ];
+        let skipped = [
+            ".git/HEAD",
+            ".dart_tool/package_config.json",
+            "android/.gradle/8.14/fileHashes.bin",
+            "android/app/.cxx/Release/x",
+            "ios/Pods/Firebase/x.h",
+            "ios/.symlinks/plugins/x",
+            "build/app/intermediates/dex/x.dex",
+            "build/app/tmp/kotlin-classes/x.class",
+            "build/app/kotlin/compileReleaseKotlin/x",
+            "build/firebase_core/intermediates/x",
+            "build/ios/XCBuildData/build.db",
+        ];
+        for rel in kept.iter().chain(&skipped) {
+            let file = root.join("guest").join(rel);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, "x").unwrap();
+        }
+        let guest = root.join("guest");
+        let share = root.join("share");
+        assert!(
+            run_sh(&workspace_out_script(
+                guest.to_str().unwrap(),
+                share.to_str().unwrap()
+            ))
+            .status
+            .success()
         );
+        for rel in kept {
+            assert!(share.join(rel).is_file(), "{rel} was not copied back");
+        }
+        for rel in skipped {
+            assert!(!share.join(rel).exists(), "{rel} was copied back");
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn warm_images_are_per_project_and_pruned_like_built_images() {
+        let coin = warm_image_name("oore-flutter-3.44.9", "coin");
+        assert!(coin.starts_with(BUILT_IMAGE_PREFIX));
+        assert_eq!(coin, warm_image_name("oore-flutter-3.44.9", "coin"));
+        assert_ne!(coin, warm_image_name("oore-flutter-3.44.9", "pulse"));
+        assert_ne!(coin, warm_image_name("oore-flutter-3.47.7", "coin"));
+        assert!(!coin.starts_with(&runner_vm_prefix("r1")));
+    }
+
+    #[test]
+    fn warm_images_go_stale_after_their_max_age() {
+        let day = 24 * 60 * 60;
+        let max_age = Duration::from_secs(7 * day as u64);
+        let now = 100 * day;
+        assert!(warm_image_fresh(Some(now - day), max_age, now));
+        assert!(warm_image_fresh(Some(now - 7 * day), max_age, now));
+        assert!(!warm_image_fresh(Some(now - 8 * day), max_age, now));
+        assert!(!warm_image_fresh(None, max_age, now));
+
+        let dir = std::env::temp_dir().join(format!("oore-tart-warm-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(read_warm_created(&dir, "oore-flutter-warm-x"), None);
+        write_warm_created(&dir, "oore-flutter-warm-x", now).unwrap();
+        assert_eq!(read_warm_created(&dir, "oore-flutter-warm-x"), Some(now));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reuse_cleanup_keeps_mounts_and_refuses_odd_paths() {
+        let script = reuse_cleanup_script("/Users/admin/oore-workspace");
+        assert!(script.contains("rm -rf '/Users/admin/oore-workspace' "));
+        assert!(!script.contains(GUEST_SHARE_DIR));
+        assert!(!script.contains("oore-cache"));
+        for odd in ["", "/", "relative/path"] {
+            assert!(!run_sh(&reuse_cleanup_script(odd)).status.success());
+        }
     }
 
     #[test]
@@ -2111,6 +2347,7 @@ mod tests {
             setup_times: Vec::new(),
             released: false,
             copy_timeout: Duration::from_secs(1),
+            caches_on_disk: false,
         };
         let started = Instant::now();
         let lines = vm.save_caches().await;
@@ -2123,6 +2360,43 @@ mod tests {
             fake_tart_calls(&dir)
                 .iter()
                 .any(|call| call == "delete oore-r1-build")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn keeping_a_vm_replaces_the_image_of_that_name() {
+        let dir = std::env::temp_dir().join(format!("oore-tart-keep-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let tart = fake_tart(&dir, &["oore-flutter-warm-x", "oore-r1-build"], "");
+        let vm = TartVm {
+            tart,
+            name: "oore-r1-build".to_string(),
+            run: None,
+            run_stderr: Arc::new(Mutex::new(String::new())),
+            guest_workspace: String::new(),
+            guest_share: String::new(),
+            guest_env: Vec::new(),
+            gradle_sync: None,
+            derived_data_sync: None,
+            android_sdk_sync: None,
+            cache_notes: Vec::new(),
+            setup_times: Vec::new(),
+            released: false,
+            copy_timeout: Duration::from_secs(1),
+            caches_on_disk: true,
+        };
+        vm.keep_as("oore-flutter-warm-x").await.unwrap();
+        let calls = fake_tart_calls(&dir)
+            .into_iter()
+            .filter(|call| call.starts_with("delete ") || call.starts_with("rename "))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            calls,
+            [
+                "delete oore-flutter-warm-x",
+                "rename oore-r1-build oore-flutter-warm-x"
+            ]
         );
         let _ = fs::remove_dir_all(&dir);
     }

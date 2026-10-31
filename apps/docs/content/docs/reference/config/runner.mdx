@@ -125,14 +125,15 @@ environment of `HOME`, `PATH`, and one runner-internal path. `oore setup` and
 variables, so these variables apply only to a runner started with
 `oore runner start`.
 
-| Variable                       | Default                                              | Role                                                                                                                             |
-| ------------------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `OORE_RUNNER_CACHE_DIR`        | `~/Library/Caches/build.oore/runner-caches/<runner>` | Where the dependency caches live                                                                                                 |
-| `OORE_RUNNER_CACHE_MAX_GB`     | `50`                                                 | Cache size limit in GiB                                                                                                          |
-| `OORE_TART_BIN`                | None                                                 | Path to the `tart` binary. Without it, the runner tries `/opt/homebrew/bin/tart`, `/usr/local/bin/tart`, then the service `PATH` |
-| `OORE_TART_IMAGE`              | `oore-flutter-{flutter}`                             | VM image name or OCI reference. `{flutter}` becomes the build's Flutter version                                                  |
-| `OORE_TART_BASE_IMAGE`         | Chosen by platform, see [Base images](#base-images)  | Base image for every image the runner builds                                                                                     |
-| `OORE_TART_IMAGE_MAX_AGE_DAYS` | `30`                                                 | Days an unused built image is kept. `0` keeps every image                                                                        |
+| Variable                            | Default                                              | Role                                                                                                                             |
+| ----------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `OORE_RUNNER_CACHE_DIR`             | `~/Library/Caches/build.oore/runner-caches/<runner>` | Where the dependency caches live                                                                                                 |
+| `OORE_RUNNER_CACHE_MAX_GB`          | `50`                                                 | Cache size limit in GiB                                                                                                          |
+| `OORE_TART_BIN`                     | None                                                 | Path to the `tart` binary. Without it, the runner tries `/opt/homebrew/bin/tart`, `/usr/local/bin/tart`, then the service `PATH` |
+| `OORE_TART_IMAGE`                   | `oore-flutter-{flutter}`                             | VM image name or OCI reference. `{flutter}` becomes the build's Flutter version                                                  |
+| `OORE_TART_BASE_IMAGE`              | Chosen by platform, see [Base images](#base-images)  | Base image for every image the runner builds                                                                                     |
+| `OORE_TART_IMAGE_MAX_AGE_DAYS`      | `30`                                                 | Days an unused built image is kept. `0` keeps every image                                                                        |
+| `OORE_TART_WARM_IMAGE_MAX_AGE_DAYS` | `7`                                                  | Days a project's [warm image](#warm-images) is reused before a build starts fresh. `0` turns warm images off                     |
 
 ## VM images
 
@@ -173,10 +174,30 @@ lower than the VM disk size.
 The output streams into the build log under `vm-start`. Two builds that need
 the same missing image build it once.
 
+### Warm images
+
+After a build in which every step succeeds, the runner keeps that build's VM
+as the project's warm image instead of deleting it. First it deletes the
+workspace copy, temp files, and Gradle and Xcode logs from the VM. The Gradle
+home, Xcode DerivedData, and Android SDK packages stay on the VM disk. The
+project's next build clones the warm image, so it does not copy those caches
+in from the runner. The build log says `Cloning oore-flutter-warm-…, this
+project's warm image of …`.
+
+Each project has one warm image for each image it builds on. A warm image is
+named `oore-flutter-warm-<hash>`. After `OORE_TART_WARM_IMAGE_MAX_AGE_DAYS`, the
+next build starts from the plain image again and replaces the warm image. This
+keeps old caches from piling up. If a warm image fails to start, the runner
+deletes it and starts the build from the plain image.
+
+A warm image holds the project's caches and build outputs, the same data the
+runner's cache directory holds for host builds. Only builds of the same project
+start from it.
+
 ### Image cleanup
 
-Between builds, the runner deletes the `oore-flutter-*` images it built that
-no build used for `OORE_TART_IMAGE_MAX_AGE_DAYS`. It never deletes images it
+Between builds, the runner deletes the `oore-flutter-*` images it built,
+warm images included, that no build used for `OORE_TART_IMAGE_MAX_AGE_DAYS`. It never deletes images it
 did not build, such as an image `OORE_TART_IMAGE` names, or base images.
 
 ### Prebuilt images
