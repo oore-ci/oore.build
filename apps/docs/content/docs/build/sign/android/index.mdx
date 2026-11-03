@@ -52,7 +52,7 @@ operation.
 
 Trigger the pipeline with one Android variant. For a supported Flutter Android
 build command, the runner hands the keystore to Gradle for that command only,
-and Gradle signs the output. The `android-sign` step then checks each
+and Gradle signs the output. The **Verify Android signing** step (`android-sign`) then checks each
 artifact, and signs again any that Gradle did not sign with this key. See
 [Keep local Gradle signing alongside Oore](/build/sign/android/gradle) for how
 it works and what a local `key.properties` setup needs.
@@ -76,7 +76,7 @@ under `build/app/outputs`, including flavored output. Two things change:
 
 ## Verify the result
 
-The build reaches `succeeded`, and its log includes an `android-sign` step
+The build reaches `succeeded`, and its log includes a **Verify Android signing** step
 that says Gradle signed the artifacts with the managed key. Download an APK and
 inspect its certificate:
 

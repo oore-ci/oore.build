@@ -75,11 +75,11 @@ Check the **Branch**, then select **Run build**.
 
 While `flutter build appbundle` runs, the runner gives Gradle your upload key,
 and Gradle signs the bundle with it in place of any signing the app sets up
-itself. A step named `android-sign` then checks the signature.
+itself. A step named **Verify Android signing** (`android-sign`) then checks the signature.
 
 ## Check the result
 
-The build ends as **Succeeded**, and its log shows an `android-sign` step. Under
+The build ends as **Succeeded**, and its log shows the **Verify Android signing** step. Under
 **Artifacts**, download `app-release.aab`, then check its signature:
 
 ```bash

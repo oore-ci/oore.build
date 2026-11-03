@@ -28,7 +28,7 @@ For each `flutter build apk` or `flutter build appbundle` command, the runner:
 
 These are the properties Android Studio uses for **Generate Signed Bundle /
 APK**, and the ones fastlane's `gradle` action passes. After the build, the
-`android-sign` step checks every APK or App Bundle under `build/app/outputs`.
+**Verify Android signing** step (`android-sign`) checks every APK or App Bundle under `build/app/outputs`.
 An artifact Gradle signed with the pipeline key is left as it is. Anything
 else is signed again with the pipeline key, so the result is the same either
 way.
@@ -88,7 +88,7 @@ The build log shows
 `[oore-signing] Gradle signs this build with the managed keystore` before the
 build command, and
 `[oore-signing] Gradle signed 1 Android artifact(s) with the managed key; verified`
-in the `android-sign` step. The downloaded artifact passes
+in the **Verify Android signing** step. The downloaded artifact passes
 `apksigner verify --print-certs` or `keytool -printcert -jarfile`, with your
 key's certificate.
 
@@ -101,7 +101,7 @@ checking that it exists. Guard both as in step 1.
 
 **The log says Gradle did not sign with the managed key**
 
-The build still succeeds, because the `android-sign` step signed the output
+The build still succeeds, because the **Verify Android signing** step signed the output
 with the pipeline key. The build does not apply the injected properties, for
 example because the repository has no `android/gradle.properties` project at
 its root, the file is a symbolic link, or the Gradle build sets signing in a

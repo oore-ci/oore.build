@@ -44,14 +44,14 @@ Only. Nothing needs to reach your Mac from the internet.
 Select **Run build**, keep the `iOS` pipeline and branch, and select
 **Run build** again.
 
-After the build, sign, and artifact steps, the runner adds a
-`publish-app-store` step. It uploads the IPA to App Store Connect. Oore then
+After the build, sign, and artifact steps, the runner adds an
+**Upload to App Store Connect** step (`publish-app-store`). It uploads the IPA to App Store Connect. Oore then
 waits while Apple processes the build, answers the export compliance question,
 and adds the build to `Internal QA`.
 
 ## Check the result
 
-- The build ends as **Succeeded**, with a succeeded `publish-app-store` step.
+- The build ends as **Succeeded**, with a succeeded **Upload to App Store Connect** step.
 - On the build page, the **Release** tab first shows **Processing**. When
   Apple finishes, it shows **Complete**, because internal groups need no
   review.
@@ -94,7 +94,7 @@ Each upload needs a higher build number. Check that **iOS build args**
 contains `--build-number=$OORE_VERSION_CODE`. If the app had builds before
 Oore, set **Build number offset** above the highest one.
 
-**`publish-app-store` fails after you fixed the cause**
+**The App Store Connect upload fails after you fixed the cause**
 
 Select **Retry App Store upload** on the failed build. Oore uploads the
 stored IPA again without rebuilding or signing again. See
