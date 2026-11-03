@@ -1,6 +1,7 @@
 {
   "title": "Deliver builds",
   "pages": [
+    "testers",
     "download",
     "install/android",
     "ios-devices",
