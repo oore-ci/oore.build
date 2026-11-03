@@ -73,13 +73,12 @@ Bundle build.
 Select **Run build**, keep the `Release Android` pipeline and branch, and
 select **Run build** again.
 
-After the build, sign, and artifact steps, the runner adds a `publish-play`
-step. It checks that the new version code is higher than every version on the
+After the build, sign, and artifact steps, the runner adds an **Upload to Google Play** step (`publish-play`). It checks that the new version code is higher than every version on the
 track, uploads the bundle, and rolls it out to internal testing.
 
 ## Check the result
 
-- The build ends as **Succeeded**, with a succeeded `publish-play` step whose
+- The build ends as **Succeeded**, with a succeeded **Upload to Google Play** step whose
   log names the `internal` track.
 - Play Console shows the new version on **Internal testing**.
 - A tester opens the internal testing link from Play Console on an Android
@@ -93,13 +92,13 @@ The message gives Google's reason. Most often the service account is not
 invited for this app in Play Console, the invitation is still being
 processed, or the API is turned off in the Google Cloud project.
 
-**`publish-play` fails because the version code is not higher**
+**The Google Play upload fails because the version code is not higher**
 
 The message names both numbers. If the app already had releases before Oore,
 open the pipeline's **Edit** page and set **Build number offset** above the
 highest version code on Google Play. Then run a new build.
 
-**`publish-play` fails after you fixed the cause**
+**The Google Play upload fails after you fixed the cause**
 
 Select **Retry Google Play upload** on the failed build. Oore uploads the
 stored bundle again without rebuilding. See
@@ -109,6 +108,8 @@ stored bundle again without rebuilding. See
 
 Your Android app now reaches testers on every release build. From here:
 
+- [Share every build with your team through Oore](/build/distribute/testers),
+  including debug builds, with no store in between.
 - [Promote a tested build to production](/build/distribute/environments)
   without rebuilding it, with an approval and a staged rollout.
 - [Build on every push](/build/sources/github): turn on External Access, then

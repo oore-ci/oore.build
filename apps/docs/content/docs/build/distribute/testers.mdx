@@ -1,0 +1,186 @@
+---
+title: 'Share builds with testers through Oore'
+status: implemented
+description: 'Give testers a QA Viewer account so they install the latest Android or iOS build from Oore and send feedback on it.'
+---
+
+Testers sign in to Oore on their phone, see the latest build of each app they
+can access, install it, and send feedback that lands on the build. Nothing goes
+through a store, so a build reaches testers as soon as it succeeds.
+
+## Choose how testers get builds
+
+| Delivery                                | Testers need                                | Oore needs                                        | Guide                                                                 |
+| --------------------------------------- | ------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------- |
+| Google Play internal testing            | A Google account on your tester list        | Local Only is enough                              | [Deliver to testers on Google Play](/start/android/google-play)       |
+| TestFlight                              | An App Store Connect user and TestFlight    | Local Only is enough                              | [Deliver to TestFlight and the App Store](/start/ios/testflight)      |
+| Oore, with a tester account (this page) | An Oore sign-in; for iOS, a registered UDID | External Access; HTTPS for iOS                    | This page                                                             |
+| Oore, with a share link for one file    | Only the link                               | External Access, and a developer to make the link | [Send one file without an account](#send-one-file-without-an-account) |
+
+Use the stores when testers are outside your company or you want store review
+early. Use Oore when testers are your own team and should get every build
+within minutes, including Android debug builds and iOS ad hoc builds.
+
+## What you need
+
+- [External Access](/team/access) with OIDC or Trusted Proxy, so testers can
+  sign in from their phones. For iOS installs, the address must use HTTPS.
+  [How External Access works](/concepts/external-access) explains the change
+  from Local Only.
+- Instance owner or admin access, to invite testers, and project maintainer
+  access to add them to the project.
+- A pipeline that produces an installable file:
+  - **Android**: any `.apk`. The `Debug APK` pipeline from
+    [Build your first Android app](/start/android/first-build) works. A
+    `.aab` cannot be installed from Oore.
+  - **iOS**: an `.ipa` signed for **Ad hoc** distribution. An App Store IPA
+    from the TestFlight path cannot be installed from Oore. Step 3 sets this
+    up.
+
+## 1. Invite each tester as a QA Viewer
+
+1. Open **Settings > Users** and select **Invite user**.
+2. Enter the tester's **Email**, exactly as your identity provider sends it.
+3. For **Instance role**, choose **QA Viewer**.
+4. Select **Send invite**, then send the tester the External Access address
+   of Oore.
+
+A QA Viewer can see builds, install artifacts, and send feedback in the
+projects you add them to, and nothing else. See
+[Invite a team member](/team/invite) for details.
+
+## 2. Add testers to the project
+
+1. Open the project and its **Settings** tab.
+2. In the **Access** section, select **Add members**.
+3. Pick the testers, or paste their emails.
+4. Keep **Project role** at **Viewer**. A QA Viewer is always limited to
+   Viewer.
+5. Select **Add N people**.
+
+To add testers to several projects at once, see
+[Manage roles and project access](/team/roles).
+
+## 3. Build an installable iOS version
+
+Skip this step for Android.
+
+An iOS build installs only on iPhones whose UDID is in its provisioning
+profile. Keep the TestFlight pipeline as it is and add a second pipeline for
+testers:
+
+1. On the project's **Pipelines** tab, select **Add pipeline**, then
+   **Custom**. Name it `iOS ad hoc`, and under **Platforms** select only
+   **iOS**.
+2. Under **Signing > iOS**, turn on **Enable iOS signing**. Choose **Ad hoc**
+   for **Distribution** and **API (App Store Connect automation)** for
+   **Signing mode**. Enter the same **Apple Team ID**, **Bundle identifiers**
+   and **App Store Connect API key** as your TestFlight pipeline.
+3. Under **Build > Artifacts**, set the pattern to `build/ios/ipa/*.ipa`.
+4. Select **Create pipeline**.
+5. Open the pipeline's **Edit** page. Under **Registered iOS devices**, enter
+   each tester's **Device name** and **UDID**, and select **Register device**.
+   Oore registers the device with Apple and syncs the profiles.
+6. Run a build of the `iOS ad hoc` pipeline.
+
+Register a device before the build that should install on it. A device
+registered later needs a new build. Finding a UDID and fixing sync problems
+are covered in [Register an iOS test device](/build/distribute/ios-devices).
+
+## 4. Testers install the latest build
+
+The tester opens the Oore address on their phone and signs in. Instead of the
+operator dashboard, a QA Viewer sees **Your apps**:
+
+1. If they can access more than one project, they pick the app at the top.
+2. **Latest release** shows the newest successful build with an installable
+   file, what changed, and an **Android** or **iOS** button.
+3. The button opens the install page. On Android, the tester selects
+   **Install**, allows the browser to install unknown apps if asked, and opens
+   the APK. On an iPhone, the tester selects **Install** and confirms the iOS
+   prompt.
+
+The install page works in Safari, Chrome and other full browsers. Browsers
+inside other apps, such as Gmail, can drop the iOS install link. The page then
+shows a hint and a **Copy link** button to open it in a full browser.
+
+You can also send a tester to one build directly. On the build page, open an
+artifact's **Install** page and select **Copy link**. The tester still signs
+in, and sees the build only if they can access the project.
+
+Each install starts a delivery session that lasts up to one hour.
+[How artifact delivery works](/concepts/artifact-delivery) explains the limits.
+
+## 5. Testers send feedback
+
+On **Your apps**, the tester selects **Feedback** on the latest release. They
+describe **What happened?**, check the **Device**, **OS version** and **App
+version** that Oore filled in, add a screenshot if it helps, and select
+**Send feedback**.
+
+The note appears on the build's timeline, with its screenshot. To get notes in
+Slack, Mattermost or email as they arrive, add the **Tester feedback** event to
+a channel in [Set up notifications](/team/notifications).
+
+Screenshots can be PNG, JPEG or WebP, up to 5 MiB. Each person can send up to
+10 notes in 10 minutes.
+
+## Send one file without an account
+
+For someone who has no Oore account, such as a client checking an Android
+build, a developer can create a link that works without sign-in:
+
+1. On the build page, find the artifact and select **Share**.
+2. Select **Create share link…**.
+3. Choose how long it lasts under **Expires after**, from 1 hour to 7 days.
+   Select **Limit to one download** if the link should work once.
+4. Select **Create link**, then **Copy link**. Oore shows the link only once.
+
+Anyone who has the link can download the file until it expires, so send it
+only to the intended person. The link downloads the file. It does not install
+an iOS build, so use it for APKs and other files. It uses the External Access
+address, so it does not work from another device in Local Only.
+
+**Share > Copy download link** gives a link that lasts only 15 minutes, for
+quick handovers.
+
+## Verify the result
+
+- The tester signs in on their phone and sees **Your apps** with the project
+  and its latest release.
+- The app installs from the **Android** or **iOS** button and opens.
+- A test note sent with **Feedback** appears on the build's timeline.
+
+## Troubleshooting
+
+**The tester sees "No apps shared with you yet"**
+
+Their account is not a member of any project. Add them in the project's
+**Access** section. Check that the email they sign in with matches the
+invitation.
+
+**The tester sees "No release is ready to test"**
+
+The project has no successful build with an APK or an install-ready IPA. A
+`.aab` or an App Store IPA does not count. Run a build of a pipeline that
+produces one.
+
+**iOS says the app cannot be installed**
+
+The iPhone's UDID is not in the build's provisioning profile. Register the
+device, then run a new build.
+
+**The install page cannot be opened on the phone**
+
+The phone cannot reach the Oore address, or it uses HTTP for an iOS install.
+Check the External Access address from the phone's browser.
+
+**The share link does not open on another device**
+
+Oore is in Local Only, so the link points to `127.0.0.1`. Set up External
+Access, then create a new link.
+
+## Next step
+
+[Set up notifications](/team/notifications) so tester feedback and failed
+builds reach your team where it already talks.

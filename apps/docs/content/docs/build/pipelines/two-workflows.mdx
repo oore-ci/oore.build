@@ -143,8 +143,8 @@ oore build run --pipeline "$PIPELINE_ID" --workflow release --branch main
 
 - A pull request starts a build labeled `adhoc`, and its iOS artifact can be
   installed on a registered device.
-- A push to `main` starts a build labeled `release`, with `publish-play` and
-  `publish-app-store` steps.
+- A push to `main` starts a build labeled `release`, with **Upload to Google Play** and
+  **Upload to App Store Connect** steps.
 - The pipeline page's workflow filter shows each workflow's builds.
 
 ## Troubleshooting
@@ -162,7 +162,7 @@ names the field. A build started by a webhook fails at its signing step with
 the same message. `oore pipeline validate --project` finds these before you
 push.
 
-**`publish-app-store` fails because App Store Connect is not set up**
+**The App Store Connect upload fails because App Store Connect is not set up**
 
 Turn on App Store Connect publishing in the pipeline's **Publishing** tab, and
 set the pipeline's iOS signing to App Store with an API key.

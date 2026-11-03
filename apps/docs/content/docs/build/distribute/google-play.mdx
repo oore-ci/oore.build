@@ -141,7 +141,7 @@ secret, deleting it, or adding a narrower secret with the same name clears it.
 ## 4. Run a build
 
 After the build, signing and artifact steps succeed, the runner adds a
-`publish-play` step that:
+**Upload to Google Play** step (`publish-play`) that:
 
 1. Picks the release App Bundle under `build/app/outputs/bundle` and reads its
    package name, `versionCode` and `versionName`.
@@ -156,7 +156,7 @@ After the build, signing and artifact steps succeed, the runner adds a
    release with the configured status and rollout, and commits the edit.
 
 If any earlier step fails, nothing is uploaded. If a Play call fails, the
-`publish-play` step fails with the Play API's error text, and the edit is
+**Upload to Google Play** step fails with the Play API's error text, and the edit is
 discarded so nothing is left half-staged in Play Console.
 
 After fixing the cause, such as a missing Play Console permission,
@@ -165,7 +165,7 @@ building again.
 
 ## Verify the result
 
-- The build shows a succeeded `publish-play` step, and its log names the track
+- The build shows a succeeded **Upload to Google Play** step, and its log names the track
   and rollout.
 - Play Console shows the version on the chosen track at the chosen rollout.
 - The audit log has a `store_upload_completed` entry for the build.
@@ -231,13 +231,13 @@ fixing access, choose **Refresh** in Store health to read the store at once.
 
 ## Troubleshooting
 
-**`publish-play` fails because the version code is not higher**
+**The Google Play upload fails because the version code is not higher**
 
 The message names both numbers. Set **Build number offset** above the
 highest version code on Google Play, and pass
 `--build-number=$OORE_VERSION_CODE` to Flutter.
 
-**`publish-play` fails with a Play API error**
+**The Google Play upload fails with a Play API error**
 
 Fix the cause, such as a missing Play Console permission, then
 [retry the upload](/build/run/retry-step). The stored bundle is uploaded
