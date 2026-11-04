@@ -67,6 +67,7 @@ export const demoBuilds: Array<Build> = [
     id: BUILD_IDS.running2,
     project_id: PROJECT_IDS.nativePayments,
     pipeline_id: PIPELINE_IDS.paymentsAll,
+    workflow: 'release',
     build_number: 47,
     status: 'running',
     trigger_type: 'manual',
@@ -368,6 +369,7 @@ export const demoBuilds: Array<Build> = [
     id: BUILD_IDS.failed1,
     project_id: PROJECT_IDS.nativePayments,
     pipeline_id: PIPELINE_IDS.paymentsAll,
+    workflow: 'adhoc',
     build_number: 46,
     status: 'failed',
     trigger_type: 'webhook',
@@ -477,6 +479,7 @@ export const demoBuilds: Array<Build> = [
     id: BUILD_IDS.timedOut1,
     project_id: PROJECT_IDS.nativePayments,
     pipeline_id: PIPELINE_IDS.paymentsAll,
+    workflow: 'release',
     build_number: 45,
     status: 'timed_out',
     trigger_type: 'webhook',
@@ -564,6 +567,7 @@ export const demoBuilds: Array<Build> = [
     id: BUILD_IDS.succeeded6,
     project_id: PROJECT_IDS.nativePayments,
     pipeline_id: PIPELINE_IDS.paymentsAll,
+    workflow: 'release',
     build_number: 44,
     status: 'succeeded',
     trigger_type: 'manual',
@@ -700,6 +704,12 @@ for (const [projectIndex, app] of demoBuildHistoryApps.entries()) {
         .toString(16)
         .padStart(40, '0'),
       branch: app.branch,
+      workflow:
+        app.pipelineId === PIPELINE_IDS.paymentsAll
+          ? index % 3 === 1
+            ? 'adhoc'
+            : 'release'
+          : undefined,
       changelog:
         index % 3 === 0
           ? 'Routine stability improvements and dependency updates.'

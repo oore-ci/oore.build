@@ -3,15 +3,20 @@ import { Link } from '@tanstack/react-router'
 import { useForm, useWatch } from 'react-hook-form'
 import type { UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import * as z from 'zod'
 import { toast } from '@/lib/toast'
 import { useBuildChangelogPreview, useCreateBuild } from '@/hooks/use-builds'
-import { useInfinitePipelines, usePipeline } from '@/hooks/use-pipelines'
+import {
+  useInfinitePipelines,
+  usePipeline,
+  usePipelineWorkflows,
+} from '@/hooks/use-pipelines'
 import { hasProjectPermission, useHasPermission } from '@/hooks/use-permissions'
 import { useRunners } from '@/hooks/use-runners'
 import { useInstancePreferences } from '@/hooks/use-artifact-storage'
 import { useInfiniteProjects, useProject } from '@/hooks/use-projects'
 import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
+import { useDebouncedJson } from '@/hooks/use-debounced-json'
+import { isOoreApiError } from '@oore/client/client'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -52,38 +57,24 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { isNearScrollEnd } from '@/lib/scroll'
 import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
+import { TriggerBuildWorkflowField } from '@/components/trigger-build-workflow-field'
+import {
+  choosableWorkflows,
+  defaultWorkflowChoice,
+} from '@/lib/pipeline-form-utils'
+import {
+  triggerBuildSchema,
+  type TriggerBuildForm,
+} from '@/components/trigger-build-form'
+
+/** Typing a branch or commit settles for this long before workflows load. */
+const WORKFLOW_LOOKUP_DEBOUNCE_MS = 400
 
 const platformLabels = {
   android: 'Android',
   ios: 'iOS',
   macos: 'macOS',
 } satisfies Record<BuildPlatform, string>
-
-const triggerBuildSchema = z
-  .object({
-    project_id: z.string().optional(),
-    pipeline_id: z.string().optional(),
-    platforms: z.array(z.enum(['android', 'ios', 'macos'])),
-    branch: z.string().optional(),
-    commit_sha: z.string().optional(),
-    changelog: z
-      .string()
-      .max(4000, 'Keep the changelog under 4,000 characters')
-      .optional(),
-  })
-  .superRefine((data, ctx) => {
-    const branch = data.branch?.trim()
-    const commit = data.commit_sha?.trim()
-    if (!branch && !commit) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'Provide a branch or a commit SHA',
-        path: ['branch'],
-      })
-    }
-  })
-
-type TriggerBuildForm = z.infer<typeof triggerBuildSchema>
 
 /** The same optional marker as the New project drawer. */
 function OptionalLabel({ children }: { children: string }) {
@@ -160,6 +151,19 @@ function PlatformSelectionField({
       )}
     />
   )
+}
+
+/**
+ * The platforms to send: the checked ones that the pipeline or workflow
+ * builds, or all of them. A single platform needs no choice.
+ */
+function buildPlatforms(
+  available: Array<BuildPlatform>,
+  checked: Array<BuildPlatform>,
+): Array<BuildPlatform> | undefined {
+  if (available.length < 2) return undefined
+  const picked = checked.filter((platform) => available.includes(platform))
+  return picked.length > 0 ? picked : available
 }
 
 function TriggerBuildBlockingAlerts({
@@ -327,6 +331,7 @@ function defaults(
     platforms: [],
     branch: defaultBranch ?? '',
     commit_sha: '',
+    workflow: '',
     changelog: undefined,
   }
 }
@@ -362,6 +367,8 @@ export default function TriggerBuildDrawer({
     instanceRole === 'owner' || instanceRole === 'admin'
   const [projectSearch, setProjectSearch] = useState('')
   const [resolvingHead, setResolvingHead] = useState(false)
+  // A signing refusal for a build with no workflow field to show it on.
+  const [signingError, setSigningError] = useState<string>()
   const [pipelineSearch, setPipelineSearch] = useState('')
   const updateProjectSearch = useDebouncedCallback(
     (value: string) => setProjectSearch(value.trim()),
@@ -486,7 +493,6 @@ export default function TriggerBuildDrawer({
     selectedPipelineQuery.data.pipeline.project_id === projectId
       ? selectedPipelineQuery.data.pipeline
       : undefined)
-  const availablePlatforms = selectedPipeline?.execution_config.platforms ?? []
   const branchItems = useMemo(
     () =>
       Array.from(
@@ -507,6 +513,43 @@ export default function TriggerBuildDrawer({
   )
   const branch = useWatch({ control: form.control, name: 'branch' })
   const commitSha = useWatch({ control: form.control, name: 'commit_sha' })
+  // Workflows are read from the commit when one is typed, else the branch.
+  const wantedReference = commitSha?.trim() || branch?.trim() || ''
+  const [workflowReference, setWorkflowReference] = useState(wantedReference)
+  useDebouncedJson(
+    wantedReference,
+    WORKFLOW_LOOKUP_DEBOUNCE_MS,
+    setWorkflowReference,
+  )
+  const workflowsQuery = usePipelineWorkflows(
+    selectedPipelineId ?? '',
+    { ref: workflowReference || undefined },
+    { enabled: open && !!selectedPipelineId },
+  )
+  const workflowChoices = choosableWorkflows(workflowsQuery.data)
+  const workflowName = useWatch({ control: form.control, name: 'workflow' })
+  const chosenWorkflow = workflowChoices.find(
+    (workflow) => workflow.name === workflowName,
+  )
+  // A picked workflow decides the platforms; otherwise the pipeline does.
+  const availablePlatforms =
+    chosenWorkflow && chosenWorkflow.platforms.length > 0
+      ? chosenWorkflow.platforms
+      : (selectedPipeline?.execution_config.platforms ?? [])
+
+  // Keep the pick when the new branch still defines it; otherwise fall back
+  // to the pipeline's default or the file's only workflow.
+  const workflowsData = workflowsQuery.data
+  useEffect(() => {
+    if (!open || !workflowsData) return
+    const current = form.getValues('workflow') ?? ''
+    const names = choosableWorkflows(workflowsData).map((w) => w.name)
+    if (current && names.includes(current)) return
+    const next = defaultWorkflowChoice(workflowsData)
+    if (next === current) return
+    form.setValue('workflow', next, { shouldDirty: false })
+    form.setValue('platforms', [], { shouldDirty: false })
+  }, [form, open, workflowsData])
   const changelogPreviewQuery = useBuildChangelogPreview(
     projectId ?? '',
     {
@@ -518,6 +561,7 @@ export default function TriggerBuildDrawer({
   )
 
   async function onSubmit(data: TriggerBuildForm) {
+    setSigningError(undefined)
     const resolvedProjectId = fixedProjectId ?? data.project_id?.trim() ?? ''
     if (!resolvedProjectId) {
       form.setError('project_id', { message: 'Project is required' })
@@ -547,6 +591,16 @@ export default function TriggerBuildDrawer({
       setResolvingHead(false)
       preview = refreshed.isSuccess ? refreshed.data : undefined
     }
+    // A file with several workflows and no default needs a pick; without
+    // one the daemon refuses the build.
+    const workflow =
+      workflowChoices.length > 0
+        ? data.workflow?.trim() || undefined
+        : undefined
+    if (workflowChoices.length > 1 && !workflow) {
+      form.setError('workflow', { message: 'Choose a workflow to build' })
+      return
+    }
     const commitSha = typedCommit ?? preview?.target_commit
     const changelog =
       (data.changelog === undefined
@@ -563,12 +617,8 @@ export default function TriggerBuildDrawer({
           commit_sha: commitSha,
           trigger_ref: branch,
           changelog,
-          platforms:
-            availablePlatforms.length > 1
-              ? data.platforms.length > 0
-                ? data.platforms
-                : availablePlatforms
-              : undefined,
+          workflow,
+          platforms: buildPlatforms(availablePlatforms, data.platforms),
         },
       },
       {
@@ -578,6 +628,27 @@ export default function TriggerBuildDrawer({
           onBuildCreated?.(result.build.id)
         },
         onError: (error) => {
+          if (isOoreApiError(error) && error.code === 'invalid_workflow') {
+            // The file changed or the pick is stale: show why on the field
+            // and read the workflows again.
+            void workflowsQuery.refetch()
+            if (workflowChoices.length > 0) {
+              form.setError('workflow', { message: error.message })
+            } else {
+              toast.error(`Choose a workflow to run: ${error.message}`)
+            }
+            return
+          }
+          if (isOoreApiError(error) && error.code === 'invalid_signing') {
+            // The workflow names a signing identity the project's library
+            // cannot satisfy: show why where the workflow is chosen.
+            if (workflowChoices.length > 0) {
+              form.setError('workflow', { message: error.message })
+            } else {
+              setSigningError(error.message)
+            }
+            return
+          }
           toast.error(`Failed to trigger build: ${error.message}`)
         },
       },
@@ -603,6 +674,7 @@ export default function TriggerBuildDrawer({
         if (nextOpen) {
           setProjectSearch('')
           setPipelineSearch('')
+          setSigningError(undefined)
         }
         setOpen(nextOpen)
       }}
@@ -790,11 +862,6 @@ export default function TriggerBuildDrawer({
                 </div>
               )}
 
-              <PlatformSelectionField
-                form={form}
-                platforms={availablePlatforms}
-              />
-
               <FormField
                 control={form.control}
                 name="branch"
@@ -809,7 +876,13 @@ export default function TriggerBuildDrawer({
                           ? field.value
                           : null
                       }
-                      onInputValueChange={field.onChange}
+                      onInputValueChange={(value, details) => {
+                        // Closing without a pick resets the input to the
+                        // selected item, which a typed branch is not. That
+                        // reset is not a user edit; keep what was typed.
+                        if (details.event.type === 'base-ui') return
+                        field.onChange(value)
+                      }}
                       onValueChange={(value) => {
                         if (value) field.onChange(value)
                       }}
@@ -847,6 +920,23 @@ export default function TriggerBuildDrawer({
                     <FormMessage />
                   </FormItem>
                 )}
+              />
+
+              {selectedPipelineId ? (
+                <TriggerBuildWorkflowField
+                  form={form}
+                  data={workflowsQuery.data}
+                  pending={workflowsQuery.isPending}
+                  error={workflowsQuery.error}
+                  reference={
+                    workflowsQuery.data?.reference ?? workflowReference
+                  }
+                />
+              ) : null}
+
+              <PlatformSelectionField
+                form={form}
+                platforms={availablePlatforms}
               />
 
               <FormField
@@ -913,6 +1003,11 @@ export default function TriggerBuildDrawer({
             </div>
             {/* Outside the scroll area so the footer never covers them. */}
             <Stack gap={2} className="shrink-0 px-4 pb-4">
+              {signingError ? (
+                <Alert variant="destructive" role="alert">
+                  <AlertDescription>{signingError}</AlertDescription>
+                </Alert>
+              ) : null}
               <TriggerBuildBlockingAlerts
                 projectId={projectId}
                 canConfigure={

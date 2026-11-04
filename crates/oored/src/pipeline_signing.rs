@@ -655,6 +655,18 @@ pub async fn get_job_android_signing(
         )
     })?;
 
+    // A workflow that names an identity signs release builds with it.
+    let release = match crate::signing_identities::job_android_release_profile(
+        &pool,
+        &state.encryption_key,
+        &job_id,
+    )
+    .await?
+    {
+        Some(profile) => Some(profile),
+        None => release,
+    };
+
     Ok(Json(RunnerAndroidSigningResponse { debug, release }))
 }
 

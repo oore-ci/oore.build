@@ -4,6 +4,7 @@
     "android",
     "ios/certificates",
     "ios/manual",
-    "ios/app-store-connect"
+    "ios/app-store-connect",
+    "project-library"
   ]
 }

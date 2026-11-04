@@ -67,6 +67,7 @@ export function useBuilds<TData = ListBuildsResponse>(
   params?: {
     project_id?: string
     pipeline_id?: string
+    workflow?: string
     status?: string
     branch?: string
     trigger?: string
@@ -192,6 +193,7 @@ export function useCreateBuild() {
         commit_sha: data.commit_sha,
         trigger_ref: data.trigger_ref,
         changelog: data.changelog,
+        workflow: data.workflow,
         config_snapshot: {},
         queued_at: Math.floor(Date.now() / 1000),
         created_at: Math.floor(Date.now() / 1000),

@@ -75,6 +75,7 @@ fn row_to_project(
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         current_user_role,
+        auto_add_pipelines: row.try_get::<i64, _>("auto_add_pipelines").unwrap_or(0) != 0,
     })
 }
 
@@ -444,13 +445,15 @@ pub async fn create_project(
     };
 
     let default_branch = req.default_branch.clone().or(inferred_default_branch);
+    // New projects add pipelines from the repository unless asked not to.
+    let auto_add_pipelines = req.auto_add_pipelines.unwrap_or(true);
 
     let now = now_unix();
     let project_id = Uuid::new_v4().to_string();
 
     sqlx::query(
-        "INSERT INTO projects (id, name, description, repository_id, settings, default_branch, created_by, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, '{}', ?5, ?6, ?7, ?7)",
+        "INSERT INTO projects (id, name, description, repository_id, settings, default_branch, created_by, created_at, updated_at, auto_add_pipelines) \
+         VALUES (?1, ?2, ?3, ?4, '{}', ?5, ?6, ?7, ?7, ?8)",
     )
     .bind(&project_id)
     .bind(name)
@@ -459,6 +462,7 @@ pub async fn create_project(
     .bind(&default_branch)
     .bind(&auth.0.user_id)
     .bind(now)
+    .bind(auto_add_pipelines)
     .execute(&pool)
     .await
     .map_err(|e| {
@@ -513,6 +517,12 @@ pub async fn create_project(
     let current_user_role = project_role_for_response(&effective)?;
 
     info!(project_id = %project_id, name = %name, "project created");
+    // Read the repository's config files so pipelines can be added from them.
+    crate::repository_config_files::spawn_refresh(
+        pool.clone(),
+        state.encryption_key.to_vec(),
+        project_id.clone(),
+    );
 
     let project = Project {
         id: project_id,
@@ -528,6 +538,7 @@ pub async fn create_project(
         created_at: now,
         updated_at: now,
         current_user_role,
+        auto_add_pipelines,
     };
 
     Ok((StatusCode::CREATED, Json(CreateProjectResponse { project })))
@@ -774,6 +785,10 @@ pub async fn update_project(
         bind_values.push(settings.to_string());
         set_parts.push(format!("settings = ?{}", bind_values.len()));
     }
+    if let Some(auto_add) = req.auto_add_pipelines {
+        bind_values.push(if auto_add { "1" } else { "0" }.to_string());
+        set_parts.push(format!("auto_add_pipelines = ?{}", bind_values.len()));
+    }
 
     if set_parts.is_empty() {
         // Nothing to update — just return the current project
@@ -862,6 +877,23 @@ pub async fn update_project(
     };
 
     if source_changed {
+        // Config files read from the old source no longer apply.
+        for table in ["repository_config_files", "repository_config_scans"] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {table} WHERE project_id = ?1"
+            )))
+            .bind(&project_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
+                error!(error = %e, project_id = %project_id, "failed to clear repository config cache");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to update project source",
+                )
+            })?;
+        }
         sqlx::query(
             "INSERT INTO build_events \
              (id, build_id, from_status, to_status, actor, reason, created_at) \
@@ -944,6 +976,13 @@ pub async fn update_project(
     .await;
 
     info!(project_id = %project_id, "project updated");
+    if source_changed || req.default_branch.is_some() {
+        crate::repository_config_files::spawn_refresh(
+            pool.clone(),
+            state.encryption_key.to_vec(),
+            project_id.clone(),
+        );
+    }
 
     let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{PROJECT_SELECT} WHERE p.id = ?1"

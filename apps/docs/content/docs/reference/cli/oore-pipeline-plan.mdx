@@ -11,8 +11,10 @@ oore pipeline plan [PATH] [--workflow NAME] [--platform PLATFORM]... [--json]
 `PATH` defaults to `.oore.yaml`. The command validates the file like
 [`oore pipeline validate`](/reference/cli/oore-pipeline-validate), then prints
 what a build runs: the step names, their commands after `vars` and `flavor`
-references are resolved, the env, the artifact patterns, and for version 2
-where each platform publishes. It reads only the file and contacts no backend.
+references are resolved, the env and the artifact patterns. For version 2 it
+also prints where each platform publishes, the signing identities the
+workflow names, the iOS export, and the credentials each store upload uses.
+It reads only the file and contacts no backend.
 
 | Option                | Effect                                                                                       |
 | --------------------- | -------------------------------------------------------------------------------------------- |
@@ -43,6 +45,43 @@ workflow release
     build/app/outputs/bundle/proRelease/*.aab
   publish:
     android publishes to the Google Play production track to 1% of users with the draft setting from the pipeline's Google Play settings (targets.android.publish.play)
+  signing:
+    android: the pipeline's Android signing settings
+  store credentials:
+    google play: the service account secret in the pipeline's Google Play settings (targets.android.publish.play sets no service_account)
+
+Signing and store credentials are what the file names. A pipeline's Workflows settings can pick other identities or turn publishing off.
+```
+
+## Signing and credentials
+
+For each workflow, the version 2 plan adds:
+
+| Line                 | Shows                                                                                                                                                                                                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `signing:`           | Per Android and iOS target, the identity the workflow names and the field that names it, such as `workflows.release.signing.ios`, or the pipeline's signing settings when it names none                    |
+| `ios export:`        | `App Store` when the workflow uploads to App Store Connect, with the identity that must hold App Store profiles. Otherwise the export follows the named identity's profiles, or the pipeline's iOS signing |
+| `store credentials:` | For Google Play, the `service_account` secret, or the pipeline's Google Play settings. For App Store Connect, the API key in the pipeline's iOS signing settings                                           |
+
+The plan shows what the file names. When a build is created, the pipeline's
+[workflow settings](/reference/config/pipeline-settings#workflow-settings)
+can replace an identity or turn publishing off, and the iOS export method
+follows the profiles of the identity the build signs with: App Store or ad
+hoc. Use [`oore pipeline validate --project`](/reference/cli/oore-pipeline-validate#check-against-a-project)
+to check the names against the project.
+
+For a workflow that names its credentials, such as `release` in
+[Run two workflows from one file](/build/pipelines/two-workflows), the lines
+read:
+
+```text
+  signing:
+    android: identity upload-key (signing.android)
+    ios: identity coin-app-store (workflows.release.signing.ios)
+  ios export: App Store, because the workflow uploads to App Store Connect; identity coin-app-store must hold App Store profiles
+  store credentials:
+    google play: service account secret PLAY_SERVICE_ACCOUNT (workflows.release.targets.android.publish.play.service_account)
+    app store connect: the API key in the pipeline's iOS signing settings
 ```
 
 Secret references are printed as written; the runner resolves them during the
@@ -55,5 +94,6 @@ command; the printed plan leaves it out.
 The pipeline editor's **What will run** section shows the same plan from the
 daemon, for the form's settings or a pasted `.oore.yaml`, with the same errors.
 It lists env keys without their values, and where the workflow publishes as a
-note. The `--json` output has a `publish` object per plan with `play` and
-`testflight` entries.
+note. The `--json` output has, per plan, a `publish` object with `play`,
+`testflight` and `app_store` entries, and a `signing` object with the
+`android` and `ios` identity names the workflow resolves to.

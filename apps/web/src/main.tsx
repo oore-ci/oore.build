@@ -78,6 +78,21 @@ declare module '@tanstack/react-router' {
   }
 }
 
+declare global {
+  interface Window {
+    /** Defined inline in index.html. True when it reloads the page. */
+    ooreRecoverFromLoadFailure?: (error: Error) => boolean
+  }
+}
+
+// A lazy chunk from a deploy that has since been replaced fails to load.
+// Reloading picks up the new files; otherwise let the error surface.
+window.addEventListener('vite:preloadError', (event) => {
+  if (window.ooreRecoverFromLoadFailure?.(event.payload)) {
+    event.preventDefault()
+  }
+})
+
 // Boot the app — conditionally enables demo mode before rendering
 async function boot() {
   if (import.meta.env.VITE_DEMO_MODE === 'true') {
@@ -106,4 +121,6 @@ async function boot() {
   }
 }
 
-void boot()
+boot().catch((error: Error) => {
+  window.ooreRecoverFromLoadFailure?.(error)
+})

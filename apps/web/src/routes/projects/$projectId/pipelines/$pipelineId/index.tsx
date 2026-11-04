@@ -1,8 +1,9 @@
-import { lazy, Suspense, useState } from 'react'
-import type { ReactNode } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  Alert02Icon,
   Delete02Icon,
   Edit02Icon,
   InformationCircleIcon,
@@ -17,16 +18,21 @@ import {
 } from '@/lib/instance-context'
 import { useBuilds } from '@/hooks/use-builds'
 import {
+  canChangeApprovalPolicy,
   hasProjectPermission,
   useHasPermissions,
 } from '@/hooks/use-permissions'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   useDeletePipeline,
   usePipeline,
   usePipelineAndroidSigning,
   usePipelineIosSigning,
+  usePipelineWorkflows,
+  useRepositoryWorkflows,
   useUpdatePipeline,
 } from '@/hooks/use-pipelines'
+import { pipelineWorkflowProblem } from '@/lib/pipeline-form-utils'
 import { useProject } from '@/hooks/use-projects'
 import {
   usePipelineAppStorePublish,
@@ -45,7 +51,17 @@ import {
   useDataTable,
   type DataTableColumnDef,
 } from '@/components/data-table'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from '@/components/ui/alert'
+import {
+  pipelineHealthBanner,
+  pipelineProblemBanner,
+  type PipelineBanner,
+} from '@/lib/repository-config-files'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -60,15 +76,25 @@ import {
 } from '@/components/ui/empty'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
-import { BuildSourceValue } from '@/components/table-values'
+import { BuildSourceValue, EmptyValue } from '@/components/table-values'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { WorkflowBadge } from '@/components/workflow-badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { searchChoice } from '@/lib/search-input'
+import { searchChoice, searchString } from '@/lib/search-input'
 import type { SearchInput } from '@/lib/search-input'
 import {
   PipelineConfigurationCard,
   SettingUnavailable,
 } from '../-pipeline-configuration-card'
+import { Mono } from '@/components/layout/mono'
 import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
 import { textVariants } from '@/lib/recipes'
@@ -147,9 +173,79 @@ function describePipeline(pipeline: Pipeline, manualOnlyTriggers: boolean) {
   return `${subject} ${when}${where}.`
 }
 
+const workflowColumn: DataTableColumnDef<Build> = {
+  accessorKey: 'workflow',
+  header: 'Workflow',
+  cell: ({ row }) =>
+    row.original.workflow ? (
+      <WorkflowBadge workflow={row.original.workflow} />
+    ) : (
+      <EmptyValue />
+    ),
+  enableSorting: false,
+}
+
+// Base UI selects treat an empty value as unselected.
+const ALL_WORKFLOWS = '__all__'
+
+/** Filters Recent builds to one workflow of the pipeline's file. */
+function WorkflowFilter({
+  workflows,
+  value,
+  onChange,
+}: {
+  workflows: Array<string>
+  value?: string
+  onChange: (workflow?: string) => void
+}) {
+  // Keep a filter from the URL visible even when the file dropped it.
+  const names =
+    value && !workflows.includes(value) ? [...workflows, value] : workflows
+  // The trigger shows "Workflow: release"; the list shows plain names.
+  const items = {
+    [ALL_WORKFLOWS]: 'All workflows',
+    ...Object.fromEntries(names.map((name) => [name, `Workflow: ${name}`])),
+  }
+  return (
+    <Select
+      value={value ?? ALL_WORKFLOWS}
+      onValueChange={(next) =>
+        onChange(next && next !== ALL_WORKFLOWS ? next : undefined)
+      }
+      items={items}
+    >
+      <SelectTrigger size="sm" aria-label="Filter by workflow">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent align="end">
+        <SelectGroup>
+          <SelectItem value={ALL_WORKFLOWS}>All workflows</SelectItem>
+          {names.map((name) => (
+            <SelectItem key={name} value={name}>
+              {name}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  )
+}
+
 function RecentBuildsTable({ builds }: { builds: Array<Build> }) {
+  // A pipeline whose builds never named a workflow has no column for it.
+  const columns = useMemo(
+    () =>
+      builds.some((build) => build.workflow)
+        ? [
+            ...recentBuildColumns.slice(0, 2),
+            workflowColumn,
+            ...recentBuildColumns.slice(2),
+          ]
+        : recentBuildColumns,
+    [builds],
+  )
   const table = useDataTable({
-    columns: recentBuildColumns,
+    columns,
     data: builds,
     getRowId: (build) => build.id,
   })
@@ -174,16 +270,28 @@ const SecretsPanel = lazy(() =>
   })),
 )
 
-const TAB_VALUES = ['overview', 'publishing', 'secrets'] as const
+const PipelineWorkflowsPanel = lazy(() =>
+  import('@/components/pipeline-workflows/pipeline-workflows-panel').then(
+    (module) => ({ default: module.PipelineWorkflowsPanel }),
+  ),
+)
+
+const TAB_VALUES = ['overview', 'workflows', 'publishing', 'secrets'] as const
 type TabValue = (typeof TAB_VALUES)[number]
 
 interface PipelineDetailSearch {
   tab?: TabValue
+  /** Show only builds of this workflow in Recent builds. */
+  workflow?: string
 }
 
 function validatePipelineSearch(search: SearchInput): PipelineDetailSearch {
   const tab = searchChoice(search, 'tab', TAB_VALUES)
-  return { tab: tab === 'overview' ? undefined : tab }
+  const workflow = searchString(search, 'workflow')?.trim()
+  return {
+    tab: tab === 'overview' ? undefined : tab,
+    workflow: workflow || undefined,
+  }
 }
 
 export const Route = createFileRoute(
@@ -201,6 +309,59 @@ export const Route = createFileRoute(
   component: PipelineDetailPage,
 })
 
+/**
+ * The pipeline's one banner about its config file: the daemon's health from
+ * its last read of the default branch, or, before that read, a live look
+ * at the file. Absent when the file is fine.
+ */
+function PipelineConfigAlert({
+  banner,
+  checked,
+  editLink,
+}: {
+  banner: PipelineBanner
+  checked?: { at: number; commit: string }
+  editLink?: ReactElement
+}) {
+  return (
+    <Alert
+      variant={banner.variant}
+      role={banner.variant === 'destructive' ? 'alert' : 'status'}
+    >
+      <HugeiconsIcon
+        icon={
+          banner.variant === 'destructive' ? Alert02Icon : InformationCircleIcon
+        }
+        size={16}
+      />
+      <AlertTitle>{banner.title}</AlertTitle>
+      <AlertDescription>
+        {checked ? (
+          <>
+            {banner.description.replace(/\.?$/, '. ')}Checked{' '}
+            <RelativeTime at={checked.at} /> at{' '}
+            <Mono>{checked.commit.slice(0, 7)}</Mono>.
+          </>
+        ) : (
+          banner.description
+        )}
+      </AlertDescription>
+      {editLink ? (
+        <AlertAction>
+          <Button
+            variant="outline"
+            size="sm"
+            render={editLink}
+            nativeButton={false}
+          >
+            Edit
+          </Button>
+        </AlertAction>
+      ) : null}
+    </Alert>
+  )
+}
+
 /* ------------------------------------------------------------------ */
 /*  Main page                                                          */
 /* ------------------------------------------------------------------ */
@@ -208,7 +369,7 @@ export const Route = createFileRoute(
 function PipelineDetailPage() {
   const { projectId, pipelineId } = Route.useParams()
   const navigate = useNavigate()
-  const { tab = 'overview' } = Route.useSearch()
+  const { tab = 'overview', workflow: workflowFilter } = Route.useSearch()
   const { data, isLoading, error } = usePipeline(pipelineId)
   const [canWriteGlobally, canTriggerBuildGlobally, canReadInstanceSettings] =
     useHasPermissions([
@@ -218,6 +379,7 @@ function PipelineDetailPage() {
     ])
   const { data: projectData } = useProject(projectId)
   const projectRole = projectData?.project.current_user_role
+  const instanceRole = useAuthStore((state) => state.user?.role)
   const canWrite =
     canWriteGlobally && hasProjectPermission(projectRole, 'pipelines:write')
   const canDelete = hasProjectPermission(projectRole, 'pipelines:delete')
@@ -231,8 +393,22 @@ function PipelineDetailPage() {
   })
   const buildsQuery = useBuilds({
     pipeline_id: pipelineId,
+    workflow: workflowFilter,
     limit: RECENT_BUILD_LIMIT,
   })
+  const pipelineWorkflowsQuery = usePipelineWorkflows(pipelineId)
+  const fileWorkflows =
+    pipelineWorkflowsQuery.data?.state === 'valid'
+      ? pipelineWorkflowsQuery.data.workflows.map((workflow) => workflow.name)
+      : []
+  function setWorkflowFilter(workflow?: string) {
+    void navigate({
+      to: '/projects/$projectId/pipelines/$pipelineId',
+      params: { projectId, pipelineId },
+      search: { tab: tab === 'overview' ? undefined : tab, workflow },
+      replace: true,
+    })
+  }
   const buildsAndroidForQueries =
     data?.pipeline.execution_config.platforms.includes('android') ?? false
   const buildsIosForQueries =
@@ -243,6 +419,22 @@ function PipelineDetailPage() {
   const appStoreQuery = usePipelineAppStorePublish(pipelineId, {
     enabled: buildsIosForQueries,
   })
+  // The daemon's health covers the pipeline's file once it has read the
+  // default branch. Until then, look at the file live; discovery needs
+  // pipeline write access, which Edit needs too.
+  const repositoryFileQuery = useRepositoryWorkflows(
+    projectId,
+    data && data.pipeline.config_path.trim() !== '.oore.yaml'
+      ? { path: data.pipeline.config_path }
+      : undefined,
+    {
+      enabled:
+        canWrite &&
+        !!data &&
+        !data.pipeline.health &&
+        !!projectData?.project.repository_id,
+    },
+  )
   const updateMutation = useUpdatePipeline()
   const deleteMutation = useDeletePipeline()
 
@@ -290,6 +482,19 @@ function PipelineDetailPage() {
   const projectHasSource = !!projectData?.project.repository_id
   const manualOnlyTriggers =
     projectData?.project.repository_provider === 'local_git'
+
+  const workflowProblem =
+    !pipeline.health && repositoryFileQuery.data
+      ? pipelineWorkflowProblem(repositoryFileQuery.data.workflows, pipeline)
+      : undefined
+  const configBanner = pipeline.health
+    ? pipelineHealthBanner(pipeline.health, pipeline)
+    : workflowProblem && repositoryFileQuery.data
+      ? pipelineProblemBanner(
+          workflowProblem,
+          repositoryFileQuery.data.reference,
+        )
+      : null
 
   const publishingSummary: Array<{ label: string; value: ReactNode }> = []
   if (buildsAndroid) {
@@ -469,6 +674,29 @@ function PipelineDetailPage() {
           </AlertDescription>
         </Alert>
       ) : null}
+      {configBanner ? (
+        <PipelineConfigAlert
+          banner={configBanner}
+          checked={
+            pipeline.health
+              ? {
+                  at: pipeline.health.checked_at,
+                  commit: pipeline.health.commit_sha,
+                }
+              : undefined
+          }
+          editLink={
+            canWrite ? (
+              <Link
+                to="/projects/$projectId/pipelines/$pipelineId/edit"
+                params={{ projectId, pipelineId }}
+                search={{}}
+                hash="basics"
+              />
+            ) : undefined
+          }
+        />
+      ) : null}
       {projectMissingSource ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
@@ -494,6 +722,7 @@ function PipelineDetailPage() {
       >
         <TabsList variant="line">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="workflows">Workflows</TabsTrigger>
           <TabsTrigger value="publishing">Publishing</TabsTrigger>
           <TabsTrigger value="secrets">Secrets</TabsTrigger>
         </TabsList>
@@ -509,7 +738,16 @@ function PipelineDetailPage() {
           {/* Recent builds */}
           <Card>
             <CardContent>
-              <h3 className="pb-3 text-sm font-medium">Recent builds</h3>
+              <Row gap={3} className="justify-between pb-3">
+                <h3 className="text-sm font-medium">Recent builds</h3>
+                {fileWorkflows.length > 1 || workflowFilter ? (
+                  <WorkflowFilter
+                    workflows={fileWorkflows}
+                    value={workflowFilter}
+                    onChange={setWorkflowFilter}
+                  />
+                ) : null}
+              </Row>
               {buildsQuery.error ? (
                 <CollectionError
                   title="Failed to load recent builds"
@@ -518,6 +756,25 @@ function PipelineDetailPage() {
                 />
               ) : buildsQuery.isLoading ? (
                 <Skeleton className="h-40 w-full" />
+              ) : builds.length === 0 && workflowFilter ? (
+                <Empty className="p-8">
+                  <EmptyHeader>
+                    <EmptyTitle>No {workflowFilter} builds</EmptyTitle>
+                    <EmptyDescription>
+                      This pipeline has not built the {workflowFilter} workflow
+                      yet.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                  <EmptyContent>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setWorkflowFilter(undefined)}
+                    >
+                      Show all workflows
+                    </Button>
+                  </EmptyContent>
+                </Empty>
               ) : builds.length === 0 ? (
                 <Empty className="p-8">
                   <EmptyHeader>
@@ -591,6 +848,22 @@ function PipelineDetailPage() {
                 </Button>
               }
             />
+          ) : null}
+        </TabsContent>
+
+        <TabsContent value="workflows" className="pt-2">
+          {tab === 'workflows' ? (
+            <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+              <PipelineWorkflowsPanel
+                canChangeApproval={canChangeApprovalPolicy(
+                  instanceRole,
+                  projectRole,
+                )}
+                canWrite={canWrite}
+                pipelineId={pipeline.id}
+                projectId={projectId}
+              />
+            </Suspense>
           ) : null}
         </TabsContent>
 

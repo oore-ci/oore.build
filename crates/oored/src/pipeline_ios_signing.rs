@@ -449,6 +449,46 @@ async fn parse_provisioning_profile(
     .map_err(|e| anyhow::anyhow!("parse_provisioning_profile task panicked: {e}"))?
 }
 
+/// A provisioning profile read for the project credential library.
+pub(crate) struct InspectedProfile {
+    pub bundle_id: String,
+    pub profile_uuid: Option<String>,
+    pub profile_name: Option<String>,
+    pub team_id: Option<String>,
+    pub expires_at: Option<i64>,
+    /// `None` for development and enterprise profiles, which the library
+    /// does not sign with.
+    pub export_method: Option<IosExportMethod>,
+    pub distribution: &'static str,
+}
+
+pub(crate) async fn inspect_provisioning_profile(
+    profile_bytes: Vec<u8>,
+) -> anyhow::Result<InspectedProfile> {
+    let parsed = parse_provisioning_profile(profile_bytes).await?;
+    Ok(InspectedProfile {
+        export_method: match parsed.distribution {
+            ProfileDistribution::AdHoc => Some(IosExportMethod::AdHoc),
+            ProfileDistribution::AppStore => Some(IosExportMethod::AppStore),
+            ProfileDistribution::Development | ProfileDistribution::Enterprise => None,
+        },
+        distribution: parsed.distribution.label(),
+        bundle_id: parsed.bundle_id,
+        profile_uuid: parsed.profile_uuid,
+        profile_name: parsed.profile_name,
+        team_id: parsed.team_id,
+        expires_at: parsed.expires_at,
+    })
+}
+
+/// The certificate's expiry, checking the password opens it.
+pub(crate) async fn inspect_p12(
+    p12_bytes: Vec<u8>,
+    password: String,
+) -> anyhow::Result<Option<i64>> {
+    Ok(parse_p12_metadata(p12_bytes, password).await?.expires_at)
+}
+
 fn set_strict_permissions(path: &FsPath) {
     #[cfg(unix)]
     {
@@ -3461,6 +3501,16 @@ pub async fn get_job_ios_signing(
 
     let pipeline_id =
         require_active_job_signing_grant(&pool, &job_id, &runner_id, &headers).await?;
+
+    // A workflow that names an identity signs with it instead of the
+    // pipeline's settings.
+    if let Some(bundle) =
+        crate::signing_identities::job_ios_bundle(&pool, &state.encryption_key, &job_id).await?
+    {
+        return Ok(Json(RunnerIosSigningResponse {
+            bundle: Some(bundle),
+        }));
+    }
 
     let settings = load_ios_settings(&pool, &pipeline_id).await.map_err(|e| {
         error!(error = %e, "failed to load iOS signing settings for runner");

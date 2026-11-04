@@ -17,6 +17,8 @@
     "oore-pipeline-validate",
     "oore-pipeline-plan",
     "oore-pipeline-migrate",
+    "oore-pipeline-workflows",
+    "oore-build-run",
     "oore-version"
   ],
   "pagesIndex": "index"

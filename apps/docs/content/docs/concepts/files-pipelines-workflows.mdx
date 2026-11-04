@@ -1,0 +1,90 @@
+---
+title: 'Files, pipelines and workflows'
+status: preview
+description: 'What lives in the repository, what lives in Oore, and how each build is named by its pipeline, workflow and commit.'
+---
+
+A `.oore.yaml` version 2 file describes how an app is built. A pipeline in
+Oore connects that file to the credentials and rules that must not live in a
+repository. A workflow is one named way to build from the file. Each build
+runs one workflow of one pipeline at one commit.
+
+## Three things, and where each lives
+
+| Thing        | Lives in       | Holds                                                                                                                                                                               |
+| ------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The file     | The repository | Targets and their build commands, steps, env and vars, workflows, triggers (`on`), where to publish, and the names of signing identities and the Google Play service account secret |
+| The pipeline | Oore           | Which file to read, the default workflow, per-workflow settings, approval, schedules, timeout, size budget, and the store settings and API keys the file cannot name                |
+| The project  | Oore           | The repository, the signing library (keystores, certificates and profiles), and project secrets                                                                                     |
+
+The file names credentials but never holds them. `signing: { ios: coin-store }`
+names an identity in the project's signing library;
+`service_account: PLAY_RELEASE` names a secret. The key material stays
+encrypted in Oore, and a commit can only pick among what the project already
+holds.
+
+Several pipelines can read the same file. Each pipeline keeps its own default
+workflow and per-workflow settings, so one file can serve, say, a pipeline
+for the team and one for releases.
+
+## How a build is named
+
+A build records three things:
+
+- **Pipeline**: which settings, credentials and gates applied.
+- **Workflow**: which part of the file ran. A file with no workflows builds
+  its top level, and the build has no workflow name.
+- **Commit**: the exact revision. The runner reads the file at that commit, so
+  an old build always shows the instructions it ran.
+
+The build page and build lists show the workflow, and the pipeline page
+filters builds by workflow.
+
+## Which workflow runs
+
+A build started from **Run build**, `oore build run` or the API runs the
+workflow it names. Without one, it runs the pipeline's **Default workflow**,
+then the file's only workflow. A file with several workflows and no default
+refuses the build until one is named.
+
+Pushes, pull requests and tags start the default workflow when the pipeline
+has one. Without a default, Oore starts one build for every workflow whose
+`on` matches the event, so one push can build `adhoc` and `release` side by
+side.
+
+## Who decides what
+
+For each build, Oore resolves signing, publishing and approval in this order.
+The first one that is set wins.
+
+| Decision        | 1. Pipeline's workflow settings | 2. The file                                  | 3. The pipeline                 |
+| --------------- | ------------------------------- | -------------------------------------------- | ------------------------------- |
+| Android signing | **Android signing** identity    | `signing.android`, workflow first            | The pipeline's Android signing  |
+| iOS signing     | **iOS signing** identity        | `signing.ios`, workflow first                | The pipeline's iOS signing      |
+| Store uploads   | **Publishing** off stops them   | `publish` on the targets, workflow first     | **Publishing** tab              |
+| Approval        | **Approval** required or not    | Not set in files                             | The pipeline's approval policy  |
+| Triggers        | Not set per workflow            | The workflow's `on`, else the top-level `on` | The pipeline's trigger settings |
+
+The per-workflow settings are on the pipeline's **Workflows** tab. They let an
+admin change a workflow's identity, or stop its uploads, without a commit.
+
+Some things still come only from the pipeline: the App Store Connect API key,
+the Google Play expected package, release notes, and schedules. The iOS export
+method is never set on its own: it follows the identity's profiles, App Store
+or ad hoc, and an App Store Connect upload needs App Store profiles.
+
+## Why it is split this way
+
+The file changes with the code and is reviewed with it, so a pull request can
+add a workflow, change a build command or move a release to another track.
+Credentials and gates change who can ship, so they stay where only project
+members with the right role can change them, and a commit cannot point a
+build at a key the project does not hold.
+
+## Next step
+
+- [Run two workflows from one file](/build/pipelines/two-workflows)
+- [Move credentials into the project library](/build/sign/project-library)
+- [Add pipelines from the repository](/build/pipelines/from-the-repository)
+- Every field in the [`.oore.yaml` version 2 reference](/reference/config/oore-yaml-v2)
+  and the [pipeline settings reference](/reference/config/pipeline-settings)

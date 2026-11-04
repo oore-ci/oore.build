@@ -84,6 +84,11 @@ pub struct PipelinePlan {
     /// where the pipeline's Publish settings decide.
     #[serde(skip_serializing_if = "PlanPublish::is_empty")]
     pub publish: PlanPublish,
+    /// Signing identities the file names, from the project's credential
+    /// library. Empty for v1 files and form settings, where the pipeline's
+    /// signing settings decide.
+    #[serde(skip_serializing_if = "SigningSpec::is_empty")]
+    pub signing: SigningSpec,
     /// Size budgets a v2 file sets on the planned targets. Each platform's
     /// check enforces its target's budget on top of the pipeline's.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -113,11 +118,19 @@ pub struct PlanPublish {
     pub play: Option<PlannedPublish<PlayPublishSpec>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub testflight: Option<PlannedPublish<TestflightPublishSpec>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_store: Option<PlannedPublish<AppStorePublishSpec>>,
 }
 
 impl PlanPublish {
     pub fn is_empty(&self) -> bool {
-        self.play.is_none() && self.testflight.is_none()
+        self.play.is_none() && self.testflight.is_none() && self.app_store.is_none()
+    }
+
+    /// Whether this plan uploads to App Store Connect, so its iOS build must
+    /// be exported for the App Store.
+    pub fn needs_app_store_export(&self) -> bool {
+        self.testflight.is_some() || self.app_store.is_some()
     }
 
     /// One line per upload, for plan output.
@@ -172,6 +185,37 @@ impl PlanPublish {
                 ),
             });
         }
+        if let Some(app_store) = &self.app_store {
+            lines.push(match &app_store.error {
+                Some(error) => format!(
+                    "ios publishes to App Store Connect ({}), but its publish step will fail: {error}",
+                    app_store.source
+                ),
+                None => {
+                    let spec = &app_store.spec;
+                    match spec.destination {
+                        AppStoreDestination::Testflight if spec.groups.is_empty() => format!(
+                            "ios publishes to TestFlight with the pipeline's groups ({})",
+                            app_store.source
+                        ),
+                        AppStoreDestination::Testflight => format!(
+                            "ios publishes to the TestFlight groups {} ({})",
+                            spec.groups.join(", "),
+                            app_store.source
+                        ),
+                        AppStoreDestination::AppStore => format!(
+                            "ios publishes to the App Store{} ({})",
+                            if spec.submit_for_review == Some(true) {
+                                " and submits for review"
+                            } else {
+                                ""
+                            },
+                            app_store.source
+                        ),
+                    }
+                }
+            });
+        }
         lines
     }
 
@@ -224,65 +268,135 @@ impl PlanPublish {
             changelog,
             google_play,
             app_store,
+            disabled,
         } = settings;
+        if disabled {
+            return EffectivePublish {
+                changelog,
+                google_play: Ok(None),
+                app_store: Ok(None),
+                notes: vec![
+                    "Publishing is off for this workflow in the pipeline's workflow settings"
+                        .to_string(),
+                ],
+            };
+        }
         let mut notes = Vec::new();
         let google_play = match &self.play {
             None => Ok(google_play),
             Some(PlannedPublish {
                 error: Some(error), ..
             }) => Err(error.clone()),
-            Some(play) => match google_play {
-                Some(mut config) => {
-                    config.enabled = true;
-                    config.track = play.spec.track.clone();
-                    if let Some(rollout) = play.spec.rollout {
-                        config.rollout_percent =
-                            Some(play_rollout_percent(rollout)).filter(|percent| *percent < 100.0);
-                    }
-                    if let Some(draft) = play.spec.draft {
-                        config.draft = draft;
-                    }
-                    // The rules the settings form enforces, applied to the
-                    // combination instead of failing the upload.
-                    if let Some(percent) = config.rollout_percent.filter(|p| *p < 100.0) {
-                        if config.draft {
-                            notes.push(format!(
-                                "A draft has no staged rollout; ignoring the {percent}% rollout"
-                            ));
-                            config.rollout_percent = None;
-                        } else if config.track == "internal" {
-                            notes.push(format!(
+            Some(play) => {
+                match google_play {
+                    Some(mut config) => {
+                        config.enabled = true;
+                        config.track = play.spec.track.clone();
+                        if let Some(rollout) = play.spec.rollout {
+                            config.rollout_percent = Some(play_rollout_percent(rollout))
+                                .filter(|percent| *percent < 100.0);
+                        }
+                        if let Some(draft) = play.spec.draft {
+                            config.draft = draft;
+                        }
+                        if let Some(secret) = &play.spec.service_account {
+                            config.service_account_secret = secret.clone();
+                        }
+                        // The rules the settings form enforces, applied to the
+                        // combination instead of failing the upload.
+                        if let Some(percent) = config.rollout_percent.filter(|p| *p < 100.0) {
+                            if config.draft {
+                                notes.push(format!(
+                                    "A draft has no staged rollout; ignoring the {percent}% rollout"
+                                ));
+                                config.rollout_percent = None;
+                            } else if config.track == "internal" {
+                                notes.push(format!(
                                 "The internal track has no staged rollouts; releasing to every internal tester instead of {percent}%"
                             ));
-                            config.rollout_percent = None;
+                                config.rollout_percent = None;
+                            }
                         }
+                        Ok(Some(config))
                     }
-                    Ok(Some(config))
+                    // A file that names its service account needs no settings.
+                    None => match &play.spec.service_account {
+                        Some(secret) => Ok(Some(GooglePlayPublishConfig {
+                            enabled: true,
+                            service_account_secret: secret.clone(),
+                            track: play.spec.track.clone(),
+                            rollout_percent: play.spec.rollout.map(play_rollout_percent).filter(
+                                |percent| *percent < 100.0 && play.spec.track != "internal",
+                            ),
+                            draft: play.spec.draft.unwrap_or(false),
+                            ..GooglePlayPublishConfig::from_file_defaults()
+                        })),
+                        None => Err(format!(
+                            "{} publishes with the pipeline's Google Play settings, which are off. Name the service account secret with `service_account`, or in the pipeline's Publish settings turn on Google Play's \"Upload after each build\" and set its service account secret; the file's track, rollout and draft replace the settings' own",
+                            play.source
+                        )),
+                    },
                 }
-                None => Err(format!(
-                    "{} publishes with the pipeline's Google Play settings, which are off. In the pipeline's Publish settings, turn on Google Play's \"Upload after each build\" and set its service account secret; the file's track, rollout and draft replace the settings' own",
-                    play.source
-                )),
-            },
+            }
         };
-        let app_store = match &self.testflight {
+        // Validation allows only one of `testflight` and `app_store`; the
+        // older `testflight` is `app_store` with destination testflight.
+        let app_store_spec = self
+            .testflight
+            .as_ref()
+            .map(|testflight| PlannedPublish {
+                spec: AppStorePublishSpec {
+                    destination: AppStoreDestination::Testflight,
+                    groups: vec![testflight.spec.group.clone()],
+                    submit_for_review: None,
+                    phased_release: None,
+                },
+                source: testflight.source.clone(),
+                error: testflight.error.clone(),
+            })
+            .or_else(|| self.app_store.clone());
+        let app_store = match app_store_spec {
             None => Ok(app_store),
             Some(PlannedPublish {
                 error: Some(error), ..
-            }) => Err(error.clone()),
-            Some(testflight) => match app_store {
+            }) => Err(error),
+            Some(planned) => match app_store {
                 Some(mut plan) => {
+                    let spec = &planned.spec;
                     plan.config.enabled = true;
-                    plan.config.destination = AppStoreDestination::Testflight;
-                    plan.config.testflight_groups = vec![testflight.spec.group.clone()];
-                    // App Store review settings don't apply to TestFlight.
-                    plan.config.submit_for_review = false;
-                    plan.config.phased_release = false;
-                    Ok(Some(plan))
+                    plan.config.destination = spec.destination;
+                    match spec.destination {
+                        AppStoreDestination::Testflight => {
+                            if !spec.groups.is_empty() {
+                                plan.config.testflight_groups = spec.groups.clone();
+                            }
+                            // App Store review settings don't apply to TestFlight.
+                            plan.config.submit_for_review = false;
+                            plan.config.phased_release = false;
+                        }
+                        AppStoreDestination::AppStore => {
+                            if let Some(submit) = spec.submit_for_review {
+                                plan.config.submit_for_review = submit;
+                            }
+                            if let Some(phased) = spec.phased_release {
+                                plan.config.phased_release = phased;
+                            }
+                        }
+                    }
+                    if plan.config.destination == AppStoreDestination::Testflight
+                        && plan.config.testflight_groups.is_empty()
+                    {
+                        Err(format!(
+                            "{} publishes to TestFlight, but neither the file nor the pipeline's App Store settings name a group; set `groups`",
+                            planned.source
+                        ))
+                    } else {
+                        Ok(Some(plan))
+                    }
                 }
                 None => Err(format!(
-                    "{} publishes with the pipeline's App Store Connect settings, which are not set up. In the pipeline's Publish settings, turn on App Store Connect, and in its iOS signing settings export App Store IPAs with an App Store Connect API key; the file's group replaces the settings' destination and groups",
-                    testflight.source
+                    "{} publishes with the pipeline's App Store Connect settings, which are not set up. In the pipeline's Publish settings, turn on App Store Connect, and in its iOS signing settings export App Store IPAs with an App Store Connect API key; the file's settings replace the settings' destination, groups and review options",
+                    planned.source
                 )),
             },
         };
@@ -647,6 +761,7 @@ pub fn plan_execution_config(
         runs_on: config.runs_on.clone(),
         isolation: config.isolation,
         publish: PlanPublish::default(),
+        signing: SigningSpec::default(),
         size_budgets: Vec::new(),
     }
 }
@@ -746,6 +861,9 @@ where
 #[serde(deny_unknown_fields)]
 pub struct ConfigV2 {
     pub version: u32,
+    /// Display name, used for a pipeline Oore adds from this file.
+    #[serde(default)]
+    pub name: Option<String>,
     #[serde(default)]
     pub app: AppSpec,
     #[serde(default)]
@@ -760,6 +878,9 @@ pub struct ConfigV2 {
     pub on: Option<TriggerSpec>,
     #[serde(default)]
     pub workflows: OrderedMap<String, WorkflowSpec>,
+    /// Signing identities every workflow uses unless it names its own.
+    #[serde(default)]
+    pub signing: SigningSpec,
     #[serde(default, deserialize_with = "crate::deserialize_runs_on")]
     pub runs_on: Vec<String>,
     #[serde(default)]
@@ -822,13 +943,13 @@ fn deserialize_target_publish<'de, D: Deserializer<'de>>(
         type Value = TargetPublish;
 
         fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str("a mapping with `play` or `testflight`, or false")
+            f.write_str("a mapping with `play`, `testflight` or `app_store`, or false")
         }
 
         fn visit_bool<E: de::Error>(self, value: bool) -> Result<Self::Value, E> {
             if value {
                 Err(E::custom(
-                    "publish: true is not supported; set `play` or `testflight`, or false to publish nowhere",
+                    "publish: true is not supported; set `play`, `testflight` or `app_store`, or false to publish nowhere",
                 ))
             } else {
                 Ok(TargetPublish::Off)
@@ -859,6 +980,58 @@ pub struct PublishSpec {
     pub play: Option<PlayPublishSpec>,
     #[serde(default)]
     pub testflight: Option<TestflightPublishSpec>,
+    #[serde(default)]
+    pub app_store: Option<AppStorePublishSpec>,
+}
+
+/// `publish.app_store`: an App Store Connect upload. `testflight: { group }`
+/// is the same as `app_store: { destination: testflight, groups: [group] }`.
+/// Fields left out keep the pipeline's App Store settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppStorePublishSpec {
+    #[serde(default = "default_app_store_destination")]
+    pub destination: AppStoreDestination,
+    /// TestFlight groups, for destination testflight.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<String>,
+    /// Submit the version for App Review, for destination app_store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submit_for_review: Option<bool>,
+    /// Release with Apple's seven-day phased release, for destination app_store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phased_release: Option<bool>,
+}
+
+fn default_app_store_destination() -> AppStoreDestination {
+    AppStoreDestination::AppStore
+}
+
+/// `signing`: names of identities in the project's credential library.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SigningSpec {
+    /// An Android keystore. It signs release builds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub android: Option<String>,
+    /// An iOS distribution certificate with its provisioning profiles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ios: Option<String>,
+}
+
+impl SigningSpec {
+    pub fn is_empty(&self) -> bool {
+        self.android.is_none() && self.ios.is_none()
+    }
+
+    /// `self` with `over`'s names replacing its own.
+    fn overlaid(&self, over: Option<&SigningSpec>) -> SigningSpec {
+        let over = over.cloned().unwrap_or_default();
+        SigningSpec {
+            android: over.android.or_else(|| self.android.clone()),
+            ios: over.ios.or_else(|| self.ios.clone()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -872,6 +1045,10 @@ pub struct PlayPublishSpec {
     /// Left out, the pipeline's Google Play settings decide.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft: Option<bool>,
+    /// Name of the secret holding the service account JSON key. Set, the
+    /// upload needs no pipeline Google Play settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_account: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -957,6 +1134,10 @@ pub struct WorkflowSpec {
     /// Added to, or replacing, the top-level vars by name.
     #[serde(default)]
     pub vars: OrderedMap<String, String>,
+    /// Signing identities for this workflow, by name, replacing the
+    /// top-level `signing` per platform.
+    #[serde(default)]
+    pub signing: Option<SigningSpec>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1017,6 +1198,36 @@ pub struct TriggerSpec {
     pub tag: Vec<String>,
     #[serde(default)]
     pub paths: Vec<String>,
+}
+
+impl TriggerSpec {
+    /// One line per event this `on` starts builds for, such as
+    /// `push to main, develop` or `tag v*`.
+    pub fn describe(&self) -> Vec<String> {
+        fn branches(trigger: &Option<BranchTrigger>, all: &str, some: &str) -> Option<String> {
+            match trigger {
+                None | Some(BranchTrigger::Off) => None,
+                Some(BranchTrigger::AllBranches) => Some(all.to_string()),
+                Some(BranchTrigger::Branches(names)) => {
+                    Some(format!("{some} {}", names.join(", ")))
+                }
+            }
+        }
+        let mut lines = Vec::new();
+        lines.extend(branches(&self.push, "push to any branch", "push to"));
+        lines.extend(branches(
+            &self.pull_request,
+            "pull requests",
+            "pull requests into",
+        ));
+        if !self.tag.is_empty() {
+            lines.push(format!("tag {}", self.tag.join(", ")));
+        }
+        if !self.paths.is_empty() && !lines.is_empty() {
+            lines.push(format!("only when {} change", self.paths.join(", ")));
+        }
+        lines
+    }
 }
 
 /// `true`, `false`, or `{ branches: [...] }`.
@@ -1582,7 +1793,7 @@ impl ConfigV2 {
         let mut notices = Vec::new();
         if self.workflows.0.len() > 1 {
             notices.push(format!(
-                "this file defines workflows [{}]; set the Workflow in each pipeline's settings, or its builds fail with `choose one for the pipeline`",
+                "this file defines workflows [{}]; each build runs one, named when it starts or the pipeline's Default workflow, and a pipeline without a default starts every workflow whose `on` matches a push, pull request or tag",
                 self.workflow_names().join(", ")
             ));
         }
@@ -1616,7 +1827,7 @@ impl ConfigV2 {
             });
         if declares_publish {
             notices.push(
-                "`publish` replaces the pipeline's Publish settings for the stores it names: the file sets the Google Play track, rollout and draft, and the TestFlight group; turn the store on in the pipeline's Publish settings for its credentials and release notes, or the publish step fails"
+                "`publish` replaces the pipeline's Publish settings for the stores it names: the file sets the Google Play track, rollout, draft and service account, and the App Store Connect destination and groups; a Google Play upload without `service_account`, and every App Store Connect upload, still needs the store turned on in the pipeline's Publish settings, or the publish step fails"
                     .to_string(),
             );
             notices.extend(self.publish_notices());
@@ -1665,6 +1876,11 @@ impl ConfigV2 {
                 &plan
                     .publish
                     .testflight
+                    .as_ref()
+                    .and_then(|p| p.error.clone()),
+                &plan
+                    .publish
+                    .app_store
                     .as_ref()
                     .and_then(|p| p.error.clone()),
             ]
@@ -2214,6 +2430,40 @@ impl ConfigV2 {
                     error,
                 });
             }
+            if let Some(app_store) = &spec.app_store {
+                let mut groups = Vec::new();
+                let mut error = None;
+                for (index, group) in app_store.groups.iter().enumerate() {
+                    match resolve(group, &format!("app_store.groups[{index}]")) {
+                        Ok(group) if group.contains(',') => {
+                            error.get_or_insert(format!(
+                                "{path}.app_store.groups[{index}] '{group}' must be one group name, without commas"
+                            ));
+                        }
+                        Ok(group) if group.chars().count() > MAX_TESTFLIGHT_GROUP_LENGTH => {
+                            error.get_or_insert(format!(
+                                "{path}.app_store.groups[{index}] is longer than {MAX_TESTFLIGHT_GROUP_LENGTH} characters"
+                            ));
+                        }
+                        Ok(group) => groups.push(group),
+                        Err(resolve_error) => {
+                            error.get_or_insert(resolve_error);
+                        }
+                    }
+                }
+                let error = error.or_else(|| flavor_error.clone());
+                if error.as_deref().is_some_and(is_limit_error) {
+                    return Err(vec![error.unwrap_or_default()]);
+                }
+                publish.app_store = Some(PlannedPublish {
+                    spec: AppStorePublishSpec {
+                        groups,
+                        ..app_store.clone()
+                    },
+                    source: format!("{path}.app_store"),
+                    error,
+                });
+            }
         }
 
         // Target builds, one per platform and flavor.
@@ -2420,6 +2670,9 @@ impl ConfigV2 {
             runs_on: normalize_runner_labels(&self.runs_on).unwrap_or_default(),
             isolation: self.isolation,
             publish,
+            signing: self
+                .signing
+                .overlaid(workflow_spec.and_then(|spec| spec.signing.as_ref())),
             size_budgets: targets
                 .iter()
                 .filter_map(|target| {
@@ -2530,8 +2783,53 @@ fn check_target(
             errors.push(format!("{path}.publish.testflight.group must not be empty"));
         }
     }
-    if publish.play.is_none() && publish.testflight.is_none() {
-        errors.push(format!("{path}.publish must set play or testflight"));
+    if let Some(play) = &publish.play
+        && play
+            .service_account
+            .as_deref()
+            .is_some_and(|name| crate::validate_secret_name(name.trim()).is_err())
+    {
+        errors.push(format!(
+            "{path}.publish.play.service_account must be a secret name such as PLAY_SERVICE_ACCOUNT"
+        ));
+    }
+    if let Some(app_store) = &publish.app_store {
+        if *platform != BuildPlatform::Ios {
+            errors.push(format!(
+                "{path}.publish.app_store is only available for ios"
+            ));
+        }
+        if publish.testflight.is_some() {
+            errors.push(format!(
+                "{path}.publish sets both testflight and app_store; use app_store with destination testflight"
+            ));
+        }
+        match app_store.destination {
+            AppStoreDestination::Testflight => {
+                if app_store.submit_for_review.is_some() || app_store.phased_release.is_some() {
+                    errors.push(format!(
+                        "{path}.publish.app_store.submit_for_review and phased_release apply to destination app_store only"
+                    ));
+                }
+            }
+            AppStoreDestination::AppStore => {
+                if !app_store.groups.is_empty() {
+                    errors.push(format!(
+                        "{path}.publish.app_store.groups applies to destination testflight only"
+                    ));
+                }
+            }
+        }
+        if app_store.groups.iter().any(|group| group.trim().is_empty()) {
+            errors.push(format!(
+                "{path}.publish.app_store.groups must not hold empty names"
+            ));
+        }
+    }
+    if publish.play.is_none() && publish.testflight.is_none() && publish.app_store.is_none() {
+        errors.push(format!(
+            "{path}.publish must set play, testflight or app_store"
+        ));
     }
 }
 
@@ -3532,6 +3830,7 @@ mod tests {
                 track: "internal".to_string(),
                 rollout: None,
                 draft: None,
+                service_account: None,
             }
         );
         assert_eq!(
@@ -3607,6 +3906,7 @@ mod tests {
             changelog: None,
             google_play: Some(serde_json::from_value(config).unwrap()),
             app_store: Some(app_store_settings()),
+            disabled: false,
         }
     }
 
@@ -3826,6 +4126,7 @@ mod tests {
             changelog: Some("Fixes".to_string()),
             google_play: Some(play_settings()),
             app_store: Some(app_store_settings()),
+            disabled: false,
         };
         let yaml = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n    publish:\n      play: { track: closed, rollout: 0.07 }\n  ios:\n    build: flutter build ipa\n    publish:\n      testflight: { group: Beta }\n";
         let effective = publish_of(yaml, None).apply(settings.clone());
@@ -3871,11 +4172,93 @@ mod tests {
     }
 
     #[test]
+    fn workflows_name_signing_and_app_store_destinations() {
+        let yaml = "version: 2\nsigning:\n  android: upload-key\ntargets:\n  android:\n    build: flutter build apk\n  ios:\n    build: flutter build ipa\nworkflows:\n  adhoc:\n    signing: { ios: adhoc-cert }\n  release:\n    signing: { ios: app-store-cert }\n    targets:\n      android:\n        build: flutter build appbundle\n        publish:\n          play: { track: internal, service_account: PLAY_RELEASE }\n      ios:\n        build: flutter build ipa\n        publish:\n          app_store: { destination: app_store, submit_for_review: true }\n";
+        let adhoc = plan(yaml, Some("adhoc"));
+        assert_eq!(adhoc.signing.android.as_deref(), Some("upload-key"));
+        assert_eq!(adhoc.signing.ios.as_deref(), Some("adhoc-cert"));
+        assert!(adhoc.publish.is_empty());
+        assert!(!adhoc.publish.needs_app_store_export());
+
+        let release = plan(yaml, Some("release"));
+        assert_eq!(release.signing.ios.as_deref(), Some("app-store-cert"));
+        assert!(release.publish.needs_app_store_export());
+        assert_eq!(
+            release.publish.describe(),
+            vec![
+                "android publishes to the Google Play internal track with the rollout and draft setting from the pipeline's Google Play settings (workflows.release.targets.android.publish.play)",
+                "ios publishes to the App Store and submits for review (workflows.release.targets.ios.publish.app_store)",
+            ]
+        );
+
+        // A named service account needs no pipeline Google Play settings.
+        let effective = release.publish.apply(RunnerPublishPlan {
+            changelog: None,
+            google_play: None,
+            app_store: Some(app_store_settings()),
+            disabled: false,
+        });
+        let play = effective.google_play.unwrap().unwrap();
+        assert_eq!(play.service_account_secret, "PLAY_RELEASE");
+        assert_eq!(play.track, "internal");
+        let app_store = effective.app_store.unwrap().unwrap();
+        assert_eq!(app_store.config.destination, AppStoreDestination::AppStore);
+        assert!(app_store.config.submit_for_review);
+
+        // Named over existing settings, the secret replaces the settings' one.
+        let over = release
+            .publish
+            .apply(settings(serde_json::json!({})))
+            .google_play
+            .unwrap()
+            .unwrap();
+        assert_eq!(over.service_account_secret, "PLAY_RELEASE");
+    }
+
+    #[test]
+    fn app_store_publish_is_checked() {
+        let errors = |publish: &str| {
+            parse_repository_config(&format!(
+                "version: 2\ntargets:\n  ios:\n    build: flutter build ipa\n    publish:\n      {publish}\n"
+            ))
+            .unwrap_err()
+        };
+        assert!(
+            errors("app_store: { destination: app_store, groups: [QA] }")
+                .contains("groups applies to destination testflight only")
+        );
+        assert!(
+            errors("{ testflight: { group: QA }, app_store: { destination: testflight } }")
+                .contains("sets both testflight and app_store")
+        );
+        let testflight = publish_of(
+            "version: 2\ntargets:\n  ios:\n    build: flutter build ipa\n    publish:\n      app_store: { destination: testflight, groups: [QA, External] }\n",
+            None,
+        );
+        let effective = testflight.apply(RunnerPublishPlan {
+            changelog: None,
+            google_play: None,
+            app_store: Some(app_store_settings()),
+            disabled: false,
+        });
+        assert_eq!(
+            effective
+                .app_store
+                .unwrap()
+                .unwrap()
+                .config
+                .testflight_groups,
+            vec!["QA", "External"]
+        );
+    }
+
+    #[test]
     fn file_publish_without_store_settings_fails_with_the_settings_to_set() {
         let settings = RunnerPublishPlan {
             changelog: None,
             google_play: None,
             app_store: None,
+            disabled: false,
         };
         let effective = publish_of(PUBLISHING, None).apply(settings);
         let play = effective.google_play.unwrap_err();
@@ -3897,6 +4280,7 @@ mod tests {
             changelog: None,
             google_play: None,
             app_store: None,
+            disabled: false,
         });
         assert_eq!(none.google_play.unwrap(), None);
         assert!(none.app_store.unwrap().is_none());

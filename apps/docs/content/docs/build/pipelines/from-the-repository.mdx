@@ -1,0 +1,94 @@
+---
+title: 'Add pipelines from the repository'
+status: implemented
+description: 'Let config files in the repository become pipelines, and see when a pipeline file is missing, invalid, or lost its workflow.'
+---
+
+Oore looks for config files in the project's repository on its default branch.
+Each file can become a pipeline with one click, or on its own when the project
+adds pipelines automatically. Each pipeline then shows whether its file is
+usable.
+
+## Where Oore looks
+
+On the project's default branch, Oore reads these files:
+
+- `.oore.yaml` and `.oore.yml`
+- any other root file named `.oore.<name>.yaml` or `.oore.<name>.yml`, such as
+  `.oore.release.yaml`
+- YAML files in `.oore/` and one folder below it, such as `.oore/ci.yaml` or
+  `.oore/ios/beta.yaml`
+
+Oore reads at most 16 files of up to 128 KB each. When a repository has more,
+the list says so.
+
+Oore keeps what it found for the commit it read. A push to the default branch
+that changes one of these paths reads the branch again, in the background, so
+it never delays or fails the webhook delivery. Oore also reads the branch when
+a project is created and when its source or default branch changes.
+
+## Add a pipeline for a file
+
+1. Open the project's **Pipelines** tab.
+2. Under **Found in repository**, find the file. The list shows only files no
+   pipeline uses yet, with the workflows each one defines.
+3. Select **Add**. Select **Add all** to add every valid file at once.
+
+The new pipeline builds from that file and is named after it:
+`.oore.release.yaml` becomes **Release**, and `.oore/ios/beta.yaml` becomes
+**Ios beta**. Rename it on the pipeline's **Edit** page.
+
+A file that does not parse shows **Invalid** with its first error, and cannot
+be added until it is fixed.
+
+Select **Refresh** to read the branch now, for example after a push that Oore
+did not receive.
+
+You can also select **Add pipeline**. Under **Start from**, Oore lists the
+files it found, those no pipeline uses first, and marks the others **In use**.
+
+## Add pipelines automatically
+
+Turn on **Add pipelines from the repository automatically** in the project's
+**Settings** tab. Each time Oore reads the default branch, a valid file that
+was not there the last time, and that no pipeline uses, becomes a pipeline.
+
+- New projects have it on. Projects created before this setting have it off.
+- A file Oore had already seen is not added again, so a pipeline you delete
+  stays deleted. Add it from **Found in repository** if you want it back.
+- A pipeline added this way has default settings. The file's `on` decides
+  which pushes, pull requests, and tags start it; without `on` it starts only
+  when you run it, on a schedule, or from the API.
+
+## Pipeline health
+
+Each pipeline row shows its file and its health on the default branch. The
+pipeline page shows a banner when the file needs attention.
+
+| Health               | Meaning                                                                                  |
+| -------------------- | ---------------------------------------------------------------------------------------- |
+| **File OK**          | The file exists and parses, and defines the pipeline's workflow if it picks one          |
+| **No file**          | The file is not on the default branch, so builds use the settings saved in Oore          |
+| **Invalid file**     | The file exists but does not parse; builds of this pipeline fail                         |
+| **Workflow missing** | The file no longer defines the workflow the pipeline picks; builds of that workflow fail |
+
+Health comes from the last read of the default branch, never from a call to
+GitHub or GitLab while the page loads. A pipeline shows no health until Oore
+has read the repository once.
+The API returns it as the pipeline's `health`; see
+[Health](/reference/config/pipeline-settings#health).
+
+## The config path
+
+A pipeline's config path always names the file it builds from. A pipeline
+with `.oore.yaml` still reads `.oore.yml` when only that file exists. The
+first read of the default branch writes `.oore.yml` on pipelines that relied
+on that, so the path shows the file in use.
+
+The API field `config_path_explicit` is deprecated. Oore ignores it on create
+and update and always returns `true`.
+
+## Next step
+
+Write or change a file with [Move a pipeline into `.oore.yaml`](/build/pipelines/oore-yaml),
+and see every field in the [`.oore.yaml` reference](/reference/config/oore-yaml-v2).

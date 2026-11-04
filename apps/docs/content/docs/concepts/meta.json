@@ -6,6 +6,7 @@
     "which-setup",
     "architecture",
     "build-lifecycle",
+    "files-pipelines-workflows",
     "pipeline-configuration",
     "runner-trust",
     "signing",

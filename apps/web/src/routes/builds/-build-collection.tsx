@@ -1,4 +1,6 @@
 import { createContext, use, useMemo, type ReactNode } from 'react'
+import { WorkflowBadge } from '@/components/workflow-badge'
+import { Row } from '@/components/layout/row'
 import { Link } from '@tanstack/react-router'
 
 import { CollectionError, CollectionFrame } from '@/components/collection'
@@ -121,16 +123,19 @@ const columns: Array<DataTableColumnDef<Build>> = [
           {projectName(row.original)}
         </Link>
         {row.original.context?.pipeline_name ? (
-          <Link
-            to="/projects/$projectId/pipelines/$pipelineId"
-            params={{
-              projectId: row.original.project_id,
-              pipelineId: row.original.pipeline_id,
-            }}
-            className="text-muted-foreground hover:text-foreground hover:underline"
-          >
-            {row.original.context.pipeline_name}
-          </Link>
+          <Row gap={1.5} className="min-w-0">
+            <Link
+              to="/projects/$projectId/pipelines/$pipelineId"
+              params={{
+                projectId: row.original.project_id,
+                pipelineId: row.original.pipeline_id,
+              }}
+              className="truncate text-muted-foreground hover:text-foreground hover:underline"
+            >
+              {row.original.context.pipeline_name}
+            </Link>
+            <WorkflowBadge workflow={row.original.workflow} />
+          </Row>
         ) : null}
       </div>
     ),

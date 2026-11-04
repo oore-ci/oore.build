@@ -67,25 +67,25 @@ export function downloadFileName(path: string): string {
 export interface PipelineConfigSource {
   name: string
   config_path: string
-  config_path_explicit: boolean
 }
 
 /**
  * The other pipelines that would read a file committed at `path`: those with
- * that explicit path, and, for the default names, those that look for
- * `.oore.yaml` or `.oore.yml` themselves.
+ * that config path, and for `.oore.yml` those with `.oore.yaml`, which read
+ * it when `.oore.yaml` is missing.
  */
 export function pipelinesReadingPath(
   path: string,
   others: ReadonlyArray<PipelineConfigSource>,
 ): Array<string> {
-  const defaultName = path === '.oore.yaml' || path === '.oore.yml'
   return others
-    .filter((other) =>
-      other.config_path_explicit
-        ? other.config_path.trim() === path
-        : defaultName,
-    )
+    .filter((other) => {
+      const otherPath = other.config_path.trim()
+      return (
+        otherPath === path ||
+        (path === '.oore.yml' && otherPath === '.oore.yaml')
+      )
+    })
     .map((other) => other.name)
 }
 

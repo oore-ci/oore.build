@@ -39,7 +39,7 @@ use. Gradle signs every variant it builds with them, over the app's own
 signing config. When the command ends, the runner restores the file and
 deletes the keystore copy.
 
-The `android-sign` step then checks each artifact. One signed with the
+The **Verify Android signing** step (`android-sign`) then checks each artifact. One signed with the
 profile's key is kept; anything else is signed again in a private signer
 workspace and verified. Local developer signing stays independent: a
 repository can keep its own `key.properties` for developer machines without

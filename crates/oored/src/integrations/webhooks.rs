@@ -1247,6 +1247,40 @@ async fn record_webhook_processing_error(
     Ok(())
 }
 
+/// A branch push that may change the repository's config files refreshes
+/// their cache in the background. It never delays or fails the delivery.
+fn spawn_config_file_refresh(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    event: &NormalizedWebhookEvent,
+) {
+    use crate::repository_config_files::{push_touches_config_files, spawn_push_refresh};
+    let (Some(repo), Some(branch), Some(sha), None) = (
+        event.repository_full_name.as_deref(),
+        event.branch.as_deref(),
+        event.commit_sha.as_deref(),
+        event.tag.as_deref(),
+    ) else {
+        return;
+    };
+    // A deleted branch reports an all-zero commit.
+    if oore_contract::TriggerConfig::normalize_event(&event.event_type) != "push"
+        || sha.is_empty()
+        || sha.bytes().all(|byte| byte == b'0')
+        || !push_touches_config_files(event.changed_files.as_deref())
+    {
+        return;
+    }
+    spawn_push_refresh(
+        pool.clone(),
+        encryption_key.to_vec(),
+        event.integration_id.clone(),
+        repo.to_string(),
+        branch.to_string(),
+        sha.to_string(),
+    );
+}
+
 async fn process_webhook_event(
     pool: &sqlx::SqlitePool,
     encryption_key: &[u8],
@@ -1279,6 +1313,8 @@ async fn process_webhook_event(
         );
         return Ok(());
     }
+
+    spawn_config_file_refresh(pool, encryption_key, event);
 
     if decision == WebhookTriggerDecision::Trigger
         && let Some(repo) = event.repository_full_name.as_deref()

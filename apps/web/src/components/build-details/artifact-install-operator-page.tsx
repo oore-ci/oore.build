@@ -11,6 +11,7 @@ import { toast } from '@/lib/toast'
 
 import {
   artifactInstallReadiness,
+  copyInstallPageLink,
   getIosAppMetadata,
 } from '@/lib/artifact-install'
 import type { InstallDevice } from '@/lib/artifact-install'
@@ -41,13 +42,6 @@ function expiryLabel(expiresAt: number): string {
   return `Available until ${expiryFormatter.format(new Date(expiresAt * 1000))}`
 }
 
-function copyPageLink() {
-  void navigator.clipboard.writeText(window.location.href).then(
-    () => toast.success('Install link copied'),
-    () => toast.error('Could not copy link. Try again.'),
-  )
-}
-
 export default function OperatorArtifactInstallPage({
   artifact,
   build,
@@ -70,11 +64,10 @@ export default function OperatorArtifactInstallPage({
     artifact.expires_at <= Math.floor(time / 1000)
   const wrongPhone =
     (isIos && device === 'android') ||
-    (isAndroid && (device === 'iphone-safari' || device === 'iphone-other'))
-  const needsSafari = isIos && device === 'iphone-other'
+    (isAndroid && device.startsWith('iphone'))
+  const inAppBrowser = isIos && device === 'iphone-webview'
   const isDesktopIos = isIos && device === 'other'
-  const canInstall =
-    readiness.ready && !expired && !wrongPhone && !needsSafari && !isDesktopIos
+  const canInstall = readiness.ready && !expired && !wrongPhone && !isDesktopIos
   const appName =
     iosApp?.displayName ??
     build.context?.project_name ??
@@ -161,23 +154,24 @@ export default function OperatorArtifactInstallPage({
           </Alert>
         ) : null}
 
-        {needsSafari ? (
-          <Alert>
-            <HugeiconsIcon icon={Globe02Icon} />
-            <AlertTitle>Open this page in Safari</AlertTitle>
-            <AlertDescription>
-              iOS installation can only start from Safari on this iPhone.
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
         {isDesktopIos ? (
           <Alert>
             <HugeiconsIcon icon={SmartPhone01Icon} />
             <AlertTitle>Use a registered iPhone</AlertTitle>
             <AlertDescription>
-              Use Safari on a device included in this version’s provisioning
+              Open this page on a device included in this version’s provisioning
               profile.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        {inAppBrowser ? (
+          <Alert>
+            <HugeiconsIcon icon={Globe02Icon} />
+            <AlertTitle>This looks like an in-app browser</AlertTitle>
+            <AlertDescription>
+              Tap Install to try anyway. If the iOS install prompt does not
+              appear, open this link in Safari or Chrome.
             </AlertDescription>
           </Alert>
         ) : null}
@@ -234,7 +228,7 @@ export default function OperatorArtifactInstallPage({
           </div>
           <Button
             variant="ghost"
-            onClick={copyPageLink}
+            onClick={copyInstallPageLink}
             className="mt-2 w-full"
           >
             <HugeiconsIcon icon={Copy01Icon} />
@@ -258,7 +252,10 @@ export default function OperatorArtifactInstallPage({
           >
             <li className="flex gap-3">
               <span className="font-mono text-foreground">01</span>
-              <span>Use Safari on the registered iPhone.</span>
+              <span>
+                Open this page on the registered iPhone. Safari, Chrome and
+                other browsers all work.
+              </span>
             </li>
             <li className="flex gap-3">
               <span className="font-mono text-foreground">02</span>

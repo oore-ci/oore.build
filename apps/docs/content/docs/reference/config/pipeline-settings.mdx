@@ -1,11 +1,12 @@
 ---
 title: 'Pipeline settings'
 status: implemented
-description: 'Triggers, schedules, concurrency, timeout, approval, and size budget fields on a pipeline, with their UI labels, API fields, and limits.'
+description: 'Default workflow, per-workflow settings, health, triggers, schedules, concurrency, timeout, approval, and size budget fields on a pipeline, with their UI labels, API fields, and limits.'
 ---
 
 These settings live on the pipeline, not in the repository. The pipeline's
-**Edit** page sets them under **Triggers** and **Size budget**, and
+**Edit** page sets most of them, under **Default workflow**, **Triggers** and
+**Size budget**, and
 [Update a pipeline](/openapi/operations/update_pipeline) sets the same fields
 through the API. A commit cannot change them, except that a `.oore.yaml`
 version 2 file can replace the events, as described in
@@ -13,6 +14,7 @@ version 2 file can replace the events, as described in
 
 | UI label                                                       | API field                     |
 | -------------------------------------------------------------- | ----------------------------- |
+| **Default workflow**                                           | `workflow`                    |
 | **Events**                                                     | `trigger_config.events`       |
 | **Branch patterns (optional)**                                 | `trigger_config.branches`     |
 | **Tag patterns (optional)**                                    | `trigger_config.tags`         |
@@ -25,6 +27,90 @@ version 2 file can replace the events, as described in
 | **Which builds**                                               | `approval.events`             |
 | **Size budget** rules                                          | `size_budget.rules`           |
 | **When an artifact is over budget**                            | `size_budget.mode`            |
+
+Per-workflow settings live on the pipeline's **Workflows** tab and have their
+own API; see [Workflow settings](#workflow-settings). Health is read-only; see
+[Health](#health).
+
+## Default workflow
+
+`workflow` names the `.oore.yaml` version 2 workflow the pipeline runs when a
+build names none. `null`, shown as **Not set**, leaves the choice to each run.
+
+| A build                                | With a default workflow                                                                                               | Without one                                                                                                                  |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Started by hand or the API             | Runs the workflow it names, else the default                                                                          | Runs the workflow it names, else the file's only workflow. Several workflows and none named: refused with `invalid_workflow` |
+| Started by a push, pull request or tag | Runs the default if the event matches its `on`; without one, the top-level `on`; without either, the trigger settings | One build per workflow whose `on` matches, or whose trigger settings match when neither it nor the top level sets `on`       |
+
+The **Default workflow** selector lists the workflows in the pipeline's file
+on the project's default branch, and names that branch beneath it. Select
+**Change branch** to read the file from another branch, for example while the
+file is only on `develop`. The branch changes only what the selector shows;
+builds read the file at the commit they build.
+
+When the file on the default branch no longer defines the default workflow,
+the pipeline's health is **Workflow missing**, and builds that fall back to it
+fail.
+
+## Workflow settings
+
+Each workflow of the pipeline's file can have settings that replace, for this
+pipeline only, what the file and the pipeline would otherwise decide. Open
+the pipeline's **Workflows** tab and select **Settings** on a row. The table
+shows every workflow in the file, what it builds, signs with and publishes,
+and its approval.
+
+| UI label            | API field             | Value                                                                                                                                          |
+| ------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Android signing** | `android_identity_id` | An Android keystore from the [project's signing library](/build/sign/project-library). Replaces the file's `signing.android`                   |
+| **iOS signing**     | `ios_identity_id`     | An iOS distribution identity from the library. Replaces the file's `signing.ios`, and with it the iOS export method                            |
+| **Publishing**      | `publish_enabled`     | `false` stops every store upload of the workflow, whatever the file and the Publishing tab say. Unset follows them                             |
+| **Approval**        | `approval_required`   | `true` holds every build of the workflow for approval and `false` none, whatever its event. Unset follows the pipeline's [approval](#approval) |
+
+- [List workflow settings](/openapi/operations/list_pipeline_workflow_settings):
+  `GET /v1/pipelines/{pipeline_id}/workflow-settings`.
+- [Update workflow settings](/openapi/operations/update_pipeline_workflow_settings):
+  `PUT /v1/pipelines/{pipeline_id}/workflow-settings/{workflow}`. The request
+  replaces the workflow's settings, so a field left out is cleared. An empty
+  request removes them.
+- Changing `approval_required` needs the same role as changing the
+  pipeline's approval policy. The other fields need project developer access
+  or higher.
+- An identity must belong to the pipeline's project and be of the field's
+  kind.
+- A workflow whose settings pick an ad hoc iOS identity, and that uploads to
+  App Store Connect with publishing on, is refused with `invalid_signing`.
+- An identity a workflow's settings pick cannot be deleted from the library.
+- Settings stay when a workflow is removed from the file, and the table marks
+  the row **Not in the file**. They apply again if the workflow comes back.
+
+Each build records the identities and publish choice it was created with, so
+a later change applies to new builds only.
+
+## Health
+
+`health` on a pipeline says whether its file is usable on the project's
+default branch. Oore reads it from the files it last saw on that branch,
+never from GitHub or GitLab while a page loads, and leaves it out until it has
+read the repository once.
+
+| `health.state`     | UI label             | Meaning                                                                                      |
+| ------------------ | -------------------- | -------------------------------------------------------------------------------------------- |
+| `ok`               | **File OK**          | The file exists and parses, and defines the default workflow when the pipeline has one       |
+| `file_missing`     | **No file**          | No file at the config path, so builds use the settings saved in Oore                         |
+| `file_invalid`     | **Invalid file**     | The file exists but does not parse or validate; builds of this pipeline fail                 |
+| `workflow_missing` | **Workflow missing** | The file no longer defines the pipeline's default workflow; builds that fall back to it fail |
+
+| Field        | Value                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------------- |
+| `message`    | What is wrong, in one line. Absent for `ok`                                              |
+| `path`       | The file read. It differs from `config_path` when `.oore.yml` stands in for `.oore.yaml` |
+| `branch`     | The branch read                                                                          |
+| `commit_sha` | The commit read                                                                          |
+| `checked_at` | When Oore last read the branch, in Unix seconds                                          |
+
+When Oore reads the branch is described in
+[Add pipelines from the repository](/build/pipelines/from-the-repository#where-oore-looks).
 
 ## Events
 

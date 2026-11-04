@@ -36,8 +36,9 @@ pub struct DiscoverRepositoryWorkflowsQuery {
     path: Option<String>,
 }
 
-struct ProjectSource {
-    provider: ScmProvider,
+pub(crate) struct ProjectSource {
+    repository_id: String,
+    pub(crate) provider: ScmProvider,
     integration_id: String,
     installation_external_id: String,
     repository_external_id: String,
@@ -45,7 +46,7 @@ struct ProjectSource {
     host_url: String,
     auth_mode: String,
     local_path: Option<String>,
-    default_reference: Option<String>,
+    pub(crate) default_reference: Option<String>,
 }
 
 fn validate_reference(reference: &str) -> Result<String, (StatusCode, Json<ApiError>)> {
@@ -85,6 +86,52 @@ fn workflow_candidates(
         paths.push(path);
     }
     Ok((paths, false))
+}
+
+/// Whether a repository root entry is a config file such as
+/// `.oore.release.yaml`. `.oore.yaml` and `.oore.yml` are always tried first.
+fn is_root_config_name(name: &str) -> bool {
+    name.starts_with(".oore.")
+        && (name.ends_with(".yaml") || name.ends_with(".yml"))
+        && !name.contains('/')
+}
+
+fn is_yaml_name(name: &str) -> bool {
+    name.ends_with(".yaml") || name.ends_with(".yml")
+}
+
+/// Directories under `.oore` that discovery lists, one level deep.
+const MAX_CONFIG_SUBDIRECTORIES: usize = 8;
+
+/// `.oore/` config files from paths relative to `.oore`: files directly in it
+/// and one directory below, such as `.oore/release/nightly.yaml`.
+fn directory_config_paths<'a>(relative: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut top = Vec::new();
+    let mut nested = Vec::new();
+    for path in relative {
+        if !is_yaml_name(path) {
+            continue;
+        }
+        match path.matches('/').count() {
+            0 => top.push(format!(".oore/{path}")),
+            1 => nested.push(format!(".oore/{path}")),
+            _ => {}
+        }
+    }
+    top.sort();
+    nested.sort();
+    top.extend(nested);
+    top
+}
+
+fn root_config_paths<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut paths = names
+        .into_iter()
+        .filter(|name| is_root_config_name(name))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
 }
 
 /// The execution a discovered file stands for, in the v1 preview shape. A v2
@@ -307,6 +354,52 @@ async fn gitlab_token(
     Ok(token)
 }
 
+/// Root `.oore.*.yaml` files. Listing the root is best effort: a repository
+/// whose root is too large to list still discovers the usual paths.
+async fn gitlab_root_config_paths(
+    client: &reqwest::Client,
+    source: &ProjectSource,
+    token: &str,
+    reference: &str,
+) -> Vec<String> {
+    #[derive(Deserialize)]
+    struct TreeEntry {
+        name: String,
+        #[serde(rename = "type")]
+        kind: String,
+    }
+    let Ok(mut url) = gitlab_api_url(
+        &source.host_url,
+        &[
+            "projects",
+            &source.repository_external_id,
+            "repository",
+            "tree",
+        ],
+    ) else {
+        return Vec::new();
+    };
+    url.query_pairs_mut()
+        .append_pair("ref", reference)
+        .append_pair("per_page", "100");
+    let Ok(response) = gitlab_request(client, source, token, url).await else {
+        return Vec::new();
+    };
+    if !response.status().is_success() {
+        return Vec::new();
+    }
+    let Ok(body) = response_bytes(response, MAX_DIRECTORY_RESPONSE_BYTES).await else {
+        return Vec::new();
+    };
+    let entries = serde_json::from_slice::<Vec<TreeEntry>>(&body).unwrap_or_default();
+    root_config_paths(
+        entries
+            .iter()
+            .filter(|entry| entry.kind == "blob")
+            .map(|entry| entry.name.as_str()),
+    )
+}
+
 async fn discover_gitlab(
     pool: &sqlx::SqlitePool,
     encryption_key: &[u8],
@@ -329,6 +422,7 @@ async fn discover_gitlab(
         .query_pairs_mut()
         .append_pair("path", ".oore")
         .append_pair("ref", reference)
+        .append_pair("recursive", "true")
         .append_pair("per_page", "100");
     let tree_response = gitlab_request(client, source, &token, tree_url).await?;
     let tree_truncated = tree_response
@@ -341,32 +435,32 @@ async fn discover_gitlab(
     } else if tree_response.status().is_success() {
         #[derive(Deserialize)]
         struct TreeEntry {
-            name: String,
+            path: String,
             #[serde(rename = "type")]
             kind: String,
         }
         let body = response_bytes(tree_response, MAX_DIRECTORY_RESPONSE_BYTES).await?;
-        serde_json::from_slice::<Vec<TreeEntry>>(&body)
-            .map_err(|e| {
-                error!(error = %e, "failed to parse GitLab repository tree");
-                api_err(
-                    StatusCode::BAD_GATEWAY,
-                    "source_parse_error",
-                    "Failed to parse the GitLab repository tree",
-                )
-            })?
-            .into_iter()
-            .filter(|entry| {
-                entry.kind == "blob"
-                    && (entry.name.ends_with(".yaml") || entry.name.ends_with(".yml"))
-            })
-            .map(|entry| format!(".oore/{}", entry.name))
-            .collect()
+        let entries = serde_json::from_slice::<Vec<TreeEntry>>(&body).map_err(|e| {
+            error!(error = %e, "failed to parse GitLab repository tree");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "source_parse_error",
+                "Failed to parse the GitLab repository tree",
+            )
+        })?;
+        directory_config_paths(
+            entries
+                .iter()
+                .filter(|entry| entry.kind == "blob")
+                .filter_map(|entry| entry.path.strip_prefix(".oore/")),
+        )
     } else {
         return Err(provider_error("GitLab", tree_response.status()));
     };
 
-    let (paths, truncated) = workflow_candidates(explicit_path, directory_paths)?;
+    let root_paths = gitlab_root_config_paths(client, source, &token, reference).await;
+    let (paths, truncated) =
+        workflow_candidates(explicit_path, root_paths.into_iter().chain(directory_paths))?;
     let mut workflows = Vec::new();
     for path in paths {
         let mut file_url = gitlab_api_url(
@@ -447,6 +541,37 @@ fn github_contents_url(full_name: &str, path: &str, reference: &str) -> url::Url
     url
 }
 
+/// Root `.oore.*.yaml` files, best effort like [`gitlab_root_config_paths`].
+async fn github_root_config_paths(
+    client: &reqwest::Client,
+    source: &ProjectSource,
+    token: &str,
+    reference: &str,
+) -> Vec<String> {
+    #[derive(Deserialize)]
+    struct ContentEntry {
+        name: String,
+        #[serde(rename = "type")]
+        kind: String,
+    }
+    let Ok(response) = github_get(client, source, token, "", reference, false).await else {
+        return Vec::new();
+    };
+    if !response.status().is_success() {
+        return Vec::new();
+    }
+    let Ok(body) = response_bytes(response, MAX_DIRECTORY_RESPONSE_BYTES).await else {
+        return Vec::new();
+    };
+    let entries = serde_json::from_slice::<Vec<ContentEntry>>(&body).unwrap_or_default();
+    root_config_paths(
+        entries
+            .iter()
+            .filter(|entry| entry.kind == "file")
+            .map(|entry| entry.name.as_str()),
+    )
+}
+
 async fn discover_github(
     pool: &sqlx::SqlitePool,
     encryption_key: &[u8],
@@ -474,27 +599,54 @@ async fn discover_github(
             kind: String,
         }
         let body = response_bytes(tree_response, MAX_DIRECTORY_RESPONSE_BYTES).await?;
-        serde_json::from_slice::<Vec<ContentEntry>>(&body)
-            .map_err(|e| {
-                error!(error = %e, "failed to parse GitHub repository contents");
-                api_err(
-                    StatusCode::BAD_GATEWAY,
-                    "source_parse_error",
-                    "Failed to parse the GitHub repository contents",
-                )
-            })?
-            .into_iter()
-            .filter(|entry| {
-                entry.kind == "file"
-                    && (entry.name.ends_with(".yaml") || entry.name.ends_with(".yml"))
-            })
-            .map(|entry| format!(".oore/{}", entry.name))
-            .collect()
+        let entries = serde_json::from_slice::<Vec<ContentEntry>>(&body).map_err(|e| {
+            error!(error = %e, "failed to parse GitHub repository contents");
+            api_err(
+                StatusCode::BAD_GATEWAY,
+                "source_parse_error",
+                "Failed to parse the GitHub repository contents",
+            )
+        })?;
+        let mut relative = entries
+            .iter()
+            .filter(|entry| entry.kind == "file")
+            .map(|entry| entry.name.clone())
+            .collect::<Vec<_>>();
+        // One directory below `.oore`, best effort like the root listing.
+        let mut directories = entries
+            .iter()
+            .filter(|entry| entry.kind == "dir")
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>();
+        directories.sort();
+        for directory in directories.into_iter().take(MAX_CONFIG_SUBDIRECTORIES) {
+            let path = format!(".oore/{directory}");
+            let Ok(response) = github_get(client, source, &token, &path, reference, false).await
+            else {
+                continue;
+            };
+            if !response.status().is_success() {
+                continue;
+            }
+            let Ok(body) = response_bytes(response, MAX_DIRECTORY_RESPONSE_BYTES).await else {
+                continue;
+            };
+            relative.extend(
+                serde_json::from_slice::<Vec<ContentEntry>>(&body)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|entry| entry.kind == "file")
+                    .map(|entry| format!("{directory}/{}", entry.name)),
+            );
+        }
+        directory_config_paths(relative.iter().map(String::as_str))
     } else {
         return Err(provider_error("GitHub", tree_response.status()));
     };
 
-    let (paths, truncated) = workflow_candidates(explicit_path, directory_paths)?;
+    let root_paths = github_root_config_paths(client, source, &token, reference).await;
+    let (paths, truncated) =
+        workflow_candidates(explicit_path, root_paths.into_iter().chain(directory_paths))?;
     let mut workflows = Vec::new();
     for path in paths {
         let response = github_get(client, source, &token, &path, reference, true).await?;
@@ -593,15 +745,12 @@ async fn discover_local(
             "-C",
             repo_path.as_str(),
             "ls-tree",
+            "-r",
             "--name-only",
             &format!("{commit}:.oore"),
         ]);
         let directory_paths = match read_limited_stdout(tree, MAX_DIRECTORY_RESPONSE_BYTES) {
-            Ok(Some(bytes)) => String::from_utf8_lossy(&bytes)
-                .lines()
-                .filter(|name| name.ends_with(".yaml") || name.ends_with(".yml"))
-                .map(|name| format!(".oore/{name}"))
-                .collect(),
+            Ok(Some(bytes)) => directory_config_paths(String::from_utf8_lossy(&bytes).lines()),
             Ok(None) => Vec::new(),
             Err(_) => {
                 return Err(api_err(
@@ -611,7 +760,16 @@ async fn discover_local(
                 ));
             }
         };
-        let (paths, truncated) = workflow_candidates(explicit_path.as_deref(), directory_paths)?;
+        let mut root = Command::new("git");
+        root.args(["-C", repo_path.as_str(), "ls-tree", "--name-only", &commit]);
+        let root_paths = match read_limited_stdout(root, MAX_DIRECTORY_RESPONSE_BYTES) {
+            Ok(Some(bytes)) => root_config_paths(String::from_utf8_lossy(&bytes).lines()),
+            _ => Vec::new(),
+        };
+        let (paths, truncated) = workflow_candidates(
+            explicit_path.as_deref(),
+            root_paths.into_iter().chain(directory_paths),
+        )?;
         let mut workflows = Vec::new();
         for path in paths {
             let object = format!("{commit}:{path}");
@@ -679,12 +837,12 @@ async fn discover_local(
     })?
 }
 
-async fn load_project_source(
+pub(crate) async fn load_project_source(
     pool: &sqlx::SqlitePool,
     project_id: &str,
 ) -> Result<ProjectSource, (StatusCode, Json<ApiError>)> {
     let row = sqlx::query(
-        "SELECT i.id AS integration_id, i.provider, i.host_url, i.auth_mode, \
+        "SELECT p.repository_id, i.id AS integration_id, i.provider, i.host_url, i.auth_mode, \
                 inst.external_id AS installation_external_id, r.external_id AS repository_external_id, \
                 r.full_name, r.default_branch AS repository_default_branch, \
                 p.default_branch AS project_default_branch \
@@ -727,6 +885,7 @@ async fn load_project_source(
         .or(repository_default)
         .filter(|value| !value.trim().is_empty());
     Ok(ProjectSource {
+        repository_id: row.get("repository_id"),
         provider,
         integration_id: row.get("integration_id"),
         installation_external_id: row.get("installation_external_id"),
@@ -739,14 +898,55 @@ async fn load_project_source(
     })
 }
 
+/// Config files at `reference`, read through the project's source provider.
+/// The bool is true when more files existed than discovery reads.
+pub(crate) async fn discover_at(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    source: &ProjectSource,
+    reference: &str,
+    explicit_path: Option<&str>,
+) -> Result<(Vec<RepositoryWorkflowPreview>, bool), (StatusCode, Json<ApiError>)> {
+    match source.provider {
+        ScmProvider::Github => {
+            discover_github(pool, encryption_key, source, reference, explicit_path).await
+        }
+        ScmProvider::Gitlab => {
+            discover_gitlab(pool, encryption_key, source, reference, explicit_path).await
+        }
+        ScmProvider::LocalGit => {
+            discover_local(
+                source.local_path.as_deref().unwrap_or_default(),
+                reference,
+                explicit_path,
+            )
+            .await
+        }
+    }
+}
+
+/// The commit `branch` points at, through the project's source provider.
+pub(crate) async fn resolve_source_branch(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    source: &ProjectSource,
+    branch: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    let branch = validate_reference(branch)?;
+    crate::integrations::resolve_branch_commit(pool, encryption_key, &source.repository_id, &branch)
+        .await
+}
+
 // ── Reading one pipeline file ───────────────────────────────────
 
-/// Paths the runner tries, in order, for a pipeline's repository file.
-fn pipeline_config_candidates(config_path: &str, config_path_explicit: bool) -> Vec<String> {
-    if config_path_explicit {
-        vec![config_path.trim().to_string()]
+/// Paths the runner tries, in order, for a pipeline's repository file:
+/// `config_path`, then the legacy `.oore.yml` when it is `.oore.yaml`.
+pub(crate) fn config_path_candidates(config_path: &str) -> Vec<String> {
+    let path = config_path.trim();
+    if path == ".oore.yaml" {
+        vec![path.to_string(), ".oore.yml".to_string()]
     } else {
-        vec![".oore.yaml".to_string(), ".oore.yml".to_string()]
+        vec![path.to_string()]
     }
 }
 
@@ -860,7 +1060,6 @@ pub(crate) async fn load_pipeline_file(
     encryption_key: &[u8],
     project_id: &str,
     config_path: &str,
-    config_path_explicit: bool,
     reference: Option<&str>,
 ) -> Result<Option<PipelineFile>, (StatusCode, Json<ApiError>)> {
     let source = load_project_source(pool, project_id).await?;
@@ -868,7 +1067,7 @@ pub(crate) async fn load_pipeline_file(
         return Ok(None);
     };
     let reference = validate_reference(reference)?;
-    for path in pipeline_config_candidates(config_path, config_path_explicit) {
+    for path in config_path_candidates(config_path) {
         if validate_repository_config_path(&path).is_err() {
             continue;
         }
@@ -886,6 +1085,16 @@ pub(crate) async fn load_pipeline_file(
         }));
     }
     Ok(Some(PipelineFile::Missing))
+}
+
+/// The ref [`load_pipeline_file`] reads when none is asked for.
+pub(crate) async fn project_default_reference(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+) -> Result<Option<String>, (StatusCode, Json<ApiError>)> {
+    Ok(load_project_source(pool, project_id)
+        .await?
+        .default_reference)
 }
 
 /// `GET /v1/projects/{project_id}/repository-workflows` — discover repository-owned configs.
@@ -929,36 +1138,14 @@ pub async fn discover_repository_workflows(
         ));
     }
 
-    let (workflows, truncated) = match source.provider {
-        ScmProvider::Github => {
-            discover_github(
-                &pool,
-                &state.encryption_key,
-                &source,
-                &reference,
-                explicit_path,
-            )
-            .await?
-        }
-        ScmProvider::Gitlab => {
-            discover_gitlab(
-                &pool,
-                &state.encryption_key,
-                &source,
-                &reference,
-                explicit_path,
-            )
-            .await?
-        }
-        ScmProvider::LocalGit => {
-            discover_local(
-                source.local_path.as_deref().expect("local path loaded"),
-                &reference,
-                explicit_path,
-            )
-            .await?
-        }
-    };
+    let (workflows, truncated) = discover_at(
+        &pool,
+        &state.encryption_key,
+        &source,
+        &reference,
+        explicit_path,
+    )
+    .await?;
 
     // A missing ref and a valid repository with no workflow files both produce
     // provider 404s. Resolve only the empty result so the latter stays a normal
@@ -1003,7 +1190,70 @@ pub async fn discover_repository_workflows(
 
 #[cfg(test)]
 mod preview_tests {
-    use super::preview;
+    use super::{
+        config_path_candidates, directory_config_paths, preview, root_config_paths,
+        workflow_candidates,
+    };
+
+    #[test]
+    fn oore_directory_files_are_found_one_level_deep() {
+        assert_eq!(
+            directory_config_paths([
+                "release/nightly.yaml",
+                "ci.yaml",
+                "notes.md",
+                "a/b/too-deep.yaml",
+                "adhoc.yml",
+            ]),
+            [
+                ".oore/adhoc.yml",
+                ".oore/ci.yaml",
+                ".oore/release/nightly.yaml"
+            ]
+        );
+    }
+
+    #[test]
+    fn oore_yaml_reads_a_legacy_oore_yml() {
+        assert_eq!(
+            config_path_candidates(".oore.yaml"),
+            [".oore.yaml", ".oore.yml"]
+        );
+        assert_eq!(config_path_candidates(".oore.yml"), [".oore.yml"]);
+        assert_eq!(
+            config_path_candidates(".oore/release.yaml"),
+            [".oore/release.yaml"]
+        );
+    }
+
+    #[test]
+    fn root_config_files_are_offered_after_the_default_names() {
+        let root = root_config_paths([
+            "README.md",
+            ".oore.yaml",
+            ".oore.release.yaml",
+            ".oore.adhoc.yml",
+            ".oorerc",
+            ".oore",
+        ]);
+        assert_eq!(
+            root,
+            [".oore.adhoc.yml", ".oore.release.yaml", ".oore.yaml"]
+        );
+        let (paths, truncated) =
+            workflow_candidates(None, root.into_iter().chain([".oore/ci.yaml".into()])).unwrap();
+        assert!(!truncated);
+        assert_eq!(
+            paths,
+            [
+                ".oore.yaml",
+                ".oore.yml",
+                ".oore.adhoc.yml",
+                ".oore.release.yaml",
+                ".oore/ci.yaml"
+            ]
+        );
+    }
 
     #[test]
     fn v1_and_v2_files_preview_in_the_same_shape() {

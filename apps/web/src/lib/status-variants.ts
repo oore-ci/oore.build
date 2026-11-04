@@ -4,6 +4,7 @@ import type {
   BuildStatus,
   IntegrationStatus,
   NotificationDeliveryStatus,
+  PipelineHealthState,
   RunnerPolicyBlockReason,
   RunnerStatus,
   TriggerType,
@@ -101,6 +102,7 @@ export type StatusKind =
   | 'delivery'
   | 'enabled'
   | 'integration'
+  | 'pipeline_health'
   | 'runner'
   | 'token'
   | 'user'
@@ -121,6 +123,21 @@ const APPROVAL_STATE_VARIANT = {
   approved: 'success',
   rejected: 'destructive',
 } satisfies Record<BuildApprovalState, BadgeVariant>
+
+const PIPELINE_HEALTH_LABEL = {
+  ok: 'File OK',
+  file_missing: 'No file',
+  file_invalid: 'Invalid file',
+  workflow_missing: 'Workflow missing',
+} satisfies Record<PipelineHealthState, string>
+
+const PIPELINE_HEALTH_VARIANT = {
+  ok: 'success',
+  // A pipeline without a file builds from the settings saved in Oore.
+  file_missing: 'outline',
+  file_invalid: 'destructive',
+  workflow_missing: 'warning',
+} satisfies Record<PipelineHealthState, BadgeVariant>
 
 const INTEGRATION_STATUS_LABEL = {
   active: 'Active',
@@ -223,6 +240,11 @@ export function getStatusPresentation(
       return {
         label: lookupLabel(INTEGRATION_STATUS_LABEL, value),
         variant: getIntegrationStatusVariant(value),
+      }
+    case 'pipeline_health':
+      return {
+        label: lookupLabel(PIPELINE_HEALTH_LABEL, value),
+        variant: lookupVariant(PIPELINE_HEALTH_VARIANT, value),
       }
     case 'runner':
       return {
