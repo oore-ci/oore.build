@@ -753,7 +753,7 @@ impl Stage {
 /// went live and phased release decides. State names follow the
 /// `AppVersionState` and older `AppStoreVersionState` enums of the App
 /// Store Connect API 4.6 OpenAPI spec.
-fn review_outcome(version_state: &str, version: &str) -> Option<(ReleaseState, String)> {
+pub(crate) fn review_outcome(version_state: &str, version: &str) -> Option<(ReleaseState, String)> {
     let outcome = |state, reason: &str| Some((state, reason.to_string()));
     match version_state {
         "READY_FOR_SALE" | "READY_FOR_DISTRIBUTION" | "PREORDER_READY_FOR_SALE" => None,
@@ -1728,6 +1728,61 @@ impl AppStoreReleaseClient {
         }
     }
 
+    /// Release now, resubmit, pull from review, or read Apple again. Apple's
+    /// answer reaches the release through the monitor, which polls next.
+    async fn act(&self, release: &Release, action: releases::StoreAction) -> anyhow::Result<()> {
+        type LinkIds = (String, Option<String>, Option<String>, String);
+        let link: Option<LinkIds> = sqlx::query_as(
+            "SELECT pipeline_id, asc_app_id, asc_version_id, config FROM app_store_release_links
+             WHERE release_id = ?1",
+        )
+        .bind(&release.id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((pipeline_id, app_id, version_id, config)) = link else {
+            anyhow::bail!("Oore does not follow this release in App Store Connect");
+        };
+        if action != releases::StoreAction::Retry {
+            let (Some(app_id), Some(version_id)) = (app_id, version_id) else {
+                anyhow::bail!("This release has no App Store version yet");
+            };
+            let row = load_signing_key_row(&self.pool, &pipeline_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("pipeline has no iOS signing settings"))?;
+            let creds = decrypt_credentials(&row, &self.encryption_key)?
+                .ok_or_else(|| anyhow::anyhow!("pipeline has no App Store Connect API key"))?;
+            let asc = AppStoreConnect::new(&self.client, &creds);
+            let config: AppStorePublishConfig = serde_json::from_str(&config).unwrap_or_default();
+            match action {
+                releases::StoreAction::ReleaseNow => asc.release_version(&version_id).await,
+                releases::StoreAction::Resubmit => {
+                    asc.submit_for_review(&app_id, &version_id, config.cancel_previous_submission)
+                        .await
+                }
+                releases::StoreAction::PullFromReview => {
+                    asc.cancel_review(&app_id, &version_id).await
+                }
+                releases::StoreAction::Retry => Ok(()),
+            }
+            .map_err(|error| anyhow::anyhow!(error.0))?;
+        }
+        // Read Apple on the next monitor pass; a resubmitted version is
+        // followed through review again.
+        sqlx::query(
+            "UPDATE app_store_release_links
+             SET next_poll_at = 0,
+                 stage = CASE WHEN ?2 AND stage = 'done' THEN 'review' ELSE stage END,
+                 updated_at = ?3
+             WHERE release_id = ?1",
+        )
+        .bind(&release.id)
+        .bind(action == releases::StoreAction::Resubmit)
+        .bind(now_unix())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     async fn apply_change(&self, release: &Release, change: StoreChange) -> anyhow::Result<()> {
         let target = match change {
             // Apple's schedule decides the percentage.
@@ -2157,6 +2212,18 @@ impl ReleaseStoreClient for StoreRouter {
             Box::pin(self.app_store.apply_change(release, change))
         } else {
             self.other.apply(release, change)
+        }
+    }
+
+    fn act<'a>(
+        &'a self,
+        release: &'a Release,
+        action: releases::StoreAction,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        if release.store == ReleaseStore::AppStore {
+            Box::pin(self.app_store.act(release, action))
+        } else {
+            self.other.act(release, action)
         }
     }
 

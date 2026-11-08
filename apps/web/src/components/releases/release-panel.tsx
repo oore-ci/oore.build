@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { Release, ReleaseHistoryEntry } from '@oore/client/models'
+import { StoreErrorMessage } from '@/components/build-details/store-wait-alert'
 import { ReleaseActions } from '@/components/releases/release-actions'
 import {
   ReleaseRollout,
@@ -23,11 +24,15 @@ import { relativeTime } from '@/lib/format-utils'
 import {
   formatRolloutPercent,
   getReleaseHealthVariant,
+  isAdoptedRelease,
+  needsStoreAction,
   RELEASE_HEALTH_LABEL,
+  releaseConsoleLink,
   releaseDestinationLabel,
   releaseNextStep,
   releaseTransitionLabel,
   releaseVersionLabel,
+  releaseWaitSummary,
 } from '@/lib/releases'
 import { cn } from '@/lib/utils'
 import { Stack } from '@/components/layout/stack'
@@ -132,7 +137,17 @@ function ReleaseCard({
     >
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
         <Stack gap={1} className="min-w-0">
-          <CardTitle>{releaseDestinationLabel(current)}</CardTitle>
+          <CardTitle className="flex flex-wrap items-center gap-2">
+            {releaseDestinationLabel(current)}
+            {isAdoptedRelease(current) ? (
+              <Badge
+                variant="outline"
+                title="Made in the store console, not uploaded by Oore. Oore follows it and its controls work."
+              >
+                Found in store
+              </Badge>
+            ) : null}
+          </CardTitle>
           <Text variant="mono" className="tabular-nums">
             {releaseVersionLabel(current)}
             {current.package_name ? ` · ${current.package_name}` : ''}
@@ -143,6 +158,7 @@ function ReleaseCard({
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
+        <StoreActionNotice release={current} />
         <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
           <ReleaseRollout release={current} />
           <Stack gap={1}>
@@ -177,7 +193,9 @@ function ReleaseCard({
             schedule; Oore's rollout steps only drive Google Play. */}
         {current.store === 'google_play' || current.approved_by_email ? (
           <Text variant="caption">
-            {current.store === 'google_play' ? (
+            {current.store === 'google_play' && !current.auto_rollout ? (
+              <>No schedule: Oore only changes this rollout when asked.</>
+            ) : current.store === 'google_play' ? (
               <>
                 Schedule:{' '}
                 {(current.policy.steps ?? [])
@@ -210,6 +228,48 @@ function ReleaseCard({
         </section>
       </CardContent>
     </Card>
+  )
+}
+
+/** Why a blocked or rejected release is stuck, with the console that fixes it. */
+function StoreActionNotice({ release }: { release: Release }) {
+  const link = releaseConsoleLink(release)
+  if (!needsStoreAction(release)) {
+    return link ? (
+      <a
+        href={link.href}
+        target="_blank"
+        rel="noreferrer"
+        className={cn(
+          textVariants({ variant: 'caption' }),
+          'w-fit underline underline-offset-2',
+        )}
+      >
+        {link.label}
+      </a>
+    ) : null
+  }
+  const summary = releaseWaitSummary(release)
+  return (
+    <Alert variant={release.state === 'rejected' ? 'destructive' : 'default'}>
+      <AlertDescription className="flex flex-col gap-2">
+        <span className="font-medium text-foreground">{summary?.title}</span>
+        {release.store_error ? (
+          <StoreErrorMessage message={release.store_error} />
+        ) : null}
+        <span className="whitespace-pre-line">{summary?.description}</span>
+        {link ? (
+          <a
+            href={link.href}
+            target="_blank"
+            rel="noreferrer"
+            className="w-fit font-medium underline underline-offset-2"
+          >
+            {link.label}
+          </a>
+        ) : null}
+      </AlertDescription>
+    </Alert>
   )
 }
 

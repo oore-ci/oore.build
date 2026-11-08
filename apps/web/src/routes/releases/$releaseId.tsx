@@ -1,6 +1,7 @@
 import { createFileRoute, Link, Navigate } from '@tanstack/react-router'
 
 import PageLayout from '@/components/page-layout'
+import { ReleasePanel } from '@/components/releases/release-panel'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -30,7 +31,23 @@ function ReleaseRedirect() {
   const { releaseId } = Route.useParams()
   const { data, error, refetch } = useRelease(releaseId)
 
-  if (data) {
+  // A release found in the store has no build page; it shows here.
+  if (data && !data.release.build_id) {
+    return (
+      <PageLayout>
+        <PageMeta title="Release" noindex />
+        <ReleasePanel
+          error={null}
+          isLoading={false}
+          onRetry={() => void refetch()}
+          releases={[data.release]}
+          selectedReleaseId={data.release.id}
+        />
+      </PageLayout>
+    )
+  }
+
+  if (data?.release.build_id) {
     return (
       <Navigate
         to="/builds/$buildId"

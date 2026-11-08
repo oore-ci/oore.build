@@ -155,6 +155,7 @@ use utoipa::{
         operations::register_pipeline_ios_device,
         // ── Pipeline Publishing ──
         operations::get_pipeline_google_play_publish,
+        operations::get_pipeline_publish_readiness,
         operations::update_pipeline_google_play_publish,
         operations::test_pipeline_google_play_credentials,
         // ── Store Credentials ──
@@ -202,6 +203,15 @@ use utoipa::{
         operations::halt_release,
         operations::complete_release,
         operations::approve_release,
+        operations::retry_release,
+        operations::release_now_release,
+        operations::resubmit_release,
+        operations::pull_from_review_release,
+        operations::mark_sent_for_review_release,
+        operations::mark_rejected_release,
+        operations::attach_schedule_release,
+        operations::detach_schedule_release,
+        operations::sync_store_releases,
         operations::list_release_events,
         // ── Environments ──
         operations::list_project_environments,
@@ -546,6 +556,15 @@ use utoipa::{
         oore_contract::ReleaseDetailResponse,
         oore_contract::ListReleaseActivityResponse,
         oore_contract::ReleaseActionRequest,
+        oore_contract::ReleaseOrigin,
+        oore_contract::BuildReleaseOutcome,
+        oore_contract::StoreSyncRequest,
+        oore_contract::StoreSyncResponse,
+        oore_contract::ReadinessLevel,
+        oore_contract::StoreReadinessItem,
+        oore_contract::StoreReadinessResponse,
+        oore_contract::PublishPreflight,
+        oore_contract::AppStoreReleaseType,
         oore_contract::CreateReleaseRequest,
         // Environments
         oore_contract::ProjectEnvironment,
@@ -2207,6 +2226,19 @@ mod operations {
     )]
     pub(super) fn get_pipeline_google_play_publish() {}
 
+    /// Check store readiness
+    ///
+    /// What would stop the pipeline's next store submission: what App Store Connect shows now (unanswered age rating questions, missing App Review contact details, another open submission) and the refusals Apple or Google gave the last time, remembered until a submission goes through. Also the pre-flight level the next build uses. Requires project read access.
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/publish/readiness", tag = "Pipeline Publishing",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Store readiness", body = StoreReadinessResponse),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_pipeline_publish_readiness() {}
+
     /// Update Google Play publish settings
     ///
     /// Requires the manage pipelines project permission. The service account
@@ -2785,6 +2817,7 @@ mod operations {
             ("project_id" = Option<String>, Query, description = "Filter by project"),
             ("build_id" = Option<String>, Query, description = "Filter by build"),
             ("state" = Option<String>, Query, description = "Filter by one state or comma-separated states"),
+            ("origin" = Option<String>, Query, description = "Filter by origin: oore or adopted"),
             ("limit" = Option<i64>, Query, description = "Page size, 1 to 200 (default 50)"),
             ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
         ),
@@ -2932,6 +2965,163 @@ mod operations {
         )
     )]
     pub(super) fn approve_release() {}
+
+    /// Check the store again
+    ///
+    /// Reads App Store Connect on the next monitor pass, for a blocked release or one waiting on Apple. Requires developer or maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/retry", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn retry_release() {}
+
+    /// Release the approved version now
+    ///
+    /// Asks App Store Connect to release a version App Review approved and that waits for a manual or scheduled release. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/release_now", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn release_now_release() {}
+
+    /// Resubmit for review
+    ///
+    /// Submits a rejected App Store version for App Review again, with the build it has. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/resubmit", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn resubmit_release() {}
+
+    /// Pull from review
+    ///
+    /// Takes the App Store version out of App Review, waiting or in review, or approved and not yet released. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/pull_from_review", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn pull_from_review_release() {}
+
+    /// Mark sent for review
+    ///
+    /// Records that a Play release held in Play Console was sent for review there. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/mark_sent_for_review", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn mark_sent_for_review_release() {}
+
+    /// Mark rejected
+    ///
+    /// Records that Google Play rejected a release Play Console held for review. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/mark_rejected", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn mark_rejected_release() {}
+
+    /// Attach a rollout schedule
+    ///
+    /// Hands a Play rollout's steps to Oore with `policy`, also for a release made outside Oore. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/attach_schedule", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn attach_schedule_release() {}
+
+    /// Detach the rollout schedule
+    ///
+    /// Stops Oore stepping the rollout; it stays where it is until changed. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/detach_schedule", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn detach_schedule_release() {}
+
+    /// Sync store releases
+    ///
+    /// Reads Google Play tracks and App Store Connect versions for the apps Oore's pipelines publish, and follows the releases made outside Oore as `adopted` releases. Runs every 15 minutes on its own. Requires maintainer of each project synced.
+    #[utoipa::path(post, path = "/v1/releases/store-sync", tag = "Releases",
+        request_body(content = StoreSyncRequest, description = "Optional project"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "What the sync read and adopted", body = StoreSyncResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+        )
+    )]
+    pub(super) fn sync_store_releases() {}
 
     /// List release events
     ///

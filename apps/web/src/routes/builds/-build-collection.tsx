@@ -46,11 +46,13 @@ import { cn } from '@/lib/utils'
 const StoreWaitContext = createContext<ReadonlyMap<string, Array<Release>>>(
   new Map(),
 )
-const STORE_WAIT_QUERY = 'uploading,processing,in_review'
+const STORE_WAIT_QUERY =
+  'uploading,processing,blocked,in_review,approved,rejected'
 
 function selectStoreWaits({ releases }: { releases: Array<Release> }) {
   const byBuild = new Map<string, Array<Release>>()
   for (const release of releases.filter(isWaitingOnStore)) {
+    if (!release.build_id) continue
     byBuild.set(release.build_id, [
       ...(byBuild.get(release.build_id) ?? []),
       release,

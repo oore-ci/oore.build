@@ -496,10 +496,25 @@ pub async fn get_job_publish_plan(
         .map(|(config, _)| config)
         .filter(|config| config.enabled);
 
-    let app_store =
+    let mut app_store =
         crate::app_store_publish::runner_plan(&state.db, &state.encryption_key, &pipeline_id)
             .await
             .map_err(|e| store_error("Failed to load App Store publish settings", e))?;
+    // The runner gets a decided pre-flight level, not `auto`.
+    let mut google_play = google_play;
+    if let Some(config) = google_play.as_mut() {
+        config.preflight =
+            crate::store_readiness::resolve_preflight(&state.db, &pipeline_id, config.preflight)
+                .await;
+    }
+    if let Some(plan) = app_store.as_mut() {
+        plan.config.preflight = crate::store_readiness::resolve_preflight(
+            &state.db,
+            &pipeline_id,
+            plan.config.preflight,
+        )
+        .await;
+    }
 
     Ok(Json(RunnerPublishPlan {
         changelog,

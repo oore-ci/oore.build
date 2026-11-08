@@ -12,7 +12,10 @@ import type {
 export const RELEASE_STATE_LABEL = {
   uploading: 'Uploading',
   processing: 'Processing',
+  blocked: 'Blocked',
   in_review: 'In review',
+  approved: 'Approved',
+  rejected: 'Rejected',
   rolling: 'Rolling out',
   paused: 'Paused',
   halted: 'Halted',
@@ -24,7 +27,11 @@ export const RELEASE_STATE_LABEL = {
 const RELEASE_STATE_VARIANT = {
   uploading: 'info',
   processing: 'info',
+  // Someone has to act in the store; nothing moves until they do.
+  blocked: 'warning',
   in_review: 'info',
+  approved: 'info',
+  rejected: 'destructive',
   rolling: 'secondary',
   paused: 'warning',
   halted: 'destructive',
@@ -61,7 +68,10 @@ const TERMINAL_RELEASE_STATES = new Set<ReleaseState>(['complete', 'failed'])
 export const LIVE_RELEASE_STATES = [
   'uploading',
   'processing',
+  'blocked',
   'in_review',
+  'approved',
+  'rejected',
   'rolling',
   'paused',
   'halted',
@@ -86,7 +96,10 @@ export function isMovingRelease(release: Pick<Release, 'state'>): boolean {
 const STORE_WAIT_STATES = new Set<ReleaseState>([
   'uploading',
   'processing',
+  'blocked',
   'in_review',
+  'approved',
+  'rejected',
 ])
 
 /**
@@ -105,8 +118,8 @@ export function isWaitingOnStore(
 
 /**
  * The store's last refusal while Oore moves a live release forward, such as
- * App Store Connect blocking a review submission. Oore retries until it
- * clears or a day passes.
+ * App Store Connect blocking a review submission. Oore keeps retrying until
+ * it clears; a refusal also blocks the release.
  */
 export function releaseStoreError(
   release: Pick<Release, 'state' | 'store_error' | 'store_error_since'>,
@@ -139,6 +152,7 @@ export function releaseStoreStatus(
 export function releaseStateLabel(
   release: Pick<Release, 'awaiting_approval' | 'state'>,
 ): string {
+  if (release.state === 'blocked') return RELEASE_STATE_LABEL.blocked
   if (releaseStoreError(release)) return 'Needs attention'
   if (release.awaiting_approval) return 'Awaiting approval'
   const status = releaseStoreStatus(release)
@@ -149,8 +163,33 @@ export function releaseStateLabel(
 export function releaseStateBadgeVariant(
   release: Pick<Release, 'awaiting_approval' | 'state'>,
 ): BadgeVariant {
+  if (release.state === 'rejected') return 'destructive'
   if (releaseStoreError(release) || release.awaiting_approval) return 'warning'
   return RELEASE_STATE_VARIANT[release.state]
+}
+
+/** Releases someone has to act on in the store before anything moves. */
+export function needsStoreAction(release: Pick<Release, 'state'>): boolean {
+  return release.state === 'blocked' || release.state === 'rejected'
+}
+
+/** Where to fix or follow the release: App Store Connect or Play Console. */
+export function releaseConsoleLink(
+  release: Pick<Release, 'console_url' | 'store'>,
+): { href: string; label: string } | null {
+  if (!release.console_url) return null
+  return {
+    href: release.console_url,
+    label:
+      release.store === 'app_store'
+        ? 'Open in App Store Connect'
+        : 'Open in Play Console',
+  }
+}
+
+/** A release found in the store rather than uploaded by Oore. */
+export function isAdoptedRelease(release: Pick<Release, 'origin'>): boolean {
+  return release.origin === 'adopted'
 }
 
 function isTestFlight(release: Pick<Release, 'store' | 'track'>) {
@@ -196,8 +235,12 @@ export function releaseStageIndex(
       return 0
     case 'processing':
       return 1
+    case 'blocked':
     case 'in_review':
+    case 'rejected':
       return release.store === 'google_play' ? 1 : 2
+    case 'approved':
+      return release.store === 'google_play' ? 2 : 3
     default:
       return release.store === 'google_play' ? 2 : 3
   }
@@ -221,12 +264,23 @@ export function releaseWaitSummary(
   const version = releaseVersionLabel(release)
   const destination = releaseDestinationLabel(release)
   const storeError = releaseStoreError(release)
-  if (storeError) {
-    const store =
-      release.store === 'app_store' ? 'App Store Connect' : 'The store'
+  const consoleName =
+    release.store === 'app_store' ? 'App Store Connect' : 'Play Console'
+  if (release.state === 'rejected') {
     return {
-      title: `${store} refused the next step for ${version}`,
-      description: `Fix what it asks for there; Oore retries every 5 minutes${storeError.since ? `, and has been retrying since ${relativeTime(storeError.since)}` : ''}. After a day of failures Oore marks the release failed.`,
+      title: `${release.store === 'app_store' ? 'Apple' : 'Google'} rejected ${version}`,
+      description: `${release.state_reason ?? 'Read why in ' + consoleName + '.'} Fix it there, then resubmit.`,
+      blocked: true,
+    }
+  }
+  if (release.state === 'blocked' || storeError) {
+    // A store error is shown as it came; the summary says what Oore does.
+    const description = storeError
+      ? `Fix it in ${consoleName}. Oore checks again every 5 minutes${storeError.since ? `, and has been since ${relativeTime(storeError.since)}` : ''}, and carries on once it is accepted.`
+      : (release.state_reason ?? `${consoleName} is waiting on you.`)
+    return {
+      title: `${version} is blocked in ${consoleName}`,
+      description,
       blocked: true,
     }
   }
@@ -257,6 +311,14 @@ export function releaseWaitSummary(
         return isTestFlight(release)
           ? appleBetaReviewSummary(release, since)
           : appleReviewSummary(release, since)
+      case 'approved':
+        return {
+          title: 'Approved by Apple',
+          description:
+            release.store_status === 'PENDING_DEVELOPER_RELEASE'
+              ? `${version} passed review and waits for you to release it. Use Release now, or release it in App Store Connect.`
+              : `${version} passed review. Apple puts it on the App Store on the release date you chose, or within a day.`,
+        }
       default:
         return null
     }
@@ -409,6 +471,17 @@ export function releaseAppName(release: { project_name?: string | null }) {
 
 /** One line telling the reader what happens next without opening the release. */
 export function releaseNextStep(release: Release, nowSeconds: number): string {
+  if (release.state === 'blocked') {
+    return release.store === 'app_store'
+      ? 'Fix it in App Store Connect'
+      : 'Send it for review in Play Console'
+  }
+  if (release.state === 'rejected') return 'Fix and resubmit'
+  if (release.state === 'approved') {
+    return release.store_status === 'PENDING_DEVELOPER_RELEASE'
+      ? 'Approved; release it when ready'
+      : 'Approved; releasing soon'
+  }
   if (releaseStoreError(release)) {
     return release.store === 'app_store'
       ? 'Fix the issue in App Store Connect'
@@ -445,6 +518,8 @@ export function releaseNextStep(release: Release, nowSeconds: number): string {
     case 'failed':
       return 'Release failed'
     case 'rolling': {
+      if (release.store === 'google_play' && release.auto_rollout === false)
+        return 'No schedule; raise it when ready'
       if (release.next_fraction == null) return 'Waiting to complete'
       const target = formatRolloutPercent(release.next_fraction)
       if (release.next_step_at == null) return `Next: ${target}`
@@ -471,15 +546,26 @@ export function releaseAudienceLabel(release: Release): string {
   }
   if (release.state === 'halted') return 'Rollout halted'
   if (release.state === 'failed') return 'Release failed'
+  if (release.state === 'blocked') return 'Not submitted yet'
+  if (release.state === 'rejected') return 'Rejected in review'
+  if (release.state === 'approved') return 'Approved, not live yet'
   return `Submitted to ${RELEASE_STORE_LABEL[release.store]}`
 }
 
 export const RELEASE_ACTION_ORDER = [
   'approve',
+  'release_now',
+  'resubmit',
+  'retry',
+  'mark_sent_for_review',
   'raise',
   'resume',
   'pause',
   'complete',
+  'attach_schedule',
+  'detach_schedule',
+  'pull_from_review',
+  'mark_rejected',
   'halt',
 ] satisfies Array<ReleaseAction>
 
@@ -546,6 +632,72 @@ export const RELEASE_ACTION_COPY = {
     },
     confirmLabel: 'Halt rollout',
     destructive: true,
+  },
+  retry: {
+    done: 'Checking the store again',
+    label: 'Check again now',
+    title: 'Check the store again?',
+    description: (release) =>
+      `Oore reads ${release.store === 'app_store' ? 'App Store Connect' : 'the store'} for ${releaseVersionLabel(release)} now instead of at its next check.`,
+    confirmLabel: 'Check now',
+  },
+  release_now: {
+    done: 'Release requested',
+    label: 'Release now',
+    title: 'Release on the App Store now?',
+    description: (release) =>
+      `Apple approved ${releaseVersionLabel(release)}. It goes on the App Store once Apple processes the request.`,
+    confirmLabel: 'Release now',
+  },
+  resubmit: {
+    done: 'Resubmitted for review',
+    label: 'Resubmit for review',
+    title: 'Resubmit for review?',
+    description: (release) =>
+      `${releaseVersionLabel(release)} goes back to App Review with the same build. Fix what Apple asked for in App Store Connect first; reply in the Resolution Center if needed.`,
+    confirmLabel: 'Resubmit',
+  },
+  pull_from_review: {
+    done: 'Pulled from review',
+    label: 'Pull from review',
+    title: 'Pull from review?',
+    description: (release) =>
+      `${releaseVersionLabel(release)} leaves App Review and goes back to waiting for a submission. You can submit it again later.`,
+    confirmLabel: 'Pull from review',
+    destructive: true,
+  },
+  mark_sent_for_review: {
+    done: 'Marked as sent for review',
+    label: 'Mark sent for review',
+    title: 'Did you send it for review?',
+    description: (release) =>
+      `Play's API doesn't tell Oore when a held change is sent. Confirm you pressed Send for review in Play Console for ${releaseVersionLabel(release)}; Oore then follows the rollout.`,
+    confirmLabel: 'Yes, it was sent',
+  },
+  mark_rejected: {
+    done: 'Marked as rejected',
+    label: 'Mark rejected',
+    title: 'Did Google reject it?',
+    description: (release) =>
+      `Records that Google Play rejected ${releaseVersionLabel(release)}. Play Console has the reason.`,
+    confirmLabel: 'Mark rejected',
+    destructive: true,
+  },
+  attach_schedule: {
+    done: 'Schedule attached',
+    label: 'Let Oore roll it out',
+    title: 'Let Oore roll it out?',
+    description: (release) =>
+      `Oore takes over ${releaseVersionLabel(release)}'s rollout from ${formatRolloutPercent(release.rollout_fraction)} with the release's schedule${release.policy.steps?.length ? ` (${release.policy.steps.map(formatRolloutPercent).join(', ')})` : ''}, halting on crash spikes.`,
+    confirmLabel: 'Attach schedule',
+  },
+  detach_schedule: {
+    done: 'Schedule detached',
+    label: 'Stop scheduled steps',
+    title: 'Stop scheduled steps?',
+    description: (release) =>
+      `${releaseVersionLabel(release)} stays at ${formatRolloutPercent(release.rollout_fraction)} until someone raises it, here or in Play Console.`,
+    confirmLabel: 'Stop steps',
   },
 } satisfies Record<ReleaseAction, ReleaseActionCopy>
 
