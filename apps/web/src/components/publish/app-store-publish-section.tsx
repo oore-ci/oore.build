@@ -19,6 +19,7 @@ import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import { toast } from '@/lib/toast'
 import {
   usePipelineAppStorePublish,
+  usePipelinePublishReadiness,
   useUpdatePipelineAppStorePublish,
   type AppStorePublishConfig,
   type AppStorePublishResponse,
@@ -86,8 +87,34 @@ const formSchema = z
     uses_non_exempt_encryption: z.boolean(),
     submit_for_review: z.boolean(),
     phased_release: z.boolean(),
+    release_type: z.enum(['after_approval', 'manual', 'scheduled']),
+    earliest_release_date: z.string(),
+    cancel_previous_submission: z.boolean(),
+    release_notes_dir: z.string().trim(),
+    preflight: z.enum(['auto', 'block', 'warn', 'off']),
   })
   .superRefine((values, ctx) => {
+    if (
+      values.destination === 'app_store' &&
+      values.release_type === 'scheduled' &&
+      !values.earliest_release_date
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['earliest_release_date'],
+        message: 'Choose when Apple releases the version.',
+      })
+    }
+    if (
+      values.release_notes_dir.startsWith('/') ||
+      values.release_notes_dir.split('/').includes('..')
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['release_notes_dir'],
+        message: 'Use a path inside the repository, such as fastlane/metadata.',
+      })
+    }
     const groups = parseGroups(values.testflight_groups)
     if (groups.some((group) => group.length > MAX_GROUP_NAME_LENGTH)) {
       ctx.addIssue({
@@ -157,7 +184,30 @@ function toFormValues(config: AppStorePublishConfig): FormValues {
     uses_non_exempt_encryption: config.uses_non_exempt_encryption ?? false,
     submit_for_review: config.submit_for_review ?? false,
     phased_release: config.phased_release ?? false,
+    release_type: config.release_type ?? 'after_approval',
+    earliest_release_date: toLocalDateTime(config.earliest_release_date),
+    cancel_previous_submission: config.cancel_previous_submission ?? false,
+    release_notes_dir: config.release_notes_dir ?? '',
+    preflight: config.preflight ?? 'auto',
   }
+}
+
+/** An RFC 3339 time as a `datetime-local` value in the viewer's zone. */
+function toLocalDateTime(value: string | null | undefined): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+  return local.toISOString().slice(0, 16)
+}
+
+/** A `datetime-local` value as the RFC 3339 time App Store Connect takes. */
+function fromLocalDateTime(value: string): string | null {
+  if (!value) return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? null
+    : date.toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
 function toConfig(values: FormValues): AppStorePublishConfig {
@@ -172,8 +222,29 @@ function toConfig(values: FormValues): AppStorePublishConfig {
     uses_non_exempt_encryption: values.uses_non_exempt_encryption,
     submit_for_review: appStore && values.submit_for_review,
     phased_release: appStore && values.phased_release,
+    release_type: appStore ? values.release_type : 'after_approval',
+    earliest_release_date:
+      appStore && values.release_type === 'scheduled'
+        ? fromLocalDateTime(values.earliest_release_date)
+        : null,
+    cancel_previous_submission: appStore && values.cancel_previous_submission,
+    release_notes_dir: values.release_notes_dir || null,
+    preflight: values.preflight,
   }
 }
+
+const RELEASE_TYPES = {
+  after_approval: 'When approved',
+  manual: 'When I release it',
+  scheduled: 'On a date',
+} as const
+
+const PREFLIGHT_LEVELS = {
+  auto: 'Automatic',
+  block: 'Stop the upload',
+  warn: 'Warn only',
+  off: 'Off',
+} as const
 
 const EFFECT_FIELDS = [
   'enabled',
@@ -258,7 +329,11 @@ function SwitchField({
   disabled?: boolean
   form: UseFormReturn<FormValues>
   label: string
-  name: 'uses_non_exempt_encryption' | 'submit_for_review' | 'phased_release'
+  name:
+    | 'uses_non_exempt_encryption'
+    | 'submit_for_review'
+    | 'phased_release'
+    | 'cancel_previous_submission'
 }) {
   return (
     <FormField
@@ -285,9 +360,9 @@ function SwitchField({
 }
 
 function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
-  const [destination, submitForReview] = useWatch({
+  const [destination, submitForReview, releaseType] = useWatch({
     control: form.control,
-    name: ['destination', 'submit_for_review'],
+    name: ['destination', 'submit_for_review', 'release_type'],
   })
 
   return (
@@ -367,6 +442,62 @@ function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
                 : 'Available when Oore submits the version for review.'
             }
           />
+          <SwitchField
+            form={form}
+            name="cancel_previous_submission"
+            label="Replace an open submission"
+            disabled={!submitForReview}
+            description="Apple allows one open review submission per app. On, Oore cancels one that holds other items before submitting; off, the release is blocked until you cancel it."
+          />
+          <FormField
+            control={form.control}
+            name="release_type"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Release after approval</FormLabel>
+                <FormControl>
+                  <RadioGroup
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    className="flex flex-wrap gap-x-6 gap-y-2"
+                  >
+                    {Object.entries(RELEASE_TYPES).map(([value, label]) => (
+                      <label
+                        key={value}
+                        className="flex items-center gap-2 text-sm"
+                      >
+                        <RadioGroupItem value={value} />
+                        {label}
+                      </label>
+                    ))}
+                  </RadioGroup>
+                </FormControl>
+                <FormDescription>
+                  {field.value === 'manual'
+                    ? 'Approved versions wait for you. Release them from the release board with Release now.'
+                    : field.value === 'scheduled'
+                      ? 'Apple releases the approved version at this time, or on approval if the time has passed.'
+                      : 'Apple puts the version on the App Store as soon as App Review approves it.'}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          {releaseType === 'scheduled' ? (
+            <FormField
+              control={form.control}
+              name="earliest_release_date"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Release on</FormLabel>
+                  <FormControl>
+                    <Input type="datetime-local" className="w-fit" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          ) : null}
         </Stack>
       )}
     </>
@@ -442,6 +573,29 @@ function ReleaseNotesFields({ form }: { form: UseFormReturn<FormValues> }) {
           </Button>
         </div>
       ))}
+      <FormField
+        control={form.control}
+        name="release_notes_dir"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Notes from the repository</FormLabel>
+            <FormControl>
+              <Input
+                className="font-mono"
+                placeholder="fastlane/metadata"
+                spellCheck={false}
+                {...field}
+              />
+            </FormControl>
+            <FormDescription>
+              Optional. A directory with one file per locale, such as en-US.txt,
+              or fastlane’s en-US/release_notes.txt. When a build has it, its
+              notes replace the ones above.
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
       {fields.length < MAX_NOTES ? (
         <div>
           <Button
@@ -510,6 +664,45 @@ function AppStorePublishForm({
 
             <SettingsSection title="Release notes">
               <ReleaseNotesFields form={form} />
+            </SettingsSection>
+
+            <SettingsSurfaceSeparator />
+
+            <SettingsSection title="Pre-flight checks">
+              <FormField
+                control={form.control}
+                name="preflight"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="sr-only">Pre-flight checks</FormLabel>
+                    <FormControl>
+                      <RadioGroup
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        className="flex flex-wrap gap-x-6 gap-y-2"
+                      >
+                        {Object.entries(PREFLIGHT_LEVELS).map(
+                          ([value, label]) => (
+                            <label
+                              key={value}
+                              className="flex items-center gap-2 text-sm"
+                            >
+                              <RadioGroupItem value={value} />
+                              {label}
+                            </label>
+                          ),
+                        )}
+                      </RadioGroup>
+                    </FormControl>
+                    <FormDescription>
+                      Before uploading, the runner checks for what Apple refuses
+                      after the upload, such as an app icon with transparency.
+                      Automatic warns until a release from this pipeline has
+                      been accepted, then stops the upload.
+                    </FormDescription>
+                  </FormItem>
+                )}
+              />
             </SettingsSection>
 
             <SettingsSurfaceSeparator />
@@ -583,6 +776,9 @@ export function AppStorePublishSection({
 }) {
   const publishQuery = usePipelineAppStorePublish(pipelineId)
   const data = publishQuery.data
+  const storeReadiness = usePipelinePublishReadiness(pipelineId, {
+    enabled: !!data?.config.enabled,
+  })
   const editLink = (label: string) =>
     canWrite ? (
       <Button
@@ -623,9 +819,36 @@ export function AppStorePublishSection({
             : 'Choose a shared key or add this pipeline’s own key in iOS signing.',
           action: data.has_api_key ? undefined : editLink('Add API key'),
         },
+        ...(storeReadiness.data?.items ?? [])
+          .filter(
+            (item) => item.store === 'app_store' && item.code !== 'api_key',
+          )
+          .map((item): ReadinessCheck => ({
+            key: `store-${item.code}`,
+            label: item.remembered
+              ? `${item.title} (Apple’s last refusal)`
+              : item.title,
+            ready: item.level === 'ok',
+            detail: item.detail ?? '',
+            action: item.console_url ? (
+              <Button
+                variant="outline"
+                size="sm"
+                nativeButton={false}
+                render={
+                  <a href={item.console_url} target="_blank" rel="noreferrer" />
+                }
+              >
+                Open in App Store Connect
+              </Button>
+            ) : undefined,
+          })),
       ]
     : []
-  const blocked = checks.some((check) => !check.ready)
+  // Only the setup checks stop a save; store findings stop a submission.
+  const blocked = checks
+    .filter((check) => !check.key.startsWith('store-'))
+    .some((check) => !check.ready)
 
   return (
     <SettingsSection

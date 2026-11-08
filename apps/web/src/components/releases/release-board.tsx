@@ -14,11 +14,18 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { useReleases, useStoreVitals } from '@/hooks/use-releases'
+import {
+  useReleases,
+  useStoreVitals,
+  useSyncStoreReleases,
+} from '@/hooks/use-releases'
+import { toast } from '@/lib/toast'
 import { useTime } from '@/hooks/use-time'
 import {
   getReleaseHealthVariant,
+  isAdoptedRelease,
   LIVE_RELEASE_STATES,
+  needsStoreAction,
   RELEASE_HEALTH_LABEL,
   RELEASE_STORE_LABEL,
   releaseAppName,
@@ -33,9 +40,16 @@ import { cn } from '@/lib/utils'
 
 const LIVE_STATE_QUERY = LIVE_RELEASE_STATES.join(',')
 
-/** Newest first by creation, so acting on a release never reorders the list. */
+/**
+ * What someone has to fix in a store console first, then newest first by
+ * creation, so a rollout control never reorders the list.
+ */
 function selectReleases({ releases }: ListReleasesResponse) {
-  return [...releases].sort((a, b) => b.created_at - a.created_at)
+  return [...releases].sort(
+    (a, b) =>
+      Number(needsStoreAction(b)) - Number(needsStoreAction(a)) ||
+      b.created_at - a.created_at,
+  )
 }
 
 function RolloutHealth({
@@ -104,6 +118,7 @@ function ReleaseRow({
       <span className={cn(textVariants({ variant: 'caption' }), 'truncate')}>
         {RELEASE_STORE_LABEL[release.store]} {release.track} ·{' '}
         <span className="tabular-nums">{releaseVersionLabel(release)}</span>
+        {isAdoptedRelease(release) ? ' · found in store' : ''}
       </span>
     </div>
   )
@@ -183,14 +198,46 @@ export function ReleaseBoard({
     ),
   )
   const releases = releasesQuery.data ?? []
+  const sync = useSyncStoreReleases()
 
   // Nothing live and nothing broken: stay out of the way.
   if (releasesQuery.isSuccess && releases.length === 0) return null
+
+  function syncStores() {
+    sync.mutate(projectId, {
+      onSuccess: (result) => {
+        const found =
+          result.adopted === 0
+            ? 'No new releases'
+            : `Found ${result.adopted} release${result.adopted === 1 ? '' : 's'} made outside Oore`
+        if (result.errors.length) {
+          toast.error(`${found}. Could not read ${result.errors.join('; ')}`)
+        } else {
+          toast.success(
+            `${found} in ${result.apps} app${result.apps === 1 ? '' : 's'}`,
+          )
+        }
+      },
+      onError: (error) =>
+        toast.error(`Could not check the stores: ${error.message}`),
+    })
+  }
 
   return (
     <DashboardSection
       title={title}
       count={releasesQuery.isSuccess ? releases.length : undefined}
+      action={
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={syncStores}
+          disabled={sync.isPending}
+          title="Look in Play Console and App Store Connect for releases made outside Oore. Oore also checks every 15 minutes."
+        >
+          {sync.isPending ? 'Checking stores…' : 'Check stores'}
+        </Button>
+      }
     >
       {releasesQuery.error ? (
         <Alert variant="destructive">

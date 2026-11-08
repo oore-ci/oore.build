@@ -92,19 +92,20 @@ curl -X PUT "$OORE_URL/v1/pipelines/$PIPELINE_ID/publish/google-play" \
 The response includes `service_account_secret_present`, which is `false` until
 the named secret exists in a scope this pipeline can see.
 
-| Field                    | Default | Meaning                                                                                                                                        |
-| ------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`                | `false` | Upload after each successful build of this pipeline.                                                                                           |
-| `service_account_secret` |         | Name of the secret holding the service account JSON key.                                                                                       |
-| `track`                  |         | `internal`, `closed`, `open`, `production`, or the name of a custom closed track. `closed` is Play's `alpha` and `open` is `beta`.             |
-| `package_name`           | AAB     | Expected application id. When set, a bundle for a different package fails the upload.                                                          |
-| `rollout_percent`        | `100`   | Initial staged rollout. Below 100 creates an in-progress release for that share of users. The internal track does not support staged rollouts. |
-| `draft`                  | `false` | Create a draft release instead of rolling out.                                                                                                 |
-| `release_notes`          | `none`  | `none`, `changelog` (the build changelog) or `repo_files`.                                                                                     |
-| `release_notes_locale`   | `en-US` | Language for changelog release notes.                                                                                                          |
-| `release_notes_dir`      |         | For `repo_files`: a repository directory with one `<locale>.txt` file per language, such as `release-notes/en-US.txt`.                         |
-| `upload_mapping`         | `true`  | Upload `build/app/outputs/mapping/<variant>/mapping.txt` when the build produced it.                                                           |
-| `in_app_update_priority` |         | In-app update priority, 0 to 5.                                                                                                                |
+| Field                    | Default | Meaning                                                                                                                                                                     |
+| ------------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                | `false` | Upload after each successful build of this pipeline.                                                                                                                        |
+| `service_account_secret` |         | Name of the secret holding the service account JSON key.                                                                                                                    |
+| `track`                  |         | `internal`, `closed`, `open`, `production`, or the name of a custom closed track. `closed` is Play's `alpha` and `open` is `beta`.                                          |
+| `package_name`           | AAB     | Expected application id. When set, a bundle for a different package fails the upload.                                                                                       |
+| `rollout_percent`        | `100`   | Initial staged rollout. Below 100 creates an in-progress release for that share of users. The internal track does not support staged rollouts.                              |
+| `draft`                  | `false` | Create a draft release instead of rolling out.                                                                                                                              |
+| `release_notes`          | `none`  | `none`, `changelog` (the build changelog) or `repo_files`.                                                                                                                  |
+| `release_notes_locale`   | `en-US` | Language for changelog release notes.                                                                                                                                       |
+| `release_notes_dir`      |         | For `repo_files`: a repository directory with one `<locale>.txt` file per language, such as `release-notes/en-US.txt`.                                                      |
+| `upload_mapping`         | `true`  | Upload `build/app/outputs/mapping/<variant>/mapping.txt` when the build produced it.                                                                                        |
+| `in_app_update_priority` |         | In-app update priority, 0 to 5.                                                                                                                                             |
+| `preflight`              | `auto`  | What a failed `edits.validate` check does before the commit: `auto`, `block`, `warn` or `off`. `auto` blocks once the app has had a release on Play, and warns before that. |
 
 Release notes longer than Play's 500-character limit are shortened.
 
@@ -242,6 +243,20 @@ highest version code on Google Play, and pass
 Fix the cause, such as a missing Play Console permission, then
 [retry the upload](/build/run/retry-step). The stored bundle is uploaded
 again without rebuilding.
+
+**The release is Blocked with "send it for review in Play Console"**
+
+Google holds some changes until you send them for review yourself, and the
+commit only succeeds with that hold. Open **Publishing overview** in Play
+Console and select **Send changes for review**, then choose **Mark sent for
+review** on the release. When Google rejects it, choose **Mark rejected**.
+
+**A rollout shows "No schedule"**
+
+The release was made in Play Console, not by Oore, so Oore does not raise it.
+Raise it in Play Console, or choose **Let Oore roll it out** on the release to
+attach the pipeline's rollout schedule. **Stop scheduled steps** detaches it
+again.
 
 **Test credentials fails**
 

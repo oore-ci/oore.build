@@ -54,6 +54,8 @@ pub mod signing_identities;
 pub mod step_retry;
 pub mod storage;
 pub mod store;
+pub mod store_readiness;
+pub mod store_sync;
 pub mod store_vitals;
 pub mod test_results;
 pub mod token;
@@ -2480,6 +2482,7 @@ pub async fn build_router_with_recovery(
         app_store_publish::start_release_monitor(shared_state.clone());
         background::start_release_rollout_monitor(shared_state.clone());
         store_vitals::start_store_vitals_monitor(shared_state.clone());
+        store_sync::start_store_sync(shared_state.clone());
         pipeline_schedules::start_schedule_monitor(shared_state.clone());
     }
 
@@ -2840,6 +2843,10 @@ pub async fn build_router_with_recovery(
                 .put(pipeline_publish::update_pipeline_google_play_publish),
         )
         .route(
+            "/v1/pipelines/{pipeline_id}/publish/readiness",
+            get(store_readiness::get_pipeline_publish_readiness),
+        )
+        .route(
             "/v1/pipelines/{pipeline_id}/publish/google-play/test-credentials",
             post(pipeline_publish::test_pipeline_google_play_credentials),
         )
@@ -2938,6 +2945,10 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/releases",
             get(releases::list_releases).post(releases::create_release_handler),
+        )
+        .route(
+            "/v1/releases/store-sync",
+            post(store_sync::sync_store_releases),
         )
         .route("/v1/releases/{release_id}", get(releases::get_release))
         .route(

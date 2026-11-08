@@ -69,6 +69,11 @@ const NOTIFICATION_EVENT_GROUPS = [
     label: 'Releases',
     events: [
       { value: 'release_uploaded', label: 'Release uploaded' },
+      { value: 'release_blocked', label: 'Release blocked in the store' },
+      { value: 'release_submitted', label: 'Submitted for review' },
+      { value: 'release_approved', label: 'Approved in review' },
+      { value: 'release_rejected', label: 'Rejected in review' },
+      { value: 'release_live', label: 'Release live' },
       { value: 'release_approval_needed', label: 'Release approval needed' },
       { value: 'rollout_step_raised', label: 'Rollout increased' },
       { value: 'rollout_halted', label: 'Rollout halted' },

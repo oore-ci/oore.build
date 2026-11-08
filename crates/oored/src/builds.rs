@@ -7,8 +7,8 @@ use axum::http::StatusCode;
 use oore_contract::{
     ApiError, ApprovalPolicy, Build, BuildApproval, BuildApprovalRequest, BuildApprovalResponse,
     BuildApprovalState, BuildChangelogPreviewResponse, BuildContext, BuildDetailResponse,
-    BuildEvent, BuildPlatform, BuildStatus, CancelBuildResponse, ConcurrencyPolicy,
-    CreateBuildRequest, CreateBuildResponse, DEFAULT_BUILD_TIMEOUT_MINUTES,
+    BuildEvent, BuildPlatform, BuildReleaseOutcome, BuildStatus, CancelBuildResponse,
+    ConcurrencyPolicy, CreateBuildRequest, CreateBuildResponse, DEFAULT_BUILD_TIMEOUT_MINUTES,
     ListBuildActorsResponse, ListBuildsResponse, PipelineExecutionConfig, RepositoryConfig,
     RerunBuildResponse, RunnerPolicyBlockReason, ScheduleTrigger, TriggerConfig, TriggerEvent,
     TriggerSpec, scheduling_labels,
@@ -75,7 +75,16 @@ pub(crate) fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
             reason: row.try_get("approval_reason").ok().flatten(),
         });
 
+    let release_outcome = row
+        .try_get::<Option<String>, _>("release_states")
+        .ok()
+        .flatten()
+        .and_then(|states| {
+            BuildReleaseOutcome::summarize(states.split(',').filter_map(|state| state.parse().ok()))
+        });
+
     Build {
+        release_outcome,
         id: row.get("id"),
         project_id: row.get("project_id"),
         pipeline_id: row.get("pipeline_id"),
@@ -1072,7 +1081,8 @@ fn build_list_query(where_clause: &str, order_by: &str, bind_count: usize) -> St
              THEN 'repository_unavailable' \
            WHEN COALESCE(instance_preferences.direct_macos_runner_paused, 0) = 1 THEN 'instance_paused' \
            ELSE NULL \
-         END AS runner_policy_block_reason \
+         END AS runner_policy_block_reason, \
+         (SELECT GROUP_CONCAT(r.state) FROM releases r WHERE r.build_id = builds.id) AS release_states \
          FROM builds \
          LEFT JOIN projects ON projects.id = builds.project_id \
          LEFT JOIN integration_repositories ON integration_repositories.id = projects.repository_id \
@@ -1646,6 +1656,7 @@ pub async fn create_build(
     let runner_policy_block_reason =
         runner_policy_block_reason_for_project(&pool, &project_id).await?;
     let build = Build {
+        release_outcome: None,
         id: build_id,
         project_id,
         pipeline_id: req.pipeline_id,
@@ -1830,7 +1841,8 @@ pub async fn get_build(
              THEN 'repository_unavailable' \
            WHEN COALESCE(instance_preferences.direct_macos_runner_paused, 0) = 1 THEN 'instance_paused' \
            ELSE NULL \
-         END AS runner_policy_block_reason \
+         END AS runner_policy_block_reason, \
+         (SELECT GROUP_CONCAT(r.state) FROM releases r WHERE r.build_id = builds.id) AS release_states \
          FROM builds \
          LEFT JOIN projects ON projects.id = builds.project_id \
          LEFT JOIN integration_repositories ON integration_repositories.id = projects.repository_id \
@@ -2520,6 +2532,7 @@ pub(crate) async fn queue_rerun(
     let runner_policy_block_reason =
         runner_policy_block_reason_for_project(pool, &project_id).await?;
     let build = Build {
+        release_outcome: None,
         id: new_build_id,
         project_id,
         pipeline_id,
@@ -3003,6 +3016,7 @@ pub async fn trigger_build_from_webhook(
                 );
 
                 created_builds.push(Build {
+                    release_outcome: None,
                     id: build_id,
                     project_id: project_id.clone(),
                     pipeline_id: pipeline_id.clone(),

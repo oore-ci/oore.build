@@ -12,12 +12,21 @@ import type {
 } from '@oore/client/models'
 import {
   approveRelease,
+  attachScheduleRelease,
   completeRelease,
+  detachScheduleRelease,
   haltRelease,
+  markRejectedRelease,
+  markSentForReviewRelease,
   pauseRelease,
+  pullFromReviewRelease,
   raiseRelease,
   refreshStoreVitals,
+  releaseNowRelease,
+  resubmitRelease,
   resumeRelease,
+  retryRelease,
+  syncStoreReleases,
 } from '@oore/client/operations'
 import {
   getReleaseOptions,
@@ -172,6 +181,14 @@ const RELEASE_ACTION_OPERATIONS = {
   pause: pauseRelease,
   raise: raiseRelease,
   resume: resumeRelease,
+  retry: retryRelease,
+  release_now: releaseNowRelease,
+  resubmit: resubmitRelease,
+  pull_from_review: pullFromReviewRelease,
+  mark_sent_for_review: markSentForReviewRelease,
+  mark_rejected: markRejectedRelease,
+  attach_schedule: attachScheduleRelease,
+  detach_schedule: detachScheduleRelease,
 } satisfies Record<ReleaseAction, typeof haltRelease>
 
 export function useReleaseAction() {
@@ -206,6 +223,31 @@ export function useReleaseAction() {
           queryKey: scopeOoreQueryKey(instanceId, queryKey),
         })
       }
+    },
+  })
+}
+
+/** Reads the stores now for releases made outside Oore. */
+export function useSyncStoreReleases() {
+  const queryClient = useQueryClient()
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useMutation({
+    mutationFn: (projectId?: string) => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return syncStoreReleases({
+        body: projectId ? { project_id: projectId } : {},
+        client,
+      })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(
+          instanceId,
+          listReleasesQueryKey({ client }),
+        ),
+      })
     },
   })
 }

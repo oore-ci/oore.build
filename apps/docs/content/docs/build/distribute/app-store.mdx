@@ -47,9 +47,17 @@ Testers install them through TestFlight.
    - For TestFlight, enter the **TestFlight groups**.
    - For the App Store, turn on **Submit for review** to submit the version
      once the build is attached. Then **Phased release** turns on Apple's
-     seven-day phased release.
+     seven-day phased release, and **Replace an open submission** lets Oore
+     cancel another open App Review submission for the app first. Apple
+     allows one per app; with this off, the release is blocked until you
+     cancel the other one.
+   - **Release after approval** chooses **When approved**, **When I release
+     it** (press **Release now** on the release) or **On a date**, with the
+     date and time.
 5. Under **Release notes**, add **What to Test** or **What's New** text per
-   locale.
+   locale. **Notes from the repository** names a folder with one
+   `<locale>.txt` file, or fastlane's `<locale>/release_notes.txt`, per
+   language; those files replace the typed notes for their locales.
 6. Under **Export compliance**, turn on **Uses non-exempt encryption** only if
    the app uses encryption beyond what iOS provides, such as HTTPS.
 7. Select **Turn on App Store publishing**, or **Save changes** when
@@ -70,7 +78,10 @@ with `PUT /v1/pipelines/{pipeline_id}/publish/app-store`:
 ```
 
 For an App Store release, set `"destination": "app_store"`, then
-`submit_for_review` and `phased_release` as needed.
+`submit_for_review`, `phased_release`, `release_type` (`after_approval`,
+`manual` or `scheduled`), `earliest_release_date` and
+`cancel_previous_submission` as needed. `release_notes_dir` and `preflight`
+apply to both destinations.
 
 ## What happens after a build
 
@@ -88,6 +99,60 @@ For an App Store release, set `"destination": "app_store"`, then
 
 Pause, resume and complete on the release change Apple's phased release.
 Apple sets the percentages, so raising a step is not available.
+
+## Pre-flight
+
+Before the upload, the **Publishing** tab and the runner check what Apple
+would otherwise refuse after the upload:
+
+- the API key reaches App Store Connect and the app exists for the bundle ID;
+- the age rating and App Review contact details are filled in;
+- no other review submission is open, unless **Replace an open submission**
+  is on;
+- the app icon has no transparency;
+- anything Apple refused on an earlier submission of this app, until a later
+  submission goes through.
+
+**Pre-flight checks** decides what a failure does. **Automatic** stops the
+upload once the app has had a release in review or live, and only warns
+before that. **Stop the upload** and **Warn only** fix the choice, and
+**Off** skips the checks. The same levels apply to Google Play, where Oore
+validates the edit before committing it. Read the checks from the API with
+`GET /v1/pipelines/{pipeline_id}/publish/readiness`.
+
+## Release states
+
+A release shows where it is in the store, and what you need to do when the
+store is waiting on you:
+
+| State          | Meaning                                                                                                                                 |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **Processing** | Apple is processing the upload.                                                                                                         |
+| **Blocked**    | The store refused a step, or the version is ready but nobody submitted it. The release names the reason and links to App Store Connect. |
+| **In review**  | App Review or TestFlight beta review has the version.                                                                                   |
+| **Approved**   | App Review approved it and it waits for its release time, or for **Release now**.                                                       |
+| **Rejected**   | App Review rejected it. Read why in the Resolution Center, fix it, then **Resubmit for review**.                                        |
+| **Rolling**    | Live, with a phased release in progress.                                                                                                |
+| **Complete**   | Live for everyone, or added to the TestFlight groups.                                                                                   |
+
+A store refusal blocks the release at once and notifies once per reason
+(`release_blocked`). A network or server error blocks it only after an hour
+of failures. A blocked release leaves the state on its own once the store
+accepts the next check; **Check again now** checks at once.
+
+The release menu offers what the store allows next: **Release now**,
+**Resubmit for review**, **Pull from review** and **Check again now**.
+Releases from before v0.1.51 are read again with these states, and the
+release history notes the first change. Failed releases stay failed.
+
+## Releases made outside Oore
+
+Every 15 minutes, and when you select **Check stores** on Home, Oore reads
+the App Store versions and Google Play tracks of every app a pipeline
+publishes. A release it did not make shows on Home and the Releases page
+marked **Found in store**, with no build. Oore follows it like its own, but
+never schedules rollout steps for a Play release it found; **Let Oore roll it
+out** on the release attaches a schedule.
 
 ## Verify the result
 

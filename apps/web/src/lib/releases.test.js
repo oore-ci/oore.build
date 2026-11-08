@@ -125,12 +125,38 @@ describe('store wait', () => {
     )
     const summary = releaseWaitSummary(blocked)
     expect(summary.blocked).toBe(true)
-    expect(summary.title).toBe(
-      'App Store Connect refused the next step for 1.3.3 (33)',
-    )
-    expect(summary.description).toContain('retries every 5 minutes')
+    expect(summary.title).toBe('1.3.3 (33) is blocked in App Store Connect')
+    expect(summary.description).toContain('every 5 minutes')
     expect(summary.description).toContain('10m ago')
     // A failed release's last error is history, not a call to act.
     expect(releaseStateLabel({ ...blocked, state: 'failed' })).toBe('Failed')
+  })
+
+  test('a blocked release says so and why, and sorts nothing as in review', () => {
+    const refused = {
+      ...appStore,
+      state: 'blocked',
+      state_reason:
+        'App Store Connect refused the request: an age rating declaration update is required',
+    }
+    expect(releaseStateLabel(refused)).toBe('Blocked')
+    expect(releaseStateBadgeVariant(refused)).toBe('warning')
+    expect(isWaitingOnStore(refused)).toBe(true)
+    expect(releaseNextStep(refused, 0)).toBe('Fix it in App Store Connect')
+    expect(releaseWaitSummary(refused).description).toContain('age rating')
+    const rejected = {
+      ...appStore,
+      state: 'rejected',
+      state_reason: 'Guideline 2.1',
+    }
+    expect(releaseStateBadgeVariant(rejected)).toBe('destructive')
+    expect(releaseWaitSummary(rejected).title).toBe('Apple rejected 1.3.3 (33)')
+    const approved = {
+      ...appStore,
+      state: 'approved',
+      store_status: 'PENDING_DEVELOPER_RELEASE',
+    }
+    expect(releaseNextStep(approved, 0)).toBe('Approved; release it when ready')
+    expect(releaseWaitSummary(approved).description).toContain('Release now')
   })
 })

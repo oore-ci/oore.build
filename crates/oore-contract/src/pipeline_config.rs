@@ -13,12 +13,12 @@ use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AppStoreDestination, BuildIsolation, BuildPlatform, GooglePlayPublishConfig,
-    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
-    PlatformBuildCommands, RunnerAppStorePublishPlan, RunnerPublishPlan, SizeBudget,
-    TargetSizeBudget, default_artifact_patterns_for_platforms, is_valid_pipeline_env_key,
-    normalize_runner_labels, parse_repository_pipeline_yaml, validate_artifact_pattern,
-    validate_build_number_offset, validate_repository_config_path,
+    AppStoreDestination, AppStoreReleaseType, BuildIsolation, BuildPlatform,
+    GooglePlayPublishConfig, PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig,
+    PlatformBuildArgs, PlatformBuildCommands, PublishPreflight, RunnerAppStorePublishPlan,
+    RunnerPublishPlan, SizeBudget, TargetSizeBudget, default_artifact_patterns_for_platforms,
+    is_valid_pipeline_env_key, normalize_runner_labels, parse_repository_pipeline_yaml,
+    validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
 };
 
 /// Longest step name a v2 file may use.
@@ -302,6 +302,9 @@ impl PlanPublish {
                         if let Some(secret) = &play.spec.service_account {
                             config.service_account_secret = secret.clone();
                         }
+                        if let Some(preflight) = play.spec.preflight {
+                            config.preflight = preflight;
+                        }
                         // The rules the settings form enforces, applied to the
                         // combination instead of failing the upload.
                         if let Some(percent) = config.rollout_percent.filter(|p| *p < 100.0) {
@@ -329,6 +332,7 @@ impl PlanPublish {
                                 |percent| *percent < 100.0 && play.spec.track != "internal",
                             ),
                             draft: play.spec.draft.unwrap_or(false),
+                            preflight: play.spec.preflight.unwrap_or_default(),
                             ..GooglePlayPublishConfig::from_file_defaults()
                         })),
                         None => Err(format!(
@@ -350,6 +354,11 @@ impl PlanPublish {
                     groups: vec![testflight.spec.group.clone()],
                     submit_for_review: None,
                     phased_release: None,
+                    release_type: None,
+                    earliest_release_date: None,
+                    release_notes_dir: None,
+                    cancel_previous_submission: None,
+                    preflight: None,
                 },
                 source: testflight.source.clone(),
                 error: testflight.error.clone(),
@@ -381,7 +390,22 @@ impl PlanPublish {
                             if let Some(phased) = spec.phased_release {
                                 plan.config.phased_release = phased;
                             }
+                            if let Some(release_type) = spec.release_type {
+                                plan.config.release_type = release_type;
+                            }
+                            if let Some(date) = &spec.earliest_release_date {
+                                plan.config.earliest_release_date = Some(date.clone());
+                            }
+                            if let Some(cancel) = spec.cancel_previous_submission {
+                                plan.config.cancel_previous_submission = cancel;
+                            }
                         }
+                    }
+                    if let Some(dir) = &spec.release_notes_dir {
+                        plan.config.release_notes_dir = Some(dir.clone());
+                    }
+                    if let Some(preflight) = spec.preflight {
+                        plan.config.preflight = preflight;
                     }
                     if plan.config.destination == AppStoreDestination::Testflight
                         && plan.config.testflight_groups.is_empty()
@@ -1001,6 +1025,24 @@ pub struct AppStorePublishSpec {
     /// Release with Apple's seven-day phased release, for destination app_store.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phased_release: Option<bool>,
+    /// When Apple releases the approved version: after_approval, manual or
+    /// scheduled. For destination app_store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_type: Option<AppStoreReleaseType>,
+    /// RFC 3339 time a scheduled release goes out, for release_type scheduled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub earliest_release_date: Option<String>,
+    /// Repository directory with "What's New" per locale: `<locale>.txt` or
+    /// fastlane's `<locale>/release_notes.txt`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_notes_dir: Option<String>,
+    /// Cancel another open App Review submission before submitting, for
+    /// destination app_store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel_previous_submission: Option<bool>,
+    /// What a failed pre-flight check does: auto, block, warn or off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight: Option<PublishPreflight>,
 }
 
 fn default_app_store_destination() -> AppStoreDestination {
@@ -1049,6 +1091,9 @@ pub struct PlayPublishSpec {
     /// upload needs no pipeline Google Play settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_account: Option<String>,
+    /// What a failed pre-flight check does: auto, block, warn or off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight: Option<PublishPreflight>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2806,9 +2851,14 @@ fn check_target(
         }
         match app_store.destination {
             AppStoreDestination::Testflight => {
-                if app_store.submit_for_review.is_some() || app_store.phased_release.is_some() {
+                if app_store.submit_for_review.is_some()
+                    || app_store.phased_release.is_some()
+                    || app_store.release_type.is_some()
+                    || app_store.earliest_release_date.is_some()
+                    || app_store.cancel_previous_submission.is_some()
+                {
                     errors.push(format!(
-                        "{path}.publish.app_store.submit_for_review and phased_release apply to destination app_store only"
+                        "{path}.publish.app_store.submit_for_review, phased_release, release_type, earliest_release_date and cancel_previous_submission apply to destination app_store only"
                     ));
                 }
             }
@@ -2817,6 +2867,23 @@ fn check_target(
                     errors.push(format!(
                         "{path}.publish.app_store.groups applies to destination testflight only"
                     ));
+                }
+                match (app_store.release_type, &app_store.earliest_release_date) {
+                    (Some(AppStoreReleaseType::Scheduled), None) => errors.push(format!(
+                        "{path}.publish.app_store.release_type scheduled needs earliest_release_date"
+                    )),
+                    (Some(AppStoreReleaseType::Scheduled), Some(date))
+                        if !crate::is_rfc3339_date_time(date) =>
+                    {
+                        errors.push(format!(
+                            "{path}.publish.app_store.earliest_release_date must be an RFC 3339 time such as 2026-12-01T09:00:00Z"
+                        ))
+                    }
+                    (Some(AppStoreReleaseType::Scheduled), Some(_)) => {}
+                    (_, Some(_)) => errors.push(format!(
+                        "{path}.publish.app_store.earliest_release_date applies to release_type scheduled only"
+                    )),
+                    _ => {}
                 }
             }
         }
@@ -3831,6 +3898,7 @@ mod tests {
                 rollout: None,
                 draft: None,
                 service_account: None,
+                preflight: None,
             }
         );
         assert_eq!(

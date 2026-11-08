@@ -15,6 +15,7 @@ import {
   getPipelineAppStorePublishQueryKey,
   getPipelineGooglePlayPublishOptions,
   getPipelineGooglePlayPublishQueryKey,
+  getPipelinePublishReadinessOptions,
 } from '@oore/client/react-query'
 import { useApiContext } from '@/hooks/use-api-context'
 import {
@@ -111,6 +112,31 @@ export function usePipelineAppStorePublish(
       }),
     ),
     enabled: (options?.enabled ?? true) && !!baseUrl && !!token,
+  })
+}
+
+/**
+ * What would stop the next store submission: read from App Store Connect
+ * now, plus refusals remembered from the last one. The store is slow to
+ * read, so this is fetched once and not polled.
+ */
+export function usePipelinePublishReadiness(
+  pipelineId: string,
+  options?: { enabled?: boolean },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useQuery({
+    ...scopeOoreQueryOptions(
+      instanceId,
+      getPipelinePublishReadinessOptions({
+        client,
+        path: { pipeline_id: pipelineId },
+      }),
+    ),
+    enabled: (options?.enabled ?? true) && !!baseUrl && !!token,
+    staleTime: 5 * 60_000,
+    retry: false,
   })
 }
 
