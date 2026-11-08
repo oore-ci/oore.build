@@ -1571,6 +1571,9 @@ async fn execute_promotion(
                 policy: environment.rollout_policy.clone(),
                 environment_id: Some(environment.id.clone()),
                 promoted_from_release_id: Some(source.id.clone()),
+                origin: source.origin,
+                pipeline_id: None,
+                auto_rollout: true,
             },
             actor,
             Some(&note),
@@ -1632,7 +1635,7 @@ async fn execute_promotion(
     .await;
     info!(
         promotion_id,
-        build_id = %source.build_id,
+        build_id = source.build_id.as_deref().unwrap_or_default(),
         environment = %environment.key,
         release_id = %release.id,
         "build promoted"
@@ -1977,7 +1980,7 @@ mod tests {
         let release = load_release(&pool, promotion.release_id.as_deref().unwrap())
             .await
             .unwrap();
-        assert_eq!(release.build_id, "b1");
+        assert_eq!(release.build_id.as_deref(), Some("b1"));
         assert_eq!(release.track, "production");
         assert_eq!(release.version_code, Some(120));
         assert_eq!(
@@ -2285,7 +2288,7 @@ mod tests {
         create_release(
             deps,
             NewRelease {
-                build_id: "b2".into(),
+                build_id: Some("b2".into()),
                 version_code: Some(121),
                 ..new_release("open", ReleasePolicy::default())
             },

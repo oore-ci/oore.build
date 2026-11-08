@@ -46,15 +46,31 @@ pub struct RunnerStateEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReleaseEventKind {
     Created,
+    /// Oore uploaded the build to the store.
     Uploaded,
+    /// The store refused to move the release on; someone has to act.
+    Blocked,
+    /// The release went to store review.
+    Submitted,
+    /// The store approved the release.
+    StoreApproved,
+    /// The store rejected the release in review.
+    Rejected,
+    /// The release reached users.
+    Live,
+    /// A newer version replaced a rejected release.
+    Superseded,
     RolloutStepRaised,
     RolloutPaused,
     RolloutResumed,
     RolloutHalted,
     RolloutCompleted,
     ApprovalNeeded,
+    /// A maintainer approved the release.
     Approved,
     Failed,
+    /// Any other change, such as a blocked release moving on.
+    Updated,
 }
 
 /// A release or rollout state change broadcast to all subscribers.
@@ -72,6 +88,12 @@ pub struct ReleaseEvent {
     /// Email of the user who caused the change, or `None` for the daemon.
     pub actor: Option<String>,
     pub reason: Option<String>,
+    /// The release state after the change, such as `blocked`.
+    pub state: Option<String>,
+    /// The store's own status words, such as `WAITING_FOR_REVIEW`.
+    pub store_status: Option<String>,
+    /// The store console page that shows the release.
+    pub console_url: Option<String>,
     pub timestamp: i64,
 }
 

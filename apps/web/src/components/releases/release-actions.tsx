@@ -95,7 +95,7 @@ export function ReleaseActions({
             </span>
             <HugeiconsIcon icon={MoreHorizontalCircle01Icon} />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuGroup>
               <DropdownMenuLabel>Actions</DropdownMenuLabel>
               {menuActions.map((action) => (
@@ -159,7 +159,12 @@ function ReleaseActionDialog({
       .mutateAsync({
         action,
         releaseId: release.id,
-        body: { reason: reason.trim() || null, fraction },
+        body: {
+          reason: reason.trim() || null,
+          fraction,
+          // The release's own schedule, which a found release starts with.
+          policy: action === 'attach_schedule' ? release.policy : null,
+        },
       })
       .then(
         (updated) => {

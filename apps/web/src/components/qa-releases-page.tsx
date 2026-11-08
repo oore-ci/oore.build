@@ -122,7 +122,8 @@ function storeReleasesByBuild(releases: Array<Release>) {
   for (const release of [...releases].sort(
     (left, right) => right.updated_at - left.updated_at,
   )) {
-    if (!byBuild.has(release.build_id)) byBuild.set(release.build_id, release)
+    if (release.build_id && !byBuild.has(release.build_id))
+      byBuild.set(release.build_id, release)
   }
   return byBuild
 }

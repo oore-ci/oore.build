@@ -127,15 +127,22 @@ async fn notification_http_client(url: &url::Url) -> anyhow::Result<reqwest::Cli
 fn release_event_type(kind: ReleaseEventKind) -> Option<&'static str> {
     match kind {
         ReleaseEventKind::Uploaded => Some("release_uploaded"),
+        ReleaseEventKind::Blocked => Some("release_blocked"),
+        ReleaseEventKind::Submitted => Some("release_submitted"),
+        ReleaseEventKind::StoreApproved => Some("release_approved"),
+        ReleaseEventKind::Rejected => Some("release_rejected"),
+        ReleaseEventKind::Live => Some("release_live"),
         ReleaseEventKind::RolloutStepRaised => Some("rollout_step_raised"),
         ReleaseEventKind::RolloutHalted => Some("rollout_halted"),
         ReleaseEventKind::RolloutCompleted => Some("rollout_completed"),
         ReleaseEventKind::ApprovalNeeded => Some("release_approval_needed"),
         ReleaseEventKind::Failed => Some("release_failed"),
         ReleaseEventKind::Created
+        | ReleaseEventKind::Superseded
         | ReleaseEventKind::RolloutPaused
         | ReleaseEventKind::RolloutResumed
-        | ReleaseEventKind::Approved => None,
+        | ReleaseEventKind::Approved
+        | ReleaseEventKind::Updated => None,
     }
 }
 
@@ -810,6 +817,9 @@ fn release_notification_payload(
             "rollout_percent": event.rollout_percent,
             "actor": event.actor,
             "reason": event.reason,
+            "state": event.state,
+            "store_status": event.store_status,
+            "console_url": event.console_url,
         },
         "project_name": project_name,
         "timestamp": event.timestamp,
@@ -938,6 +948,15 @@ fn release_summary(payload: &serde_json::Value, bold: &str, escape: fn(&str) -> 
 
     match payload["event"].as_str().unwrap_or_default() {
         "release.release_uploaded" => format!(":package: {subject} uploaded{track}"),
+        "release.release_blocked" => {
+            format!(":warning: {subject} is {bold}blocked{bold} at the store{track}")
+        }
+        "release.release_submitted" => format!(":mag: {subject} submitted for review{track}"),
+        "release.release_approved" => format!(":ok_hand: {subject} approved by the store{track}"),
+        "release.release_rejected" => {
+            format!(":no_entry: {subject} {bold}rejected{bold} in store review{track}")
+        }
+        "release.release_live" => format!(":rocket: {subject} is live{track}"),
         "release.rollout_step_raised" => {
             format!(":arrow_up: {subject} rollout raised to {percent}{track}")
         }
@@ -972,6 +991,9 @@ fn release_mattermost_payload(payload: &serde_json::Value) -> serde_json::Value 
     let mut text = release_summary(payload, "**", |value| value.to_string());
     if let Some(reason) = payload["release"]["reason"].as_str() {
         text.push_str(&format!("\nReason: {reason}"));
+    }
+    if let Some(url) = payload["release"]["console_url"].as_str() {
+        text.push_str(&format!("\n[Open in the store console]({url})"));
     }
     serde_json::json!({
         "text": text,
@@ -1155,6 +1177,12 @@ fn slack_message(
             let mut context = Vec::new();
             if let Some(reason) = payload["release"]["reason"].as_str() {
                 context.push(format!("Reason: {}", slack_escape(reason)));
+            }
+            if let Some(status) = payload["release"]["store_status"].as_str() {
+                context.push(format!("Store status `{}`", slack_escape(status)));
+            }
+            if let Some(url) = payload["release"]["console_url"].as_str() {
+                context.push(format!("<{url}|Open in the store console>"));
             }
             (
                 release_summary(payload, "*", slack_escape),
@@ -1781,11 +1809,27 @@ fn release_email_html(payload: &serde_json::Value) -> (String, String) {
         .unwrap_or(summary);
     let reason = payload["release"]["reason"]
         .as_str()
-        .map(|reason| format!("<p>Reason: {}</p>", html_escape(reason)))
+        .map(|reason| {
+            format!(
+                "<p>Reason: {}</p>",
+                html_escape(reason).replace('\n', "<br>")
+            )
+        })
+        .unwrap_or_default();
+    let console = payload["release"]["console_url"]
+        .as_str()
+        .map(|url| {
+            format!(
+                r#"<p><a href="{}">Open in the store console</a></p>"#,
+                html_escape(url)
+            )
+        })
         .unwrap_or_default();
     let color = match payload["event"].as_str().unwrap_or_default() {
-        "release.rollout_halted" | "release.release_failed" => "#dc2626",
-        "release.release_approval_needed" => "#d97706",
+        "release.rollout_halted" | "release.release_failed" | "release.release_rejected" => {
+            "#dc2626"
+        }
+        "release.release_approval_needed" | "release.release_blocked" => "#d97706",
         _ => "#16a34a",
     };
     let heading = html_escape(&summary.replace('`', ""));
@@ -1798,6 +1842,7 @@ fn release_email_html(payload: &serde_json::Value) -> (String, String) {
 </div>
 <div style="padding: 24px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
   {reason}
+  {console}
   <p>Open the release in the Oore CI dashboard for details.</p>
 </div>
 <p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 16px;">Sent by Oore CI</p>
@@ -1838,6 +1883,9 @@ mod tests {
             rollout_percent: Some(20.0),
             actor: Some("dev@example.com".to_string()),
             reason: reason.map(String::from),
+            state: None,
+            store_status: None,
+            console_url: None,
             timestamp: 0,
         };
         release_notification_payload(&event, event_type, Some("Kite"))
@@ -2184,6 +2232,9 @@ mod tests {
             rollout_percent: Some(20.0),
             actor: None,
             reason: None,
+            state: None,
+            store_status: None,
+            console_url: None,
             timestamp: 0,
         };
         let deliveries = dispatch_release_event(&pool, &event).await.unwrap();

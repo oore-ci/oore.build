@@ -90,7 +90,9 @@ export function PromoteDialog({
   }
 
   function submit() {
-    if (!target) return
+    // Promotion reuses a build Oore uploaded; a release found in the store
+    // has none.
+    if (!target || !release.build_id) return
     promote.mutate(
       {
         build_id: release.build_id,

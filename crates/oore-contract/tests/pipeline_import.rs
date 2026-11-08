@@ -18,10 +18,10 @@ use std::path::{Path, PathBuf};
 use oore_contract::pipeline_export::{FormExport, FormSettings, export_form_settings};
 use oore_contract::pipeline_import::{FormImport, ImportContext, import_form_settings};
 use oore_contract::{
-    AppStoreDestination, AppStorePublishConfig, BuildIsolation, BuildPlatform,
+    AppStoreDestination, AppStorePublishConfig, AppStoreReleaseType, BuildIsolation, BuildPlatform,
     ExportPipelineYamlRequest, GooglePlayPublishConfig, GooglePlayReleaseNotesSource,
-    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, ScheduleTrigger, TriggerConfig,
-    default_artifact_patterns_for_platforms,
+    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PublishPreflight,
+    ScheduleTrigger, TriggerConfig, default_artifact_patterns_for_platforms,
 };
 
 fn triggers(json: serde_json::Value) -> TriggerConfig {
@@ -42,6 +42,7 @@ fn play(track: &str, rollout_percent: Option<f64>, draft: bool) -> GooglePlayPub
         upload_mapping: true,
         in_app_update_priority: None,
         rollout_policy: None,
+        preflight: PublishPreflight::default(),
     }
 }
 
@@ -54,6 +55,11 @@ fn app_store(groups: &[&str]) -> AppStorePublishConfig {
         uses_non_exempt_encryption: false,
         submit_for_review: false,
         phased_release: false,
+        release_type: AppStoreReleaseType::default(),
+        earliest_release_date: None,
+        release_notes_dir: None,
+        cancel_previous_submission: false,
+        preflight: PublishPreflight::default(),
     }
 }
 

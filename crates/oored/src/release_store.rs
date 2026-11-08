@@ -29,6 +29,34 @@ struct PlayTarget {
     version_code: i64,
 }
 
+/// A pipeline's Google Play settings with the service account key they name.
+pub(crate) async fn play_service_account(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    project_id: &str,
+    pipeline_id: &str,
+) -> anyhow::Result<(Zeroizing<String>, oore_contract::GooglePlayPublishConfig)> {
+    let (config, _) = load_google_play(pool, pipeline_id)
+        .await?
+        .context("the pipeline has no Google Play settings")?;
+    let service_account_json = resolve_secret_value(
+        pool,
+        encryption_key,
+        project_id,
+        Some(pipeline_id),
+        &config.service_account_secret,
+    )
+    .await?
+    .map(Zeroizing::new)
+    .with_context(|| {
+        format!(
+            "the service account secret {} is not set",
+            config.service_account_secret
+        )
+    })?;
+    Ok((service_account_json, config))
+}
+
 impl PlayReleaseStoreClient {
     pub fn new(pool: SqlitePool, encryption_key: Zeroizing<Vec<u8>>) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
@@ -43,30 +71,23 @@ impl PlayReleaseStoreClient {
     }
 
     async fn target(&self, release: &Release) -> anyhow::Result<PlayTarget> {
-        let pipeline_id: String =
-            sqlx::query_scalar("SELECT pipeline_id FROM builds WHERE id = ?1")
-                .bind(&release.build_id)
-                .fetch_optional(&self.pool)
-                .await?
-                .context("the release's build no longer exists")?;
-        let (config, _) = load_google_play(&self.pool, &pipeline_id)
-            .await?
-            .context("the pipeline has no Google Play settings")?;
-        let service_account_json = resolve_secret_value(
+        // An adopted release has no build; it names its pipeline itself.
+        let pipeline_id: String = sqlx::query_scalar(
+            "SELECT COALESCE(r.pipeline_id, b.pipeline_id) FROM releases r
+             LEFT JOIN builds b ON b.id = r.build_id WHERE r.id = ?1",
+        )
+        .bind(&release.id)
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten()
+        .context("the release's build and pipeline no longer exist")?;
+        let (service_account_json, config) = play_service_account(
             &self.pool,
             &self.encryption_key,
             &release.project_id,
-            Some(&pipeline_id),
-            &config.service_account_secret,
+            &pipeline_id,
         )
-        .await?
-        .map(Zeroizing::new)
-        .with_context(|| {
-            format!(
-                "the service account secret {} is not set",
-                config.service_account_secret
-            )
-        })?;
+        .await?;
         let package_name = release
             .package_name
             .clone()
@@ -131,7 +152,13 @@ impl PlayReleaseStoreClient {
         }
         .await;
         let result = match result {
-            Ok(()) => edits.commit().await,
+            Ok(()) => edits.commit().await.map(|outcome| {
+                if outcome == oore_google_play::CommitOutcome::HeldForReview {
+                    tracing::warn!(
+                        "Play Console holds this change until someone sends it for review"
+                    );
+                }
+            }),
             Err(error) => Err(error),
         };
         // A failed commit leaves the edit open, and an open edit would get
@@ -180,7 +207,13 @@ impl PlayReleaseStoreClient {
         }
         .await;
         let result = match result {
-            Ok(()) => edits.commit().await,
+            Ok(()) => edits.commit().await.map(|outcome| {
+                if outcome == oore_google_play::CommitOutcome::HeldForReview {
+                    tracing::warn!(
+                        "Play Console holds this change until someone sends it for review"
+                    );
+                }
+            }),
             Err(error) => Err(error),
         };
         if result.is_err() {

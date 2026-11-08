@@ -5563,6 +5563,54 @@
         ]
       }
     },
+    "/v1/pipelines/{pipeline_id}/publish/readiness": {
+      "get": {
+        "tags": [
+          "Pipeline Publishing"
+        ],
+        "summary": "Check store readiness",
+        "description": "What would stop the pipeline's next store submission: what App Store Connect shows now (unanswered age rating questions, missing App Review contact details, another open submission) and the refusals Apple or Google gave the last time, remembered until a submission goes through. Also the pre-flight level the next build uses. Requires project read access.",
+        "operationId": "get_pipeline_publish_readiness",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Store readiness",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreReadinessResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/pipelines/{pipeline_id}/secrets": {
       "get": {
         "tags": [
@@ -8558,6 +8606,15 @@
             }
           },
           {
+            "name": "origin",
+            "in": "query",
+            "description": "Filter by origin: oore or adopted",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "Page size, 1 to 200 (default 50)",
@@ -8682,6 +8739,54 @@
         ]
       }
     },
+    "/v1/releases/store-sync": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Sync store releases",
+        "description": "Reads Google Play tracks and App Store Connect versions for the apps Oore's pipelines publish, and follows the releases made outside Oore as `adopted` releases. Runs every 15 minutes on its own. Requires maintainer of each project synced.",
+        "operationId": "sync_store_releases",
+        "requestBody": {
+          "description": "Optional project",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreSyncRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the sync read and adopted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreSyncResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/releases/{release_id}": {
       "get": {
         "tags": [
@@ -8751,6 +8856,111 @@
         ],
         "requestBody": {
           "description": "Optional reason; `fraction` is accepted by raise only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/releases/{release_id}/attach_schedule": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Attach a rollout schedule",
+        "description": "Hands a Play rollout's steps to Oore with `policy`, also for a release made outside Oore. Requires maintainer. Writes history and an audit log entry.",
+        "operationId": "attach_schedule_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `policy` is accepted by attach_schedule only",
           "content": {
             "application/json": {
               "schema": {
@@ -8940,6 +9150,111 @@
         ]
       }
     },
+    "/v1/releases/{release_id}/detach_schedule": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Detach the rollout schedule",
+        "description": "Stops Oore stepping the rollout; it stays where it is until changed. Requires maintainer. Writes history and an audit log entry.",
+        "operationId": "detach_schedule_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `policy` is accepted by attach_schedule only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/releases/{release_id}/halt": {
       "post": {
         "tags": [
@@ -8961,6 +9276,216 @@
         ],
         "requestBody": {
           "description": "Optional reason; `fraction` is accepted by raise only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/releases/{release_id}/mark_rejected": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Mark rejected",
+        "description": "Records that Google Play rejected a release Play Console held for review. Requires maintainer. Writes history and an audit log entry.",
+        "operationId": "mark_rejected_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `policy` is accepted by attach_schedule only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/releases/{release_id}/mark_sent_for_review": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Mark sent for review",
+        "description": "Records that a Play release held in Play Console was sent for review there. Requires maintainer. Writes history and an audit log entry.",
+        "operationId": "mark_sent_for_review_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `policy` is accepted by attach_schedule only",
           "content": {
             "application/json": {
               "schema": {
@@ -9150,6 +9675,111 @@
         ]
       }
     },
+    "/v1/releases/{release_id}/pull_from_review": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Pull from review",
+        "description": "Takes the App Store version out of App Review, waiting or in review, or approved and not yet released. Requires maintainer. Writes history and an audit log entry.",
+        "operationId": "pull_from_review_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `policy` is accepted by attach_schedule only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/releases/{release_id}/raise": {
       "post": {
         "tags": [
@@ -9255,6 +9885,216 @@
         ]
       }
     },
+    "/v1/releases/{release_id}/release_now": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Release the approved version now",
+        "description": "Asks App Store Connect to release a version App Review approved and that waits for a manual or scheduled release. Requires maintainer. Writes history and an audit log entry.",
+        "operationId": "release_now_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `policy` is accepted by attach_schedule only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/releases/{release_id}/resubmit": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Resubmit for review",
+        "description": "Submits a rejected App Store version for App Review again, with the build it has. Requires maintainer. Writes history and an audit log entry.",
+        "operationId": "resubmit_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `policy` is accepted by attach_schedule only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/releases/{release_id}/resume": {
       "post": {
         "tags": [
@@ -9276,6 +10116,111 @@
         ],
         "requestBody": {
           "description": "Optional reason; `fraction` is accepted by raise only",
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ReleaseActionRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Release"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not allowed in the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The store rejected the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/releases/{release_id}/retry": {
+      "post": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Check the store again",
+        "description": "Reads App Store Connect on the next monitor pass, for a blocked release or one waiting on Apple. Requires developer or maintainer. Writes history and an audit log entry.",
+        "operationId": "retry_release",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "path",
+            "description": "Release ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional reason; `policy` is accepted by attach_schedule only",
           "content": {
             "application/json": {
               "schema": {
@@ -14166,8 +15111,19 @@
           "release_notes"
         ],
         "properties": {
+          "cancel_previous_submission": {
+            "type": "boolean",
+            "description": "Cancel an open review submission that holds other items (an in-app\nevent, a custom product page) instead of waiting for someone to\nclear it, like Codemagic's `--cancel-previous-submissions`."
+          },
           "destination": {
             "$ref": "#/components/schemas/AppStoreDestination"
+          },
+          "earliest_release_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`scheduled` only: the earliest release time, RFC 3339 (Apple rounds\nto the hour)."
           },
           "enabled": {
             "type": "boolean"
@@ -14176,12 +15132,27 @@
             "type": "boolean",
             "description": "Release the approved version with Apple's seven-day phased release."
           },
+          "preflight": {
+            "$ref": "#/components/schemas/PublishPreflight",
+            "description": "Checks before the upload."
+          },
           "release_notes": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/AppStoreReleaseNote"
             },
             "description": "TestFlight \"What to Test\" or App Store \"What's New\", per locale."
+          },
+          "release_notes_dir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A repository directory of `<locale>.txt` files, such as\n`ios/release-notes`, whose text replaces `release_notes` for the\nbuild. Relative to the repository root."
+          },
+          "release_type": {
+            "$ref": "#/components/schemas/AppStoreReleaseType",
+            "description": "When Apple releases an approved version. App Store destination only."
           },
           "submit_for_review": {
             "type": "boolean",
@@ -14215,6 +15186,15 @@
             "type": "string"
           }
         }
+      },
+      "AppStoreReleaseType": {
+        "type": "string",
+        "description": "When Apple releases a version App Review approved.",
+        "enum": [
+          "after_approval",
+          "manual",
+          "scheduled"
+        ]
       },
       "AppendBuildLogsRequest": {
         "type": "object",
@@ -14841,6 +15821,17 @@
           "queued_at": {
             "type": "integer",
             "format": "int64"
+          },
+          "release_outcome": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildReleaseOutcome",
+                "description": "Where the build's store releases stand, so a Succeeded build that the\nstore has not taken yet says so. Absent when the build has no release."
+              }
+            ]
           },
           "retry_steps": {
             "type": [
@@ -15566,6 +16557,19 @@
             "description": "Queued and scheduled builds that a runner can pick up."
           }
         }
+      },
+      "BuildReleaseOutcome": {
+        "type": "string",
+        "description": "The furthest-behind store release of a build, in words a build list can\nshow beside the build status.",
+        "enum": [
+          "waiting",
+          "blocked",
+          "in_review",
+          "approved",
+          "rejected",
+          "live",
+          "failed"
+        ]
       },
       "BuildSizeBaseline": {
         "type": "object",
@@ -17583,6 +18587,10 @@
               "null"
             ],
             "description": "Expected application id. When omitted, the AAB's package is used."
+          },
+          "preflight": {
+            "$ref": "#/components/schemas/PublishPreflight",
+            "description": "Checks before the store sees the upload."
           },
           "release_notes": {
             "$ref": "#/components/schemas/GooglePlayReleaseNotesSource"
@@ -20565,6 +21573,16 @@
           "failed"
         ]
       },
+      "PublishPreflight": {
+        "type": "string",
+        "description": "What a failed pre-flight check does to the publish step.",
+        "enum": [
+          "auto",
+          "block",
+          "warn",
+          "off"
+        ]
+      },
       "PublishStore": {
         "type": "string",
         "enum": [
@@ -20582,6 +21600,15 @@
             "$ref": "#/components/schemas/User"
           }
         }
+      },
+      "ReadinessLevel": {
+        "type": "string",
+        "description": "How serious a store readiness finding is.",
+        "enum": [
+          "ok",
+          "warn",
+          "block"
+        ]
       },
       "ReadinessResponse": {
         "type": "object",
@@ -20742,7 +21769,6 @@
         "required": [
           "id",
           "project_id",
-          "build_id",
           "platform",
           "store",
           "track",
@@ -20782,11 +21808,19 @@
               "null"
             ]
           },
+          "auto_rollout": {
+            "type": "boolean",
+            "description": "Google Play: whether Oore drives the rollout on `policy`'s schedule.\nOff for a release found in the store until a schedule is attached."
+          },
           "awaiting_approval": {
             "type": "boolean"
           },
           "build_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The build Oore uploaded. Absent for a release made outside Oore."
           },
           "build_number": {
             "type": [
@@ -20794,6 +21828,13 @@
               "null"
             ],
             "format": "int64"
+          },
+          "console_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The store console page for the release: the App Store Connect\nversion, or the app's Play Console publishing overview."
           },
           "crash_rate": {
             "type": [
@@ -20846,6 +21887,10 @@
             ],
             "format": "int64"
           },
+          "origin": {
+            "$ref": "#/components/schemas/ReleaseOrigin",
+            "description": "Whether Oore uploaded the release or found it in the store."
+          },
           "package_name": {
             "type": [
               "string",
@@ -20882,6 +21927,13 @@
           },
           "state": {
             "$ref": "#/components/schemas/ReleaseState"
+          },
+          "state_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the release is in its state, in the store's words where there\nare some: the reason of its latest history entry."
           },
           "store": {
             "$ref": "#/components/schemas/ReleaseStore"
@@ -20940,7 +21992,15 @@
           "resume",
           "halt",
           "complete",
-          "approve"
+          "approve",
+          "retry",
+          "release_now",
+          "resubmit",
+          "pull_from_review",
+          "mark_sent_for_review",
+          "mark_rejected",
+          "attach_schedule",
+          "detach_schedule"
         ]
       },
       "ReleaseActionRequest": {
@@ -20953,6 +22013,17 @@
             ],
             "format": "double",
             "description": "Raise only: target fraction (0..1]. Defaults to the next policy step."
+          },
+          "policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReleasePolicy",
+                "description": "`attach_schedule` only: the schedule to drive the release on.\nDefaults to the release's current policy."
+              }
+            ]
           },
           "reason": {
             "type": [
@@ -20972,13 +22043,15 @@
             "required": [
               "release_id",
               "project_id",
-              "build_id",
               "store",
               "track"
             ],
             "properties": {
               "build_id": {
-                "type": "string"
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "project_id": {
                 "type": "string"
@@ -21024,14 +22097,16 @@
         "required": [
           "release_id",
           "project_id",
-          "build_id",
           "state",
           "rollout_fraction",
           "updated_at"
         ],
         "properties": {
           "build_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "project_id": {
             "type": "string"
@@ -21144,6 +22219,14 @@
           }
         }
       },
+      "ReleaseOrigin": {
+        "type": "string",
+        "description": "Whether Oore uploaded a release or found it in the store.",
+        "enum": [
+          "oore",
+          "adopted"
+        ]
+      },
       "ReleasePolicy": {
         "type": "object",
         "description": "Staged rollout policy stored with each release.",
@@ -21179,7 +22262,10 @@
         "enum": [
           "uploading",
           "processing",
+          "blocked",
           "in_review",
+          "approved",
+          "rejected",
           "rolling",
           "paused",
           "halted",
@@ -22156,8 +23242,22 @@
           "status"
         ],
         "properties": {
+          "held_for_review": {
+            "type": "boolean",
+            "description": "Google Play only took the edit with `changesNotSentForReview=true`:\nthe release waits in Play Console until someone sends it for review."
+          },
           "package_name": {
             "type": "string"
+          },
+          "release_notes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AppStoreReleaseNote"
+            },
+            "description": "App Store uploads: \"What's New\" / \"What to Test\" read from the\nrepository (`release_notes_dir`), which replace the saved notes."
           },
           "rollout_fraction": {
             "type": [
@@ -23372,6 +24472,117 @@
           "users": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "StoreReadinessItem": {
+        "type": "object",
+        "description": "One store readiness finding for a pipeline's publishing.",
+        "required": [
+          "store",
+          "code",
+          "level",
+          "title"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable identifier, such as `age_rating` or `version_live`."
+          },
+          "console_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The store console page that fixes it."
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "level": {
+            "$ref": "#/components/schemas/ReadinessLevel"
+          },
+          "remembered": {
+            "type": "boolean",
+            "description": "Remembered from the store's last refusal rather than read now."
+          },
+          "store": {
+            "$ref": "#/components/schemas/ReleaseStore"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "StoreReadinessResponse": {
+        "type": "object",
+        "description": "`GET /v1/pipelines/{pipeline_id}/publish/readiness`.",
+        "required": [
+          "pipeline_id",
+          "items",
+          "preflight",
+          "checked_at"
+        ],
+        "properties": {
+          "checked_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoreReadinessItem"
+            }
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "preflight": {
+            "$ref": "#/components/schemas/PublishPreflight",
+            "description": "What a blocking finding does to the next build's publish step."
+          }
+        }
+      },
+      "StoreSyncRequest": {
+        "type": "object",
+        "description": "`POST /v1/releases/store-sync`: read the stores now.",
+        "properties": {
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only this project's apps. Omitted reads every app the caller can see."
+          }
+        }
+      },
+      "StoreSyncResponse": {
+        "type": "object",
+        "required": [
+          "apps",
+          "adopted",
+          "errors"
+        ],
+        "properties": {
+          "adopted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Store releases Oore had no record of and now follows."
+          },
+          "apps": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Apps read."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Apps that could not be read, with why."
           }
         }
       },
