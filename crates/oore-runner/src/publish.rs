@@ -7,11 +7,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use oore_contract::{
-    GooglePlayPublishConfig, GooglePlayReleaseNotesSource, PublishStore, RunnerPublishResult,
+    GooglePlayPublishConfig, GooglePlayReleaseNotesSource, PublishPreflight, PublishStore,
+    RunnerPublishResult,
 };
 use oore_google_play::{
-    LocalizedText, MAX_RELEASE_NOTES_CHARS, PlayEdits, ReleaseStatus, TrackRelease, access_token,
-    is_play_rejection, play_track_name, read_aab_manifest,
+    CommitOutcome, LocalizedText, MAX_RELEASE_NOTES_CHARS, PlayEdits, ReleaseStatus, TrackRelease,
+    access_token, is_play_rejection, play_track_name, read_aab_manifest,
 };
 
 use crate::store_version::{ensure_play_version_code, fetch_play_version_codes};
@@ -165,6 +166,9 @@ pub(crate) struct PublishGate<S, A> {
 #[derive(Debug, PartialEq, Eq)]
 enum Committed {
     Confirmed,
+    /// Play took the edit but holds it until someone sends it for review in
+    /// Play Console.
+    HeldForReview,
     /// The commit's reply was lost, but the release is on the track.
     ReplyLost,
 }
@@ -198,8 +202,10 @@ async fn stage_and_commit<T>(
         return Err(error
             .context("The build stopped before the release was committed; nothing was published"));
     }
-    let Err(error) = edits.commit().await else {
-        return Ok((staged, Committed::Confirmed));
+    let error = match edits.commit().await {
+        Ok(CommitOutcome::SentForReview) => return Ok((staged, Committed::Confirmed)),
+        Ok(CommitOutcome::HeldForReview) => return Ok((staged, Committed::HeldForReview)),
+        Err(error) => error,
     };
     if !is_play_rejection(&error) && landed.await.unwrap_or(false) {
         return Ok((staged, Committed::ReplyLost));
@@ -297,6 +303,21 @@ pub(crate) async fn publish_to_google_play(
                 },
             )
             .await?;
+        match config.preflight {
+            PublishPreflight::Off => {}
+            level => {
+                if let Err(error) = edits.validate().await {
+                    if level == PublishPreflight::Block {
+                        return Err(error.context(
+                            "Pre-flight: Google Play refused the release before it was committed; nothing was published",
+                        ));
+                    }
+                    staged_log.push(format!(
+                        "[oore-publish] Pre-flight warning: Google Play's check of the edit failed: {error:#}"
+                    ));
+                }
+            }
+        }
         anyhow::Ok(version_code)
     };
     let landed = async {
@@ -310,6 +331,13 @@ pub(crate) async fn publish_to_google_play(
     let committed = stage_and_commit(&edits, stage, gate, landed).await;
     log.append(&mut staged_log);
     let (version_code, committed) = committed?;
+    let held_for_review = committed == Committed::HeldForReview;
+    if held_for_review {
+        log.push(
+            "[oore-publish] Play Console holds this change until someone presses Send for review in Publishing overview; nothing reaches users before that"
+                .to_string(),
+        );
+    }
     if committed == Committed::ReplyLost {
         log.push(
             "[oore-publish] Google Play's reply to the commit was lost, but the release is on the track"
@@ -318,6 +346,9 @@ pub(crate) async fn publish_to_google_play(
     }
 
     log.push(match (status, user_fraction) {
+        _ if held_for_review => {
+            format!("[oore-publish] Staged on {track}, waiting to be sent for review")
+        }
         (ReleaseStatus::Draft, _) => format!("[oore-publish] Created a draft release on {track}"),
         (_, Some(fraction)) => format!(
             "[oore-publish] Rolling out to {}% of {track} users",
@@ -343,6 +374,8 @@ pub(crate) async fn publish_to_google_play(
         }
         .to_string(),
         testflight_groups: None,
+        held_for_review,
+        release_notes: None,
     })
 }
 

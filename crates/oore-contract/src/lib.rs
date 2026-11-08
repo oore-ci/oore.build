@@ -1737,6 +1737,68 @@ pub struct Build {
     pub finished_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Where the build's store releases stand, so a Succeeded build that the
+    /// store has not taken yet says so. Absent when the build has no release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_outcome: Option<BuildReleaseOutcome>,
+}
+
+/// The furthest-behind store release of a build, in words a build list can
+/// show beside the build status.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildReleaseOutcome {
+    /// Uploaded; the store is still processing it.
+    Waiting,
+    /// The store refused to move it on; someone has to act.
+    Blocked,
+    InReview,
+    /// Approved by the store and waiting to be released.
+    Approved,
+    Rejected,
+    /// Live or rolling out.
+    Live,
+    Failed,
+}
+
+impl BuildReleaseOutcome {
+    /// The outcome one release implies.
+    pub fn of(state: ReleaseState) -> Self {
+        match state {
+            ReleaseState::Uploading | ReleaseState::Processing => Self::Waiting,
+            ReleaseState::Blocked => Self::Blocked,
+            ReleaseState::InReview => Self::InReview,
+            ReleaseState::Approved => Self::Approved,
+            ReleaseState::Rejected => Self::Rejected,
+            ReleaseState::Rolling
+            | ReleaseState::Paused
+            | ReleaseState::Halted
+            | ReleaseState::Complete => Self::Live,
+            ReleaseState::Failed => Self::Failed,
+        }
+    }
+
+    /// How much the outcome needs a person, highest first, so a build with
+    /// several releases shows the one that needs attention.
+    pub fn urgency(self) -> u8 {
+        match self {
+            Self::Blocked => 6,
+            Self::Rejected => 5,
+            Self::Failed => 4,
+            Self::Approved => 3,
+            Self::InReview => 2,
+            Self::Waiting => 1,
+            Self::Live => 0,
+        }
+    }
+
+    /// The outcome of a build with these release states.
+    pub fn summarize(states: impl IntoIterator<Item = ReleaseState>) -> Option<Self> {
+        states
+            .into_iter()
+            .map(Self::of)
+            .max_by_key(|outcome| outcome.urgency())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -4561,6 +4623,37 @@ pub struct GooglePlayPublishConfig {
     /// release record. Omitted means the default schedule with no halt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollout_policy: Option<ReleasePolicy>,
+    /// Checks before the store sees the upload.
+    #[serde(default)]
+    pub preflight: PublishPreflight,
+}
+
+/// What a failed pre-flight check does to the publish step.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PublishPreflight {
+    /// Warn until the pipeline has had a release accepted by the store,
+    /// then block: first releases are where store records are still being
+    /// set up, and after that a blocker is a regression.
+    #[default]
+    Auto,
+    /// A blocking check fails the publish step before the upload.
+    Block,
+    /// Problems are written to the log; the upload goes ahead.
+    Warn,
+    /// No checks.
+    Off,
+}
+
+impl PublishPreflight {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Block => "block",
+            Self::Warn => "warn",
+            Self::Off => "off",
+        }
+    }
 }
 
 fn default_release_notes_locale() -> String {
@@ -4585,6 +4678,7 @@ impl GooglePlayPublishConfig {
             upload_mapping: true,
             in_app_update_priority: None,
             rollout_policy: None,
+            preflight: PublishPreflight::Auto,
         }
     }
 }
@@ -4773,6 +4867,14 @@ pub struct RunnerPublishResult {
     /// for, which the daemon records instead of reading the settings again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub testflight_groups: Option<Vec<String>>,
+    /// Google Play only took the edit with `changesNotSentForReview=true`:
+    /// the release waits in Play Console until someone sends it for review.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub held_for_review: bool,
+    /// App Store uploads: "What's New" / "What to Test" read from the
+    /// repository (`release_notes_dir`), which replace the saved notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_notes: Option<Vec<AppStoreReleaseNote>>,
 }
 
 // ── Pipeline Android signing types ──────────────────────────────
@@ -5420,6 +5522,100 @@ pub struct AppStorePublishConfig {
     /// Release the approved version with Apple's seven-day phased release.
     #[serde(default)]
     pub phased_release: bool,
+    /// When Apple releases an approved version. App Store destination only.
+    #[serde(default)]
+    pub release_type: AppStoreReleaseType,
+    /// `scheduled` only: the earliest release time, RFC 3339 (Apple rounds
+    /// to the hour).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub earliest_release_date: Option<String>,
+    /// A repository directory of `<locale>.txt` files, such as
+    /// `ios/release-notes`, whose text replaces `release_notes` for the
+    /// build. Relative to the repository root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_notes_dir: Option<String>,
+    /// Cancel an open review submission that holds other items (an in-app
+    /// event, a custom product page) instead of waiting for someone to
+    /// clear it, like Codemagic's `--cancel-previous-submissions`.
+    #[serde(default)]
+    pub cancel_previous_submission: bool,
+    /// Checks before the upload.
+    #[serde(default)]
+    pub preflight: PublishPreflight,
+}
+
+/// Whether `value` is an RFC 3339 date-time such as `2026-12-01T09:00:00Z`
+/// or `2026-12-01T09:00:00+05:30`, the form App Store Connect takes.
+pub fn is_rfc3339_date_time(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let digits = |range: std::ops::Range<usize>| {
+        bytes
+            .get(range)
+            .is_some_and(|part| part.iter().all(u8::is_ascii_digit))
+    };
+    if bytes.len() < 20
+        || !digits(0..4)
+        || bytes[4] != b'-'
+        || !digits(5..7)
+        || bytes[7] != b'-'
+        || !digits(8..10)
+        || !matches!(bytes[10], b'T' | b't')
+        || !digits(11..13)
+        || bytes[13] != b':'
+        || !digits(14..16)
+        || bytes[16] != b':'
+        || !digits(17..19)
+    {
+        return false;
+    }
+    let mut rest = &value[19..];
+    if let Some(fraction) = rest.strip_prefix('.') {
+        let end = fraction
+            .find(|character: char| !character.is_ascii_digit())
+            .unwrap_or(fraction.len());
+        if end == 0 {
+            return false;
+        }
+        rest = &fraction[end..];
+    }
+    match rest.as_bytes() {
+        [b'Z' | b'z'] => true,
+        [b'+' | b'-', h1, h2, b':', m1, m2] => [h1, h2, m1, m2].iter().all(|b| b.is_ascii_digit()),
+        _ => false,
+    }
+}
+
+/// When Apple releases a version App Review approved.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AppStoreReleaseType {
+    /// As soon as App Review approves it (Apple's `AFTER_APPROVAL`).
+    #[default]
+    AfterApproval,
+    /// When someone presses Release now (`MANUAL`).
+    Manual,
+    /// At `earliest_release_date`, or on approval if that has passed
+    /// (`SCHEDULED`).
+    Scheduled,
+}
+
+impl AppStoreReleaseType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AfterApproval => "after_approval",
+            Self::Manual => "manual",
+            Self::Scheduled => "scheduled",
+        }
+    }
+
+    /// The `releaseType` App Store Connect stores on a version.
+    pub fn asc_value(self) -> &'static str {
+        match self {
+            Self::AfterApproval => "AFTER_APPROVAL",
+            Self::Manual => "MANUAL",
+            Self::Scheduled => "SCHEDULED",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -5508,7 +5704,8 @@ pub struct RunnerChangedEvent {
 pub struct ReleaseChangedEvent {
     pub release_id: String,
     pub project_id: String,
-    pub build_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_id: Option<String>,
     pub state: ReleaseState,
     /// Fraction of users, 0..1.
     pub rollout_fraction: f64,
@@ -6101,11 +6298,22 @@ impl FromStr for ReleaseStore {
 pub enum ReleaseState {
     Uploading,
     Processing,
+    /// The store refused to move the release on and someone has to act in
+    /// its console: an App Store submission Apple refused, a version nobody
+    /// submitted, a Play edit held for review. Oore keeps checking and
+    /// moves on by itself once the console is fixed.
+    Blocked,
     InReview,
+    /// The store approved the release and it waits to be released.
+    Approved,
+    /// The store rejected the release in review. A fix in the console can
+    /// resubmit the same build.
+    Rejected,
     Rolling,
     Paused,
     Halted,
     Complete,
+    /// Oore could not get the release to the store at all.
     Failed,
 }
 
@@ -6114,7 +6322,10 @@ impl ReleaseState {
         match self {
             Self::Uploading => "uploading",
             Self::Processing => "processing",
+            Self::Blocked => "blocked",
             Self::InReview => "in_review",
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
             Self::Rolling => "rolling",
             Self::Paused => "paused",
             Self::Halted => "halted",
@@ -6133,16 +6344,59 @@ impl ReleaseState {
         match self {
             Self::Uploading => &[
                 Self::Processing,
+                Self::Blocked,
                 Self::InReview,
                 Self::Rolling,
                 Self::Failed,
             ],
-            Self::Processing => &[Self::InReview, Self::Rolling, Self::Failed],
-            Self::InReview => &[Self::Rolling, Self::Failed],
+            Self::Processing => &[
+                Self::Blocked,
+                Self::InReview,
+                Self::Rolling,
+                Self::Complete,
+                Self::Failed,
+            ],
+            Self::Blocked => &[
+                Self::Processing,
+                Self::InReview,
+                Self::Approved,
+                Self::Rejected,
+                Self::Rolling,
+                Self::Paused,
+                Self::Complete,
+                Self::Failed,
+            ],
+            Self::InReview => &[
+                Self::Blocked,
+                Self::Approved,
+                Self::Rejected,
+                Self::Rolling,
+                Self::Paused,
+                Self::Complete,
+                Self::Failed,
+            ],
+            Self::Approved => &[
+                Self::Blocked,
+                Self::Rejected,
+                Self::Rolling,
+                Self::Paused,
+                Self::Complete,
+                Self::Failed,
+            ],
+            // A fix in the console sends it back to review; a newer version
+            // supersedes it.
+            Self::Rejected => &[
+                Self::Blocked,
+                Self::InReview,
+                Self::Approved,
+                Self::Complete,
+                Self::Failed,
+            ],
             Self::Rolling => &[
                 Self::Rolling,
                 Self::Paused,
                 Self::Halted,
+                Self::Rejected,
                 Self::Complete,
                 Self::Failed,
             ],
@@ -6170,7 +6424,10 @@ impl FromStr for ReleaseState {
         match s {
             "uploading" => Ok(Self::Uploading),
             "processing" => Ok(Self::Processing),
+            "blocked" => Ok(Self::Blocked),
             "in_review" => Ok(Self::InReview),
+            "approved" => Ok(Self::Approved),
+            "rejected" => Ok(Self::Rejected),
             "rolling" => Ok(Self::Rolling),
             "paused" => Ok(Self::Paused),
             "halted" => Ok(Self::Halted),
@@ -6191,6 +6448,25 @@ pub enum ReleaseAction {
     Halt,
     Complete,
     Approve,
+    /// Check the store again now instead of at the next poll.
+    Retry,
+    /// App Store: release an approved version now.
+    ReleaseNow,
+    /// App Store: submit a rejected version for review again, with the
+    /// same build.
+    Resubmit,
+    /// App Store: take a version out of review (developer reject).
+    PullFromReview,
+    /// Google Play: someone sent the held changes for review in Play
+    /// Console. Play's API cannot tell Oore.
+    MarkSentForReview,
+    /// Google Play: Google rejected the release in review. Play's API
+    /// cannot tell Oore.
+    MarkRejected,
+    /// Google Play: let Oore drive a rolling release on a schedule.
+    AttachSchedule,
+    /// Google Play: stop driving the release; it stays where it is.
+    DetachSchedule,
 }
 
 impl ReleaseAction {
@@ -6202,6 +6478,14 @@ impl ReleaseAction {
             Self::Halt => "halt",
             Self::Complete => "complete",
             Self::Approve => "approve",
+            Self::Retry => "retry",
+            Self::ReleaseNow => "release_now",
+            Self::Resubmit => "resubmit",
+            Self::PullFromReview => "pull_from_review",
+            Self::MarkSentForReview => "mark_sent_for_review",
+            Self::MarkRejected => "mark_rejected",
+            Self::AttachSchedule => "attach_schedule",
+            Self::DetachSchedule => "detach_schedule",
         }
     }
 }
@@ -6217,6 +6501,14 @@ impl FromStr for ReleaseAction {
             "halt" => Ok(Self::Halt),
             "complete" => Ok(Self::Complete),
             "approve" => Ok(Self::Approve),
+            "retry" => Ok(Self::Retry),
+            "release_now" => Ok(Self::ReleaseNow),
+            "resubmit" => Ok(Self::Resubmit),
+            "pull_from_review" => Ok(Self::PullFromReview),
+            "mark_sent_for_review" => Ok(Self::MarkSentForReview),
+            "mark_rejected" => Ok(Self::MarkRejected),
+            "attach_schedule" => Ok(Self::AttachSchedule),
+            "detach_schedule" => Ok(Self::DetachSchedule),
             other => Err(format!("unknown release action: {other}")),
         }
     }
@@ -6350,9 +6642,14 @@ pub struct Release {
     pub project_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_name: Option<String>,
-    pub build_id: String,
+    /// The build Oore uploaded. Absent for a release made outside Oore.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_number: Option<i64>,
+    /// Whether Oore uploaded the release or found it in the store.
+    #[serde(default)]
+    pub origin: ReleaseOrigin,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_id: Option<String>,
     /// `android` or `ios`, derived from the store.
@@ -6408,8 +6705,56 @@ pub struct Release {
     /// together. App Store releases only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_status: Option<String>,
+    /// Why the release is in its state, in the store's words where there
+    /// are some: the reason of its latest history entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_reason: Option<String>,
+    /// The store console page for the release: the App Store Connect
+    /// version, or the app's Play Console publishing overview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub console_url: Option<String>,
+    /// Google Play: whether Oore drives the rollout on `policy`'s schedule.
+    /// Off for a release found in the store until a schedule is attached.
+    #[serde(default = "default_true_bool")]
+    pub auto_rollout: bool,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+fn default_true_bool() -> bool {
+    true
+}
+
+/// Whether Oore uploaded a release or found it in the store.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseOrigin {
+    /// A build Oore uploaded.
+    #[default]
+    Oore,
+    /// Uploaded by hand or another tool; Oore found it in the store.
+    Adopted,
+}
+
+impl ReleaseOrigin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Oore => "oore",
+            Self::Adopted => "adopted",
+        }
+    }
+}
+
+impl FromStr for ReleaseOrigin {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "oore" => Ok(Self::Oore),
+            "adopted" => Ok(Self::Adopted),
+            other => Err(format!("unknown release origin: {other}")),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -6442,7 +6787,8 @@ pub struct ReleaseActivityEvent {
     pub project_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_name: Option<String>,
-    pub build_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_id: Option<String>,
     pub store: ReleaseStore,
     pub track: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -6473,6 +6819,69 @@ pub struct ReleaseActionRequest {
     /// Raise only: target fraction (0..1]. Defaults to the next policy step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fraction: Option<f64>,
+    /// `attach_schedule` only: the schedule to drive the release on.
+    /// Defaults to the release's current policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<ReleasePolicy>,
+}
+
+/// `POST /v1/releases/store-sync`: read the stores now.
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct StoreSyncRequest {
+    /// Only this project's apps. Omitted reads every app the caller can see.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema)]
+pub struct StoreSyncResponse {
+    /// Apps read.
+    pub apps: i64,
+    /// Store releases Oore had no record of and now follows.
+    pub adopted: i64,
+    /// Apps that could not be read, with why.
+    #[schema(required = true)]
+    pub errors: Vec<String>,
+}
+
+/// How serious a store readiness finding is.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadinessLevel {
+    Ok,
+    /// The store may hold the release, or a person should check.
+    Warn,
+    /// The store will refuse it.
+    Block,
+}
+
+/// One store readiness finding for a pipeline's publishing.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct StoreReadinessItem {
+    pub store: ReleaseStore,
+    /// Stable identifier, such as `age_rating` or `version_live`.
+    pub code: String,
+    pub level: ReadinessLevel,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// The store console page that fixes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub console_url: Option<String>,
+    /// Remembered from the store's last refusal rather than read now.
+    #[serde(default)]
+    pub remembered: bool,
+}
+
+/// `GET /v1/pipelines/{pipeline_id}/publish/readiness`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct StoreReadinessResponse {
+    pub pipeline_id: String,
+    #[schema(required = true)]
+    pub items: Vec<StoreReadinessItem>,
+    /// What a blocking finding does to the next build's publish step.
+    pub preflight: PublishPreflight,
+    pub checked_at: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

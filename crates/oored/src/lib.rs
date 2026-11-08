@@ -54,6 +54,8 @@ pub mod signing_identities;
 pub mod step_retry;
 pub mod storage;
 pub mod store;
+pub mod store_readiness;
+pub mod store_sync;
 pub mod store_vitals;
 pub mod test_results;
 pub mod token;

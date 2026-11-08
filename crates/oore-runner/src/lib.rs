@@ -7176,8 +7176,37 @@ async fn run_publish_steps(
         )
         .await;
         let result = match (signed_ipa_path, ios_artifact_metadata) {
-            (Some(ipa), Some(metadata)) => {
+            (Some(ipa), Some(metadata)) => 'upload: {
                 let key_dir = signing_workspace.join(".oore").join("asc-keys");
+                let preflight = app_store_upload::apply_preflight(
+                    app_store.config.preflight,
+                    app_store_upload::preflight_findings(workspace),
+                );
+                let warnings = match preflight {
+                    Ok(warnings) => warnings,
+                    Err(error) => break 'upload Err(error),
+                };
+                for warning in warnings {
+                    let _ = append_runner_log_line(
+                        client,
+                        daemon_url,
+                        config,
+                        &job.build_id,
+                        log_seq,
+                        "stdout",
+                        &warning,
+                    )
+                    .await;
+                }
+                let release_notes = match app_store.config.release_notes_dir.as_deref() {
+                    Some(dir) => match app_store_upload::read_release_notes_dir(workspace, dir) {
+                        Ok(notes) => notes,
+                        Err(error) => {
+                            break 'upload Err(error.context("failed to read release_notes_dir"));
+                        }
+                    },
+                    None => None,
+                };
                 // Once altool starts, Apple may get the build; don't start
                 // it for a build that has already stopped.
                 match check_build_active(client, daemon_url, config, &job.build_id, authority)
@@ -7189,7 +7218,7 @@ async fn run_publish_steps(
                     Ok(()) => tokio::select! {
                         uploaded = app_store_upload::upload_ipa(ipa, &app_store.credentials, &key_dir) => {
                             uploaded.and_then(|message| {
-                                app_store_upload::publish_result(metadata, &app_store.config)
+                                app_store_upload::publish_result(metadata, &app_store.config, release_notes)
                                     .map(|result| (message, result))
                             })
                         }
@@ -10028,6 +10057,8 @@ mod publish_report_tests {
             rollout_fraction: Some(0.1),
             status: "in_progress".into(),
             testflight_groups: None,
+            held_for_review: false,
+            release_notes: None,
         };
         report_publish_result(
             &reqwest::Client::new(),

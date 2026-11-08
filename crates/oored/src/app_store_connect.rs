@@ -7,9 +7,28 @@ use serde_json::{Value, json};
 
 use crate::apple_api::{self, AppleApiCredentials};
 
-/// A failed App Store Connect call, worded for release history.
+/// A failed App Store Connect call, worded for release history. The flag
+/// says whether Apple refused the request (a 4xx answer such as a 409 for a
+/// missing age rating), which a person has to fix, rather than the call
+/// failing on the way (a timeout, a 5xx), which a retry may fix.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AscError(pub String);
+pub struct AscError(pub String, pub bool);
+
+impl AscError {
+    /// A failure a retry may fix.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self(message.into(), false)
+    }
+
+    /// Apple refused the request; someone has to change something.
+    pub fn refused(message: impl Into<String>) -> Self {
+        Self(message.into(), true)
+    }
+
+    pub fn is_refusal(&self) -> bool {
+        self.1
+    }
+}
 
 impl std::fmt::Display for AscError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -132,6 +151,94 @@ fn submission_item_versions(items: &Value) -> Vec<Option<String>> {
         .unwrap_or_default()
 }
 
+/// An App Store version as the version list shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AscListedVersion {
+    pub id: String,
+    pub version_string: String,
+    pub state: String,
+    /// The attached build's CFBundleVersion.
+    pub build_number: Option<String>,
+    pub build_id: Option<String>,
+}
+
+/// Versions and their builds from an `appStoreVersions` list that included
+/// `build`.
+fn listed_versions(document: &Value) -> Vec<AscListedVersion> {
+    let builds: std::collections::HashMap<&str, &str> = document["included"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["type"] == "builds")
+        .filter_map(|item| {
+            Some((
+                item["id"].as_str()?,
+                item.pointer("/attributes/version")?.as_str()?,
+            ))
+        })
+        .collect();
+    document["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|version| {
+            let attributes = &version["attributes"];
+            let build_id = version
+                .pointer("/relationships/build/data/id")
+                .and_then(Value::as_str);
+            Some(AscListedVersion {
+                id: version["id"].as_str()?.to_string(),
+                version_string: attributes["versionString"].as_str()?.to_string(),
+                state: attributes["appVersionState"]
+                    .as_str()
+                    .or_else(|| attributes["appStoreState"].as_str())?
+                    .to_string(),
+                build_number: build_id
+                    .and_then(|id| builds.get(id))
+                    .map(|number| (*number).to_string()),
+                build_id: build_id.map(str::to_string),
+            })
+        })
+        .collect()
+}
+
+/// Age rating questions with no answer, in words. Overrides, the Korea
+/// rating and the info URL are optional, so they never count.
+fn unanswered_age_rating_questions(attributes: &Value) -> Vec<String> {
+    const OPTIONAL: &[&str] = &[
+        "ageRatingOverride",
+        "ageRatingOverrideV2",
+        "koreaAgeRatingOverride",
+        "gracRatingClassificationNumber",
+        "developerAgeRatingInfoUrl",
+        "kidsAgeBand",
+    ];
+    let Some(attributes) = attributes.as_object() else {
+        return Vec::new();
+    };
+    let mut missing: Vec<String> = attributes
+        .iter()
+        .filter(|(key, value)| value.is_null() && !OPTIONAL.contains(&key.as_str()))
+        .map(|(key, _)| words_of(key))
+        .collect();
+    missing.sort();
+    missing
+}
+
+/// `gamblingSimulated` as "gambling simulated".
+fn words_of(key: &str) -> String {
+    let mut words = String::new();
+    for character in key.chars() {
+        if character.is_ascii_uppercase() {
+            words.push(' ');
+            words.push(character.to_ascii_lowercase());
+        } else {
+            words.push(character);
+        }
+    }
+    words
+}
+
 #[derive(Debug, Clone)]
 pub struct AscPhasedRelease {
     pub id: String,
@@ -171,7 +278,7 @@ impl<'a> AppStoreConnect<'a> {
 
     fn token(&self) -> AscResult<String> {
         apple_api::generate_app_store_connect_jwt(self.creds)
-            .map_err(|(_, body)| AscError(body.0.error))
+            .map_err(|(_, body)| AscError::refused(body.0.error))
     }
 
     async fn send(
@@ -183,14 +290,23 @@ impl<'a> AppStoreConnect<'a> {
             .bearer_auth(self.token()?)
             .send()
             .await
-            .map_err(|error| AscError(format!("{scope} failed: {error}")))?;
+            .map_err(|error| AscError::new(format!("{scope} failed: {error}")))?;
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         if !status.is_success() {
-            return Err(AscError(format!(
+            let message = format!(
                 "{scope} failed ({status}): {}",
                 apple_api::parse_apple_error(&body)
-            )));
+            );
+            // Rate limits and timeouts clear up on their own.
+            let transient = status.is_server_error()
+                || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                || status == reqwest::StatusCode::REQUEST_TIMEOUT;
+            return Err(if transient {
+                AscError::new(message)
+            } else {
+                AscError::refused(message)
+            });
         }
         Ok((!body.trim().is_empty()).then_some(body))
     }
@@ -208,8 +324,9 @@ impl<'a> AppStoreConnect<'a> {
             )
             .await?
             .unwrap_or_default();
-        serde_json::from_str(&body)
-            .map_err(|error| AscError(format!("{scope} returned an invalid response: {error}")))
+        serde_json::from_str(&body).map_err(|error| {
+            AscError::new(format!("{scope} returned an invalid response: {error}"))
+        })
     }
 
     async fn post(&self, scope: &str, path: &str, body: Value) -> AscResult<Option<Resource>> {
@@ -280,7 +397,7 @@ impl<'a> AppStoreConnect<'a> {
             .await?
             .unwrap_or_default();
         serde_json::from_str(if body.is_empty() { "{}" } else { &body }).map_err(|error| {
-            AscError(format!(
+            AscError::new(format!(
                 "Power and performance metrics returned an invalid response: {error}"
             ))
         })
@@ -533,9 +650,9 @@ impl<'a> AppStoreConnect<'a> {
                 }),
             )
             .await?;
-        created
-            .map(|version| version.id)
-            .ok_or_else(|| AscError("App Store version creation returned no version".to_string()))
+        created.map(|version| version.id).ok_or_else(|| {
+            AscError::new("App Store version creation returned no version".to_string())
+        })
     }
 
     /// The app's App Store version with this version string, in any state,
@@ -728,10 +845,17 @@ impl<'a> AppStoreConnect<'a> {
     /// to call again after a partial failure: a version already submitted or
     /// already in the open submission is not added twice. Like fastlane's
     /// deliver, it stops when the open submission holds items it did not add.
-    pub async fn submit_for_review(&self, app_id: &str, version_id: &str) -> AscResult<()> {
+    pub async fn submit_for_review(
+        &self,
+        app_id: &str,
+        version_id: &str,
+        cancel_previous: bool,
+    ) -> AscResult<()> {
         if version_is_submitted(&self.version_state(version_id).await?) {
             return Ok(());
         }
+        // A rejected version waits in a submission with unresolved issues;
+        // submitting that one again is a resubmission.
         let open: ListEnvelope = self
             .get(
                 "Review submission lookup",
@@ -739,7 +863,7 @@ impl<'a> AppStoreConnect<'a> {
                 &[
                     ("filter[app]", app_id),
                     ("filter[platform]", "IOS"),
-                    ("filter[state]", "READY_FOR_REVIEW"),
+                    ("filter[state]", "READY_FOR_REVIEW,UNRESOLVED_ISSUES"),
                     ("limit", "1"),
                 ],
             )
@@ -763,7 +887,7 @@ impl<'a> AppStoreConnect<'a> {
                 .await?
                 .map(|submission| submission.id)
                 .ok_or_else(|| {
-                    AscError("Review submission creation returned no submission".to_string())
+                    AscError::new("Review submission creation returned no submission".to_string())
                 })?,
         };
         let items: Value = self
@@ -783,8 +907,27 @@ impl<'a> AppStoreConnect<'a> {
             .iter()
             .any(|item| item.as_deref() != Some(version_id))
         {
-            return Err(AscError(
-                "App Store Connect already has a draft review submission with other items; submit or remove it in App Store Connect, then Oore retries".to_string(),
+            if !cancel_previous {
+                return Err(AscError::refused(
+                    "App Store Connect already has a draft review submission with other items; submit or remove it in App Store Connect, then Oore retries".to_string(),
+                ));
+            }
+            // Like Codemagic's --cancel-previous-submissions: cancel the
+            // other submission, and the next poll starts a new one.
+            self.patch(
+                "Canceling the previous review submission",
+                &format!("/v1/reviewSubmissions/{submission_id}"),
+                json!({
+                    "data": {
+                        "type": "reviewSubmissions",
+                        "id": submission_id,
+                        "attributes": { "canceled": true }
+                    }
+                }),
+            )
+            .await?;
+            return Err(AscError::new(
+                "Canceled the previous review submission in App Store Connect; submitting this version next",
             ));
         }
         if item_versions.is_empty() {
@@ -821,6 +964,242 @@ impl<'a> AppStoreConnect<'a> {
         .await
     }
 
+    /// Sets when Apple releases the version once App Review approves it.
+    pub async fn set_release_type(
+        &self,
+        version_id: &str,
+        release_type: &str,
+        earliest_release_date: Option<&str>,
+    ) -> AscResult<()> {
+        let mut attributes = json!({ "releaseType": release_type });
+        if release_type == "SCHEDULED"
+            && let Some(date) = earliest_release_date
+        {
+            attributes["earliestReleaseDate"] = json!(date);
+        }
+        self.patch(
+            "App Store release type update",
+            &format!("/v1/appStoreVersions/{version_id}"),
+            json!({
+                "data": {
+                    "type": "appStoreVersions",
+                    "id": version_id,
+                    "attributes": attributes
+                }
+            }),
+        )
+        .await
+    }
+
+    /// The id of the build attached to the version, if any.
+    pub async fn version_build_id(&self, version_id: &str) -> AscResult<Option<String>> {
+        let build: OptionalEnvelope = self
+            .get(
+                "App Store version build lookup",
+                &format!("/v1/appStoreVersions/{version_id}/build"),
+                &[("fields[builds]", "version")],
+            )
+            .await?;
+        Ok(build.data.map(|build| build.id))
+    }
+
+    /// Releases an approved version that waits for the developer
+    /// (`PENDING_DEVELOPER_RELEASE`) or for its scheduled date.
+    pub async fn release_version(&self, version_id: &str) -> AscResult<()> {
+        self.post(
+            "App Store version release",
+            "/v1/appStoreVersionReleaseRequests",
+            json!({
+                "data": {
+                    "type": "appStoreVersionReleaseRequests",
+                    "relationships": {
+                        "appStoreVersion": {
+                            "data": { "type": "appStoreVersions", "id": version_id }
+                        }
+                    }
+                }
+            }),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// Takes the version out of App Review by canceling the review
+    /// submission that holds it (a developer reject).
+    pub async fn cancel_review(&self, app_id: &str, version_id: &str) -> AscResult<()> {
+        let submissions: ListEnvelope = self
+            .get(
+                "Review submission lookup",
+                "/v1/reviewSubmissions",
+                &[
+                    ("filter[app]", app_id),
+                    ("filter[platform]", "IOS"),
+                    (
+                        "filter[state]",
+                        "WAITING_FOR_REVIEW,IN_REVIEW,UNRESOLVED_ISSUES",
+                    ),
+                    ("limit", "10"),
+                ],
+            )
+            .await?;
+        for submission in submissions.data {
+            let items: Value = self
+                .get(
+                    "Review submission items lookup",
+                    &format!("/v1/reviewSubmissions/{}/items", submission.id),
+                    &[
+                        ("fields[reviewSubmissionItems]", "appStoreVersion"),
+                        ("include", "appStoreVersion"),
+                        ("fields[appStoreVersions]", "versionString"),
+                        ("limit", "50"),
+                    ],
+                )
+                .await?;
+            if submission_item_versions(&items)
+                .iter()
+                .any(|item| item.as_deref() == Some(version_id))
+            {
+                return self
+                    .patch(
+                        "Review submission cancellation",
+                        &format!("/v1/reviewSubmissions/{}", submission.id),
+                        json!({
+                            "data": {
+                                "type": "reviewSubmissions",
+                                "id": submission.id,
+                                "attributes": { "canceled": true }
+                            }
+                        }),
+                    )
+                    .await;
+            }
+        }
+        Err(AscError::refused(
+            "App Store Connect has no review submission for this version to cancel",
+        ))
+    }
+
+    /// The app's newest App Store versions, newest first, with their build.
+    pub async fn list_versions(
+        &self,
+        app_id: &str,
+        limit: u32,
+    ) -> AscResult<Vec<AscListedVersion>> {
+        let limit = limit.to_string();
+        let versions: Value = self
+            .get(
+                "App Store versions lookup",
+                &format!("/v1/apps/{app_id}/appStoreVersions"),
+                &[
+                    ("filter[platform]", "IOS"),
+                    (
+                        "fields[appStoreVersions]",
+                        "versionString,appVersionState,appStoreState,releaseType,build,createdDate",
+                    ),
+                    ("include", "build"),
+                    ("fields[builds]", "version"),
+                    ("limit", &limit),
+                ],
+            )
+            .await?;
+        Ok(listed_versions(&versions))
+    }
+
+    /// The age rating questions the app's editable App Info leaves
+    /// unanswered.
+    pub async fn age_rating_gaps(&self, app_id: &str) -> AscResult<Vec<String>> {
+        let infos: ListEnvelope = self
+            .get(
+                "App info lookup",
+                &format!("/v1/apps/{app_id}/appInfos"),
+                &[("fields[appInfos]", "state,appStoreState"), ("limit", "5")],
+            )
+            .await?;
+        let info = infos
+            .data
+            .iter()
+            .find(|info| {
+                matches!(
+                    attr_str(info, "state").as_deref(),
+                    Some("PREPARE_FOR_SUBMISSION" | "DEVELOPER_REJECTED" | "REJECTED")
+                )
+            })
+            .or_else(|| infos.data.first());
+        let Some(info) = info else {
+            return Ok(Vec::new());
+        };
+        let declaration: OptionalEnvelope = self
+            .get(
+                "Age rating lookup",
+                &format!("/v1/appInfos/{}/ageRatingDeclaration", info.id),
+                &[],
+            )
+            .await?;
+        Ok(declaration
+            .data
+            .map(|declaration| unanswered_age_rating_questions(&declaration.attributes))
+            .unwrap_or_default())
+    }
+
+    /// The review contact fields the version leaves empty.
+    pub async fn review_detail_gaps(&self, version_id: &str) -> AscResult<Vec<String>> {
+        let detail: OptionalEnvelope = self
+            .get(
+                "App Review details lookup",
+                &format!("/v1/appStoreVersions/{version_id}/appStoreReviewDetail"),
+                &[],
+            )
+            .await?;
+        let Some(detail) = detail.data else {
+            return Ok(vec!["App Review contact information".to_string()]);
+        };
+        Ok([
+            ("contactFirstName", "contact first name"),
+            ("contactLastName", "contact last name"),
+            ("contactPhone", "contact phone"),
+            ("contactEmail", "contact email"),
+        ]
+        .into_iter()
+        .filter(|(key, _)| {
+            attr_str(&detail, key)
+                .map(|value| value.trim().is_empty())
+                .unwrap_or(true)
+        })
+        .map(|(_, label)| label.to_string())
+        .collect())
+    }
+
+    /// Whether an open review submission holds items other than App Store
+    /// versions, which would stop Oore's submission.
+    pub async fn open_submission_has_other_items(&self, app_id: &str) -> AscResult<bool> {
+        let open: ListEnvelope = self
+            .get(
+                "Review submission lookup",
+                "/v1/reviewSubmissions",
+                &[
+                    ("filter[app]", app_id),
+                    ("filter[platform]", "IOS"),
+                    ("filter[state]", "READY_FOR_REVIEW"),
+                    ("limit", "1"),
+                ],
+            )
+            .await?;
+        let Some(submission) = open.data.into_iter().next() else {
+            return Ok(false);
+        };
+        let items: Value = self
+            .get(
+                "Review submission items lookup",
+                &format!("/v1/reviewSubmissions/{}/items", submission.id),
+                &[
+                    ("fields[reviewSubmissionItems]", "appStoreVersion"),
+                    ("limit", "50"),
+                ],
+            )
+            .await?;
+        Ok(submission_item_versions(&items).iter().any(Option::is_none))
+    }
+
     /// The version's App Store state, preferring `appVersionState` and falling
     /// back to the older `appStoreState`.
     pub async fn version_state(&self, version_id: &str) -> AscResult<String> {
@@ -833,7 +1212,7 @@ impl<'a> AppStoreConnect<'a> {
             .await?;
         attr_str(&version.data, "appVersionState")
             .or_else(|| attr_str(&version.data, "appStoreState"))
-            .ok_or_else(|| AscError("App Store version has no state".to_string()))
+            .ok_or_else(|| AscError::new("App Store version has no state".to_string()))
     }
 }
 
@@ -864,7 +1243,18 @@ pub(crate) trait AscApi {
     ) -> AscResult<()>;
     async fn enable_phased_release(&self, version_id: &str) -> AscResult<()>;
     async fn disable_phased_release(&self, version_id: &str) -> AscResult<()>;
-    async fn submit_for_review(&self, app_id: &str, version_id: &str) -> AscResult<()>;
+    async fn submit_for_review(
+        &self,
+        app_id: &str,
+        version_id: &str,
+        cancel_previous: bool,
+    ) -> AscResult<()>;
+    async fn set_release_type(
+        &self,
+        version_id: &str,
+        release_type: &str,
+        earliest_release_date: Option<&str>,
+    ) -> AscResult<()>;
 }
 
 impl AscApi for AppStoreConnect<'_> {
@@ -917,8 +1307,22 @@ impl AscApi for AppStoreConnect<'_> {
     async fn disable_phased_release(&self, version_id: &str) -> AscResult<()> {
         AppStoreConnect::disable_phased_release(self, version_id).await
     }
-    async fn submit_for_review(&self, app_id: &str, version_id: &str) -> AscResult<()> {
-        AppStoreConnect::submit_for_review(self, app_id, version_id).await
+    async fn submit_for_review(
+        &self,
+        app_id: &str,
+        version_id: &str,
+        cancel_previous: bool,
+    ) -> AscResult<()> {
+        AppStoreConnect::submit_for_review(self, app_id, version_id, cancel_previous).await
+    }
+    async fn set_release_type(
+        &self,
+        version_id: &str,
+        release_type: &str,
+        earliest_release_date: Option<&str>,
+    ) -> AscResult<()> {
+        AppStoreConnect::set_release_type(self, version_id, release_type, earliest_release_date)
+            .await
     }
 }
 

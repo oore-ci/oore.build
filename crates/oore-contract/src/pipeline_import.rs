@@ -580,6 +580,7 @@ fn expected_play(
             ),
             service_account: None,
             draft: Some(play.draft),
+            preflight: None,
         })
 }
 
@@ -752,6 +753,7 @@ fn differences(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AppStoreReleaseType, PublishPreflight};
     use crate::{GooglePlayReleaseNotesSource, ScheduleTrigger};
 
     fn execution(json: serde_json::Value) -> PipelineExecutionConfig {
@@ -776,6 +778,7 @@ mod tests {
             upload_mapping: true,
             in_app_update_priority: None,
             rollout_policy: None,
+            preflight: PublishPreflight::default(),
         }
     }
 
@@ -788,6 +791,11 @@ mod tests {
             uses_non_exempt_encryption: false,
             submit_for_review: false,
             phased_release: false,
+            release_type: AppStoreReleaseType::default(),
+            earliest_release_date: None,
+            release_notes_dir: None,
+            cancel_previous_submission: false,
+            preflight: PublishPreflight::default(),
         }
     }
 

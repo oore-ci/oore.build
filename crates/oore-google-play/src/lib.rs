@@ -215,6 +215,16 @@ pub struct TrackState {
     pub releases: Vec<TrackRelease>,
 }
 
+/// How Play took a committed edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitOutcome {
+    /// The changes went out, and to review where Play reviews them.
+    SentForReview,
+    /// Play only took the edit with `changesNotSentForReview=true`: the
+    /// changes wait in Play Console until someone sends them for review.
+    HeldForReview,
+}
+
 /// An open Play edit. Nothing is visible in Play Console until `commit`.
 pub struct PlayEdits<'a> {
     http: &'a reqwest::Client,
@@ -525,16 +535,46 @@ impl<'a> PlayEdits<'a> {
     /// On an error the edit stays open for the caller to delete. An error
     /// for which [`is_play_rejection`] is false may hide a commit that went
     /// through.
-    pub async fn commit(&self) -> anyhow::Result<()> {
+    pub async fn commit(&self) -> anyhow::Result<CommitOutcome> {
         match play_json::<serde_json::Value>(self.commit_request(false), "commit the edit").await {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(CommitOutcome::SentForReview),
             Err(error) if wants_changes_not_sent_for_review(&error.to_string()) => {
                 let _: serde_json::Value =
                     play_json(self.commit_request(true), "commit the edit").await?;
-                Ok(())
+                Ok(CommitOutcome::HeldForReview)
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// Ask Play to check the edit as it stands, without committing it. Play
+    /// answers with the same refusal a commit would get, so a problem shows
+    /// before anything changes in Play Console.
+    pub async fn validate(&self) -> anyhow::Result<()> {
+        let _: serde_json::Value = play_json(
+            self.http
+                .post(self.api(":validate"))
+                .bearer_auth(&self.token)
+                .json(&serde_json::json!({})),
+            "validate the edit",
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Every track of the app with its releases.
+    pub async fn list_tracks(&self) -> anyhow::Result<Vec<TrackState>> {
+        #[derive(Deserialize)]
+        struct Tracks {
+            #[serde(default)]
+            tracks: Vec<TrackState>,
+        }
+        let tracks: Tracks = play_json(
+            self.http.get(self.api("/tracks")).bearer_auth(&self.token),
+            "list the tracks",
+        )
+        .await?;
+        Ok(tracks.tracks)
     }
 
     // Google's front end answers a bodyless POST with 411 Length Required,
