@@ -11291,6 +11291,66 @@
         ]
       }
     },
+    "/v1/runners/{runner_id}/jobs/{job_id}/identity": {
+      "post": {
+        "tags": [
+          "Runners"
+        ],
+        "summary": "Report build identity",
+        "description": "Runner reports the commit title and author and the app version once\nit has checked out the build's source.",
+        "operationId": "report_build_identity",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportBuildIdentityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Identity stored"
+          },
+          "403": {
+            "description": "The build is not assigned to this runner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/runners/{runner_id}/jobs/{job_id}/ios-signing": {
       "get": {
         "tags": [
@@ -15772,11 +15832,25 @@
               "null"
             ]
           },
+          "commit_author": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The built commit's author name, reported with `commit_title`."
+          },
           "commit_sha": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "commit_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The first line of the built commit's message. The runner reports it\nafter checkout, so a queued build has none."
           },
           "config_snapshot": {
             "type": "object"
@@ -15884,6 +15958,17 @@
               "$ref": "#/components/schemas/StepResult"
             }
           },
+          "superseded_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildReference",
+                "description": "The newer build that canceled this one, when a push to the same\nbranch replaced it."
+              }
+            ]
+          },
           "trigger_actor": {
             "type": [
               "string",
@@ -15908,6 +15993,21 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          },
+          "version_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The store version code (Android versionCode, iOS build number) the\nbuild makes."
+          },
+          "version_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The app version the build makes, from `pubspec.yaml`."
           },
           "workflow": {
             "type": [
@@ -16555,6 +16655,23 @@
             "type": "integer",
             "format": "int64",
             "description": "Queued and scheduled builds that a runner can pick up."
+          }
+        }
+      },
+      "BuildReference": {
+        "type": "object",
+        "description": "Another build, by id and number.",
+        "required": [
+          "id",
+          "build_number"
+        ],
+        "properties": {
+          "build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
           }
         }
       },
@@ -22307,6 +22424,37 @@
         "properties": {
           "access_token": {
             "type": "string"
+          }
+        }
+      },
+      "ReportBuildIdentityRequest": {
+        "type": "object",
+        "description": "What a runner found out about a build after checkout.",
+        "properties": {
+          "commit_author": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "version_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

@@ -7,11 +7,11 @@ use axum::http::StatusCode;
 use oore_contract::{
     ApiError, ApprovalPolicy, Build, BuildApproval, BuildApprovalRequest, BuildApprovalResponse,
     BuildApprovalState, BuildChangelogPreviewResponse, BuildContext, BuildDetailResponse,
-    BuildEvent, BuildPlatform, BuildReleaseOutcome, BuildStatus, CancelBuildResponse,
-    ConcurrencyPolicy, CreateBuildRequest, CreateBuildResponse, DEFAULT_BUILD_TIMEOUT_MINUTES,
-    ListBuildActorsResponse, ListBuildsResponse, PipelineExecutionConfig, RepositoryConfig,
-    RerunBuildResponse, RunnerPolicyBlockReason, ScheduleTrigger, TriggerConfig, TriggerEvent,
-    TriggerSpec, scheduling_labels,
+    BuildEvent, BuildPlatform, BuildReference, BuildReleaseOutcome, BuildStatus,
+    CancelBuildResponse, ConcurrencyPolicy, CreateBuildRequest, CreateBuildResponse,
+    DEFAULT_BUILD_TIMEOUT_MINUTES, ListBuildActorsResponse, ListBuildsResponse,
+    PipelineExecutionConfig, RepositoryConfig, RerunBuildResponse, RunnerPolicyBlockReason,
+    ScheduleTrigger, TriggerConfig, TriggerEvent, TriggerSpec, scheduling_labels,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -101,6 +101,20 @@ pub(crate) fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         trigger_ref: row.get("trigger_ref"),
         commit_sha: row.get("commit_sha"),
         branch: row.get("branch"),
+        commit_title: row.try_get("commit_title").ok().flatten(),
+        commit_author: row.try_get("commit_author").ok().flatten(),
+        version_name: row.try_get("version_name").ok().flatten(),
+        version_code: row.try_get("version_code").ok().flatten(),
+        superseded_by: row
+            .try_get::<Option<String>, _>("superseded_by_build_id")
+            .ok()
+            .flatten()
+            .zip(
+                row.try_get::<Option<i64>, _>("superseded_by_build_number")
+                    .ok()
+                    .flatten(),
+            )
+            .map(|(id, build_number)| BuildReference { id, build_number }),
         changelog: row.get("changelog"),
         source_build_id: row.get("source_build_id"),
         retry_steps: crate::step_retry::retry_steps_from_snapshot(&config_snapshot),
@@ -778,7 +792,8 @@ async fn execute_build_insert(
         sqlx::query(
             "UPDATE builds \
              SET status = 'canceled', runner_id = NULL, signing_token_hash = NULL, \
-                 finished_at = ?1, updated_at = ?1 \
+                 finished_at = ?1, updated_at = ?1, superseded_by_build_id = ?4, \
+                 superseded_by_build_number = (SELECT build_number FROM builds WHERE id = ?4) \
              WHERE pipeline_id = ?2 AND branch = ?3 AND id != ?4 \
                AND build_number < (SELECT build_number FROM builds WHERE id = ?4) \
                AND json_extract(config_snapshot, '$.repository_id') = \
@@ -1657,6 +1672,11 @@ pub async fn create_build(
         runner_policy_block_reason_for_project(&pool, &project_id).await?;
     let build = Build {
         release_outcome: None,
+        commit_title: None,
+        commit_author: None,
+        version_name: None,
+        version_code: None,
+        superseded_by: None,
         id: build_id,
         project_id,
         pipeline_id: req.pipeline_id,
@@ -2533,6 +2553,11 @@ pub(crate) async fn queue_rerun(
         runner_policy_block_reason_for_project(pool, &project_id).await?;
     let build = Build {
         release_outcome: None,
+        commit_title: None,
+        commit_author: None,
+        version_name: None,
+        version_code: None,
+        superseded_by: None,
         id: new_build_id,
         project_id,
         pipeline_id,
@@ -3017,6 +3042,11 @@ pub async fn trigger_build_from_webhook(
 
                 created_builds.push(Build {
                     release_outcome: None,
+                    commit_title: None,
+                    commit_author: None,
+                    version_name: None,
+                    version_code: None,
+                    superseded_by: None,
                     id: build_id,
                     project_id: project_id.clone(),
                     pipeline_id: pipeline_id.clone(),
@@ -3669,6 +3699,11 @@ mod tests {
         let superseded = load_build(&pool, &first[0].id).await;
         assert_eq!(superseded.status, "canceled");
         assert!(superseded.approval.is_none());
+        let replaced_by = superseded
+            .superseded_by
+            .expect("names the build that replaced it");
+        assert_eq!(replaced_by.id, second[0].id);
+        assert_eq!(replaced_by.build_number, second[0].build_number);
         assert_eq!(
             second[0].approval.as_ref().map(|approval| approval.state),
             Some(BuildApprovalState::Pending)

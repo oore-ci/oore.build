@@ -3014,6 +3014,10 @@ pub async fn build_router_with_recovery(
             post(runners::update_job_status),
         )
         .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/identity",
+            post(runners::report_build_identity),
+        )
+        .route(
             "/v1/runners/{runner_id}/jobs/{job_id}",
             get(runners::get_job_status),
         )

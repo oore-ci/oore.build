@@ -239,6 +239,7 @@ use utoipa::{
         operations::gitlab_checkout_discovery,
         operations::gitlab_checkout_upload_pack,
         operations::update_job_status,
+        operations::report_build_identity,
         operations::get_job_status,
         operations::get_job_android_signing,
         operations::get_job_ios_signing,
@@ -594,6 +595,8 @@ use utoipa::{
         oore_contract::ClaimJobResponse,
         oore_contract::ClaimedJob,
         oore_contract::UpdateJobStatusRequest,
+        oore_contract::ReportBuildIdentityRequest,
+        oore_contract::BuildReference,
         oore_contract::ListRunnersResponse,
         oore_contract::JobStatusResponse,
         oore_contract::RunnerAndroidSigningProfile,
@@ -3520,6 +3523,24 @@ mod operations {
         )
     )]
     pub(super) fn update_job_status() {}
+
+    /// Report build identity
+    ///
+    /// Runner reports the commit title and author and the app version once
+    /// it has checked out the build's source.
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/identity", tag = "Runners",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+        ),
+        request_body = ReportBuildIdentityRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 204, description = "Identity stored"),
+            (status = 403, description = "The build is not assigned to this runner", body = ApiError),
+        )
+    )]
+    pub(super) fn report_build_identity() {}
 
     /// Get job status
     ///
