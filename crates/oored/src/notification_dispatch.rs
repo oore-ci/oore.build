@@ -322,6 +322,12 @@ pub async fn dispatch_build_approval_needed(
         return Ok(());
     };
     let deliveries = enqueue(pool, &notification).await?;
+    {
+        let mut conn = pool.acquire().await?;
+        if let Err(error) = queue_personal(&mut conn, &notification).await {
+            warn!(%error, build_id, "personal approval email not queued");
+        }
+    }
     deliver(pool.clone(), encryption_key.into(), deliveries).await;
     Ok(())
 }
@@ -431,6 +437,7 @@ pub(crate) async fn notify_due_builds(pool: &SqlitePool) -> anyhow::Result<Vec<S
             && let Some(notification) = &notification
         {
             deliveries.extend(enqueue_on(&mut tx, notification).await?);
+            queue_personal(&mut tx, notification).await?;
         }
         tx.commit().await?;
     }
@@ -517,6 +524,12 @@ async fn dispatch_release_event(
         actor_login: None,
         payload: release_notification_payload(event, event_type, project_name.as_deref()),
     };
+    {
+        let mut conn = pool.acquire().await?;
+        if let Err(error) = queue_personal(&mut conn, &notification).await {
+            warn!(%error, release_id = %event.release_id, "personal release email not queued");
+        }
+    }
     enqueue(pool, &notification).await
 }
 
@@ -1859,6 +1872,67 @@ async fn send_email_notification(
             .map_err(|_| anyhow::anyhow!("SMTP send timed out after 30s"))??;
     }
 
+    Ok(())
+}
+
+/// Send one email with an SMTP configuration; personal email uses this.
+pub(crate) async fn send_email(
+    config: &SmtpConfig,
+    subject: &str,
+    html_body: &str,
+) -> anyhow::Result<()> {
+    send_email_notification(config, subject, html_body).await
+}
+
+/// Queue personal email for the people a build or release event concerns.
+async fn queue_personal(
+    conn: &mut sqlx::SqliteConnection,
+    notification: &Notification,
+) -> anyhow::Result<()> {
+    use crate::personal::Audience;
+    let Some(project_id) = notification.project_id.as_deref() else {
+        return Ok(());
+    };
+    let payload = &notification.payload;
+    match notification.category.as_str() {
+        "build" if notification.event_type == "build_approval_needed" => {
+            let (subject, html) = build_email_html(payload);
+            crate::personal::queue_for_audience(
+                conn,
+                Audience::Approvers { project_id },
+                &subject,
+                &html,
+            )
+            .await?;
+        }
+        "build" => {
+            let Some(email) = notification.actor_email.as_deref() else {
+                return Ok(());
+            };
+            let (subject, html) = build_email_html(payload);
+            crate::personal::queue_for_audience(
+                conn,
+                Audience::BuildOwner {
+                    email,
+                    status: &notification.event_type,
+                },
+                &subject,
+                &html,
+            )
+            .await?;
+        }
+        "release" => {
+            let (subject, html) = release_email_html(payload);
+            crate::personal::queue_for_audience(
+                conn,
+                Audience::Followers { project_id },
+                &subject,
+                &html,
+            )
+            .await?;
+        }
+        _ => {}
+    }
     Ok(())
 }
 

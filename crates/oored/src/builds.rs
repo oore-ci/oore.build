@@ -1946,10 +1946,18 @@ pub async fn get_build(
             Vec::new()
         });
 
+    let queue = crate::queue_estimate::estimate(pool, &build_id, now_unix())
+        .await
+        .unwrap_or_else(|e| {
+            warn!(build_id = %build_id, error = %e, "failed to estimate the queue wait");
+            None
+        });
+
     Ok(Json(BuildDetailResponse {
         build,
         events,
         retryable_steps,
+        queue,
     }))
 }
 
