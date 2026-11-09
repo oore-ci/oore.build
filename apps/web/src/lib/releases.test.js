@@ -2,6 +2,9 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   isWaitingOnStore,
+  latestChangePerRelease,
+  releaseChangeDestination,
+  releaseChangeShare,
   releaseDestinationLabel,
   releaseStageIndex,
   releaseNextStep,
@@ -158,5 +161,94 @@ describe('store wait', () => {
     }
     expect(releaseNextStep(approved, 0)).toBe('Approved; release it when ready')
     expect(releaseWaitSummary(approved).description).toContain('Release now')
+  })
+})
+
+describe('latestChangePerRelease', () => {
+  const step = (release_id, at, to_state, to_fraction, extra = {}) => ({
+    id: `${release_id}-${at}`,
+    release_id,
+    at,
+    to_state,
+    to_fraction,
+    project_id: 'p1',
+    project_name: 'Kite',
+    store: 'google_play',
+    track: 'production',
+    version_name: release_id,
+    ...extra,
+  })
+
+  test('keeps one row per app version, newest change first', () => {
+    const rows = latestChangePerRelease(
+      [
+        step('1.3.3', 50, 'complete', 1, {
+          store: 'app_store',
+          track: 'app_store',
+        }),
+        step('1.3.3', 40, 'rolling', 0.5, {
+          store: 'app_store',
+          track: 'app_store',
+        }),
+        step('2.0.0', 60, 'in_review', null),
+        step('1.3.3', 20, 'rolling', 0.1, {
+          store: 'app_store',
+          track: 'app_store',
+        }),
+      ],
+      5,
+    )
+    expect(
+      rows.map((row) => [row.event.version_name, row.event.at, row.changes]),
+    ).toEqual([
+      ['2.0.0', 60, 1],
+      ['1.3.3', 50, 3],
+    ])
+  })
+
+  test('folds one version on several tracks into one row, newer version first on a tie', () => {
+    const rows = latestChangePerRelease(
+      [
+        step('3.11.11', 10, 'complete', 1, { track: 'TradingQnA' }),
+        step('3.11.13', 10, 'complete', 1, { track: 'internal' }),
+        step('3.11.11', 10, 'complete', 1, { track: 'alpha' }),
+        step('3.11.13', 10, 'complete', 1, { track: 'beta' }),
+        step('3.11.13', 10, 'complete', 1, { track: 'production' }),
+      ],
+      5,
+    )
+    expect(
+      rows.map((row) => [
+        row.event.version_name,
+        releaseChangeDestination(row),
+      ]),
+    ).toEqual([
+      ['3.11.13', 'Google Play · internal, beta, production'],
+      ['3.11.11', 'Google Play · TradingQnA, alpha'],
+    ])
+  })
+
+  test('stops at the limit', () => {
+    const rows = latestChangePerRelease(
+      [
+        step('a', 3, 'complete', 1),
+        step('b', 2, 'complete', 1),
+        step('c', 1, 'complete', 1),
+      ],
+      2,
+    )
+    expect(rows.map((row) => row.event.version_name)).toEqual(['a', 'b'])
+  })
+
+  test('names the share only while a rollout is partial', () => {
+    expect(releaseChangeShare({ to_state: 'rolling', to_fraction: 0.2 })).toBe(
+      '20%',
+    )
+    expect(
+      releaseChangeShare({ to_state: 'complete', to_fraction: 1 }),
+    ).toBeNull()
+    expect(
+      releaseChangeShare({ to_state: 'in_review', to_fraction: null }),
+    ).toBeNull()
   })
 })

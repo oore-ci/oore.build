@@ -2139,6 +2139,8 @@ pub async fn list_release_activity(
         ));
     }
     let admin = auth.0.role == "owner" || auth.0.role == "admin";
+    // Finding a release made outside Oore is not a change to it; its later
+    // changes are.
     let rows = sqlx::query(
         "SELECT h.*, r.project_id, r.build_id, r.store, r.track, r.version_name, p.name AS project_name \
          FROM release_history h \
@@ -2147,6 +2149,7 @@ pub async fn list_release_activity(
          WHERE (?1 = 1 OR EXISTS (SELECT 1 FROM project_members pm \
                 WHERE pm.project_id = r.project_id AND pm.user_id = ?2)) \
            AND (?3 IS NULL OR r.project_id = ?3) \
+           AND NOT (r.origin = 'adopted' AND h.from_state IS NULL) \
          ORDER BY h.at DESC, h.rowid DESC LIMIT ?4",
     )
     .bind(admin)

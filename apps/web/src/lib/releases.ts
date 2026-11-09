@@ -3,6 +3,7 @@ import { relativeTime } from '@/lib/format-utils'
 import type {
   Release,
   ReleaseAction,
+  ReleaseActivityEvent,
   ReleaseHealth,
   ReleaseHistoryEntry,
   ReleaseState,
@@ -718,4 +719,79 @@ export function releaseTransitionLabel(
   if (!entry.from_state) return 'Created'
   if (entry.from_state === entry.to_state) return ''
   return `from ${RELEASE_STATE_LABEL[entry.from_state].toLowerCase()}`
+}
+
+/** An app version's newest change, standing for every change in the window. */
+export type ReleaseLatestChange = {
+  event: ReleaseActivityEvent
+  /** Changes to this version, across its tracks, among the events read. */
+  changes: number
+  /** Where the version went, newest change first: "production", "beta". */
+  tracks: string[]
+}
+
+function compareVersionsDesc(
+  a: string | null | undefined,
+  b: string | null | undefined,
+) {
+  return (b ?? '').localeCompare(a ?? '', undefined, { numeric: true })
+}
+
+/**
+ * One entry per app version and store, newest change first, so a phased
+ * rollout's steps and the same build on several tracks read as one row.
+ * Changes at the same moment list the newer version first.
+ */
+export function latestChangePerRelease(
+  events: ReadonlyArray<ReleaseActivityEvent>,
+  limit: number,
+): ReleaseLatestChange[] {
+  const byVersion = new Map<string, ReleaseLatestChange>()
+  for (const event of events) {
+    const key = `${event.project_id}:${event.store}:${event.version_name ?? event.release_id}`
+    const seen = byVersion.get(key)
+    if (!seen) {
+      byVersion.set(key, { event, changes: 1, tracks: [event.track] })
+      continue
+    }
+    seen.changes += 1
+    if (!seen.tracks.includes(event.track)) seen.tracks.push(event.track)
+    if (event.at > seen.event.at) seen.event = event
+  }
+  return [...byVersion.values()]
+    .sort(
+      (a, b) =>
+        b.event.at - a.event.at ||
+        compareVersionsDesc(a.event.version_name, b.event.version_name) ||
+        releaseAppName(a.event).localeCompare(releaseAppName(b.event)),
+    )
+    .slice(0, limit)
+}
+
+/** Where an app version went: "Google Play · production, beta". */
+export function releaseChangeDestination(change: ReleaseLatestChange): string {
+  const { event, tracks } = change
+  if (event.store === 'google_play') {
+    return `${RELEASE_STORE_LABEL.google_play} · ${tracks.join(', ')}`
+  }
+  return [
+    ...new Set(
+      tracks.map((track) =>
+        releaseDestinationLabel({ store: event.store, track }),
+      ),
+    ),
+  ].join(', ')
+}
+
+/** Where a release stands after a change: "50%" while rolling, else nothing. */
+export function releaseChangeShare(
+  event: Pick<ReleaseActivityEvent, 'to_fraction' | 'to_state'>,
+): string | null {
+  const partial =
+    event.to_state === 'rolling' ||
+    event.to_state === 'paused' ||
+    event.to_state === 'halted'
+  return partial && event.to_fraction != null && event.to_fraction < 1
+    ? formatRolloutPercent(event.to_fraction)
+    : null
 }

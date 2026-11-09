@@ -570,6 +570,7 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
               : // First run lists connecting a runner as a step already.
                 attention.items.filter((item) => item.key !== 'no-runner')
           }
+          onDismiss={attention.dismiss}
         />
 
         {/* 2. What is moving now and what happened since: builds on the left, releases on the right. */}
