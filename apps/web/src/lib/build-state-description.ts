@@ -91,6 +91,14 @@ export function buildStateSummary(
         description: 'It ran past the pipeline time limit.',
       }
     case 'canceled':
+      if (build.superseded_by) {
+        return {
+          tone: 'neutral',
+          title: `Replaced by #${build.superseded_by.build_number}`,
+          description:
+            'A newer push to the same branch started a new build, so this one was canceled.',
+        }
+      }
       return {
         tone: 'neutral',
         title: 'Build canceled',

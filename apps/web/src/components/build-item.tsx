@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { buildSourceRef } from '@/lib/build-source'
+import { buildIdentityParts } from '@/lib/build-identity'
 import { WorkflowBadge } from '@/components/workflow-badge'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -75,6 +76,7 @@ export function BuildItem({
   const commitLabel = build.commit_sha
     ? `#${build.commit_sha.slice(0, 8)}`
     : 'No commit'
+  const identity = buildIdentityParts(build)
   const platforms = getBuildPlatforms(build)
   const runner = runnerState(build)
   const duration = buildDuration(build)
@@ -130,8 +132,16 @@ export function BuildItem({
             <WorkflowBadge workflow={build.workflow} />
           </ItemTitle>
           <ItemDescription className="line-clamp-1">
-            {pipelineName} · {buildSourceRef(build) ?? 'No branch'} ·{' '}
-            <span className="font-mono">{commitLabel}</span>
+            {identity.length ? (
+              <>
+                {identity.join(' · ')} · {buildSourceRef(build) ?? 'No branch'}
+              </>
+            ) : (
+              <>
+                {pipelineName} · {buildSourceRef(build) ?? 'No branch'} ·{' '}
+                <span className="font-mono">{commitLabel}</span>
+              </>
+            )}
           </ItemDescription>
           <Text variant="caption" className="truncate xl:hidden">
             {meta}

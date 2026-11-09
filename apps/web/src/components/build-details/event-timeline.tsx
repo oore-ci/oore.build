@@ -199,7 +199,7 @@ export function EventTimeline({
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle>Event timeline</CardTitle>
+        <CardTitle>Activity</CardTitle>
       </CardHeader>
       <CardContent>
         {entries.length === 0 ? (

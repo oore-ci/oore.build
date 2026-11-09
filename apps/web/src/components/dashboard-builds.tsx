@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { buildSourceRef } from '@/lib/build-source'
+import { buildIdentityParts } from '@/lib/build-identity'
 import { WorkflowBadge } from '@/components/workflow-badge'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -126,7 +127,8 @@ function DashboardBuildRow({
             <WorkflowBadge workflow={build.workflow} />
           </ItemTitle>
           <ItemDescription className="line-clamp-1">
-            {pipelineName} · {buildSourceRef(build) ?? 'No branch'}
+            {buildIdentityParts(build).join(' · ') || pipelineName} ·{' '}
+            {buildSourceRef(build) ?? 'No branch'}
             {active ? ` · ${whereText(build)}` : ''}
           </ItemDescription>
         </ItemContent>
