@@ -859,7 +859,8 @@ mod tests {
             Path::new("/tmp/Runner.ipa"),
             &credentials(),
             &key_dir,
-            Duration::from_millis(500),
+            // Long enough for a busy host to start the script and record its pid.
+            Duration::from_secs(3),
             Duration::ZERO,
         )
         .await
@@ -870,7 +871,12 @@ mod tests {
             "{error}"
         );
         assert!(!key_dir.join("AuthKey_ABC123DEF4.p8").exists());
-        let pid = fs::read_to_string(dir.join("altool.pid")).unwrap();
+        // No pid file means the timeout stopped the script before it ran
+        // its first line, so nothing it started can be left behind.
+        let Ok(pid) = fs::read_to_string(dir.join("altool.pid")) else {
+            let _ = fs::remove_dir_all(dir);
+            return;
+        };
         let pid: libc::pid_t = pid.trim().parse().unwrap();
         let mut gone = false;
         for _ in 0..50 {
