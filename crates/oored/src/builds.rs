@@ -833,6 +833,8 @@ pub struct ListBuildsQuery {
     pub trigger: Option<String>,
     /// Exact `trigger_actor`.
     pub actor: Option<String>,
+    /// Builds the caller started or of apps the caller pinned.
+    pub mine: Option<bool>,
     /// Unix seconds; builds created at or after this time.
     pub created_after: Option<i64>,
     /// Unix seconds; builds created before this time.
@@ -945,6 +947,24 @@ fn placeholders(values: &[&str], binds: &mut Vec<String>) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Builds `user_id` started (manual and API builds carry their email) or of
+/// apps they pinned.
+fn push_mine_scope(
+    user_id: &str,
+    email: &str,
+    conditions: &mut Vec<String>,
+    binds: &mut Vec<String>,
+) {
+    binds.push(email.to_string());
+    let email_index = binds.len();
+    binds.push(user_id.to_string());
+    let user_index = binds.len();
+    conditions.push(format!(
+        "(builds.trigger_actor = ?{email_index} OR builds.project_id IN \
+         (SELECT project_id FROM user_favorite_projects WHERE user_id = ?{user_index}))"
+    ));
 }
 
 /// WHERE conditions and their bind values for `GET /v1/builds`, scoped to
@@ -1777,7 +1797,15 @@ pub async fn list_builds(
 
     let viewer =
         (auth.0.role != "owner" && auth.0.role != "admin").then_some(auth.0.user_id.as_str());
-    let (conditions, bind_values) = build_list_conditions(&params, viewer)?;
+    let (mut conditions, mut bind_values) = build_list_conditions(&params, viewer)?;
+    if params.mine == Some(true) {
+        push_mine_scope(
+            &auth.0.user_id,
+            &auth.0.email,
+            &mut conditions,
+            &mut bind_values,
+        );
+    }
 
     let where_clause = where_sql(&conditions);
 
@@ -3898,6 +3926,7 @@ mod tests {
             workflow: None,
             trigger: None,
             actor: None,
+            mine: None,
             created_after: None,
             created_before: None,
             q: None,
@@ -4028,6 +4057,48 @@ mod tests {
             q = q.bind(bind);
         }
         q.fetch_all(pool).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn mine_lists_own_builds_and_pinned_apps() {
+        let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
+        insert_filter_builds(&pool).await;
+        let mine = |user_id: &str, email: &str| {
+            let (mut conditions, mut binds) =
+                build_list_conditions(&list_params(), None).unwrap();
+            push_mine_scope(user_id, email, &mut conditions, &mut binds);
+            (conditions, binds)
+        };
+        let run = |(conditions, binds): (Vec<String>, Vec<String>)| {
+            let pool = pool.clone();
+            async move {
+                let sql = format!(
+                    "SELECT id FROM builds {} ORDER BY created_at",
+                    where_sql(&conditions)
+                );
+                let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql));
+                for bind in &binds {
+                    q = q.bind(bind);
+                }
+                q.fetch_all(&pool).await.unwrap()
+            }
+        };
+
+        assert_eq!(
+            run(mine("u1", "lead@example.com")).await,
+            ["manual", "rerun"]
+        );
+        sqlx::query(
+            "INSERT INTO user_favorite_projects (user_id, project_id, created_at) \
+             VALUES ('u1', 'p2', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            run(mine("u1", "lead@example.com")).await,
+            ["manual", "rerun", "nightly", "hidden"]
+        );
     }
 
     #[tokio::test]

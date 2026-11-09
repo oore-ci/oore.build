@@ -1931,6 +1931,15 @@
             }
           },
           {
+            "name": "mine",
+            "in": "query",
+            "description": "Only builds you started or builds of apps you pinned.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "created_after",
             "in": "query",
             "description": "Only builds created at or after this Unix time in seconds",

@@ -2800,6 +2800,7 @@ mod operations {
             ("workflow" = Option<String>, Query, description = "Filter by exact .oore.yaml version 2 workflow name"),
             ("trigger" = Option<String>, Query, description = "Filter by one or more comma-separated trigger kinds: manual, api, schedule, push, pull_request, or tag_push. The last three are webhook events."),
             ("actor" = Option<String>, Query, description = "Filter by exact trigger actor (the user email for manual builds, the SCM login for webhook builds). At most 320 characters."),
+            ("mine" = Option<bool>, Query, description = "Only builds you started or builds of apps you pinned."),
             ("created_after" = Option<i64>, Query, description = "Only builds created at or after this Unix time in seconds"),
             ("created_before" = Option<i64>, Query, description = "Only builds created before this Unix time in seconds. Must be later than created_after."),
             ("q" = Option<String>, Query, description = "Search builds, case-insensitively, by build number (with or without #), part of the branch, the start of the commit SHA, or part of the pipeline or project name. At most 200 characters."),
