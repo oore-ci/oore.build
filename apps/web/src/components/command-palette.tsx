@@ -285,7 +285,7 @@ export default function CommandPalette({
       ? [
           {
             id: 'action-new-project',
-            label: 'Create app…',
+            label: 'Add your app…',
             icon: FolderAddIcon,
             action: () => go('/projects?openCreate=1'),
             keywords: ['add new app project create'],

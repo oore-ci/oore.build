@@ -41,6 +41,7 @@ mod metrics;
 mod publish;
 mod tart;
 mod test_reports;
+mod toolchain;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
 const OORE_ANDROID_KEYSTORE_PATH_ENV: &str = "OORE_ANDROID_KEYSTORE_PATH";
@@ -370,6 +371,7 @@ pub async fn detect_capabilities() -> serde_json::Value {
     let tart_version = tart::find_tart()
         .and_then(|tart| tart::tart_version(&tart))
         .unwrap_or_default();
+    let toolchain = toolchain::refresh().await;
 
     serde_json::json!({
         "os": std::env::consts::OS,
@@ -379,6 +381,7 @@ pub async fn detect_capabilities() -> serde_json::Value {
         "tart_version": tart_version,
         "version": version,
         "protocol_version": RUNNER_PROTOCOL_VERSION,
+        "toolchain": toolchain,
     })
 }
 
@@ -3582,6 +3585,9 @@ fn heartbeat_capabilities(
     {
         object.insert("vm_images".to_string(), value);
     }
+    if let (Some(object), Some(toolchain)) = (capabilities.as_object_mut(), toolchain::snapshot()) {
+        object.insert("toolchain".to_string(), toolchain);
+    }
     capabilities
 }
 
@@ -3837,6 +3843,14 @@ pub async fn run_runner_forever(
                     eprintln!("Runner heartbeat is temporarily unavailable: {error:#}");
                 }
             }
+        }
+    });
+
+    // Tools installed while the runner runs show up in the web UI.
+    tokio::spawn(async {
+        loop {
+            tokio::time::sleep(toolchain::REFRESH_INTERVAL).await;
+            toolchain::refresh().await;
         }
     });
 

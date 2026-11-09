@@ -8,6 +8,8 @@ import {
   requireDemoProjectPermission,
 } from '../authorization'
 import { demoState } from '../state'
+import { demoAppStorePublishEnabled } from './pipelines'
+import { demoPlayPublishEnabled } from './secrets'
 import { parseDemoJsonObject } from '../request'
 import type {
   AddProjectMemberRequest,
@@ -35,6 +37,28 @@ const createProjectRequestSchema = z.toZod<CreateProjectRequest>()(
     auto_add_pipelines: z.boolean().nullish(),
   }),
 )
+
+const signingEnabledSchema = z.object({ enabled: z.boolean() })
+
+/** What the project has set up after its first install. */
+function demoSetupProgress(projectId: string) {
+  const pipelineIds = demoState.pipelines
+    .filter((pipeline) => pipeline.project_id === projectId)
+    .map((pipeline) => pipeline.id)
+  return {
+    release_signing: pipelineIds.some(
+      (id) =>
+        signingEnabledSchema.safeParse(demoState.androidSigning[id]?.release)
+          .data?.enabled === true ||
+        signingEnabledSchema.safeParse(demoState.iosSigning[id]).data
+          ?.enabled === true,
+    ),
+    store_publishing: pipelineIds.some(
+      (id) => demoPlayPublishEnabled(id) || demoAppStorePublishEnabled(id),
+    ),
+    testers: false,
+  }
+}
 
 function hasProjectMembership(projectId: string, userId: string): boolean {
   return !!demoState.projectRoles[projectId]?.[userId]
@@ -127,7 +151,49 @@ export const projectHandlers = [
         (build) => build.project_id === project.id,
       ).length,
       current_user_role: role,
+      setup: demoSetupProgress(project.id),
     })
+  }),
+
+  demoApi.detectProjectApp(async ({ params }) => {
+    await delay(400)
+    const project = demoState.projects.find((p) => p.id === params.project_id)
+    if (!project) {
+      return HttpResponse.json(
+        { error: 'Project not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    return HttpResponse.json({
+      reference: project.default_branch ?? 'main',
+      flutter: true,
+      app_name: 'coin',
+      platforms: ['android', 'ios'],
+      config_files: [],
+    })
+  }),
+
+  demoApi.createSampleProject(async ({ request }) => {
+    await delay(1200)
+    const forbidden = requireDemoInstancePermission(request, 'projects:write')
+    if (forbidden) return forbidden
+    const persona = getDemoPersonaFromRequest(request)
+    const project = {
+      id: `proj-demo-sample-${crypto.randomUUID().slice(0, 8)}`,
+      name: 'Sample app',
+      description: 'A new Flutter app Oore created to show a first build.',
+      repository_id: 'local:oore-sample',
+      repository_full_name: 'oore_sample_3f9c2a1e',
+      default_branch: 'main',
+      settings: {},
+      auto_add_pipelines: true,
+      created_by: persona.userId,
+      created_at: ago(0),
+      updated_at: ago(0),
+    }
+    demoState.projects.unshift(project)
+    demoState.projectRoles[project.id] = { [persona.userId]: 'maintainer' }
+    return HttpResponse.json({ project }, { status: 201 })
   }),
 
   demoApi.listProjectMembers(async ({ params, request }) => {

@@ -283,6 +283,11 @@ const demoAppStoreConfigs = new Map<
   ],
 ])
 
+/** Whether the pipeline uploads to App Store Connect. */
+export function demoAppStorePublishEnabled(pipelineId: string): boolean {
+  return demoAppStoreConfigs.get(pipelineId)?.config.enabled === true
+}
+
 const appStoreConfigSchema = z.object({
   enabled: z.boolean(),
   destination: z.enum(['testflight', 'app_store']),

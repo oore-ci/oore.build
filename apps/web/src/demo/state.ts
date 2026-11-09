@@ -959,7 +959,16 @@ export function createDemoState(
     state.releaseHistory = {}
     state.environments = []
     state.promotions = []
-    state.runners = []
+    // A Complete profile install enrolls this Mac as the first runner.
+    state.runners =
+      scenario === 'empty'
+        ? state.runners.slice(1, 2).map((runner) => ({
+            ...runner,
+            name: 'this-mac',
+            status: 'online',
+            last_heartbeat_at: ago(10),
+          }))
+        : []
     state.integrations = []
     state.installations = {}
     state.repositories = {}
@@ -968,6 +977,11 @@ export function createDemoState(
     state.auditLogs = []
     state.signingIdentities = []
     state.workflowSettings = {}
+  }
+
+  if (scenario === 'empty') {
+    state.setupStatus.runtime_mode = 'local'
+    state.preferences.runtime_mode = 'local'
   }
 
   if (scenario === 'setup') {

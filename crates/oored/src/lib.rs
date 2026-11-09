@@ -47,6 +47,7 @@ pub mod repository_workflows;
 pub mod retention;
 pub mod runners;
 pub mod runtime_updates;
+pub mod sample_app;
 pub mod scheduler;
 pub mod secrets;
 pub mod session;
@@ -2731,6 +2732,10 @@ pub async fn build_router_with_recovery(
             get(projects::list_projects).post(projects::create_project),
         )
         .route(
+            "/v1/projects/sample",
+            post(sample_app::create_sample_project),
+        )
+        .route(
             "/v1/projects/{project_id}",
             get(projects::get_project)
                 .patch(projects::update_project)
@@ -2739,6 +2744,10 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/projects/{project_id}/repository-workflows",
             get(repository_workflows::discover_repository_workflows),
+        )
+        .route(
+            "/v1/projects/{project_id}/app-detection",
+            get(repository_workflows::detect_project_app),
         )
         .route(
             "/v1/projects/{project_id}/repository-config-files",

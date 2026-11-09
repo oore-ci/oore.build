@@ -35,6 +35,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import { SampleAppButton } from '@/components/sample-app-button'
 import RepositoryAvatar from '@/components/repository-avatar'
 import type { ScmProvider } from '@oore/client/models'
 import { useCreateProject } from '@/hooks/use-projects'
@@ -47,6 +48,7 @@ import { useActiveInstance } from '@/stores/instance-store'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 import { textVariants } from '@/lib/recipes'
 
 const createProjectSchema = z.object({
@@ -88,11 +90,14 @@ function sourceProviderLabel(provider: ScmProvider): string {
 interface CreateProjectDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** A repository path on this Mac to start from, as `oore setup` passes. */
+  initialPath?: string
 }
 
 export default function CreateProjectDialog({
   open,
   onOpenChange,
+  initialPath,
 }: CreateProjectDialogProps) {
   const titleRef = useRef<HTMLHeadingElement>(null)
   const scope = useFirstAppScope()
@@ -137,10 +142,14 @@ export default function CreateProjectDialog({
   const form = useForm<CreateProjectForm>({
     resolver: zodResolver(schema),
     defaultValues: {
-      name: draft?.name ?? '',
+      name:
+        draft?.name ??
+        (initialPath
+          ? (initialPath.split('/').filter(Boolean).at(-1) ?? '')
+          : ''),
       description: draft?.description ?? '',
       default_branch: draft?.default_branch ?? '',
-      local_repository_path: draft?.local_repository_path ?? '',
+      local_repository_path: draft?.local_repository_path ?? initialPath ?? '',
       repository_id: draft?.repository_id ?? '',
     },
     mode: 'onBlur',
@@ -214,12 +223,12 @@ export default function CreateProjectDialog({
         >
           <DrawerHeader>
             <DrawerTitle ref={titleRef} tabIndex={-1} className="outline-none">
-              Create project
+              Add your app
             </DrawerTitle>
             <DrawerDescription>
               {isRemoteMode
-                ? "Choose a repository from a connected source. Creating the project trusts its build commands to run with the runner account's macOS permissions."
-                : "Choose a repository on this Mac. Creating the app trusts its build commands to run with the runner account's macOS permissions."}
+                ? 'Pick the repository. Oore reads it next and proposes what to build.'
+                : 'Pick the repository on this Mac. Oore reads it next and proposes what to build.'}
             </DrawerDescription>
           </DrawerHeader>
 
@@ -451,6 +460,16 @@ export default function CreateProjectDialog({
                   />
                 ) : null}
 
+                {!isRemoteMode ? (
+                  <Row gap={1} className="flex-wrap">
+                    <Text variant="muted">No Flutter app on this Mac yet?</Text>
+                    <SampleAppButton
+                      variant="link"
+                      onCreated={() => handleOpenChange(false)}
+                    />
+                  </Row>
+                ) : null}
+
                 <FormField
                   control={form.control}
                   name="default_branch"
@@ -470,6 +489,18 @@ export default function CreateProjectDialog({
                   )}
                 />
               </div>
+              <Text variant="caption" className="px-4">
+                Builds run the repository&apos;s commands as the runner&apos;s
+                Mac account.{' '}
+                <a
+                  href="https://docs.oore.build/concepts/runner-trust"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline underline-offset-4"
+                >
+                  Learn more
+                </a>
+              </Text>
               <DrawerFooter>
                 <Button
                   type="button"
@@ -491,10 +522,10 @@ export default function CreateProjectDialog({
                   {createMutation.isPending ? (
                     <>
                       <Spinner className="size-4" />
-                      Creating...
+                      Adding...
                     </>
                   ) : (
-                    'Create app'
+                    'Add app'
                   )}
                 </Button>
               </DrawerFooter>

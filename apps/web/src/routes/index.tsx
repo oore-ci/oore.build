@@ -533,7 +533,6 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
             canWriteIntegrations={canWriteIntegrations}
             canWriteProjects={canWriteProjects}
             noConnectedSources={noConnectedSources}
-            noOnlineRunners={noOnlineRunners}
             runtimeMode={runtimeMode}
           />
         ) : null}

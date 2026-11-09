@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import {
   isSetupComplete,
+  nextSteps,
   setupDoneCount,
   setupNext,
   setupSteps,
@@ -64,4 +65,23 @@ test('setup is complete once an installable app exists', () => {
   expect(isSetupComplete(done)).toBe(true)
   expect(setupDoneCount(done)).toBe(5)
   expect(setupNext(done).id).toBe('done')
+})
+
+test('next steps after the first install leave as each is done', () => {
+  const none = {
+    release_signing: false,
+    store_publishing: false,
+    testers: false,
+  }
+  expect(nextSteps(none).map((step) => step.id)).toEqual([
+    'signing',
+    'store',
+    'testers',
+  ])
+  expect(
+    nextSteps({ ...none, store_publishing: true }).map((step) => step.id),
+  ).toEqual(['signing', 'testers'])
+  expect(
+    nextSteps({ release_signing: true, store_publishing: true, testers: true }),
+  ).toEqual([])
 })

@@ -6225,6 +6225,53 @@
         ]
       }
     },
+    "/v1/projects/sample": {
+      "post": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Create a sample Flutter app",
+        "description": "Local Only instances: runs `flutter create` in the backend's data\nfolder, commits it to a new Git repository and adds it as an app named\n\"Sample app\", so a first build works before any code of your own.",
+        "operationId": "create_sample_project",
+        "responses": {
+          "201": {
+            "description": "Sample app created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateProjectResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or admin role and Local Only mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Flutter or Git could not create the sample",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects/{project_id}": {
       "get": {
         "tags": [
@@ -6366,6 +6413,74 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/app-detection": {
+      "get": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Detect the app in the repository",
+        "description": "Reads `pubspec.yaml`, the platform folders and Oore config files on\nthe project's default branch through its source provider, so the web\nUI can propose the app's first pipelines.",
+        "operationId": "detect_project_app",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What Oore found in the repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAppDetection"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Read permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or project source not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Source provider request failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -21403,6 +21518,47 @@
           }
         }
       },
+      "ProjectAppDetection": {
+        "type": "object",
+        "description": "What Oore found in an app's repository on its default branch, to propose\nits first pipelines.",
+        "required": [
+          "reference",
+          "flutter",
+          "platforms",
+          "config_files"
+        ],
+        "properties": {
+          "app_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `name` in `pubspec.yaml`."
+          },
+          "config_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Valid Oore config files found, such as `.oore.yaml`."
+          },
+          "flutter": {
+            "type": "boolean",
+            "description": "The repository has a `pubspec.yaml` that depends on Flutter."
+          },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            },
+            "description": "Platform folders found, such as `android/` and `ios/`."
+          },
+          "reference": {
+            "type": "string",
+            "description": "The branch or commit Oore read."
+          }
+        }
+      },
       "ProjectBuildInsights": {
         "type": "object",
         "required": [
@@ -21458,6 +21614,10 @@
           },
           "project": {
             "$ref": "#/components/schemas/Project"
+          },
+          "setup": {
+            "$ref": "#/components/schemas/ProjectSetupProgress",
+            "description": "The steps after the first install that the app has done."
           }
         }
       },
@@ -21706,6 +21866,29 @@
           "developer",
           "viewer"
         ]
+      },
+      "ProjectSetupProgress": {
+        "type": "object",
+        "description": "What an app has set up beyond its first build, for the checklist that\nfollows the first install.",
+        "required": [
+          "release_signing",
+          "store_publishing",
+          "testers"
+        ],
+        "properties": {
+          "release_signing": {
+            "type": "boolean",
+            "description": "A pipeline signs release builds, or the app's signing library holds\nan identity."
+          },
+          "store_publishing": {
+            "type": "boolean",
+            "description": "A pipeline uploads to Google Play or App Store Connect."
+          },
+          "testers": {
+            "type": "boolean",
+            "description": "Someone has viewer access to the app, as testers do."
+          }
+        }
       },
       "PromotionDecisionRequest": {
         "type": "object",
@@ -23003,6 +23186,13 @@
           "status": {
             "$ref": "#/components/schemas/RunnerStatus"
           },
+          "toolchain": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunnerToolchainCheck"
+            },
+            "description": "What the runner found when it checked its build tools, as\n`oore doctor` would. Empty for runners that do not report them."
+          },
           "updated_at": {
             "type": "integer",
             "format": "int64"
@@ -23633,6 +23823,58 @@
             "format": "int64"
           }
         }
+      },
+      "RunnerToolchainCheck": {
+        "type": "object",
+        "description": "One build tool a runner checked, such as Xcode or the Android SDK.",
+        "required": [
+          "id",
+          "label",
+          "status"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version or path found, or what is wrong."
+          },
+          "fix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How to fix a missing tool, often a command to run on the runner."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable id, such as `xcode` or `android_sdk`."
+          },
+          "label": {
+            "type": "string",
+            "description": "What people call the tool, such as \"Android SDK\"."
+          },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            },
+            "description": "Platforms that need it. Empty when every build does."
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunnerToolchainStatus"
+          }
+        }
+      },
+      "RunnerToolchainStatus": {
+        "type": "string",
+        "description": "The outcome of one build tool check on a runner.",
+        "enum": [
+          "ok",
+          "missing",
+          "warning"
+        ]
       },
       "RuntimeMode": {
         "type": "string",

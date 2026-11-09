@@ -1,3 +1,4 @@
+import { RunnerToolchainCell } from '@/components/runner-toolchain'
 import * as z from 'zod'
 import { useMemo } from 'react'
 import type { Runner } from '@oore/client/models'
@@ -199,6 +200,12 @@ function getRunnerColumns({
   }
 
   columns.push(
+    {
+      id: 'toolchain',
+      header: 'Can build',
+      cell: ({ row }) => <RunnerToolchainCell runner={row.original} />,
+      enableSorting: false,
+    },
     {
       id: 'cache',
       accessorFn: (runner) => runnerCacheStats(runner)?.total_bytes,
