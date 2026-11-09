@@ -56,6 +56,11 @@ import { useListNavigation } from '@/hooks/use-list-navigation'
 const ProjectOverview = lazy(() => import('./-project-overview'))
 
 const SetupChecklist = lazy(() => import('@/components/setup-checklist'))
+const NextSteps = lazy(() =>
+  import('@/components/next-steps').then((module) => ({
+    default: module.NextSteps,
+  })),
+)
 
 import type { ProjectBuildSort } from './-project-build-sort'
 import { Stack } from '@/components/layout/stack'
@@ -600,7 +605,11 @@ function ProjectDetailPage() {
                 error={buildSummaryQuery.error}
                 onRetry={() => void buildSummaryQuery.refetch()}
                 setup={
-                  showSetup ? <SetupChecklist projectId={projectId} /> : null
+                  showSetup ? (
+                    <SetupChecklist projectId={projectId} />
+                  ) : (
+                    <NextSteps projectId={projectId} />
+                  )
                 }
               />
             </Suspense>

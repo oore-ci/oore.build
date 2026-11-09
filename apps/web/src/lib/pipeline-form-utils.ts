@@ -491,3 +491,40 @@ export function defaultWorkflowChoice(
   }
   return names.length === 1 ? names[0] : ''
 }
+
+/**
+ * One sentence for the settings a short New pipeline form keeps behind
+ * "More settings", so leaving them closed is an informed choice.
+ */
+export function moreSettingsSummary(
+  values: Pick<
+    PipelineFormValues,
+    | 'trigger_events'
+    | 'timeout_minutes'
+    | 'approval_required'
+    | 'android_signing_release_enabled'
+    | 'ios_signing_enabled'
+    | 'size_budget_rules'
+  >,
+  manualOnlyTriggers = false,
+): string {
+  const events = (values.trigger_events ?? []).map((event) =>
+    event.replaceAll('_', ' '),
+  )
+  const parts = [
+    manualOnlyTriggers
+      ? 'Runs when you start it'
+      : events.length
+        ? `Runs on ${events.join(', ')} and when you start it`
+        : 'Runs on every push, pull request or tag, or when you start it',
+    `stops after ${values.timeout_minutes} minutes`,
+    values.android_signing_release_enabled || values.ios_signing_enabled
+      ? 'signs release builds'
+      : 'signs nothing for release',
+  ]
+  if (values.approval_required) parts.push('waits for approval')
+  if ((values.size_budget_rules ?? []).length > 0) {
+    parts.push('checks the app size')
+  }
+  return `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}.`
+}

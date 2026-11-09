@@ -32,8 +32,10 @@ import {
   hasSigningFileChanges,
   parseBundleIdsInput,
   parseMultiline,
+  moreSettingsSummary,
   previewPlatformCommands,
 } from '@/lib/pipeline-form-utils'
+import { Text } from '@/components/layout/text'
 import { PipelineBasicsSection } from '@/components/pipeline-form-basic-sections'
 import type {
   PipelineWorkflowLookup,
@@ -96,6 +98,11 @@ interface PipelineFormProps {
   workflowSource?: PipelineWorkflowSource
   /** Reads the typed config path from the repository for the Workflow field. */
   workflowLookup?: PipelineWorkflowLookup
+  /**
+   * Keep build commands, signing, triggers and the size budget behind
+   * "More settings", as a new pipeline needs only a name and what to build.
+   */
+  compact?: boolean
 }
 
 /** Fields with an error; an array field with several bad rows counts once. */
@@ -154,7 +161,9 @@ export default function PipelineForm({
   otherPipelines,
   workflowSource,
   workflowLookup,
+  compact = false,
 }: PipelineFormProps) {
+  const [moreOpen, setMoreOpen] = useState(!compact)
   const form = useForm<PipelineFormValues>({
     resolver: zodResolver(pipelineFormSchema),
     defaultValues: initialValues,
@@ -213,16 +222,21 @@ export default function PipelineForm({
   const previewDefaults = previewPlatformCommands(values, {
     playBundle: googlePlayUpload,
   })
-  const sections = [
-    { id: 'basics', label: 'Basics' },
-    ...(repositoryWorkflow ? [] : [{ id: 'build', label: 'Build' }]),
-    { id: 'plan', label: 'Plan' },
-    ...(values.platform_android || values.platform_ios
-      ? [{ id: 'signing', label: 'Signing' }]
-      : []),
-    { id: 'triggers', label: 'Triggers' },
-    { id: 'size-budget', label: 'Size budget' },
-  ]
+  const sections = moreOpen
+    ? [
+        { id: 'basics', label: 'Basics' },
+        ...(repositoryWorkflow ? [] : [{ id: 'build', label: 'Build' }]),
+        { id: 'plan', label: 'Plan' },
+        ...(values.platform_android || values.platform_ios
+          ? [{ id: 'signing', label: 'Signing' }]
+          : []),
+        { id: 'triggers', label: 'Triggers' },
+        { id: 'size-budget', label: 'Size budget' },
+      ]
+    : [
+        { id: 'basics', label: 'Basics' },
+        { id: 'plan', label: 'Plan' },
+      ]
 
   // Deep links such as `edit#ios-signing` land on their section once the
   // form has rendered.
@@ -247,9 +261,11 @@ export default function PipelineForm({
         ref={formRef}
         noValidate
         onSubmit={(event) =>
-          void form.handleSubmit(handleFormSubmit, () =>
-            revealFirstInvalidField(formRef),
-          )(event)
+          void form.handleSubmit(handleFormSubmit, () => {
+            // An invalid field may sit in the closed "More settings".
+            setMoreOpen(true)
+            revealFirstInvalidField(formRef)
+          })(event)
         }
         className="flex flex-col gap-8"
       >
@@ -260,7 +276,7 @@ export default function PipelineForm({
           workflowLookup={workflowLookup}
           workflowSource={workflowSource}
         />
-        {repositoryWorkflow ? null : (
+        {repositoryWorkflow || !moreOpen ? null : (
           <PipelineBuildSection
             advancedOpen={hasPlatformOverrides(initialValues)}
             commandCount={totalCmdCount}
@@ -277,29 +293,52 @@ export default function PipelineForm({
           repositoryConfig={!!repositoryWorkflow}
           values={values}
         />
-        <PipelineSigningSection
-          androidSigningData={signingData}
-          bundleIds={iosBundleIds}
-          debugKeystoreFile={debugKeystoreFile}
-          iosActions={iosSigningActions}
-          iosApiKeyFile={iosApiKeyFile}
-          iosAppStorePublishing={iosAppStorePublishing}
-          iosP12File={iosP12File}
-          iosProfileFiles={iosProfileFiles}
-          iosSigningData={iosSigningData}
-          onApiKeyFileChange={setIosApiKeyFile}
-          onDebugKeystoreFileChange={setDebugKeystoreFile}
-          onP12FileChange={setIosP12File}
-          onProfileFileChange={handleProfileFileChange}
-          onReleaseKeystoreFileChange={setReleaseKeystoreFile}
-          releaseKeystoreFile={releaseKeystoreFile}
-          values={values}
-        />
-        <PipelineTriggersSection
-          canChangeApproval={canChangeApproval}
-          manualOnlyTriggers={manualOnlyTriggers}
-        />
-        <PipelineSizeBudgetSection />
+        {compact ? (
+          <div className="flex flex-col gap-1 rounded-lg border p-4">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="-ml-2 self-start"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((open) => !open)}
+            >
+              {moreOpen ? 'Fewer settings' : 'More settings'}
+            </Button>
+            <Text variant="muted">
+              {moreOpen
+                ? 'Build commands, signing, triggers and the size budget. Every setting can change later.'
+                : `${moreSettingsSummary(values, manualOnlyTriggers)} Build commands, signing, triggers and the size budget are here.`}
+            </Text>
+          </div>
+        ) : null}
+        {moreOpen ? (
+          <>
+            <PipelineSigningSection
+              androidSigningData={signingData}
+              bundleIds={iosBundleIds}
+              debugKeystoreFile={debugKeystoreFile}
+              iosActions={iosSigningActions}
+              iosApiKeyFile={iosApiKeyFile}
+              iosAppStorePublishing={iosAppStorePublishing}
+              iosP12File={iosP12File}
+              iosProfileFiles={iosProfileFiles}
+              iosSigningData={iosSigningData}
+              onApiKeyFileChange={setIosApiKeyFile}
+              onDebugKeystoreFileChange={setDebugKeystoreFile}
+              onP12FileChange={setIosP12File}
+              onProfileFileChange={handleProfileFileChange}
+              onReleaseKeystoreFileChange={setReleaseKeystoreFile}
+              releaseKeystoreFile={releaseKeystoreFile}
+              values={values}
+            />
+            <PipelineTriggersSection
+              canChangeApproval={canChangeApproval}
+              manualOnlyTriggers={manualOnlyTriggers}
+            />
+            <PipelineSizeBudgetSection />
+          </>
+        ) : null}
 
         {validationErrors.length > 0 ? (
           <div>

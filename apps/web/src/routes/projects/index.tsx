@@ -50,6 +50,8 @@ const CreateProjectDialog = lazy(loadCreateProjectDialog)
 interface ProjectsSearch {
   direction?: SortDirection
   openCreate?: 1
+  /** A local repository path to add, from `oore setup`. */
+  repo?: string
   page?: number
   pageSize?: 20 | 50 | 100
   q?: string
@@ -83,6 +85,7 @@ function parseSearch(search: SearchInput): ProjectsSearch {
     page: Number.isInteger(page) && page > 1 ? page : undefined,
     pageSize: pageSize === 50 || pageSize === 100 ? pageSize : undefined,
     openCreate: searchNumber(search, 'openCreate') === 1 ? 1 : undefined,
+    repo: searchString(search, 'repo')?.trim() || undefined,
   }
 }
 
@@ -164,7 +167,7 @@ function ProjectsListPage() {
   function handleCreateOpenChange(open: boolean) {
     setCreateOpen(open)
     if (!open && search.openCreate === 1) {
-      updateSearch({ openCreate: undefined })
+      updateSearch({ openCreate: undefined, repo: undefined })
     }
   }
 
@@ -200,7 +203,7 @@ function ProjectsListPage() {
           canWriteProjects && !showTrueEmpty && !needsSource ? (
             <Button onClick={() => setCreateOpen(true)}>
               <HugeiconsIcon icon={Add01Icon} />
-              New app
+              Add app
             </Button>
           ) : undefined
         }
@@ -281,7 +284,11 @@ function ProjectsListPage() {
 
       {isCreateOpen ? (
         <Suspense fallback={null}>
-          <CreateProjectDialog open onOpenChange={handleCreateOpenChange} />
+          <CreateProjectDialog
+            open
+            onOpenChange={handleCreateOpenChange}
+            initialPath={search.repo}
+          />
         </Suspense>
       ) : null}
     </PageLayout>

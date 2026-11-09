@@ -231,6 +231,11 @@ function secretVisible(name: string | undefined, pipelineId: string) {
   )
 }
 
+/** Whether the pipeline uploads to Google Play. */
+export function demoPlayPublishEnabled(pipelineId: string): boolean {
+  return demoPlayConfigs.get(pipelineId)?.config.enabled === true
+}
+
 function playResponse(pipelineId: string): GooglePlayPublishResponse {
   const saved = demoPlayConfigs.get(pipelineId)
   return {
