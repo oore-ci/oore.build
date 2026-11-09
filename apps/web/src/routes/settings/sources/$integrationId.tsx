@@ -98,7 +98,7 @@ function parseSearch(search: SearchInput): IntegrationDetailSearch {
   }
 }
 
-export const Route = createFileRoute('/settings/integrations/$integrationId')({
+export const Route = createFileRoute('/settings/sources/$integrationId')({
   staticData: {
     breadcrumb: {
       title: 'Source',
@@ -122,7 +122,7 @@ function IntegrationDetailPage() {
   const [webhookTarget, setWebhookTarget] =
     useState<IntegrationRepository | null>(null)
   const { integrationId } = Route.useParams()
-  const search = useSearch({ from: '/settings/integrations/$integrationId' })
+  const search = useSearch({ from: '/settings/sources/$integrationId' })
   const navigate = Route.useNavigate()
 
   const detailQuery = useIntegration(integrationId)
@@ -239,7 +239,7 @@ function IntegrationDetailPage() {
     deleteMutation.mutate(integrationId, {
       onSuccess: () => {
         toast.success(`Disconnected source: ${name}`)
-        void navigate({ to: '/settings/integrations' })
+        void navigate({ to: '/settings/sources' })
       },
       onError: (error) => {
         toast.error(`Failed to disconnect: ${error.message}`)

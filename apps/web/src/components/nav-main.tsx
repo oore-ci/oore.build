@@ -1,6 +1,7 @@
 import { Link, useLocation } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  ArrowDown01Icon,
   CommandLineIcon,
   DashboardSquare02Icon,
   Folder02Icon,
@@ -14,7 +15,14 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { useAuthStore } from '@/stores/auth-store'
+import { cn } from '@/lib/utils'
+import { useSidebarSettingsOpen } from '@/stores/sidebar-settings-store'
 import { useBuilds } from '@/hooks/use-builds'
 import { settingsGroupsForRole } from '@/components/settings/settings-navigation'
 import type { UserRole } from '@oore/client/models'
@@ -28,6 +36,8 @@ interface NavItem {
 interface NavGroup {
   title: string
   items: Array<NavItem>
+  /** The group's heading toggles it open and closed in place. */
+  collapsible?: boolean
 }
 
 export const WORKSPACE_ITEMS: Array<NavItem> = [
@@ -56,7 +66,7 @@ export function sidebarGroupsForRole(
 
   return [
     { title: 'Workspace', items: WORKSPACE_ITEMS },
-    { title: 'Settings', items: settingsItems },
+    { title: 'Settings', items: settingsItems, collapsible: true },
   ]
 }
 
@@ -79,6 +89,98 @@ function ActiveBuildBadge() {
   )
 }
 
+/**
+ * Whether the Settings group shows its pages. It is always open while a
+ * settings page is showing; otherwise it follows the person's last choice,
+ * and starts open only for people who can change instance settings.
+ */
+export function isSettingsGroupOpen({
+  remembered,
+  role,
+  onSettingsPage,
+}: {
+  remembered: boolean | undefined
+  role: UserRole | undefined
+  onSettingsPage: boolean
+}): boolean {
+  if (onSettingsPage) return true
+  if (remembered !== undefined) return remembered
+  return role === 'owner' || role === 'admin'
+}
+
+function NavGroupItems({
+  items,
+  pathname,
+}: {
+  items: Array<NavItem>
+  pathname: string
+}) {
+  return (
+    <SidebarMenu>
+      {items.map((item) => (
+        <SidebarMenuItem key={item.to}>
+          <SidebarMenuButton
+            isActive={isSidebarItemActive(pathname, item.to)}
+            tooltip={item.title}
+            render={<Link to={item.to} />}
+          >
+            <HugeiconsIcon icon={item.icon} />
+            <span>{item.title}</span>
+          </SidebarMenuButton>
+          {item.to === '/builds' && <ActiveBuildBadge />}
+        </SidebarMenuItem>
+      ))}
+    </SidebarMenu>
+  )
+}
+
+function CollapsibleNavGroup({
+  group,
+  pathname,
+  role,
+}: {
+  group: NavGroup
+  pathname: string
+  role: UserRole | undefined
+}) {
+  const [remembered, setRemembered] = useSidebarSettingsOpen()
+  const onSettingsPage = group.items.some((item) =>
+    isSidebarItemActive(pathname, item.to),
+  )
+  const open = isSettingsGroupOpen({ remembered, role, onSettingsPage })
+
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setRemembered}
+      render={<SidebarGroup />}
+    >
+      <SidebarGroupLabel
+        render={
+          <CollapsibleTrigger
+            className="w-full justify-between hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            disabled={onSettingsPage}
+          />
+        }
+      >
+        {group.title}
+        <HugeiconsIcon
+          icon={ArrowDown01Icon}
+          className={cn(
+            'transition-transform motion-reduce:transition-none',
+            !open && '-rotate-90',
+          )}
+        />
+      </SidebarGroupLabel>
+      <CollapsibleContent>
+        <SidebarGroupContent>
+          <NavGroupItems items={group.items} pathname={pathname} />
+        </SidebarGroupContent>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
 export default function NavMain() {
   const location = useLocation()
   const authUser = useAuthStore((s) => s.user)
@@ -86,32 +188,23 @@ export default function NavMain() {
 
   return (
     <>
-      {groups.map((group) => (
-        <SidebarGroup key={group.title}>
-          <SidebarGroupLabel>{group.title}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {group.items.map((item) => {
-                const Icon = item.icon
-
-                return (
-                  <SidebarMenuItem key={item.to}>
-                    <SidebarMenuButton
-                      isActive={isSidebarItemActive(location.pathname, item.to)}
-                      tooltip={item.title}
-                      render={<Link to={item.to} />}
-                    >
-                      <HugeiconsIcon icon={Icon} />
-                      <span>{item.title}</span>
-                    </SidebarMenuButton>
-                    {item.to === '/builds' && <ActiveBuildBadge />}
-                  </SidebarMenuItem>
-                )
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      ))}
+      {groups.map((group) =>
+        group.collapsible ? (
+          <CollapsibleNavGroup
+            key={group.title}
+            group={group}
+            pathname={location.pathname}
+            role={authUser?.role}
+          />
+        ) : (
+          <SidebarGroup key={group.title}>
+            <SidebarGroupLabel>{group.title}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <NavGroupItems items={group.items} pathname={location.pathname} />
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ),
+      )}
     </>
   )
 }

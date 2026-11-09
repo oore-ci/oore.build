@@ -27,7 +27,7 @@ import {
   LIVE_RELEASE_STATES,
   needsStoreAction,
   RELEASE_HEALTH_LABEL,
-  RELEASE_STORE_LABEL,
+  releaseDestinationLabel,
   releaseAppName,
   releaseHealthDetail,
   releaseNextStep,
@@ -59,6 +59,8 @@ function RolloutHealth({
   release: Release
   storeAnchor?: string
 }) {
+  // A release with no crash numbers yet has nothing to report.
+  if (release.health === 'unknown') return null
   const badge = (
     <Badge variant={getReleaseHealthVariant(release.health)}>
       {RELEASE_HEALTH_LABEL[release.health]}
@@ -116,7 +118,7 @@ function ReleaseRow({
         {releaseAppName(release)}
       </Link>
       <span className={cn(textVariants({ variant: 'caption' }), 'truncate')}>
-        {RELEASE_STORE_LABEL[release.store]} {release.track} ·{' '}
+        {releaseDestinationLabel(release)} ·{' '}
         <span className="tabular-nums">{releaseVersionLabel(release)}</span>
         {isAdoptedRelease(release) ? ' · found in store' : ''}
       </span>

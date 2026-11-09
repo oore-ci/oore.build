@@ -1,4 +1,5 @@
 import { useMemo, type ReactNode } from 'react'
+import { buildSourceRef } from '@/lib/build-source'
 import { WorkflowBadge } from '@/components/workflow-badge'
 import { Row } from '@/components/layout/row'
 import { Link } from '@tanstack/react-router'
@@ -91,7 +92,7 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
     ),
     cell: ({ row }) => (
       <BuildSourceValue
-        branch={row.original.branch}
+        branch={buildSourceRef(row.original)}
         commitSha={row.original.commit_sha}
         context={row.original.context}
       />

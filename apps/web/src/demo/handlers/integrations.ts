@@ -31,7 +31,7 @@ export const integrationHandlers = [
           resource_id: source.id,
           resource_name: source.display_name ?? 'GitLab source',
           repair_action: 'Reconnect GitLab',
-          repair_url: `/settings/integrations/${source.id}?tab=connection`,
+          repair_url: `/settings/sources/${source.id}?tab=connection`,
         },
       ],
     })

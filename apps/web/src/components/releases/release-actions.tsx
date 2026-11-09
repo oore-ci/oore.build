@@ -36,7 +36,7 @@ import { useReleaseAction } from '@/hooks/use-releases'
 import {
   RELEASE_ACTION_COPY,
   RELEASE_ACTION_ORDER,
-  RELEASE_STORE_LABEL,
+  releaseDestinationLabel,
   fractionToPercent,
   releaseAppName,
   releaseVersionLabel,
@@ -47,9 +47,27 @@ import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
 
 /**
+ * The one action worth a button for this release: carry on a paused rollout,
+ * let an approved one go out, or stop one that is rolling. Everything else
+ * lives in the menu.
+ */
+export function primaryReleaseAction(
+  release: Pick<Release, 'allowed_actions' | 'state'>,
+): ReleaseAction | null {
+  const allowed = new Set(release.allowed_actions)
+  if (release.state === 'paused' && allowed.has('resume')) return 'resume'
+  for (const action of ['approve', 'release_now'] as const) {
+    if (allowed.has(action)) return action
+  }
+  if (allowed.has('halt') && release.state !== 'halted') return 'halt'
+  return null
+}
+
+/**
  * Release controls. The server decides which actions the caller may take
  * from their project role and the release state; a viewer gets none.
- * Halt sits outside the menu so it is always two clicks away.
+ * The leading action sits outside the menu; Halt is never more than two
+ * clicks away.
  */
 export function ReleaseActions({
   release,
@@ -59,17 +77,24 @@ export function ReleaseActions({
   size?: 'sm' | 'default'
 }) {
   const [pending, setPending] = useState<ReleaseAction | null>(null)
+  const primary = primaryReleaseAction(release)
   const allowed = new Set(release.allowed_actions)
-  const canHalt = allowed.has('halt') && release.state !== 'halted'
-  const menuActions = RELEASE_ACTION_ORDER.filter(
-    (action) => action !== 'halt' && allowed.has(action),
-  )
+  const menuActions = [
+    ...RELEASE_ACTION_ORDER.filter(
+      (action) =>
+        action !== primary && action !== 'halt' && allowed.has(action),
+    ),
+    // Halt stays reachable from the menu when another action leads.
+    ...(primary !== 'halt' && allowed.has('halt') && release.state !== 'halted'
+      ? (['halt'] as const)
+      : []),
+  ]
 
-  if (!canHalt && menuActions.length === 0) return null
+  if (!primary && menuActions.length === 0) return null
 
   return (
     <Row gap={1} className="justify-end">
-      {canHalt ? (
+      {primary === 'halt' ? (
         <Button
           variant="outline"
           size={size}
@@ -78,6 +103,14 @@ export function ReleaseActions({
         >
           <HugeiconsIcon icon={StopCircleIcon} data-icon="inline-start" />
           Halt
+        </Button>
+      ) : primary ? (
+        <Button
+          variant="outline"
+          size={size}
+          onClick={() => setPending(primary)}
+        >
+          {RELEASE_ACTION_COPY[primary].label}
         </Button>
       ) : null}
       {menuActions.length > 0 ? (
@@ -193,8 +226,8 @@ function ReleaseActionDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>{copy.title}</AlertDialogTitle>
           <p className="text-sm font-medium">
-            {releaseAppName(release)} · {RELEASE_STORE_LABEL[release.store]}{' '}
-            {release.track} · {releaseVersionLabel(release)}
+            {releaseAppName(release)} · {releaseDestinationLabel(release)} ·{' '}
+            {releaseVersionLabel(release)}
           </p>
           <AlertDialogDescription>
             {copy.description(release)}

@@ -27,8 +27,8 @@ export function apiTokenStatus(token: {
 export const BUILD_STATUS_FILTER_OPTIONS = {
   all: 'All statuses',
   queued: 'Queued',
-  scheduled: 'Scheduled',
-  assigned: 'Assigned',
+  scheduled: 'Picked up',
+  assigned: 'Starting',
   running: 'Running',
   succeeded: 'Succeeded',
   failed: 'Failed',

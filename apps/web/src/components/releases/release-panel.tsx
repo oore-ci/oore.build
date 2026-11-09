@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react'
 import type { Release, ReleaseHistoryEntry } from '@oore/client/models'
 import { StoreErrorMessage } from '@/components/build-details/store-wait-alert'
+import { Row } from '@/components/layout/row'
 import { ReleaseActions } from '@/components/releases/release-actions'
+import { PromoteReleaseButton } from '@/components/environments/promote-release-button'
 import {
   ReleaseRollout,
   ReleaseStateBadge,
@@ -153,9 +155,10 @@ function ReleaseCard({
             {current.package_name ? ` · ${current.package_name}` : ''}
           </Text>
         </Stack>
-        <div className="-mt-0.5">
+        <Row gap={1} className="-mt-0.5">
+          <PromoteReleaseButton release={current} />
           <ReleaseActions release={current} />
-        </div>
+        </Row>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <StoreActionNotice release={current} />
@@ -169,25 +172,29 @@ function ReleaseCard({
               {releaseNextStep(current, nowSeconds)}
             </span>
           </Stack>
-          <Stack gap={1} className="items-start">
-            <span className={textVariants({ variant: 'caption' })}>Health</span>
-            <Badge variant={getReleaseHealthVariant(current.health)}>
-              {RELEASE_HEALTH_LABEL[current.health]}
-            </Badge>
-            {current.crash_rate != null ? (
-              <span
-                className={cn(
-                  textVariants({ variant: 'caption' }),
-                  'tabular-nums',
-                )}
-              >
-                Crash rate {formatRolloutPercent(current.crash_rate)}
-                {current.crash_rate_threshold != null
-                  ? ` (halts at ${formatRolloutPercent(current.crash_rate_threshold)})`
-                  : ''}
+          {current.health === 'unknown' ? null : (
+            <Stack gap={1} className="items-start">
+              <span className={textVariants({ variant: 'caption' })}>
+                Health
               </span>
-            ) : null}
-          </Stack>
+              <Badge variant={getReleaseHealthVariant(current.health)}>
+                {RELEASE_HEALTH_LABEL[current.health]}
+              </Badge>
+              {current.crash_rate != null ? (
+                <span
+                  className={cn(
+                    textVariants({ variant: 'caption' }),
+                    'tabular-nums',
+                  )}
+                >
+                  Crash rate {formatRolloutPercent(current.crash_rate)}
+                  {current.crash_rate_threshold != null
+                    ? ` (halts at ${formatRolloutPercent(current.crash_rate_threshold)})`
+                    : ''}
+                </span>
+              ) : null}
+            </Stack>
+          )}
         </div>
         {/* Apple runs App Store and TestFlight releases on its own
             schedule; Oore's rollout steps only drive Google Play. */}

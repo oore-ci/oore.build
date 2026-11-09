@@ -61,14 +61,14 @@ export function buildStateSummary(
     case 'scheduled':
       return {
         tone: 'neutral',
-        title: 'Scheduled',
-        description: 'The build has not started yet.',
+        title: 'Picked up by a runner',
+        description: 'The runner is getting ready to start it.',
       }
     case 'assigned':
       return {
         tone: 'neutral',
-        title: 'Assigned to a runner',
-        description: 'Waiting for the runner to start it.',
+        title: 'Starting',
+        description: 'The runner has it and is starting the first step.',
       }
     case 'running':
       return null

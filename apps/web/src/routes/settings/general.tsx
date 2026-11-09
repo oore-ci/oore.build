@@ -1,0 +1,24 @@
+import { createFileRoute } from '@tanstack/react-router'
+
+import {
+  getActiveInstanceOrRedirect,
+  requireInstanceRoleOrRedirect,
+} from '@/lib/instance-context'
+
+export type {
+  ExternalAccessNetworkFormValues,
+  ExternalAccessOidcFormValues,
+  TrustedProxyFormValues,
+} from './general.lazy'
+
+export const Route = createFileRoute('/settings/general')({
+  staticData: {
+    breadcrumb: {
+      title: 'General',
+    },
+  },
+  beforeLoad: (context) => {
+    const instance = getActiveInstanceOrRedirect()
+    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'], context)
+  },
+})

@@ -20,7 +20,10 @@ import {
   formatSizeChange,
   relativeTime,
 } from '@/lib/format-utils'
-import { artifactInstallReadiness } from '@/lib/artifact-install'
+import {
+  artifactInstallReadiness,
+  artifactPurposeLabel,
+} from '@/lib/artifact-install'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -161,11 +164,10 @@ function ArtifactRow({
   return (
     <Item variant="outline" size="xs" className="flex-wrap">
       <ItemContent className="min-w-0 basis-40">
-        <ItemTitle className="break-all">{artifact.name}</ItemTitle>
+        <ItemTitle>{artifactPurposeLabel(artifact)}</ItemTitle>
         <ItemDescription className="flex flex-wrap items-center gap-1.5">
-          <Badge variant="outline" className="text-[10px]">
-            {artifact.artifact_type}
-          </Badge>
+          <span className="break-all">{artifact.name}</span>
+          <span aria-hidden>·</span>
           <span>
             {artifact.file_size != null
               ? formatFileSize(artifact.file_size)

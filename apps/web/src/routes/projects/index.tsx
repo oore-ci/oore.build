@@ -232,7 +232,7 @@ function ProjectsListPage() {
                 {needsSource ? (
                   canWriteIntegrations ? (
                     <Button
-                      render={<Link to="/settings/integrations" />}
+                      render={<Link to="/settings/sources" />}
                       onClick={() =>
                         updateProgress(scope, { projectDraft: { name: '' } })
                       }

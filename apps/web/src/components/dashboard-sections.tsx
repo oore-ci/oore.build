@@ -56,7 +56,7 @@ export function DashboardGettingStarted({
                 onClick={() =>
                   updateProgress(scope, { projectDraft: { name: '' } })
                 }
-                render={<Link to="/settings/integrations" />}
+                render={<Link to="/settings/sources" />}
                 nativeButton={false}
               >
                 <HugeiconsIcon icon={Link04Icon} data-icon="inline-start" />
