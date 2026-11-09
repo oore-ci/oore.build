@@ -381,6 +381,11 @@ interface TriggerBuildDrawerProps {
   fixedPipelineName?: string
   defaultPipelineId?: string
   defaultBranch?: string
+  /**
+   * Values to start from, such as a build being re-run with changes. Pass a
+   * stable object: a new one resets the form.
+   */
+  prefill?: Partial<TriggerBuildForm>
   title?: string
   description?: string
   onBuildCreated?: (buildId: string) => void
@@ -413,6 +418,7 @@ export default function TriggerBuildDrawer({
   fixedPipelineName,
   defaultPipelineId,
   defaultBranch,
+  prefill,
   title = 'Run build',
   description = 'Choose a pipeline and branch to build.',
   onBuildCreated,
@@ -491,16 +497,19 @@ export default function TriggerBuildDrawer({
   useEffect(() => {
     if (!open) return
 
-    const initial = defaults(
-      fixedProjectId,
-      fixedPipelineId,
-      defaultPipelineId,
-      defaultBranch,
-    )
+    const initial = {
+      ...defaults(
+        fixedProjectId,
+        fixedPipelineId,
+        defaultPipelineId,
+        defaultBranch,
+      ),
+      ...prefill,
+    }
     // Start from the last pipeline and branch this person ran here, unless
     // the page opening the drawer already chose them.
     const last =
-      defaultPipelineId || defaultBranch
+      defaultPipelineId || defaultBranch || prefill
         ? undefined
         : // Read once as the drawer opens, so a run started now does not
           // reset the form.
@@ -526,6 +535,7 @@ export default function TriggerBuildDrawer({
     fixedProjectId,
     form,
     open,
+    prefill,
     recentRunsScope,
   ])
 

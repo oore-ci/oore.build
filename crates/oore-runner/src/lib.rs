@@ -5783,6 +5783,18 @@ async fn execute_build_steps(
             }
         };
     let version_name = read_pubspec_version_name(&workspace);
+    report_build_identity(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &oore_contract::ReportBuildIdentityRequest {
+            version_name: version_name.clone(),
+            version_code: Some(version_code),
+            ..read_head_commit_identity(&workspace).await
+        },
+    )
+    .await;
 
     let mut signing_source: Option<&str> = None;
     let mut signing_variant: Option<AndroidSigningBuildType> = None;
@@ -8923,6 +8935,63 @@ async fn abort_artifact(
         .await;
 }
 
+/// The checked-out commit's title and author, from `git log`. Empty when
+/// git cannot say, which leaves the build without them.
+async fn read_head_commit_identity(workspace: &Path) -> oore_contract::ReportBuildIdentityRequest {
+    let output = tokio::process::Command::new("git")
+        .args(["log", "-1", "--format=%s%x00%an"])
+        .current_dir(workspace)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await;
+    match output {
+        Ok(output) if output.status.success() => {
+            parse_head_commit_identity(&String::from_utf8_lossy(&output.stdout))
+        }
+        _ => oore_contract::ReportBuildIdentityRequest::default(),
+    }
+}
+
+fn parse_head_commit_identity(raw: &str) -> oore_contract::ReportBuildIdentityRequest {
+    let mut parts = raw.trim_end_matches('\n').splitn(2, '\0');
+    let text = |value: Option<&str>| {
+        value
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    oore_contract::ReportBuildIdentityRequest {
+        commit_title: text(parts.next()),
+        commit_author: text(parts.next()),
+        ..Default::default()
+    }
+}
+
+/// Tells the backend what the build is. Best effort: an older backend
+/// without the endpoint, or a failed request, only leaves the build
+/// without a title and version.
+async fn report_build_identity(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    identity: &oore_contract::ReportBuildIdentityRequest,
+) {
+    let result = client
+        .post(format!(
+            "{}/v1/runners/{}/jobs/{}/identity",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .json(identity)
+        .timeout(CONTROL_REQUEST_TIMEOUT)
+        .send()
+        .await;
+    if let Err(error) = result {
+        println!("Could not report build identity for {build_id}: {error}");
+    }
+}
+
 struct StatusReport<'a> {
     build_id: &'a str,
     status: &'a str,
@@ -9680,6 +9749,18 @@ mod tests {
             choose_ios_export_method("", IosExportMethod::AppStore),
             "app-store"
         );
+    }
+
+    #[test]
+    fn head_commit_identity_reads_title_and_author() {
+        let identity = super::parse_head_commit_identity("Fix saved addresses\0Mina Patel\n");
+        assert_eq!(
+            identity.commit_title.as_deref(),
+            Some("Fix saved addresses")
+        );
+        assert_eq!(identity.commit_author.as_deref(), Some("Mina Patel"));
+        let empty = super::parse_head_commit_identity("");
+        assert!(empty.commit_title.is_none() && empty.commit_author.is_none());
     }
 
     #[test]

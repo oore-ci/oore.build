@@ -7,10 +7,10 @@ use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
     ApiError, BuildDetailResponse, BuildStatus, ClaimJobRequest, ClaimJobResponse, ClaimedJob,
     JobStatusResponse, ListRunnersResponse, MAX_RUNNER_CONCURRENT_BUILDS, RUNNER_PROTOCOL_VERSION,
-    RegisterRunnerRequest, RegisterRunnerResponse, Runner, RunnerDiskPressure,
-    RunnerHeartbeatRequest, RunnerHeartbeatResponse, RunnerMetrics, RunnerStatus,
-    UpdateJobStatusRequest, UpdateRunnerRequest, UpdateRunnerResponse, effective_runner_labels,
-    normalize_runner_labels, runner_disk_pressure,
+    RegisterRunnerRequest, RegisterRunnerResponse, ReportBuildIdentityRequest, Runner,
+    RunnerDiskPressure, RunnerHeartbeatRequest, RunnerHeartbeatResponse, RunnerMetrics,
+    RunnerStatus, UpdateJobStatusRequest, UpdateRunnerRequest, UpdateRunnerResponse,
+    effective_runner_labels, normalize_runner_labels, runner_disk_pressure,
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -1221,6 +1221,83 @@ pub async fn update_job_status(
     }))
 }
 
+/// Longest commit title or author name stored; longer values are cut.
+const BUILD_IDENTITY_TEXT_LIMIT: usize = 200;
+
+fn identity_text(value: Option<&str>) -> Option<String> {
+    let value = value?.lines().next()?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(value.chars().take(BUILD_IDENTITY_TEXT_LIMIT).collect())
+}
+
+/// Stores what the runner reported, on a build still assigned to it. A
+/// value it left out keeps what the build has. Returns false when the build
+/// is not the runner's.
+async fn store_build_identity(
+    pool: &sqlx::SqlitePool,
+    build_id: &str,
+    runner_id: &str,
+    identity: &ReportBuildIdentityRequest,
+) -> Result<bool, sqlx::Error> {
+    let updated = sqlx::query(
+        "UPDATE builds SET \
+             commit_title = COALESCE(?1, commit_title), \
+             commit_author = COALESCE(?2, commit_author), \
+             version_name = COALESCE(?3, version_name), \
+             version_code = COALESCE(?4, version_code), \
+             updated_at = ?5 \
+         WHERE id = ?6 AND runner_id = ?7",
+    )
+    .bind(identity_text(identity.commit_title.as_deref()))
+    .bind(identity_text(identity.commit_author.as_deref()))
+    .bind(identity_text(identity.version_name.as_deref()))
+    .bind(identity.version_code.filter(|code| *code > 0))
+    .bind(crate::util::now_unix())
+    .bind(build_id)
+    .bind(runner_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(updated > 0)
+}
+
+/// `POST /v1/runners/{runner_id}/jobs/{job_id}/identity` — the runner
+/// reports the commit title and author and the app version after checkout.
+pub async fn report_build_identity(
+    State(state): State<Arc<AppState>>,
+    Path((runner_id, job_id)): Path<(String, String)>,
+    runner_auth: RunnerAuth,
+    Json(req): Json<ReportBuildIdentityRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    if runner_auth.runner_id != runner_id {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "runner_mismatch",
+            "Runner token does not match the requested runner ID",
+        ));
+    }
+    let updated = store_build_identity(&state.db, &job_id, &runner_id, &req)
+        .await
+        .map_err(|e| {
+            error!(error = %e, build_id = %job_id, "failed to store build identity");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to store build identity",
+            )
+        })?;
+    if !updated {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "runner_mismatch",
+            "This build is not assigned to your runner",
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// `GET /v1/runners/{runner_id}/jobs/{job_id}` — check build status (for runner cancellation polling).
 pub async fn get_job_status(
     State(state): State<Arc<AppState>>,
@@ -1874,6 +1951,48 @@ mod tests {
             .await
             .unwrap()
             .map(|row| row.get("id"))
+    }
+
+    #[tokio::test]
+    async fn runner_reports_build_identity_for_its_own_build() {
+        let pool = pool().await;
+        insert_runner(&pool, "mac", "macos").await;
+        queue_build(&pool, "b1", 1, &[]).await;
+        sqlx::query("UPDATE builds SET status = 'running', runner_id = 'mac' WHERE id = 'b1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let identity = ReportBuildIdentityRequest {
+            commit_title: Some("Fix saved addresses\nlonger body".to_string()),
+            commit_author: Some(" Mina Patel ".to_string()),
+            version_name: Some("2.5.1".to_string()),
+            version_code: Some(146),
+        };
+        assert!(
+            !store_build_identity(&pool, "b1", "other", &identity)
+                .await
+                .unwrap()
+        );
+        assert!(
+            store_build_identity(&pool, "b1", "mac", &identity)
+                .await
+                .unwrap()
+        );
+        // A later report without a title keeps the stored one.
+        assert!(
+            store_build_identity(&pool, "b1", "mac", &ReportBuildIdentityRequest::default())
+                .await
+                .unwrap()
+        );
+        let row = sqlx::query("SELECT * FROM builds WHERE id = 'b1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let build = crate::builds::row_to_build(&row);
+        assert_eq!(build.commit_title.as_deref(), Some("Fix saved addresses"));
+        assert_eq!(build.commit_author.as_deref(), Some("Mina Patel"));
+        assert_eq!(build.version_name.as_deref(), Some("2.5.1"));
+        assert_eq!(build.version_code, Some(146));
     }
 
     #[tokio::test]

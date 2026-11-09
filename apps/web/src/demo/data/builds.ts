@@ -732,6 +732,58 @@ for (const [projectIndex, app] of demoBuildHistoryApps.entries()) {
   }
 }
 
+// ── What each build is: commit title, author and app version ────
+const DEMO_COMMIT_TITLES = [
+  'Fix saved addresses on checkout',
+  'Add order tracking map',
+  'Bump flutter_stripe to 11.2',
+  'Cache product images offline',
+  'Show delivery slots in local time',
+  'Fix crash when the cart is empty',
+  'Add Hindi translations',
+  'Speed up the home feed',
+  'Retry payments after a timeout',
+  'Tidy up the settings screen',
+  'Support dark mode in receipts',
+  'Fix login on Android 15',
+]
+const DEMO_AUTHORS = new Map([
+  ['octocat', 'Mona Lisa'],
+  ['mina-patel', 'Mina Patel'],
+  ['jordan-kim', 'Jordan Kim'],
+  ['priya-shah', 'Priya Shah'],
+])
+const DEMO_VERSION_NAMES = new Map<string, string>([
+  [PROJECT_IDS.flutterShop, '2.5.1'],
+  [PROJECT_IDS.internalAdmin, '1.8.2'],
+  [PROJECT_IDS.nativePayments, '3.2.0'],
+])
+
+// A runner reports these after checkout, so queued builds have none.
+for (const build of demoBuilds) {
+  if (!build.started_at) continue
+  build.commit_title ??=
+    DEMO_COMMIT_TITLES[build.build_number % DEMO_COMMIT_TITLES.length]
+  build.commit_author ??=
+    DEMO_AUTHORS.get(build.trigger_actor ?? '') ?? 'Mina Patel'
+  build.version_name ??= DEMO_VERSION_NAMES.get(build.project_id) ?? '1.0.0'
+  build.version_code ??= build.build_number
+}
+
+// A push to the same branch replaced each canceled history build.
+for (const build of demoBuilds) {
+  if (build.status !== 'canceled' || !build.id.startsWith('build-demo-history'))
+    continue
+  const newer = demoBuilds.find(
+    (candidate) =>
+      candidate.pipeline_id === build.pipeline_id &&
+      candidate.build_number === build.build_number + 1,
+  )
+  if (newer) {
+    build.superseded_by = { id: newer.id, build_number: newer.build_number }
+  }
+}
+
 // ── Build events for detail views ───────────────────────────────
 export const demoBuildEvents = {
   [BUILD_IDS.awaitingApproval1]: [

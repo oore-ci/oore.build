@@ -76,7 +76,11 @@ import {
 } from '@/components/ui/empty'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
-import { BuildSourceValue, EmptyValue } from '@/components/table-values'
+import {
+  BuildNumberValue,
+  BuildSourceValue,
+  EmptyValue,
+} from '@/components/table-values'
 import {
   Select,
   SelectContent,
@@ -104,15 +108,7 @@ const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
     accessorKey: 'build_number',
     header: 'Build',
-    cell: ({ row }) => (
-      <Link
-        to="/builds/$buildId"
-        params={{ buildId: row.original.id }}
-        className="font-mono font-medium"
-      >
-        #{row.original.build_number}
-      </Link>
-    ),
+    cell: ({ row }) => <BuildNumberValue build={row.original} />,
     enableSorting: false,
   },
   {
@@ -123,12 +119,14 @@ const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
   },
   {
     accessorKey: 'branch',
-    header: 'Branch',
+    header: 'Source',
     cell: ({ row }) => (
       <BuildSourceValue
         branch={row.original.branch}
         commitSha={row.original.commit_sha}
         context={row.original.context}
+        title={row.original.commit_title}
+        author={row.original.commit_author}
       />
     ),
     enableSorting: false,

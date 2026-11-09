@@ -1705,6 +1705,24 @@ pub struct Build {
     pub commit_sha: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// The first line of the built commit's message. The runner reports it
+    /// after checkout, so a queued build has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_title: Option<String>,
+    /// The built commit's author name, reported with `commit_title`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_author: Option<String>,
+    /// The app version the build makes, from `pubspec.yaml`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    /// The store version code (Android versionCode, iOS build number) the
+    /// build makes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_code: Option<i64>,
+    /// The newer build that canceled this one, when a push to the same
+    /// branch replaced it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<BuildReference>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changelog: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1799,6 +1817,26 @@ impl BuildReleaseOutcome {
             .map(Self::of)
             .max_by_key(|outcome| outcome.urgency())
     }
+}
+
+/// Another build, by id and number.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BuildReference {
+    pub id: String,
+    pub build_number: i64,
+}
+
+/// What a runner found out about a build after checkout.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct ReportBuildIdentityRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_code: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

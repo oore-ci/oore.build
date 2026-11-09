@@ -42,6 +42,23 @@ The build detail shows its branch, pinned commit, pipeline, and selected
 platforms. Follow the state and logs until the build reaches `succeeded` or
 another terminal result.
 
+## Follow the build
+
+The build page opens on **Logs** while the build runs, with a bar and a line
+such as "Step 3 of 6 · Build · about 4 min left" once the pipeline has a few
+successful runs to compare with. A build no runner has started lists the
+runners that can take it and why each has not yet. A finished build opens on
+**Summary**: the apps it made with **Install**, the stores it was sent to,
+what changed, its checks, its version, commit and author, and its activity,
+including tester feedback. A failed build opens on **Logs**, or on **Tests**
+when tests failed.
+
+To run a build again with a different branch, workflow or notes, open the
+menu beside **Re-run** and choose **Re-run with changes**.
+
+A build canceled because a newer push to the same branch started another one
+says **Replaced by** and links to that build.
+
 ## Troubleshooting
 
 **The build waits because the Direct macOS runner is paused**
