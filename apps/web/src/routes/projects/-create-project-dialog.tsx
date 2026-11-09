@@ -50,7 +50,7 @@ import { Stack } from '@/components/layout/stack'
 import { textVariants } from '@/lib/recipes'
 
 const createProjectSchema = z.object({
-  name: z.string().trim().min(1, 'Enter a project name.'),
+  name: z.string().trim().min(1, 'Enter an app name.'),
   description: z.string().optional(),
   default_branch: z.string().optional(),
   local_repository_path: z.string().optional(),
@@ -65,7 +65,7 @@ function createProjectSchemaFor(isRemoteMode: boolean) {
     if (isRemoteMode && !data.repository_id?.trim()) {
       ctx.addIssue({
         code: 'custom',
-        message: 'Choose the repository this project builds from.',
+        message: 'Choose the repository this app builds from.',
         path: ['repository_id'],
       })
     }
@@ -177,7 +177,7 @@ export default function CreateProjectDialog({
             projectId: response.project.id,
             projectDraft: undefined,
           })
-          toast.success('Project created')
+          toast.success('App created')
           form.reset()
           onOpenChange(false)
           void navigate({
@@ -186,7 +186,7 @@ export default function CreateProjectDialog({
           })
         },
         onError: (error) => {
-          toast.error(`Failed to create project: ${error.message}`)
+          toast.error(`Failed to create app: ${error.message}`)
         },
       },
     )
@@ -219,7 +219,7 @@ export default function CreateProjectDialog({
             <DrawerDescription>
               {isRemoteMode
                 ? "Choose a repository from a connected source. Creating the project trusts its build commands to run with the runner account's macOS permissions."
-                : "Choose a repository on this Mac. Creating the project trusts its build commands to run with the runner account's macOS permissions."}
+                : "Choose a repository on this Mac. Creating the app trusts its build commands to run with the runner account's macOS permissions."}
             </DrawerDescription>
           </DrawerHeader>
 
@@ -396,7 +396,7 @@ export default function CreateProjectDialog({
                       </FormLabel>
                       <FormControl>
                         <Input
-                          placeholder="A brief description of this project"
+                          placeholder="A brief description of this app"
                           {...field}
                         />
                       </FormControl>
@@ -494,7 +494,7 @@ export default function CreateProjectDialog({
                       Creating...
                     </>
                   ) : (
-                    'Create project'
+                    'Create app'
                   )}
                 </Button>
               </DrawerFooter>
@@ -509,7 +509,7 @@ export default function CreateProjectDialog({
         enabled={open && !isRemoteMode && canBrowseLocalFs}
         initialPath={form.getValues('local_repository_path')}
         title="Browse Local Folders"
-        description="Select a Git repository folder and use it for this project."
+        description="Select a Git repository folder and use it for this app."
         requireGitRepository
         selectCurrentLabel="Use Current Folder"
         selectDirectoryLabel="Use Repo"

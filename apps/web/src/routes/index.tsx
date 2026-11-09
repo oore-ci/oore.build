@@ -511,7 +511,7 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
             ) : (
               <Suspense fallback={null}>
                 <TriggerBuildDrawer
-                  description="Choose a project, pipeline and branch to build."
+                  description="Choose an app, pipeline and branch to build."
                   onBuildCreated={(buildId) => {
                     void navigate({
                       to: '/builds/$buildId',
@@ -551,7 +551,7 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
         {projectsQuery.error ? (
           <Alert variant="destructive">
             <AlertDescription className="flex items-center justify-between gap-3">
-              <span>Projects could not be loaded.</span>
+              <span>Apps could not be loaded.</span>
               <Button
                 variant="outline"
                 size="sm"

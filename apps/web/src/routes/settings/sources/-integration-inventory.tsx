@@ -284,7 +284,7 @@ export function IntegrationRepositoryInventory({
     <section aria-label="Repositories" className="min-w-0 space-y-4">
       <Text variant="muted">
         Repositories discovered from this source are available when an owner or
-        admin creates a project.
+        admin creates an app.
       </Text>
 
       {error ? (

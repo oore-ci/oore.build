@@ -285,10 +285,10 @@ export default function CommandPalette({
       ? [
           {
             id: 'action-new-project',
-            label: 'Create project…',
+            label: 'Create app…',
             icon: FolderAddIcon,
             action: () => go('/projects?openCreate=1'),
-            keywords: ['add new project create'],
+            keywords: ['add new app project create'],
           },
         ]
       : []),
@@ -425,11 +425,11 @@ export default function CommandPalette({
   const projectStatus = isQaViewer
     ? null
     : error
-      ? 'Projects could not be loaded. Open Projects to retry.'
+      ? 'Apps could not be loaded. Open Apps to retry.'
       : isLoading
-        ? 'Loading projects…'
+        ? 'Loading apps…'
         : projectTotal > projects.length
-          ? `Showing ${projects.length} of ${projectTotal} projects. Open Projects to search them all.`
+          ? `Showing ${projects.length} of ${projectTotal} apps. Open Apps to search them all.`
           : null
 
   const sections = rankPaletteSections(
@@ -440,7 +440,7 @@ export default function CommandPalette({
       { heading: 'Actions', items: actionItems },
       { heading: 'Run pipeline', items: runItems },
       { heading: 'Recent builds', items: buildItems },
-      { heading: 'Projects', items: projectItems },
+      { heading: 'Apps', items: projectItems },
       { heading: 'Settings', items: settingsItems },
       { heading: 'Theme', items: themeItems },
     ].map((section) => ({
@@ -459,19 +459,19 @@ export default function CommandPalette({
       open={open}
       onOpenChange={onOpenChange}
       title="Quick open"
-      description="Open a page, project, build or action."
+      description="Open a page, app, build or action."
     >
       {/* Filtered here: cmdk cannot reorder groups, so the best match could
           sit below a weaker one. */}
       <Command shouldFilter={false}>
         <CommandInput
-          aria-label="Find a page, project, build or action"
+          aria-label="Find a page, app, build or action"
           value={search}
           onValueChange={setSearch}
           placeholder={
             isQaViewer
               ? 'Find a page or action…'
-              : 'Find a project, build #, page or action…'
+              : 'Find an app, build #, page or action…'
           }
         />
         <CommandList>

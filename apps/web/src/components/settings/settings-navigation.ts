@@ -63,7 +63,7 @@ const SETTINGS_GROUPS = [
     items: [
       {
         title: 'Users',
-        description: 'Instance roles and project access.',
+        description: 'Instance roles and app access.',
         to: '/settings/users',
         icon: UserMultiple02Icon,
         roles: ADMIN_ROLES,

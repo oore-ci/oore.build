@@ -252,7 +252,7 @@ function BuildActionsMenuItems({
             />
           }
         >
-          Project builds
+          App builds
         </DropdownMenuItem>
       </DropdownMenuGroup>
     </>

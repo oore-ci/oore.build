@@ -142,11 +142,11 @@ export function GrantProjectAccessDialog({
     <Dialog open={open} onOpenChange={setDialogOpen}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Give project access</DialogTitle>
+          <DialogTitle>Give app access</DialogTitle>
           <DialogDescription>
             {eligible.length === 1
-              ? `Add ${eligible[0].email} to one or more projects.`
-              : `Add ${people(eligible.length)} to one or more projects with the same role.`}
+              ? `Add ${eligible[0].email} to one or more apps.`
+              : `Add ${people(eligible.length)} to one or more apps with the same role.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -161,7 +161,7 @@ export function GrantProjectAccessDialog({
             <p className={textVariants({ variant: 'caption' })}>
               {[
                 implicit.length > 0
-                  ? `Skipping ${implicit.map((user) => user.email).join(', ')}: owners and admins already see every project.`
+                  ? `Skipping ${implicit.map((user) => user.email).join(', ')}: owners and admins already see every app.`
                   : null,
                 disabled.length > 0
                   ? `Skipping ${disabled.map((user) => user.email).join(', ')}: disabled users can't be added.`
@@ -174,7 +174,7 @@ export function GrantProjectAccessDialog({
 
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <Label htmlFor="grant-projects-input">Projects</Label>
+              <Label htmlFor="grant-projects-input">Apps</Label>
               {allProjects.length > 0 &&
               projects.length < allProjects.length ? (
                 <Button
@@ -214,9 +214,7 @@ export function GrantProjectAccessDialog({
                       ))}
                       <ComboboxChipsInput
                         id="grant-projects-input"
-                        placeholder={
-                          values.length === 0 ? 'Search projects' : ''
-                        }
+                        placeholder={values.length === 0 ? 'Search apps' : ''}
                       />
                     </>
                   )}
@@ -224,9 +222,7 @@ export function GrantProjectAccessDialog({
               </ComboboxChips>
               <ComboboxContent anchor={anchor}>
                 <ComboboxEmpty>
-                  {projectsQuery.isLoading
-                    ? 'Loading projects…'
-                    : 'No projects found.'}
+                  {projectsQuery.isLoading ? 'Loading apps…' : 'No apps found.'}
                 </ComboboxEmpty>
                 <ComboboxList>
                   {(project: Project) => (
@@ -242,7 +238,7 @@ export function GrantProjectAccessDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="grant-projects-role">Project role</Label>
+            <Label htmlFor="grant-projects-role">App role</Label>
             <Select
               value={role}
               onValueChange={(value) => {
@@ -265,7 +261,7 @@ export function GrantProjectAccessDialog({
               </SelectContent>
             </Select>
             <p className={textVariants({ variant: 'caption' })}>
-              People who are already on a project keep their current role.
+              People who are already on an app keep their current role.
               {hasQaViewers && role !== 'viewer'
                 ? ' QA viewers always get read-only Viewer access.'
                 : ''}
@@ -315,7 +311,7 @@ export function GrantProjectAccessDialog({
                   Adding...
                 </>
               ) : projects.length > 0 ? (
-                `Add to ${plural(projects.length, 'project')}`
+                `Add to ${plural(projects.length, 'app')}`
               ) : (
                 'Give access'
               )}

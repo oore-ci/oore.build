@@ -26,7 +26,7 @@ and the full build sequence are in
   version.
 - Xcode on the host too, if the pipeline uploads to TestFlight or the App
   Store. The upload runs on the host.
-- Project developer, maintainer, instance admin, or instance owner access to
+- App developer, maintainer, instance admin, or instance owner access to
   edit the pipeline.
 
 ## 1. Install Tart
@@ -103,7 +103,7 @@ setup:
   - gem install bundler
 ```
 
-The next build creates a new image for that project. Each edit to the file
+The next build creates a new image for that app. Each edit to the file
 creates another one, and the runner deletes images that no build used for
 30 days.
 

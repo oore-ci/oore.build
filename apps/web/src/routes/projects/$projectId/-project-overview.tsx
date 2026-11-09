@@ -236,7 +236,7 @@ export default function ProjectOverview({
     <Stack gap={8} className="pt-3">
       {setup}
       {showApps ? (
-        <OverviewSection title="Latest apps">
+        <OverviewSection title="Ready to install">
           {artifacts.error ? (
             <Alert>
               <AlertDescription className="flex flex-wrap items-center justify-between gap-3">

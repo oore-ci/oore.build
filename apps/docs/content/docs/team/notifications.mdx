@@ -25,7 +25,7 @@ Oore sends every request from the backend host. Slack never calls back into Oore
 
 1. Open **Settings > Notifications** and select **Add channel**.
 2. Enter a **Name** and set **Type** to **Slack**.
-3. Choose a **Project** to post only that project's events, or keep **All projects**. Runner alerts only go to channels for all projects.
+3. Choose a **App** to post only that app's events, or keep **All apps**. Runner alerts only go to channels for all apps.
 4. Paste the webhook URL into **Incoming webhook URL** and, if you have one, the bot token into **Bot token (optional)**. To mention people without a bot token, or to mention people who push to Git, list them under **Slack member IDs (optional)** (see [Mentions](#mentions)).
 5. Under **Events**, keep **All events**, or choose **Selected events** and tick the ones to send.
 6. Select **Create channel**.
@@ -58,7 +58,7 @@ Messages post within a few seconds of the change. If Slack does not accept a mes
 
 ## Tester feedback
 
-Testers can select **Feedback** on the latest release in the QA portal. The note carries their device, OS version and app version, which the form fills in and the tester can edit, plus an optional screenshot. It shows on the build's **Timeline** tab and posts to the project's channels with a **View feedback** button. Feedback messages do not mention anyone; they name the tester instead, by display name, or by email when the tester has no display name. Webhook payloads always include the tester's email.
+Testers can select **Feedback** on the latest release in the QA portal. The note carries their device, OS version and app version, which the form fills in and the tester can edit, plus an optional screenshot. It shows on the build's **Timeline** tab and posts to the app's channels with a **View feedback** button. Feedback messages do not mention anyone; they name the tester instead, by display name, or by email when the tester has no display name. Webhook payloads always include the tester's email.
 
 Anyone who can install the build can send feedback. Each person can send 10 notes per 10 minutes. Screenshots must be PNG, JPEG or WebP images of 5 MiB or less and need artifact storage.
 
@@ -106,7 +106,7 @@ line for the Git username, because the bot token can look up only emails.
 
 ### Runner alerts do not arrive
 
-Runner offline alerts go only to channels set to **All projects**.
+Runner offline alerts go only to channels set to **All apps**.
 
 ### A delivery stays pending
 

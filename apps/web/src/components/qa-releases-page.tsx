@@ -736,8 +736,8 @@ export default function QaReleasesPage() {
             </EmptyMedia>
             <EmptyTitle>No apps shared with you yet</EmptyTitle>
             <EmptyDescription>
-              Ask an owner or admin to add you to a project. Its test releases
-              will appear here automatically.
+              Ask an owner or admin to add you to an app. Its test releases will
+              appear here automatically.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

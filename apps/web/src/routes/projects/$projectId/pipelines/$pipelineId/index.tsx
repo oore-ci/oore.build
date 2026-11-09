@@ -701,8 +701,8 @@ function PipelineDetailPage() {
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
-            This project has no linked source repository. Link a repository
-            before triggering builds.
+            This app has no linked source repository. Link a repository before
+            triggering builds.
           </AlertDescription>
         </Alert>
       ) : null}

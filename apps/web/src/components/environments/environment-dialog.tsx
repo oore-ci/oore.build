@@ -505,7 +505,7 @@ export function EnvironmentDialog({
                         <Spinner />
                       ) : approverCandidates.length === 0 ? (
                         <Text render={<span />}>
-                          No developers or maintainers in this project yet.
+                          No developers or maintainers in this app yet.
                         </Text>
                       ) : (
                         <div

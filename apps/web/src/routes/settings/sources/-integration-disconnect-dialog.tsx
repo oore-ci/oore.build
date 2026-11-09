@@ -66,9 +66,9 @@ export function IntegrationDisconnectDialog({
         </AlertDialogHeader>
 
         <div className="space-y-3" aria-live="polite">
-          <h3 className="text-sm font-semibold">Affected projects</h3>
+          <h3 className="text-sm font-semibold">Affected apps</h3>
           {isLoading ? (
-            <div className="space-y-2" aria-label="Checking affected projects">
+            <div className="space-y-2" aria-label="Checking affected apps">
               <Skeleton className="h-4 w-56" />
               <Skeleton className="h-4 w-40" />
             </div>
@@ -93,8 +93,8 @@ export function IntegrationDisconnectDialog({
             <Alert>
               <AlertTitle>
                 {affectedProjectTotal}{' '}
-                {affectedProjectTotal === 1 ? 'project is' : 'projects are'}{' '}
-                currently linked to this source.
+                {affectedProjectTotal === 1 ? 'app is' : 'apps are'} currently
+                linked to this source.
               </AlertTitle>
               <AlertDescription>
                 <ul
@@ -117,7 +117,7 @@ export function IntegrationDisconnectDialog({
                   ))}
                   {isFetchingMoreProjects ? (
                     <li className="list-none py-1 text-muted-foreground">
-                      Loading more projects…
+                      Loading more apps…
                     </li>
                   ) : null}
                 </ul>
@@ -125,7 +125,7 @@ export function IntegrationDisconnectDialog({
             </Alert>
           ) : (
             <Text variant="muted">
-              No current projects are linked to repositories from this source.
+              No current apps are linked to repositories from this source.
             </Text>
           )}
 

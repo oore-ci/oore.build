@@ -250,7 +250,7 @@ function IntegrationsPage() {
               Local Only mode
             </h2>
             <Text variant="muted" className="mt-2">
-              Create projects from paths on this Mac. GitHub and GitLab sources
+              Create apps from paths on this Mac. GitHub and GitLab sources
               become available when External Access is configured.
             </Text>
           </div>
@@ -263,7 +263,7 @@ function IntegrationsPage() {
               Open General settings
             </Button>
             <Button render={<Link to="/projects" />} nativeButton={false}>
-              Go to projects
+              Go to apps
             </Button>
           </div>
         </section>

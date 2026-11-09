@@ -197,7 +197,7 @@ function TriggerBuildBlockingAlerts({
     return (
       <Alert variant="destructive">
         <AlertDescription className="flex items-center justify-between gap-3">
-          <span>Projects could not be loaded.</span>
+          <span>Apps could not be loaded.</span>
           <Button
             type="button"
             variant="outline"
@@ -215,7 +215,7 @@ function TriggerBuildBlockingAlerts({
     return (
       <Alert variant="destructive">
         <AlertDescription className="flex items-center justify-between gap-3">
-          <span>Pipelines could not be loaded for this project.</span>
+          <span>Pipelines could not be loaded for this app.</span>
           <Button
             type="button"
             variant="outline"
@@ -234,8 +234,8 @@ function TriggerBuildBlockingAlerts({
       {issues.noProjects ? (
         <Alert variant="destructive">
           <AlertDescription>
-            No projects are available for you to run. Ask a maintainer for build
-            access or create a project.
+            No apps are available for you to run. Ask a maintainer for build
+            access or create an app.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -252,7 +252,7 @@ function TriggerBuildBlockingAlerts({
                 Set up a build
               </Link>
             ) : (
-              'Ask a project maintainer to add one.'
+              'Ask an app maintainer to add one.'
             )}
           </AlertDescription>
         </Alert>
@@ -260,8 +260,8 @@ function TriggerBuildBlockingAlerts({
       {issues.sourceMissing ? (
         <Alert variant="destructive">
           <AlertDescription>
-            This project is not linked to a source repository. Ask an owner or
-            admin to repair it in{' '}
+            This app is not linked to a source repository. Ask an owner or admin
+            to repair it in{' '}
             {projectId ? (
               <Link
                 to="/projects/$projectId"
@@ -269,10 +269,10 @@ function TriggerBuildBlockingAlerts({
                 search={{ tab: 'settings' }}
                 className="underline underline-offset-4"
               >
-                project settings
+                app settings
               </Link>
             ) : (
-              'project settings'
+              'app settings'
             )}
             .
           </AlertDescription>
@@ -659,13 +659,11 @@ export default function TriggerBuildDrawer({
     setSigningError(undefined)
     const resolvedProjectId = fixedProjectId ?? data.project_id?.trim() ?? ''
     if (!resolvedProjectId) {
-      form.setError('project_id', { message: 'Project is required' })
+      form.setError('project_id', { message: 'App is required' })
       return
     }
     if (sourceMissing) {
-      toast.error(
-        'Link a repository in project settings before running a build.',
-      )
+      toast.error('Link a repository in app settings before running a build.')
       return
     }
 
@@ -827,7 +825,7 @@ export default function TriggerBuildDrawer({
                   name="project_id"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Project</FormLabel>
+                      <FormLabel>App</FormLabel>
                       <Combobox
                         items={projects}
                         filter={null}
@@ -869,13 +867,13 @@ export default function TriggerBuildDrawer({
                             disabled={projectsQuery.isLoading}
                             placeholder={
                               projectsQuery.isLoading
-                                ? 'Loading projects...'
-                                : 'Search projects...'
+                                ? 'Loading apps...'
+                                : 'Search apps...'
                             }
                           />
                         </FormControl>
                         <ComboboxContent>
-                          <ComboboxEmpty>No matching projects.</ComboboxEmpty>
+                          <ComboboxEmpty>No matching apps.</ComboboxEmpty>
                           <ComboboxList
                             onScroll={(event) => {
                               const list = event.currentTarget
@@ -950,7 +948,7 @@ export default function TriggerBuildDrawer({
                                 ? pipelinesQuery.isLoading
                                   ? 'Loading pipelines...'
                                   : 'Search pipelines...'
-                                : 'Select a project first'
+                                : 'Select an app first'
                             }
                           />
                         </FormControl>
@@ -1023,7 +1021,7 @@ export default function TriggerBuildDrawer({
                               ? (activeProject?.default_branch ??
                                 defaultBranch ??
                                 'Enter a branch')
-                              : 'Select a project first'
+                              : 'Select an app first'
                           }
                           autoComplete="off"
                         />

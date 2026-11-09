@@ -427,7 +427,7 @@ function ServiceAccountField({
             {!value
               ? 'Store the whole service account JSON key file as a secret, then choose it here.'
               : scope
-                ? `Uses the ${SCOPE_LABEL[scope]} secret ${value}. A pipeline secret overrides a project secret, which overrides an instance secret. Uploads read it on the runner that builds the app.`
+                ? `Uses the ${SCOPE_LABEL[scope]} secret ${value}. A pipeline secret overrides an app secret, which overrides an instance secret. Uploads read it on the runner that builds the app.`
                 : savedPresent
                   ? `Uses ${value} from a scope you can’t list.`
                   : `No secret named ${value} is visible to this pipeline. The upload step will fail until you add it.`}

@@ -13,7 +13,7 @@ with.
 
 - A pipeline that builds successfully from the UI settings.
 - Write access to the repository.
-- Project developer, maintainer, instance admin, or instance owner access in
+- App developer, maintainer, instance admin, or instance owner access in
   Oore.
 - The `oore` CLI where you edit the repository, to validate the file.
 
@@ -78,12 +78,12 @@ runs, in order and by step name.
 
 ## 3. Commit the file
 
-Commit `.oore.yaml` to the branch Oore builds and push it. For a project that
+Commit `.oore.yaml` to the branch Oore builds and push it. For an app that
 points at a repository on the Oore Mac, commit it in that repository.
 
 With the default **Config source**, a pipeline checks `.oore.yaml`, then
 `.oore.yml`, at the commit it builds. From the next build on, every pipeline
-in the project that reads that path builds from the file, and its form
+in the app that reads that path builds from the file, and its form
 settings for the build stop applying. The pipeline editor names those
 pipelines before you copy the file.
 
@@ -99,7 +99,7 @@ workflow** left at **Not set**, they start one build for each workflow whose
 build page and build lists show which workflow each build ran, and the
 pipeline page filters its builds by workflow.
 
-The **Default workflow** field lists the workflows in the file on the project's
+The **Default workflow** field lists the workflows in the file on the app's
 default branch. The line under it names that branch, such as
 `Workflows read from main`. When the file is only on another branch so far,
 select **Change branch** and enter that branch. When the file is missing,
@@ -120,8 +120,8 @@ create the pipeline from it. Oore looks for `.oore.yaml`, `.oore.yml`, files
 named `.oore.<name>.yaml` in the repository root, such as
 `.oore.release.yaml`, and files in the `.oore/` directory.
 
-1. Open the project's **Pipelines** tab and select
-   **Use repository workflow**. With other pipelines in the project, select
+1. Open the app's **Pipelines** tab and select
+   **Use repository workflow**. With other pipelines in the app, select
    **Add pipeline**.
 2. Under **Start from**, Oore shows **Repository workflow found** and a
    summary of the platforms, Flutter version, commands, and artifacts. If it

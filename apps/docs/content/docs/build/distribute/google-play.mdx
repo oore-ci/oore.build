@@ -13,7 +13,7 @@ daemon.
 
 ## What you need
 
-- Project developer, maintainer, instance admin, or instance owner access.
+- App developer, maintainer, instance admin, or instance owner access.
   Storing a shared instance secret needs instance admin or owner access.
 - An app that already exists in Play Console, with one release uploaded by
   hand. Google Play does not let the API create an app or upload its first
@@ -22,7 +22,7 @@ daemon.
 - A pipeline that builds a release App Bundle and signs it with your upload
   key, from the pipeline's signing settings
   ([Add Android signing](/build/sign/android)) or an Android keystore in the
-  [project's signing library](/build/sign/project-library).
+  [app's signing library](/build/sign/project-library).
 - A Google Cloud service account with a JSON key, invited in Play Console
   under **Users and permissions** with release permissions for the app.
 - Outbound HTTPS from the runner host to `oauth2.googleapis.com` and
@@ -36,10 +36,10 @@ all your apps are in one Play Console developer account, store it once as an
 instance secret: open **Settings > Store credentials** and, under
 **Google Play service account**, select **Add service account**. New
 pipelines then choose it on the **Publishing** tab without another upload. A
-project or pipeline secret with the same name overrides it.
+app or pipeline secret with the same name overrides it.
 
-From the API, any scope works. A project secret is shared by all of the
-project's pipelines:
+From the API, any scope works. An app secret is shared by all of the
+app's pipelines:
 
 ```bash
 jq -n --rawfile value play-service-account.json \
@@ -197,14 +197,14 @@ workflows:
   needs no Google Play settings in the pipeline. Without it, turn the
   pipeline's Google Play upload on as in [step 2](#2-configure-publishing).
 - `signing.android` names the keystore that signs the bundle, from the
-  [project's signing library](/build/sign/project-library). Without it, the
+  [app's signing library](/build/sign/project-library). Without it, the
   pipeline's Android signing applies.
 - To stop one workflow's uploads without a commit, open the pipeline's
   **Workflows** tab, select **Settings** on the workflow, and turn
   **Publishing** off.
 
 `oore pipeline validate --project "$PROJECT_ID"` checks that the keystore and
-the secret exist in the project before you push, and `oore pipeline plan`
+the secret exist in the app before you push, and `oore pipeline plan`
 prints the track, identity and secret each workflow uses. Every field is in
 [Publish](/reference/config/oore-yaml-v2#publish), and the per-workflow
 switches in [Workflow settings](/reference/config/pipeline-settings#workflow-settings).

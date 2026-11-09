@@ -75,21 +75,21 @@ Owners and Admins are notified when an incident opens.
 The runner keeps one directory per tool and points build steps at it with an
 environment variable:
 
-| Cache                            | Directory         | Variable                     |
-| -------------------------------- | ----------------- | ---------------------------- |
-| pub                              | `pub`             | `PUB_CACHE`                  |
-| Gradle                           | `gradle`          | `GRADLE_USER_HOME`           |
-| CocoaPods downloads              | `cocoapods`       | `CP_CACHE_DIR`               |
-| CocoaPods spec repos             | `cocoapods-specs` | `CP_HOME_DIR`                |
-| Xcode DerivedData (VM builds)    | `derived-data`    | None. One folder per project |
-| Android SDK packages (VM builds) | `android-sdk`     | None                         |
+| Cache                            | Directory         | Variable                 |
+| -------------------------------- | ----------------- | ------------------------ |
+| pub                              | `pub`             | `PUB_CACHE`              |
+| Gradle                           | `gradle`          | `GRADLE_USER_HOME`       |
+| CocoaPods downloads              | `cocoapods`       | `CP_CACHE_DIR`           |
+| CocoaPods spec repos             | `cocoapods-specs` | `CP_HOME_DIR`            |
+| Xcode DerivedData (VM builds)    | `derived-data`    | None. One folder per app |
+| Android SDK packages (VM builds) | `android-sdk`     | None                     |
 
 - The directories live under
   `~/Library/Caches/build.oore/runner-caches/<runner>/` unless
   `OORE_RUNNER_CACHE_DIR` moves them.
 - A pipeline variable with the same name as a cache variable overrides the
   runner's value.
-- Host builds keep Xcode DerivedData in Xcode's default location. Each project
+- Host builds keep Xcode DerivedData in Xcode's default location. Each app
   builds from the same workspace path on a runner, so it reuses one DerivedData
   folder.
 - Before each build, the runner copies `~/.gradle/gradle.properties` into its
@@ -133,7 +133,7 @@ variables, so these variables apply only to a runner started with
 | `OORE_TART_IMAGE`                   | `oore-flutter-{flutter}`                             | VM image name or OCI reference. `{flutter}` becomes the build's Flutter version                                                  |
 | `OORE_TART_BASE_IMAGE`              | Chosen by platform, see [Base images](#base-images)  | Base image for every image the runner builds                                                                                     |
 | `OORE_TART_IMAGE_MAX_AGE_DAYS`      | `30`                                                 | Days an unused built image is kept. `0` keeps every image                                                                        |
-| `OORE_TART_WARM_IMAGE_MAX_AGE_DAYS` | `7`                                                  | Days a project's [warm image](#warm-images) is reused before a build starts fresh. `0` turns warm images off                     |
+| `OORE_TART_WARM_IMAGE_MAX_AGE_DAYS` | `7`                                                  | Days an app's [warm image](#warm-images) is reused before a build starts fresh. `0` turns warm images off                        |
 
 ## VM images
 
@@ -177,21 +177,21 @@ the same missing image build it once.
 ### Warm images
 
 After a build in which every step succeeds, the runner keeps that build's VM
-as the project's warm image instead of deleting it. First it deletes the
+as the app's warm image instead of deleting it. First it deletes the
 workspace copy, temp files, and Gradle and Xcode logs from the VM. The Gradle
 home, Xcode DerivedData, and Android SDK packages stay on the VM disk. The
-project's next build clones the warm image, so it does not copy those caches
+app's next build clones the warm image, so it does not copy those caches
 in from the runner. The build log says `Cloning oore-flutter-warm-…, this
-project's warm image of …`.
+app's warm image of …`.
 
-Each project has one warm image for each image it builds on. A warm image is
+Each app has one warm image for each image it builds on. A warm image is
 named `oore-flutter-warm-<hash>`. After `OORE_TART_WARM_IMAGE_MAX_AGE_DAYS`, the
 next build starts from the plain image again and replaces the warm image. This
 keeps old caches from piling up. If a warm image fails to start, the runner
 deletes it and starts the build from the plain image.
 
-A warm image holds the project's caches and build outputs, the same data the
-runner's cache directory holds for host builds. Only builds of the same project
+A warm image holds the app's caches and build outputs, the same data the
+runner's cache directory holds for host builds. Only builds of the same app
 start from it.
 
 ### Image cleanup
@@ -214,7 +214,7 @@ Each image carries exactly one Flutter SDK.
 
 ## `oore.image.yaml`
 
-`oore.image.yaml` at the repository root adds to the image for that project:
+`oore.image.yaml` at the repository root adds to the image for that app:
 
 ```yaml
 version: 1
@@ -237,8 +237,8 @@ setup:
 | `setup`            | Shell commands run last, after Flutter is installed   |
 
 The Flutter version still comes from `.fvmrc` or the pipeline. The image name
-adds a hash of the project, base, Flutter version, and file, so the image
-belongs to that project alone and an edit to the file builds a new image.
+adds a hash of the app, base, Flutter version, and file, so the image
+belongs to that app alone and an edit to the file builds a new image.
 
 ## VM build sequence
 
@@ -258,7 +258,7 @@ belongs to that project alone and an edit to the file builds a new image.
      in and back out. Its `gradle.properties` is the runner's, with
      `org.gradle.caching=true` added unless that file sets
      `org.gradle.caching`.
-   - Xcode DerivedData is kept per project and copied to its default folder.
+   - Xcode DerivedData is kept per app and copied to its default folder.
      The runner keeps the last complete copy while it saves a new one.
    - Android SDK packages that a build installs and the image lacks are saved
      and copied into later VMs.

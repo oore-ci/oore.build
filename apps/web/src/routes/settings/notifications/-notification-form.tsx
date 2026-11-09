@@ -388,7 +388,7 @@ function ProjectScopeField({
   const projectsQuery = useProjects({ limit: 100 })
   const projects = projectsQuery.data?.projects ?? []
   const items = {
-    [ALL_PROJECTS]: 'All projects',
+    [ALL_PROJECTS]: 'All apps',
     ...Object.fromEntries(
       projects.map((project) => [project.id, project.name]),
     ),
@@ -400,7 +400,7 @@ function ProjectScopeField({
       name="project_id"
       render={({ field }) => (
         <FormItem>
-          <FormLabel>Project</FormLabel>
+          <FormLabel>App</FormLabel>
           <Select
             value={field.value}
             onValueChange={field.onChange}
@@ -408,7 +408,7 @@ function ProjectScopeField({
           >
             <FormControl>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="All projects" />
+                <SelectValue placeholder="All apps" />
               </SelectTrigger>
             </FormControl>
             <SelectContent>
@@ -422,7 +422,7 @@ function ProjectScopeField({
           <FormDescription>
             {field.value === ALL_PROJECTS
               ? 'Receives events from every project, plus runner alerts.'
-              : 'Receives build and release events for this project only.'}
+              : 'Receives build and release events for this app only.'}
           </FormDescription>
           {projectsQuery.isError ? (
             <p className="text-sm text-destructive">

@@ -85,7 +85,7 @@ const columns: Array<DataTableColumnDef<ProjectBuildInsights>> = [
   {
     id: 'project',
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Project" />
+      <DataTableColumnHeader column={column} title="App" />
     ),
     cell: ({ row }) => (
       <Link
@@ -187,14 +187,14 @@ export function DashboardProjectHealth({
 
   return (
     <DashboardSection
-      title="Project health"
+      title="App health"
       scope={`Last ${days} days`}
       collapsedOnMobile
       action={<DashboardViewAll to="/projects" />}
     >
       {insightsQuery.error && !insightsQuery.data ? (
         <DashboardSectionError
-          label="Project health"
+          label="App health"
           onRetry={() => void insightsQuery.refetch()}
         />
       ) : !insightsQuery.data ? (

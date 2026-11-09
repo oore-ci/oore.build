@@ -270,7 +270,7 @@ function SetupAction({
           </Button>
         </div>
       ) : (
-        hint('Ask a project maintainer to add a pipeline.')
+        hint('Ask an app maintainer to add a pipeline.')
       )
     case 'build':
       return canRun ? (
@@ -290,7 +290,7 @@ function SetupAction({
           </Button>
         </div>
       ) : (
-        hint('Ask a project maintainer for permission to run builds.')
+        hint('Ask an app maintainer for permission to run builds.')
       )
     case 'install':
       return latestBuildId ? (

@@ -366,8 +366,8 @@ export function PipelineTriggersSection({
         title="Approval"
         hint={
           canChangeApproval
-            ? 'Hold builds until a project maintainer approves them.'
-            : 'Only project maintainers can change which builds wait for approval.'
+            ? 'Hold builds until an app maintainer approves them.'
+            : 'Only app maintainers can change which builds wait for approval.'
         }
       >
         <label className="flex items-center gap-2 text-sm">

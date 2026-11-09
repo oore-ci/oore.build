@@ -199,7 +199,7 @@ function OperationsBuildsPage() {
           canTriggerBuild ? (
             <Suspense fallback={null}>
               <TriggerBuildDrawer
-                description="Choose a project and pipeline to run a manual build."
+                description="Choose an app and pipeline to run a manual build."
                 open={buildDrawerOpen}
                 onOpenChange={setBuildDrawerOpen}
                 onBuildCreated={(buildId) => {
@@ -224,14 +224,14 @@ function OperationsBuildsPage() {
           <HugeiconsIcon icon={InformationCircleIcon} />
           <AlertDescription className={splitRowVariants()}>
             <span>
-              Project filters and build actions are temporarily unavailable.
+              App filters and build actions are temporarily unavailable.
             </span>
             <Button
               variant="outline"
               size="sm"
               onClick={() => void projectsQuery.refetch()}
             >
-              Retry projects
+              Retry apps
             </Button>
           </AlertDescription>
         </Alert>

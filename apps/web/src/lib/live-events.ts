@@ -10,7 +10,7 @@ const MAX_RECONNECT_DELAY_MS = 30_000
 export function tagsForLiveEvent(event: LiveEvent): Array<string> {
   switch (event.type) {
     case 'build':
-      return ['Builds', 'Projects', 'Artifacts']
+      return ['Builds', 'Apps', 'Artifacts']
     case 'release':
       return ['Releases']
     case 'runner':
@@ -22,7 +22,7 @@ export function tagsForLiveEvent(event: LiveEvent): Array<string> {
 
 export const ALL_LIVE_TAGS = [
   'Builds',
-  'Projects',
+  'Apps',
   'Artifacts',
   'Releases',
   'Runners',

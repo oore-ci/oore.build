@@ -33,7 +33,7 @@ test('sign-in never redirects off the app or back into sign-in', () => {
 
 test('the login page names where sign-in continues to', () => {
   assert.equal(describeRedirectPath('/builds/b1?install=a'), 'this build')
-  assert.equal(describeRedirectPath('/projects/p1/pipelines/x'), 'this project')
+  assert.equal(describeRedirectPath('/projects/p1/pipelines/x'), 'this app')
   assert.equal(describeRedirectPath('/settings/users'), 'Settings')
   assert.equal(describeRedirectPath('/elsewhere'), 'the page you opened')
 })

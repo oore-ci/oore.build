@@ -344,7 +344,7 @@ it with the plan's notes.
 
 ## Signing
 
-`signing` names identities from the project's signing library (**Project
+`signing` names identities from the app's signing library (**App
 settings > Signing**), so each workflow can sign with its own keys:
 
 ```yaml
@@ -372,7 +372,7 @@ The names carry no secrets; the key material stays in Oore. A workflow without
 `signing` uses the pipeline's signing settings, as before. The pipeline's
 **Workflows** settings can pick a different identity for a workflow, or turn
 its publishing off, without changing the file. See
-[Move credentials into the project library](/build/sign/project-library).
+[Move credentials into the app library](/build/sign/project-library).
 
 Oore checks the names when a build is created. A name the library does not
 hold, or an identity of the wrong kind, refuses a manual build with

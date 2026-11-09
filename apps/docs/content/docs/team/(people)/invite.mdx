@@ -6,7 +6,7 @@ status: implemented
 
 Create an invited Oore account and share the instance URL with the person. Oore does not send an invitation email.
 
-The invitation sets an instance role. It does not grant access to individual projects.
+The invitation sets an instance role. It does not grant access to individual apps.
 
 ## What you need
 
@@ -20,9 +20,9 @@ The invitation sets an instance role. It does not grant access to individual pro
 2. Select **Invite user**.
 3. In **Invite a user**, enter the person's **Email**.
 4. Choose an **Instance role**:
-   - **Admin** can manage instance settings, users, and projects.
-   - **Developer** can work in projects where they have explicit membership.
-   - **QA Viewer** can view builds and artifacts in assigned projects.
+   - **Admin** can manage instance settings, users, and apps.
+   - **Developer** can work in apps where they have explicit membership.
+   - **QA Viewer** can view builds and artifacts in assigned apps.
 5. Select **Send invite**.
 
 ## 2. Share the instance URL
@@ -46,7 +46,7 @@ In **Settings > Users**, confirm that:
 - the intended instance role is shown; and
 - the status is `invited` before first sign-in and `active` after a matching sign-in.
 
-The new user can sign in to Oore, but a Developer or QA Viewer will not see a project until you grant project access.
+The new user can sign in to Oore, but a Developer or QA Viewer will not see an app until you grant app access.
 
 ## Troubleshooting
 
@@ -58,10 +58,10 @@ An Oore user or invitation already uses that normalized email. Find the existing
 
 The identity provider or proxy probably supplied a different email. Compare the invitation with the authenticated email, then correct the upstream identity or invite the exact address it supplies.
 
-### The user can sign in but cannot see a project
+### The user can sign in but cannot see an app
 
-An instance role does not create project membership. Add the user from that project's **Settings** tab.
+An instance role does not create app membership. Add the user from that app's **Settings** tab.
 
 ## Next step
 
-[Assign the user's project access](/team/roles).
+[Assign the user's app access](/team/roles).

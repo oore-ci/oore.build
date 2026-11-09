@@ -239,8 +239,8 @@ export default function OperatorArtifactInstallPage({
 
       <section className="flex flex-col gap-4 pt-1">
         <Text variant="muted">
-          Teammates need to sign in and have access to this project. The file
-          must still be available when they open the link.
+          Teammates need to sign in and have access to this app. The file must
+          still be available when they open the link.
         </Text>
         <h2 className="text-sm font-medium">Before you install</h2>
         {isIos ? (
