@@ -25,8 +25,8 @@ function SourceSetupLayout() {
           className="flex-wrap justify-between border-b px-4 py-3 sm:px-6"
         >
           <p className="text-sm">
-            Your project details are saved. Connect and sync a source, then
-            choose its repository.
+            Your app details are saved. Connect and sync a source, then choose
+            its repository.
           </p>
           <Button
             variant="outline"

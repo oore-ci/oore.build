@@ -407,7 +407,7 @@ export function WorkflowSettingsDrawer({
                     <FormDescription>
                       {canChangeApproval
                         ? 'Replaces the pipeline’s approval policy for this workflow.'
-                        : 'Only project maintainers and instance admins can change which builds wait for approval.'}
+                        : 'Only app maintainers and instance admins can change which builds wait for approval.'}
                     </FormDescription>
                   </FormItem>
                 )}
@@ -416,7 +416,7 @@ export function WorkflowSettingsDrawer({
               {!canWrite ? (
                 <Text variant="muted">
                   You can view these settings. Changing them needs pipeline
-                  write access in this project.
+                  write access in this app.
                 </Text>
               ) : null}
 

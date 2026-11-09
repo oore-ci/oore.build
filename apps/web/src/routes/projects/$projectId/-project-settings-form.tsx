@@ -101,9 +101,9 @@ export function ProjectSettingsForm({
         },
       },
       {
-        onSuccess: () => toast.success('Project updated'),
+        onSuccess: () => toast.success('App updated'),
         onError: (error) =>
-          toast.error(`Failed to update project: ${error.message}`),
+          toast.error(`Failed to update app: ${error.message}`),
       },
     )
   }

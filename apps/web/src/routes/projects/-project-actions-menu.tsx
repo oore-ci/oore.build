@@ -65,7 +65,7 @@ export default function ProjectActionsMenu({
                 />
               }
             >
-              Project settings
+              App settings
             </DropdownMenuItem>
           ) : null}
         </DropdownMenuGroup>

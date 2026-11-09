@@ -133,7 +133,7 @@ function getProjectColumns(
     {
       accessorKey: 'name',
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title="Project" />
+        <DataTableColumnHeader column={column} title="App" />
       ),
       cell: ({ row }) => <ProjectIdentity project={row.original} />,
       enableHiding: false,
@@ -283,10 +283,10 @@ export function ProjectCollection({
   })
 
   return (
-    <CollectionFrame ariaLabel="Projects" isBusy={isLoading || isRefreshing}>
+    <CollectionFrame ariaLabel="Apps" isBusy={isLoading || isRefreshing}>
       {error ? (
         <CollectionError
-          title="Projects could not be loaded"
+          title="Apps could not be loaded"
           description={error.message}
           onRetry={onRetry}
         />
@@ -300,11 +300,11 @@ export function ProjectCollection({
           search={{
             value: query,
             onChange: onSearch,
-            placeholder: 'Search projects',
+            placeholder: 'Search apps',
           }}
           pagination={{ onPageChange, page, pageSize, total }}
           isLoading={isLoading}
-          emptyMessage={isLoading ? 'Loading projects…' : undefined}
+          emptyMessage={isLoading ? 'Loading apps…' : undefined}
         />
       )}
     </CollectionFrame>

@@ -220,7 +220,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
             </Alert>
           ) : members.length === 0 ? (
             <Text variant="muted" className="p-4 sm:p-5">
-              No explicit project members yet. Owners and admins can always open
+              No explicit app members yet. Owners and admins can always open
               this project.
             </Text>
           ) : (
@@ -251,7 +251,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
                           : ''}
                         {implicit
                           ? `Implicit ${projectRole.toLowerCase()} access from their instance role`
-                          : `${projectRole} on this project`}
+                          : `${projectRole} on this app`}
                       </ItemDescription>
                     </ItemContent>
                     <ItemActions>
@@ -288,7 +288,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove project access?</AlertDialogTitle>
+            <AlertDialogTitle>Remove app access?</AlertDialogTitle>
             <AlertDialogDescription>
               {memberToRemove?.user_email} will no longer see this project’s
               builds, logs, or artifacts.

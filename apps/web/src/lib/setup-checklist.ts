@@ -33,7 +33,7 @@ export interface SetupNext {
 export function setupSteps(input: SetupInput): Array<SetupStep> {
   return [
     { id: 'repository', label: 'Connect repository', done: input.hasSource },
-    { id: 'project', label: 'Create project', done: true },
+    { id: 'project', label: 'Create app', done: true },
     { id: 'pipeline', label: 'Add pipeline', done: input.hasPipeline },
     {
       id: 'build',
@@ -59,7 +59,7 @@ export function setupNext(input: SetupInput): SetupNext {
       id: 'repository',
       title: 'Connect a repository',
       detail:
-        'Builds need a source. Choose the repository this project builds from.',
+        'Builds need a source. Choose the repository this app builds from.',
     }
   }
   if (!input.hasPipeline) {

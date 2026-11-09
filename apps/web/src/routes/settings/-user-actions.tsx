@@ -56,7 +56,7 @@ export function UserActions({
               {user.role !== 'admin' ? (
                 <DropdownMenuItem onClick={() => onGrantAccess(user)}>
                   <HugeiconsIcon icon={FolderAddIcon} />
-                  Give project access
+                  Give app access
                 </DropdownMenuItem>
               ) : null}
               <DropdownMenuSub>

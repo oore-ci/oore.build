@@ -1,18 +1,18 @@
 ---
-title: 'Move credentials into the project library'
+title: 'Move credentials into the app library'
 status: preview
-description: 'Store keystores and iOS certificates once per project, then let each workflow sign with its own by name.'
+description: 'Store keystores and iOS certificates once per app, then let each workflow sign with its own by name.'
 ---
 
 A pipeline's own signing settings hold one Android keystore and one iOS
-setup, shared by every build of the pipeline. The project's signing library
+setup, shared by every build of the pipeline. The app's signing library
 holds named identities instead. A `.oore.yaml` version 2 workflow picks one by
 name, so an ad hoc test build and an App Store release can sign differently
 from the same pipeline.
 
 ## What you need
 
-- Project developer, maintainer, instance admin, or instance owner access.
+- App developer, maintainer, instance admin, or instance owner access.
 - The signing files: an Android keystore (`.jks`) with its alias and
   passwords, or an iOS distribution certificate (`.p12`) with its password
   and one ad hoc or App Store provisioning profile per bundle ID. See
@@ -21,7 +21,7 @@ from the same pipeline.
 
 ## 1. Add identities to the library
 
-1. Open the project's **Settings** tab and find **Signing**.
+1. Open the app's **Settings** tab and find **Signing**.
 2. Select **Add identity**.
 3. Choose the **Kind**:
    - **Android keystore**: choose the **Keystore (.jks)** and enter the
@@ -84,8 +84,8 @@ follow the file, or the pipeline's signing when the file names none.
 
 ## 4. Move the Google Play key too
 
-Store the Google Play service account key as a project secret, such as
-`PLAY_SERVICE_ACCOUNT`, on the project's **Settings** tab, then name it in
+Store the Google Play service account key as an app secret, such as
+`PLAY_SERVICE_ACCOUNT`, on the app's **Settings** tab, then name it in
 the workflow that publishes:
 
 ```yaml
@@ -116,7 +116,7 @@ publish:
 
 **A build is refused with `invalid_signing`**
 
-The message names the workflow and field. Add the identity under **Project
+The message names the workflow and field. Add the identity under **App
 settings > Signing**, fix the name in the file, or pick an identity of the
 right kind. An App Store Connect upload needs an identity with App Store
 profiles.

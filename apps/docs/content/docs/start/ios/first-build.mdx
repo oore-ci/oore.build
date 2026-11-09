@@ -25,23 +25,23 @@ The command ends with `All selected required checks passed.` It checks the
 signing tools, not your certificates. Oore checks signing credentials in each
 build.
 
-## 1. Create the project
+## 1. Create the app
 
-If you already created a project for this app in the Android path, open it and
+If you already added this app to Oore in the Android path, open it and
 go to the next step.
 
-1. In the Oore web UI, open **Projects** and select **New project**.
+1. In the Oore web UI, open **Apps** and select **New app**.
 2. Enter a **Name**.
 3. In **Path**, enter the absolute path to the app's Git repository.
-4. Select **Create project**.
+4. Select **Create app**.
 
-Creating a project trusts that repository's code to run with your macOS
+Creating an app trusts that repository's code to run with your macOS
 account's permissions. Use a repository you would run on this Mac yourself.
 
 ## 2. Create an iOS pipeline
 
-1. On the project's **Pipelines** tab, select **Set up a build**, or
-   **Add pipeline** if the project already has one.
+1. On the app's **Pipelines** tab, select **Set up a build**, or
+   **Add pipeline** if the app already has one.
 2. Under **Start from**, select **Custom**.
 3. Under **Basics**, enter `iOS` as the **Pipeline name**. Under
    **Platforms**, clear **Android** and select **iOS**.

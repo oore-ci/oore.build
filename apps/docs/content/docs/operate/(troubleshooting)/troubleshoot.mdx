@@ -53,7 +53,7 @@ the runners and the queue.
   **Settings > Runners**, turn on **Accept builds from approved repositories**,
   or select **Resume runners** on the build's notice.
 - **Source unavailable** (`repository_unavailable`): reconnect or relink the
-  repository in the project's **Settings** tab. Pausing does not revoke source
+  repository in the app's **Settings** tab. Pausing does not revoke source
   trust.
 - **No runner is online**: inspect `~/.oore/logs/oore-runner.log` on the
   Runner Mac and follow [Add a Direct macOS runner](/operate/runners/direct).
@@ -98,7 +98,7 @@ runner delete old Tart images.
 
 ## An artifact cannot be downloaded
 
-Check project access and artifact expiry, then request a new link. Ordinary
+Check app access and artifact expiry, then request a new link. Ordinary
 download links expire. For S3 or R2 storage, check the provider endpoint and
 bucket policy. For local storage, check the backend disk and that the phone or
 browser can reach the delivery URL.

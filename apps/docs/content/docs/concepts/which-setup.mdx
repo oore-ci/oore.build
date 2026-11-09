@@ -24,7 +24,7 @@ is one operator and no identity provider to set up.
 **External Access** lets other people and devices sign in over HTTPS. Your team
 signs in through an OpenID Connect provider such as Google or Okta, or through
 an access proxy you already run. Oore then applies its own instance and
-project roles. You provide the HTTPS address, DNS, certificate, and any tunnel
+app roles. You provide the HTTPS address, DNS, certificate, and any tunnel
 or proxy. Oore does not set those up.
 
 Store delivery works the same in both modes. The runner uploads to Google Play
@@ -45,7 +45,7 @@ is a settings change, described in
 
 ## Repository on disk or GitHub and GitLab
 
-In Local Only, a project points at a Git repository on the Mac that runs Oore.
+In Local Only, an app points at a Git repository on the Mac that runs Oore.
 Builds start from the UI, the API, or a schedule, because nothing tells Oore
 about new commits.
 
@@ -54,14 +54,14 @@ through a personal access token or an OAuth application. Oore then lists your
 repositories, builds on pushes, tags, and pull requests, and reports each
 build back as a check on the commit. Local repository paths are not available in this mode.
 
-In both cases, creating a project is the moment you trust the repository.
+In both cases, creating an app is the moment you trust the repository.
 Its commands run with the runner account's permissions. See
 [How Oore trusts Direct macOS runners](/concepts/runner-trust).
 
 ## Which browser client
 
 Every Oore browser client is the same static web app. Each one talks to your
-backend, which keeps all users, projects, builds, and artifacts.
+backend, which keeps all users, apps, builds, and artifacts.
 
 - **The installed web UI** comes with the Complete role and listens on
   loopback. Use it in Local Only.

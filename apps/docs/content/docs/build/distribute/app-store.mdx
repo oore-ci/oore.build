@@ -16,7 +16,7 @@ upload hosts.
 
 ## What you need
 
-- Project developer, maintainer, instance admin, or instance owner access.
+- App developer, maintainer, instance admin, or instance owner access.
 - iOS signing with an App Store Connect API key, as in
   [Configure App Store Connect signing](/build/sign/ios/app-store-connect).
 - The app already exists in App Store Connect with the pipeline's bundle ID.
@@ -182,7 +182,7 @@ workflows:
 ```
 
 - `signing.ios` names an iOS distribution identity in the
-  [project's signing library](/build/sign/project-library). Its certificate
+  [app's signing library](/build/sign/project-library). Its certificate
   and profiles replace the pipeline's for that workflow, and the export
   follows its profiles. A workflow that uploads to App Store Connect needs an
   identity with App Store profiles; an ad hoc one refuses the build with
