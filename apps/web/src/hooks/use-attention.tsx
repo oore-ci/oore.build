@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import { useEffect } from 'react'
 
 import type {
   Build,
@@ -21,6 +22,7 @@ import { useHasPermission } from '@/hooks/use-permissions'
 import { useRunners } from '@/hooks/use-runners'
 import { relativeTime } from '@/lib/format-utils'
 import { getRunnerPolicyBlockLabel } from '@/lib/status-variants'
+import { useAttentionDismissals } from '@/stores/attention-dismiss-store'
 
 /**
  * The widest Build health window. A pipeline failing in any shorter window is
@@ -34,6 +36,11 @@ export type AttentionSeverity = 'blocking' | 'failing' | 'warning'
 
 export type AttentionItem = {
   key: string
+  /**
+   * What the item is about right now, such as the newest failed build. A
+   * dismissed item shows again once this changes.
+   */
+  revision: string
   severity: AttentionSeverity
   title: string
   description: string
@@ -87,6 +94,7 @@ function blockedItems(blocked: Array<Build>): Array<AttentionItem> {
   if (paused.length > 0) {
     items.push({
       key: 'instance-paused',
+      revision: paused[0].id,
       severity: 'blocking',
       title: 'Mac builds are paused',
       description: `${waitingCount(paused.length)} since ${relativeTime(paused[0].queued_at)} · Resume in Runners`,
@@ -107,6 +115,7 @@ function blockedItems(blocked: Array<Build>): Array<AttentionItem> {
     const reason = oldest.runner_policy_block_reason
     items.push({
       key: `blocked-${oldest.project_id}`,
+      revision: oldest.id,
       severity: 'blocking',
       title: `${oldest.context?.project_name ?? oldest.project_id} builds are blocked`,
       description: `${reason ? blockDescription(reason) : 'Waiting'} · ${waitingCount(builds.length)} since ${relativeTime(oldest.queued_at)}`,
@@ -143,6 +152,7 @@ function failingItems(
         : `${failing.length} pipelines failing`
     return {
       key: `failing-${worst.project_id}`,
+      revision: worst.last_failed_build_id,
       severity: 'failing',
       title: `${worst.project_name} builds are failing`,
       description: `${where} · #${worst.last_failed_build_number} ${relativeTime(worst.last_failed_at)}`,
@@ -162,6 +172,7 @@ function incidentItem(
 ): AttentionItem {
   return {
     key: `incident-${incident.id}`,
+    revision: incident.id,
     severity: incident.severity === 'critical' ? 'blocking' : 'warning',
     title: incidentTitle(incident),
     description: incident.repair_action,
@@ -186,11 +197,12 @@ export function useAttention() {
     { enabled: canReadRunners, select: selectNoRunnerOnline },
   )
 
-  const items: Array<AttentionItem> = [
+  const listed: Array<AttentionItem> = [
     ...(runnersQuery.data
       ? [
           {
             key: 'no-runner',
+            revision: 'offline',
             severity: 'blocking',
             title: 'No runner is online',
             description: 'Builds wait until a runner checks in',
@@ -206,8 +218,25 @@ export function useAttention() {
   ].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
 
   const queries = [insightsQuery, blockedQuery, runnersQuery, incidentsQuery]
+  const settled = queries.every((query) => !query.isLoading && !query.isError)
+
+  // Dismissed items stay hidden until what they are about changes; an item
+  // that clears forgets its dismissal, so it shows if it comes back.
+  const { dismissed, dismiss, prune } = useAttentionDismissals()
+  const listedKeys = listed.map((item) => item.key).join('\n')
+  useEffect(() => {
+    if (settled) prune(new Set(listedKeys ? listedKeys.split('\n') : []))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keys stand in for the list
+  }, [settled, listedKeys])
+  const items = listed.filter((item) => dismissed[item.key] !== item.revision)
+
   return {
     items,
+    /** Hide an item until it changes. */
+    dismiss: (item: AttentionItem) => {
+      dismiss(item.key, item.revision)
+      item.onSelect?.()
+    },
     /** Still waiting on a source; the list may be incomplete. */
     isLoading: queries.some((query) => query.isLoading),
     /** A source failed, so an empty list does not mean all clear. */

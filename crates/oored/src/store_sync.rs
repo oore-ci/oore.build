@@ -37,6 +37,8 @@ use crate::util::{api_err, now_unix};
 
 /// How often the background sync reads the stores.
 const SYNC_INTERVAL: Duration = Duration::from_secs(15 * 60);
+/// How long after start the first sync waits.
+const FIRST_SYNC_DELAY: Duration = Duration::from_secs(60);
 /// App Store versions read per app; older ones are history.
 const ASC_VERSIONS: u32 = 5;
 
@@ -350,6 +352,14 @@ pub(crate) async fn sync(
     http: &reqwest::Client,
     project_ids: Option<&[String]>,
 ) -> anyhow::Result<StoreSyncResponse> {
+    // Pick up apps set up since the last vitals pass, so a release made
+    // outside Oore shows before Oore has released the app itself.
+    if let Err(error) = crate::store_vitals::discover_apps(&state.db).await {
+        warn!(
+            ?error,
+            "failed to discover store apps before the store sync"
+        );
+    }
     let apps: Vec<KnownApp> = sqlx::query_as(
         "SELECT project_id, store, app_identifier, pipeline_id, asc_app_id FROM store_app_vitals
          ORDER BY project_id, store, app_identifier",
@@ -459,9 +469,10 @@ pub async fn sync_store_releases(
 pub fn start_store_sync(state: Arc<AppState>) {
     tokio::spawn(async move {
         let http = sync_http_client();
+        // The first read soon after start, so an upgrade or restart shows
+        // store releases within a minute instead of a full interval.
+        tokio::time::sleep(FIRST_SYNC_DELAY).await;
         loop {
-            // After the vitals monitor's first discovery of the apps.
-            tokio::time::sleep(SYNC_INTERVAL).await;
             match sync(&state, &http, None).await {
                 Ok(response) if response.adopted > 0 || !response.errors.is_empty() => {
                     info!(
@@ -474,6 +485,7 @@ pub fn start_store_sync(state: Arc<AppState>) {
                 Ok(_) => {}
                 Err(error) => error!(%error, "store sync failed"),
             }
+            tokio::time::sleep(SYNC_INTERVAL).await;
         }
     });
 }
