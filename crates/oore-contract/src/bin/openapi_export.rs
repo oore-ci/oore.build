@@ -112,6 +112,7 @@ use utoipa::{
         operations::mark_operator_incident_read,
         // ── Projects ──
         operations::create_project,
+        operations::create_sample_project,
         operations::list_projects,
         operations::get_project,
         operations::update_project,
@@ -1798,6 +1799,21 @@ mod operations {
         )
     )]
     pub(super) fn create_project() {}
+
+    /// Create a sample Flutter app
+    ///
+    /// Local Only instances: runs `flutter create` in the backend's data
+    /// folder, commits it to a new Git repository and adds it as an app named
+    /// "Sample app", so a first build works before any code of your own.
+    #[utoipa::path(post, path = "/v1/projects/sample", tag = "Projects",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Sample app created", body = CreateProjectResponse),
+            (status = 403, description = "Owner or admin role and Local Only mode required", body = ApiError),
+            (status = 409, description = "Flutter or Git could not create the sample", body = ApiError),
+        )
+    )]
+    pub(super) fn create_sample_project() {}
 
     /// List projects
     #[utoipa::path(get, path = "/v1/projects", tag = "Projects",

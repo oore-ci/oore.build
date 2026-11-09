@@ -14,6 +14,7 @@
     "oore-doctor",
     "oore-status",
     "oore-login",
+    "oore-init",
     "oore-pipeline-validate",
     "oore-pipeline-plan",
     "oore-pipeline-migrate",

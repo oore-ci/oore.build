@@ -6225,6 +6225,53 @@
         ]
       }
     },
+    "/v1/projects/sample": {
+      "post": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Create a sample Flutter app",
+        "description": "Local Only instances: runs `flutter create` in the backend's data\nfolder, commits it to a new Git repository and adds it as an app named\n\"Sample app\", so a first build works before any code of your own.",
+        "operationId": "create_sample_project",
+        "responses": {
+          "201": {
+            "description": "Sample app created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateProjectResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or admin role and Local Only mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Flutter or Git could not create the sample",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects/{project_id}": {
       "get": {
         "tags": [

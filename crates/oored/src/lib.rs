@@ -47,6 +47,7 @@ pub mod repository_workflows;
 pub mod retention;
 pub mod runners;
 pub mod runtime_updates;
+pub mod sample_app;
 pub mod scheduler;
 pub mod secrets;
 pub mod session;
@@ -2729,6 +2730,10 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/projects",
             get(projects::list_projects).post(projects::create_project),
+        )
+        .route(
+            "/v1/projects/sample",
+            post(sample_app::create_sample_project),
         )
         .route(
             "/v1/projects/{project_id}",

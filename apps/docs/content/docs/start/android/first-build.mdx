@@ -1,7 +1,7 @@
 ---
 title: 'Build your first Android app'
 status: implemented
-description: 'Create an app from a local repository, run the Android test app pipeline, and download the debug APK.'
+description: 'Add an app from a local repository, let Oore propose its first pipeline, and download the debug APK.'
 ---
 
 On this page you create an app for your Flutter app, build a debug APK, and
@@ -16,55 +16,73 @@ explains what happens between selecting **Run build** and the download.
 - Oore set up on this Mac, from [Complete first-run setup](/start/first-run).
 - Android Studio and the Android SDK, from
   [Check that your Mac is ready](/start/prerequisites).
-- A Flutter app in a Git repository on this Mac, with no `.oore.yaml` or
-  `.oore.yml` file.
+- A Flutter app in a Git repository on this Mac. It may or may not have an
+  `.oore.yaml` file; step 2 covers both.
 
-First, check the Android toolchain the runner will use:
+You do not need to check the toolchain in a terminal first. Oore shows what
+the runner is missing in step 2, with the command that fixes it. To check
+anyway, run `oore doctor --platform android`.
 
-```bash
-oore doctor --platform android
-```
+## 1. Add the app
 
-The command ends with `All selected required checks passed.`
+If `oore setup` asked which folder your app is in, Oore opened with the form
+filled in: skip to the last step of this list.
 
-## 1. Create the app
-
-1. In the Oore web UI, open **Apps** and select **New app**.
-2. Enter a **Name**.
-3. In **Path**, enter the absolute path to the app's Git repository, such as
-   `/Users/you/code/my_app`.
-4. Leave **Default branch** empty unless Oore should build a branch other than
+1. In the Oore web UI, open **Apps** and select **Add app**.
+2. In **Path**, enter the absolute path to the app's Git repository, such as
+   `/Users/you/code/my_app`. **Name** follows the folder's name.
+3. Leave **Default branch** empty unless Oore should build a branch other than
    the repository's default.
-5. Select **Create app**.
+4. Select **Add app**.
 
 <Callout type="warning" title="Repository trust">
 
-Creating an app trusts that repository's code to run with your macOS
-account's permissions. Use a repository you would run on this Mac yourself.
+Builds run the repository's commands with the runner's macOS account, so add
+a repository you would run on this Mac yourself.
 [How Oore trusts Direct macOS runners](/concepts/runner-trust) explains why.
 
 </Callout>
 
-Oore shows `Project created` and opens the app.
+Oore opens the app with its setup checklist.
 
-## 2. Create the pipeline
+## 2. Start the first build
 
-1. On the app's **Pipelines** tab, select **Set up a build**.
-2. Under **Start from**, keep **Android test app** selected. It builds a debug
-   APK with `flutter build apk --debug` and needs no signing.
-3. Select **Create pipeline**.
+Under **Add pipeline**, Oore reads the repository and says what it found.
+What it proposes depends on whether the repository has an Oore file.
 
-Oore shows `Pipeline created` and opens **Run build** with the new `Debug APK`
-pipeline selected.
+### Without an `.oore.yaml`
 
-## 3. Run the build
+Oore proposes one pipeline per platform folder. **Android test app** is
+ticked: it builds a debug APK with `flutter build apk --debug` and needs no
+signing. Leave **iOS test app** unticked for now; it needs signing first.
 
-1. Check that **Branch** names the branch you want to build.
-2. Select **Run build**.
+Under the pipeline, Oore says whether a runner can build it:
 
-Oore opens the build page. Follow the steps and the log as the runner fetches
-packages and builds the APK. A first build can take several minutes while
-Gradle downloads its dependencies.
+- **Builds on** a runner's name: go on.
+- A runner **cannot build this yet**: each missing tool is listed with the
+  command that fixes it, such as installing a JDK. Run it on this Mac. The
+  runner checks again every 15 minutes.
+
+To write the file yourself instead, run [`oore init`](/reference/cli/oore-init)
+in the repository, commit `.oore.yaml`, and reload the app's page: Oore then
+proposes the file.
+
+### With an `.oore.yaml`
+
+Oore proposes **Build from .oore.yaml**, since the file already says how to
+build. Each build reads the file from the commit it builds, so later changes
+ride with the code. When there are several files, such as a
+`.oore.release.yaml` too, the first is ticked.
+
+To use the template instead, select **Set up manually** and pick
+**Android test app**.
+
+### Then
+
+Select **Create and start the first build**. Oore creates the pipeline,
+starts a build of the default branch and opens the build page. Follow the
+steps and the log as the runner fetches packages and builds the APK. A first
+build can take several minutes while Gradle downloads its dependencies.
 
 ## Check the result
 
@@ -90,11 +108,15 @@ The repository asks for a Flutter release that is not the one installed. Fix
 the installed version as in
 [Install Flutter where the runner can find it](/start/prerequisites#2-install-flutter-where-the-runner-can-find-it).
 
-**Oore offers a repository workflow instead of the templates**
+**Oore could not read the repository**
 
-The repository already has an `.oore.yaml` or `.oore.yml` file. Select
-**Set up manually** to use the templates, or keep the workflow and read
-[Move a pipeline into `.oore.yaml`](/build/pipelines/oore-yaml).
+Check that the path is still a Git repository and has a default branch, then
+reload. Select **Add pipeline** to set one up by hand meanwhile.
+
+**Oore found no Flutter app**
+
+The repository has no `pubspec.yaml` that depends on Flutter at its root.
+Select **Set up manually** and set the build commands yourself.
 
 **The app form rejects the path**
 

@@ -36,6 +36,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixStream};
 
 mod build_commands;
+mod init_command;
 mod install_lock;
 mod install_manifest;
 mod installer;
@@ -143,6 +144,8 @@ enum Commands {
     Config(ConfigArgs),
     /// Check the host and selected build-platform toolchains
     Doctor(DoctorArgs),
+    /// Write a starter .oore.yaml for the Flutter app in a folder
+    Init(init_command::InitArgs),
     /// Validate repository pipeline files and list a pipeline's workflows
     Pipeline(PipelineArgs),
     /// Start a build of a pipeline
@@ -13324,6 +13327,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Doctor(args) => {
             run_doctor_checks(args)?;
         }
+        Commands::Init(args) => init_command::handle_init(args)?,
         Commands::Pipeline(pipeline) => match pipeline.command {
             PipelineSubcommand::Validate(args) => handle_pipeline_validate(args)?,
             PipelineSubcommand::Plan(args) => handle_pipeline_plan(args)?,
