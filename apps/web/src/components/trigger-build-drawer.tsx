@@ -65,6 +65,7 @@ import { isNearScrollEnd } from '@/lib/scroll'
 import { Stack } from '@/components/layout/stack'
 import { Row } from '@/components/layout/row'
 import { Text } from '@/components/layout/text'
+import { TriggerBuildStoreSection } from '@/components/trigger-build-store-section'
 import { TriggerBuildWorkflowField } from '@/components/trigger-build-workflow-field'
 import {
   choosableWorkflows,
@@ -409,6 +410,7 @@ function defaults(
     commit_sha: '',
     workflow: '',
     changelog: undefined,
+    store_notes: '',
   }
 }
 
@@ -720,6 +722,7 @@ export default function TriggerBuildDrawer({
           commit_sha: commitSha,
           trigger_ref: branch,
           changelog,
+          store_notes: data.store_notes?.trim() || undefined,
           workflow,
           platforms: buildPlatforms(availablePlatforms, data.platforms),
         },
@@ -1170,6 +1173,15 @@ export default function TriggerBuildDrawer({
                   </FormItem>
                 )}
               />
+              {selectedPipelineId ? (
+                <TriggerBuildStoreSection
+                  form={form}
+                  pipelineId={selectedPipelineId}
+                  changelogMarkdown={changelogPreviewQuery.data?.markdown}
+                  enabled={open}
+                  filePublishes={chosenWorkflow?.publishes ?? []}
+                />
+              ) : null}
             </div>
             {/* Outside the scroll area so the footer never covers them. */}
             <Stack gap={2} className="shrink-0 px-4 pb-4">

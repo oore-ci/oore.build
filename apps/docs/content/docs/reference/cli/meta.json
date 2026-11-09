@@ -18,6 +18,7 @@
     "oore-pipeline-plan",
     "oore-pipeline-migrate",
     "oore-pipeline-workflows",
+    "oore-pipeline-readiness",
     "oore-build-run",
     "oore-version"
   ],

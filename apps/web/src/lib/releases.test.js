@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   isWaitingOnStore,
+  reviewDurationLabel,
+  reviewExpectation,
   latestChangePerRelease,
   releaseChangeDestination,
   releaseChangeShare,
@@ -251,4 +253,17 @@ describe('latestChangePerRelease', () => {
       releaseChangeShare({ to_state: 'in_review', to_fraction: null }),
     ).toBeNull()
   })
+})
+
+test('review expectation from the app history', () => {
+  expect(reviewDurationLabel(1800)).toBe('under an hour')
+  expect(reviewDurationLabel(7200)).toBe('about 2 hours')
+  expect(reviewDurationLabel(86_400)).toBe('about 1 day')
+  expect(reviewDurationLabel(3 * 86_400)).toBe('about 3 days')
+  expect(
+    reviewExpectation({ state: 'in_review', typical_review_seconds: 86_400 }),
+  ).toBe('usually about 1 day for this app')
+  expect(
+    reviewExpectation({ state: 'rolling', typical_review_seconds: 86_400 }),
+  ).toBe(null)
 })

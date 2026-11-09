@@ -24,6 +24,11 @@ import { useProjects } from '@/hooks/use-projects'
 import { useSigningIdentitiesOf } from '@/hooks/use-signing-identities'
 import { useTime } from '@/hooks/use-time'
 import { signingExpiries, type SigningExpiry } from '@/lib/signing-expiry'
+import {
+  testflightExpiries,
+  type TestflightExpiry,
+} from '@/lib/testflight-expiry'
+import { useReleases } from '@/hooks/use-releases'
 import { useAuthStore } from '@/stores/auth-store'
 import { relativeTime } from '@/lib/format-utils'
 import { getRunnerPolicyBlockLabel } from '@/lib/status-variants'
@@ -220,6 +225,35 @@ function expiryItems(
   }))
 }
 
+/** TestFlight builds testers are about to lose, or just lost. */
+function testflightItems(
+  expiring: Array<TestflightExpiry>,
+  nowSeconds: number,
+): Array<AttentionItem> {
+  return expiring.map(({ release, expiresAt, band }) => {
+    const days = Math.max(1, Math.round((expiresAt - nowSeconds) / 86_400))
+    const when =
+      band === 'expired'
+        ? 'has expired'
+        : days === 1
+          ? 'expires tomorrow'
+          : `expires in ${days} days`
+    const version = release.version_name
+      ? `${release.version_name}${release.version_code != null ? ` (${release.version_code})` : ''}`
+      : 'The TestFlight build'
+    return {
+      key: `testflight-${release.project_id}-${release.track}`,
+      revision: `${release.id}:${band}`,
+      severity: band === 'fortnight' ? 'warning' : 'failing',
+      title: `${release.project_name ?? 'An app'}: TestFlight ${version} ${when}`,
+      description: `${release.track} · Apple stops TestFlight builds after 90 days. Send a new build so testers keep the app`,
+      link: (
+        <Link to="/releases/$releaseId" params={{ releaseId: release.id }} />
+      ),
+    } satisfies AttentionItem
+  })
+}
+
 /**
  * Everything that needs someone now, from one source for Home's Needs
  * attention and the header bell, so the two never disagree.
@@ -246,6 +280,12 @@ export function useAttention() {
     { enabled: seesAllSigning },
   )
   const nowSeconds = useTime((time) => Math.floor(time / 3_600_000) * 3600)
+  const releasesQuery = useReleases(
+    { limit: 200 },
+    {
+      select: (data) => testflightExpiries(data.releases, nowSeconds),
+    },
+  )
   const projectNames = new Map(
     projects.map((project) => [project.id, project.name]),
   )
@@ -273,6 +313,7 @@ export function useAttention() {
       projectNames,
       nowSeconds,
     ),
+    ...testflightItems(releasesQuery.data ?? [], nowSeconds),
   ].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
 
   const queries = [insightsQuery, blockedQuery, runnersQuery, incidentsQuery]

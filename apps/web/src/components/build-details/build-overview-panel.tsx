@@ -446,6 +446,11 @@ export function BuildOverviewPanel({
             </Text>
           )}
         </Section>
+        {build.store_notes ? (
+          <Section title="What's new, for the stores">
+            <p className="text-sm whitespace-pre-line">{build.store_notes}</p>
+          </Section>
+        ) : null}
         <EventTimeline events={events} feedback={feedback} />
       </Stack>
       <Stack gap={4}>

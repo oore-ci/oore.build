@@ -10,6 +10,7 @@ import {
   releaseStateLabel,
   releaseStoreError,
   releaseStoreStatus,
+  reviewExpectation,
 } from '@/lib/releases'
 import { cn } from '@/lib/utils'
 import { Row } from '@/components/layout/row'
@@ -105,9 +106,11 @@ function ReleaseStages({
       <span className={textVariants({ variant: 'caption' })}>
         {blocked
           ? `Blocked before ${next ?? 'the next step'}`
-          : next
-            ? `Next: ${next}`
-            : now}
+          : reviewExpectation(release)
+            ? `In review, ${reviewExpectation(release)}`
+            : next
+              ? `Next: ${next}`
+              : now}
       </span>
     </div>
   )

@@ -56,6 +56,15 @@ The test message says whether mentions work for the email you signed in with, so
 
 Messages post within a few seconds of the change. If Slack does not accept a message, Oore tries again up to four more times over the next eight minutes. The delivery shows as pending until then. Each channel's page shows its **Delivery history**.
 
+## One message per release
+
+By default every release change is a new post. To keep one message per release that Oore edits as it moves (uploaded, in review, approved, rolling at 20%, complete), with each change in the message's thread:
+
+1. Give the Slack app's bot token the `chat:write` scope and invite the app to the channel.
+2. Open the channel in Oore, expand **Mentions and release threads**, and enter the bot token and the **Channel ID for release threads**. The channel ID is under the channel's name in Slack, then **About**, for example `C0123ABCD`.
+
+Mentions go in the thread replies, so the person who acted is still notified. Build and runner messages keep posting through the incoming webhook. If someone deletes a release's message in Slack, Oore posts a new one on the next change.
+
 ## Tester feedback
 
 Testers can select **Feedback** on the latest release in the QA portal. The note carries their device, OS version and app version, which the form fills in and the tester can edit, plus an optional screenshot. It shows under **Activity** on the build's **Summary** tab and posts to the app's channels with a **View feedback** button. Feedback messages do not mention anyone; they name the tester instead, by display name, or by email when the tester has no display name. Webhook payloads always include the tester's email.

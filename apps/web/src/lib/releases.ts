@@ -795,3 +795,27 @@ export function releaseChangeShare(
     ? formatRolloutPercent(event.to_fraction)
     : null
 }
+
+/** How long a review usually takes, roughly: "about 2 hours", "about 1 day". */
+export function reviewDurationLabel(seconds: number): string {
+  const hours = seconds / 3600
+  if (hours < 1) return 'under an hour'
+  if (hours < 20) {
+    const rounded = Math.max(1, Math.round(hours))
+    return `about ${rounded} ${rounded === 1 ? 'hour' : 'hours'}`
+  }
+  const days = Math.max(1, Math.round(hours / 24))
+  return `about ${days} ${days === 1 ? 'day' : 'days'}`
+}
+
+/**
+ * "Usually about 1 day for this app", from the app's own recent reviews,
+ * for a release in review. `null` until the app has a review history.
+ */
+export function reviewExpectation(
+  release: Pick<Release, 'state' | 'typical_review_seconds'>,
+): string | null {
+  if (release.state !== 'in_review' || release.typical_review_seconds == null)
+    return null
+  return `usually ${reviewDurationLabel(release.typical_review_seconds)} for this app`
+}

@@ -62,7 +62,9 @@ rotation.
 4. Under **Release**, choose the **Track** and the **Rollout**:
    **Full rollout**, **Staged rollout** with an **Initial rollout (%)**, or
    **Draft**. Choose the **Release notes** source.
-5. Under **Advanced**, enter the app's application ID in **Expected package**.
+5. Under **Advanced**, enter the app's application ID in **Expected package**,
+   and choose **Pre-flight checks**: whether Google Play's validation of the
+   release stops the upload, only warns, or is skipped.
 6. Select **Turn on Google Play publishing**, or **Save changes** when
    publishing was already on.
 
@@ -107,7 +109,10 @@ the named secret exists in a scope this pipeline can see.
 | `in_app_update_priority` |         | In-app update priority, 0 to 5.                                                                                                                                             |
 | `preflight`              | `auto`  | What a failed `edits.validate` check does before the commit: `auto`, `block`, `warn` or `off`. `auto` blocks once the app has had a release on Play, and warns before that. |
 
-Release notes longer than Play's 500-character limit are shortened.
+Release notes longer than Play's 500-character limit are shortened. Notes
+typed in **What's new in this release** when a build starts replace these
+notes for that build, under `release_notes_locale`; see
+[Notes for one release](/build/distribute/app-store#notes-for-one-release).
 
 ## 3. Test the credentials
 
@@ -159,6 +164,13 @@ After the build, signing and artifact steps succeed, the runner adds a
 If any earlier step fails, nothing is uploaded. If a Play call fails, the
 **Upload to Google Play** step fails with the Play API's error text, and the edit is
 discarded so nothing is left half-staged in Play Console.
+
+A release Google Play holds or refuses says what is wrong in one sentence
+when Oore knows the refusal, such as changes waiting to be sent for review or
+a service account without release access, with a button to the Play Console
+page that fixes it. A rollout Oore runs draws its schedule as steps, with
+where it is now, when the next raise happens and the crash rate that halts
+it.
 
 After fixing the cause, such as a missing Play Console permission,
 [retry the upload](/build/run/retry-step) to upload the stored bundle without

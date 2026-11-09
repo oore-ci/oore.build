@@ -366,6 +366,7 @@ export function BuildDetailPage({
             branch: buildToRerun.branch ?? '',
             workflow: buildToRerun.workflow ?? '',
             changelog: buildToRerun.changelog ?? undefined,
+            store_notes: buildToRerun.store_notes ?? '',
           }
         : undefined,
     [buildToRerun],

@@ -78,6 +78,7 @@ test('workflow settings round-trip and only store what differs from the file', (
     ios_identity_id: 'sid-1',
     publish_enabled: false,
     approval: 'required',
+    testflight_groups: '',
   })
   expect(workflowSettingsRequest(values)).toEqual({
     ios_identity_id: 'sid-1',
@@ -132,4 +133,18 @@ test('a row names the identity its file signs with', () => {
   expect(
     fileSigningName({ name: 'x', isDefault: false }, 'ios'),
   ).toBeUndefined()
+})
+
+test('TestFlight groups typed for a workflow', () => {
+  const values = {
+    ...workflowSettingsFormValues(),
+    testflight_groups: ' QA, Beta,, QA ',
+  }
+  expect(workflowSettingsRequest(values)).toEqual({
+    testflight_groups: ['QA', 'Beta'],
+  })
+  expect(
+    workflowSettingsFormValues({ workflow: 'beta', testflight_groups: ['QA'] })
+      .testflight_groups,
+  ).toBe('QA')
 })

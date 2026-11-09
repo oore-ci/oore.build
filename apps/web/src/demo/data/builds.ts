@@ -144,6 +144,8 @@ export const demoBuilds: Array<Build> = [
     trigger_ref: 'v2.5.1',
     commit_sha: 'f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5',
     changelog: 'Fixes the checkout total on iPad.',
+    store_notes:
+      '• The checkout total is right on iPad again\n• Faster loading of your order history',
     config_snapshot: {},
     runner_id: RUNNER_IDS.macStudio,
     exit_code: 0,

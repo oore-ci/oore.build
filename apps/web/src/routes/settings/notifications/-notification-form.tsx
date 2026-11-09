@@ -117,6 +117,10 @@ export const notificationChannelSchema = z.object({
   secret: z.string().optional(),
   remove_secret: z.boolean(),
   slack_mentions: z.string(),
+  slack_channel_id: z
+    .string()
+    .trim()
+    .regex(/^([CG][A-Z0-9]{8,23})?$/, 'Use the channel ID, such as C0123ABCD'),
   event_scope: z.enum(['all', 'selected']),
   events: z.array(z.string()),
   smtp_host: z.string().optional(),
@@ -247,6 +251,7 @@ export const notificationChannelDefaults: NotificationChannelFormValues = {
   secret: '',
   remove_secret: false,
   slack_mentions: '',
+  slack_channel_id: '',
   event_scope: 'all',
   events: [],
   smtp_host: '',
@@ -269,6 +274,7 @@ export function notificationChannelEditValues(
     enabled: channel.enabled,
     project_id: channel.project_id ?? ALL_PROJECTS,
     slack_mentions: formatSlackMentions(channel.slack_mentions),
+    slack_channel_id: channel.slack_channel_id ?? '',
     event_scope: channel.events.length > 0 ? 'selected' : 'all',
     events: channel.events,
     smtp_host: smtp?.host ?? '',
@@ -311,6 +317,7 @@ export function createNotificationChannelRequest(
       url: values.url,
       secret: values.secret || undefined,
       slack_mentions: slackMentions(values),
+      slack_channel_id: values.slack_channel_id.trim() || undefined,
     }
   }
   if (values.channel_type !== 'email') {
@@ -344,6 +351,7 @@ export function updateNotificationChannelRequest(
       url: values.url || undefined,
       secret: values.remove_secret ? '' : values.secret || undefined,
       slack_mentions: slackMentions(values),
+      slack_channel_id: values.slack_channel_id.trim(),
     }
   }
   if (values.channel_type !== 'email') {
@@ -828,7 +836,8 @@ export function NotificationChannelFormFields({
             <Collapsible
               defaultOpen={
                 !!channel?.has_secret ||
-                (channel?.slack_mentions?.length ?? 0) > 0
+                (channel?.slack_mentions?.length ?? 0) > 0 ||
+                !!channel?.slack_channel_id
               }
               className="space-y-4"
             >
@@ -842,7 +851,7 @@ export function NotificationChannelFormFields({
                   />
                 }
               >
-                Mention people
+                Mentions and release threads
                 <HugeiconsIcon icon={ArrowDown01Icon} data-icon="inline-end" />
               </CollapsibleTrigger>
               <CollapsibleContent className="space-y-4">
@@ -868,7 +877,7 @@ export function NotificationChannelFormFields({
                           ? removeSecret
                             ? 'The bot token will be removed when you save.'
                             : 'Leave blank to keep the configured bot token.'
-                          : 'A bot token with the users:read.email scope lets Oore mention people by matching their sign-in email. Without it, use member IDs below; anyone unmapped is named by email or Git username.'}
+                          : 'A bot token with the users:read.email scope lets Oore mention people by matching their sign-in email. With chat:write and a channel ID below, it also keeps one message per release. Without it, use member IDs below; anyone unmapped is named by email or Git username.'}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -897,6 +906,34 @@ export function NotificationChannelFormFields({
                     )}
                   />
                 ) : null}
+                <FormField
+                  control={form.control}
+                  name="slack_channel_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        Channel ID for release threads (optional)
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="C0123ABCD"
+                          autoComplete="off"
+                          spellCheck={false}
+                          className="font-mono"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        With a bot token that has chat:write and is in this
+                        channel, each release gets one message that Oore edits
+                        as it moves (uploaded, in review, approved, rolling,
+                        done), and every change goes in its thread. Find the ID
+                        under the channel's name, then About.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 <FormField
                   control={form.control}
                   name="slack_mentions"

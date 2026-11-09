@@ -1725,6 +1725,9 @@ pub struct Build {
     pub superseded_by: Option<BuildReference>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changelog: Option<String>,
+    /// Release notes written for this build's store uploads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_notes: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_build_id: Option<String>,
     /// Steps this build retries against `source_build_id`'s stored artifacts.
@@ -1890,6 +1893,12 @@ pub struct CreateBuildRequest {
     pub trigger_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changelog: Option<String>,
+    /// What's new in this release, as testers and store users read it. It
+    /// replaces the pipeline's Google Play and App Store release notes for
+    /// the build's uploads (Play's notes language, App Store's first
+    /// locale). Omitted uses the pipeline's notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_notes: Option<String>,
     /// The `.oore.yaml` version 2 workflow to build. Omitted uses the
     /// pipeline's default workflow, then the file's only workflow. A file
     /// with several workflows and no default needs one named here.
@@ -5132,6 +5141,11 @@ pub struct PipelineWorkflowSettings {
     /// Replaces the pipeline's approval policy for the workflow's builds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_required: Option<bool>,
+    /// TestFlight groups the workflow's builds go to, replacing the file's
+    /// and the pipeline's groups. Only used when the upload goes to
+    /// TestFlight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub testflight_groups: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
 }
@@ -5153,6 +5167,8 @@ pub struct UpdatePipelineWorkflowSettingsRequest {
     pub publish_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub testflight_groups: Option<Vec<String>>,
 }
 
 // ── Pipeline iOS signing types ──────────────────────────────────
@@ -6085,6 +6101,11 @@ pub struct NotificationChannel {
     /// daemons that predate it, which is the same as none.
     #[serde(default)]
     pub slack_mentions: Vec<SlackMention>,
+    /// Slack channel ID, such as `C0123ABCD`, the bot token posts release
+    /// updates to (Slack only). With it, each release gets one message that
+    /// Oore edits as the release moves, with details in its thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slack_channel_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
     pub created_at: i64,
@@ -6126,6 +6147,10 @@ pub struct CreateNotificationChannelRequest {
     /// Slack member IDs to mention (Slack only). Works without a bot token.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slack_mentions: Vec<SlackMention>,
+    /// Slack channel ID for one updating message per release (Slack only).
+    /// Needs a bot token with `chat:write` that is in the channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slack_channel_id: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -6158,6 +6183,10 @@ pub struct UpdateNotificationChannelRequest {
     /// empty list to clear.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub slack_mentions: Option<Vec<SlackMention>>,
+    /// New Slack channel ID for release updates. Omit to keep existing; pass
+    /// an empty string to clear.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slack_channel_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -6743,6 +6772,12 @@ pub struct Release {
     /// together. App Store releases only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_status: Option<String>,
+    /// How long store review usually takes for this app on this store, in
+    /// seconds: the average of its last five finished reviews (App Store
+    /// and TestFlight counted apart). Only on releases in review, and absent
+    /// until the app has finished two reviews.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typical_review_seconds: Option<i64>,
     /// Why the release is in its state, in the store's words where there
     /// are some: the reason of its latest history entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]

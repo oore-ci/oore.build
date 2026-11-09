@@ -37,6 +37,7 @@ import { useProject } from '@/hooks/use-projects'
 import {
   usePipelineAppStorePublish,
   usePipelineGooglePlayPublish,
+  usePipelinePublishReadiness,
 } from '@/hooks/use-pipeline-publish'
 import { CollectionError } from '@/components/collection'
 import { enabledStatus } from '@/lib/status-variants'
@@ -66,6 +67,7 @@ import ConfirmDialog from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { StoreReadinessChecklist } from '@/components/trigger-build-store-section'
 import {
   Empty,
   EmptyContent,
@@ -733,6 +735,7 @@ function PipelineDetailPage() {
             pipeline={pipeline}
             publishing={publishingSummary}
           />
+          <PipelineStoreReadiness pipelineId={pipelineId} />
           {/* Recent builds */}
           <Card>
             <CardContent>
@@ -945,5 +948,25 @@ function PipelineDetailPage() {
         onConfirm={handleDelete}
       />
     </PageLayout>
+  )
+}
+
+/**
+ * The pipeline's store checklist on its overview, so a missing age rating
+ * or contract shows before someone starts a long release build. Hidden for
+ * pipelines without store uploads.
+ */
+function PipelineStoreReadiness({ pipelineId }: { pipelineId: string }) {
+  const readiness = usePipelinePublishReadiness(pipelineId)
+  if (!readiness.data?.items.length) return null
+  return (
+    <Card size="sm">
+      <CardContent>
+        <StoreReadinessChecklist
+          readiness={readiness}
+          title="Ready to submit to the stores?"
+        />
+      </CardContent>
+    </Card>
   )
 }

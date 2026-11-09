@@ -45,6 +45,8 @@ const DELIVERY_LEASE_SECS: i64 = 120;
 const MAX_CONCURRENT_SENDS: usize = 8;
 /// Keeps a slow Slack lookup from delaying the message itself.
 const SLACK_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
+/// Each Slack Web API call of a release thread; three fit in the lease.
+const SLACK_API_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn notification_addresses_allowed(host: &str, addresses: &[std::net::SocketAddr]) -> bool {
     !addresses.is_empty()
@@ -654,7 +656,14 @@ async fn attempt_delivery(
                 .ok()
                 .and_then(|settings| settings.public_url);
             let link = notification_link(public_url.as_deref(), &notification);
-            let result = send(&channel, encryption_key, &notification, link.as_deref()).await;
+            let result = send(
+                pool,
+                &channel,
+                encryption_key,
+                &notification,
+                link.as_deref(),
+            )
+            .await;
             (result, attempt < MAX_DELIVERY_ATTEMPTS)
         }
     };
@@ -701,6 +710,7 @@ async fn attempt_delivery(
 
 /// Render and send a notification to one channel.
 async fn send(
+    pool: &SqlitePool,
     channel_row: &sqlx::sqlite::SqliteRow,
     encryption_key: &[u8],
     notification: &Notification,
@@ -728,7 +738,15 @@ async fn send(
             .await
         }
         NotificationChannelType::Slack => {
-            dispatch_slack(channel_row, encryption_key, &channel_id, notification, link).await
+            dispatch_slack(
+                pool,
+                channel_row,
+                encryption_key,
+                &channel_id,
+                notification,
+                link,
+            )
+            .await
         }
         NotificationChannelType::Mattermost => {
             let body = match notification.category.as_str() {
@@ -1357,6 +1375,7 @@ fn decrypt_channel_field(
 }
 
 async fn dispatch_slack(
+    pool: &SqlitePool,
     channel_row: &sqlx::sqlite::SqliteRow,
     encryption_key: &[u8],
     channel_id: &str,
@@ -1383,6 +1402,39 @@ async fn dispatch_slack(
         notification.actor_login.as_deref(),
     )
     .await;
+    // With a bot token and a channel ID, a release keeps one message that
+    // is edited as it moves, and each change goes in its thread.
+    let slack_channel: Option<String> = channel_row
+        .try_get::<Option<String>, _>("slack_channel_id")
+        .ok()
+        .flatten();
+    if notification.category == "release"
+        && let (Some(release_id), Some(token), Some(slack_channel)) = (
+            notification.release_id.as_deref(),
+            bot_token.as_deref(),
+            slack_channel.as_deref(),
+        )
+    {
+        let message = slack_message(&notification.category, &notification.payload, link, None);
+        let thread_reply = slack_message(
+            &notification.category,
+            &notification.payload,
+            None,
+            mention.as_deref(),
+        );
+        return slack_release_thread(
+            pool,
+            &SlackReleasePost {
+                channel_id,
+                release_id,
+                token,
+                slack_channel,
+            },
+            &message,
+            &thread_reply,
+        )
+        .await;
+    }
     let body = slack_message(
         &notification.category,
         &notification.payload,
@@ -1390,6 +1442,133 @@ async fn dispatch_slack(
         mention.as_deref(),
     );
     send_raw_http_payload(&url, None, NotificationChannelType::Slack, &body).await
+}
+
+struct SlackReleasePost<'a> {
+    channel_id: &'a str,
+    release_id: &'a str,
+    token: &'a str,
+    slack_channel: &'a str,
+}
+
+/// Posts or edits the one message that stands for a release in a Slack
+/// channel, then adds the change to its thread. A message deleted in Slack
+/// is posted again.
+async fn slack_release_thread(
+    pool: &SqlitePool,
+    post: &SlackReleasePost<'_>,
+    message: &serde_json::Value,
+    thread_reply: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let existing: Option<String> = sqlx::query_scalar(
+        "SELECT ts FROM slack_release_messages \
+         WHERE channel_id = ?1 AND release_id = ?2 AND slack_channel_id = ?3",
+    )
+    .bind(post.channel_id)
+    .bind(post.release_id)
+    .bind(post.slack_channel)
+    .fetch_optional(pool)
+    .await?;
+    let with_channel = |body: &serde_json::Value, extra: serde_json::Value| {
+        let mut body = body.clone();
+        body["channel"] = serde_json::json!(post.slack_channel);
+        if let (Some(body), Some(extra)) = (body.as_object_mut(), extra.as_object()) {
+            body.extend(extra.clone());
+        }
+        body
+    };
+    let ts = match existing {
+        Some(ts) => {
+            match slack_api(
+                post.token,
+                "chat.update",
+                &with_channel(message, serde_json::json!({ "ts": ts })),
+            )
+            .await
+            {
+                Ok(_) => Some(ts),
+                Err(error) if error.to_string().contains("message_not_found") => None,
+                Err(error) => return Err(error),
+            }
+        }
+        None => None,
+    };
+    let ts = match ts {
+        Some(ts) => {
+            slack_api(
+                post.token,
+                "chat.postMessage",
+                &with_channel(thread_reply, serde_json::json!({ "thread_ts": ts })),
+            )
+            .await?;
+            ts
+        }
+        None => {
+            let response = slack_api(
+                post.token,
+                "chat.postMessage",
+                &with_channel(message, serde_json::json!({})),
+            )
+            .await?;
+            let ts = response["ts"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("Slack returned no message timestamp"))?
+                .to_string();
+            slack_api(
+                post.token,
+                "chat.postMessage",
+                &with_channel(thread_reply, serde_json::json!({ "thread_ts": ts })),
+            )
+            .await?;
+            ts
+        }
+    };
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO slack_release_messages \
+         (channel_id, release_id, slack_channel_id, ts, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?5) \
+         ON CONFLICT(channel_id, release_id) DO UPDATE SET \
+           slack_channel_id = excluded.slack_channel_id, ts = excluded.ts, \
+           updated_at = excluded.updated_at",
+    )
+    .bind(post.channel_id)
+    .bind(post.release_id)
+    .bind(post.slack_channel)
+    .bind(&ts)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Calls a Slack Web API method with the bot token. Slack answers 200 with
+/// `ok: false` on failure; its error code becomes the error.
+async fn slack_api(
+    token: &str,
+    method: &str,
+    body: &serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
+    let url = url::Url::parse(&format!("https://slack.com/api/{method}"))?;
+    let client = notification_http_client(&url).await?;
+    let response = client
+        .post(url)
+        .bearer_auth(token)
+        .header("Content-Type", "application/json; charset=utf-8")
+        .timeout(SLACK_API_TIMEOUT)
+        .json(body)
+        .send()
+        .await
+        .map_err(safe_notification_transport_error)?;
+    let reply: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|_| anyhow::anyhow!("Slack {method} returned an invalid response"))?;
+    if reply["ok"].as_bool() != Some(true) {
+        let error = reply["error"].as_str().unwrap_or("unknown_error");
+        anyhow::bail!("Slack {method} failed: {}", slack_escape(error));
+    }
+    Ok(reply)
 }
 
 /// Send a Slack test message that mentions the person who pressed test, so
