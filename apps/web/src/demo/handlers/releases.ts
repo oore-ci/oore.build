@@ -297,16 +297,21 @@ export const releaseHandlers = [
       )
       .flatMap((release) => {
         const context = withReleaseContext(release, persona)
-        return (demoState.releaseHistory[release.id] ?? []).map((entry) => ({
-          ...entry,
-          release_id: release.id,
-          project_id: release.project_id,
-          project_name: context.project_name,
-          build_id: release.build_id,
-          store: release.store,
-          track: release.track,
-          version_name: release.version_name,
-        }))
+        return (
+          (demoState.releaseHistory[release.id] ?? [])
+            // Finding a release outside Oore is not a change to it.
+            .filter((entry) => release.origin !== 'adopted' || entry.from_state)
+            .map((entry) => ({
+              ...entry,
+              release_id: release.id,
+              project_id: release.project_id,
+              project_name: context.project_name,
+              build_id: release.build_id,
+              store: release.store,
+              track: release.track,
+              version_name: release.version_name,
+            }))
+        )
       })
       .sort((left, right) => right.at - left.at)
       .slice(0, limit)
