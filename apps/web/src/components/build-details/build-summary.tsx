@@ -1,3 +1,4 @@
+import { buildSourceRef } from '@/lib/build-source'
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -119,11 +120,4 @@ export function BuildSummary({
   )
 }
 
-/** Branch, or the tag or ref that triggered a build with no branch. */
-export function buildSourceRef(build: Build): string | null {
-  return (
-    build.branch ??
-    build.trigger_ref?.replace(/^refs\/(?:heads|tags)\//, '') ??
-    null
-  )
-}
+export { buildSourceRef }

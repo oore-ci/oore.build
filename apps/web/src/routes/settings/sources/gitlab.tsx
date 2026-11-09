@@ -31,7 +31,7 @@ import { PageMeta } from '@/lib/seo'
 import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
 
-export const Route = createFileRoute('/settings/integrations/gitlab')({
+export const Route = createFileRoute('/settings/sources/gitlab')({
   staticData: {
     breadcrumb: {
       title: 'GitLab',
@@ -106,7 +106,7 @@ function GitLabSetupPage() {
             toast.success(`Source verified: ${displayName}`)
           }
           void navigate({
-            to: '/settings/integrations/$integrationId',
+            to: '/settings/sources/$integrationId',
             params: { integrationId: response.integration.id },
           })
         },
@@ -190,7 +190,7 @@ function GitLabSetupPage() {
                 : 'External access is required.'
             }
             isPending={startMutation.isPending}
-            onCancel={() => void navigate({ to: '/settings/integrations' })}
+            onCancel={() => void navigate({ to: '/settings/sources' })}
             pendingLabel="Connecting..."
             submitLabel={
               authMode === 'personal_token'

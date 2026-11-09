@@ -65,7 +65,7 @@ function EndpointRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-export const Route = createFileRoute('/settings/integrations/github')({
+export const Route = createFileRoute('/settings/sources/github')({
   staticData: {
     breadcrumb: {
       title: 'GitHub',
@@ -87,7 +87,7 @@ function GitHubSetupPage() {
 
   const backendUrl = resolveInstanceApiBaseUrl(instance) ?? ''
   const webhookUrl = `${backendUrl}/v1/webhooks/github`
-  const redirectUrl = `${window.location.origin}/settings/integrations`
+  const redirectUrl = `${window.location.origin}/settings/sources`
 
   function handleConnect() {
     if (!remoteEnabled) return

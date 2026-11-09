@@ -585,7 +585,7 @@ export const RELEASE_ACTION_COPY = {
     label: 'Approve',
     title: 'Approve release?',
     description: (release) =>
-      `${releaseVersionLabel(release)} continues to ${RELEASE_STORE_LABEL[release.store]} ${release.track}.`,
+      `${releaseVersionLabel(release)} continues to ${releaseDestinationLabel(release).replace(' · ', ' ')}.`,
     confirmLabel: 'Approve',
   },
   raise: {

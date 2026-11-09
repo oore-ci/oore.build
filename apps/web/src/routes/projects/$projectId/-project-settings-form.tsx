@@ -263,7 +263,7 @@ export function ProjectSettingsForm({
                         <Button
                           type="button"
                           variant="outline"
-                          render={<Link to="/settings/integrations" />}
+                          render={<Link to="/settings/sources" />}
                           nativeButton={false}
                         >
                           Connect source

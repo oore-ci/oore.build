@@ -4,6 +4,7 @@ import type {
   EnvironmentPromotion,
   ProjectEnvironment,
   PromotionState,
+  Release,
   ReleasePolicy,
 } from '@oore/client/models'
 import type { BadgeVariant } from '@/components/ui/badge'
@@ -177,4 +178,35 @@ export function approversSummary(
         ? 'Maintainers'
         : undefined
   return [role, ...emails].filter(Boolean).join(', ')
+}
+
+/**
+ * A release in this environment that can still be promoted elsewhere: a live
+ * Google Play release, or a TestFlight release testers have. A release on the
+ * App Store itself is the end of the path.
+ */
+export function promotableRelease(environment: ProjectEnvironment) {
+  const release = environment.latest_release
+  if (!release) return undefined
+  if (release.store === 'app_store' && release.track === 'app_store') {
+    return undefined
+  }
+  return ['rolling', 'paused', 'complete'].includes(release.state)
+    ? release
+    : undefined
+}
+
+/** The environment a release can be promoted from, when it is that one's. */
+export function promotionSource(
+  environments: ReadonlyArray<ProjectEnvironment>,
+  release: Pick<Release, 'id' | 'environment_id' | 'build_id'>,
+): ProjectEnvironment | undefined {
+  // A release found in the store has no build to promote.
+  if (!release.environment_id || !release.build_id) return undefined
+  const environment = environments.find(
+    (candidate) => candidate.id === release.environment_id,
+  )
+  return environment && promotableRelease(environment)?.id === release.id
+    ? environment
+    : undefined
 }

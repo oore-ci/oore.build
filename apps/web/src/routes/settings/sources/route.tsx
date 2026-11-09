@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 import { Row } from '@/components/layout/row'
 
-export const Route = createFileRoute('/settings/integrations')({
+export const Route = createFileRoute('/settings/sources')({
   staticData: {
     breadcrumb: {
       title: 'Sources',

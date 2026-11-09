@@ -50,7 +50,7 @@ function authModeLabel(mode: string): string {
 function sourceIdentity(integration: Integration) {
   return (
     <Link
-      to="/settings/integrations/$integrationId"
+      to="/settings/sources/$integrationId"
       params={{ integrationId: integration.id }}
       className={cn(focusRingVariants(), 'group block min-w-0 rounded-md')}
     >

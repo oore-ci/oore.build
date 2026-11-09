@@ -46,7 +46,7 @@ const ExternalAccessNetworkDialog = lazy(preloadExternalAccessNetworkDialog)
 const TrustedProxySettingsDialog = lazy(preloadTrustedProxySettingsDialog)
 const OidcSettingsDialog = lazy(preloadOidcSettingsDialog)
 
-export const Route = createLazyFileRoute('/settings/preferences')({
+export const Route = createLazyFileRoute('/settings/general')({
   component: PreferencesPage,
 })
 

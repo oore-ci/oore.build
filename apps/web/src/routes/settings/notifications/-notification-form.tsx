@@ -1,8 +1,15 @@
 import type { UseFormReturn } from 'react-hook-form'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { useWatch } from 'react-hook-form'
 import * as z from 'zod'
 import type { SmtpConfig, UpdateSmtpConfig } from '@oore/client/models'
 import { Button } from '@/components/ui/button'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { ArrowDown01Icon } from '@hugeicons/core-free-icons'
 import { Checkbox } from '@/components/ui/checkbox'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
@@ -818,84 +825,106 @@ export function NotificationChannelFormFields({
           ) : null}
 
           {channelType === 'slack' ? (
-            <>
-              <FormField
-                control={form.control}
-                name="secret"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      {editing ? 'New bot token' : 'Bot token (optional)'}
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        type="password"
-                        placeholder={editing ? undefined : 'xoxb-...'}
-                        autoComplete="off"
-                        disabled={removeSecret}
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {channel?.has_secret
-                        ? removeSecret
-                          ? 'The bot token will be removed when you save.'
-                          : 'Leave blank to keep the configured bot token.'
-                        : 'A bot token with the users:read.email scope lets Oore mention people by matching their sign-in email. Without it, use member IDs below; anyone unmapped is named by email or Git username.'}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              {channel?.has_secret ? (
+            <Collapsible
+              defaultOpen={
+                !!channel?.has_secret ||
+                (channel?.slack_mentions?.length ?? 0) > 0
+              }
+              className="space-y-4"
+            >
+              <CollapsibleTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="-ml-2 data-panel-open:[&_svg]:rotate-180"
+                  />
+                }
+              >
+                Mention people
+                <HugeiconsIcon icon={ArrowDown01Icon} data-icon="inline-end" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-4">
                 <FormField
                   control={form.control}
-                  name="remove_secret"
+                  name="secret"
                   render={({ field }) => (
-                    <FormItem className="flex items-start gap-3">
+                    <FormItem>
+                      <FormLabel>
+                        {editing ? 'New bot token' : 'Bot token (optional)'}
+                      </FormLabel>
                       <FormControl>
-                        <Checkbox
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
+                        <Input
+                          type="password"
+                          placeholder={editing ? undefined : 'xoxb-...'}
+                          autoComplete="off"
+                          disabled={removeSecret}
+                          {...field}
                         />
                       </FormControl>
-                      <div className="space-y-0.5">
-                        <FormLabel>Remove configured bot token</FormLabel>
-                        <FormDescription>
-                          Only people listed under member IDs will be mentioned.
-                        </FormDescription>
-                      </div>
+                      <FormDescription>
+                        {channel?.has_secret
+                          ? removeSecret
+                            ? 'The bot token will be removed when you save.'
+                            : 'Leave blank to keep the configured bot token.'
+                          : 'A bot token with the users:read.email scope lets Oore mention people by matching their sign-in email. Without it, use member IDs below; anyone unmapped is named by email or Git username.'}
+                      </FormDescription>
+                      <FormMessage />
                     </FormItem>
                   )}
                 />
-              ) : null}
-              <FormField
-                control={form.control}
-                name="slack_mentions"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Slack member IDs (optional)</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        placeholder={
-                          'dev@example.com U0123ABCD\noctocat U0456EFGH'
-                        }
-                        rows={4}
-                        spellCheck={false}
-                        className="font-mono"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      One per line: a sign-in email or Git username, then the
-                      Slack member ID to mention. Push builds use the Git
-                      username. These take priority over the bot token lookup.
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </>
+                {channel?.has_secret ? (
+                  <FormField
+                    control={form.control}
+                    name="remove_secret"
+                    render={({ field }) => (
+                      <FormItem className="flex items-start gap-3">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                        <div className="space-y-0.5">
+                          <FormLabel>Remove configured bot token</FormLabel>
+                          <FormDescription>
+                            Only people listed under member IDs will be
+                            mentioned.
+                          </FormDescription>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+                ) : null}
+                <FormField
+                  control={form.control}
+                  name="slack_mentions"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Slack member IDs (optional)</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder={
+                            'dev@example.com U0123ABCD\noctocat U0456EFGH'
+                          }
+                          rows={4}
+                          spellCheck={false}
+                          className="font-mono"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        One per line: a sign-in email or Git username, then the
+                        Slack member ID to mention. Push builds use the Git
+                        username. These take priority over the bot token lookup.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </CollapsibleContent>
+            </Collapsible>
           ) : null}
         </>
       )}

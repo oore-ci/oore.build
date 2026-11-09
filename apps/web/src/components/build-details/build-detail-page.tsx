@@ -30,6 +30,11 @@ import { useRerunAndOpen } from '@/hooks/use-rerun-and-open'
 import { usePageCommands, type PageCommand } from '@/stores/command-store'
 import { buildStepLabel, retryStepLabel } from '@/lib/build-steps'
 import { BuildSummary, buildSourceRef } from './build-summary'
+import {
+  BUILD_TAB_TITLE_MARK,
+  buildTabState,
+  useBuildTabIcon,
+} from '@/hooks/use-build-tab-state'
 import { EventTimeline } from './event-timeline'
 import { AnalyzerPanel } from './analyzer-panel'
 import { TestsPanel } from './tests-panel'
@@ -262,9 +267,11 @@ export function BuildDetailPage({
       ? initialTab
       : null
 
+  const tabState = buildTabState(data?.build.status)
   const label = data?.build.build_number
-    ? `Build #${data.build.build_number}`
+    ? `${tabState ? BUILD_TAB_TITLE_MARK[tabState] : ''}Build #${data.build.build_number}`
     : 'Build Details'
+  useBuildTabIcon(data?.build.status)
 
   useBuildNotification(data?.build, isTerminal)
   const notifications = useNotificationPermission()

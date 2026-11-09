@@ -24,7 +24,7 @@ const SETTINGS_GROUPS = [
       {
         title: 'General',
         description: 'Runtime, External Access, and service updates.',
-        to: '/settings/preferences',
+        to: '/settings/general',
         icon: Settings01Icon,
         roles: ADMIN_ROLES,
       },
@@ -38,7 +38,7 @@ const SETTINGS_GROUPS = [
       {
         title: 'Sources',
         description: 'Connected repositories and provider credentials.',
-        to: '/settings/integrations',
+        to: '/settings/sources',
         icon: Link04Icon,
         roles: OPERATOR_ROLES,
       },

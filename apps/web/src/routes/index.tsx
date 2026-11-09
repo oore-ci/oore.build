@@ -483,6 +483,7 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
       <Stack gap={10}>
         <PageHeader
           title="Home"
+          inlineActions
           meta={
             hasProjects
               ? statusSummary({

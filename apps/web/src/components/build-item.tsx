@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import { buildSourceRef } from '@/lib/build-source'
 import { WorkflowBadge } from '@/components/workflow-badge'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -129,7 +130,7 @@ export function BuildItem({
             <WorkflowBadge workflow={build.workflow} />
           </ItemTitle>
           <ItemDescription className="line-clamp-1">
-            {pipelineName} · {build.branch ?? 'No branch'} ·{' '}
+            {pipelineName} · {buildSourceRef(build) ?? 'No branch'} ·{' '}
             <span className="font-mono">{commitLabel}</span>
           </ItemDescription>
           <Text variant="caption" className="truncate xl:hidden">

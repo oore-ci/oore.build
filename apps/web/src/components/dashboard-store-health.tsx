@@ -536,7 +536,7 @@ export function DashboardStoreHealth() {
           ) : (
             <HugeiconsIcon icon={Refresh01Icon} data-icon="inline-start" />
           )}
-          {refresh.isPending ? 'Reading stores…' : 'Refresh'}
+          {refresh.isPending ? 'Checking stores…' : 'Check stores'}
         </Button>
       }
     >

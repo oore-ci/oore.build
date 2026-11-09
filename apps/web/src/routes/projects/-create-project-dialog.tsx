@@ -334,7 +334,7 @@ export default function CreateProjectDialog({
                             <Button
                               type="button"
                               variant="outline"
-                              render={<Link to="/settings/integrations" />}
+                              render={<Link to="/settings/sources" />}
                               nativeButton={false}
                               onClick={() =>
                                 updateProgress(scope, {
@@ -351,7 +351,7 @@ export default function CreateProjectDialog({
                           <FormDescription>
                             Not listed?{' '}
                             <Link
-                              to="/settings/integrations"
+                              to="/settings/sources"
                               className="font-medium text-foreground underline underline-offset-4"
                               onClick={() =>
                                 updateProgress(scope, {

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { buildSourceRef } from '@/lib/build-source'
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react'
 import {
@@ -179,7 +180,7 @@ function CurrentRelease({
           </CardTitle>
           <CardDescription>
             Released {relativeTime(releasedAt)}
-            {build.branch ? ` · ${build.branch}` : ''}
+            {buildSourceRef(build) ? ` · ${buildSourceRef(build)}` : ''}
             {duration ? ` · Built in ${duration}` : ''}
           </CardDescription>
         </CardHeader>

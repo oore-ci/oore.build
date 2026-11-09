@@ -59,13 +59,15 @@ export function GooglePlayServiceAccountPanel({
               <HugeiconsIcon icon={PlayStoreIcon} />
             </ItemMedia>
             <ItemContent className="min-w-0">
-              <ItemTitle className="font-mono">
-                {PLAY_SERVICE_ACCOUNT_SECRET}
-              </ItemTitle>
+              <ItemTitle>Google Play service account</ItemTitle>
               <ItemDescription>
                 {stored ? (
                   <>
-                    Instance secret · Updated {relativeTime(stored.updated_at)}
+                    <span className="font-mono">
+                      {PLAY_SERVICE_ACCOUNT_SECRET}
+                    </span>{' '}
+                    · Instance secret · Updated{' '}
+                    {relativeTime(stored.updated_at)}
                   </>
                 ) : (
                   'Not stored yet. Add the JSON key once and new pipelines use it on the Publishing tab.'
