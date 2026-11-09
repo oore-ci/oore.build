@@ -1,5 +1,6 @@
 import {
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
   type Query,
@@ -167,4 +168,31 @@ export function useUpdatePipelineWorkflowSettings(pipelineId: string) {
         path: { pipeline_id: pipelineId, workflow },
       }),
   )
+}
+
+/**
+ * The signing libraries of several projects at once, for reminders that
+ * look across apps. A project the caller cannot read is left out.
+ */
+export function useSigningIdentitiesOf(
+  projectIds: ReadonlyArray<string>,
+  options?: { enabled?: boolean },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  return useQueries({
+    queries: projectIds.map((projectId) => ({
+      ...scopeOoreQueryOptions(
+        instanceId,
+        listSigningIdentitiesOptions({
+          client,
+          path: { project_id: projectId },
+        }),
+      ),
+      enabled: (options?.enabled ?? true) && !!baseUrl && !!token,
+      select: selectIdentities,
+      staleTime: 10 * 60_000,
+      retry: false,
+    })),
+    combine: (results) => results.flatMap((result) => result.data ?? []),
+  })
 }

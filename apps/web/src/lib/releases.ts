@@ -685,12 +685,12 @@ export const RELEASE_ACTION_COPY = {
     destructive: true,
   },
   attach_schedule: {
-    done: 'Schedule attached',
-    label: 'Let Oore roll it out',
-    title: 'Let Oore roll it out?',
+    done: 'Oore manages this rollout now',
+    label: 'Manage rollout with Oore',
+    title: 'Manage this rollout with Oore?',
     description: (release) =>
       `Oore takes over ${releaseVersionLabel(release)}'s rollout from ${formatRolloutPercent(release.rollout_fraction)} with the release's schedule${release.policy.steps?.length ? ` (${release.policy.steps.map(formatRolloutPercent).join(', ')})` : ''}, halting on crash spikes.`,
-    confirmLabel: 'Attach schedule',
+    confirmLabel: 'Let Oore manage it',
   },
   detach_schedule: {
     done: 'Schedule detached',

@@ -162,6 +162,24 @@ function ReleaseCard({
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <StoreActionNotice release={current} />
+        {isAdoptedRelease(current) ? (
+          <Text variant="muted">
+            Found in{' '}
+            {current.store === 'app_store'
+              ? 'App Store Connect'
+              : 'Play Console'}{' '}
+            {relativeTime(current.created_at)}
+            {current.version_code != null
+              ? `, version code ${current.version_code}`
+              : ''}
+            .{' '}
+            {current.store === 'google_play' && current.auto_rollout
+              ? 'Oore runs its rollout schedule and halts it on crash spikes.'
+              : current.store === 'google_play'
+                ? 'Oore watches it and changes the rollout only when someone asks, here or in Play Console.'
+                : 'Oore follows its review and release state.'}
+          </Text>
+        ) : null}
         <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
           <ReleaseRollout release={current} />
           <Stack gap={1}>

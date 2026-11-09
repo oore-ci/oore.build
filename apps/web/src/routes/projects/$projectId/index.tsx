@@ -68,6 +68,11 @@ const ProjectBuildsTab = lazy(() =>
     default: module.ProjectBuildsTab,
   })),
 )
+const ProjectReleasesTab = lazy(() =>
+  import('./-project-releases-tab').then((module) => ({
+    default: module.ProjectReleasesTab,
+  })),
+)
 const ProjectEnvironmentsTab = lazy(() =>
   import('./-project-environments-tab').then((module) => ({
     default: module.ProjectEnvironmentsTab,
@@ -100,6 +105,7 @@ const TAB_VALUES = [
   'overview',
   'pipelines',
   'builds',
+  'releases',
   'environments',
   'settings',
 ] as const
@@ -561,7 +567,7 @@ function ProjectDetailPage() {
         }}
         className="min-h-0 flex-1"
       >
-        {/* Five tabs outgrow a phone; the row scrolls instead of the page. */}
+        {/* Six tabs outgrow a phone; the row scrolls instead of the page. */}
         <div className="-mb-2 max-w-full shrink-0 overflow-x-auto pb-2">
           <TabsList variant="line">
             <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -572,6 +578,7 @@ function ProjectDetailPage() {
             <TabsTrigger value="builds">
               Builds{buildCount > 0 ? ` (${buildCount})` : ''}
             </TabsTrigger>
+            <TabsTrigger value="releases">Releases</TabsTrigger>
             <TabsTrigger value="environments">Environments</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
@@ -654,6 +661,12 @@ function ProjectDetailPage() {
               projectHasSource={projectHasSource}
               projectId={projectId}
             />
+          </Suspense>
+        ) : null}
+
+        {activeTab === 'releases' ? (
+          <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+            <ProjectReleasesTab projectId={projectId} />
           </Suspense>
         ) : null}
 
