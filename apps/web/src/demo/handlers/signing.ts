@@ -51,6 +51,7 @@ const settingsSchema = z.object({
   ios_identity_id: z.string().nullish(),
   publish_enabled: z.boolean().nullish(),
   approval_required: z.boolean().nullish(),
+  testflight_groups: z.array(z.string()).nullish(),
 })
 
 function failure(message: string, status = 400, code = 'invalid_input') {
@@ -365,7 +366,8 @@ export const signingHandlers = [
       !body.android_identity_id &&
       !body.ios_identity_id &&
       body.publish_enabled == null &&
-      body.approval_required == null
+      body.approval_required == null &&
+      !body.testflight_groups?.length
     if (empty) {
       demoState.workflowSettings[pipeline.id] = rest
       return HttpResponse.json({ workflow })
@@ -376,6 +378,9 @@ export const signingHandlers = [
       ios_identity_id: body.ios_identity_id ?? undefined,
       publish_enabled: body.publish_enabled ?? undefined,
       approval_required: body.approval_required ?? undefined,
+      testflight_groups: body.testflight_groups?.length
+        ? body.testflight_groups
+        : undefined,
       updated_at: ago(0),
     }
     demoState.workflowSettings[pipeline.id] = [...rest, saved]

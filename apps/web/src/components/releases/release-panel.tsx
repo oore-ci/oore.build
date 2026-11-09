@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { Release, ReleaseHistoryEntry } from '@oore/client/models'
 import { StoreErrorMessage } from '@/components/build-details/store-wait-alert'
 import { Row } from '@/components/layout/row'
@@ -8,6 +8,7 @@ import {
   ReleaseRollout,
   ReleaseStateBadge,
 } from '@/components/releases/release-rollout'
+import { RolloutSteps } from '@/components/releases/rollout-steps'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -20,7 +21,9 @@ import {
 } from '@/components/ui/empty'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useBuild } from '@/hooks/use-builds'
 import { useRelease } from '@/hooks/use-releases'
+import { plainRefusals, reviewGuidelines } from '@/lib/store-refusals'
 import { useTime } from '@/hooks/use-time'
 import { relativeTime } from '@/lib/format-utils'
 import {
@@ -40,6 +43,10 @@ import { cn } from '@/lib/utils'
 import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
 import { textVariants } from '@/lib/recipes'
+
+const TriggerBuildDrawer = lazy(
+  () => import('@/components/trigger-build-drawer'),
+)
 
 /** Build detail's Release tab: every store release made from this build. */
 export function ReleasePanel({
@@ -214,25 +221,22 @@ function ReleaseCard({
             </Stack>
           )}
         </div>
+        {current.store === 'google_play' &&
+        current.auto_rollout &&
+        !['complete', 'failed'].includes(current.state) &&
+        current.rollout_fraction > 0 ? (
+          <RolloutSteps release={current} />
+        ) : null}
         {/* Apple runs App Store and TestFlight releases on its own
             schedule; Oore's rollout steps only drive Google Play. */}
-        {current.store === 'google_play' || current.approved_by_email ? (
+        {(current.store === 'google_play' && !current.auto_rollout) ||
+        current.approved_by_email ? (
           <Text variant="caption">
             {current.store === 'google_play' && !current.auto_rollout ? (
               <>No schedule: Oore only changes this rollout when asked.</>
-            ) : current.store === 'google_play' ? (
-              <>
-                Schedule:{' '}
-                {(current.policy.steps ?? [])
-                  .map(formatRolloutPercent)
-                  .join(' → ')}
-                {current.policy.interval_hours != null
-                  ? `, every ${current.policy.interval_hours}h`
-                  : ''}
-              </>
             ) : null}
             {current.approved_by_email
-              ? `${current.store === 'google_play' ? ' · ' : ''}Approved by ${current.approved_by_email}`
+              ? `${current.store === 'google_play' && !current.auto_rollout ? ' · ' : ''}Approved by ${current.approved_by_email}`
               : ''}
           </Text>
         ) : null}
@@ -274,16 +278,47 @@ function StoreActionNotice({ release }: { release: Release }) {
       </a>
     ) : null
   }
+  if (release.state === 'rejected') return <RejectionNotice release={release} />
   const summary = releaseWaitSummary(release)
+  // The store's words, put plainly when Oore knows the refusal.
+  const storeText = release.store_error ?? release.state_reason
+  const refusals = plainRefusals(storeText, release)
   return (
-    <Alert variant={release.state === 'rejected' ? 'destructive' : 'default'}>
+    <Alert variant="default">
       <AlertDescription className="flex flex-col gap-2">
         <span className="font-medium text-foreground">{summary?.title}</span>
-        {release.store_error ? (
+        {refusals.length ? (
+          <ul className="flex flex-col gap-2">
+            {refusals.map((refusal) => (
+              <li
+                key={refusal.code}
+                className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
+              >
+                <span className="min-w-0 flex-1 text-foreground">
+                  {refusal.sentence}
+                </span>
+                {refusal.href && refusal.fix ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    nativeButton={false}
+                    render={
+                      <a href={refusal.href} target="_blank" rel="noreferrer" />
+                    }
+                  >
+                    {refusal.fix}
+                  </Button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : release.store_error ? (
           <StoreErrorMessage message={release.store_error} />
         ) : null}
-        <span className="whitespace-pre-line">{summary?.description}</span>
-        {link ? (
+        {refusals.length && !release.store_error ? null : (
+          <span className="whitespace-pre-line">{summary?.description}</span>
+        )}
+        {!refusals.some((refusal) => refusal.href) && link ? (
           <a
             href={link.href}
             target="_blank"
@@ -292,6 +327,114 @@ function StoreActionNotice({ release }: { release: Release }) {
           >
             {link.label}
           </a>
+        ) : null}
+        {refusals.length && storeText ? (
+          <StoreDetails message={storeText} />
+        ) : null}
+      </AlertDescription>
+    </Alert>
+  )
+}
+
+/** The store's own text, folded away behind the plain sentence. */
+function StoreDetails({ message }: { message: string }) {
+  return (
+    <details className="group text-xs">
+      <summary className="w-fit cursor-pointer text-muted-foreground underline-offset-2 hover:underline">
+        Details from the store
+      </summary>
+      <div className="mt-2">
+        <StoreErrorMessage message={message} />
+      </div>
+    </details>
+  )
+}
+
+/**
+ * A release the store rejected in review: the reviewer's words, the
+ * guidelines they cite, and the two ways forward.
+ */
+function RejectionNotice({ release }: { release: Release }) {
+  const apple = release.store === 'app_store'
+  const reviewer = release.state_reason
+  const guidelines = reviewGuidelines(reviewer)
+  const buildQuery = useBuild(release.build_id ?? '')
+  const [resubmitOpen, setResubmitOpen] = useState(false)
+  const build = buildQuery.data?.build
+  const prefill = useMemo(
+    () =>
+      build
+        ? {
+            project_id: build.project_id,
+            pipeline_id: build.pipeline_id,
+            branch: build.branch ?? '',
+            workflow: build.workflow ?? '',
+          }
+        : undefined,
+    [build],
+  )
+  return (
+    <Alert variant="default" className="border-destructive/40">
+      <AlertDescription className="flex flex-col gap-3">
+        <span className="font-medium text-foreground">
+          {apple ? 'Apple' : 'Google'} rejected {releaseVersionLabel(release)}
+        </span>
+        {reviewer ? (
+          <Stack gap={1}>
+            <span className={textVariants({ variant: 'caption' })}>
+              {apple ? "Reviewer's message" : "Google's reason"}
+              {guidelines.length ? ` · Guideline ${guidelines.join(', ')}` : ''}
+            </span>
+            <blockquote className="border-l-2 pl-3 whitespace-pre-line text-foreground">
+              {reviewer}
+            </blockquote>
+          </Stack>
+        ) : (
+          <span>
+            {apple ? 'App Store Connect' : 'Play Console'} has the reviewer's
+            message.
+          </span>
+        )}
+        <span>
+          Reply there if you think the reviewer got it wrong, or fix the app and
+          send a new build.
+        </span>
+        <Row gap={2} className="flex-wrap">
+          {release.console_url ? (
+            <Button
+              size="sm"
+              variant="outline"
+              nativeButton={false}
+              render={
+                <a
+                  href={release.console_url}
+                  target="_blank"
+                  rel="noreferrer"
+                />
+              }
+            >
+              {apple ? 'Reply in App Store Connect' : 'Open Play Console'}
+            </Button>
+          ) : null}
+          {build ? (
+            <Button size="sm" onClick={() => setResubmitOpen(true)}>
+              Resubmit with a new build
+            </Button>
+          ) : null}
+        </Row>
+        {build ? (
+          <Suspense fallback={null}>
+            {resubmitOpen ? (
+              <TriggerBuildDrawer
+                open={resubmitOpen}
+                onOpenChange={setResubmitOpen}
+                fixedProjectId={build.project_id}
+                prefill={prefill}
+                title="Resubmit with a new build"
+                description="Builds the fix and sends it for review again. Raise the build number if the store already has this one."
+              />
+            ) : null}
+          </Suspense>
         ) : null}
       </AlertDescription>
     </Alert>

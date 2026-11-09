@@ -45,6 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Mono } from '@/components/layout/mono'
@@ -361,6 +362,32 @@ export function WorkflowSettingsDrawer({
                   </FormItem>
                 )}
               />
+
+              {shown?.summary?.platforms.includes('ios') ? (
+                <FormField
+                  control={form.control}
+                  name="testflight_groups"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>TestFlight groups</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="Follow the file and the pipeline"
+                          disabled={disabled}
+                          autoComplete="off"
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Names of TestFlight groups, separated by commas. When
+                        this workflow uploads to TestFlight, these groups get
+                        the build instead of the ones the file or the pipeline
+                        name.
+                      </FormDescription>
+                    </FormItem>
+                  )}
+                />
+              ) : null}
 
               {conflict ? (
                 <Alert variant="destructive">

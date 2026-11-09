@@ -153,6 +153,7 @@ const formSchema = z
     package_name: z.string().trim(),
     upload_mapping: z.boolean(),
     in_app_update_priority: PRIORITY_VALUES,
+    preflight: z.enum(['auto', 'block', 'warn', 'off']),
   })
   .superRefine((values, ctx) => {
     if (
@@ -250,6 +251,7 @@ function toFormValues(
     in_app_update_priority:
       PRIORITY_VALUES.safeParse(String(config?.in_app_update_priority)).data ??
       'none',
+    preflight: config?.preflight ?? 'auto',
   } satisfies FormValues
 }
 
@@ -271,8 +273,16 @@ function toConfig(values: FormValues): GooglePlayPublishConfig {
       values.in_app_update_priority === 'none'
         ? null
         : Number(values.in_app_update_priority),
+    preflight: values.preflight,
   }
 }
+
+const PREFLIGHT_LEVELS = {
+  auto: 'Automatic',
+  block: 'Stop the upload',
+  warn: 'Warn only',
+  off: 'Off',
+} as const
 
 /** One sentence describing what the saved settings will do to a build. */
 const EFFECT_FIELDS = [
@@ -782,6 +792,39 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
                 aria-label="Upload the R8 mapping file"
               />
             </FormControl>
+          </FormItem>
+        )}
+      />
+      <FormField
+        control={form.control}
+        name="preflight"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Pre-flight checks</FormLabel>
+            <FormControl>
+              <RadioGroup
+                value={field.value}
+                onValueChange={field.onChange}
+                className="flex flex-wrap gap-x-6 gap-y-2"
+              >
+                {Object.entries(PREFLIGHT_LEVELS).map(([value, label]) => (
+                  <label
+                    key={value}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <RadioGroupItem value={value} />
+                    {label}
+                  </label>
+                ))}
+              </RadioGroup>
+            </FormControl>
+            <FormDescription>
+              Before the release is committed, Google Play validates it, which
+              catches a version code Play already has or a track the service
+              account cannot release to. Automatic warns until a release from
+              this pipeline has been accepted, then stops a refused release so
+              nothing half-published reaches Play.
+            </FormDescription>
           </FormItem>
         )}
       />

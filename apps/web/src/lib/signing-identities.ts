@@ -96,6 +96,8 @@ export interface WorkflowSettingsFormValues {
   ios_identity_id: string
   publish_enabled: boolean
   approval: ApprovalChoice
+  /** Comma separated; empty follows the file and the pipeline. */
+  testflight_groups: string
 }
 
 export function workflowSettingsFormValues(
@@ -111,7 +113,20 @@ export function workflowSettingsFormValues(
         : settings?.approval_required === false
           ? 'not_required'
           : 'follow',
+    testflight_groups: (settings?.testflight_groups ?? []).join(', '),
   }
+}
+
+/** Typed TestFlight group names, trimmed, without blanks or repeats. */
+export function parseTestflightGroups(value: string): Array<string> {
+  return [
+    ...new Set(
+      value
+        .split(',')
+        .map((group) => group.trim())
+        .filter(Boolean),
+    ),
+  ]
 }
 
 /**
@@ -133,6 +148,8 @@ export function workflowSettingsRequest(
   if (values.approval !== 'follow') {
     request.approval_required = values.approval === 'required'
   }
+  const groups = parseTestflightGroups(values.testflight_groups)
+  if (groups.length) request.testflight_groups = groups
   return request
 }
 
@@ -145,6 +162,7 @@ export function isDefaultWorkflowSettings(
     (!settings.android_identity_id &&
       !settings.ios_identity_id &&
       settings.publish_enabled == null &&
-      settings.approval_required == null)
+      settings.approval_required == null &&
+      !settings.testflight_groups?.length)
   )
 }
