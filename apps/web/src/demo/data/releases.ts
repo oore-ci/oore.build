@@ -272,6 +272,10 @@ export const demoReleases: Array<DemoRelease> = [
   },
 ]
 
+// Oore schedules the rollouts it started; the daemon sends auto_rollout on
+// every release.
+for (const release of demoReleases) release.auto_rollout ??= true
+
 export const demoReleaseHistory = {
   [RELEASE_IDS.adminProduction]: [
     {

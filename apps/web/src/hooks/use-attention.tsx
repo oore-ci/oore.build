@@ -20,6 +20,11 @@ import {
 } from '@/hooks/use-operator-incidents'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { useRunners } from '@/hooks/use-runners'
+import { useProjects } from '@/hooks/use-projects'
+import { useSigningIdentitiesOf } from '@/hooks/use-signing-identities'
+import { useTime } from '@/hooks/use-time'
+import { signingExpiries, type SigningExpiry } from '@/lib/signing-expiry'
+import { useAuthStore } from '@/stores/auth-store'
 import { relativeTime } from '@/lib/format-utils'
 import { getRunnerPolicyBlockLabel } from '@/lib/status-variants'
 import { useAttentionDismissals } from '@/stores/attention-dismiss-store'
@@ -181,6 +186,40 @@ function incidentItem(
   }
 }
 
+function expiryWhen(item: SigningExpiry, nowSeconds: number): string {
+  if (item.band === 'expired') return 'expired'
+  const days = Math.max(1, Math.round((item.expiresAt - nowSeconds) / 86_400))
+  return days === 1 ? 'expires tomorrow' : `expires in ${days} days`
+}
+
+/** Signing that stops working soon: 30 and 7 days ahead, and once expired. */
+function expiryItems(
+  expiring: Array<SigningExpiry>,
+  projectNames: ReadonlyMap<string, string>,
+  nowSeconds: number,
+): Array<AttentionItem> {
+  return expiring.map((item) => ({
+    key: `signing-${item.key}`,
+    // A dismissed reminder shows again at the next band.
+    revision: `${item.expiresAt}:${item.band}`,
+    severity:
+      item.band === 'expired'
+        ? 'blocking'
+        : item.band === 'week'
+          ? 'failing'
+          : 'warning',
+    title: `${projectNames.get(item.projectId) ?? 'An app'}: ${item.what.charAt(0).toLowerCase()}${item.what.slice(1)} ${expiryWhen(item, nowSeconds)}`,
+    description: `${item.identityName} · Replace it in the signing library before release builds fail`,
+    link: (
+      <Link
+        to="/projects/$projectId"
+        params={{ projectId: item.projectId }}
+        search={{ tab: 'settings' }}
+      />
+    ),
+  }))
+}
+
 /**
  * Everything that needs someone now, from one source for Home's Needs
  * attention and the header bell, so the two never disagree.
@@ -195,6 +234,20 @@ export function useAttention() {
   const runnersQuery = useRunners(
     { limit: 1 },
     { enabled: canReadRunners, select: selectNoRunnerOnline },
+  )
+  // Signing reminders look across every app, so only people who can see
+  // every app's library get them.
+  const instanceRole = useAuthStore((state) => state.user?.role)
+  const seesAllSigning = instanceRole === 'owner' || instanceRole === 'admin'
+  const projectsQuery = useProjects({ limit: 100 }, { enabled: seesAllSigning })
+  const projects = projectsQuery.data?.projects ?? []
+  const identities = useSigningIdentitiesOf(
+    projects.map((project) => project.id),
+    { enabled: seesAllSigning },
+  )
+  const nowSeconds = useTime((time) => Math.floor(time / 3_600_000) * 3600)
+  const projectNames = new Map(
+    projects.map((project) => [project.id, project.name]),
   )
 
   const listed: Array<AttentionItem> = [
@@ -215,6 +268,11 @@ export function useAttention() {
       incidentItem(incident, (id) => markRead.mutate(id)),
     ),
     ...failingItems(insightsQuery.data?.failing_pipelines ?? []),
+    ...expiryItems(
+      signingExpiries(identities, nowSeconds),
+      projectNames,
+      nowSeconds,
+    ),
   ].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
 
   const queries = [insightsQuery, blockedQuery, runnersQuery, incidentsQuery]

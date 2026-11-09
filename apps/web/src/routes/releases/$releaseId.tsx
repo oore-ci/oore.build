@@ -1,5 +1,6 @@
-import { createFileRoute, Link, Navigate } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 
+import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { ReleasePanel } from '@/components/releases/release-panel'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -11,9 +12,10 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { PageMeta } from '@/lib/seo'
+import { releaseAppName, releaseDestinationLabel } from '@/lib/releases'
 
-// Stable link target for a single release (notifications link here); the
-// release itself lives on its build's Release tab.
+// Every release has its own page (notifications link here). A release made
+// by a build also shows on that build's Release tab.
 export const Route = createFileRoute('/releases/$releaseId')({
   staticData: {
     breadcrumb: {
@@ -31,30 +33,47 @@ function ReleaseRedirect() {
   const { releaseId } = Route.useParams()
   const { data, error, refetch } = useRelease(releaseId)
 
-  // A release found in the store has no build page; it shows here.
-  if (data && !data.release.build_id) {
+  if (data) {
+    const release = data.release
+    const appName = releaseAppName(release)
     return (
       <PageLayout>
-        <PageMeta title="Release" noindex />
+        <PageMeta
+          title={`${appName} ${release.version_name ?? 'release'}`}
+          noindex
+        />
+        <PageHeader
+          title={`${appName} ${release.version_name ?? ''}`.trim()}
+          description={releaseDestinationLabel(release)}
+          meta={
+            <>
+              <Link
+                to="/projects/$projectId"
+                params={{ projectId: release.project_id }}
+                search={{ tab: 'releases' }}
+                className="underline-offset-4 hover:text-foreground hover:underline"
+              >
+                All releases of {appName}
+              </Link>
+              {release.build_id ? (
+                <Link
+                  to="/builds/$buildId"
+                  params={{ buildId: release.build_id }}
+                  className="underline-offset-4 hover:text-foreground hover:underline"
+                >
+                  Built by #{release.build_number ?? 'build'}
+                </Link>
+              ) : null}
+            </>
+          }
+        />
         <ReleasePanel
           error={null}
           isLoading={false}
           onRetry={() => void refetch()}
-          releases={[data.release]}
-          selectedReleaseId={data.release.id}
+          releases={[release]}
         />
       </PageLayout>
-    )
-  }
-
-  if (data?.release.build_id) {
-    return (
-      <Navigate
-        to="/builds/$buildId"
-        params={{ buildId: data.release.build_id }}
-        search={{ tab: 'release', release: releaseId }}
-        replace
-      />
     )
   }
 

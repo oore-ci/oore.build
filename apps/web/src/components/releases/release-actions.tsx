@@ -33,7 +33,11 @@ import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useReleaseAction } from '@/hooks/use-releases'
+import { useTime } from '@/hooks/use-time'
+import { schedulePreview } from '@/lib/release-tracks'
+import { Text } from '@/components/layout/text'
 import {
+  formatRolloutPercent,
   RELEASE_ACTION_COPY,
   RELEASE_ACTION_ORDER,
   releaseDestinationLabel,
@@ -52,9 +56,13 @@ import { Stack } from '@/components/layout/stack'
  * lives in the menu.
  */
 export function primaryReleaseAction(
-  release: Pick<Release, 'allowed_actions' | 'state'>,
+  release: Pick<Release, 'allowed_actions' | 'origin' | 'state'>,
 ): ReleaseAction | null {
   const allowed = new Set(release.allowed_actions)
+  // A rollout started in Play Console: offer to run it, before anything else.
+  if (release.origin === 'adopted' && allowed.has('attach_schedule')) {
+    return 'attach_schedule'
+  }
   if (release.state === 'paused' && allowed.has('resume')) return 'resume'
   for (const action of ['approve', 'release_now'] as const) {
     if (allowed.has(action)) return action
@@ -233,6 +241,9 @@ function ReleaseActionDialog({
             {copy.description(release)}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {action === 'attach_schedule' ? (
+          <SchedulePreview release={release} />
+        ) : null}
         {action === 'raise' ? (
           <Stack gap={2}>
             <Label htmlFor={percentId}>New rollout</Label>
@@ -312,5 +323,46 @@ function ReleaseActionDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  )
+}
+
+/** What Oore will do and when, if it takes over this rollout now. */
+function SchedulePreview({ release }: { release: Release }) {
+  const nowSeconds = useTime((time) => Math.floor(time / 60_000) * 60)
+  const steps = schedulePreview(release, nowSeconds)
+  if (steps.length === 0) {
+    return (
+      <Text variant="muted">
+        It is already past every step of the schedule; Oore only watches its
+        crash rate.
+      </Text>
+    )
+  }
+  return (
+    <Stack gap={1}>
+      <span className="text-sm font-medium">What Oore will do</span>
+      <ol className="flex flex-col gap-1 text-sm">
+        {steps.map((step) => (
+          <li key={step.fraction} className="flex justify-between gap-4">
+            <span>Raise to {formatRolloutPercent(step.fraction)}</span>
+            <span className="text-muted-foreground tabular-nums">
+              {new Date(step.at * 1000).toLocaleString(undefined, {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+              })}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {release.policy.crash_rate_threshold != null ? (
+        <Text variant="caption">
+          It halts the rollout if the crash rate reaches{' '}
+          {formatRolloutPercent(release.policy.crash_rate_threshold)}.
+        </Text>
+      ) : null}
+    </Stack>
   )
 }
