@@ -10,7 +10,7 @@ hostile repository code.
 
 ## Source linking is the trust decision
 
-Creating a project or changing its linked source authorizes that repository's
+Creating an app or changing its linked source authorizes that repository's
 checkout, dependencies, and commands to run with the Direct runner account's
 permissions. Oore does not ask for a second per-repository execution approval.
 
@@ -41,7 +41,7 @@ accepting new builds and the linked source remains available. The
 resumes new claims.
 
 Turning it off lets active work drain and leaves queued work waiting. It does
-not cancel active jobs, revoke a project's repository trust, or introduce a
+not cancel active jobs, revoke an app's repository trust, or introduce a
 second approval list.
 
 ## Each job stays bound to its source
@@ -51,7 +51,7 @@ pipeline information, and a scoped signing capability. The runner retrieves
 signing material through assignment-bound paths rather than placing those
 values in repository configuration.
 
-If an operator relinks the project, queued work for the previous repository is
+If an operator relinks the app, queued work for the previous repository is
 canceled. Already-active work keeps its build-bound identity instead of
 silently switching repositories.
 

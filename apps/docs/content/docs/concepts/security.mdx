@@ -32,14 +32,14 @@ The installed, self-hosted, and hosted browser clients all defer to the
 selected backend. The hosted client is static UI only; it does not provide a
 hosted Oore backend or server-side credential store.
 
-`oored` enforces instance and project permissions for every protected action.
-Instance roles and project roles are separate. Hiding a resource with a
-privacy-preserving not-found response and rejecting an insufficient project
+`oored` enforces instance and app permissions for every protected action.
+Instance roles and app roles are separate. Hiding a resource with a
+privacy-preserving not-found response and rejecting an insufficient app
 role are backend decisions, not UI-only guards.
 
 ## Repository trust is explicit
 
-An instance owner or admin trusts a repository when creating a project or
+An instance owner or admin trusts a repository when creating an app or
 changing its linked source. A Direct macOS runner then executes that
 repository's checkout, dependencies, and commands with the runner account's
 host permissions.
@@ -66,7 +66,7 @@ secrets until they expire.
 - Protect non-loopback traffic with TLS and the chosen External Access
   boundary.
 - Keep the backend database and matching root key together for recovery.
-- Give instance and project access separately and use the least privilege that
+- Give instance and app access separately and use the least privilege that
   fits the job.
 - Run the Direct macOS runner under a dedicated non-admin account where
   practical.

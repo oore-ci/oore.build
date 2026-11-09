@@ -33,7 +33,7 @@ export function buildStateSummary(
           tone: 'neutral',
           title: 'Waiting for approval',
           description:
-            'A project maintainer must approve this build before a runner picks it up.',
+            'An app maintainer must approve this build before a runner picks it up.',
         }
   }
 

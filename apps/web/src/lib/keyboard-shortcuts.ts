@@ -47,7 +47,7 @@ export const SHORTCUTS = {
   goBuilds: { sequence: ['G', 'B'], label: 'Go to Builds', group: 'Go to' },
   goProjects: {
     sequence: ['G', 'P'],
-    label: 'Go to Projects',
+    label: 'Go to Apps',
     group: 'Go to',
   },
   goSettings: {

@@ -1,10 +1,10 @@
 ---
 title: 'Build your first Android app'
 status: implemented
-description: 'Create a project from a local repository, run the Android test app pipeline, and download the debug APK.'
+description: 'Create an app from a local repository, run the Android test app pipeline, and download the debug APK.'
 ---
 
-On this page you create a project for your Flutter app, build a debug APK, and
+On this page you create an app for your Flutter app, build a debug APK, and
 download it. A debug build needs no signing keys, so it is the quickest way to
 prove that Oore can build your app.
 
@@ -27,29 +27,29 @@ oore doctor --platform android
 
 The command ends with `All selected required checks passed.`
 
-## 1. Create the project
+## 1. Create the app
 
-1. In the Oore web UI, open **Projects** and select **New project**.
+1. In the Oore web UI, open **Apps** and select **New app**.
 2. Enter a **Name**.
 3. In **Path**, enter the absolute path to the app's Git repository, such as
    `/Users/you/code/my_app`.
 4. Leave **Default branch** empty unless Oore should build a branch other than
    the repository's default.
-5. Select **Create project**.
+5. Select **Create app**.
 
 <Callout type="warning" title="Repository trust">
 
-Creating a project trusts that repository's code to run with your macOS
+Creating an app trusts that repository's code to run with your macOS
 account's permissions. Use a repository you would run on this Mac yourself.
 [How Oore trusts Direct macOS runners](/concepts/runner-trust) explains why.
 
 </Callout>
 
-Oore shows `Project created` and opens the project.
+Oore shows `Project created` and opens the app.
 
 ## 2. Create the pipeline
 
-1. On the project's **Pipelines** tab, select **Set up a build**.
+1. On the app's **Pipelines** tab, select **Set up a build**.
 2. Under **Start from**, keep **Android test app** selected. It builds a debug
    APK with `flutter build apk --debug` and needs no signing.
 3. Select **Create pipeline**.
@@ -96,7 +96,7 @@ The repository already has an `.oore.yaml` or `.oore.yml` file. Select
 **Set up manually** to use the templates, or keep the workflow and read
 [Move a pipeline into `.oore.yaml`](/build/pipelines/oore-yaml).
 
-**The project form rejects the path**
+**The app form rejects the path**
 
 Use an absolute path to a folder that is already a Git repository on this Mac.
 The **Browse** button works only when you use Oore on this Mac.

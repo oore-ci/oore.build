@@ -136,7 +136,7 @@ export function ProjectBuildsTab({
               <EmptyTitle>No builds yet</EmptyTitle>
               <EmptyDescription>
                 {canTriggerBuild
-                  ? 'Run this project’s first pipeline to see its status, output, and artifacts here.'
+                  ? 'Run this app’s first pipeline to see its status, output, and artifacts here.'
                   : 'Builds will appear here once triggered by a developer.'}
               </EmptyDescription>
             </EmptyHeader>

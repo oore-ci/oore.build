@@ -11,10 +11,9 @@ export const ROLE_LABELS: RoleLabels = {
 
 export const ROLE_DESCRIPTIONS: RoleLabels = {
   owner: 'Full control of this instance, including external access.',
-  admin:
-    'Can manage users, sources, and all projects. Cannot delete the instance.',
+  admin: 'Can manage users, sources, and all apps. Cannot delete the instance.',
   developer:
-    'Can work on assigned projects according to their project role. Cannot create projects or manage instance settings.',
+    'Can work on assigned apps according to their app role. Cannot create apps or manage instance settings.',
   qa_viewer:
-    'Tester access to assigned project releases, install actions, and diagnostic logs.',
+    'Tester access to assigned app releases, install actions, and diagnostic logs.',
 }

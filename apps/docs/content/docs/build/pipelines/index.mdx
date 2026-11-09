@@ -4,7 +4,7 @@ status: implemented
 description: 'Set up what a pipeline builds, from the UI or from .oore.yaml, and which parts stay in Oore.'
 ---
 
-A pipeline tells Oore what to build for a project, with which credentials and
+A pipeline tells Oore what to build for an app, with which credentials and
 under which rules. What it builds can come from settings saved in Oore or
 from a `.oore.yaml` file in the repository. Credentials, approvals and
 per-workflow overrides always stay in Oore. Read
@@ -26,7 +26,7 @@ which part lives where.
 - [Run two workflows from one file](/build/pipelines/two-workflows), such as an
   ad hoc build for testers and a store release, each with its own signing and
   publishing.
-- [Move credentials into the project library](/build/sign/project-library) so
+- [Move credentials into the app library](/build/sign/project-library) so
   each workflow signs with its own keys.
 
 ## Inputs and rules

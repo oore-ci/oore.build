@@ -190,9 +190,9 @@ function ProjectsListPage() {
 
   return (
     <PageLayout width="wide" fill>
-      <PageMeta title="Projects" noindex />
+      <PageMeta title="Apps" noindex />
       <PageHeader
-        title="Projects"
+        title="Apps"
         actions={
           // While the page is empty its one next step lives in the empty
           // state, and without a connected source the dialog has nothing to
@@ -200,7 +200,7 @@ function ProjectsListPage() {
           canWriteProjects && !showTrueEmpty && !needsSource ? (
             <Button onClick={() => setCreateOpen(true)}>
               <HugeiconsIcon icon={Add01Icon} />
-              New project
+              New app
             </Button>
           ) : undefined
         }
@@ -219,10 +219,10 @@ function ProjectsListPage() {
                 <EmptyMedia variant="icon">
                   <HugeiconsIcon icon={Folder02Icon} />
                 </EmptyMedia>
-                <EmptyTitle>Create your first project</EmptyTitle>
+                <EmptyTitle>Create your first app</EmptyTitle>
                 <EmptyDescription>
                   {runtimeMode === 'local'
-                    ? 'Choose a local Git repository to create your first project.'
+                    ? 'Choose a local Git repository to create your first app.'
                     : noConnectedSources
                       ? 'Connect GitHub or GitLab so Oore can see your repositories, then create a project from one.'
                       : 'Pick a repository from a connected source, then add a pipeline to start building.'}
@@ -253,7 +253,7 @@ function ProjectsListPage() {
                   </Button>
                 ) : (
                   <Text variant="caption">
-                    Ask an owner or admin to create the first project.
+                    Ask an owner or admin to create the first app.
                   </Text>
                 )}
               </EmptyContent>

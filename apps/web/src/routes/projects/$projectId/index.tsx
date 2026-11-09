@@ -286,7 +286,7 @@ function ProjectDetailPage() {
 
   const activeTab: TabValue = tab ?? 'overview'
 
-  const label = data?.project.name ?? 'Project Details'
+  const label = data?.project.name ?? 'App Details'
 
   if (isLoading) {
     return (
@@ -303,12 +303,12 @@ function ProjectDetailPage() {
     if (isOoreApiError(error) && error.status === 404) {
       return (
         <PageLayout width="wide">
-          <PageMeta title="Project not found" noindex />
+          <PageMeta title="App not found" noindex />
           <NotFoundState
-            title="Project not found"
-            description="This project was deleted, expired, or the link is wrong."
+            title="App not found"
+            description="This app was deleted, expired, or the link is wrong."
             backTo="/projects"
-            backLabel="Back to projects"
+            backLabel="Back to apps"
           />
         </PageLayout>
       )
@@ -328,7 +328,7 @@ function ProjectDetailPage() {
                 render={<Link to="/projects" />}
                 nativeButton={false}
               >
-                Back to projects
+                Back to apps
               </Button>
               <Button
                 variant="outline"
@@ -373,11 +373,11 @@ function ProjectDetailPage() {
   function handleDelete() {
     deleteMutation.mutate(projectId, {
       onSuccess: () => {
-        toast.success('Project deleted')
+        toast.success('App deleted')
         void navigate({ to: '/projects' })
       },
       onError: (err) => {
-        toast.error(`Failed to delete project: ${err.message}`)
+        toast.error(`Failed to delete app: ${err.message}`)
       },
     })
   }
@@ -716,7 +716,7 @@ function ProjectDetailPage() {
                     canReadInstanceSettings ? [{ scope: 'instance' }] : []
                   }
                   target={{ scope: 'project', projectId }}
-                  title="Project secrets"
+                  title="App secrets"
                 />
                 <SigningIdentitiesPanel
                   canWrite={canWritePipelines}
@@ -727,7 +727,7 @@ function ProjectDetailPage() {
 
             {canDeleteProjects ? (
               <DangerZone
-                title="Delete this project"
+                title="Delete this app"
                 description={`Permanently deletes "${project.name}" and all associated pipelines and builds. This cannot be undone.`}
                 action={
                   <Button
@@ -747,9 +747,9 @@ function ProjectDetailPage() {
       <ConfirmDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
-        title="Delete project?"
+        title="Delete app?"
         description={`This will permanently delete "${project.name}" and all associated pipelines and builds. This action cannot be undone.`}
-        confirmLabel="Delete project"
+        confirmLabel="Delete app"
         confirmVariant="destructive"
         isPending={deleteMutation.isPending}
         pendingLabel="Deleting..."

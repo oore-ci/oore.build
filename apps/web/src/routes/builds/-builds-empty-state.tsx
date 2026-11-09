@@ -38,22 +38,22 @@ export function BuildsEmptyState({
           <EmptyMedia variant="icon">
             <HugeiconsIcon icon={Folder02Icon} />
           </EmptyMedia>
-          <EmptyTitle>No projects to build yet</EmptyTitle>
+          <EmptyTitle>No apps to build yet</EmptyTitle>
           <EmptyDescription>
             {runtimeMode === 'local'
-              ? 'Builds run from project pipelines. Create a project from a Git repository on this Mac, add a pipeline, and your builds will show up here.'
+              ? 'Builds run from app pipelines. Create an app from a Git repository on this Mac, add a pipeline, and your builds will show up here.'
               : 'Builds run from project pipelines. Create a project from a GitHub or GitLab repository, add a pipeline, and your builds will show up here.'}
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           {capabilities.writeProjects ? (
             <Button render={<Link to="/projects" />} nativeButton={false}>
-              Set up a project
+              Set up an app
               <HugeiconsIcon icon={ArrowRight01Icon} data-icon="inline-end" />
             </Button>
           ) : (
             <Text variant="muted">
-              Ask an owner or admin to create the first project.
+              Ask an owner or admin to create the first app.
             </Text>
           )}
         </EmptyContent>

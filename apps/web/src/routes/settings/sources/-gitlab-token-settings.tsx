@@ -156,7 +156,7 @@ export function GitLabTokenSettings({
             <DialogTitle>Replace GitLab access token</DialogTitle>
             <DialogDescription>
               Oore checks the new token before it replaces the saved token.
-              Existing projects and repositories stay connected.
+              Existing apps and repositories stay connected.
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>

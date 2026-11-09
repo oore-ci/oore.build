@@ -27,8 +27,8 @@ within minutes, including Android debug builds and iOS ad hoc builds.
   sign in from their phones. For iOS installs, the address must use HTTPS.
   [How External Access works](/concepts/external-access) explains the change
   from Local Only.
-- Instance owner or admin access, to invite testers, and project maintainer
-  access to add them to the project.
+- Instance owner or admin access, to invite testers, and app maintainer
+  access to add them to the app.
 - A pipeline that produces an installable file:
   - **Android**: any `.apk`. The `Debug APK` pipeline from
     [Build your first Android app](/start/android/first-build) works. A
@@ -46,20 +46,20 @@ within minutes, including Android debug builds and iOS ad hoc builds.
    of Oore.
 
 A QA Viewer can see builds, install artifacts, and send feedback in the
-projects you add them to, and nothing else. See
+apps you add them to, and nothing else. See
 [Invite a team member](/team/invite) for details.
 
-## 2. Add testers to the project
+## 2. Add testers to the app
 
-1. Open the project and its **Settings** tab.
+1. Open the app and its **Settings** tab.
 2. In the **Access** section, select **Add members**.
 3. Pick the testers, or paste their emails.
-4. Keep **Project role** at **Viewer**. A QA Viewer is always limited to
+4. Keep **App role** at **Viewer**. A QA Viewer is always limited to
    Viewer.
 5. Select **Add N people**.
 
-To add testers to several projects at once, see
-[Manage roles and project access](/team/roles).
+To add testers to several apps at once, see
+[Manage roles and app access](/team/roles).
 
 ## 3. Build an installable iOS version
 
@@ -69,7 +69,7 @@ An iOS build installs only on iPhones whose UDID is in its provisioning
 profile. Keep the TestFlight pipeline as it is and add a second pipeline for
 testers:
 
-1. On the project's **Pipelines** tab, select **Add pipeline**, then
+1. On the app's **Pipelines** tab, select **Add pipeline**, then
    **Custom**. Name it `iOS ad hoc`, and under **Platforms** select only
    **iOS**.
 2. Under **Signing > iOS**, turn on **Enable iOS signing**. Choose **Ad hoc**
@@ -92,7 +92,7 @@ are covered in [Register an iOS test device](/build/distribute/ios-devices).
 The tester opens the Oore address on their phone and signs in. Instead of the
 operator dashboard, a QA Viewer sees **Your apps**:
 
-1. If they can access more than one project, they pick the app at the top.
+1. If they can access more than one app, they pick the app at the top.
 2. **Latest release** shows the newest successful build with an installable
    file, what changed, and an **Android** or **iOS** button.
 3. The button opens the install page. On Android, the tester selects
@@ -106,7 +106,7 @@ shows a hint and a **Copy link** button to open it in a full browser.
 
 You can also send a tester to one build directly. On the build page, open an
 artifact's **Install** page and select **Copy link**. The tester still signs
-in, and sees the build only if they can access the project.
+in, and sees the build only if they can access the app.
 
 Each install starts a delivery session that lasts up to one hour.
 [How artifact delivery works](/concepts/artifact-delivery) explains the limits.
@@ -146,7 +146,7 @@ quick handovers.
 
 ## Verify the result
 
-- The tester signs in on their phone and sees **Your apps** with the project
+- The tester signs in on their phone and sees **Your apps** with the app
   and its latest release.
 - The app installs from the **Android** or **iOS** button and opens.
 - A test note sent with **Feedback** appears on the build's timeline.
@@ -155,13 +155,13 @@ quick handovers.
 
 **The tester sees "No apps shared with you yet"**
 
-Their account is not a member of any project. Add them in the project's
+Their account is not a member of any app. Add them in the app's
 **Access** section. Check that the email they sign in with matches the
 invitation.
 
 **The tester sees "No release is ready to test"**
 
-The project has no successful build with an APK or an install-ready IPA. A
+The app has no successful build with an APK or an install-ready IPA. A
 `.aab` or an App Store IPA does not count. Run a build of a pipeline that
 produces one.
 

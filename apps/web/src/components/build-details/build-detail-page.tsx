@@ -819,7 +819,7 @@ export function BuildDetailPage({
                   search={{ tab: 'settings' }}
                   className="font-medium underline underline-offset-4"
                 >
-                  Project Settings
+                  App settings
                 </Link>
                 .
               </>

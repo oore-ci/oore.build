@@ -68,9 +68,9 @@ export function DashboardGettingStarted({
       : []),
     {
       key: 'project',
-      title: 'Create a project',
+      title: 'Create an app',
       hint: !canWriteProjects
-        ? 'Ask an owner or admin to create a project.'
+        ? 'Ask an owner or admin to create an app.'
         : noConnectedSources
           ? 'Connect a source first, then pick one of its repositories.'
           : runtimeMode === 'local'
@@ -83,7 +83,7 @@ export function DashboardGettingStarted({
           nativeButton={false}
         >
           <HugeiconsIcon icon={Add01Icon} data-icon="inline-start" />
-          Create project
+          Create app
         </Button>
       ) : undefined,
     },

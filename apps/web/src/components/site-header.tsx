@@ -91,7 +91,7 @@ export default function SiteHeader() {
               description={
                 runBuildTarget
                   ? 'Choose a branch to build.'
-                  : 'Choose a project, pipeline and branch to build.'
+                  : 'Choose an app, pipeline and branch to build.'
               }
               open={runBuildOpen}
               onOpenChange={setRunBuildOpen}

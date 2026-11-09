@@ -14,17 +14,17 @@ Every field, pattern rule, and limit is in
 
 ## What you need
 
-- Project developer, maintainer, instance admin, or instance owner access.
+- App developer, maintainer, instance admin, or instance owner access.
   Changing the approval policy needs maintainer access or higher.
-- For push, tag, and pull request triggers, a project connected to
+- For push, tag, and pull request triggers, an app connected to
   [GitHub](/build/sources/github) or [GitLab](/build/sources/gitlab). A
   repository on the Oore Mac builds only from the UI, the API, or a schedule.
-- For tag builds from GitLab, **Tag push events** turned on in the project's
+- For tag builds from GitLab, **Tag push events** turned on in the app's
   webhook.
 
 ## 1. Open the trigger settings
 
-1. Open the project, then the pipeline.
+1. Open the app, then the pipeline.
 2. Select **Edit**.
 3. Scroll to **Triggers**.
 
@@ -63,7 +63,7 @@ tell which files changed, it builds.
 
 Under **Schedules**, select **Add schedule**. Enter a cron expression in UTC,
 such as `0 2 * * 1-5` for 02:00 on weekdays, and optionally a branch. Without a branch, the schedule
-builds the project's default branch. A pipeline can have up to 10 schedules.
+builds the app's default branch. A pipeline can have up to 10 schedules.
 
 ## 5. Set the timeout
 
@@ -121,7 +121,7 @@ minutes late and skips older ones.
 
 ### The approval settings are read-only
 
-Only project maintainers, instance admins, and the instance owner can change
+Only app maintainers, instance admins, and the instance owner can change
 which builds wait for approval.
 
 ## Next step

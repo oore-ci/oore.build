@@ -491,7 +491,7 @@ function RunnersSettingsPage() {
           if (!open) setPurgeRunner(null)
         }}
         title={`Purge caches on ${purgeRunner?.name ?? 'runner'}?`}
-        description="The runner deletes its pub, Gradle, CocoaPods and Xcode DerivedData caches before its next build. The next build of each project downloads its dependencies again."
+        description="The runner deletes its pub, Gradle, CocoaPods and Xcode DerivedData caches before its next build. The next build of each app downloads its dependencies again."
         confirmLabel="Purge cache"
         confirmVariant="destructive"
         isPending={purgeCaches.isPending}

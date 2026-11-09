@@ -78,7 +78,7 @@ build starts.
 
 - **Settings > Runners** shows the runner's cache size in the **Cache**
   column after each build.
-- After a purge, the next build of each project shows **miss** for every cache
+- After a purge, the next build of each app shows **miss** for every cache
   and downloads its dependencies again. The build after that shows **hit**.
 
 ## Troubleshooting
@@ -93,7 +93,7 @@ runner records a hash only after a successful build.
 
 The runner trims the caches only above the limit. Lower
 `OORE_RUNNER_CACHE_MAX_GB`, or purge the caches. VM builds also keep Xcode
-DerivedData and Android SDK packages in the cache directory. Each project that
+DerivedData and Android SDK packages in the cache directory. Each app that
 builds in a VM also keeps a warm image. It holds the same caches on the VM disk
 and starts again from the plain image every
 `OORE_TART_WARM_IMAGE_MAX_AGE_DAYS`.

@@ -91,7 +91,7 @@ function buildTriggerLabel(build: Build) {
 }
 
 function projectName(build: Build) {
-  return build.context?.project_name ?? 'Unknown project'
+  return build.context?.project_name ?? 'Unknown app'
 }
 
 const columns: Array<DataTableColumnDef<Build>> = [
@@ -114,7 +114,7 @@ const columns: Array<DataTableColumnDef<Build>> = [
     id: 'project_name',
     accessorFn: projectName,
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Project" />
+      <DataTableColumnHeader column={column} title="App" />
     ),
     cell: ({ row }) => (
       <div className={CELL_STACK}>
