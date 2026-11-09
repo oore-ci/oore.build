@@ -117,6 +117,7 @@ use utoipa::{
         operations::update_project,
         operations::delete_project,
         operations::discover_repository_workflows,
+        operations::detect_project_app,
         operations::list_repository_config_files,
         operations::refresh_repository_config_files,
         // ── Project Members ──
@@ -386,6 +387,8 @@ use utoipa::{
         oore_contract::CreateProjectResponse,
         oore_contract::UpdateProjectRequest,
         oore_contract::ProjectDetailResponse,
+        oore_contract::ProjectSetupProgress,
+        oore_contract::ProjectAppDetection,
         oore_contract::ListProjectsResponse,
         oore_contract::RepositoryWorkflowExecutionPreview,
         oore_contract::RepositoryWorkflowPreview,
@@ -583,6 +586,8 @@ use utoipa::{
         // Runners
         oore_contract::RunnerStatus,
         oore_contract::Runner,
+        oore_contract::RunnerToolchainStatus,
+        oore_contract::RunnerToolchainCheck,
         oore_contract::RunnerMetrics,
         oore_contract::RunnerDiskPressure,
         oore_contract::RegisterRunnerRequest,
@@ -1936,6 +1941,23 @@ mod operations {
         )
     )]
     pub(super) fn discover_repository_workflows() {}
+
+    /// Detect the app in the repository
+    ///
+    /// Reads `pubspec.yaml`, the platform folders and Oore config files on
+    /// the project's default branch through its source provider, so the web
+    /// UI can propose the app's first pipelines.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/app-detection", tag = "Projects",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "What Oore found in the repository", body = ProjectAppDetection),
+            (status = 403, description = "Read permission required", body = ApiError),
+            (status = 404, description = "Project or project source not found", body = ApiError),
+            (status = 502, description = "Source provider request failed", body = ApiError),
+        )
+    )]
+    pub(super) fn detect_project_app() {}
 
     /// List config files found in the repository
     ///

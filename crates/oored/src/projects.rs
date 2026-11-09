@@ -5,7 +5,8 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
     ApiError, CreateProjectRequest, CreateProjectResponse, ListProjectsResponse, OkResponse,
-    Project, ProjectDetailResponse, ProjectRole, RuntimeMode, ScmProvider, UpdateProjectRequest,
+    Project, ProjectDetailResponse, ProjectRole, ProjectSetupProgress, RuntimeMode, ScmProvider,
+    UpdateProjectRequest,
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -698,12 +699,48 @@ pub async fn get_project(
         .await
         .unwrap_or(0);
 
+    let setup = project_setup_progress(&pool, &project_id)
+        .await
+        .unwrap_or_default();
+
     Ok(Json(ProjectDetailResponse {
         project,
         pipeline_count,
         build_count,
         current_user_role,
+        setup,
     }))
+}
+
+/// Which steps after the first install the project has done.
+async fn project_setup_progress(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+) -> Result<ProjectSetupProgress, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT \
+           EXISTS (SELECT 1 FROM pipeline_android_signing_profiles s \
+                   JOIN pipelines p ON p.id = s.pipeline_id \
+                   WHERE p.project_id = ?1 AND s.build_type = 'release' AND s.enabled = 1) \
+           OR EXISTS (SELECT 1 FROM pipeline_ios_signing_settings s \
+                   JOIN pipelines p ON p.id = s.pipeline_id \
+                   WHERE p.project_id = ?1 AND s.enabled = 1) \
+           OR EXISTS (SELECT 1 FROM project_signing_identities WHERE project_id = ?1) \
+             AS release_signing, \
+           EXISTS (SELECT 1 FROM pipeline_publish_targets t \
+                   JOIN pipelines p ON p.id = t.pipeline_id \
+                   WHERE p.project_id = ?1 AND t.enabled = 1) AS store_publishing, \
+           EXISTS (SELECT 1 FROM project_members \
+                   WHERE project_id = ?1 AND role = 'viewer') AS testers",
+    )
+    .bind(project_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(ProjectSetupProgress {
+        release_signing: row.get::<bool, _>("release_signing"),
+        store_publishing: row.get::<bool, _>("store_publishing"),
+        testers: row.get::<bool, _>("testers"),
+    })
 }
 
 /// `PATCH /v1/projects/{project_id}` — partial update.

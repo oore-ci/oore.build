@@ -2741,6 +2741,10 @@ pub async fn build_router_with_recovery(
             get(repository_workflows::discover_repository_workflows),
         )
         .route(
+            "/v1/projects/{project_id}/app-detection",
+            get(repository_workflows::detect_project_app),
+        )
+        .route(
             "/v1/projects/{project_id}/repository-config-files",
             get(repository_config_files::list_repository_config_files),
         )

@@ -9,8 +9,8 @@ use oore_contract::{
     JobStatusResponse, ListRunnersResponse, MAX_RUNNER_CONCURRENT_BUILDS, RUNNER_PROTOCOL_VERSION,
     RegisterRunnerRequest, RegisterRunnerResponse, ReportBuildIdentityRequest, Runner,
     RunnerDiskPressure, RunnerHeartbeatRequest, RunnerHeartbeatResponse, RunnerMetrics,
-    RunnerStatus, UpdateJobStatusRequest, UpdateRunnerRequest, UpdateRunnerResponse,
-    effective_runner_labels, normalize_runner_labels, runner_disk_pressure,
+    RunnerStatus, RunnerToolchainCheck, UpdateJobStatusRequest, UpdateRunnerRequest,
+    UpdateRunnerResponse, effective_runner_labels, normalize_runner_labels, runner_disk_pressure,
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -162,6 +162,14 @@ fn json_labels(raw: &str) -> Vec<String> {
     serde_json::from_str(raw).unwrap_or_default()
 }
 
+/// The build tool checks a runner reported under `toolchain`.
+fn runner_toolchain(capabilities: &serde_json::Value) -> Vec<RunnerToolchainCheck> {
+    capabilities
+        .get("toolchain")
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default()
+}
+
 fn row_to_runner(row: &sqlx::sqlite::SqliteRow) -> Runner {
     let caps_str: String = row.get("capabilities");
     let capabilities: serde_json::Value = serde_json::from_str(&caps_str).unwrap_or_default();
@@ -169,6 +177,7 @@ fn row_to_runner(row: &sqlx::sqlite::SqliteRow) -> Runner {
         .get::<Option<String>, _>("metrics")
         .and_then(|raw| serde_json::from_str(&raw).ok());
 
+    let toolchain = runner_toolchain(&capabilities);
     Runner {
         id: row.get("id"),
         name: row.get("name"),
@@ -187,6 +196,7 @@ fn row_to_runner(row: &sqlx::sqlite::SqliteRow) -> Runner {
             .get::<i64, _>("max_concurrent_builds")
             .clamp(1, i64::from(MAX_RUNNER_CONCURRENT_BUILDS))
             as u32,
+        toolchain,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     }
@@ -265,6 +275,7 @@ pub async fn register_runner(
         id: runner_id,
         name: name.to_string(),
         status: "offline".to_string(),
+        toolchain: runner_toolchain(&req.capabilities),
         capabilities: req.capabilities,
         labels,
         custom_labels,

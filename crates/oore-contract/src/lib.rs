@@ -2150,8 +2150,42 @@ pub struct Runner {
     /// How many builds the runner runs at the same time.
     #[serde(default = "default_runner_max_concurrent_builds")]
     pub max_concurrent_builds: u32,
+    /// What the runner found when it checked its build tools, as
+    /// `oore doctor` would. Empty for runners that do not report them.
+    #[serde(default)]
+    pub toolchain: Vec<RunnerToolchainCheck>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// The outcome of one build tool check on a runner.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerToolchainStatus {
+    Ok,
+    /// Builds that need it fail until it is installed.
+    Missing,
+    /// Builds may work, but something is worth fixing.
+    Warning,
+}
+
+/// One build tool a runner checked, such as Xcode or the Android SDK.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RunnerToolchainCheck {
+    /// Stable id, such as `xcode` or `android_sdk`.
+    pub id: String,
+    /// What people call the tool, such as "Android SDK".
+    pub label: String,
+    /// Platforms that need it. Empty when every build does.
+    #[serde(default)]
+    pub platforms: Vec<BuildPlatform>,
+    pub status: RunnerToolchainStatus,
+    /// The version or path found, or what is wrong.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// How to fix a missing tool, often a command to run on the runner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
 }
 
 /// The most builds one runner may run at the same time.
@@ -3270,6 +3304,39 @@ pub struct ProjectDetailResponse {
     pub pipeline_count: i64,
     pub build_count: i64,
     pub current_user_role: ProjectRole,
+    /// The steps after the first install that the app has done.
+    #[serde(default)]
+    pub setup: ProjectSetupProgress,
+}
+
+/// What an app has set up beyond its first build, for the checklist that
+/// follows the first install.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct ProjectSetupProgress {
+    /// A pipeline signs release builds, or the app's signing library holds
+    /// an identity.
+    pub release_signing: bool,
+    /// A pipeline uploads to Google Play or App Store Connect.
+    pub store_publishing: bool,
+    /// Someone has viewer access to the app, as testers do.
+    pub testers: bool,
+}
+
+/// What Oore found in an app's repository on its default branch, to propose
+/// its first pipelines.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProjectAppDetection {
+    /// The branch or commit Oore read.
+    pub reference: String,
+    /// The repository has a `pubspec.yaml` that depends on Flutter.
+    pub flutter: bool,
+    /// The `name` in `pubspec.yaml`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<String>,
+    /// Platform folders found, such as `android/` and `ios/`.
+    pub platforms: Vec<BuildPlatform>,
+    /// Valid Oore config files found, such as `.oore.yaml`.
+    pub config_files: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
